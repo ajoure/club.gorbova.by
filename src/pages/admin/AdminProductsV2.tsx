@@ -8,24 +8,35 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
+import { useProductRelationCounts } from "@/hooks/useProductRelations";
 import { useNavigate } from "react-router-dom";
-import { PRODUCT_CATEGORIES, PRODUCT_CATEGORY_LABELS, getCategoryLabel } from "@/lib/product-names";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+
+const STATUS_LABELS: Record<string, string> = {
+  active: "Активный",
+  hidden: "Скрытый",
+  archived: "Архивный",
+};
+
+const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
+  active: "default",
+  hidden: "outline",
+  archived: "secondary",
+};
 
 interface ProductFormData {
   code: string;
   name: string;
   description: string;
   status: string;
-  category: string;
   primary_domain: string;
 }
 
@@ -34,7 +45,6 @@ const defaultFormData: ProductFormData = {
   name: "",
   description: "",
   status: "active",
-  category: "course",
   primary_domain: "",
 };
 
@@ -42,6 +52,7 @@ export default function AdminProductsV2() {
   const navigate = useNavigate();
   const { isSuperAdmin, loading: permLoading } = usePermissions();
   const { data: products, isLoading } = useProductsV2();
+  const { data: relationCounts } = useProductRelationCounts();
   
   const createMutation = useCreateProductV2();
   const updateMutation = useUpdateProductV2();
@@ -62,7 +73,6 @@ export default function AdminProductsV2() {
         name: product.name,
         description: product.description || "",
         status: product.status || "active",
-        category: product.category || "course",
         primary_domain: product.primary_domain || "",
       });
     } else {
@@ -89,7 +99,6 @@ export default function AdminProductsV2() {
       name: formData.name,
       description: formData.description || null,
       status: formData.status,
-      category: formData.category,
       primary_domain: formData.primary_domain || null,
     };
 
@@ -119,13 +128,12 @@ export default function AdminProductsV2() {
   };
 
   // Counts
-  const activeProducts = products?.filter(p => p.is_active).length || 0;
-  const withClub = products?.filter(p => p.telegram_club_id).length || 0;
-  const categoryCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
+  const statusCounts = useMemo(() => {
+    const counts = { active: 0, hidden: 0, archived: 0, with_club: 0 };
     products?.forEach(p => {
-      const cat = (p as any).category || "course";
-      counts[cat] = (counts[cat] || 0) + 1;
+      const s = (p as any).status || "active";
+      if (s in counts) counts[s as keyof typeof counts]++;
+      if (p.telegram_club_id) counts.with_club++;
     });
     return counts;
   }, [products]);
@@ -135,24 +143,19 @@ export default function AdminProductsV2() {
 
   const productTabs = useMemo(() => [
     { id: "all", label: "Все", count: products?.length || 0 },
-    { id: "active", label: "Активные", count: activeProducts },
-    ...PRODUCT_CATEGORIES.map(cat => ({
-      id: `cat_${cat}`,
-      label: PRODUCT_CATEGORY_LABELS[cat],
-      count: categoryCounts[cat] || 0,
-    })),
-    { id: "with_club", label: "С клубом", count: withClub },
-  ], [products?.length, activeProducts, categoryCounts, withClub]);
+    { id: "active", label: "Активные", count: statusCounts.active },
+    { id: "hidden", label: "Скрытые", count: statusCounts.hidden },
+    { id: "archived", label: "Архивные", count: statusCounts.archived },
+    { id: "with_club", label: "С клубом", count: statusCounts.with_club },
+  ], [products?.length, statusCounts]);
 
   // Filter by tab
   const tabFiltered = useMemo(() => {
     if (!products) return [];
-    if (activeTab === "active") return products.filter(p => p.is_active);
+    if (activeTab === "active") return products.filter(p => (p as any).status === "active");
+    if (activeTab === "hidden") return products.filter(p => (p as any).status === "hidden");
+    if (activeTab === "archived") return products.filter(p => (p as any).status === "archived");
     if (activeTab === "with_club") return products.filter(p => p.telegram_club_id);
-    if (activeTab.startsWith("cat_")) {
-      const cat = activeTab.replace("cat_", "");
-      return products.filter(p => (p as any).category === cat);
-    }
     return products;
   }, [products, activeTab]);
 
@@ -173,9 +176,8 @@ export default function AdminProductsV2() {
     getFieldValue: (item: any, key: string) => {
       switch (key) {
         case "name": return item.name;
-        case "category": return getCategoryLabel(item.category || "course");
         case "domain": return item.primary_domain || "";
-        case "status": return item.is_active ? "Активен" : "Неактивен";
+        case "status": return STATUS_LABELS[item.status] || item.status;
         default: return (item as any)[key];
       }
     },
@@ -264,9 +266,6 @@ export default function AdminProductsV2() {
                   <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                     Продукт
                   </SortableTableHead>
-                  <SortableTableHead sortKey="category" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                    Категория
-                  </SortableTableHead>
                   <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                     Сайт
                   </SortableTableHead>
@@ -277,65 +276,81 @@ export default function AdminProductsV2() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedData.map((product: any) => (
-                  <TableRow
-                    key={product.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => navigate(`/admin/products-v2/${product.id}`)}
-                  >
-                    <TableCell>
-                      <span className="font-medium text-sm">{product.name}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {getCategoryLabel(product.category || 'course')}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {product.primary_domain ? (
-                        <div className="flex items-center gap-1.5">
-                          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="text-xs">{product.primary_domain}</span>
-                          <a
-                            href={`https://${product.primary_domain}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
+                {sortedData.map((product: any) => {
+                  const isParent = relationCounts?.parentIds?.has(product.id);
+                  const isChild = relationCounts?.childIds?.has(product.id);
+                  return (
+                    <TableRow
+                      key={product.id}
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => navigate(`/admin/products-v2/${product.id}`)}
+                    >
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm">{product.name}</span>
+                          {isParent && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <FolderTree className="h-3.5 w-3.5 text-primary/60" />
+                                </TooltipTrigger>
+                                <TooltipContent>Содержит дочерние продукты</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                          {isChild && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <CornerDownRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>Входит в состав другого продукта</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
                         </div>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1.5">
-                        <Badge variant={product.is_active ? "default" : "secondary"} className="text-[11px]">
-                          {product.is_active ? "Активен" : "Неактивен"}
-                        </Badge>
-                        {product.status === "draft" && (
-                          <Badge variant="outline" className="text-[11px]">Черновик</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {product.primary_domain ? (
+                          <div className="flex items-center gap-1.5">
+                            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                            <span className="text-xs">{product.primary_domain}</span>
+                            <a
+                              href={`https://${product.primary_domain}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-0.5">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); copyProductId(product.id); }}>
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={STATUS_VARIANTS[product.status] || "outline"} className="text-[11px]">
+                          {STATUS_LABELS[product.status] || product.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); copyProductId(product.id); }}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -376,29 +391,16 @@ export default function AdminProductsV2() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Статус</Label>
-                <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="draft">Черновик</SelectItem>
-                    <SelectItem value="active">Активный</SelectItem>
-                    <SelectItem value="archived">Архивный</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Категория</Label>
-                <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PRODUCT_CATEGORIES.map((cat) => (
-                      <SelectItem key={cat} value={cat}>{PRODUCT_CATEGORY_LABELS[cat]}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-2">
+              <Label>Статус</Label>
+              <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Активный</SelectItem>
+                  <SelectItem value="hidden">Скрытый</SelectItem>
+                  <SelectItem value="archived">Архивный</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">

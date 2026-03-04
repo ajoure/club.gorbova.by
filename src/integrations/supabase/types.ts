@@ -5878,6 +5878,54 @@ export type Database = {
           },
         ]
       }
+      product_relations: {
+        Row: {
+          child_product_id: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          parent_product_id: string
+          relation_type: string
+          sort_order: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          child_product_id: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          parent_product_id: string
+          relation_type?: string
+          sort_order?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          child_product_id?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          parent_product_id?: string
+          relation_type?: string
+          sort_order?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_relations_child_product_id_fkey"
+            columns: ["child_product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_relations_parent_product_id_fkey"
+            columns: ["parent_product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_versions: {
         Row: {
           changed_at: string
