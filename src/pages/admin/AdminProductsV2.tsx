@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
 import { useTelegramClubs } from "@/hooks/useTelegramIntegration";
@@ -54,6 +56,7 @@ const defaultFormData: ProductFormData = {
 
 export default function AdminProductsV2() {
   const navigate = useNavigate();
+  const { isSuperAdmin } = usePermissions();
   const { data: products, isLoading } = useProductsV2();
   const { data: clubs } = useTelegramClubs();
   const createMutation = useCreateProductV2();
@@ -249,6 +252,23 @@ export default function AdminProductsV2() {
               className="pl-8 h-8 text-xs"
             />
           </div>
+          {isSuperAdmin() && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={() => navigate("/admin/products-v2/docs")}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Документация раздела</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
             Добавить продукт
