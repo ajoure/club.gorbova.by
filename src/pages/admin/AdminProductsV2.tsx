@@ -372,7 +372,7 @@ export default function AdminProductsV2() {
                       <TableCell className="w-10">
                         <Checkbox
                           checked={isSelected}
-                          onCheckedChange={() => toggleSelection(product.id, false)}
+                          onCheckedChange={() => toggleSelection(product.id, true)}
                           onClick={(e) => e.stopPropagation()}
                         />
                       </TableCell>
