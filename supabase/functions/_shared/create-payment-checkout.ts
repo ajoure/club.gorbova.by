@@ -123,23 +123,76 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       const existingMeta = (existingOrder.meta || {}) as Record<string, any>;
       const existingToken = existingMeta.bepaid_checkout_token;
       if (existingToken) {
-        const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
-        console.log('[create-payment-checkout] Reusing existing pending one_time order:', existingOrder.id);
+        // PATCH-PAYLINK: Validate token before reuse (GET with timeout)
+        let tokenAlive = false;
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
+          const tokenCheckResp = await fetch(
+            `https://checkout.bepaid.by/ctp/api/checkouts/${existingToken}`,
+            {
+              method: 'GET',
+              headers: { 'Authorization': bepaidAuth, 'Accept': 'application/json' },
+              signal: controller.signal,
+            }
+          );
+          clearTimeout(timeout);
+          if (tokenCheckResp.ok) {
+            try {
+              const tokenData = await tokenCheckResp.json();
+              // Consider alive only if checkout status is not explicitly expired/failed
+              const checkoutStatus = tokenData?.checkout?.status;
+              tokenAlive = !checkoutStatus || !['expired', 'failed', 'error'].includes(checkoutStatus);
+            } catch {
+              // JSON parse failed — treat as alive (200 OK is good enough)
+              tokenAlive = true;
+            }
+          }
+        } catch (err) {
+          // Network error / timeout / abort — treat as expired, regen
+          console.log('[create-payment-checkout] Token validation failed (network/timeout), will regen:', err);
+        }
 
-        // Audit log for reuse
+        if (tokenAlive) {
+          // Token alive — reuse as before
+          const existingUrl = `https://checkout.bepaid.by/v2/checkout?token=${existingToken}`;
+          console.log('[create-payment-checkout] Reusing existing pending one_time order (token alive):', existingOrder.id);
+
+          await supabase.from('audit_logs').insert({
+            actor_type: effectiveActorType,
+            actor_user_id: actorUserId,
+            action: 'payment_checkout.reused',
+            actor_label: `${effectiveActorType}:payment_checkout`,
+            meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
+          });
+
+          return {
+            success: true,
+            redirect_url: existingUrl,
+            order_id: existingOrder.id,
+            payment_type: 'one_time',
+          };
+        }
+
+        // Token expired/invalid — mark meta (add-only, no status change) and fall through to create new
+        console.log('[create-payment-checkout] Token expired for one_time order, will create new:', existingOrder.id);
+        await supabase.from('orders_v2').update({
+          meta: {
+            ...existingMeta,
+            checkout_expired: true,
+            checkout_expired_at: new Date().toISOString(),
+            checkout_expired_reason: 'token_invalid_or_unreachable',
+          },
+        }).eq('id', existingOrder.id);
+
         await supabase.from('audit_logs').insert({
           actor_type: effectiveActorType,
           actor_user_id: actorUserId,
-          action: 'payment_checkout.reused',
-          meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
+          action: 'payment_checkout.token_expired',
+          actor_label: `${effectiveActorType}:payment_checkout`,
+          meta: { order_id: existingOrder.id, payment_type: 'one_time' },
         });
-
-        return {
-          success: true,
-          redirect_url: existingUrl,
-          order_id: existingOrder.id,
-          payment_type: 'one_time',
-        };
+        // Fall through — create new order + checkout below
       }
     }
 
@@ -312,24 +365,67 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         : null;
 
       if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
-        console.log('[create-payment-checkout] Reusing existing pending subscription order:', existingSubOrder.id);
+        // PATCH-PAYLINK: Validate checkout URL before reuse (GET with timeout)
+        let checkoutAlive = false;
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
+          const checkResp = await fetch(reusableCheckoutUrl, {
+            method: 'GET',
+            redirect: 'follow',
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          // Alive if HTTP 200 OK (not 404/410/500)
+          checkoutAlive = checkResp.ok;
+        } catch (err) {
+          // Network error / timeout — treat as expired
+          console.log('[create-payment-checkout] Subscription checkout URL validation failed:', err);
+        }
+
+        if (checkoutAlive) {
+          // Checkout URL alive — reuse
+          console.log('[create-payment-checkout] Reusing existing pending subscription order (URL alive):', existingSubOrder.id);
+
+          await supabase.from('audit_logs').insert({
+            actor_type: effectiveActorType,
+            actor_user_id: actorUserId,
+            action: 'payment_checkout.reused',
+            actor_label: `${effectiveActorType}:payment_checkout`,
+            meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
+          });
+
+          return {
+            success: true,
+            redirect_url: reusableCheckoutUrl,
+            order_id: existingSubOrder.id,
+            payment_type: 'subscription',
+          };
+        }
+
+        // Checkout URL expired — mark meta (add-only) and fall through
+        console.log('[create-payment-checkout] Subscription checkout URL expired, will create new:', existingSubOrder.id);
+        const existingSubMeta = (existingSubOrder.meta || {}) as Record<string, any>;
+        await supabase.from('orders_v2').update({
+          meta: {
+            ...existingSubMeta,
+            checkout_expired: true,
+            checkout_expired_at: new Date().toISOString(),
+            checkout_expired_reason: 'checkout_url_expired',
+          },
+        }).eq('id', existingSubOrder.id);
 
         await supabase.from('audit_logs').insert({
           actor_type: effectiveActorType,
           actor_user_id: actorUserId,
-          action: 'payment_checkout.reused',
-          meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
+          action: 'payment_checkout.token_expired',
+          actor_label: `${effectiveActorType}:payment_checkout`,
+          meta: { order_id: existingSubOrder.id, payment_type: 'subscription' },
         });
-
-        return {
-          success: true,
-          redirect_url: reusableCheckoutUrl,
-          order_id: existingSubOrder.id,
-          payment_type: 'subscription',
-        };
+      } else {
+        // No valid checkout_url — fall through to create new order+subscription
+        console.log('[create-payment-checkout] Found pending sub order but no valid checkout_url, creating new');
       }
-      // No valid checkout_url — fall through to create new order+subscription
-      console.log('[create-payment-checkout] Found pending sub order but no valid checkout_url, creating new');
     }
 
     const orderNumber = `SUB-LINK-${Date.now().toString(36).toUpperCase()}`;
