@@ -2391,6 +2391,41 @@ export type Database = {
           },
         ]
       }
+      field_values_v2: {
+        Row: {
+          created_at: string | null
+          entity_id: string
+          field_id: string
+          id: string
+          updated_at: string | null
+          value: Json | null
+        }
+        Insert: {
+          created_at?: string | null
+          entity_id: string
+          field_id: string
+          id?: string
+          updated_at?: string | null
+          value?: Json | null
+        }
+        Update: {
+          created_at?: string | null
+          entity_id?: string
+          field_id?: string
+          id?: string
+          updated_at?: string | null
+          value?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "field_values_v2_field_id_fkey"
+            columns: ["field_id"]
+            isOneToOne: false
+            referencedRelation: "fields_registry"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       fields: {
         Row: {
           created_at: string
@@ -2451,6 +2486,48 @@ export type Database = {
           label?: string
           updated_at?: string
           validation_rules?: Json | null
+        }
+        Relationships: []
+      }
+      fields_registry: {
+        Row: {
+          archived_at: string | null
+          created_at: string | null
+          created_by: string | null
+          data_type: string
+          entity_type: string
+          id: string
+          key: string
+          label: string
+          options: Json | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          data_type?: string
+          entity_type: string
+          id?: string
+          key: string
+          label: string
+          options?: Json | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          data_type?: string
+          entity_type?: string
+          id?: string
+          key?: string
+          label?: string
+          options?: Json | null
+          updated_at?: string | null
+          updated_by?: string | null
         }
         Relationships: []
       }

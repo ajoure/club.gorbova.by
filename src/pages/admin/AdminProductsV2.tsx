@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,7 +13,6 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useProductsV2, useCreateProductV2, useUpdateProductV2, useDeleteProductV2 } from "@/hooks/useProductsV2";
-import { useTelegramClubs } from "@/hooks/useTelegramIntegration";
 import { useNavigate } from "react-router-dom";
 import { PRODUCT_CATEGORIES, PRODUCT_CATEGORY_LABELS, getCategoryLabel } from "@/lib/product-names";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -26,39 +24,25 @@ interface ProductFormData {
   code: string;
   name: string;
   description: string;
-  slug: string;
   status: string;
   category: string;
   primary_domain: string;
-  currency: string;
-  public_title: string;
-  public_subtitle: string;
-  payment_disclaimer_text: string;
-  telegram_club_id: string | null;
-  is_active: boolean;
 }
 
 const defaultFormData: ProductFormData = {
   code: "",
   name: "",
   description: "",
-  slug: "",
   status: "active",
   category: "course",
   primary_domain: "",
-  currency: "BYN",
-  public_title: "",
-  public_subtitle: "",
-  payment_disclaimer_text: "",
-  telegram_club_id: null,
-  is_active: true,
 };
 
 export default function AdminProductsV2() {
   const navigate = useNavigate();
   const { isSuperAdmin, loading: permLoading } = usePermissions();
   const { data: products, isLoading } = useProductsV2();
-  const { data: clubs } = useTelegramClubs();
+  
   const createMutation = useCreateProductV2();
   const updateMutation = useUpdateProductV2();
   const deleteMutation = useDeleteProductV2();
@@ -77,16 +61,9 @@ export default function AdminProductsV2() {
         code: product.code,
         name: product.name,
         description: product.description || "",
-        slug: product.slug || "",
         status: product.status || "active",
         category: product.category || "course",
         primary_domain: product.primary_domain || "",
-        currency: product.currency || "BYN",
-        public_title: product.public_title || "",
-        public_subtitle: product.public_subtitle || "",
-        payment_disclaimer_text: product.payment_disclaimer_text || "",
-        telegram_club_id: product.telegram_club_id,
-        is_active: product.is_active,
       });
     } else {
       setEditingProduct(null);
@@ -111,16 +88,9 @@ export default function AdminProductsV2() {
       code: formData.code,
       name: formData.name,
       description: formData.description || null,
-      slug: formData.slug || null,
       status: formData.status,
       category: formData.category,
       primary_domain: formData.primary_domain || null,
-      currency: formData.currency,
-      public_title: formData.public_title || null,
-      public_subtitle: formData.public_subtitle || null,
-      payment_disclaimer_text: formData.payment_disclaimer_text || null,
-      telegram_club_id: formData.telegram_club_id || null,
-      is_active: formData.is_active,
     };
 
     if (editingProduct) {
@@ -298,7 +268,7 @@ export default function AdminProductsV2() {
                     Категория
                   </SortableTableHead>
                   <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                    Домен
+                    Сайт
                   </SortableTableHead>
                   <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                     Статус
@@ -386,50 +356,38 @@ export default function AdminProductsV2() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
-            <div className="space-y-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Основные данные</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Код *</Label>
-                  <Input
-                    placeholder="gorbova_club"
-                    value={formData.code}
-                    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Название *</Label>
-                  <Input
-                    placeholder="Gorbova Club"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  />
-                </div>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Код *</Label>
+                <Input
+                  placeholder="gorbova_club"
+                  value={formData.code}
+                  onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                />
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Slug (URL)</Label>
-                  <Input
-                    placeholder="gorbova-club"
-                    value={formData.slug}
-                    onChange={(e) => setFormData({ ...formData, slug: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Статус</Label>
-                  <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">Черновик</SelectItem>
-                      <SelectItem value="active">Активный</SelectItem>
-                      <SelectItem value="archived">Архивный</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="space-y-2">
+                <Label>Название *</Label>
+                <Input
+                  placeholder="Gorbova Club"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                />
               </div>
+            </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Статус</Label>
+                <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Черновик</SelectItem>
+                    <SelectItem value="active">Активный</SelectItem>
+                    <SelectItem value="archived">Архивный</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-2">
                 <Label>Категория</Label>
                 <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
@@ -441,78 +399,26 @@ export default function AdminProductsV2() {
                   </SelectContent>
                 </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label>Описание</Label>
-                <Textarea
-                  placeholder="Описание продукта..."
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                />
-              </div>
             </div>
 
-            <div className="space-y-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Домен и валюта</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Основной домен</Label>
-                  <Input
-                    placeholder="club.gorbova.by"
-                    value={formData.primary_domain}
-                    onChange={(e) => setFormData({ ...formData, primary_domain: e.target.value })}
-                  />
-                  <p className="text-xs text-muted-foreground">Домен, на котором будет отображаться продукт</p>
-                </div>
-                <div className="space-y-2">
-                  <Label>Валюта</Label>
-                  <Select value={formData.currency} onValueChange={(v) => setFormData({ ...formData, currency: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="BYN">BYN</SelectItem>
-                      <SelectItem value="RUB">RUB</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+            <div className="space-y-2">
+              <Label>URL сайта</Label>
+              <Input
+                placeholder="club.gorbova.by"
+                value={formData.primary_domain}
+                onChange={(e) => setFormData({ ...formData, primary_domain: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">Где продаётся продукт (опционально)</p>
             </div>
 
-            <div className="space-y-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Публичное отображение</h4>
-              <div className="space-y-2">
-                <Label>Заголовок секции тарифов</Label>
-                <Input placeholder="Тарифы клуба" value={formData.public_title} onChange={(e) => setFormData({ ...formData, public_title: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Подзаголовок</Label>
-                <Input placeholder="Выберите подходящий формат участия" value={formData.public_subtitle} onChange={(e) => setFormData({ ...formData, public_subtitle: e.target.value })} />
-              </div>
-              <div className="space-y-2">
-                <Label>Текст под тарифами (disclaimer)</Label>
-                <Textarea placeholder="Безопасная оплата через bePaid..." value={formData.payment_disclaimer_text} onChange={(e) => setFormData({ ...formData, payment_disclaimer_text: e.target.value })} />
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <h4 className="text-sm font-medium text-muted-foreground">Интеграции</h4>
-              <div className="space-y-2">
-                <Label>Telegram клуб</Label>
-                <Select value={formData.telegram_club_id || "none"} onValueChange={(v) => setFormData({ ...formData, telegram_club_id: v === "none" ? null : v })}>
-                  <SelectTrigger><SelectValue placeholder="Выберите клуб" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Не привязан</SelectItem>
-                    {clubs?.map((club) => (
-                      <SelectItem key={club.id} value={club.id}>{club.club_name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch checked={formData.is_active} onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })} />
-                <Label>Активен</Label>
-              </div>
+            <div className="space-y-2">
+              <Label>Описание</Label>
+              <Textarea
+                placeholder="Описание продукта..."
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                rows={3}
+              />
             </div>
           </div>
 
