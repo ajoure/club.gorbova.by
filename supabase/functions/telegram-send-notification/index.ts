@@ -219,7 +219,7 @@ Deno.serve(async (req) => {
     // PATCH 10B + 10C: Idempotency через notification_outbox
     // PATCH A: For card_* types, include payment_method_id + verification_version
     // =================================================================
-    const bucket = Math.floor(Date.now() / (10 * 60 * 1000)); // 10-минутные интервалы
+    const bucket = Math.floor(Date.now() / 1000); // 1-sec dedup window (anti-doubleclick only)
     
     // Build idempotency key based on message_type
     let idempotencyKey: string;
