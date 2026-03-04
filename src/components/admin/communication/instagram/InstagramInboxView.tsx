@@ -137,7 +137,10 @@ export function InstagramInboxView() {
 
   const filteredDialogs = useMemo(() => {
     if (!dialogs) return [];
-    let list = dialogs;
+    // FIX-4: Hide test probe dialogs
+    let list = dialogs.filter(
+      (d) => !d.sender_name?.includes('Webhook Test Probe') && !d.peer_id?.startsWith('test_')
+    );
     if (filter === "unread") {
       list = list.filter((d) => d.unread_count > 0);
     }
