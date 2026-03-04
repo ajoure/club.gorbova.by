@@ -16,10 +16,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree
 } from "lucide-react";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
-import { getCategoryLabel } from "@/lib/product-names";
+import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
@@ -522,14 +522,12 @@ export default function AdminProductDetailV2() {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-lg font-semibold truncate">{product.name}</h1>
-                <Badge variant={product.is_active ? "default" : "secondary"} className="text-[11px]">
-                  {product.is_active ? "Активен" : "Неактивен"}
+                <Badge 
+                  variant={(product as any).status === "active" ? "default" : (product as any).status === "archived" ? "secondary" : "outline"} 
+                  className="text-[11px]"
+                >
+                  {(product as any).status === "active" ? "Активный" : (product as any).status === "archived" ? "Архивный" : "Скрытый"}
                 </Badge>
-                {(product as any).category && (
-                  <Badge variant="outline" className="text-[11px]">
-                    {getCategoryLabel((product as any).category)}
-                  </Badge>
-                )}
               </div>
             </div>
             {(product as any).primary_domain && (
@@ -566,6 +564,10 @@ export default function AdminProductDetailV2() {
               <TabsTrigger value="custom_fields" className="gap-1.5 text-xs">
                 <Settings2 className="h-3.5 w-3.5" />
                 Доп. поля
+              </TabsTrigger>
+              <TabsTrigger value="composition" className="gap-1.5 text-xs">
+                <FolderTree className="h-3.5 w-3.5" />
+                Состав
               </TabsTrigger>
             </TabsList>
           </div>
@@ -760,6 +762,11 @@ export default function AdminProductDetailV2() {
           {/* Custom Fields Tab */}
           <TabsContent value="custom_fields" className="mt-6">
             {productId && <ProductCustomFields entityId={productId} />}
+          </TabsContent>
+
+          {/* Composition Tab */}
+          <TabsContent value="composition" className="space-y-4 mt-6">
+            {productId && <ProductCompositionTab productId={productId} />}
           </TabsContent>
         </Tabs>
       </div>
