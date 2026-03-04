@@ -125,6 +125,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (existingToken) {
         // PATCH-PAYLINK: Validate token before reuse (GET with timeout)
         let tokenAlive = false;
+        let expiredReason = 'token_not_found_or_invalid'; // default
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
@@ -140,17 +141,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           if (tokenCheckResp.ok) {
             try {
               const tokenData = await tokenCheckResp.json();
-              // Consider alive only if checkout status is not explicitly expired/failed
               const checkoutStatus = tokenData?.checkout?.status;
-              tokenAlive = !checkoutStatus || !['expired', 'failed', 'error'].includes(checkoutStatus);
+              // Alive ONLY if status is known and NOT expired/failed/error
+              tokenAlive = !!checkoutStatus && !['expired', 'failed', 'error'].includes(checkoutStatus);
+              if (!tokenAlive) {
+                expiredReason = checkoutStatus ? 'checkout_status_expired' : 'token_not_found_or_invalid';
+              }
             } catch {
-              // JSON parse failed — treat as alive (200 OK is good enough)
-              tokenAlive = true;
+              // JSON parse failed — cannot confirm alive, regen
+              tokenAlive = false;
+              expiredReason = 'token_not_found_or_invalid';
             }
+          } else {
+            expiredReason = 'token_not_found_or_invalid';
           }
         } catch (err) {
           // Network error / timeout / abort — treat as expired, regen
           console.log('[create-payment-checkout] Token validation failed (network/timeout), will regen:', err);
+          expiredReason = 'validation_timeout_or_network';
         }
 
         if (tokenAlive) {
@@ -162,7 +170,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             actor_type: effectiveActorType,
             actor_user_id: actorUserId,
             action: 'payment_checkout.reused',
-            actor_label: `${effectiveActorType}:payment_checkout`,
+            actor_label: 'payment_checkout',
+            created_at: new Date().toISOString(),
             meta: { reused_order_id: existingOrder.id, payment_type: 'one_time', reuse_reason: 'pending_dedup' },
           });
 
@@ -175,22 +184,23 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         }
 
         // Token expired/invalid — mark meta (add-only, no status change) and fall through to create new
-        console.log('[create-payment-checkout] Token expired for one_time order, will create new:', existingOrder.id);
+        console.log('[create-payment-checkout] Token expired for one_time order, reason:', expiredReason, ', will create new:', existingOrder.id);
         await supabase.from('orders_v2').update({
           meta: {
             ...existingMeta,
             checkout_expired: true,
             checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: 'token_invalid_or_unreachable',
+            checkout_expired_reason: expiredReason,
           },
-        }).eq('id', existingOrder.id);
+        }).eq('id', existingOrder.id).is('meta->>checkout_expired', null);
 
         await supabase.from('audit_logs').insert({
           actor_type: effectiveActorType,
           actor_user_id: actorUserId,
           action: 'payment_checkout.token_expired',
-          actor_label: `${effectiveActorType}:payment_checkout`,
-          meta: { order_id: existingOrder.id, payment_type: 'one_time' },
+          actor_label: 'payment_checkout',
+          created_at: new Date().toISOString(),
+          meta: { order_id: existingOrder.id, payment_type: 'one_time', reason: expiredReason },
         });
         // Fall through — create new order + checkout below
       }
@@ -367,6 +377,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (reusableCheckoutUrl && typeof reusableCheckoutUrl === 'string' && reusableCheckoutUrl.startsWith('http')) {
         // PATCH-PAYLINK: Validate checkout URL before reuse (GET with timeout)
         let checkoutAlive = false;
+        let subExpiredReason = 'checkout_url_invalid_or_expired'; // default
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout
@@ -376,11 +387,13 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             signal: controller.signal,
           });
           clearTimeout(timeout);
-          // Alive if HTTP 200 OK (not 404/410/500)
-          checkoutAlive = checkResp.ok;
+          // Alive only if 200 AND not an HTML error/expired page
+          checkoutAlive = checkResp.status === 200
+            && !String(checkResp.headers.get('content-type') || '').includes('text/html');
         } catch (err) {
           // Network error / timeout — treat as expired
           console.log('[create-payment-checkout] Subscription checkout URL validation failed:', err);
+          subExpiredReason = 'validation_timeout_or_network';
         }
 
         if (checkoutAlive) {
@@ -391,7 +404,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             actor_type: effectiveActorType,
             actor_user_id: actorUserId,
             action: 'payment_checkout.reused',
-            actor_label: `${effectiveActorType}:payment_checkout`,
+            actor_label: 'payment_checkout',
+            created_at: new Date().toISOString(),
             meta: { reused_order_id: existingSubOrder.id, payment_type: 'subscription', reuse_reason: 'pending_dedup' },
           });
 
@@ -404,23 +418,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         }
 
         // Checkout URL expired — mark meta (add-only) and fall through
-        console.log('[create-payment-checkout] Subscription checkout URL expired, will create new:', existingSubOrder.id);
+        console.log('[create-payment-checkout] Subscription checkout URL expired, reason:', subExpiredReason, ', will create new:', existingSubOrder.id);
         const existingSubMeta = (existingSubOrder.meta || {}) as Record<string, any>;
         await supabase.from('orders_v2').update({
           meta: {
             ...existingSubMeta,
             checkout_expired: true,
             checkout_expired_at: new Date().toISOString(),
-            checkout_expired_reason: 'checkout_url_expired',
+            checkout_expired_reason: subExpiredReason,
           },
-        }).eq('id', existingSubOrder.id);
+        }).eq('id', existingSubOrder.id).is('meta->>checkout_expired', null);
 
         await supabase.from('audit_logs').insert({
           actor_type: effectiveActorType,
           actor_user_id: actorUserId,
           action: 'payment_checkout.token_expired',
-          actor_label: `${effectiveActorType}:payment_checkout`,
-          meta: { order_id: existingSubOrder.id, payment_type: 'subscription' },
+          actor_label: 'payment_checkout',
+          created_at: new Date().toISOString(),
+          meta: { order_id: existingSubOrder.id, payment_type: 'subscription', reason: subExpiredReason },
         });
       } else {
         // No valid checkout_url — fall through to create new order+subscription
