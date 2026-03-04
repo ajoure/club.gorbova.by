@@ -186,11 +186,10 @@ export function ContactInstagramChat({
   };
 
   // Check if media_url is actually an avatar (not a real attachment)
+  // Webhook already filters avatars, but double-check here
   const isRealMedia = (msg: Message) => {
     if (!msg.media_url) return false;
     if (msg.media_type === 'avatar') return false;
-    // If the URL contains profile pic indicators, skip
-    if (msg.media_url.includes('/t51.2885-19/')) return false;
     return true;
   };
 
