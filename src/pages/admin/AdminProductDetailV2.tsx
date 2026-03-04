@@ -16,8 +16,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2
 } from "lucide-react";
+import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { getCategoryLabel } from "@/lib/product-names";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
@@ -535,7 +536,7 @@ export default function AdminProductDetailV2() {
               <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 shrink-0" asChild>
                 <a href={`https://${(product as any).primary_domain}`} target="_blank" rel="noopener noreferrer">
                   <Globe className="h-3.5 w-3.5" />
-                  {(product as any).primary_domain}
+                  Сайт
                 </a>
               </Button>
             )}
@@ -561,6 +562,10 @@ export default function AdminProductDetailV2() {
               <TabsTrigger value="preview" className="gap-1.5 text-xs">
                 <Eye className="h-3.5 w-3.5" />
                 Превью
+              </TabsTrigger>
+              <TabsTrigger value="custom_fields" className="gap-1.5 text-xs">
+                <Settings2 className="h-3.5 w-3.5" />
+                Доп. поля
               </TabsTrigger>
             </TabsList>
           </div>
@@ -751,6 +756,11 @@ export default function AdminProductDetailV2() {
               )}
             </GlassCard>
           </TabsContent>
+
+          {/* Custom Fields Tab */}
+          <TabsContent value="custom_fields" className="mt-6">
+            {productId && <ProductCustomFields entityId={productId} />}
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -883,7 +893,7 @@ export default function AdminProductDetailV2() {
 
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader className="pr-8">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
