@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Loader2, Send, Users } from 'lucide-react';
+import { TokenPicker } from '@/components/admin/TokenPicker';
+import { useBracketTrigger } from '@/hooks/useBracketTrigger';
 
 interface MassBroadcastDialogProps {
   open: boolean;
@@ -26,6 +28,33 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
   const [buttonText, setButtonText] = useState('Открыть платформу');
   const [isSending, setIsSending] = useState(false);
   const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [messagePickerOpen, setMessagePickerOpen] = useState(false);
+
+  const messageRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertAtCaret = useCallback(
+    (text: string) => {
+      const el = messageRef.current;
+      if (!el) return;
+      const start = el.selectionStart ?? message.length;
+      const end = el.selectionEnd ?? start;
+      const newVal = message.slice(0, start) + text + message.slice(end);
+      setMessage(newVal);
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + text.length;
+        el.setSelectionRange(pos, pos);
+      });
+    },
+    [message]
+  );
+
+  const messageBracket = useBracketTrigger({
+    isPickerOpen: messagePickerOpen,
+    onOpen: () => setMessagePickerOpen(true),
+    onClose: () => setMessagePickerOpen(false),
+    onInsertBracket: () => insertAtCaret('['),
+  });
 
   const handleSend = async () => {
     if (!message.trim()) {
@@ -84,17 +113,28 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label htmlFor="message">Текст сообщения</Label>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="message">Текст сообщения</Label>
+              <TokenPicker onInsert={(token) => insertAtCaret(token)} />
+              <TokenPicker
+                triggerless
+                open={messagePickerOpen}
+                onOpenChange={setMessagePickerOpen}
+                onInsert={(token) => insertAtCaret(token)}
+              />
+            </div>
             <Textarea
               id="message"
+              ref={messageRef}
               placeholder="Введите текст сообщения для рассылки..."
               value={message}
               onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={messageBracket.handleKeyDown}
               rows={5}
               disabled={isSending}
             />
             <p className="text-xs text-muted-foreground">
-              Поддерживается Markdown: *жирный*, _курсив_, `код`
+              Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки токена.
             </p>
           </div>
 
