@@ -124,8 +124,18 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
                 placeholder="Введите текст сообщения для рассылки..."
                 value={message}
                 onChange={(e) => {
-                  if (messagePickerOpen) setMessagePickerOpen(false);
-                  setMessage(e.target.value);
+                  const cursor = e.target.selectionStart ?? e.target.value.length;
+                  const corrected = messageBracket.handleChange(e.target.value, cursor);
+                  if (messagePickerOpen && corrected === null) setMessagePickerOpen(false);
+                  setMessage(corrected ?? e.target.value);
+                  if (corrected !== null) {
+                    requestAnimationFrame(() => {
+                      const ta = messageRef.current;
+                      if (!ta) return;
+                      const pos = Math.max(0, cursor - 1);
+                      ta.setSelectionRange(pos, pos);
+                    });
+                  }
                 }}
                 onKeyDown={messageBracket.handleKeyDown}
                 rows={5}

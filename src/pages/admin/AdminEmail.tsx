@@ -1125,14 +1125,25 @@ export default function AdminEmail() {
                     value={templateDialog.template.subject}
                     onKeyDown={subjectBracket.handleKeyDown}
                     onChange={(e) => {
-                      if (subjectPickerOpen) setSubjectPickerOpen(false);
+                      const cursor = e.target.selectionStart ?? e.target.value.length;
+                      const corrected = subjectBracket.handleChange(e.target.value, cursor);
+                      if (subjectPickerOpen && corrected === null) setSubjectPickerOpen(false);
+                      const finalValue = corrected ?? e.target.value;
                       setTemplateValidationError(null);
                       setTemplateDialog((prev) => ({
                         ...prev,
                         template: prev.template
-                          ? { ...prev.template, subject: e.target.value }
+                          ? { ...prev.template, subject: finalValue }
                           : null,
                       }));
+                      if (corrected !== null) {
+                        requestAnimationFrame(() => {
+                          const input = subjectRef.current;
+                          if (!input) return;
+                          const pos = Math.max(0, cursor - 1);
+                          input.setSelectionRange(pos, pos);
+                        });
+                      }
                     }}
                   />
                   <TokenPicker
@@ -1177,14 +1188,25 @@ export default function AdminEmail() {
                     value={templateDialog.template.body_html}
                     onKeyDown={bodyBracket.handleKeyDown}
                     onChange={(e) => {
-                      if (bodyPickerOpen) setBodyPickerOpen(false);
+                      const cursor = e.target.selectionStart ?? e.target.value.length;
+                      const corrected = bodyBracket.handleChange(e.target.value, cursor);
+                      if (bodyPickerOpen && corrected === null) setBodyPickerOpen(false);
+                      const finalValue = corrected ?? e.target.value;
                       setTemplateValidationError(null);
                       setTemplateDialog((prev) => ({
                         ...prev,
                         template: prev.template
-                          ? { ...prev.template, body_html: e.target.value }
+                          ? { ...prev.template, body_html: finalValue }
                           : null,
                       }));
+                      if (corrected !== null) {
+                        requestAnimationFrame(() => {
+                          const ta = bodyRef.current;
+                          if (!ta) return;
+                          const pos = Math.max(0, cursor - 1);
+                          ta.setSelectionRange(pos, pos);
+                        });
+                      }
                     }}
                   />
                   <TokenPicker
