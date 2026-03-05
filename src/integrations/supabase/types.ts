@@ -2226,6 +2226,7 @@ export type Database = {
           meta: Json | null
           order_id: string | null
           product_code: string
+          product_id: string | null
           profile_id: string | null
           status: string
           updated_at: string
@@ -2238,6 +2239,7 @@ export type Database = {
           meta?: Json | null
           order_id?: string | null
           product_code: string
+          product_id?: string | null
           profile_id?: string | null
           status?: string
           updated_at?: string
@@ -2250,12 +2252,20 @@ export type Database = {
           meta?: Json | null
           order_id?: string | null
           product_code?: string
+          product_id?: string | null
           profile_id?: string | null
           status?: string
           updated_at?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "entitlements_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "fk_entitlements_order"
             columns: ["order_id"]

@@ -274,6 +274,7 @@ Deno.serve(async (req) => {
           user_id: userId,
           profile_id: profileId || userId,
           product_code: productCode,
+          product_id: productId || null,
           status: "active",
           order_id: orderId,
           expires_at: accessEndAt.toISOString(),
