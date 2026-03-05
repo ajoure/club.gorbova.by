@@ -1560,6 +1560,7 @@ Deno.serve(async (req) => {
         // 5. Create entitlements
         if (subV2.products_v2?.code) {
           const productCode = subV2.products_v2.code;
+          const productIdForEnt = subV2.products_v2.id;
           const { data: existingEntitlement } = await supabase
             .from('entitlements')
             .select('id, expires_at')
@@ -1590,6 +1591,7 @@ Deno.serve(async (req) => {
                 profile_id: profile?.id || null,
                 order_id: orderV2Id,
                 product_code: productCode,
+                product_id: productIdForEnt,
                 status: 'active',
                 expires_at: accessEndAt.toISOString(),
                 meta: {
@@ -3813,6 +3815,7 @@ Deno.serve(async (req) => {
                       profile_id: userProfileCheck.id,
                       order_id: orderV2.id, // первый order_id
                       product_code: productCode,
+                      product_id: productV2.id,
                       status: 'active',
                       expires_at: entitlementExpiresAt,
                       meta: {

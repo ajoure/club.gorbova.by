@@ -257,16 +257,18 @@ export function EditSubscriptionDialog({
 
       // Update entitlements if dates changed
       if (subscription.user_id && subscription.product_id) {
+        const resolvedProductId = formData.product_id || subscription.product_id;
         const { data: product } = await supabase
           .from("products_v2")
-          .select("code")
-          .eq("id", formData.product_id || subscription.product_id)
+          .select("id, code")
+          .eq("id", resolvedProductId)
           .single();
 
         if (product?.code) {
           await supabase.from("entitlements").upsert({
             user_id: subscription.user_id,
             product_code: product.code,
+            product_id: product.id,
             expires_at: dateRange?.to?.toISOString() || null,
             status: formData.status === "active" || formData.status === "trial" ? "active" : "expired",
           }, { onConflict: "user_id,product_code" });

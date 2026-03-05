@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
@@ -52,41 +53,59 @@ import {
   CheckCircle, 
   XCircle, 
   Clock,
-  Trash2
+  Trash2,
+  AlertTriangle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+interface ResolvedProfile {
+  id: string;
+  user_id: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+}
+
+interface ResolvedProduct {
+  id: string;
+  name: string;
+  code: string | null;
+}
 
 interface Entitlement {
   id: string;
   user_id: string;
   product_code: string;
+  product_id: string | null;
   status: string;
   expires_at: string | null;
   created_at: string;
-  user_email?: string;
-  user_name?: string;
+  // Joined data
+  profile: ResolvedProfile | null;
+  product: ResolvedProduct | null;
 }
 
-const PRODUCT_CODES = [
-  { code: "pro", name: "Pro подписка" },
-  { code: "premium", name: "Premium подписка" },
-  { code: "webinar", name: "Вебинар" },
-  { code: "course_accounting", name: "Курс: Бухгалтерия" },
-  { code: "course_business", name: "Курс: Бизнес" },
-  { code: "course_development", name: "Курс: Саморазвитие" },
-];
+// Resolve profile: prefer JOIN, fallback to map
+function resolveEntitlementProfile(
+  ent: any,
+  fallbackMap: Map<string, ResolvedProfile>
+): ResolvedProfile | null {
+  // 1. JOIN via profile_id
+  if (ent.profiles && typeof ent.profiles === "object" && !Array.isArray(ent.profiles)) {
+    return ent.profiles as ResolvedProfile;
+  }
+  // 2. Fallback map (keyed by user_id AND profile.id)
+  return fallbackMap.get(ent.user_id) || null;
+}
 
 export default function AdminEntitlements() {
   const navigate = useNavigate();
   const { hasPermission } = usePermissions();
-  const [entitlements, setEntitlements] = useState<Entitlement[]>([]);
-  const [users, setUsers] = useState<{ user_id: string; email: string; full_name: string }[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   
   const [grantDialog, setGrantDialog] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
-  const [selectedProduct, setSelectedProduct] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState("");
   const [expiresAt, setExpiresAt] = useState<Date | undefined>();
   
   const [revokeDialog, setRevokeDialog] = useState<{ open: boolean; id: string; product: string }>({
@@ -95,142 +114,116 @@ export default function AdminEntitlements() {
     product: "",
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      // Fetch entitlements
-      const { data: entData, error: entError } = await supabase
+  // Load products from products_v2 (dynamic, not hardcoded)
+  const { data: products = [] } = useQuery({
+    queryKey: ["products-v2-list"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name, code")
+        .eq("status", "active")
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Load entitlements with JOINs on profiles and products_v2
+  const { data: rawEntitlements = [], isLoading: loadingEntitlements, refetch } = useQuery({
+    queryKey: ["admin-entitlements"],
+    queryFn: async () => {
+      const { data, error } = await supabase
         .from("entitlements")
-        .select("*")
+        .select(`
+          id, user_id, product_code, product_id, status, expires_at, created_at, profile_id,
+          profiles:profile_id(id, user_id, full_name, email, phone),
+          products_v2:product_id(id, name, code)
+        `)
         .order("created_at", { ascending: false });
 
-      if (entError) {
-        console.error("Error fetching entitlements:", entError);
+      if (error) {
+        console.error("Error fetching entitlements:", error);
         toast.error("Ошибка загрузки доступов");
-        return;
+        return [];
       }
+      return data || [];
+    },
+  });
 
-      // Fetch users
-      const { data: profilesData, error: profilesError } = await supabase
+  // Fallback profiles for entitlements where profile_id is NULL
+  const missingUserIds = rawEntitlements
+    .filter((e: any) => !e.profiles && e.user_id)
+    .map((e: any) => e.user_id);
+  const uniqueMissingUserIds = [...new Set(missingUserIds)];
+
+  const { data: fallbackProfilesMap = new Map<string, ResolvedProfile>() } = useQuery({
+    queryKey: ["entitlement-fallback-profiles", uniqueMissingUserIds],
+    queryFn: async () => {
+      const map = new Map<string, ResolvedProfile>();
+      if (uniqueMissingUserIds.length === 0) return map;
+      const CHUNK = 300;
+      const addToMap = (profiles: any[] | null) => {
+        profiles?.forEach(p => {
+          const rp = p as ResolvedProfile;
+          if (p.user_id) map.set(p.user_id, rp);
+          map.set(p.id, rp);
+        });
+      };
+      for (let i = 0; i < uniqueMissingUserIds.length; i += CHUNK) {
+        const chunk = uniqueMissingUserIds.slice(i, i + CHUNK);
+        const [byUser, byId] = await Promise.all([
+          supabase.from("profiles").select("id, user_id, full_name, email, phone").in("user_id", chunk),
+          supabase.from("profiles").select("id, user_id, full_name, email, phone").in("id", chunk),
+        ]);
+        addToMap(byUser.data);
+        addToMap(byId.data);
+      }
+      return map;
+    },
+    enabled: uniqueMissingUserIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Load users for grant dialog
+  const { data: grantUsers = [] } = useQuery({
+    queryKey: ["profiles-for-grant"],
+    queryFn: async () => {
+      const { data } = await supabase
         .from("profiles")
-        .select("user_id, email, full_name");
+        .select("user_id, email, full_name")
+        .not("user_id", "is", null)
+        .order("full_name");
+      return data || [];
+    },
+    enabled: grantDialog,
+    staleTime: 2 * 60 * 1000,
+  });
 
-      if (profilesError) {
-        console.error("Error fetching profiles:", profilesError);
-      } else {
-        setUsers(profilesData || []);
-      }
-
-      // Map user info to entitlements
-      const profileMap = new Map(
-        profilesData?.map((p) => [p.user_id, { email: p.email, name: p.full_name }]) || []
-      );
-
-      const enrichedEntitlements = entData?.map((ent) => ({
-        ...ent,
-        user_email: profileMap.get(ent.user_id)?.email || "Unknown",
-        user_name: profileMap.get(ent.user_id)?.name || "",
-      })) || [];
-
-      setEntitlements(enrichedEntitlements);
-    } catch (error) {
-      console.error("Error in fetchData:", error);
-      toast.error("Ошибка загрузки данных");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const handleGrantAccess = async () => {
-    if (!selectedUserId || !selectedProduct) {
-      toast.error("Выберите пользователя и продукт");
-      return;
-    }
-
-    try {
-      // Dual-write: user_id + profile_id
-      // Resolve profile_id from user_id
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", selectedUserId)
-        .single();
-      const profileId = profileData?.id || null;
-
-      const { error } = await supabase.from("entitlements").insert({
-        user_id: selectedUserId,
-        profile_id: profileId,
-        product_code: selectedProduct,
-        status: "active",
-        expires_at: expiresAt?.toISOString() || null,
-      });
-
-      if (error) {
-        console.error("Error granting access:", error);
-        toast.error("Ошибка выдачи доступа");
-        return;
-      }
-
-      // Log to audit
-      await supabase.from("audit_logs").insert({
-        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
-        action: "entitlements.grant",
-        target_user_id: selectedUserId,
-        meta: { product_code: selectedProduct, expires_at: expiresAt?.toISOString() },
-      });
-
-      toast.success("Доступ выдан");
-      setGrantDialog(false);
-      setSelectedUserId("");
-      setSelectedProduct("");
-      setExpiresAt(undefined);
-      await fetchData();
-    } catch (error) {
-      console.error("Error granting access:", error);
-      toast.error("Ошибка выдачи доступа");
-    }
-  };
-
-  const handleRevokeAccess = async () => {
-    try {
-      const { error } = await supabase
-        .from("entitlements")
-        .update({ status: "revoked" })
-        .eq("id", revokeDialog.id);
-
-      if (error) {
-        console.error("Error revoking access:", error);
-        toast.error("Ошибка отзыва доступа");
-        return;
-      }
-
-      // Log to audit
-      const ent = entitlements.find((e) => e.id === revokeDialog.id);
-      await supabase.from("audit_logs").insert({
-        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
-        action: "entitlements.revoke",
-        target_user_id: ent?.user_id,
-        meta: { product_code: ent?.product_code },
-      });
-
-      toast.success("Доступ отозван");
-      setRevokeDialog({ open: false, id: "", product: "" });
-      await fetchData();
-    } catch (error) {
-      console.error("Error revoking access:", error);
-      toast.error("Ошибка отзыва доступа");
-    }
-  };
+  // Build resolved entitlements
+  const entitlements: Entitlement[] = rawEntitlements.map((raw: any) => {
+    const profile = resolveEntitlementProfile(raw, fallbackProfilesMap);
+    const product: ResolvedProduct | null = raw.products_v2 && typeof raw.products_v2 === "object"
+      ? raw.products_v2 as ResolvedProduct
+      : null;
+    return {
+      id: raw.id,
+      user_id: raw.user_id,
+      product_code: raw.product_code,
+      product_id: raw.product_id,
+      status: raw.status,
+      expires_at: raw.expires_at,
+      created_at: raw.created_at,
+      profile,
+      product,
+    };
+  });
 
   const filteredEntitlements = entitlements.filter(
     (ent) =>
-      ent.user_email?.toLowerCase().includes(search.toLowerCase()) ||
-      ent.user_name?.toLowerCase().includes(search.toLowerCase()) ||
-      ent.product_code.toLowerCase().includes(search.toLowerCase())
+      (ent.profile?.full_name || "").toLowerCase().includes(search.toLowerCase()) ||
+      (ent.profile?.email || "").toLowerCase().includes(search.toLowerCase()) ||
+      (ent.product?.name || ent.product_code).toLowerCase().includes(search.toLowerCase())
   );
 
   const getStatusBadge = (status: string, expiresAt: string | null) => {
@@ -252,11 +245,117 @@ export default function AdminEntitlements() {
     }
   };
 
-  const getProductName = (code: string) => {
-    return PRODUCT_CODES.find((p) => p.code === code)?.name || code;
+  const getProductDisplay = (ent: Entitlement) => {
+    if (ent.product) {
+      return (
+        <div className="flex items-center gap-2">
+          <Package className="w-4 h-4 text-primary" />
+          {ent.product.name}
+        </div>
+      );
+    }
+    // UNMAPPED — product_id is null or no match
+    return (
+      <div className="flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4 text-yellow-500" />
+        <span>{ent.product_code}</span>
+        <Badge variant="outline" className="text-yellow-500 border-yellow-500/30 text-xs">
+          UNMAPPED
+        </Badge>
+      </div>
+    );
   };
 
-  if (loading) {
+  const handleGrantAccess = async () => {
+    if (!selectedUserId || !selectedProductId) {
+      toast.error("Выберите пользователя и продукт");
+      return;
+    }
+
+    const selectedProduct = products.find(p => p.id === selectedProductId);
+    if (!selectedProduct) {
+      toast.error("Продукт не найден");
+      return;
+    }
+
+    try {
+      // Resolve profile_id
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", selectedUserId)
+        .single();
+      const profileId = profileData?.id || null;
+
+      const { error } = await supabase.from("entitlements").insert({
+        user_id: selectedUserId,
+        profile_id: profileId,
+        product_code: selectedProduct.code || `product_${selectedProduct.id}`,
+        product_id: selectedProduct.id,
+        status: "active",
+        expires_at: expiresAt?.toISOString() || null,
+      });
+
+      if (error) {
+        console.error("Error granting access:", error);
+        toast.error("Ошибка выдачи доступа");
+        return;
+      }
+
+      await supabase.from("audit_logs").insert({
+        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
+        action: "entitlements.grant",
+        target_user_id: selectedUserId,
+        meta: { 
+          product_id: selectedProduct.id,
+          product_code: selectedProduct.code,
+          expires_at: expiresAt?.toISOString(),
+        },
+      });
+
+      toast.success("Доступ выдан");
+      setGrantDialog(false);
+      setSelectedUserId("");
+      setSelectedProductId("");
+      setExpiresAt(undefined);
+      refetch();
+    } catch (error) {
+      console.error("Error granting access:", error);
+      toast.error("Ошибка выдачи доступа");
+    }
+  };
+
+  const handleRevokeAccess = async () => {
+    try {
+      const { error } = await supabase
+        .from("entitlements")
+        .update({ status: "revoked" })
+        .eq("id", revokeDialog.id);
+
+      if (error) {
+        console.error("Error revoking access:", error);
+        toast.error("Ошибка отзыва доступа");
+        return;
+      }
+
+      const ent = entitlements.find((e) => e.id === revokeDialog.id);
+      await supabase.from("audit_logs").insert({
+        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
+        action: "entitlements.revoke",
+        target_user_id: ent?.user_id,
+        meta: { product_code: ent?.product_code, product_id: ent?.product_id },
+      });
+
+      toast.success("Доступ отозван");
+      setRevokeDialog({ open: false, id: "", product: "" });
+      refetch();
+    } catch (error) {
+      console.error("Error revoking access:", error);
+      toast.error("Ошибка отзыва доступа");
+    }
+  };
+
+  if (loadingEntitlements) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -304,21 +403,22 @@ export default function AdminEntitlements() {
               <TableRow key={ent.id}>
                 <TableCell>
                   <div>
-                    <button
-                      onClick={() => navigate(`/admin/contacts?contact=${ent.user_id}&from=entitlements`)}
-                      className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
-                    >
-                      {ent.user_name || "—"}
-                    </button>
-                    <div className="text-sm text-muted-foreground">{ent.user_email}</div>
+                    {ent.profile ? (
+                      <button
+                        onClick={() => navigate(`/admin/contacts?contact=${ent.profile!.id}&from=entitlements`)}
+                        className="font-medium text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                      >
+                        {ent.profile.full_name || "—"}
+                      </button>
+                    ) : (
+                      <span className="font-medium text-muted-foreground">—</span>
+                    )}
+                    <div className="text-sm text-muted-foreground">
+                      {ent.profile?.email || ent.user_id?.slice(0, 8) + "..."}
+                    </div>
                   </div>
                 </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <Package className="w-4 h-4 text-primary" />
-                    {getProductName(ent.product_code)}
-                  </div>
-                </TableCell>
+                <TableCell>{getProductDisplay(ent)}</TableCell>
                 <TableCell>{getStatusBadge(ent.status, ent.expires_at)}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">
                   {ent.expires_at
@@ -334,7 +434,11 @@ export default function AdminEntitlements() {
                       variant="ghost"
                       size="icon"
                       className="text-destructive hover:text-destructive"
-                      onClick={() => setRevokeDialog({ open: true, id: ent.id, product: getProductName(ent.product_code) })}
+                      onClick={() => setRevokeDialog({ 
+                        open: true, 
+                        id: ent.id, 
+                        product: ent.product?.name || ent.product_code 
+                      })}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
@@ -367,7 +471,7 @@ export default function AdminEntitlements() {
                   <SelectValue placeholder="Выберите пользователя" />
                 </SelectTrigger>
                 <SelectContent>
-                  {users.map((user) => (
+                  {grantUsers.map((user: any) => (
                     <SelectItem key={user.user_id} value={user.user_id}>
                       {user.full_name || user.email}
                     </SelectItem>
@@ -377,13 +481,13 @@ export default function AdminEntitlements() {
             </div>
             <div>
               <label className="text-sm font-medium mb-2 block">Продукт</label>
-              <Select value={selectedProduct} onValueChange={setSelectedProduct}>
+              <Select value={selectedProductId} onValueChange={setSelectedProductId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Выберите продукт" />
                 </SelectTrigger>
                 <SelectContent>
-                  {PRODUCT_CODES.map((product) => (
-                    <SelectItem key={product.code} value={product.code}>
+                  {products.map((product) => (
+                    <SelectItem key={product.id} value={product.id}>
                       {product.name}
                     </SelectItem>
                   ))}
