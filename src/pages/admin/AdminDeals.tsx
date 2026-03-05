@@ -81,6 +81,18 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   expired: { label: "Истёк", color: "bg-muted text-muted-foreground", icon: XCircle },
 };
 
+/** Extract payer name from latest payment (immutable sort) */
+function getLatestPayerName(deal: any): string | null {
+  const payments = (deal.payments_v2 as any[]) || [];
+  if (payments.length === 0) return null;
+  const latest = payments.reduce((best: any, p: any) => {
+    const bestTs = new Date(best.paid_at || best.created_at || 0).getTime();
+    const pTs = new Date(p.paid_at || p.created_at || 0).getTime();
+    return pTs > bestTs ? p : best;
+  });
+  return latest?.card_holder || (latest?.meta as any)?.payer_name || null;
+}
+
 export default function AdminDeals() {
   const navigate = useNavigate();
   const { canWrite, isSuperAdmin } = usePermissions();
@@ -115,7 +127,7 @@ export default function AdminDeals() {
           products_v2(id, name, code),
           tariffs(id, name, code, access_days),
           flows(id, name),
-          payments_v2(id, status, amount, paid_at)
+          payments_v2(id, status, amount, paid_at, created_at, card_holder, meta)
         `)
         .order("created_at", { ascending: false })
         .limit(1000);
@@ -231,7 +243,8 @@ export default function AdminDeals() {
     switch (fieldKey) {
       case "contact_name":
         const profile = profilesMap?.get(deal.user_id);
-        return profile?.full_name || deal.customer_email || "";
+        const payerName = getLatestPayerName(deal);
+        return profile?.full_name || payerName || deal.customer_email || "";
       case "product_name":
         return (deal.products_v2 as any)?.name || "";
       case "tariff_name":
@@ -250,6 +263,7 @@ export default function AdminDeals() {
       .filter(d => VALID_DEAL_STATUSES.includes(d.status as any))
       .map(d => {
         const profile = profilesMap?.get(d.user_id);
+        const payerName = getLatestPayerName(d);
         return {
           ...d,
           search_index: buildSearchIndex([
@@ -258,6 +272,7 @@ export default function AdminDeals() {
             d.customer_phone,
             profile?.email,
             profile?.full_name,
+            payerName,
             (d.products_v2 as any)?.name,
             (d.tariffs as any)?.name,
             d.final_price,
@@ -306,7 +321,7 @@ export default function AdminDeals() {
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
     { header: "Дата", getValue: (d) => d.created_at ? format(new Date(d.created_at), "dd.MM.yyyy HH:mm") : "" },
     { header: "Номер", getValue: (d) => d.order_number || "" },
-    { header: "Контакт", getValue: (d) => profilesMap?.get(d.user_id)?.full_name || "" },
+    { header: "Контакт", getValue: (d) => profilesMap?.get(d.user_id)?.full_name || getLatestPayerName(d) || "" },
     { header: "Email", getValue: (d) => d.customer_email || profilesMap?.get(d.user_id)?.email || "" },
     { header: "Телефон", getValue: (d) => profilesMap?.get(d.user_id)?.phone || "" },
     { header: "Продукт", getValue: (d) => (d.products_v2 as any)?.name || "" },
@@ -766,6 +781,7 @@ export default function AdminDeals() {
                 const StatusIcon = statusConfig.icon;
                 const payments = (deal.payments_v2 as any[]) || [];
                 const paidPayments = payments.filter(p => p.status === "paid");
+                const payerName = getLatestPayerName(deal);
 
                 return (
                   <TableRow 
@@ -834,12 +850,12 @@ export default function AdminDeals() {
                         <Avatar className="h-8 w-8 shrink-0">
                           {profile?.avatar_url && <AvatarImage src={profile.avatar_url} alt={profile?.full_name || ""} />}
                           <AvatarFallback className="text-xs">
-                            {profile?.full_name?.[0]?.toUpperCase() || deal.customer_email?.[0]?.toUpperCase() || "?"}
+                            {(profile?.full_name || payerName)?.[0]?.toUpperCase() || deal.customer_email?.[0]?.toUpperCase() || "?"}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
                           <div className="font-medium truncate">
-                            {profile?.full_name || deal.customer_email || "—"}
+                            {profile?.full_name || payerName || deal.customer_email || (deal.customer_phone && !deal.customer_email ? deal.customer_phone : null) || "—"}
                           </div>
                           <div className="text-sm text-muted-foreground truncate">
                             {profile?.email || deal.customer_email || "—"}

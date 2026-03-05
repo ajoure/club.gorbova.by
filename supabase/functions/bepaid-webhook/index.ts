@@ -1944,6 +1944,100 @@ Deno.serve(async (req) => {
       const isSuccessful = (subscriptionState === 'active' || transactionStatus === 'successful');
       if (!isSuccessful) {
         console.log('[WEBHOOK-LINK-ORDER] Non-successful state, skipping:', { subscriptionState, transactionStatus });
+
+        // === RECORD FAILED PAYMENT in payments_v2 (link_order) ===
+        const loFailedAmount = transaction?.amount ? transaction.amount / 100 : 0;
+        const loFailedCurrency = transaction?.currency || body?.plan?.currency || 'BYN';
+        const loFailedCardHolder = transaction?.credit_card?.holder || null;
+        const loFailedCardLast4 = transaction?.credit_card?.last_4 || null;
+        const loFailedCardBrand = transaction?.credit_card?.brand || null;
+        const loFailedTxMessage = transaction?.message || transactionStatus || null;
+        const loFailedEmail = transaction?.customer?.email || null;
+        const loFailedPhone = transaction?.customer?.phone || null;
+
+        const loFailedRow = {
+          order_id: parsedOrderId,  // parsedOrderId is always UUID from parseTrackingId regex
+          amount: loFailedAmount,
+          currency: loFailedCurrency,
+          status: 'failed',
+          provider: 'bepaid',
+          provider_payment_id: transactionUid,
+          card_holder: loFailedCardHolder,
+          card_last4: loFailedCardLast4,
+          card_brand: loFailedCardBrand,
+          error_message: loFailedTxMessage,
+          origin: 'bepaid',
+          meta: {
+            payer_name: loFailedCardHolder,
+            customer_email: loFailedEmail,
+            customer_phone: loFailedPhone,
+            bepaid_status: transactionStatus,
+            subscription_state: subscriptionState,
+            tracking_id: rawTrackingId,
+          },
+        };
+
+        // Select-then-insert/update
+        const { data: existLoFailed } = await supabase
+          .from('payments_v2')
+          .select('id')
+          .eq('provider', 'bepaid')
+          .eq('provider_payment_id', transactionUid)
+          .maybeSingle();
+
+        if (existLoFailed) {
+          await supabase.from('payments_v2')
+            .update({
+              status: 'failed',
+              order_id: parsedOrderId,
+              amount: loFailedAmount,
+              currency: loFailedCurrency,
+              card_holder: loFailedCardHolder,
+              card_last4: loFailedCardLast4,
+              card_brand: loFailedCardBrand,
+              error_message: loFailedTxMessage,
+              meta: loFailedRow.meta,
+            })
+            .eq('id', existLoFailed.id);
+        } else {
+          const { error: insErr } = await supabase.from('payments_v2').insert(loFailedRow);
+          if (insErr && insErr.code === '23505') {
+            await supabase.from('payments_v2')
+              .update({
+                status: 'failed',
+                order_id: parsedOrderId,
+                amount: loFailedAmount,
+                currency: loFailedCurrency,
+                card_holder: loFailedCardHolder,
+                card_last4: loFailedCardLast4,
+                card_brand: loFailedCardBrand,
+                error_message: loFailedTxMessage,
+                meta: loFailedRow.meta,
+              })
+              .eq('provider', 'bepaid')
+              .eq('provider_payment_id', transactionUid);
+          } else if (insErr) {
+            console.error('[WEBHOOK-LINK-ORDER] Failed payment insert error (non-fatal):', insErr);
+          }
+        }
+
+        // Audit log (error-guarded, SYSTEM ACTOR)
+        const { error: auditErr2 } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'payment_link_order.failed_recorded',
+          created_at: new Date().toISOString(),
+          meta: {
+            order_id: parsedOrderId,
+            transaction_uid: transactionUid,
+            bepaid_status: transactionStatus,
+            subscription_state: subscriptionState,
+            payer_name: loFailedCardHolder,
+          },
+        });
+        if (auditErr2) console.error('[WEBHOOK-LINK-ORDER] Audit error (non-fatal):', auditErr2);
+
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
           tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
@@ -2629,9 +2723,111 @@ Deno.serve(async (req) => {
       // Handle non-successful statuses
       if (!isLinkSuccessful) {
         console.log('[WEBHOOK-LINK] Non-successful status:', transactionStatus);
-        if (transactionStatus === 'failed' || transactionStatus === 'expired') {
+        // STOP-GUARD: don't overwrite paid/refunded/canceled orders with 'failed'
+        if ((transactionStatus === 'failed' || transactionStatus === 'expired') &&
+            !['paid', 'refunded', 'canceled'].includes(linkOrderV2.status)) {
           await supabase.from('orders_v2').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', linkOrderV2.id);
         }
+
+        // === RECORD FAILED PAYMENT in payments_v2 ===
+        const failedAmount = transaction?.amount ? transaction.amount / 100 : 0;
+        const failedCurrency = transaction?.currency || 'BYN';
+        const failedCardHolder = transaction?.credit_card?.holder || null;
+        const failedCardLast4 = transaction?.credit_card?.last_4 || null;
+        const failedCardBrand = transaction?.credit_card?.brand || null;
+        const failedCustomerEmail = transaction?.customer?.email || linkOrderV2?.customer_email || null;
+        const failedCustomerPhone = transaction?.customer?.phone || linkOrderV2?.customer_phone || null;
+        const failedTxMessage = transaction?.message || transactionStatus || null;
+
+        const failedPaymentRow = {
+          order_id: linkOrderV2.id,
+          user_id: linkOrderV2.user_id || null,
+          profile_id: linkOrderV2.profile_id || null,
+          amount: failedAmount,
+          currency: failedCurrency,
+          status: 'failed',
+          provider: 'bepaid',
+          provider_payment_id: transactionUid,
+          card_holder: failedCardHolder,
+          card_last4: failedCardLast4,
+          card_brand: failedCardBrand,
+          error_message: failedTxMessage,
+          origin: 'bepaid',
+          meta: {
+            payer_name: failedCardHolder,
+            customer_email: failedCustomerEmail,
+            customer_phone: failedCustomerPhone,
+            bepaid_status: transactionStatus,
+            tracking_id: rawTrackingId,
+          },
+        };
+
+        // Select-then-insert/update (unique INDEX, not constraint)
+        const { data: existFailedPmt } = await supabase
+          .from('payments_v2')
+          .select('id')
+          .eq('provider', 'bepaid')
+          .eq('provider_payment_id', transactionUid)
+          .maybeSingle();
+
+        if (existFailedPmt) {
+          // Update ALL fields to "polish" the record on retry
+          await supabase.from('payments_v2')
+            .update({
+              status: 'failed',
+              order_id: linkOrderV2.id,
+              user_id: linkOrderV2.user_id || null,
+              profile_id: linkOrderV2.profile_id || null,
+              amount: failedAmount,
+              currency: failedCurrency,
+              card_holder: failedCardHolder,
+              card_last4: failedCardLast4,
+              card_brand: failedCardBrand,
+              error_message: failedTxMessage,
+              meta: failedPaymentRow.meta,
+            })
+            .eq('id', existFailedPmt.id);
+        } else {
+          const { error: insErr } = await supabase.from('payments_v2').insert(failedPaymentRow);
+          if (insErr && insErr.code === '23505') {
+            // Race condition: another webhook already inserted → update
+            await supabase.from('payments_v2')
+              .update({
+                status: 'failed',
+                order_id: linkOrderV2.id,
+                user_id: linkOrderV2.user_id || null,
+                profile_id: linkOrderV2.profile_id || null,
+                amount: failedAmount,
+                currency: failedCurrency,
+                card_holder: failedCardHolder,
+                card_last4: failedCardLast4,
+                card_brand: failedCardBrand,
+                error_message: failedTxMessage,
+                meta: failedPaymentRow.meta,
+              })
+              .eq('provider', 'bepaid')
+              .eq('provider_payment_id', transactionUid);
+          } else if (insErr) {
+            console.error('[WEBHOOK-LINK] Failed payment insert error (non-fatal):', insErr);
+          }
+        }
+
+        // Audit log (error-guarded, SYSTEM ACTOR)
+        const { error: auditErr } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'payment_link.failed_recorded',
+          created_at: new Date().toISOString(),
+          meta: {
+            order_id: linkOrderV2.id,
+            transaction_uid: transactionUid,
+            bepaid_status: transactionStatus,
+            payer_name: failedCardHolder,
+          },
+        });
+        if (auditErr) console.error('[WEBHOOK-LINK] Audit log error (non-fatal):', auditErr);
+
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
           tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,

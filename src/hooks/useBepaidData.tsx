@@ -364,6 +364,7 @@ export function useBepaidPayments(dateFilter?: DateFilter) {
           provider_payment_id,
           card_last4,
           card_brand,
+          card_holder,
           paid_at,
           created_at,
           provider_response,
@@ -437,14 +438,14 @@ export function useBepaidPayments(dateFilter?: DateFilter) {
           provider_payment_id: p.provider_payment_id,
           card_last4: p.card_last4,
           card_brand: p.card_brand,
-          card_holder,
+          card_holder: card_holder || (p as any).card_holder || null,
           paid_at: p.paid_at,
           created_at: p.created_at,
           order_number: order?.order_number || null,
           product_name,
-          profile_name: profile?.full_name || null,
-          profile_email: profile?.email || null,
-          profile_phone: profile?.phone || null,
+          profile_name: profile?.full_name || card_holder || (p as any).card_holder || (p.meta as any)?.payer_name || (p.meta as any)?.customer_email || null,
+          profile_email: profile?.email || (p.meta as any)?.customer_email || null,
+          profile_phone: profile?.phone || (p.meta as any)?.customer_phone || null,
         };
       });
 
