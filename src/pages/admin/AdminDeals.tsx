@@ -218,15 +218,28 @@ export default function AdminDeals() {
       if (missingUserIds.length === 0) return map;
       // Chunk by 300 to avoid Supabase in() degradation
       const CHUNK = 300;
+      const addToMap = (profiles: any[] | null) => {
+        profiles?.forEach(p => {
+          const rp = p as ResolvedProfile;
+          if (p.user_id) map.set(p.user_id, rp);
+          map.set(p.id, rp); // also index by profile.id
+        });
+      };
       for (let i = 0; i < missingUserIds.length; i += CHUNK) {
         const chunk = missingUserIds.slice(i, i + CHUNK);
-        const { data } = await supabase
-          .from("profiles")
-          .select("id, user_id, full_name, email, phone, avatar_url")
-          .in("user_id", chunk);
-        data?.forEach(p => {
-          if (p.user_id) map.set(p.user_id, p as ResolvedProfile);
-        });
+        // Double lookup: user_id may actually be profiles.id (historical data)
+        const [byUser, byId] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("id, user_id, full_name, email, phone, avatar_url")
+            .in("user_id", chunk),
+          supabase
+            .from("profiles")
+            .select("id, user_id, full_name, email, phone, avatar_url")
+            .in("id", chunk),
+        ]);
+        addToMap(byUser.data);
+        addToMap(byId.data);
       }
       return map;
     },
