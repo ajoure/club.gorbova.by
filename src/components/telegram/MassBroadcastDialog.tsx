@@ -116,6 +116,21 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
             <div className="flex items-center gap-2">
               <Label htmlFor="message">Текст сообщения</Label>
               <TokenPicker onInsert={(token) => insertAtCaret(token)} />
+            </div>
+            <div className="relative">
+              <Textarea
+                id="message"
+                ref={messageRef}
+                placeholder="Введите текст сообщения для рассылки..."
+                value={message}
+                onChange={(e) => {
+                  if (messagePickerOpen) setMessagePickerOpen(false);
+                  setMessage(e.target.value);
+                }}
+                onKeyDown={messageBracket.handleKeyDown}
+                rows={5}
+                disabled={isSending}
+              />
               <TokenPicker
                 triggerless
                 open={messagePickerOpen}
@@ -123,20 +138,6 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
                 onInsert={(token) => insertAtCaret(token)}
               />
             </div>
-            <Textarea
-              id="message"
-              ref={messageRef}
-              placeholder="Введите текст сообщения для рассылки..."
-              value={message}
-              onFocus={() => { if (messagePickerOpen) setMessagePickerOpen(false); }}
-              onChange={(e) => {
-                if (messagePickerOpen) setMessagePickerOpen(false);
-                setMessage(e.target.value);
-              }}
-              onKeyDown={messageBracket.handleKeyDown}
-              rows={5}
-              disabled={isSending}
-            />
             <p className="text-xs text-muted-foreground">
               Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки токена.
             </p>
