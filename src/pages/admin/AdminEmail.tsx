@@ -67,6 +67,7 @@ import {
   validateTemplateVariables, 
   renderTemplatePreview 
 } from "@/lib/email-template-validation";
+import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 
 interface EmailAccount {
@@ -202,6 +203,20 @@ export default function AdminEmail() {
   const [showImapSettings, setShowImapSettings] = useState(false);
   const [templateValidationError, setTemplateValidationError] = useState<string | null>(null);
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
+  const [previewProductId, setPreviewProductId] = useState<string>("");
+
+  // Fetch products for preview context
+  const { data: productsForPreview = [] } = useQuery({
+    queryKey: ["products-for-email-preview"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .order("name");
+      if (error) throw error;
+      return data as { id: string; name: string }[];
+    },
+  });
 
   // Fetch email accounts
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
@@ -430,7 +445,7 @@ export default function AdminEmail() {
     );
   };
 
-  const handlePreview = (template: EmailTemplate) => {
+  const handlePreview = async (template: EmailTemplate) => {
     // Replace variables with example values
     let html = template.body_html;
     let subject = template.subject;
@@ -454,6 +469,11 @@ export default function AdminEmail() {
       html = html.replace(new RegExp(`{{${v}}}`, "g"), value);
       subject = subject.replace(new RegExp(`{{${v}}}`, "g"), value);
     });
+
+    // Resolve custom field tokens (cf.product.*)
+    const ctx = previewProductId && previewProductId !== "__none__" ? { productId: previewProductId } : {};
+    html = await resolveTokens(html, ctx);
+    subject = await resolveTokens(subject, ctx);
     
     setPreviewDialog({ open: true, html, subject });
   };
@@ -1031,8 +1051,12 @@ export default function AdminEmail() {
                   const validation = validateTemplateVariables(fullText);
                   
                   if (!validation.valid) {
-                    setTemplateValidationError(`Недопустимые переменные: ${validation.invalidVariables.join(', ')}`);
-                    toast.error(`Недопустимые переменные: ${validation.invalidVariables.join(', ')}`);
+                    const errors = [
+                      ...validation.invalidVariables,
+                      ...validation.invalidCfTokens,
+                    ];
+                    setTemplateValidationError(`Недопустимые переменные: ${errors.join(', ')}`);
+                    toast.error(`Недопустимые переменные: ${errors.join(', ')}`);
                     return;
                   }
                   setTemplateValidationError(null);
@@ -1147,11 +1171,27 @@ export default function AdminEmail() {
             <DialogTitle>Превью письма</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Label className="text-muted-foreground whitespace-nowrap text-xs">Контекст продукта:</Label>
+              <Select value={previewProductId} onValueChange={setPreviewProductId}>
+                <SelectTrigger className="h-8 text-xs w-[240px]">
+                  <SelectValue placeholder="Без продукта (cf → пусто)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Без продукта</SelectItem>
+                  {productsForPreview.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <Label className="text-muted-foreground">Тема:</Label>
               <p className="font-medium">{previewDialog.subject}</p>
             </div>
-            <div className="border rounded-lg p-4 bg-white text-black max-h-[400px] overflow-y-auto">
+            <div className="border rounded-lg p-4 bg-background text-foreground max-h-[400px] overflow-y-auto">
               <div dangerouslySetInnerHTML={{ __html: previewDialog.html }} />
             </div>
           </div>

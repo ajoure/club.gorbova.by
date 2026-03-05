@@ -47,8 +47,18 @@ export const ALLOWED_TEMPLATE_VARIABLES = [
 export type AllowedVariable = typeof ALLOWED_TEMPLATE_VARIABLES[number];
 
 /**
+ * Strict regex for valid cf.product tokens with UUID field_id (8-4-4-4-12)
+ */
+export const CF_TOKEN_REGEX = /\{\{cf\.product\.[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\}\}/g;
+
+/**
+ * Regex matching ANY {{cf.*}} token (valid or invalid)
+ */
+const CF_ANY_REGEX = /\{\{cf\.[^}]+\}\}/g;
+
+/**
  * Extract all template variables from a string
- * Matches {{variable_name}} pattern
+ * Matches {{variable_name}} pattern (simple vars only, not cf.* tokens)
  */
 export function extractTemplateVariables(text: string): string[] {
   const matches = text.match(/\{\{(\w+)\}\}/g);
@@ -57,22 +67,42 @@ export function extractTemplateVariables(text: string): string[] {
 }
 
 /**
- * Validate template variables against allowlist
- * Returns object with validation result and invalid variables
+ * Validate template variables against allowlist.
+ * Also validates cf.* tokens: only {{cf.product.<valid-uuid>}} is allowed.
+ * Any other {{cf.*}} pattern is reported as invalid.
  */
 export function validateTemplateVariables(text: string): { 
   valid: boolean; 
   invalidVariables: string[];
   usedVariables: string[];
+  invalidCfTokens: string[];
 } {
-  const usedVariables = extractTemplateVariables(text);
+  // Step 1: Find all {{cf.*}} tokens and validate them
+  const allCfTokens = text.match(CF_ANY_REGEX) || [];
+  const validCfTokens = text.match(CF_TOKEN_REGEX) || [];
+  const validCfSet = new Set(validCfTokens);
+  const invalidCfTokens = allCfTokens.filter(t => !validCfSet.has(t));
+
+  // Step 2: Remove all cf.* tokens (valid ones) from text before standard validation
+  let cleanedText = text;
+  for (const token of validCfTokens) {
+    cleanedText = cleanedText.replace(token, '');
+  }
+  // Also remove invalid cf tokens from text so they don't get double-reported
+  for (const token of invalidCfTokens) {
+    cleanedText = cleanedText.replace(token, '');
+  }
+
+  // Step 3: Standard {{variable}} validation on cleaned text
+  const usedVariables = extractTemplateVariables(cleanedText);
   const allowedSet = new Set<string>(ALLOWED_TEMPLATE_VARIABLES);
   const invalidVariables = usedVariables.filter(v => !allowedSet.has(v));
   
   return {
-    valid: invalidVariables.length === 0,
+    valid: invalidVariables.length === 0 && invalidCfTokens.length === 0,
     invalidVariables,
-    usedVariables
+    usedVariables,
+    invalidCfTokens,
   };
 }
 
