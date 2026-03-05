@@ -70,6 +70,7 @@ import {
 import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 import { TokenPicker } from "@/components/admin/TokenPicker";
+import { useBracketTrigger } from "@/hooks/useBracketTrigger";
 
 interface EmailAccount {
   id: string;
@@ -208,6 +209,48 @@ export default function AdminEmail() {
 
   const subjectRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
+  const [bodyPickerOpen, setBodyPickerOpen] = useState(false);
+
+  const insertAtCaret = useCallback(
+    (
+      ref: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
+      field: "subject" | "body_html",
+      text: string
+    ) => {
+      const el = ref.current;
+      if (!el || !templateDialog.template) return;
+      const val = templateDialog.template[field];
+      const start = el.selectionStart ?? val.length;
+      const end = el.selectionEnd ?? start;
+      const newVal = val.slice(0, start) + text + val.slice(end);
+      setTemplateDialog((prev) => ({
+        ...prev,
+        template: prev.template ? { ...prev.template, [field]: newVal } : null,
+      }));
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + text.length;
+        el.setSelectionRange(pos, pos);
+      });
+    },
+    [templateDialog.template]
+  );
+
+  const subjectBracket = useBracketTrigger({
+    isPickerOpen: subjectPickerOpen,
+    onOpen: () => setSubjectPickerOpen(true),
+    onClose: () => setSubjectPickerOpen(false),
+    onInsertBracket: () => insertAtCaret(subjectRef, "subject", "["),
+  });
+
+  const bodyBracket = useBracketTrigger({
+    isPickerOpen: bodyPickerOpen,
+    onOpen: () => setBodyPickerOpen(true),
+    onClose: () => setBodyPickerOpen(false),
+    onInsertBracket: () => insertAtCaret(bodyRef, "body_html", "["),
+  });
 
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
@@ -1073,28 +1116,19 @@ export default function AdminEmail() {
                 <div className="flex items-center gap-2">
                   <Label>Тема письма</Label>
                   <TokenPicker
-                    onInsert={(token) => {
-                      const input = subjectRef.current;
-                      if (!input || !templateDialog.template) return;
-                      const start = input.selectionStart ?? templateDialog.template.subject.length;
-                      const end = input.selectionEnd ?? start;
-                      const val = templateDialog.template.subject;
-                      const newVal = val.slice(0, start) + token + val.slice(end);
-                      setTemplateDialog((prev) => ({
-                        ...prev,
-                        template: prev.template ? { ...prev.template, subject: newVal } : null,
-                      }));
-                      requestAnimationFrame(() => {
-                        input.focus();
-                        const pos = start + token.length;
-                        input.setSelectionRange(pos, pos);
-                      });
-                    }}
+                    onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
+                  />
+                  <TokenPicker
+                    triggerless
+                    open={subjectPickerOpen}
+                    onOpenChange={setSubjectPickerOpen}
+                    onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
                   />
                 </div>
                 <Input
                   ref={subjectRef}
                   value={templateDialog.template.subject}
+                  onKeyDown={subjectBracket.handleKeyDown}
                   onChange={(e) => {
                     setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
@@ -1129,23 +1163,13 @@ export default function AdminEmail() {
                 <div className="flex items-center gap-2">
                   <Label>Тело письма (HTML)</Label>
                   <TokenPicker
-                    onInsert={(token) => {
-                      const ta = bodyRef.current;
-                      if (!ta || !templateDialog.template) return;
-                      const start = ta.selectionStart ?? templateDialog.template.body_html.length;
-                      const end = ta.selectionEnd ?? start;
-                      const val = templateDialog.template.body_html;
-                      const newVal = val.slice(0, start) + token + val.slice(end);
-                      setTemplateDialog((prev) => ({
-                        ...prev,
-                        template: prev.template ? { ...prev.template, body_html: newVal } : null,
-                      }));
-                      requestAnimationFrame(() => {
-                        ta.focus();
-                        const pos = start + token.length;
-                        ta.setSelectionRange(pos, pos);
-                      });
-                    }}
+                    onInsert={(token) => insertAtCaret(bodyRef, "body_html", token)}
+                  />
+                  <TokenPicker
+                    triggerless
+                    open={bodyPickerOpen}
+                    onOpenChange={setBodyPickerOpen}
+                    onInsert={(token) => insertAtCaret(bodyRef, "body_html", token)}
                   />
                 </div>
                 <Textarea
@@ -1153,6 +1177,7 @@ export default function AdminEmail() {
                   rows={12}
                   className="font-mono text-sm"
                   value={templateDialog.template.body_html}
+                  onKeyDown={bodyBracket.handleKeyDown}
                   onChange={(e) => {
                     setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
