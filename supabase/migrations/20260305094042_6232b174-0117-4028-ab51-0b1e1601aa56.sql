@@ -1,0 +1,6 @@
+
+UPDATE admin_docs
+SET content_text = substring(content_text from 1 for position('---' in content_text) + 3) || E'\n\n============================================================\n7) FIELD ENGINE (Phase 1 — CURRENT)\n============================================================\n- fields_registry + field_values_v2 — SoT доп. полей\n- Типы данных: text, number, boolean, date, json\n- Токены: {{cf.product.<field_id>}} — copy-only, resolver/рендер в шаблонах ещё не реализован\n- Интеграция: только Products (через EntityCustomFields)\n- Contacts/Deals — Phase 2\n\n============================================================\n8) READINESS GUARD (CURRENT)\n============================================================\n- share-link (/pay?product=<id>) копируется всегда (не блокируется)\n- UI предупреждает, если продукт не готов к оплате\n- readiness = product.status=active + >=1 active tariff + >=1 active pay_now offer\n- trial/preregistration НЕ считаются readiness для /pay?product=...\n- reasonCodes: ok, product_not_active, no_active_tariff, no_active_pay_now_offer\n- Readiness Guard = UX layer, не блокирует и не меняет payment pipeline\n- Bulk copy: aggregate toast «Скопировано N. Не готовы: M.»\n'
+WHERE section_key = 'products_sales' 
+  AND version_label = 'POINT B' 
+  AND status = 'active';
