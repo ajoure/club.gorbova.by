@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "@/components/ui/popover";
@@ -16,6 +16,8 @@ interface TokenPickerProps {
   onOpenChange?: (v: boolean) => void;
   /** If true, don't render the trigger button (used for keyboard-triggered mode) */
   triggerless?: boolean;
+  /** Anchor element ref for triggerless mode positioning */
+  anchorRef?: React.RefObject<HTMLElement>;
 }
 
 const DATA_TYPE_LABELS: Record<string, string> = {
@@ -29,14 +31,24 @@ const DATA_TYPE_LABELS: Record<string, string> = {
   multiselect: "Мульти",
 };
 
-export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless }: TokenPickerProps) {
+export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = openProp ?? internalOpen;
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const setOpen = (v: boolean) => {
     setInternalOpen(v);
     onOpenChange?.(v);
   };
+
+  // Focus search input when picker opens (stable via rAF)
+  useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+    }
+  }, [isOpen]);
 
   const { data: fields = [] } = useQuery({
     queryKey: ["fields-registry-picker", entityTypes],
@@ -73,7 +85,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
   const content = (
     <PopoverContent className="w-72 p-0" align="start">
       <Command>
-        <CommandInput placeholder="Поиск по названию..." />
+        <CommandInput ref={searchInputRef} placeholder="Поиск по названию..." />
         <CommandList>
           <CommandEmpty>Поля не найдены</CommandEmpty>
           {entityTypes.map((et) => (
@@ -100,7 +112,12 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
   if (triggerless) {
     return (
       <Popover open={isOpen} onOpenChange={setOpen}>
-        <PopoverAnchor className="absolute" />
+        <PopoverAnchor asChild>
+          <span
+            ref={anchorRef as React.RefObject<HTMLSpanElement> | undefined}
+            className="inline-block w-0 h-0"
+          />
+        </PopoverAnchor>
         {content}
       </Popover>
     );

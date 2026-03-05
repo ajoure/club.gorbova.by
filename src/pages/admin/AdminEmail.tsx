@@ -1129,7 +1129,9 @@ export default function AdminEmail() {
                   ref={subjectRef}
                   value={templateDialog.template.subject}
                   onKeyDown={subjectBracket.handleKeyDown}
+                  onFocus={() => { if (subjectPickerOpen) setSubjectPickerOpen(false); }}
                   onChange={(e) => {
+                    if (subjectPickerOpen) setSubjectPickerOpen(false);
                     setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
                       ...prev,
@@ -1178,7 +1180,9 @@ export default function AdminEmail() {
                   className="font-mono text-sm"
                   value={templateDialog.template.body_html}
                   onKeyDown={bodyBracket.handleKeyDown}
+                  onFocus={() => { if (bodyPickerOpen) setBodyPickerOpen(false); }}
                   onChange={(e) => {
+                    if (bodyPickerOpen) setBodyPickerOpen(false);
                     setTemplateValidationError(null);
                     setTemplateDialog((prev) => ({
                       ...prev,

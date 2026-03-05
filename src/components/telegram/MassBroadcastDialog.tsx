@@ -128,7 +128,11 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
               ref={messageRef}
               placeholder="Введите текст сообщения для рассылки..."
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onFocus={() => { if (messagePickerOpen) setMessagePickerOpen(false); }}
+              onChange={(e) => {
+                if (messagePickerOpen) setMessagePickerOpen(false);
+                setMessage(e.target.value);
+              }}
               onKeyDown={messageBracket.handleKeyDown}
               rows={5}
               disabled={isSending}
