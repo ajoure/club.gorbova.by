@@ -2495,11 +2495,14 @@ export type Database = {
           created_at: string | null
           created_by: string | null
           data_type: string
+          description: string | null
+          display_order: number
           entity_type: string
           id: string
           key: string
           label: string
           options: Json | null
+          public_id: string | null
           updated_at: string | null
           updated_by: string | null
         }
@@ -2508,11 +2511,14 @@ export type Database = {
           created_at?: string | null
           created_by?: string | null
           data_type?: string
+          description?: string | null
+          display_order?: number
           entity_type: string
           id?: string
           key: string
           label: string
           options?: Json | null
+          public_id?: string | null
           updated_at?: string | null
           updated_by?: string | null
         }
@@ -2521,11 +2527,14 @@ export type Database = {
           created_at?: string | null
           created_by?: string | null
           data_type?: string
+          description?: string | null
+          display_order?: number
           entity_type?: string
           id?: string
           key?: string
           label?: string
           options?: Json | null
+          public_id?: string | null
           updated_at?: string | null
           updated_by?: string | null
         }
