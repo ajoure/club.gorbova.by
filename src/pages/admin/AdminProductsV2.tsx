@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
+import { useProductReadiness } from "@/hooks/useProductReadiness";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -56,6 +57,9 @@ export default function AdminProductsV2() {
   const { isSuperAdmin, loading: permLoading } = usePermissions();
   const { data: products, isLoading } = useProductsV2();
   const { data: relationCounts } = useProductRelationCounts();
+  const { data: readinessMap } = useProductReadiness(
+    products?.map((p: any) => ({ id: p.id, status: p.status || "active" }))
+  );
   
   const createMutation = useCreateProductV2();
   const updateMutation = useUpdateProductV2();
@@ -238,12 +242,33 @@ export default function AdminProductsV2() {
   const handleCopyLink = useCallback(() => {
     const ids = Array.from(selectedIds);
     if (ids.length === 1) {
-      copyToClipboard(getProductPayUrl(ids[0]), "Ссылка на оплату скопирована");
+      const readiness = readinessMap?.get(ids[0]);
+      const url = getProductPayUrl(ids[0]);
+      if (readiness && !readiness.isReady) {
+        copyToClipboard(url, "Ссылка скопирована");
+        toast.warning(`Продукт не готов к оплате: ${readiness.reasonLabel}. Ссылка скопирована, но покупатель увидит ошибку.`);
+      } else {
+        copyToClipboard(url, "Ссылка на оплату скопирована");
+      }
     } else {
       const links = ids.map(id => getProductPayUrl(id)).join("\n");
+      const notReadyProducts = ids
+        .map(id => {
+          const r = readinessMap?.get(id);
+          const prod = products?.find((p: any) => p.id === id);
+          return r && !r.isReady ? (prod as any)?.name || id : null;
+        })
+        .filter(Boolean);
+      
       copyToClipboard(links, `Скопировано ${ids.length} ссылок`);
+      if (notReadyProducts.length > 0) {
+        const detail = notReadyProducts.length <= 3
+          ? notReadyProducts.join(", ")
+          : `${notReadyProducts.slice(0, 3).join(", ")} и ещё ${notReadyProducts.length - 3}`;
+        toast.warning(`Скопировано ${ids.length} ссылок. Не готовы: ${notReadyProducts.length}.\n${detail}`);
+      }
     }
-  }, [selectedIds]);
+  }, [selectedIds, readinessMap, products]);
 
   return (
     <AdminLayout>
@@ -432,19 +457,43 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-0.5">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
-                                  e.stopPropagation();
-                                  copyToClipboard(getProductPayUrl(product.id), "Ссылка на оплату скопирована");
-                                }}>
-                                  <Link className="h-3.5 w-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Копировать ссылку на оплату</TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
+                          {(() => {
+                            const readiness = readinessMap?.get(product.id);
+                            const isReady = readiness?.isReady ?? true;
+                            return (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                                      e.stopPropagation();
+                                      const url = getProductPayUrl(product.id);
+                                      if (!isReady && readiness) {
+                                        copyToClipboard(url, "Ссылка скопирована");
+                                        toast.warning(`Продукт не готов к оплате: ${readiness.reasonLabel}. Ссылка скопирована, но покупатель увидит ошибку.`);
+                                      } else {
+                                        copyToClipboard(url, "Ссылка на оплату скопирована");
+                                      }
+                                    }}>
+                                      <Link className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="flex items-center gap-1.5">
+                                    {isReady ? (
+                                      <>
+                                        <CircleCheck className="h-3 w-3 text-green-600" />
+                                        <span>Копировать ссылку на оплату</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <AlertTriangle className="h-3 w-3 text-amber-500" />
+                                        <span>{readiness?.reasonLabel || "Не готов к оплате"}</span>
+                                      </>
+                                    )}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            );
+                          })()}
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>

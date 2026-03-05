@@ -1,0 +1,8 @@
+-- Idempotent POINT B docs update: append Field Engine + Readiness Guard sections
+UPDATE admin_docs
+SET content_text = content_text || E'\n\n---\n\n7) FIELD ENGINE (Phase 1 — CURRENT)\n- fields_registry + field_values_v2 — SoT доп. полей\n- public_id: FLD-XXXXXX (auto via trigger trg_fields_registry_public_id)\n- Типы: text, number, boolean, date, json, url, select, multiselect\n- select → scalar string в field_values_v2.value\n- multiselect → jsonb array of strings в field_values_v2.value\n- options.choices = [{\"value\":\"...\",\"label\":\"...\"}] для select/multiselect\n- Токены: {{cf.<entityType>.<FLD-XXXXXX>}} — copy-only, resolver отсутствует\n- Интеграция: только Products (через EntityCustomFields)\n- Contacts/Deals — Phase 2\n\n8) READINESS GUARD (CURRENT)\n- share-link (/pay?product=<id>) копируется всегда (не блокируется)\n- UI предупреждает, если продукт не готов к оплате\n- readiness = product.status=active + >=1 active tariff + >=1 active pay_now offer\n- trial/preregistration НЕ считаются readiness для /pay?product=...\n- reasonCodes: ok, product_not_active, no_active_tariff, no_active_pay_now_offer, unknown\n- Readiness Guard = UX layer, не блокирует и не меняет payment pipeline\n- Bulk copy: aggregate toast «Скопировано N. Не готовы: M.»',
+    updated_at = now()
+WHERE section_key = 'products_sales'
+  AND version_label = 'POINT B'
+  AND content_text NOT LIKE '%FIELD ENGINE%'
+  AND content_text NOT LIKE '%READINESS GUARD%';
