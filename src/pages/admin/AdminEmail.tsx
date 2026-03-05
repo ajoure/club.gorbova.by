@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -69,6 +69,7 @@ import {
 } from "@/lib/email-template-validation";
 import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
+import { TokenPicker } from "@/components/admin/TokenPicker";
 
 interface EmailAccount {
   id: string;
@@ -204,6 +205,9 @@ export default function AdminEmail() {
   const [templateValidationError, setTemplateValidationError] = useState<string | null>(null);
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
   const [previewProductId, setPreviewProductId] = useState<string>("");
+
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
@@ -1066,8 +1070,30 @@ export default function AdminEmail() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <Label>Тема письма</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Тема письма</Label>
+                  <TokenPicker
+                    onInsert={(token) => {
+                      const input = subjectRef.current;
+                      if (!input || !templateDialog.template) return;
+                      const start = input.selectionStart ?? templateDialog.template.subject.length;
+                      const end = input.selectionEnd ?? start;
+                      const val = templateDialog.template.subject;
+                      const newVal = val.slice(0, start) + token + val.slice(end);
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template ? { ...prev.template, subject: newVal } : null,
+                      }));
+                      requestAnimationFrame(() => {
+                        input.focus();
+                        const pos = start + token.length;
+                        input.setSelectionRange(pos, pos);
+                      });
+                    }}
+                  />
+                </div>
                 <Input
+                  ref={subjectRef}
                   value={templateDialog.template.subject}
                   onChange={(e) => {
                     setTemplateValidationError(null);
@@ -1100,8 +1126,30 @@ export default function AdminEmail() {
               </div>
 
               <div className="space-y-2">
-                <Label>Тело письма (HTML)</Label>
+                <div className="flex items-center gap-2">
+                  <Label>Тело письма (HTML)</Label>
+                  <TokenPicker
+                    onInsert={(token) => {
+                      const ta = bodyRef.current;
+                      if (!ta || !templateDialog.template) return;
+                      const start = ta.selectionStart ?? templateDialog.template.body_html.length;
+                      const end = ta.selectionEnd ?? start;
+                      const val = templateDialog.template.body_html;
+                      const newVal = val.slice(0, start) + token + val.slice(end);
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template ? { ...prev.template, body_html: newVal } : null,
+                      }));
+                      requestAnimationFrame(() => {
+                        ta.focus();
+                        const pos = start + token.length;
+                        ta.setSelectionRange(pos, pos);
+                      });
+                    }}
+                  />
+                </div>
                 <Textarea
+                  ref={bodyRef}
                   rows={12}
                   className="font-mono text-sm"
                   value={templateDialog.template.body_html}
