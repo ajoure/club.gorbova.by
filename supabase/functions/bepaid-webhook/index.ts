@@ -54,6 +54,54 @@ function translatePaymentError(error: string): string {
   return `Ошибка платежа: ${error}`;
 }
 
+// =====================================================================
+// payments_v2 helpers: select→insert/update (avoids 42P10 with partial index)
+// =====================================================================
+async function findPaymentByProviderUid(supabase: any, provider: string, uid: string): Promise<{ id: string; order_id: string | null; origin: string | null } | null> {
+  const { data, error } = await supabase.from('payments_v2').select('id, order_id, origin').eq('provider', provider).eq('provider_payment_id', uid).maybeSingle();
+  if (error) { console.error('[payments_v2-helper] findByProviderUid error:', error.message); return null; }
+  return data || null;
+}
+
+async function upsertPaymentV2(supabase: any, payload: Record<string, any>, logPrefix: string): Promise<{ id: string | null; action: 'created' | 'updated' | 'error'; error?: string }> {
+  const uid = payload.provider_payment_id;
+  const provider = payload.provider || 'bepaid';
+  if (!uid) { console.error(`${logPrefix} SKIP: no provider_payment_id`); return { id: null, action: 'error', error: 'missing_provider_payment_id' }; }
+
+  const existing = await findPaymentByProviderUid(supabase, provider, uid);
+  if (existing) {
+    const updateFields: Record<string, any> = {};
+    for (const key of ['order_id','user_id','profile_id','amount','currency','status','card_holder','card_last4','card_brand','error_message','origin','paid_at','is_recurring','receipt_url','product_name_raw','provider_response']) {
+      if (payload[key] !== undefined && payload[key] !== null) updateFields[key] = payload[key];
+    }
+    if (payload.meta && typeof payload.meta === 'object') {
+      const { data: cur } = await supabase.from('payments_v2').select('meta').eq('id', existing.id).maybeSingle();
+      updateFields.meta = { ...((cur?.meta && typeof cur.meta === 'object') ? cur.meta : {}), ...payload.meta };
+    }
+    const { error: updErr } = await supabase.from('payments_v2').update(updateFields).eq('id', existing.id);
+    if (updErr) { console.error(`${logPrefix} update error:`, updErr.message); return { id: existing.id, action: 'error', error: updErr.message }; }
+    console.log(`${logPrefix} updated existing payment:`, existing.id);
+    return { id: existing.id, action: 'updated' };
+  }
+
+  const { data: newRow, error: insErr } = await supabase.from('payments_v2').insert(payload).select('id').single();
+  if (insErr) {
+    if (insErr.code === '23505') {
+      console.warn(`${logPrefix} 23505 race → fallback update`);
+      const re = await findPaymentByProviderUid(supabase, provider, uid);
+      if (re) {
+        const { error: rErr } = await supabase.from('payments_v2').update(payload).eq('id', re.id);
+        if (rErr) { console.error(`${logPrefix} race update error:`, rErr.message); return { id: re.id, action: 'error', error: rErr.message }; }
+        return { id: re.id, action: 'updated' };
+      }
+    }
+    console.error(`${logPrefix} insert error:`, insErr.message);
+    return { id: null, action: 'error', error: insErr.message };
+  }
+  console.log(`${logPrefix} created new payment:`, newRow?.id);
+  return { id: newRow?.id || null, action: 'created' };
+}
+
 // Send order to GetCourse
 // Now uses getcourse_offer_id from tariffs table instead of hardcoded mapping
 interface GetCourseUserData {
@@ -1478,9 +1526,7 @@ Deno.serve(async (req) => {
           .eq('user_id', subV2.user_id)
           .maybeSingle();
         
-        await supabase
-          .from('payments_v2')
-          .insert({
+        const subPayResult = await upsertPaymentV2(supabase, {
             order_id: orderV2Id,
             user_id: subV2.user_id,
             profile_id: profile?.id || null,
@@ -1498,8 +1544,8 @@ Deno.serve(async (req) => {
               provider_managed: true,
               bepaid_description: extractBepaidDescription(body),
             },
-          });
-        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2 created');
+          }, '[WEBHOOK-SUBSCRIPTION]');
+        console.log('[WEBHOOK-SUBSCRIPTION] payments_v2', subPayResult.action, subPayResult.id);
         
         // 5. Create entitlements
         if (subV2.products_v2?.code) {
@@ -1977,48 +2023,14 @@ Deno.serve(async (req) => {
           },
         };
 
-        // Select-then-insert/update
-        const { data: existLoFailed } = await supabase
-          .from('payments_v2')
-          .select('id')
-          .eq('provider', 'bepaid')
-          .eq('provider_payment_id', transactionUid)
-          .maybeSingle();
-
-        if (existLoFailed) {
-          await supabase.from('payments_v2')
-            .update({
-              status: 'failed',
-              order_id: parsedOrderId,
-              amount: loFailedAmount,
-              currency: loFailedCurrency,
-              card_holder: loFailedCardHolder,
-              card_last4: loFailedCardLast4,
-              card_brand: loFailedCardBrand,
-              error_message: loFailedTxMessage,
-              meta: loFailedRow.meta,
-            })
-            .eq('id', existLoFailed.id);
-        } else {
-          const { error: insErr } = await supabase.from('payments_v2').insert(loFailedRow);
-          if (insErr && insErr.code === '23505') {
-            await supabase.from('payments_v2')
-              .update({
-                status: 'failed',
-                order_id: parsedOrderId,
-                amount: loFailedAmount,
-                currency: loFailedCurrency,
-                card_holder: loFailedCardHolder,
-                card_last4: loFailedCardLast4,
-                card_brand: loFailedCardBrand,
-                error_message: loFailedTxMessage,
-                meta: loFailedRow.meta,
-              })
-              .eq('provider', 'bepaid')
-              .eq('provider_payment_id', transactionUid);
-          } else if (insErr) {
-            console.error('[WEBHOOK-LINK-ORDER] Failed payment insert error (non-fatal):', insErr);
+        // Use helper for idempotent upsert
+        if (transactionUid) {
+          const loFailedResult = await upsertPaymentV2(supabase, loFailedRow, '[WEBHOOK-LINK-ORDER-FAILED]');
+          if (loFailedResult.action === 'error') {
+            console.error('[WEBHOOK-LINK-ORDER] Failed payment write error (non-fatal):', loFailedResult.error);
           }
+        } else {
+          console.warn('[WEBHOOK-LINK-ORDER] No transactionUid for failed payment, skipping payments_v2 write');
         }
 
         // Audit log (error-guarded, SYSTEM ACTOR)
@@ -2236,75 +2248,66 @@ Deno.serve(async (req) => {
           },
       };
 
-      const { error: payUpsertErr } = await supabase
-        .from('payments_v2')
-        .upsert(paymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
-
-      if (payUpsertErr) {
-        console.error('[WEBHOOK-LINK-ORDER] payments_v2 upsert FAILED:', payUpsertErr.message, payUpsertErr.code);
-
-        // Fallback: plain insert (no ON CONFLICT)
-        const { error: payInsertErr } = await supabase
-          .from('payments_v2')
-          .insert(paymentPayload);
-
-        if (payInsertErr) {
-          console.error('[WEBHOOK-LINK-ORDER] payments_v2 fallback insert FAILED:', payInsertErr.message);
-
-          // CRITICAL audit log
-          try {
-            await supabase.from('audit_logs').insert({
-              actor_type: 'system',
-              actor_label: 'bepaid-webhook',
-              action: 'bepaid.webhook.payments_v2_write_failed',
-              meta: {
-                order_id: linkOrder.id,
-                tracking_id: rawTrackingId,
-                transaction_uid: transactionUid,
-                error_code: payInsertErr.code,
-                error_message: payInsertErr.message,
-                upsert_error_code: payUpsertErr.code,
-                upsert_error_message: payUpsertErr.message,
-              },
-            });
-          } catch (_) {}
-
-          // Orphan record
-          try {
-            await supabase.from('provider_webhook_orphans').upsert({
-              provider: 'bepaid',
-              provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
-              provider_payment_id: transactionUid,
-              reason: 'payments_v2_write_failed',
-              raw_data: createSafeOrphanData(body, rawTrackingId),
-              processed: false,
-            }, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: true });
-          } catch (_) {}
-
-          // Webhook event
-          await recordWebhookEvent(supabase, {
-            provider: 'bepaid', event_type: 'subscription',
-            transaction_uid: transactionUid,
-            tracking_id: rawTrackingId,
-            subscription_id: subscriptionId ? String(subscriptionId) : null,
-            parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
-            outcome: 'failed_payments_v2_write',
-            http_status: 500,
-            processing_ms: Date.now() - startTime,
-            error_message: `upsert: ${payUpsertErr.message}; insert: ${payInsertErr.message}`,
-          });
-
-          // Return 500 -> BePaid retries
-          return new Response(
-            JSON.stringify({ ok: false, status: 'failed_payments_v2_write', error: payInsertErr.message }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        } else {
-          console.log('[WEBHOOK-LINK-ORDER] payments_v2 fallback insert OK');
-        }
-      } else {
-        console.log('[WEBHOOK-LINK-ORDER] payments_v2 upserted OK');
+      // transactionUid guard
+      if (!transactionUid) {
+        console.error('[WEBHOOK-LINK-ORDER] SKIP payments_v2: no transactionUid');
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: null,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'skipped_no_uid', http_status: 202,
+          processing_ms: Date.now() - startTime,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'skipped_no_uid' }), {
+          status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
+
+      const payUpsertResult = await upsertPaymentV2(supabase, paymentPayload, '[WEBHOOK-LINK-ORDER]');
+
+      if (payUpsertResult.action === 'error') {
+        console.error('[WEBHOOK-LINK-ORDER] payments_v2 write FAILED:', payUpsertResult.error);
+
+        // Audit log
+        try {
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+            action: 'bepaid.webhook.payments_v2_write_failed',
+            created_at: new Date().toISOString(),
+            meta: {
+              order_id: linkOrder.id, tracking_id: rawTrackingId, transaction_uid: transactionUid,
+              error_message: payUpsertResult.error,
+            },
+          });
+        } catch (_) {}
+
+        // Orphan record
+        try {
+          await supabase.from('provider_webhook_orphans').insert({
+            provider: 'bepaid',
+            provider_subscription_id: subscriptionId ? String(subscriptionId) : null,
+            provider_payment_id: transactionUid,
+            reason: 'payments_v2_write_failed',
+            raw_data: createSafeOrphanData(body, rawTrackingId),
+            processed: false,
+          });
+        } catch (_) {}
+
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'subscription', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, subscription_id: subscriptionId ? String(subscriptionId) : null,
+          parsed_kind: tracking.kind, parsed_order_id: parsedOrderId,
+          outcome: 'failed_payments_v2_write', http_status: 500,
+          processing_ms: Date.now() - startTime, error_message: payUpsertResult.error,
+        });
+
+        return new Response(
+          JSON.stringify({ ok: false, status: 'failed_payments_v2_write', error: payUpsertResult.error }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      console.log('[WEBHOOK-LINK-ORDER] payments_v2', payUpsertResult.action, payUpsertResult.id);
+
 
       // 5. PATCH P2: provider_subscriptions UPSERT (not UPDATE)
       if (subscriptionId) {
@@ -2762,54 +2765,14 @@ Deno.serve(async (req) => {
           },
         };
 
-        // Select-then-insert/update (unique INDEX, not constraint)
-        const { data: existFailedPmt } = await supabase
-          .from('payments_v2')
-          .select('id')
-          .eq('provider', 'bepaid')
-          .eq('provider_payment_id', transactionUid)
-          .maybeSingle();
-
-        if (existFailedPmt) {
-          // Update ALL fields to "polish" the record on retry
-          await supabase.from('payments_v2')
-            .update({
-              status: 'failed',
-              order_id: linkOrderV2.id,
-              user_id: linkOrderV2.user_id || null,
-              profile_id: linkOrderV2.profile_id || null,
-              amount: failedAmount,
-              currency: failedCurrency,
-              card_holder: failedCardHolder,
-              card_last4: failedCardLast4,
-              card_brand: failedCardBrand,
-              error_message: failedTxMessage,
-              meta: failedPaymentRow.meta,
-            })
-            .eq('id', existFailedPmt.id);
-        } else {
-          const { error: insErr } = await supabase.from('payments_v2').insert(failedPaymentRow);
-          if (insErr && insErr.code === '23505') {
-            // Race condition: another webhook already inserted → update
-            await supabase.from('payments_v2')
-              .update({
-                status: 'failed',
-                order_id: linkOrderV2.id,
-                user_id: linkOrderV2.user_id || null,
-                profile_id: linkOrderV2.profile_id || null,
-                amount: failedAmount,
-                currency: failedCurrency,
-                card_holder: failedCardHolder,
-                card_last4: failedCardLast4,
-                card_brand: failedCardBrand,
-                error_message: failedTxMessage,
-                meta: failedPaymentRow.meta,
-              })
-              .eq('provider', 'bepaid')
-              .eq('provider_payment_id', transactionUid);
-          } else if (insErr) {
-            console.error('[WEBHOOK-LINK] Failed payment insert error (non-fatal):', insErr);
+        // Use helper for idempotent upsert
+        if (transactionUid) {
+          const linkFailedResult = await upsertPaymentV2(supabase, failedPaymentRow, '[WEBHOOK-LINK-FAILED]');
+          if (linkFailedResult.action === 'error') {
+            console.error('[WEBHOOK-LINK] Failed payment write error (non-fatal):', linkFailedResult.error);
           }
+        } else {
+          console.warn('[WEBHOOK-LINK] No transactionUid for failed payment, skipping payments_v2 write');
         }
 
         // Audit log (error-guarded, SYSTEM ACTOR)
@@ -2938,32 +2901,37 @@ Deno.serve(async (req) => {
         receipt_url: transaction?.receipt_url || null,
       };
 
-      const { error: linkPayUpsertErr } = await supabase
-        .from('payments_v2')
-        .upsert(linkPaymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
-
-      if (linkPayUpsertErr) {
-        console.error('[WEBHOOK-LINK] payments_v2 upsert FAILED:', linkPayUpsertErr.message);
-        const { error: linkPayInsertErr } = await supabase.from('payments_v2').insert(linkPaymentPayload);
-        if (linkPayInsertErr) {
-          console.error('[WEBHOOK-LINK] payments_v2 fallback insert FAILED:', linkPayInsertErr.message);
-          await supabase.from('audit_logs').insert({
-            actor_type: 'system', actor_label: 'bepaid-webhook',
-            action: 'bepaid.webhook.payments_v2_write_failed',
-            meta: { order_id: linkOrderV2.id, transaction_uid: transactionUid, error: linkPayInsertErr.message },
-          });
-          await recordWebhookEvent(supabase, {
-            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-            tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
-            outcome: 'failed_payments_v2_write', http_status: 500,
-            processing_ms: Date.now() - startTime, error_message: linkPayInsertErr.message,
-          });
-          return new Response(JSON.stringify({ ok: false, status: 'failed_payments_v2_write' }), {
-            status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+      // transactionUid guard (already validated at entry, but belt-and-suspenders)
+      if (!transactionUid) {
+        console.error('[WEBHOOK-LINK] SKIP payments_v2: no transactionUid');
+        return new Response(JSON.stringify({ ok: false, status: 'skipped_no_uid' }), {
+          status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
-      console.log('[WEBHOOK-LINK] payments_v2 written OK');
+
+      const linkPayResult = await upsertPaymentV2(supabase, linkPaymentPayload, '[WEBHOOK-LINK]');
+
+      if (linkPayResult.action === 'error') {
+        console.error('[WEBHOOK-LINK] payments_v2 write FAILED:', linkPayResult.error);
+        const { error: auditE } = await supabase.from('audit_logs').insert({
+          actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+          action: 'bepaid.webhook.payments_v2_write_failed',
+          created_at: new Date().toISOString(),
+          meta: { order_id: linkOrderV2.id, transaction_uid: transactionUid, error: linkPayResult.error },
+        });
+        if (auditE) console.error('[WEBHOOK-LINK] audit error (non-fatal):', auditE);
+        await recordWebhookEvent(supabase, {
+          provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          outcome: 'failed_payments_v2_write', http_status: 500,
+          processing_ms: Date.now() - startTime, error_message: linkPayResult.error,
+        });
+        return new Response(JSON.stringify({ ok: false, status: 'failed_payments_v2_write' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      console.log('[WEBHOOK-LINK] payments_v2', linkPayResult.action, linkPayResult.id);
+
 
       // 5. Update orders_v2 → paid
       const linkOrderMeta = (linkOrderV2.meta && typeof linkOrderV2.meta === 'object') ? linkOrderV2.meta : {};
@@ -4448,20 +4416,11 @@ ${userName}, к сожалению, не удалось провести опл�
             },
           };
 
-          const { error: payErr } = await supabase.from('payments_v2')
-            .upsert(paymentPayload, { onConflict: 'provider,provider_payment_id', ignoreDuplicates: false });
-
-          if (payErr) {
-            console.error('[WEBHOOK-LEGACY] payments_v2 upsert error:', payErr.message);
-            // Fallback: plain insert
-            const { error: payInsertErr } = await supabase.from('payments_v2').insert(paymentPayload);
-            if (payInsertErr) {
-              console.error('[WEBHOOK-LEGACY] payments_v2 insert also failed:', payInsertErr.message);
-            } else {
-              paymentCreated = true;
-            }
+          const legacyUpsertResult = await upsertPaymentV2(supabase, paymentPayload, '[WEBHOOK-LEGACY]');
+          if (legacyUpsertResult.action === 'error') {
+            console.error('[WEBHOOK-LEGACY] payments_v2 write error:', legacyUpsertResult.error);
           } else {
-            paymentCreated = true;
+            paymentCreated = legacyUpsertResult.action === 'created';
           }
         } else {
           console.log('[WEBHOOK-LEGACY] payments_v2 already exists for uid=' + transactionUid);
