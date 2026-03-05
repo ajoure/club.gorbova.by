@@ -68,29 +68,37 @@ async function upsertPaymentV2(supabase: any, payload: Record<string, any>, logP
   const provider = payload.provider || 'bepaid';
   if (!uid) { console.error(`${logPrefix} SKIP: no provider_payment_id`); return { id: null, action: 'error', error: 'missing_provider_payment_id' }; }
 
+  // Shared helper: build COALESCE-style update fields + meta-merge
+  const buildUpdateFields = async (targetId: string): Promise<Record<string, any>> => {
+    const fields: Record<string, any> = {};
+    for (const key of ['order_id','user_id','profile_id','amount','currency','status','card_holder','card_last4','card_brand','error_message','origin','paid_at','is_recurring','receipt_url','product_name_raw','provider_response']) {
+      if (payload[key] !== undefined && payload[key] !== null) fields[key] = payload[key];
+    }
+    if (payload.meta && typeof payload.meta === 'object' && Object.keys(payload.meta).length > 0) {
+      const { data: cur } = await supabase.from('payments_v2').select('meta').eq('id', targetId).maybeSingle();
+      fields.meta = { ...((cur?.meta && typeof cur.meta === 'object') ? cur.meta : {}), ...payload.meta };
+    }
+    return fields;
+  };
+
   const existing = await findPaymentByProviderUid(supabase, provider, uid);
   if (existing) {
-    const updateFields: Record<string, any> = {};
-    for (const key of ['order_id','user_id','profile_id','amount','currency','status','card_holder','card_last4','card_brand','error_message','origin','paid_at','is_recurring','receipt_url','product_name_raw','provider_response']) {
-      if (payload[key] !== undefined && payload[key] !== null) updateFields[key] = payload[key];
-    }
-    if (payload.meta && typeof payload.meta === 'object') {
-      const { data: cur } = await supabase.from('payments_v2').select('meta').eq('id', existing.id).maybeSingle();
-      updateFields.meta = { ...((cur?.meta && typeof cur.meta === 'object') ? cur.meta : {}), ...payload.meta };
-    }
+    const updateFields = await buildUpdateFields(existing.id);
     const { error: updErr } = await supabase.from('payments_v2').update(updateFields).eq('id', existing.id);
     if (updErr) { console.error(`${logPrefix} update error:`, updErr.message); return { id: existing.id, action: 'error', error: updErr.message }; }
     console.log(`${logPrefix} updated existing payment:`, existing.id);
     return { id: existing.id, action: 'updated' };
   }
 
-  const { data: newRow, error: insErr } = await supabase.from('payments_v2').insert(payload).select('id').single();
+  // Insert without .select().single() — get id via findPaymentByProviderUid after
+  const { error: insErr } = await supabase.from('payments_v2').insert(payload);
   if (insErr) {
     if (insErr.code === '23505') {
-      console.warn(`${logPrefix} 23505 race → fallback update`);
+      console.warn(`${logPrefix} 23505 race → fallback coalesce-update`);
       const re = await findPaymentByProviderUid(supabase, provider, uid);
       if (re) {
-        const { error: rErr } = await supabase.from('payments_v2').update(payload).eq('id', re.id);
+        const raceFields = await buildUpdateFields(re.id);
+        const { error: rErr } = await supabase.from('payments_v2').update(raceFields).eq('id', re.id);
         if (rErr) { console.error(`${logPrefix} race update error:`, rErr.message); return { id: re.id, action: 'error', error: rErr.message }; }
         return { id: re.id, action: 'updated' };
       }
@@ -98,8 +106,10 @@ async function upsertPaymentV2(supabase: any, payload: Record<string, any>, logP
     console.error(`${logPrefix} insert error:`, insErr.message);
     return { id: null, action: 'error', error: insErr.message };
   }
-  console.log(`${logPrefix} created new payment:`, newRow?.id);
-  return { id: newRow?.id || null, action: 'created' };
+  // Deterministic id retrieval after successful insert
+  const created = await findPaymentByProviderUid(supabase, provider, uid);
+  console.log(`${logPrefix} created new payment:`, created?.id);
+  return { id: created?.id || null, action: 'created' };
 }
 
 // Send order to GetCourse
