@@ -71,6 +71,32 @@ import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
+/** Profile shape from JOIN or fallback query */
+interface ResolvedProfile {
+  id: string;
+  user_id: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  avatar_url: string | null;
+}
+
+/** Resolve profile: JOIN first, then fallback map */
+function resolveDealProfile(
+  deal: any,
+  fallbackMap: Map<string, ResolvedProfile> | undefined
+): ResolvedProfile | null {
+  // Primary: profile from JOIN by profile_id
+  if (deal.profiles && typeof deal.profiles === 'object' && deal.profiles.id) {
+    return deal.profiles as ResolvedProfile;
+  }
+  // Fallback: map keyed by user_id (for deals without profile_id)
+  if (deal.user_id && fallbackMap) {
+    return fallbackMap.get(deal.user_id) || null;
+  }
+  return null;
+}
+
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
   pending: { label: "Ожидает оплаты", color: "bg-amber-500/20 text-amber-600", icon: Clock },
@@ -127,7 +153,8 @@ export default function AdminDeals() {
           products_v2(id, name, code),
           tariffs(id, name, code, access_days),
           flows(id, name),
-          payments_v2(id, status, amount, paid_at, created_at, card_holder, meta)
+          payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
+          profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
         `)
         .order("created_at", { ascending: false })
         .limit(1000);
@@ -171,24 +198,40 @@ export default function AdminDeals() {
     },
   });
 
-  // Fetch profiles for contact info - map by both id and user_id
-  const { data: profilesMap } = useQuery({
-    queryKey: ["profiles-map"],
+  // Fallback: fetch profiles ONLY for deals without profile_id but with user_id
+  const missingUserIds = useMemo(() => {
+    if (!deals) return [];
+    const ids = new Set<string>();
+    for (const d of deals) {
+      // Only need fallback when JOIN didn't return a profile
+      if (!d.profile_id && d.user_id) {
+        ids.add(d.user_id);
+      }
+    }
+    return Array.from(ids);
+  }, [deals]);
+
+  const { data: fallbackProfilesMap } = useQuery({
+    queryKey: ["deals-fallback-profiles", missingUserIds],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("profiles")
-        .select("id, user_id, email, full_name, phone, avatar_url");
-      const map = new Map<string, any>();
-      data?.forEach(p => {
-        // Map by profile.id (for orders that store profile_id in user_id field)
-        map.set(p.id, p);
-        // Also map by user_id if it exists (for orders linked to auth users)
-        if (p.user_id) {
-          map.set(p.user_id, p);
-        }
-      });
+      const map = new Map<string, ResolvedProfile>();
+      if (missingUserIds.length === 0) return map;
+      // Chunk by 300 to avoid Supabase in() degradation
+      const CHUNK = 300;
+      for (let i = 0; i < missingUserIds.length; i += CHUNK) {
+        const chunk = missingUserIds.slice(i, i + CHUNK);
+        const { data } = await supabase
+          .from("profiles")
+          .select("id, user_id, full_name, email, phone, avatar_url")
+          .in("user_id", chunk);
+        data?.forEach(p => {
+          if (p.user_id) map.set(p.user_id, p as ResolvedProfile);
+        });
+      }
       return map;
     },
+    enabled: missingUserIds.length > 0,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Build filter fields dynamically based on available products and tariffs
@@ -242,7 +285,7 @@ export default function AdminDeals() {
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
       case "contact_name":
-        const profile = profilesMap?.get(deal.user_id);
+        const profile = resolveDealProfile(deal, fallbackProfilesMap);
         const payerName = getLatestPayerName(deal);
         return profile?.full_name || payerName || deal.customer_email || "";
       case "product_name":
@@ -254,7 +297,7 @@ export default function AdminDeals() {
       default:
         return deal[fieldKey];
     }
-  }, [profilesMap]);
+  }, [fallbackProfilesMap]);
 
   // P0-guard: Build search index ONCE per deal
   const dealsWithIndex = useMemo(() => {
@@ -262,7 +305,7 @@ export default function AdminDeals() {
     return deals
       .filter(d => VALID_DEAL_STATUSES.includes(d.status as any))
       .map(d => {
-        const profile = profilesMap?.get(d.user_id);
+        const profile = resolveDealProfile(d, fallbackProfilesMap);
         const payerName = getLatestPayerName(d);
         return {
           ...d,
@@ -271,6 +314,7 @@ export default function AdminDeals() {
             d.customer_email,
             d.customer_phone,
             profile?.email,
+            profile?.phone,
             profile?.full_name,
             payerName,
             (d.products_v2 as any)?.name,
@@ -279,7 +323,7 @@ export default function AdminDeals() {
           ]),
         };
       });
-  }, [deals, profilesMap, VALID_DEAL_STATUSES]);
+  }, [deals, fallbackProfilesMap, VALID_DEAL_STATUSES]);
 
   // P0-guard: Debounce search input (150ms)
   const debouncedSearch = useDebouncedValue(search, 150);
@@ -321,16 +365,16 @@ export default function AdminDeals() {
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
     { header: "Дата", getValue: (d) => d.created_at ? format(new Date(d.created_at), "dd.MM.yyyy HH:mm") : "" },
     { header: "Номер", getValue: (d) => d.order_number || "" },
-    { header: "Контакт", getValue: (d) => profilesMap?.get(d.user_id)?.full_name || getLatestPayerName(d) || "" },
-    { header: "Email", getValue: (d) => d.customer_email || profilesMap?.get(d.user_id)?.email || "" },
-    { header: "Телефон", getValue: (d) => profilesMap?.get(d.user_id)?.phone || "" },
+    { header: "Контакт", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.full_name || getLatestPayerName(d) || ""; } },
+    { header: "Email", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return d.customer_email || p?.email || ""; } },
+    { header: "Телефон", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.phone || ""; } },
     { header: "Продукт", getValue: (d) => (d.products_v2 as any)?.name || "" },
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
     { header: "Статус", getValue: (d) => STATUS_CONFIG[d.status]?.label || d.status || "" },
     { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
-  ], [profilesMap]);
+  ], [fallbackProfilesMap]);
 
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
@@ -691,7 +735,7 @@ export default function AdminDeals() {
           </DropdownMenu>
           <Button variant="outline" size="sm" className="h-8" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
-            queryClient.invalidateQueries({ queryKey: ["profiles-map"] });
+            queryClient.invalidateQueries({ queryKey: ["deals-fallback-profiles"] });
             queryClient.invalidateQueries({ queryKey: ["products-filter"] });
             toast.success("Данные обновлены");
           }}>
@@ -776,7 +820,7 @@ export default function AdminDeals() {
             </TableHeader>
             <TableBody>
               {sortedDeals.map((deal) => {
-                const profile = profilesMap?.get(deal.user_id);
+                const profile = resolveDealProfile(deal, fallbackProfilesMap);
                 const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
                 const StatusIcon = statusConfig.icon;
                 const payments = (deal.payments_v2 as any[]) || [];
@@ -922,7 +966,7 @@ export default function AdminDeals() {
       {/* Deal Detail Sheet */}
       <DealDetailSheet
         deal={selectedDeal || null}
-        profile={selectedDeal ? profilesMap?.get(selectedDeal.user_id) : null}
+        profile={selectedDeal ? resolveDealProfile(selectedDeal, fallbackProfilesMap) : null}
         open={!!selectedDealId}
         onOpenChange={(open) => !open && setSelectedDealId(null)}
       />
