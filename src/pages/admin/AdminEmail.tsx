@@ -1118,6 +1118,23 @@ export default function AdminEmail() {
                   <TokenPicker
                     onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
                   />
+                </div>
+                <div className="relative">
+                  <Input
+                    ref={subjectRef}
+                    value={templateDialog.template.subject}
+                    onKeyDown={subjectBracket.handleKeyDown}
+                    onChange={(e) => {
+                      if (subjectPickerOpen) setSubjectPickerOpen(false);
+                      setTemplateValidationError(null);
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template
+                          ? { ...prev.template, subject: e.target.value }
+                          : null,
+                      }));
+                    }}
+                  />
                   <TokenPicker
                     triggerless
                     open={subjectPickerOpen}
@@ -1125,22 +1142,6 @@ export default function AdminEmail() {
                     onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
                   />
                 </div>
-                <Input
-                  ref={subjectRef}
-                  value={templateDialog.template.subject}
-                  onKeyDown={subjectBracket.handleKeyDown}
-                  onFocus={() => { if (subjectPickerOpen) setSubjectPickerOpen(false); }}
-                  onChange={(e) => {
-                    if (subjectPickerOpen) setSubjectPickerOpen(false);
-                    setTemplateValidationError(null);
-                    setTemplateDialog((prev) => ({
-                      ...prev,
-                      template: prev.template
-                        ? { ...prev.template, subject: e.target.value }
-                        : null,
-                    }));
-                  }}
-                />
               </div>
 
               <div className="space-y-2">
@@ -1167,6 +1168,25 @@ export default function AdminEmail() {
                   <TokenPicker
                     onInsert={(token) => insertAtCaret(bodyRef, "body_html", token)}
                   />
+                </div>
+                <div className="relative">
+                  <Textarea
+                    ref={bodyRef}
+                    rows={12}
+                    className="font-mono text-sm"
+                    value={templateDialog.template.body_html}
+                    onKeyDown={bodyBracket.handleKeyDown}
+                    onChange={(e) => {
+                      if (bodyPickerOpen) setBodyPickerOpen(false);
+                      setTemplateValidationError(null);
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template
+                          ? { ...prev.template, body_html: e.target.value }
+                          : null,
+                      }));
+                    }}
+                  />
                   <TokenPicker
                     triggerless
                     open={bodyPickerOpen}
@@ -1174,24 +1194,6 @@ export default function AdminEmail() {
                     onInsert={(token) => insertAtCaret(bodyRef, "body_html", token)}
                   />
                 </div>
-                <Textarea
-                  ref={bodyRef}
-                  rows={12}
-                  className="font-mono text-sm"
-                  value={templateDialog.template.body_html}
-                  onKeyDown={bodyBracket.handleKeyDown}
-                  onFocus={() => { if (bodyPickerOpen) setBodyPickerOpen(false); }}
-                  onChange={(e) => {
-                    if (bodyPickerOpen) setBodyPickerOpen(false);
-                    setTemplateValidationError(null);
-                    setTemplateDialog((prev) => ({
-                      ...prev,
-                      template: prev.template
-                        ? { ...prev.template, body_html: e.target.value }
-                        : null,
-                    }));
-                  }}
-                />
                 {templateValidationError && (
                   <p className="text-sm text-destructive flex items-center gap-1">
                     <AlertCircle className="w-4 h-4" />
