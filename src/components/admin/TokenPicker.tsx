@@ -100,6 +100,25 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
         <CommandInput ref={searchInputRef} placeholder="Поиск по названию..." />
         <CommandList>
           <CommandEmpty>Поля не найдены</CommandEmpty>
+          {showContactVars && (
+            <CommandGroup heading="Контакт / Профиль">
+              {STANDARD_CONTACT_VARS.map((v) => (
+                <CommandItem
+                  key={v.key}
+                  value={`${v.label} ${v.key}`}
+                  onSelect={() => {
+                    onInsert(`{{${v.key}}}`);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="flex-1 truncate">{v.label}</span>
+                  <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                  </Badge>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
           {entityTypes.map((et) => (
             <CommandGroup key={et} heading={ENTITY_LABELS[et] ?? et}>
               {(grouped[et] ?? []).map((field) => (
