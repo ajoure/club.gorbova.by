@@ -750,17 +750,31 @@ const [includeButton, setIncludeButton] = useState(true);
 
                   <div className="space-y-2">
                     <Label>Текст письма (HTML)</Label>
-                    <Textarea
-                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                      value={emailBody}
-                      onChange={(e) => setEmailBody(e.target.value)}
-                      rows={8}
-                      className="resize-none font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Поддерживается HTML-разметка
-                    </p>
-                  </div>
+                    <div className="relative">
+                      <Textarea
+                        ref={emailBodyRef}
+                        placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                        value={emailBody}
+                        onChange={(e) => {
+                          const corrected = emailBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setEmailBody(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={emailBodyBracket.handleKeyDown}
+                        rows={8}
+                        className="resize-none font-mono text-sm"
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={emailBodyPickerAnchorRef}
+                        open={emailBodyPickerOpen}
+                        onOpenChange={setEmailBodyPickerOpen}
+                        onInsert={(token) => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной. Поддерживается HTML-разметка.
+                      </p>
+                    </div>
                 </CardContent>
               </Card>
             </TabsContent>
