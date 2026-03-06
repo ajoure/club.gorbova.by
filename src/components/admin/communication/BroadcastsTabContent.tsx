@@ -136,13 +136,8 @@ const [includeButton, setIncludeButton] = useState(true);
     });
   }, []);
 
-  // Bracket triggers for 3 fields
-  const tgBracket = useBracketTrigger({
-    onOpen: () => setTgPickerOpen(true),
-    onInsertBracket: () => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, "["),
-    isPickerOpen: tgPickerOpen,
-    onClose: () => setTgPickerOpen(false),
-  });
+  // Bracket triggers for email fields only (TG uses TokenizedRichInput)
+
 
   const emailSubjectBracket = useBracketTrigger({
     onOpen: () => setEmailSubjectPickerOpen(true),
