@@ -59,6 +59,7 @@ import { TelegramTextToolbar } from "./TelegramTextToolbar";
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
 import { TokenPicker } from "@/components/admin/TokenPicker";
 import { useBracketTrigger } from "@/hooks/useBracketTrigger";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
