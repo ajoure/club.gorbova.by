@@ -53,6 +53,30 @@ interface BroadcastFilters {
   clubId?: string;
 }
 
+/**
+ * Resolve standard contact tokens in a message template.
+ * Replaces {{full_name}}, {{first_name}}, {{last_name}}, {{email}}, etc.
+ */
+function resolveContactTokens(
+  text: string,
+  profile: { full_name?: string | null; email?: string | null; telegram_username?: string | null }
+): string {
+  if (!text.includes('{{')) return text;
+  
+  const fullName = profile.full_name || '';
+  const parts = fullName.split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+
+  return text
+    .replace(/\{\{full_name\}\}/g, fullName)
+    .replace(/\{\{first_name\}\}/g, firstName)
+    .replace(/\{\{last_name\}\}/g, lastName)
+    .replace(/\{\{name\}\}/g, fullName)
+    .replace(/\{\{email\}\}/g, profile.email || '')
+    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });

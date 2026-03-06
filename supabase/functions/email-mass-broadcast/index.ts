@@ -299,11 +299,15 @@ Deno.serve(async (req) => {
     for (const profile of filteredProfiles) {
       if (!profile.email) continue;
 
+      // Resolve standard contact tokens per-recipient
+      const personalizedSubject = resolveContactTokens(subject, profile);
+      const personalizedHtml = resolveContactTokens(html, profile);
+
       try {
         await sendEmailViaSMTP({
           to: profile.email,
-          subject,
-          html,
+          subject: personalizedSubject,
+          html: personalizedHtml,
           account: emailAccount,
         });
         sent++;
