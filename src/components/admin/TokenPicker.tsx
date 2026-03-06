@@ -18,7 +18,19 @@ interface TokenPickerProps {
   triggerless?: boolean;
   /** Anchor element ref for triggerless mode positioning */
   anchorRef?: React.RefObject<HTMLElement>;
+  /** Show standard contact variables group */
+  showContactVars?: boolean;
 }
+
+/** Standard contact variables available in broadcast templates */
+const STANDARD_CONTACT_VARS = [
+  { key: "full_name", label: "Полное имя", dataType: "text" },
+  { key: "first_name", label: "Имя", dataType: "text" },
+  { key: "last_name", label: "Фамилия", dataType: "text" },
+  { key: "email", label: "Email", dataType: "text" },
+  { key: "phone", label: "Телефон", dataType: "text" },
+  { key: "telegram_username", label: "Telegram username", dataType: "text" },
+] as const;
 
 const DATA_TYPE_LABELS: Record<string, string> = {
   text: "Текст",
