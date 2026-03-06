@@ -275,10 +275,16 @@ Deno.serve(async (req) => {
       ]]
     } : undefined;
 
+    // Extract token usage from original template (before substitution)
+    const tokensInfo = extractUsedTokens(message);
+    // Single `now` for the entire broadcast — all recipients get the same date/time
+    const broadcastNow = new Date();
+
     // Send messages with token substitution
     for (const profile of profiles) {
-      // Resolve standard contact tokens per-recipient
-      const personalizedMessage = resolveContactTokens(message, profile);
+      // Resolve contact tokens first, then system tokens
+      const afterContact = resolveContactTokens(message, profile);
+      const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
       try {
         let result;
         
