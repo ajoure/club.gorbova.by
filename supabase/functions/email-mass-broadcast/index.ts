@@ -318,6 +318,11 @@ Deno.serve(async (req) => {
 
     console.log(`Sending to ${filteredProfiles.length} recipients`);
 
+    // Extract token usage from original templates (before substitution)
+    const tokensInfo = extractUsedTokens(subject + ' ' + html);
+    // Single `now` for the entire broadcast
+    const broadcastNow = new Date();
+
     let sent = 0;
     let failed = 0;
 
