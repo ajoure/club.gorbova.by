@@ -249,8 +249,10 @@ Deno.serve(async (req) => {
       ]]
     } : undefined;
 
-    // Send messages
+    // Send messages with token substitution
     for (const profile of profiles) {
+      // Resolve standard contact tokens per-recipient
+      const personalizedMessage = resolveContactTokens(message, profile);
       try {
         let result;
         
