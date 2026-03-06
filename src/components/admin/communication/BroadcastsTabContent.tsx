@@ -106,10 +106,10 @@ const [includeButton, setIncludeButton] = useState(true);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const emailSubjectRef = useRef<HTMLInputElement>(null);
   const emailBodyRef = useRef<HTMLTextAreaElement>(null);
-  const tgPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
   const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
   const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
 
