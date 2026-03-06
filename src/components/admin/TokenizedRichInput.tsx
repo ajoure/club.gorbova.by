@@ -1,0 +1,531 @@
+/**
+ * TokenizedRichInput — TipTap-based editor with inline token chips.
+ * 
+ * SoT: plain markdown string with {{token}} placeholders.
+ * UI: renders {{token}} as visual chips with labels from tokenRegistry.
+ * 
+ * Features:
+ * - [ trigger (300ms) opens token picker
+ * - [[ inserts literal [
+ * - Markdown toolbar (Bold/Italic/Code/Link) when showToolbar=true
+ * - Copy chip → clipboard gets {{token}}, not label
+ * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
+ * - Rename-safe: labels resolved at runtime from registry
+ */
+
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useEditor, EditorContent, Editor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import { Node, mergeAttributes } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { useQuery } from "@tanstack/react-query";
+import {
+  CONTACT_TOKENS,
+  DATETIME_TOKENS,
+  loadProductFields,
+  setProductFieldsCache,
+  tokenStringToLabel,
+  extractShortUuid,
+  type TokenDef,
+} from "@/lib/tokens/tokenRegistry";
+import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Bold, Italic, Code, Link } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+// ─── TokenNode Extension ────────────────────────────────────────────
+
+const TokenNode = Node.create({
+  name: "token",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+
+  addAttributes() {
+    return {
+      tokenString: { default: "" },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'span[data-token]', getAttrs: (el) => ({ tokenString: (el as HTMLElement).getAttribute("data-token") }) }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    const tokenStr = HTMLAttributes.tokenString || "";
+    const label = tokenStringToLabel(tokenStr);
+    const displayLabel = label || `UNMAPPED · ${extractShortUuid(tokenStr)}`;
+
+    return [
+      "span",
+      mergeAttributes({
+        "data-token": tokenStr,
+        class: label
+          ? "bg-primary/10 text-primary rounded px-1.5 py-0.5 text-xs font-medium inline-block cursor-default select-none"
+          : "bg-destructive/10 text-destructive rounded px-1.5 py-0.5 text-xs font-medium inline-block cursor-default select-none",
+        contenteditable: "false",
+      }),
+      displayLabel,
+    ];
+  },
+
+  // Clipboard: copy tokenString, not label
+  renderText({ node }) {
+    return node.attrs.tokenString;
+  },
+});
+
+// ─── Bracket trigger plugin ─────────────────────────────────────────
+
+const bracketPluginKey = new PluginKey("bracketTrigger");
+
+function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
+  let pending = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearPending = () => {
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    pending = false;
+  };
+
+  return new Plugin({
+    key: bracketPluginKey,
+    props: {
+      handleKeyDown(view, event) {
+        if (event.key === "Escape") {
+          clearPending();
+          return false; // let popover handle
+        }
+
+        if (event.key === "[" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault();
+
+          if (pending) {
+            clearPending();
+            onInsertBracket();
+          } else {
+            pending = true;
+            timer = setTimeout(() => {
+              pending = false;
+              timer = undefined;
+              onOpen();
+            }, 300);
+          }
+          return true;
+        }
+
+        // Any other key while pending → cancel pending (don't open picker)
+        if (pending && event.key.length === 1) {
+          clearPending();
+        }
+
+        return false;
+      },
+    },
+  });
+}
+
+// ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
+
+function serializeDoc(editor: Editor): string {
+  const doc = editor.getJSON();
+  if (!doc.content) return "";
+
+  const lines: string[] = [];
+
+  for (const block of doc.content) {
+    if (block.type === "paragraph") {
+      lines.push(serializeInline(block.content || []));
+    } else {
+      lines.push(serializeInline(block.content || []));
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function serializeInline(nodes: any[]): string {
+  return nodes
+    .map((node) => {
+      if (node.type === "token") {
+        return node.attrs?.tokenString || "";
+      }
+      if (node.type === "text") {
+        let text = node.text || "";
+        const marks = node.marks || [];
+        // Apply marks in order: code first (innermost), then bold/italic
+        for (const mark of marks) {
+          if (mark.type === "code") text = "`" + text + "`";
+          if (mark.type === "bold") text = "*" + text + "*";
+          if (mark.type === "italic") text = "_" + text + "_";
+          if (mark.type === "link") text = `[${text}](${mark.attrs?.href || ""})`;
+        }
+        return text;
+      }
+      return "";
+    })
+    .join("");
+}
+
+// ─── Parse markdown string with {{tokens}} → TipTap doc ────────────
+
+function parseToDoc(value: string): any {
+  const lines = value.split("\n");
+  const content = lines.map((line) => ({
+    type: "paragraph",
+    content: parseInline(line),
+  }));
+
+  return { type: "doc", content };
+}
+
+function parseInline(text: string): any[] {
+  if (!text) return [];
+
+  const nodes: any[] = [];
+  // Split by {{...}} tokens
+  const parts = text.split(/(\{\{[^}]+\}\})/g);
+
+  for (const part of parts) {
+    if (!part) continue;
+    if (part.startsWith("{{") && part.endsWith("}}")) {
+      nodes.push({
+        type: "token",
+        attrs: { tokenString: part },
+      });
+    } else {
+      // Parse markdown marks in text
+      const textNodes = parseMarkdownText(part);
+      nodes.push(...textNodes);
+    }
+  }
+
+  return nodes;
+}
+
+function parseMarkdownText(text: string): any[] {
+  // Simple approach: treat as plain text for now
+  // TipTap will handle markdown parsing via StarterKit inputRules
+  if (!text) return [];
+  return [{ type: "text", text }];
+}
+
+// ─── Component ──────────────────────────────────────────────────────
+
+interface TokenizedRichInputProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
+  showToolbar?: boolean;
+  disabled?: boolean;
+  className?: string;
+}
+
+export function TokenizedRichInput({
+  value,
+  onChange,
+  placeholder = "",
+  rows = 4,
+  showToolbar = false,
+  disabled = false,
+  className,
+}: TokenizedRichInputProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const isInternalUpdate = useRef(false);
+
+  // Load product fields for registry
+  const { data: productFields = [] } = useQuery({
+    queryKey: ["token-registry-product-fields"],
+    queryFn: loadProductFields,
+    staleTime: 60_000,
+  });
+
+  // Update cache when product fields load
+  useEffect(() => {
+    setProductFieldsCache(productFields);
+  }, [productFields]);
+
+  // All tokens for picker
+  const allTokens = useMemo(
+    () => [...CONTACT_TOKENS, ...DATETIME_TOKENS, ...productFields],
+    [productFields]
+  );
+
+  const openPicker = useCallback(() => {
+    setPickerOpen(true);
+    requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  const insertLiteralBracket = useCallback(() => {
+    if (editor) {
+      editor.commands.insertContent("[");
+    }
+  }, []);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        // Disable block-level features we don't need
+        heading: false,
+        blockquote: false,
+        bulletList: false,
+        orderedList: false,
+        codeBlock: false,
+        horizontalRule: false,
+        listItem: false,
+      }),
+      TokenNode,
+    ],
+    content: parseToDoc(value),
+    editable: !disabled,
+    editorProps: {
+      attributes: {
+        class: cn(
+          "prose prose-sm max-w-none focus:outline-none",
+          "min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background",
+          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+          "placeholder:text-muted-foreground",
+          disabled && "cursor-not-allowed opacity-50",
+          className
+        ),
+        style: `min-height: ${Math.max(rows * 1.5, 3)}rem`,
+        "data-placeholder": placeholder,
+      },
+    },
+    onUpdate: ({ editor: ed }) => {
+      isInternalUpdate.current = true;
+      const serialized = serializeDoc(ed);
+      onChange(serialized);
+    },
+  });
+
+  // Update insertLiteralBracket ref after editor is created
+  useEffect(() => {
+    if (!editor) return;
+
+    // Register bracket plugin
+    const plugin = createBracketPlugin(
+      () => {
+        setPickerOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+      },
+      () => {
+        editor.commands.insertContent("[");
+      }
+    );
+
+    // Add plugin to editor
+    const { state } = editor;
+    const newState = state.reconfigure({
+      plugins: [...state.plugins, plugin],
+    });
+    editor.view.updateState(newState);
+
+    return () => {
+      // Cleanup: remove plugin
+      try {
+        const currentState = editor.state;
+        const filtered = currentState.plugins.filter(
+          (p) => (p as any).key !== bracketPluginKey.key
+        );
+        const cleanState = currentState.reconfigure({ plugins: filtered });
+        editor.view.updateState(cleanState);
+      } catch {
+        // editor may be destroyed
+      }
+    };
+  }, [editor]);
+
+  // Sync external value changes (e.g., loading saved template)
+  useEffect(() => {
+    if (!editor || isInternalUpdate.current) {
+      isInternalUpdate.current = false;
+      return;
+    }
+
+    const currentSerialized = serializeDoc(editor);
+    if (currentSerialized !== value) {
+      editor.commands.setContent(parseToDoc(value));
+    }
+  }, [value, editor]);
+
+  // Handle token selection from picker
+  const handleTokenSelect = useCallback(
+    (tokenDef: TokenDef) => {
+      if (!editor) return;
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "token",
+          attrs: { tokenString: tokenDef.tokenString },
+        })
+        .insertContent(" ") // space after chip
+        .run();
+      setPickerOpen(false);
+    },
+    [editor]
+  );
+
+  // Close picker when editor loses focus to other content
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => {
+      // Small delay to allow picker clicks
+      setTimeout(() => {
+        if (!editor.isFocused && pickerOpen) {
+          // Don't close if focus went to picker
+        }
+      }, 200);
+    };
+    editor.on("blur", handler);
+    return () => { editor.off("blur", handler); };
+  }, [editor, pickerOpen]);
+
+  if (!editor) return null;
+
+  return (
+    <div className="space-y-1">
+      {showToolbar && (
+        <div className="flex gap-1 mb-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            className={cn(editor.isActive("bold") && "bg-muted")}
+            title="Жирный"
+          >
+            <Bold className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            className={cn(editor.isActive("italic") && "bg-muted")}
+            title="Курсив"
+          >
+            <Italic className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => editor.chain().focus().toggleCode().run()}
+            className={cn(editor.isActive("code") && "bg-muted")}
+            title="Код"
+          >
+            <Code className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const url = prompt("Введите URL:");
+              if (url) {
+                editor
+                  .chain()
+                  .focus()
+                  .setMark("link", { href: url })
+                  .run();
+              }
+            }}
+            title="Ссылка"
+          >
+            <Link className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      <div ref={anchorRef} className="relative">
+        <EditorContent editor={editor} />
+
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverAnchor asChild>
+            <span className="absolute bottom-0 left-4 inline-block w-0 h-0" />
+          </PopoverAnchor>
+          <PopoverContent
+            className="max-w-[320px] p-0"
+            align="start"
+            side="bottom"
+            collisionPadding={8}
+          >
+            <Command>
+              <CommandInput
+                ref={searchInputRef}
+                placeholder="Поиск по названию..."
+                className="text-xs h-8"
+              />
+              <CommandList className="max-h-[240px] overflow-auto">
+                <CommandEmpty>Токены не найдены</CommandEmpty>
+                <CommandGroup heading="Контакт / Профиль">
+                  {CONTACT_TOKENS.map((t) => (
+                    <CommandItem
+                      key={t.key}
+                      value={t.searchKeywords}
+                      className="text-xs py-1"
+                      onSelect={() => handleTokenSelect(t)}
+                    >
+                      <span className="flex-1 truncate">{t.label}</span>
+                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                        {t.badge}
+                      </Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+                <CommandGroup heading="Дата / Время">
+                  {DATETIME_TOKENS.map((t) => (
+                    <CommandItem
+                      key={t.key}
+                      value={t.searchKeywords}
+                      className="text-xs py-1"
+                      onSelect={() => handleTokenSelect(t)}
+                    >
+                      <span className="flex-1 truncate">{t.label}</span>
+                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                        {t.badge}
+                      </Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+                {productFields.length > 0 && (
+                  <CommandGroup heading="Продукт">
+                    {productFields.map((t) => (
+                      <CommandItem
+                        key={t.key}
+                        value={t.searchKeywords}
+                        className="text-xs py-1"
+                        onSelect={() => handleTokenSelect(t)}
+                      >
+                        <span className="flex-1 truncate">{t.label}</span>
+                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                          {t.badge}
+                        </Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Нажмите{" "}
+        <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd>{" "}
+        для вставки переменной
+      </p>
+    </div>
+  );
+}
