@@ -723,11 +723,29 @@ const [includeButton, setIncludeButton] = useState(true);
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Тема письма</Label>
-                    <Input
-                      placeholder="Тема письма..."
-                      value={emailSubject}
-                      onChange={(e) => setEmailSubject(e.target.value)}
-                    />
+                    <div className="relative">
+                      <Input
+                        ref={emailSubjectRef}
+                        placeholder="Тема письма..."
+                        value={emailSubject}
+                        onChange={(e) => {
+                          const corrected = emailSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setEmailSubject(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={emailSubjectBracket.handleKeyDown}
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={emailSubjectPickerAnchorRef}
+                        open={emailSubjectPickerOpen}
+                        onOpenChange={setEmailSubjectPickerOpen}
+                        onInsert={(token) => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                      </p>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
