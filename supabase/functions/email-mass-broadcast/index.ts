@@ -6,6 +6,30 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+/**
+ * Resolve standard contact tokens in a template string.
+ */
+function resolveContactTokens(
+  text: string,
+  profile: { full_name?: string | null; email?: string | null; phone?: string | null; telegram_username?: string | null }
+): string {
+  if (!text.includes('{{')) return text;
+  
+  const fullName = profile.full_name || '';
+  const parts = fullName.split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+
+  return text
+    .replace(/\{\{full_name\}\}/g, fullName)
+    .replace(/\{\{first_name\}\}/g, firstName)
+    .replace(/\{\{last_name\}\}/g, lastName)
+    .replace(/\{\{name\}\}/g, fullName)
+    .replace(/\{\{email\}\}/g, profile.email || '')
+    .replace(/\{\{phone\}\}/g, profile.phone || '')
+    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
+}
+
 interface EmailAccount {
   id: string;
   email: string;
