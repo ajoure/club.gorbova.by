@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
     // Add admins who have telegram_user_id but might not be in filtered list
     const { data: adminProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name')
+      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
