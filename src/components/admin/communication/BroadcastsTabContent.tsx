@@ -118,14 +118,15 @@ const [includeButton, setIncludeButton] = useState(true);
   const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
 
   // Insert token at caret helper
-  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: (v: string) => void, token: string) => {
+  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<string>>, token: string) => {
     const el = ref.current;
-    if (!el) { setter((prev: string) => prev + token); return; }
+    if (!el) { setter(prev => prev + token); return; }
     const start = el.selectionStart ?? el.value.length;
     const end = el.selectionEnd ?? start;
     const before = el.value.slice(0, start);
     const after = el.value.slice(end);
-    setter(before + token + after);
+    const newVal = before + token + after;
+    setter(newVal);
     requestAnimationFrame(() => {
       const pos = start + token.length;
       el.setSelectionRange(pos, pos);
