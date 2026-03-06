@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -59,14 +60,14 @@ interface BroadcastFilters {
  */
 function resolveContactTokens(
   text: string,
-  profile: { full_name?: string | null; email?: string | null; telegram_username?: string | null }
+  profile: { full_name?: string | null; first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null; telegram_username?: string | null }
 ): string {
   if (!text.includes('{{')) return text;
   
   const fullName = profile.full_name || '';
   const parts = fullName.split(/\s+/);
-  const firstName = parts[0] || '';
-  const lastName = parts.slice(1).join(' ') || '';
+  const firstName = profile.first_name || parts[0] || '';
+  const lastName = profile.last_name || parts.slice(1).join(' ') || '';
 
   return text
     .replace(/\{\{full_name\}\}/g, fullName)
@@ -74,6 +75,7 @@ function resolveContactTokens(
     .replace(/\{\{last_name\}\}/g, lastName)
     .replace(/\{\{name\}\}/g, fullName)
     .replace(/\{\{email\}\}/g, profile.email || '')
+    .replace(/\{\{phone\}\}/g, profile.phone || '')
     .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
 }
 
@@ -172,7 +174,7 @@ Deno.serve(async (req) => {
     // Build user query based on filters
     let query = supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name')
+      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null);
 
     const { data: allProfiles } = await query.limit(1000);
@@ -230,7 +232,7 @@ Deno.serve(async (req) => {
     // Add admins who have telegram_user_id but might not be in filtered list
     const { data: adminProfiles } = await supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name')
+      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
@@ -273,10 +275,16 @@ Deno.serve(async (req) => {
       ]]
     } : undefined;
 
+    // Extract token usage from original template (before substitution)
+    const tokensInfo = extractUsedTokens(message);
+    // Single `now` for the entire broadcast — all recipients get the same date/time
+    const broadcastNow = new Date();
+
     // Send messages with token substitution
     for (const profile of profiles) {
-      // Resolve standard contact tokens per-recipient
-      const personalizedMessage = resolveContactTokens(message, profile);
+      // Resolve contact tokens first, then system tokens
+      const afterContact = resolveContactTokens(message, profile);
+      const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
       try {
         let result;
         
@@ -371,6 +379,8 @@ Deno.serve(async (req) => {
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
+        tokens_used_contact: tokensInfo.contact,
+        tokens_used_system: tokensInfo.system,
       },
     });
 
