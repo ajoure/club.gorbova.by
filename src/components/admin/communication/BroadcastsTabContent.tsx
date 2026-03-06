@@ -55,7 +55,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
-import { TelegramTextToolbar } from "./TelegramTextToolbar";
+// TelegramTextToolbar removed from TG broadcast (now using TokenizedRichInput)
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
 import { TokenPicker } from "@/components/admin/TokenPicker";
 import { useBracketTrigger } from "@/hooks/useBracketTrigger";
