@@ -1,62 +1,17 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Braces } from "lucide-react";
-
-interface TokenPickerProps {
-  onInsert: (token: string) => void;
-  entityTypes?: string[];
-  /** Controlled open state */
-  open?: boolean;
-  /** Callback when open state changes */
-  onOpenChange?: (v: boolean) => void;
-  /** If true, don't render the trigger button (used for keyboard-triggered mode) */
-  triggerless?: boolean;
-  /** Anchor element ref for triggerless mode positioning */
-  anchorRef?: React.RefObject<HTMLElement>;
-  /** Show standard contact variables group */
-  showContactVars?: boolean;
-  /** Show system date/time variables group */
-  showSystemVars?: boolean;
-}
-
-/** Standard contact variables available in broadcast templates */
-const STANDARD_CONTACT_VARS = [
-  { key: "full_name", label: "Полное имя", dataType: "text" },
-  { key: "first_name", label: "Имя", dataType: "text" },
-  { key: "last_name", label: "Фамилия", dataType: "text" },
-  { key: "email", label: "Email", dataType: "text" },
-  { key: "phone", label: "Телефон", dataType: "text" },
-  { key: "telegram_username", label: "Telegram username", dataType: "text" },
-] as const;
-
-/** System date/time variables */
-const SYSTEM_DATE_VARS = [
-  { key: "today", label: "Сегодня (дд.мм.гггг)", dataType: "date" },
-  { key: "tomorrow", label: "Завтра", dataType: "date" },
-  { key: "yesterday", label: "Вчера", dataType: "date" },
-  { key: "now", label: "Сейчас (дата+время)", dataType: "date" },
-  { key: "month_name", label: "Месяц (словом)", dataType: "date" },
-  { key: "month", label: "Месяц (01-12)", dataType: "date" },
-  { key: "year", label: "Год", dataType: "date" },
-  { key: "day", label: "День (01-31)", dataType: "date" },
-  { key: "weekday", label: "День недели", dataType: "date" },
-] as const;
-
-const DATA_TYPE_LABELS: Record<string, string> = {
-  text: "Текст",
-  number: "Число",
-  boolean: "Да/Нет",
-  date: "Дата",
-  json: "JSON",
-  url: "URL",
-  select: "Список",
-  multiselect: "Мульти",
-};
+import {
+  CONTACT_TOKENS,
+  DATETIME_TOKENS,
+  loadProductFields,
+  setProductFieldsCache,
+  type TokenDef,
+} from "@/lib/tokens/tokenRegistry";
 
 export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true, showSystemVars = true }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);

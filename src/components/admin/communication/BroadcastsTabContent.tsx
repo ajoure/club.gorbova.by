@@ -630,36 +630,13 @@ const [includeButton, setIncludeButton] = useState(true);
 
                   <div className="space-y-2">
                     <Label>Текст сообщения {mediaFile && "(подпись)"}</Label>
-                    <TelegramTextToolbar 
-                      textareaRef={textareaRef}
+                    <TokenizedRichInput
                       value={message}
                       onChange={setMessage}
+                      placeholder="Введите текст сообщения для рассылки..."
+                      rows={6}
+                      showToolbar={true}
                     />
-                    <div className="relative">
-                      <Textarea
-                        ref={textareaRef}
-                        placeholder="Введите текст сообщения для рассылки..."
-                        value={message}
-                        onChange={(e) => {
-                          const corrected = tgBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                          setMessage(corrected ?? e.target.value);
-                        }}
-                        onKeyDown={tgBracket.handleKeyDown}
-                        rows={6}
-                        className="resize-none font-mono text-sm"
-                      />
-                      <TokenPicker
-                        triggerless
-                        anchorRef={tgPickerAnchorRef}
-                        open={tgPickerOpen}
-                        onOpenChange={setTgPickerOpen}
-                        onInsert={(token) => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, token)}
-                        showContactVars
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
-                      </p>
-                    </div>
                   </div>
 
                   {/* WYSIWYG Preview */}
