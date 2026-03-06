@@ -1,10 +1,35 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
+import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+/**
+ * Resolve standard contact tokens in a message template.
+ */
+function resolveContactTokens(
+  text: string,
+  profile: { full_name?: string | null; email?: string | null; phone?: string | null; telegram_username?: string | null }
+): string {
+  if (!text.includes('{{')) return text;
+  
+  const fullName = profile.full_name || '';
+  const parts = fullName.split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+
+  return text
+    .replace(/\{\{full_name\}\}/g, fullName)
+    .replace(/\{\{first_name\}\}/g, firstName)
+    .replace(/\{\{last_name\}\}/g, lastName)
+    .replace(/\{\{name\}\}/g, fullName)
+    .replace(/\{\{email\}\}/g, profile.email || '')
+    .replace(/\{\{phone\}\}/g, profile.phone || '')
+    .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
+}
 
 Deno.serve(async (req: Request) => {
   // Handle CORS preflight
@@ -62,10 +87,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Get user's Telegram ID from profile
+    // Get user's Telegram ID and contact fields from profile
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
-      .select("telegram_user_id, telegram_username")
+      .select("telegram_user_id, telegram_username, full_name, first_name, last_name, email, phone")
       .eq("user_id", userId)
       .single();
 
@@ -92,6 +117,12 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // Resolve tokens: contact first, then system
+    const now = new Date();
+    const tokensInfo = extractUsedTokens(messageText);
+    let personalizedMessage = resolveContactTokens(messageText, profile);
+    personalizedMessage = resolveSystemTokens(personalizedMessage, now);
+
     // Build message with button
     const keyboard = buttonText && buttonUrl ? {
       inline_keyboard: [[{
@@ -107,7 +138,7 @@ Deno.serve(async (req: Request) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: telegramChatId,
-        text: `🧪 ТЕСТОВОЕ СООБЩЕНИЕ\n\n${messageText}`,
+        text: `🧪 ТЕСТОВОЕ СООБЩЕНИЕ\n\n${personalizedMessage}`,
         parse_mode: "Markdown",
         reply_markup: keyboard,
       }),
@@ -122,6 +153,24 @@ Deno.serve(async (req: Request) => {
       }), { 
         status: 500, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      });
+    }
+
+    // Log token usage
+    if (tokensInfo.contact.length > 0 || tokensInfo.system.length > 0) {
+      await supabaseAdmin.from('audit_logs').insert({
+        actor_type: 'system',
+        actor_user_id: userId,
+        actor_label: 'telegram-send-test',
+        action: 'broadcast.tokens_resolved',
+        meta: {
+          channel: 'telegram',
+          type: 'test',
+          sent: 1,
+          failed: 0,
+          tokens_used_contact: tokensInfo.contact,
+          tokens_used_system: tokensInfo.system,
+        },
       });
     }
 

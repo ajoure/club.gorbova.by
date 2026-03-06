@@ -379,6 +379,8 @@ Deno.serve(async (req) => {
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
+        tokens_used_contact: tokensInfo.contact,
+        tokens_used_system: tokensInfo.system,
       },
     });
 
