@@ -776,6 +776,7 @@ const [includeButton, setIncludeButton] = useState(true);
                         Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной. Поддерживается HTML-разметка.
                       </p>
                     </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
