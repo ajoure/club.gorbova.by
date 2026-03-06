@@ -110,12 +110,8 @@ const [includeButton, setIncludeButton] = useState(true);
   const emailBodyRef = useRef<HTMLTextAreaElement>(null);
   const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
   const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
-  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
-  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
 
-  // TokenPicker open states
   // TokenPicker open states (email fields only; TG uses TokenizedRichInput)
-  const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
   const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
   const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
 
