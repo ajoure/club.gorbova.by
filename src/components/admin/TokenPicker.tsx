@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
@@ -8,10 +9,24 @@ import { Braces } from "lucide-react";
 import {
   CONTACT_TOKENS,
   DATETIME_TOKENS,
-  loadProductFields,
-  setProductFieldsCache,
   type TokenDef,
 } from "@/lib/tokens/tokenRegistry";
+
+interface TokenPickerProps {
+  onInsert: (token: string) => void;
+  entityTypes?: string[];
+  open?: boolean;
+  onOpenChange?: (v: boolean) => void;
+  triggerless?: boolean;
+  anchorRef?: React.RefObject<HTMLElement>;
+  showContactVars?: boolean;
+  showSystemVars?: boolean;
+}
+
+const ENTITY_LABELS: Record<string, string> = {
+  product: "Продукт",
+  contact: "Контакт",
+};
 
 export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true, showSystemVars = true }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
@@ -23,7 +38,6 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     onOpenChange?.(v);
   };
 
-  // Focus search input when picker opens (stable via rAF)
   useEffect(() => {
     if (isOpen) {
       requestAnimationFrame(() => {
@@ -32,6 +46,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     }
   }, [isOpen]);
 
+  // Dynamic custom fields from fields_registry
   const { data: fields = [] } = useQuery({
     queryKey: ["fields-registry-picker", entityTypes],
     queryFn: async () => {
@@ -54,11 +69,6 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     return acc;
   }, {});
 
-  const ENTITY_LABELS: Record<string, string> = {
-    product: "Продукт",
-    contact: "Контакт",
-  };
-
   const handleSelect = (field: typeof fields[number]) => {
     onInsert(`{{cf.${field.entity_type}.${field.id}}}`);
     setOpen(false);
@@ -72,19 +82,19 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
           <CommandEmpty>Поля не найдены</CommandEmpty>
           {showContactVars && (
             <CommandGroup heading="Контакт / Профиль">
-              {STANDARD_CONTACT_VARS.map((v) => (
+              {CONTACT_TOKENS.map((t) => (
                 <CommandItem
-                  key={v.key}
-                  value={`${v.label} ${v.key}`}
+                  key={t.key}
+                  value={t.searchKeywords}
                   className="text-xs py-1"
                   onSelect={() => {
-                    onInsert(`{{${v.key}}}`);
+                    onInsert(t.tokenString);
                     setOpen(false);
                   }}
                 >
-                  <span className="flex-1 truncate">{v.label}</span>
+                  <span className="flex-1 truncate">{t.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                    {t.badge}
                   </Badge>
                 </CommandItem>
               ))}
@@ -92,19 +102,19 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
           )}
           {showSystemVars && (
             <CommandGroup heading="Дата / Время">
-              {SYSTEM_DATE_VARS.map((v) => (
+              {DATETIME_TOKENS.map((t) => (
                 <CommandItem
-                  key={v.key}
-                  value={`${v.label} ${v.key}`}
+                  key={t.key}
+                  value={t.searchKeywords}
                   className="text-xs py-1"
                   onSelect={() => {
-                    onInsert(`{{${v.key}}}`);
+                    onInsert(t.tokenString);
                     setOpen(false);
                   }}
                 >
-                  <span className="flex-1 truncate">{v.label}</span>
+                  <span className="flex-1 truncate">{t.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                    {t.badge}
                   </Badge>
                 </CommandItem>
               ))}
@@ -121,7 +131,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
                 >
                   <span className="flex-1 truncate">{field.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[field.data_type] ?? field.data_type}
+                    {field.data_type}
                   </Badge>
                 </CommandItem>
               ))}
