@@ -6,56 +6,26 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Braces } from "lucide-react";
+import {
+  CONTACT_TOKENS,
+  DATETIME_TOKENS,
+  type TokenDef,
+} from "@/lib/tokens/tokenRegistry";
 
 interface TokenPickerProps {
   onInsert: (token: string) => void;
   entityTypes?: string[];
-  /** Controlled open state */
   open?: boolean;
-  /** Callback when open state changes */
   onOpenChange?: (v: boolean) => void;
-  /** If true, don't render the trigger button (used for keyboard-triggered mode) */
   triggerless?: boolean;
-  /** Anchor element ref for triggerless mode positioning */
   anchorRef?: React.RefObject<HTMLElement>;
-  /** Show standard contact variables group */
   showContactVars?: boolean;
-  /** Show system date/time variables group */
   showSystemVars?: boolean;
 }
 
-/** Standard contact variables available in broadcast templates */
-const STANDARD_CONTACT_VARS = [
-  { key: "full_name", label: "Полное имя", dataType: "text" },
-  { key: "first_name", label: "Имя", dataType: "text" },
-  { key: "last_name", label: "Фамилия", dataType: "text" },
-  { key: "email", label: "Email", dataType: "text" },
-  { key: "phone", label: "Телефон", dataType: "text" },
-  { key: "telegram_username", label: "Telegram username", dataType: "text" },
-] as const;
-
-/** System date/time variables */
-const SYSTEM_DATE_VARS = [
-  { key: "today", label: "Сегодня (дд.мм.гггг)", dataType: "date" },
-  { key: "tomorrow", label: "Завтра", dataType: "date" },
-  { key: "yesterday", label: "Вчера", dataType: "date" },
-  { key: "now", label: "Сейчас (дата+время)", dataType: "date" },
-  { key: "month_name", label: "Месяц (словом)", dataType: "date" },
-  { key: "month", label: "Месяц (01-12)", dataType: "date" },
-  { key: "year", label: "Год", dataType: "date" },
-  { key: "day", label: "День (01-31)", dataType: "date" },
-  { key: "weekday", label: "День недели", dataType: "date" },
-] as const;
-
-const DATA_TYPE_LABELS: Record<string, string> = {
-  text: "Текст",
-  number: "Число",
-  boolean: "Да/Нет",
-  date: "Дата",
-  json: "JSON",
-  url: "URL",
-  select: "Список",
-  multiselect: "Мульти",
+const ENTITY_LABELS: Record<string, string> = {
+  product: "Продукт",
+  contact: "Контакт",
 };
 
 export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true, showSystemVars = true }: TokenPickerProps) {
@@ -68,7 +38,6 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     onOpenChange?.(v);
   };
 
-  // Focus search input when picker opens (stable via rAF)
   useEffect(() => {
     if (isOpen) {
       requestAnimationFrame(() => {
@@ -77,6 +46,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     }
   }, [isOpen]);
 
+  // Dynamic custom fields from fields_registry
   const { data: fields = [] } = useQuery({
     queryKey: ["fields-registry-picker", entityTypes],
     queryFn: async () => {
@@ -99,11 +69,6 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
     return acc;
   }, {});
 
-  const ENTITY_LABELS: Record<string, string> = {
-    product: "Продукт",
-    contact: "Контакт",
-  };
-
   const handleSelect = (field: typeof fields[number]) => {
     onInsert(`{{cf.${field.entity_type}.${field.id}}}`);
     setOpen(false);
@@ -117,19 +82,19 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
           <CommandEmpty>Поля не найдены</CommandEmpty>
           {showContactVars && (
             <CommandGroup heading="Контакт / Профиль">
-              {STANDARD_CONTACT_VARS.map((v) => (
+              {CONTACT_TOKENS.map((t) => (
                 <CommandItem
-                  key={v.key}
-                  value={`${v.label} ${v.key}`}
+                  key={t.key}
+                  value={t.searchKeywords}
                   className="text-xs py-1"
                   onSelect={() => {
-                    onInsert(`{{${v.key}}}`);
+                    onInsert(t.tokenString);
                     setOpen(false);
                   }}
                 >
-                  <span className="flex-1 truncate">{v.label}</span>
+                  <span className="flex-1 truncate">{t.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                    {t.badge}
                   </Badge>
                 </CommandItem>
               ))}
@@ -137,19 +102,19 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
           )}
           {showSystemVars && (
             <CommandGroup heading="Дата / Время">
-              {SYSTEM_DATE_VARS.map((v) => (
+              {DATETIME_TOKENS.map((t) => (
                 <CommandItem
-                  key={v.key}
-                  value={`${v.label} ${v.key}`}
+                  key={t.key}
+                  value={t.searchKeywords}
                   className="text-xs py-1"
                   onSelect={() => {
-                    onInsert(`{{${v.key}}}`);
+                    onInsert(t.tokenString);
                     setOpen(false);
                   }}
                 >
-                  <span className="flex-1 truncate">{v.label}</span>
+                  <span className="flex-1 truncate">{t.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                    {t.badge}
                   </Badge>
                 </CommandItem>
               ))}
@@ -166,7 +131,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
                 >
                   <span className="flex-1 truncate">{field.label}</span>
                   <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                    {DATA_TYPE_LABELS[field.data_type] ?? field.data_type}
+                    {field.data_type}
                   </Badge>
                 </CommandItem>
               ))}

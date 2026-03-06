@@ -162,3 +162,21 @@ body.impersonation-active .impersonation-offset {
     font-size: 16px;
   }
 }
+
+/* TipTap / ProseMirror editor styles */
+.ProseMirror {
+  outline: none;
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: hsl(var(--muted-foreground));
+  pointer-events: none;
+  height: 0;
+}
+.ProseMirror p {
+  margin: 0;
+}
+.ProseMirror [data-token] {
+  user-select: all;
+}

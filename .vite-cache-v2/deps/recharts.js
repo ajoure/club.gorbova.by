@@ -17435,7 +17435,7 @@ var import_react29 = __toESM(require_react());
 var import_react19 = __toESM(require_react());
 var import_prop_types = __toESM(require_prop_types());
 
-// node_modules/fast-equals/dist/esm/index.mjs
+// node_modules/react-smooth/node_modules/fast-equals/dist/esm/index.mjs
 var getOwnPropertyNames = Object.getOwnPropertyNames;
 var getOwnPropertySymbols = Object.getOwnPropertySymbols;
 var hasOwnProperty = Object.prototype.hasOwnProperty;
