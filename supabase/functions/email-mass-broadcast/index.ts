@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
     // Get recipients based on filters
     let query = supabase
       .from('profiles')
-      .select('user_id, email, full_name')
+      .select('user_id, email, full_name, phone, telegram_username')
       .not('email', 'is', null);
 
     const { data: profiles } = await query.limit(1000);
