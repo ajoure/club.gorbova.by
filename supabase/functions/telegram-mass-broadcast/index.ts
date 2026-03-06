@@ -290,14 +290,14 @@ Deno.serve(async (req) => {
             mediaField,
             mediaBuffer,
             mediaFileName,
-            message || undefined,
+            personalizedMessage || undefined,
             keyboard
           );
         } else {
           // Send text message
           result = await telegramRequest(botToken, 'sendMessage', {
             chat_id: profile.telegram_user_id,
-            text: message,
+            text: personalizedMessage,
             parse_mode: 'Markdown',
             reply_markup: keyboard,
           });
