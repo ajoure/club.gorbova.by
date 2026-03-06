@@ -106,6 +106,54 @@ const [includeButton, setIncludeButton] = useState(true);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emailSubjectRef = useRef<HTMLInputElement>(null);
+  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
+  const tgPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
+
+  // TokenPicker open states
+  const [tgPickerOpen, setTgPickerOpen] = useState(false);
+  const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
+  const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
+
+  // Insert token at caret helper
+  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: (v: string) => void, token: string) => {
+    const el = ref.current;
+    if (!el) { setter((prev: string) => prev + token); return; }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    setter(before + token + after);
+    requestAnimationFrame(() => {
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    });
+  }, []);
+
+  // Bracket triggers for 3 fields
+  const tgBracket = useBracketTrigger({
+    onOpen: () => setTgPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, "["),
+    isPickerOpen: tgPickerOpen,
+    onClose: () => setTgPickerOpen(false),
+  });
+
+  const emailSubjectBracket = useBracketTrigger({
+    onOpen: () => setEmailSubjectPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, "["),
+    isPickerOpen: emailSubjectPickerOpen,
+    onClose: () => setEmailSubjectPickerOpen(false),
+  });
+
+  const emailBodyBracket = useBracketTrigger({
+    onOpen: () => setEmailBodyPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, "["),
+    isPickerOpen: emailBodyPickerOpen,
+    onClose: () => setEmailBodyPickerOpen(false),
+  });
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
