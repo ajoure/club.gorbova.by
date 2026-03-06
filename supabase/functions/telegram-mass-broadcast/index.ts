@@ -60,7 +60,7 @@ interface BroadcastFilters {
  */
 function resolveContactTokens(
   text: string,
-  profile: { full_name?: string | null; email?: string | null; telegram_username?: string | null }
+  profile: { full_name?: string | null; first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null; telegram_username?: string | null }
 ): string {
   if (!text.includes('{{')) return text;
   
