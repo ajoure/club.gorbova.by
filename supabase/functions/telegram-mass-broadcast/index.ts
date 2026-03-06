@@ -75,6 +75,7 @@ function resolveContactTokens(
     .replace(/\{\{last_name\}\}/g, lastName)
     .replace(/\{\{name\}\}/g, fullName)
     .replace(/\{\{email\}\}/g, profile.email || '')
+    .replace(/\{\{phone\}\}/g, profile.phone || '')
     .replace(/\{\{telegram_username\}\}/g, profile.telegram_username || '');
 }
 
