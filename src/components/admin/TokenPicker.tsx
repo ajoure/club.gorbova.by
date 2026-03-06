@@ -43,7 +43,7 @@ const DATA_TYPE_LABELS: Record<string, string> = {
   multiselect: "Мульти",
 };
 
-export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef }: TokenPickerProps) {
+export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = openProp ?? internalOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
