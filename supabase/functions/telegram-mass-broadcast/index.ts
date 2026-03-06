@@ -174,7 +174,7 @@ Deno.serve(async (req) => {
     // Build user query based on filters
     let query = supabase
       .from('profiles')
-      .select('user_id, telegram_user_id, full_name')
+      .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null);
 
     const { data: allProfiles } = await query.limit(1000);
