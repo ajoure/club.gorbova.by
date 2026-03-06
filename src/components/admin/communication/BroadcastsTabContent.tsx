@@ -634,15 +634,31 @@ const [includeButton, setIncludeButton] = useState(true);
                       value={message}
                       onChange={setMessage}
                     />
-                    <Textarea
-                      ref={textareaRef}
-                      placeholder="Введите текст сообщения для рассылки..."
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      rows={6}
-                      className="resize-none font-mono text-sm"
-                    />
-                  </div>
+                    <div className="relative">
+                      <Textarea
+                        ref={textareaRef}
+                        placeholder="Введите текст сообщения для рассылки..."
+                        value={message}
+                        onChange={(e) => {
+                          const corrected = tgBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setMessage(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={tgBracket.handleKeyDown}
+                        rows={6}
+                        className="resize-none font-mono text-sm"
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={tgPickerAnchorRef}
+                        open={tgPickerOpen}
+                        onOpenChange={setTgPickerOpen}
+                        onInsert={(token) => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                      </p>
+                    </div>
 
                   {/* WYSIWYG Preview */}
                   {message && (
