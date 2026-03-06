@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -40,6 +40,8 @@ import {
   Play,
   AlertTriangle,
 } from "lucide-react";
+import { TokenPicker } from "@/components/admin/TokenPicker";
+import { useBracketTrigger } from "@/hooks/useBracketTrigger";
 import { OlegSettingsSection } from "./OlegSettingsSection";
 
 interface EmailTemplate {
@@ -76,6 +78,52 @@ export function CommunicationSettingsTabContent() {
   }>({ open: false, html: "", subject: "" });
 
   const [isRunningWorker, setIsRunningWorker] = useState(false);
+
+  // TokenPicker refs and state for template dialog
+  const tplSubjectRef = useRef<HTMLInputElement>(null);
+  const tplBodyRef = useRef<HTMLTextAreaElement>(null);
+  const tplSubjectAnchorRef = useRef<HTMLSpanElement>(null);
+  const tplBodyAnchorRef = useRef<HTMLSpanElement>(null);
+  const [tplSubjectPickerOpen, setTplSubjectPickerOpen] = useState(false);
+  const [tplBodyPickerOpen, setTplBodyPickerOpen] = useState(false);
+
+  const insertAtCaretTpl = useCallback((ref: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, field: 'subject' | 'body_html', token: string) => {
+    const el = ref.current;
+    if (!el) {
+      setTemplateDialog(prev => ({
+        ...prev,
+        template: prev.template ? { ...prev.template, [field]: prev.template[field] + token } : null,
+      }));
+      return;
+    }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    setTemplateDialog(prev => ({
+      ...prev,
+      template: prev.template ? { ...prev.template, [field]: before + token + after } : null,
+    }));
+    requestAnimationFrame(() => {
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    });
+  }, []);
+
+  const tplSubjectBracket = useBracketTrigger({
+    onOpen: () => setTplSubjectPickerOpen(true),
+    onInsertBracket: () => insertAtCaretTpl(tplSubjectRef as React.RefObject<HTMLInputElement>, 'subject', '['),
+    isPickerOpen: tplSubjectPickerOpen,
+    onClose: () => setTplSubjectPickerOpen(false),
+  });
+
+  const tplBodyBracket = useBracketTrigger({
+    onOpen: () => setTplBodyPickerOpen(true),
+    onInsertBracket: () => insertAtCaretTpl(tplBodyRef as React.RefObject<HTMLTextAreaElement>, 'body_html', '['),
+    isPickerOpen: tplBodyPickerOpen,
+    onClose: () => setTplBodyPickerOpen(false),
+  });
 
   // Fetch email templates
   const { data: templates = [], isLoading: loadingTemplates } = useQuery({
@@ -528,33 +576,67 @@ export function CommunicationSettingsTabContent() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Тема письма</Label>
-                <Input
-                  value={templateDialog.template.subject}
-                  onChange={(e) =>
-                    setTemplateDialog((prev) => ({
-                      ...prev,
-                      template: prev.template
-                        ? { ...prev.template, subject: e.target.value }
-                        : null,
-                    }))
-                  }
-                />
+                <div className="relative">
+                  <Input
+                    ref={tplSubjectRef}
+                    value={templateDialog.template.subject}
+                    onChange={(e) => {
+                      const corrected = tplSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                      const val = corrected ?? e.target.value;
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template
+                          ? { ...prev.template, subject: val }
+                          : null,
+                      }));
+                    }}
+                    onKeyDown={tplSubjectBracket.handleKeyDown}
+                  />
+                  <TokenPicker
+                    triggerless
+                    anchorRef={tplSubjectAnchorRef}
+                    open={tplSubjectPickerOpen}
+                    onOpenChange={setTplSubjectPickerOpen}
+                    onInsert={(token) => insertAtCaretTpl(tplSubjectRef as React.RefObject<HTMLInputElement>, 'subject', token)}
+                    showContactVars
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2">
                 <Label>HTML-содержимое</Label>
-                <Textarea
-                  className="font-mono text-xs min-h-[300px]"
-                  value={templateDialog.template.body_html}
-                  onChange={(e) =>
-                    setTemplateDialog((prev) => ({
-                      ...prev,
-                      template: prev.template
-                        ? { ...prev.template, body_html: e.target.value }
-                        : null,
-                    }))
-                  }
-                />
+                <div className="relative">
+                  <Textarea
+                    ref={tplBodyRef}
+                    className="font-mono text-xs min-h-[300px]"
+                    value={templateDialog.template.body_html}
+                    onChange={(e) => {
+                      const corrected = tplBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                      const val = corrected ?? e.target.value;
+                      setTemplateDialog((prev) => ({
+                        ...prev,
+                        template: prev.template
+                          ? { ...prev.template, body_html: val }
+                          : null,
+                      }));
+                    }}
+                    onKeyDown={tplBodyBracket.handleKeyDown}
+                  />
+                  <TokenPicker
+                    triggerless
+                    anchorRef={tplBodyAnchorRef}
+                    open={tplBodyPickerOpen}
+                    onOpenChange={setTplBodyPickerOpen}
+                    onInsert={(token) => insertAtCaretTpl(tplBodyRef as React.RefObject<HTMLTextAreaElement>, 'body_html', token)}
+                    showContactVars
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                  </p>
+                </div>
               </div>
 
               {templateDialog.template.variables?.length > 0 && (

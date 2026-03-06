@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,6 +57,8 @@ import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
 import { TelegramTextToolbar } from "./TelegramTextToolbar";
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
+import { TokenPicker } from "@/components/admin/TokenPicker";
+import { useBracketTrigger } from "@/hooks/useBracketTrigger";
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
@@ -104,6 +106,55 @@ const [includeButton, setIncludeButton] = useState(true);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emailSubjectRef = useRef<HTMLInputElement>(null);
+  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
+  const tgPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
+  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
+
+  // TokenPicker open states
+  const [tgPickerOpen, setTgPickerOpen] = useState(false);
+  const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
+  const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
+
+  // Insert token at caret helper
+  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<string>>, token: string) => {
+    const el = ref.current;
+    if (!el) { setter(prev => prev + token); return; }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? start;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    const newVal = before + token + after;
+    setter(newVal);
+    requestAnimationFrame(() => {
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    });
+  }, []);
+
+  // Bracket triggers for 3 fields
+  const tgBracket = useBracketTrigger({
+    onOpen: () => setTgPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, "["),
+    isPickerOpen: tgPickerOpen,
+    onClose: () => setTgPickerOpen(false),
+  });
+
+  const emailSubjectBracket = useBracketTrigger({
+    onOpen: () => setEmailSubjectPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, "["),
+    isPickerOpen: emailSubjectPickerOpen,
+    onClose: () => setEmailSubjectPickerOpen(false),
+  });
+
+  const emailBodyBracket = useBracketTrigger({
+    onOpen: () => setEmailBodyPickerOpen(true),
+    onInsertBracket: () => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, "["),
+    isPickerOpen: emailBodyPickerOpen,
+    onClose: () => setEmailBodyPickerOpen(false),
+  });
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
@@ -583,14 +634,31 @@ const [includeButton, setIncludeButton] = useState(true);
                       value={message}
                       onChange={setMessage}
                     />
-                    <Textarea
-                      ref={textareaRef}
-                      placeholder="Введите текст сообщения для рассылки..."
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value)}
-                      rows={6}
-                      className="resize-none font-mono text-sm"
-                    />
+                    <div className="relative">
+                      <Textarea
+                        ref={textareaRef}
+                        placeholder="Введите текст сообщения для рассылки..."
+                        value={message}
+                        onChange={(e) => {
+                          const corrected = tgBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setMessage(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={tgBracket.handleKeyDown}
+                        rows={6}
+                        className="resize-none font-mono text-sm"
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={tgPickerAnchorRef}
+                        open={tgPickerOpen}
+                        onOpenChange={setTgPickerOpen}
+                        onInsert={(token) => insertAtCaret(textareaRef as React.RefObject<HTMLTextAreaElement>, setMessage, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                      </p>
+                    </div>
                   </div>
 
                   {/* WYSIWYG Preview */}
@@ -656,25 +724,58 @@ const [includeButton, setIncludeButton] = useState(true);
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Тема письма</Label>
-                    <Input
-                      placeholder="Тема письма..."
-                      value={emailSubject}
-                      onChange={(e) => setEmailSubject(e.target.value)}
-                    />
+                    <div className="relative">
+                      <Input
+                        ref={emailSubjectRef}
+                        placeholder="Тема письма..."
+                        value={emailSubject}
+                        onChange={(e) => {
+                          const corrected = emailSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setEmailSubject(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={emailSubjectBracket.handleKeyDown}
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={emailSubjectPickerAnchorRef}
+                        open={emailSubjectPickerOpen}
+                        onOpenChange={setEmailSubjectPickerOpen}
+                        onInsert={(token) => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
+                      </p>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
                     <Label>Текст письма (HTML)</Label>
-                    <Textarea
-                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                      value={emailBody}
-                      onChange={(e) => setEmailBody(e.target.value)}
-                      rows={8}
-                      className="resize-none font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Поддерживается HTML-разметка
-                    </p>
+                    <div className="relative">
+                      <Textarea
+                        ref={emailBodyRef}
+                        placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                        value={emailBody}
+                        onChange={(e) => {
+                          const corrected = emailBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
+                          setEmailBody(corrected ?? e.target.value);
+                        }}
+                        onKeyDown={emailBodyBracket.handleKeyDown}
+                        rows={8}
+                        className="resize-none font-mono text-sm"
+                      />
+                      <TokenPicker
+                        triggerless
+                        anchorRef={emailBodyPickerAnchorRef}
+                        open={emailBodyPickerOpen}
+                        onOpenChange={setEmailBodyPickerOpen}
+                        onInsert={(token) => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, token)}
+                        showContactVars
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной. Поддерживается HTML-разметка.
+                      </p>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

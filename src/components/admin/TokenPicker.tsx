@@ -18,7 +18,19 @@ interface TokenPickerProps {
   triggerless?: boolean;
   /** Anchor element ref for triggerless mode positioning */
   anchorRef?: React.RefObject<HTMLElement>;
+  /** Show standard contact variables group */
+  showContactVars?: boolean;
 }
+
+/** Standard contact variables available in broadcast templates */
+const STANDARD_CONTACT_VARS = [
+  { key: "full_name", label: "Полное имя", dataType: "text" },
+  { key: "first_name", label: "Имя", dataType: "text" },
+  { key: "last_name", label: "Фамилия", dataType: "text" },
+  { key: "email", label: "Email", dataType: "text" },
+  { key: "phone", label: "Телефон", dataType: "text" },
+  { key: "telegram_username", label: "Telegram username", dataType: "text" },
+] as const;
 
 const DATA_TYPE_LABELS: Record<string, string> = {
   text: "Текст",
@@ -31,7 +43,7 @@ const DATA_TYPE_LABELS: Record<string, string> = {
   multiselect: "Мульти",
 };
 
-export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef }: TokenPickerProps) {
+export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = openProp ?? internalOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +100,25 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
         <CommandInput ref={searchInputRef} placeholder="Поиск по названию..." />
         <CommandList>
           <CommandEmpty>Поля не найдены</CommandEmpty>
+          {showContactVars && (
+            <CommandGroup heading="Контакт / Профиль">
+              {STANDARD_CONTACT_VARS.map((v) => (
+                <CommandItem
+                  key={v.key}
+                  value={`${v.label} ${v.key}`}
+                  onSelect={() => {
+                    onInsert(`{{${v.key}}}`);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="flex-1 truncate">{v.label}</span>
+                  <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                  </Badge>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
           {entityTypes.map((et) => (
             <CommandGroup key={et} heading={ENTITY_LABELS[et] ?? et}>
               {(grouped[et] ?? []).map((field) => (
