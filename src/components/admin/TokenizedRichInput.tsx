@@ -334,7 +334,7 @@ export function TokenizedRichInput({
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
-          (p) => (p as any).key !== bracketPluginKey.key
+          (p) => p !== plugin
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
