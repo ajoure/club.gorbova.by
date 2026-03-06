@@ -20,6 +20,8 @@ interface TokenPickerProps {
   anchorRef?: React.RefObject<HTMLElement>;
   /** Show standard contact variables group */
   showContactVars?: boolean;
+  /** Show system date/time variables group */
+  showSystemVars?: boolean;
 }
 
 /** Standard contact variables available in broadcast templates */
@@ -30,6 +32,19 @@ const STANDARD_CONTACT_VARS = [
   { key: "email", label: "Email", dataType: "text" },
   { key: "phone", label: "Телефон", dataType: "text" },
   { key: "telegram_username", label: "Telegram username", dataType: "text" },
+] as const;
+
+/** System date/time variables */
+const SYSTEM_DATE_VARS = [
+  { key: "today", label: "Сегодня (дд.мм.гггг)", dataType: "date" },
+  { key: "tomorrow", label: "Завтра", dataType: "date" },
+  { key: "yesterday", label: "Вчера", dataType: "date" },
+  { key: "now", label: "Сейчас (дата+время)", dataType: "date" },
+  { key: "month_name", label: "Месяц (словом)", dataType: "date" },
+  { key: "month", label: "Месяц (01-12)", dataType: "date" },
+  { key: "year", label: "Год", dataType: "date" },
+  { key: "day", label: "День (01-31)", dataType: "date" },
+  { key: "weekday", label: "День недели", dataType: "date" },
 ] as const;
 
 const DATA_TYPE_LABELS: Record<string, string> = {
@@ -43,7 +58,7 @@ const DATA_TYPE_LABELS: Record<string, string> = {
   multiselect: "Мульти",
 };
 
-export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true }: TokenPickerProps) {
+export function TokenPicker({ onInsert, entityTypes = ["product"], open: openProp, onOpenChange, triggerless, anchorRef, showContactVars = true, showSystemVars = true }: TokenPickerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = openProp ?? internalOpen;
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -95,10 +110,10 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
   };
 
   const content = (
-    <PopoverContent className="w-72 p-0" align="start">
+    <PopoverContent className="max-w-[320px] p-0" align="start" side="bottom" collisionPadding={8}>
       <Command>
-        <CommandInput ref={searchInputRef} placeholder="Поиск по названию..." />
-        <CommandList>
+        <CommandInput ref={searchInputRef} placeholder="Поиск по названию..." className="text-xs h-8" />
+        <CommandList className="max-h-[240px] overflow-auto">
           <CommandEmpty>Поля не найдены</CommandEmpty>
           {showContactVars && (
             <CommandGroup heading="Контакт / Профиль">
@@ -106,6 +121,27 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
                 <CommandItem
                   key={v.key}
                   value={`${v.label} ${v.key}`}
+                  className="text-xs py-1"
+                  onSelect={() => {
+                    onInsert(`{{${v.key}}}`);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="flex-1 truncate">{v.label}</span>
+                  <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
+                    {DATA_TYPE_LABELS[v.dataType] ?? v.dataType}
+                  </Badge>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+          {showSystemVars && (
+            <CommandGroup heading="Дата / Время">
+              {SYSTEM_DATE_VARS.map((v) => (
+                <CommandItem
+                  key={v.key}
+                  value={`${v.label} ${v.key}`}
+                  className="text-xs py-1"
                   onSelect={() => {
                     onInsert(`{{${v.key}}}`);
                     setOpen(false);
@@ -125,6 +161,7 @@ export function TokenPicker({ onInsert, entityTypes = ["product"], open: openPro
                 <CommandItem
                   key={field.id}
                   value={`${field.label} ${field.key}`}
+                  className="text-xs py-1"
                   onSelect={() => handleSelect(field)}
                 >
                   <span className="flex-1 truncate">{field.label}</span>

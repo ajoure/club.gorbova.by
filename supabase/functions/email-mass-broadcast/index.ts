@@ -384,6 +384,8 @@ Deno.serve(async (req) => {
         failed,
         total: sent + failed,
         subject,
+        tokens_used_contact: tokensInfo.contact,
+        tokens_used_system: tokensInfo.system,
       },
     });
 
