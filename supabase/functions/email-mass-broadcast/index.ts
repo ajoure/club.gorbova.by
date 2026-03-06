@@ -329,9 +329,9 @@ Deno.serve(async (req) => {
     for (const profile of filteredProfiles) {
       if (!profile.email) continue;
 
-      // Resolve standard contact tokens per-recipient
-      const personalizedSubject = resolveContactTokens(subject, profile);
-      const personalizedHtml = resolveContactTokens(html, profile);
+      // Resolve contact tokens first, then system tokens
+      const personalizedSubject = resolveSystemTokens(resolveContactTokens(subject, profile), broadcastNow);
+      const personalizedHtml = resolveSystemTokens(resolveContactTokens(html, profile), broadcastNow);
 
       try {
         await sendEmailViaSMTP({
