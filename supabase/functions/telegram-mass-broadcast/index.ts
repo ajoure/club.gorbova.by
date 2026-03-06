@@ -66,8 +66,8 @@ function resolveContactTokens(
   
   const fullName = profile.full_name || '';
   const parts = fullName.split(/\s+/);
-  const firstName = parts[0] || '';
-  const lastName = parts.slice(1).join(' ') || '';
+  const firstName = profile.first_name || parts[0] || '';
+  const lastName = profile.last_name || parts.slice(1).join(' ') || '';
 
   return text
     .replace(/\{\{full_name\}\}/g, fullName)
