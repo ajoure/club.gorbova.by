@@ -38,8 +38,7 @@ import {
   Play,
   AlertTriangle,
 } from "lucide-react";
-import { TokenPicker } from "@/components/admin/TokenPicker";
-import { useBracketTrigger } from "@/hooks/useBracketTrigger";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { OlegSettingsSection } from "./OlegSettingsSection";
 
 interface EmailTemplate {
