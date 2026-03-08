@@ -25,7 +25,8 @@ import Text from "@tiptap/extension-text";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
-import History from "@tiptap/extension-history";
+import { history, undo, redo } from "@tiptap/pm/history";
+import { keymap } from "@tiptap/pm/keymap";
 import Link from "@tiptap/extension-link";
 import {
   CONTACT_TOKENS,
@@ -177,6 +178,18 @@ const SingleLine = Extension.create({
       Enter: () => true, // block Enter
       "Shift-Enter": () => true, // block Shift+Enter too
     };
+  },
+});
+
+// ─── History via ProseMirror plugins (no @tiptap/extension-history) ──
+
+const ProseMirrorHistory = Extension.create({
+  name: "prosemirrorHistory",
+  addProseMirrorPlugins() {
+    return [
+      history(),
+      keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo }),
+    ];
   },
 });
 
@@ -359,7 +372,7 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      History,
+      ProseMirrorHistory,
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
