@@ -646,34 +646,6 @@ export function TokenizedRichInput({
 
   return (
     <div className="space-y-1">
-      {showToolbar && (
-        <div className="flex gap-1 mb-1">
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("bold").run()}
-            className={cn(editor.isActive("bold") && "bg-muted")} title="Жирный">
-            <BoldIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("italic").run()}
-            className={cn(editor.isActive("italic") && "bg-muted")} title="Курсив">
-            <ItalicIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("code").run()}
-            className={cn(editor.isActive("code") && "bg-muted")} title="Код">
-            <CodeIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => {
-              const url = prompt("Введите URL:");
-              if (url) editor.chain().focus().setMark("link", { href: url }).run();
-            }}
-            title="Ссылка">
-            <LinkIcon className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-
       <div className="relative">
         <EditorContent editor={editor} />
       </div>

@@ -77,8 +77,11 @@ export function validateTemplateVariables(text: string): {
   usedVariables: string[];
   invalidCfTokens: string[];
 } {
+  // Strip align prefixes before validation (they are not template variables)
+  const cleanedInput = text.replace(/\[\[align:(left|center|right)\]\]/g, '');
+
   // Step 1: Find all {{cf.*}} tokens and validate them
-  const allCfTokens = text.match(CF_ANY_REGEX) || [];
+  const allCfTokens = cleanedInput.match(CF_ANY_REGEX) || [];
   const validCfTokens = text.match(CF_TOKEN_REGEX) || [];
   const validCfSet = new Set(validCfTokens);
   const invalidCfTokens = allCfTokens.filter(t => !validCfSet.has(t));
