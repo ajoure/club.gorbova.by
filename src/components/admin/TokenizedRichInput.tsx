@@ -552,6 +552,7 @@ export function TokenizedRichInput({
             <span className="absolute bottom-0 left-4 inline-block w-0 h-0" />
           </PopoverAnchor>
           <PopoverContent
+            ref={popoverRef}
             className="max-w-[320px] p-0"
             align="start"
             side="bottom"
