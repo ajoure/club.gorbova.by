@@ -1184,8 +1184,6 @@ export default function AdminEmail() {
     </div>
   );
 }
-                      const corrected = subjectBracket.handleChange(e.target.value, cursor);
-                      if (subjectPickerOpen && corrected === null) setSubjectPickerOpen(false);
                       const finalValue = corrected ?? e.target.value;
                       setTemplateValidationError(null);
                       setTemplateDialog((prev) => ({
