@@ -401,6 +401,11 @@ export function TokenizedRichInput({
   useEffect(() => {
     if (!editor) return;
 
+    // Remove any existing bracket plugin first (guard against duplicates)
+    const existingPlugins = editor.state.plugins.filter(
+      (p) => (p as any).key !== bracketPluginKey.key
+    );
+
     const plugin = createBracketPlugin(
       () => {
         setPickerOpen(true);
@@ -408,12 +413,13 @@ export function TokenizedRichInput({
       },
       () => {
         editor.commands.insertContent("[");
-      }
+      },
+      pickerOpenRef,
+      closePicker,
     );
 
-    const { state } = editor;
-    const newState = state.reconfigure({
-      plugins: [...state.plugins, plugin],
+    const newState = editor.state.reconfigure({
+      plugins: [...existingPlugins, plugin],
     });
     editor.view.updateState(newState);
 
@@ -421,7 +427,7 @@ export function TokenizedRichInput({
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
-          (p) => p !== plugin
+          (p) => (p as any).key !== bracketPluginKey.key
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
@@ -429,7 +435,7 @@ export function TokenizedRichInput({
         // editor may be destroyed
       }
     };
-  }, [editor]);
+  }, [editor, closePicker]);
 
   // Sync external value changes (e.g., loading saved template)
   useEffect(() => {
