@@ -326,9 +326,16 @@ export function TokenizedRichInput({
   className,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerOpenRef = useRef(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
+
+  // Keep ref in sync with state
+  useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
+
+  const closePicker = useCallback(() => setPickerOpen(false), []);
 
   // Load product fields for registry
   const { data: productFields = [] } = useQuery({
@@ -341,17 +348,6 @@ export function TokenizedRichInput({
   useEffect(() => {
     setProductFieldsCache(productFields);
   }, [productFields]);
-
-  // All tokens for picker
-  const allTokens = useMemo(
-    () => [...CONTACT_TOKENS, ...DATETIME_TOKENS, ...productFields],
-    [productFields]
-  );
-
-  const openPicker = useCallback(() => {
-    setPickerOpen(true);
-    requestAnimationFrame(() => searchInputRef.current?.focus());
-  }, []);
 
   // Build extensions list
   const extensions = useMemo(() => {
