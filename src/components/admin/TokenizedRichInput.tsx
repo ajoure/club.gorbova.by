@@ -25,8 +25,6 @@ import Text from "@tiptap/extension-text";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
-import { history, undo, redo } from "@tiptap/pm/history";
-import { keymap } from "@tiptap/pm/keymap";
 import Link from "@tiptap/extension-link";
 import {
   CONTACT_TOKENS,
