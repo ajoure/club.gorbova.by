@@ -644,31 +644,6 @@ export function TokenizedRichInput({
     </div>
   );
 }
-      (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
-    );
-
-    const plugin = createBracketPlugin(
-      () => {
-        setPickerOpen(true);
-        requestAnimationFrame(() => searchInputRef.current?.focus());
-      },
-      () => {
-        editor.commands.insertContent("[");
-      },
-      pickerOpenRef,
-      closePicker,
-    );
-
-    const newState = editor.state.reconfigure({
-      plugins: [...existingPlugins, plugin],
-    });
-    editor.view.updateState(newState);
-
-    return () => {
-      try {
-        const currentState = editor.state;
-        const filtered = currentState.plugins.filter(
-          (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
