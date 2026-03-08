@@ -405,10 +405,14 @@ export function TokenizedRichInput({
       const rect = dropdownRef.current?.getBoundingClientRect();
       const ddH = rect?.height || 280;
       const ddW = rect?.width || 320;
-      const top = coords.bottom + 6 + ddH > viewportH
-        ? coords.top - ddH - 6
+      // Clamp by editor rect to stay within modal/editor bounds
+      const editorRect = ed.view.dom.getBoundingClientRect();
+      const minLeft = Math.max(4, editorRect.left);
+      const maxLeft = Math.min(viewportW - ddW - 4, editorRect.right - ddW);
+      const top = coords.bottom + 6 + ddH > Math.min(viewportH, editorRect.bottom + ddH + 20)
+        ? Math.max(4, coords.top - ddH - 6)
         : coords.bottom + 6;
-      const left = Math.max(4, Math.min(coords.left, viewportW - ddW - 4));
+      const left = Math.max(minLeft, Math.min(coords.left, maxLeft));
       setCaretCoords({ top, left });
     } catch {
       // editor may not be ready
