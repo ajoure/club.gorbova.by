@@ -309,6 +309,7 @@ const [includeButton, setIncludeButton] = useState(true);
           button_text: includeButton ? buttonText : undefined,
           button_url: includeButton ? buttonUrl : undefined,
           filters,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
