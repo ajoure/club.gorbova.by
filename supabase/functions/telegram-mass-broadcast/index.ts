@@ -85,6 +85,8 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // NOTE: this 'supabase' is a SERVICE_ROLE client (RLS bypass).
+    // Required by resolveCustomFieldTokens and direct table queries.
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
