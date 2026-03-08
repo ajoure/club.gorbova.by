@@ -181,16 +181,15 @@ export function BroadcastTemplateDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Текст письма (HTML)</Label>
-                <Textarea
+                <Label>Текст письма</Label>
+                <TokenizedRichInput
                   value={emailBodyHtml}
-                  onChange={(e) => setEmailBodyHtml(e.target.value)}
-                  placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                  onChange={setEmailBodyHtml}
+                  placeholder="Содержимое письма..."
                   rows={12}
-                  className="resize-none font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Поддерживается HTML-разметка
+                  Нажмите [ для вставки переменной
                 </p>
               </div>
             </TabsContent>
