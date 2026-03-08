@@ -186,6 +186,7 @@ export function BroadcastTemplateDialog({
                   onChange={setEmailBodyHtml}
                   placeholder="Содержимое письма..."
                   rows={12}
+                  allowAlign
                 />
                 <p className="text-xs text-muted-foreground">
                   Нажмите [ для вставки переменной

@@ -39,7 +39,7 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
     try {
       const { data, error } = await supabase.functions.invoke('telegram-mass-broadcast', {
         body: {
-          message: message.trim(),
+          message: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
           include_button: includeButton,
           button_text: includeButton ? buttonText : undefined,
         },

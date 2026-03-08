@@ -719,40 +719,44 @@ export function TokenizedRichInput({
           >
             <LinkIcon className="h-3.5 w-3.5" />
           </button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "left" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("left").run(); }}
-            title="По левому краю"
-          >
-            <AlignLeft className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "center" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("center").run(); }}
-            title="По центру"
-          >
-            <AlignCenter className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "right" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("right").run(); }}
-            title="По правому краю"
-          >
-            <AlignRight className="h-3.5 w-3.5" />
-          </button>
+          {allowAlign && (
+            <>
+              <div className="w-px h-5 bg-border mx-0.5" />
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "left" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("left").run(); }}
+                title="По левому краю"
+              >
+                <AlignLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "center" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("center").run(); }}
+                title="По центру"
+              >
+                <AlignCenter className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "right" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("right").run(); }}
+                title="По правому краю"
+              >
+                <AlignRight className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       )}
 

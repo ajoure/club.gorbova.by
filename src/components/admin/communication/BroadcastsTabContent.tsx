@@ -679,6 +679,7 @@ const [includeButton, setIncludeButton] = useState(true);
                       onChange={setEmailBody}
                       placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
                       rows={8}
+                      allowAlign
                     />
                   </div>
 
