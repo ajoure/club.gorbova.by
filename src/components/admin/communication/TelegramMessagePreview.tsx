@@ -29,13 +29,11 @@ export function TelegramMessagePreview({ text }: TelegramMessagePreviewProps) {
         // Links: [text](url)
         .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<a href='$2' class='text-primary underline' target='_blank' rel='noopener'>$1</a>");
       
-      if (align && align !== "left") {
-        return `<div style="text-align:${align}">${html}</div>`;
-      }
-      return html;
+      const style = align ? ` style="text-align:${align};"` : "";
+      return `<div${style}>${html || "&nbsp;"}</div>`;
     });
     
-    return processedLines.join("<br />");
+    return processedLines.join("");
   }, [text]);
 
   if (!text) {

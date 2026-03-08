@@ -407,9 +407,11 @@ export function TokenizedRichInput({
       const editorRect = ed.view.dom.getBoundingClientRect();
       const minLeft = Math.max(4, editorRect.left);
       const maxLeft = Math.min(viewportW - ddW - 4, editorRect.right - ddW);
-      const top = coords.bottom + 6 + ddH > Math.min(viewportH, editorRect.bottom + ddH + 20)
-        ? Math.max(4, coords.top - ddH - 6)
-        : coords.bottom + 6;
+      let top = coords.bottom + 6;
+      if (top + ddH > viewportH) top = coords.top - ddH - 6;
+      const minTop = Math.max(4, editorRect.top + 4);
+      const maxTop = Math.min(viewportH - ddH - 4, editorRect.bottom - ddH - 4);
+      top = Math.max(minTop, Math.min(top, maxTop));
       const left = Math.max(minLeft, Math.min(coords.left, maxLeft));
       setCaretCoords({ top, left });
     } catch {
