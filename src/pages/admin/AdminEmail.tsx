@@ -1105,12 +1105,7 @@ export default function AdminEmail() {
                     {templateValidationError}
                   </p>
                 )
-                    onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
-                  />
-                </div>
-                <div className="relative">
-                  <Input
-                    ref={subjectRef}
+              </div>
                     value={templateDialog.template.subject}
                     onKeyDown={subjectBracket.handleKeyDown}
                     onChange={(e) => {
