@@ -102,7 +102,8 @@ const AdminLessonProgress = lazy(() => import("./pages/admin/AdminLessonProgress
 const AdminBepaidArchiveImport = lazy(() => import("./pages/admin/AdminBepaidArchiveImport"));
 const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
 const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
-const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication"));
+// Static import to avoid stale HMR chunk errors
+import AdminCommunication from "./pages/admin/AdminCommunication";
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
 const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
