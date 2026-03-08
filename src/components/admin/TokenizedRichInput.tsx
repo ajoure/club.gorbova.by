@@ -669,10 +669,10 @@ export function TokenizedRichInput({
       </div>
 
       {/* P0.1: Bubble toolbar on text selection (multi-line only) */}
-      {bubbleOpen && bubbleCoords && !singleLine && (
+      {bubbleOpen && bubbleCoords && !singleLine && createPortal(
         <div
           ref={bubbleRef}
-          className="fixed z-[1001] flex items-center gap-0.5 px-1 py-0.5 rounded-md border bg-popover shadow-md animate-in fade-in-0 zoom-in-95 duration-100"
+          className="fixed z-[9999] flex items-center gap-0.5 px-1 py-0.5 rounded-md border bg-popover shadow-md animate-in fade-in-0 zoom-in-95 duration-100"
           style={{ top: bubbleCoords.top, left: bubbleCoords.left }}
           onMouseDown={(e) => e.preventDefault()}
         >
@@ -762,7 +762,8 @@ export function TokenizedRichInput({
               </button>
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Floating dropdown at caret position */}
