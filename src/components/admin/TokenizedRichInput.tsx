@@ -25,8 +25,6 @@ import Text from "@tiptap/extension-text";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
-import { history, undo, redo } from "@tiptap/pm/history";
-import { keymap } from "@tiptap/pm/keymap";
 import Link from "@tiptap/extension-link";
 import {
   CONTACT_TOKENS,
@@ -181,17 +179,7 @@ const SingleLine = Extension.create({
   },
 });
 
-// ─── History via ProseMirror plugins (no @tiptap/extension-history) ──
-
-const ProseMirrorHistory = Extension.create({
-  name: "prosemirrorHistory",
-  addProseMirrorPlugins() {
-    return [
-      history(),
-      keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo }),
-    ];
-  },
-});
+// ─── No History extension — not needed for short template inputs ──
 
 // ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
 
@@ -372,7 +360,7 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      ProseMirrorHistory,
+      // No History extension needed for template inputs
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
