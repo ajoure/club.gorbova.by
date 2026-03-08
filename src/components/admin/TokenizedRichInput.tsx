@@ -299,6 +299,8 @@ interface TokenizedRichInputProps {
   singleLine?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
+  allowAlign?: boolean;
 }
 
 export function TokenizedRichInput({
@@ -309,6 +311,7 @@ export function TokenizedRichInput({
   singleLine = false,
   disabled = false,
   className,
+  allowAlign = false,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
@@ -383,6 +386,10 @@ export function TokenizedRichInput({
       let serialized = serializeDoc(ed);
       if (singleLine) {
         serialized = serialized.replace(/\n/g, " ");
+      }
+      // Strip align markers when not allowed (Telegram-safe)
+      if (!allowAlign) {
+        serialized = serialized.replace(/\[\[align:(left|center|right)\]\]/g, "");
       }
       onChange(serialized);
     },
@@ -589,23 +596,27 @@ export function TokenizedRichInput({
       return;
     }
     try {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      const from = ed.state.selection.from;
+      const to = ed.state.selection.to;
+      const c1 = ed.view.coordsAtPos(from);
+      const c2 = ed.view.coordsAtPos(to);
+      const selRect = {
+        left: Math.min(c1.left, c2.left),
+        right: Math.max(c1.right, c2.right),
+        top: Math.min(c1.top, c2.top),
+        bottom: Math.max(c1.bottom, c2.bottom),
+      };
+      if (selRect.right - selRect.left === 0 && selRect.bottom - selRect.top === 0) {
         setBubbleOpen(false);
         return;
       }
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) {
-        setBubbleOpen(false);
-        return;
-      }
-      const toolbarW = 240;
+      const editorRect = ed.view.dom.getBoundingClientRect();
+      const toolbarW = allowAlign ? 300 : 200;
       const toolbarH = 40;
-      let top = rect.top - toolbarH - 8;
-      if (top < 4) top = rect.bottom + 6;
-      let left = rect.left + rect.width / 2 - toolbarW / 2;
-      left = Math.max(4, Math.min(left, window.innerWidth - toolbarW - 4));
+      let top = selRect.top - toolbarH - 8;
+      if (top < editorRect.top + 4) top = selRect.bottom + 6;
+      let left = (selRect.left + selRect.right) / 2 - toolbarW / 2;
+      left = Math.max(editorRect.left + 4, Math.min(left, editorRect.right - toolbarW - 4));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
     } catch {
@@ -708,40 +719,44 @@ export function TokenizedRichInput({
           >
             <LinkIcon className="h-3.5 w-3.5" />
           </button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "left" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("left").run(); }}
-            title="По левому краю"
-          >
-            <AlignLeft className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "center" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("center").run(); }}
-            title="По центру"
-          >
-            <AlignCenter className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "p-1.5 rounded transition-colors hover:bg-accent",
-              editor.isActive({ textAlign: "right" }) && "bg-accent text-accent-foreground"
-            )}
-            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("right").run(); }}
-            title="По правому краю"
-          >
-            <AlignRight className="h-3.5 w-3.5" />
-          </button>
+          {allowAlign && (
+            <>
+              <div className="w-px h-5 bg-border mx-0.5" />
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "left" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("left").run(); }}
+                title="По левому краю"
+              >
+                <AlignLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "center" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("center").run(); }}
+                title="По центру"
+              >
+                <AlignCenter className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "p-1.5 rounded transition-colors hover:bg-accent",
+                  editor.isActive({ textAlign: "right" }) && "bg-accent text-accent-foreground"
+                )}
+                onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("right").run(); }}
+                title="По правому краю"
+              >
+                <AlignRight className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       )}
 

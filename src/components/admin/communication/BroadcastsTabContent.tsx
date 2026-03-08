@@ -59,7 +59,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
-import { TelegramMessagePreview } from "./TelegramMessagePreview";
+
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface BroadcastFilters {
@@ -271,7 +271,7 @@ const [includeButton, setIncludeButton] = useState(true);
     mutationFn: async () => {
       if (mediaFile) {
         const formData = new FormData();
-        formData.append("message", message.trim());
+        formData.append("message", message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""));
         formData.append("include_button", String(includeButton));
         if (includeButton) {
           formData.append("button_text", buttonText);
@@ -304,7 +304,7 @@ const [includeButton, setIncludeButton] = useState(true);
 
       const { data, error } = await supabase.functions.invoke("telegram-mass-broadcast", {
         body: {
-          message: message.trim(),
+          message: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
           include_button: includeButton,
           button_text: includeButton ? buttonText : undefined,
           button_url: includeButton ? buttonUrl : undefined,
@@ -366,7 +366,7 @@ const [includeButton, setIncludeButton] = useState(true);
       const { data, error } = await supabase.functions.invoke("telegram-send-test", {
         body: {
           botId: bots[0].id,
-          messageText: message.trim(),
+          messageText: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
           buttonText: includeButton ? buttonText : undefined,
           buttonUrl: includeButton ? buttonUrl : undefined,
           product_context_id: productContextId,
@@ -613,18 +613,6 @@ const [includeButton, setIncludeButton] = useState(true);
                     )}
                   </div>
 
-                  {/* WYSIWYG Preview */}
-                  {message && (
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2">
-                        <Eye className="h-4 w-4" />
-                        Предпросмотр
-                      </Label>
-                      <div className="rounded-lg border bg-muted/30 p-4">
-                        <TelegramMessagePreview text={message} />
-                      </div>
-                    </div>
-                  )}
 
                   <Separator />
 
@@ -691,6 +679,7 @@ const [includeButton, setIncludeButton] = useState(true);
                       onChange={setEmailBody}
                       placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
                       rows={8}
+                      allowAlign
                     />
                   </div>
 
