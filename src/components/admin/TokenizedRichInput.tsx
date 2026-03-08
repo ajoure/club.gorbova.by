@@ -28,6 +28,7 @@ import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import Code from "@tiptap/extension-code";
 import Link from "@tiptap/extension-link";
+import TextAlign from "@tiptap/extension-text-align";
 import {
   CONTACT_TOKENS,
   DATETIME_TOKENS,
@@ -40,7 +41,7 @@ import {
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon } from "lucide-react";
+import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TokenNode = Node.create({
@@ -345,6 +346,7 @@ export function TokenizedRichInput({
       Italic.configure({}),
       Code.configure({}),
       Link.configure({ openOnClick: false }),
+      TextAlign.configure({ types: ["paragraph"] }),
       TokenNode,
     ];
     if (singleLine) {
@@ -446,10 +448,14 @@ export function TokenizedRichInput({
 
     const plugin = createBracketPlugin(
       () => {
-        // P0.2: compute coords immediately before opening
+        // P0.2: focus editor first, then compute coords, then open
+        editor.chain().focus().run();
         updateCaretCoords();
         setPickerOpen(true);
-        requestAnimationFrame(() => searchInputRef.current?.focus());
+        requestAnimationFrame(() => {
+          updateCaretCoords();
+          searchInputRef.current?.focus();
+        });
       },
       () => {
         editor.commands.insertContent("[");
@@ -584,7 +590,7 @@ export function TokenizedRichInput({
         setBubbleOpen(false);
         return;
       }
-      const toolbarW = 160;
+      const toolbarW = 240;
       const toolbarH = 40;
       let top = rect.top - toolbarH - 8;
       if (top < 4) top = rect.bottom + 6;
@@ -719,6 +725,40 @@ export function TokenizedRichInput({
             title="Ссылка"
           >
             <LinkIcon className="h-3.5 w-3.5" />
+          </button>
+          <div className="w-px h-5 bg-border mx-0.5" />
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive({ textAlign: "left" }) && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("left").run(); }}
+            title="По левому краю"
+          >
+            <AlignLeft className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive({ textAlign: "center" }) && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("center").run(); }}
+            title="По центру"
+          >
+            <AlignCenter className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive({ textAlign: "right" }) && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().setTextAlign("right").run(); }}
+            title="По правому краю"
+          >
+            <AlignRight className="h-3.5 w-3.5" />
           </button>
         </div>
       )}

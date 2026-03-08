@@ -602,7 +602,6 @@ const [includeButton, setIncludeButton] = useState(true);
                       onChange={setMessage}
                       placeholder="Введите текст сообщения для рассылки..."
                       rows={6}
-                      showToolbar={true}
                     />
                     {showCfWarning && (
                       <Alert variant="destructive">

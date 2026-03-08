@@ -129,7 +129,6 @@ export function BroadcastTemplateDialog({
                   onChange={setMessageText}
                   placeholder="Введите текст сообщения..."
                   rows={8}
-                  showToolbar
                 />
                 <p className="text-xs text-muted-foreground">
                   Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки переменной.
