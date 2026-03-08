@@ -107,17 +107,7 @@ const [includeButton, setIncludeButton] = useState(true);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
 
-  // cf warning: check if message/email contains cf.product tokens
-  const hasCfTokens = useMemo(() => {
-    const allText = message + emailSubject + emailBody;
-    return allText.includes('{{cf.product.');
-  }, [message, emailSubject, emailBody]);
-
-  const productContextId = useMemo(() => {
-    return (filters.productId && filters.productId !== 'all') ? filters.productId : null;
-  }, [filters.productId]);
-
-  const showCfWarning = hasCfTokens && !productContextId;
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
