@@ -497,9 +497,9 @@ export function TokenizedRichInput({
   useEffect(() => {
     if (!pickerOpen) return;
     const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (dropdownRef.current?.contains(target)) return;
-      if (editor && editor.view.dom.contains(target)) return;
+      const target = e.target as globalThis.Node;
+      if (dropdownRef.current?.contains(target as globalThis.Node)) return;
+      if (editor && editor.view.dom.contains(target as globalThis.Node)) return;
       setPickerOpen(false);
     };
     document.addEventListener("mousedown", handler);
