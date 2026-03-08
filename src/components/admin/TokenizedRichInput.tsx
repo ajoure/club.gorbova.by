@@ -590,7 +590,7 @@ export function TokenizedRichInput({
         setBubbleOpen(false);
         return;
       }
-      const toolbarW = 160;
+      const toolbarW = 240;
       const toolbarH = 40;
       let top = rect.top - toolbarH - 8;
       if (top < 4) top = rect.bottom + 6;
