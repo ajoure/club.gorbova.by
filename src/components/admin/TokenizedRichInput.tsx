@@ -448,10 +448,14 @@ export function TokenizedRichInput({
 
     const plugin = createBracketPlugin(
       () => {
-        // P0.2: compute coords immediately before opening
+        // P0.2: focus editor first, then compute coords, then open
+        editor.chain().focus().run();
         updateCaretCoords();
         setPickerOpen(true);
-        requestAnimationFrame(() => searchInputRef.current?.focus());
+        requestAnimationFrame(() => {
+          updateCaretCoords();
+          searchInputRef.current?.focus();
+        });
       },
       () => {
         editor.commands.insertContent("[");
