@@ -1,11 +1,10 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -32,6 +31,10 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
+  Alert,
+  AlertDescription,
+} from "@/components/ui/alert";
+import {
   Send,
   Mail,
   MessageCircle,
@@ -50,15 +53,13 @@ import {
   Circle,
   X,
   Paperclip,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
-// TelegramTextToolbar removed from TG broadcast (now using TokenizedRichInput)
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
-import { TokenPicker } from "@/components/admin/TokenPicker";
-import { useBracketTrigger } from "@/hooks/useBracketTrigger";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface BroadcastFilters {
