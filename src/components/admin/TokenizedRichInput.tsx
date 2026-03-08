@@ -395,12 +395,255 @@ export function TokenizedRichInput({
     },
   });
 
+  // Keep editorRef in sync
+  useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
+
+  // Compute caret coords
+  const updateCaretCoords = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    try {
+      const coords = ed.view.coordsAtPos(ed.state.selection.from);
+      const viewportH = window.innerHeight;
+      const dropdownH = 280;
+      const top = coords.bottom + 6 + dropdownH > viewportH
+        ? coords.top - dropdownH - 6
+        : coords.bottom + 6;
+      const left = Math.min(coords.left, window.innerWidth - 330);
+      setCaretCoords({ top, left: Math.max(4, left) });
+    } catch {
+      // editor may not be ready
+    }
+  }, []);
+
+  // Reposition on scroll/resize while picker is open
+  useEffect(() => {
+    if (!pickerOpen) return;
+    updateCaretCoords();
+    const onReposition = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [pickerOpen, updateCaretCoords]);
+
+  // Reposition on selectionUpdate/transaction
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    editor.on("selectionUpdate", handler);
+    editor.on("update", handler);
+    return () => { editor.off("selectionUpdate", handler); editor.off("update", handler); };
+  }, [editor, updateCaretCoords]);
+
   // Register bracket plugin after editor is created
   useEffect(() => {
     if (!editor) return;
 
-    // Remove any existing bracket plugin first (guard against duplicates)
     const existingPlugins = editor.state.plugins.filter(
+      (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
+    );
+
+    const plugin = createBracketPlugin(
+      () => {
+        setPickerOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+      },
+      () => {
+        editor.commands.insertContent("[");
+      },
+      pickerOpenRef,
+      closePicker,
+    );
+
+    const newState = editor.state.reconfigure({
+      plugins: [...existingPlugins, plugin],
+    });
+    editor.view.updateState(newState);
+
+    return () => {
+      try {
+        const currentState = editor.state;
+        const filtered = currentState.plugins.filter(
+          (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
+        );
+        const cleanState = currentState.reconfigure({ plugins: filtered });
+        editor.view.updateState(cleanState);
+      } catch {
+        // editor may be destroyed
+      }
+    };
+  }, [editor, closePicker]);
+
+  // Sync external value changes
+  useEffect(() => {
+    if (!editor || isInternalUpdate.current) {
+      isInternalUpdate.current = false;
+      return;
+    }
+
+    const currentSerialized = serializeDoc(editor);
+    const compareValue = singleLine ? value.replace(/\n/g, " ") : value;
+    if (currentSerialized !== compareValue) {
+      editor.commands.setContent(parseToDoc(compareValue));
+    }
+  }, [value, editor, singleLine]);
+
+  // Handle token selection from picker
+  const handleTokenSelect = useCallback(
+    (tokenDef: TokenDef) => {
+      if (!editor) return;
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "token",
+          attrs: { tokenString: tokenDef.tokenString },
+        })
+        .insertContent(" ")
+        .run();
+      setPickerOpen(false);
+    },
+    [editor]
+  );
+
+  // Close picker when focus leaves both editor and dropdown
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (dropdownRef.current?.contains(active)) return;
+        if (!editor.isFocused && pickerOpenRef.current) {
+          setPickerOpen(false);
+        }
+      }, 150);
+    };
+    editor.on("blur", handler);
+    return () => { editor.off("blur", handler); };
+  }, [editor]);
+
+  // Click-outside handler
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (dropdownRef.current?.contains(target)) return;
+      if (editor && editor.view.dom.contains(target)) return;
+      setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [pickerOpen, editor]);
+
+  // Esc key closes dropdown and returns focus
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPickerOpen(false);
+        editor?.commands.focus();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [pickerOpen, editor]);
+
+  if (!editor) return null;
+
+  return (
+    <div className="space-y-1">
+      {showToolbar && (
+        <div className="flex gap-1 mb-1">
+          <Button type="button" variant="outline" size="sm"
+            onClick={() => editor.chain().focus().toggleMark("bold").run()}
+            className={cn(editor.isActive("bold") && "bg-muted")} title="Жирный">
+            <BoldIcon className="h-4 w-4" />
+          </Button>
+          <Button type="button" variant="outline" size="sm"
+            onClick={() => editor.chain().focus().toggleMark("italic").run()}
+            className={cn(editor.isActive("italic") && "bg-muted")} title="Курсив">
+            <ItalicIcon className="h-4 w-4" />
+          </Button>
+          <Button type="button" variant="outline" size="sm"
+            onClick={() => editor.chain().focus().toggleMark("code").run()}
+            className={cn(editor.isActive("code") && "bg-muted")} title="Код">
+            <CodeIcon className="h-4 w-4" />
+          </Button>
+          <Button type="button" variant="outline" size="sm"
+            onClick={() => {
+              const url = prompt("Введите URL:");
+              if (url) editor.chain().focus().setMark("link", { href: url }).run();
+            }}
+            title="Ссылка">
+            <LinkIcon className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      <div className="relative">
+        <EditorContent editor={editor} />
+      </div>
+
+      {/* Floating dropdown at caret position */}
+      {pickerOpen && caretCoords && (
+        <div
+          ref={dropdownRef}
+          className="fixed z-[1000] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
+          style={{ top: caretCoords.top, left: caretCoords.left }}
+        >
+          <Command>
+            <CommandInput
+              ref={searchInputRef}
+              placeholder="Поиск по названию..."
+              className="text-xs h-8"
+            />
+            <CommandList className="max-h-[240px] overflow-auto">
+              <CommandEmpty>Токены не найдены</CommandEmpty>
+              <CommandGroup heading="Контакт / Профиль">
+                {CONTACT_TOKENS.map((t) => (
+                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                    onSelect={() => handleTokenSelect(t)}>
+                    <span className="flex-1 truncate">{t.label}</span>
+                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+              <CommandGroup heading="Дата / Время">
+                {DATETIME_TOKENS.map((t) => (
+                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                    onSelect={() => handleTokenSelect(t)}>
+                    <span className="flex-1 truncate">{t.label}</span>
+                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+              {productFields.length > 0 && (
+                <CommandGroup heading="Продукт">
+                  {productFields.map((t) => (
+                    <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                      onSelect={() => handleTokenSelect(t)}>
+                      <span className="flex-1 truncate">{t.label}</span>
+                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        Нажмите{" "}
+        <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd>{" "}
+        для вставки переменной
+      </p>
+    </div>
+  );
+}
       (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
     );
 
