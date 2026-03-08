@@ -8,23 +8,34 @@ export function TelegramMessagePreview({ text }: TelegramMessagePreviewProps) {
   const formattedHtml = useMemo(() => {
     if (!text) return "";
     
-    let html = text
-      // Escape HTML
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      // Bold: *text*
-      .replace(/\*([^*]+)\*/g, "<strong>$1</strong>")
-      // Italic: _text_
-      .replace(/\_([^_]+)\_/g, "<em>$1</em>")
-      // Code: `text`
-      .replace(/\`([^`]+)\`/g, "<code class='bg-muted px-1 rounded text-sm font-mono'>$1</code>")
-      // Links: [text](url)
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<a href='$2' class='text-primary underline' target='_blank' rel='noopener'>$1</a>")
-      // Newlines
-      .replace(/\n/g, "<br />");
+    // Process lines individually to handle [[align:...]] prefixes
+    const lines = text.split("\n");
+    const processedLines = lines.map((line) => {
+      const alignMatch = line.match(/^\[\[align:(left|center|right)\]\]/);
+      const align = alignMatch ? alignMatch[1] : null;
+      const cleanLine = alignMatch ? line.slice(alignMatch[0].length) : line;
+      
+      let html = cleanLine
+        // Escape HTML
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        // Bold: *text*
+        .replace(/\*([^*]+)\*/g, "<strong>$1</strong>")
+        // Italic: _text_
+        .replace(/\_([^_]+)\_/g, "<em>$1</em>")
+        // Code: `text`
+        .replace(/\`([^`]+)\`/g, "<code class='bg-muted px-1 rounded text-sm font-mono'>$1</code>")
+        // Links: [text](url)
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "<a href='$2' class='text-primary underline' target='_blank' rel='noopener'>$1</a>");
+      
+      if (align && align !== "left") {
+        return `<div style="text-align:${align}">${html}</div>`;
+      }
+      return html;
+    });
     
-    return html;
+    return processedLines.join("<br />");
   }, [text]);
 
   if (!text) {

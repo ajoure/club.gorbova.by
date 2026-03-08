@@ -7,7 +7,7 @@
  * Features:
  * - [ trigger (300ms) opens token picker
  * - [[ inserts literal [
- * - Markdown toolbar (Bold/Italic/Code/Link) when showToolbar=true
+ * - Bubble toolbar on text selection with Bold/Italic/Code/Link + Align L/C/R (multi-line only)
  * - Bubble toolbar on text selection (multi-line only)
  * - Copy chip → clipboard gets {{token}}, not label
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
@@ -172,11 +172,9 @@ function serializeDoc(editor: Editor): string {
   const lines: string[] = [];
 
   for (const block of doc.content) {
-    if (block.type === "paragraph") {
-      lines.push(serializeInline(block.content || []));
-    } else {
-      lines.push(serializeInline(block.content || []));
-    }
+    const align = block.attrs?.textAlign;
+    const prefix = align && align !== "left" ? `[[align:${align}]]` : "";
+    lines.push(prefix + serializeInline(block.content || []));
   }
 
   return lines.join("\n");
@@ -204,12 +202,20 @@ function serializeInline(nodes: any[]): string {
     .join("");
 }
 
+const ALIGN_PREFIX_RE = /^\[\[align:(left|center|right)\]\]/;
+
 function parseToDoc(value: string): any {
   const lines = value.split("\n");
-  const content = lines.map((line) => ({
-    type: "paragraph",
-    content: parseInline(line),
-  }));
+  const content = lines.map((line) => {
+    const m = line.match(ALIGN_PREFIX_RE);
+    const textAlign = m ? m[1] : null;
+    const cleanLine = m ? line.slice(m[0].length) : line;
+    return {
+      type: "paragraph",
+      attrs: textAlign ? { textAlign } : undefined,
+      content: parseInline(cleanLine),
+    };
+  });
 
   return { type: "doc", content };
 }
@@ -290,7 +296,6 @@ interface TokenizedRichInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   rows?: number;
-  showToolbar?: boolean;
   singleLine?: boolean;
   disabled?: boolean;
   className?: string;
@@ -301,7 +306,6 @@ export function TokenizedRichInput({
   onChange,
   placeholder = "",
   rows = 4,
-  showToolbar = false,
   singleLine = false,
   disabled = false,
   className,
@@ -399,10 +403,14 @@ export function TokenizedRichInput({
       const rect = dropdownRef.current?.getBoundingClientRect();
       const ddH = rect?.height || 280;
       const ddW = rect?.width || 320;
-      const top = coords.bottom + 6 + ddH > viewportH
-        ? coords.top - ddH - 6
+      // Clamp by editor rect to stay within modal/editor bounds
+      const editorRect = ed.view.dom.getBoundingClientRect();
+      const minLeft = Math.max(4, editorRect.left);
+      const maxLeft = Math.min(viewportW - ddW - 4, editorRect.right - ddW);
+      const top = coords.bottom + 6 + ddH > Math.min(viewportH, editorRect.bottom + ddH + 20)
+        ? Math.max(4, coords.top - ddH - 6)
         : coords.bottom + 6;
-      const left = Math.max(4, Math.min(coords.left, viewportW - ddW - 4));
+      const left = Math.max(minLeft, Math.min(coords.left, maxLeft));
       setCaretCoords({ top, left });
     } catch {
       // editor may not be ready
@@ -638,34 +646,6 @@ export function TokenizedRichInput({
 
   return (
     <div className="space-y-1">
-      {showToolbar && (
-        <div className="flex gap-1 mb-1">
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("bold").run()}
-            className={cn(editor.isActive("bold") && "bg-muted")} title="Жирный">
-            <BoldIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("italic").run()}
-            className={cn(editor.isActive("italic") && "bg-muted")} title="Курсив">
-            <ItalicIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => editor.chain().focus().toggleMark("code").run()}
-            className={cn(editor.isActive("code") && "bg-muted")} title="Код">
-            <CodeIcon className="h-4 w-4" />
-          </Button>
-          <Button type="button" variant="outline" size="sm"
-            onClick={() => {
-              const url = prompt("Введите URL:");
-              if (url) editor.chain().focus().setMark("link", { href: url }).run();
-            }}
-            title="Ссылка">
-            <LinkIcon className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-
       <div className="relative">
         <EditorContent editor={editor} />
       </div>
