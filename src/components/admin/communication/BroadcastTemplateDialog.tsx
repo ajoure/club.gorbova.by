@@ -10,8 +10,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import { Switch } from "@/components/ui/switch";
 import { MessageCircle, Mail, Loader2, Save } from "lucide-react";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
@@ -124,15 +124,15 @@ export function BroadcastTemplateDialog({
             <TabsContent value="telegram" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Текст сообщения</Label>
-                <Textarea
+                <TokenizedRichInput
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
+                  onChange={setMessageText}
                   placeholder="Введите текст сообщения..."
                   rows={8}
-                  className="resize-none"
+                  showToolbar
                 />
                 <p className="text-xs text-muted-foreground">
-                  Поддерживается Markdown: *жирный*, _курсив_, `код`
+                  Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки переменной.
                 </p>
               </div>
 
@@ -172,24 +172,24 @@ export function BroadcastTemplateDialog({
             <TabsContent value="email" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Тема письма</Label>
-                <Input
+                <TokenizedRichInput
                   value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
+                  onChange={setEmailSubject}
                   placeholder="Тема письма..."
+                  singleLine
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Текст письма (HTML)</Label>
-                <Textarea
+                <Label>Текст письма</Label>
+                <TokenizedRichInput
                   value={emailBodyHtml}
-                  onChange={(e) => setEmailBodyHtml(e.target.value)}
-                  placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                  onChange={setEmailBodyHtml}
+                  placeholder="Содержимое письма..."
                   rows={12}
-                  className="resize-none font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Поддерживается HTML-разметка
+                  Нажмите [ для вставки переменной
                 </p>
               </div>
             </TabsContent>
