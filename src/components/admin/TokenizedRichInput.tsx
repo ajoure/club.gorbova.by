@@ -299,6 +299,8 @@ interface TokenizedRichInputProps {
   singleLine?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
+  allowAlign?: boolean;
 }
 
 export function TokenizedRichInput({
@@ -309,6 +311,7 @@ export function TokenizedRichInput({
   singleLine = false,
   disabled = false,
   className,
+  allowAlign = false,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
