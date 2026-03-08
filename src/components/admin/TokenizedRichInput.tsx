@@ -372,7 +372,7 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      History,
+      ProseMirrorHistory,
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
