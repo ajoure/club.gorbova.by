@@ -1107,7 +1107,83 @@ export default function AdminEmail() {
               </div>
 
 
-                      const cursor = e.target.selectionStart ?? e.target.value.length;
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={templateDialog.template.is_active}
+                  onCheckedChange={(checked) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, is_active: checked }
+                        : null,
+                    }))
+                  }
+                />
+                <Label>Активен</Label>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handlePreview(templateDialog.template!)}
+                >
+                  <Eye className="w-4 h-4 mr-2" />
+                  Превью
+                </Button>
+                <Button type="submit" disabled={saveTemplateMutation.isPending}>
+                  {saveTemplateMutation.isPending && (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  )}
+                  Сохранить
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview Dialog */}
+      <Dialog
+        open={previewDialog.open}
+        onOpenChange={(open) =>
+          !open && setPreviewDialog({ open: false, html: "", subject: "" })
+        }
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>Превью письма</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Label className="text-muted-foreground whitespace-nowrap text-xs">Контекст продукта:</Label>
+              <Select value={previewProductId} onValueChange={setPreviewProductId}>
+                <SelectTrigger className="h-8 text-xs w-[240px]">
+                  <SelectValue placeholder="Без продукта (cf → пусто)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Без продукта</SelectItem>
+                  {productsForPreview.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-muted-foreground">Тема:</Label>
+              <p className="font-medium">{previewDialog.subject}</p>
+            </div>
+            <div className="border rounded-lg p-4 bg-background text-foreground max-h-[400px] overflow-y-auto">
+              <div dangerouslySetInnerHTML={{ __html: previewDialog.html }} />
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
                       const corrected = subjectBracket.handleChange(e.target.value, cursor);
                       if (subjectPickerOpen && corrected === null) setSubjectPickerOpen(false);
                       const finalValue = corrected ?? e.target.value;
