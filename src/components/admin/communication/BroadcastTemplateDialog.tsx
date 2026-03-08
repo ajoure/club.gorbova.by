@@ -172,10 +172,11 @@ export function BroadcastTemplateDialog({
             <TabsContent value="email" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Тема письма</Label>
-                <Input
+                <TokenizedRichInput
                   value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
+                  onChange={setEmailSubject}
                   placeholder="Тема письма..."
+                  singleLine
                 />
               </div>
 
