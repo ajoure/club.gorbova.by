@@ -346,6 +346,7 @@ export function TokenizedRichInput({
       Italic.configure({}),
       Code.configure({}),
       Link.configure({ openOnClick: false }),
+      TextAlign.configure({ types: ["paragraph"] }),
       TokenNode,
     ];
     if (singleLine) {
