@@ -8,6 +8,7 @@
  * - [ trigger (300ms) opens token picker
  * - [[ inserts literal [
  * - Markdown toolbar (Bold/Italic/Code/Link) when showToolbar=true
+ * - Bubble toolbar on text selection (multi-line only)
  * - Copy chip → clipboard gets {{token}}, not label
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
  * - Rename-safe: labels resolved at runtime from registry
@@ -84,7 +85,7 @@ const TokenNode = Node.create({
 });
 
 const bracketPluginKey = new PluginKey("bracketTrigger");
-const BRACKET_PLUGIN_KEY_STR = (bracketPluginKey as any).key as string;
+const BRACKET_PLUGIN_KEY_STR = (bracketPluginKey as any).key || "bracketTrigger$";
 
 function createBracketPlugin(
   onOpen: () => void,
@@ -268,6 +269,19 @@ function parseMarkdownText(text: string): any[] {
   return nodes.length > 0 ? nodes : [{ type: "text", text }];
 }
 
+// ─── Helper: check if selection contains only token nodes ──────────
+function isSelectionOnlyTokens(editor: Editor): boolean {
+  const { from, to } = editor.state.selection;
+  if (from === to) return false;
+  let hasText = false;
+  let hasToken = false;
+  editor.state.doc.nodesBetween(from, to, (node) => {
+    if (node.type.name === "token") hasToken = true;
+    if (node.isText) hasText = true;
+  });
+  return hasToken && !hasText;
+}
+
 // ─── Component ──────────────────────────────────────────────────────
 
 interface TokenizedRichInputProps {
@@ -298,6 +312,11 @@ export function TokenizedRichInput({
   const isInternalUpdate = useRef(false);
   const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
   const editorRef = useRef<Editor | null>(null);
+
+  // ── Bubble toolbar state (P0.1) ──
+  const [bubbleOpen, setBubbleOpen] = useState(false);
+  const [bubbleCoords, setBubbleCoords] = useState<{ top: number; left: number } | null>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
 
   // Keep ref in sync with state
   useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
@@ -366,19 +385,23 @@ export function TokenizedRichInput({
   // Keep editorRef in sync
   useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
 
-  // Compute caret coords for floating dropdown
+  // ── P0.2: Compute caret coords for floating dropdown (dynamic sizes) ──
   const updateCaretCoords = useCallback(() => {
     const ed = editorRef.current;
     if (!ed) return;
     try {
       const coords = ed.view.coordsAtPos(ed.state.selection.from);
       const viewportH = window.innerHeight;
-      const dropdownH = 280;
-      const top = coords.bottom + 6 + dropdownH > viewportH
-        ? coords.top - dropdownH - 6
+      const viewportW = window.innerWidth;
+      // Measure real dropdown dimensions if rendered, else fallback
+      const rect = dropdownRef.current?.getBoundingClientRect();
+      const ddH = rect?.height || 280;
+      const ddW = rect?.width || 320;
+      const top = coords.bottom + 6 + ddH > viewportH
+        ? coords.top - ddH - 6
         : coords.bottom + 6;
-      const left = Math.min(coords.left, window.innerWidth - 330);
-      setCaretCoords({ top, left: Math.max(4, left) });
+      const left = Math.max(4, Math.min(coords.left, viewportW - ddW - 4));
+      setCaretCoords({ top, left });
     } catch {
       // editor may not be ready
     }
@@ -395,6 +418,13 @@ export function TokenizedRichInput({
       window.removeEventListener("scroll", onReposition, true);
       window.removeEventListener("resize", onReposition);
     };
+  }, [pickerOpen, updateCaretCoords]);
+
+  // P0.2: After dropdown renders, re-measure with real dimensions
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const rafId = requestAnimationFrame(() => updateCaretCoords());
+    return () => cancelAnimationFrame(rafId);
   }, [pickerOpen, updateCaretCoords]);
 
   // Reposition on selectionUpdate/transaction
@@ -416,6 +446,8 @@ export function TokenizedRichInput({
 
     const plugin = createBracketPlugin(
       () => {
+        // P0.2: compute coords immediately before opening
+        updateCaretCoords();
         setPickerOpen(true);
         requestAnimationFrame(() => searchInputRef.current?.focus());
       },
@@ -443,7 +475,7 @@ export function TokenizedRichInput({
         // editor may be destroyed
       }
     };
-  }, [editor, closePicker]);
+  }, [editor, closePicker, updateCaretCoords]);
 
   // Sync external value changes
   useEffect(() => {
@@ -519,6 +551,83 @@ export function TokenizedRichInput({
     return () => document.removeEventListener("keydown", handler);
   }, [pickerOpen, editor]);
 
+  // ── P0.1: Bubble toolbar logic ──
+  const updateBubble = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed || singleLine) {
+      setBubbleOpen(false);
+      return;
+    }
+    if (ed.state.selection.empty) {
+      setBubbleOpen(false);
+      return;
+    }
+    // Don't show bubble if selection is only token nodes
+    if (isSelectionOnlyTokens(ed)) {
+      setBubbleOpen(false);
+      return;
+    }
+    // Don't show bubble while picker is open
+    if (pickerOpenRef.current) {
+      setBubbleOpen(false);
+      return;
+    }
+    try {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        setBubbleOpen(false);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setBubbleOpen(false);
+        return;
+      }
+      const toolbarW = 160;
+      const toolbarH = 40;
+      let top = rect.top - toolbarH - 8;
+      if (top < 4) top = rect.bottom + 6;
+      let left = rect.left + rect.width / 2 - toolbarW / 2;
+      left = Math.max(4, Math.min(left, window.innerWidth - toolbarW - 4));
+      setBubbleCoords({ top, left });
+      setBubbleOpen(true);
+    } catch {
+      setBubbleOpen(false);
+    }
+  }, [singleLine]);
+
+  useEffect(() => {
+    if (!editor) return;
+    const onSelUpdate = () => updateBubble();
+    const onBlur = () => {
+      // Delay to allow clicking bubble buttons
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (bubbleRef.current?.contains(active)) return;
+        setBubbleOpen(false);
+      }, 150);
+    };
+    editor.on("selectionUpdate", onSelUpdate);
+    editor.on("blur", onBlur);
+    return () => {
+      editor.off("selectionUpdate", onSelUpdate);
+      editor.off("blur", onBlur);
+    };
+  }, [editor, updateBubble]);
+
+  // Reposition bubble on scroll/resize
+  useEffect(() => {
+    if (!bubbleOpen) return;
+    const onReposition = () => updateBubble();
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [bubbleOpen, updateBubble]);
+
   if (!editor) return null;
 
   return (
@@ -554,6 +663,65 @@ export function TokenizedRichInput({
       <div className="relative">
         <EditorContent editor={editor} />
       </div>
+
+      {/* P0.1: Bubble toolbar on text selection (multi-line only) */}
+      {bubbleOpen && bubbleCoords && !singleLine && (
+        <div
+          ref={bubbleRef}
+          className="fixed z-[1001] flex items-center gap-0.5 px-1 py-0.5 rounded-md border bg-popover shadow-md animate-in fade-in-0 zoom-in-95 duration-100"
+          style={{ top: bubbleCoords.top, left: bubbleCoords.left }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive("bold") && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleMark("bold").run(); }}
+            title="Жирный"
+          >
+            <BoldIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive("italic") && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleMark("italic").run(); }}
+            title="Курсив"
+          >
+            <ItalicIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive("code") && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => { e.preventDefault(); editor.chain().focus().toggleMark("code").run(); }}
+            title="Код"
+          >
+            <CodeIcon className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "p-1.5 rounded transition-colors hover:bg-accent",
+              editor.isActive("link") && "bg-accent text-accent-foreground"
+            )}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const url = prompt("Введите URL:");
+              if (url) editor.chain().focus().setMark("link", { href: url }).run();
+            }}
+            title="Ссылка"
+          >
+            <LinkIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Floating dropdown at caret position */}
       {pickerOpen && caretCoords && (
