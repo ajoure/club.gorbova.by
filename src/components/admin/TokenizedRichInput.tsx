@@ -35,7 +35,6 @@ import {
   extractShortUuid,
   type TokenDef,
 } from "@/lib/tokens/tokenRegistry";
-import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
