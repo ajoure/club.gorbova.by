@@ -172,11 +172,9 @@ function serializeDoc(editor: Editor): string {
   const lines: string[] = [];
 
   for (const block of doc.content) {
-    if (block.type === "paragraph") {
-      lines.push(serializeInline(block.content || []));
-    } else {
-      lines.push(serializeInline(block.content || []));
-    }
+    const align = block.attrs?.textAlign;
+    const prefix = align && align !== "left" ? `[[align:${align}]]` : "";
+    lines.push(prefix + serializeInline(block.content || []));
   }
 
   return lines.join("\n");
