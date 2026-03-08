@@ -206,50 +206,8 @@ export default function AdminEmail() {
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
   const [previewProductId, setPreviewProductId] = useState<string>("");
 
-  const subjectRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
-  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
-  const [bodyPickerOpen, setBodyPickerOpen] = useState(false);
 
-  const insertAtCaret = useCallback(
-    (
-      ref: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
-      field: "subject" | "body_html",
-      text: string
-    ) => {
-      const el = ref.current;
-      if (!el || !templateDialog.template) return;
-      const val = templateDialog.template[field];
-      const start = el.selectionStart ?? val.length;
-      const end = el.selectionEnd ?? start;
-      const newVal = val.slice(0, start) + text + val.slice(end);
-      setTemplateDialog((prev) => ({
-        ...prev,
-        template: prev.template ? { ...prev.template, [field]: newVal } : null,
-      }));
-      requestAnimationFrame(() => {
-        el.focus();
-        const pos = start + text.length;
-        el.setSelectionRange(pos, pos);
-      });
-    },
-    [templateDialog.template]
-  );
-
-  const subjectBracket = useBracketTrigger({
-    isPickerOpen: subjectPickerOpen,
-    onOpen: () => setSubjectPickerOpen(true),
-    onClose: () => setSubjectPickerOpen(false),
-    onInsertBracket: () => insertAtCaret(subjectRef, "subject", "["),
-  });
-
-  const bodyBracket = useBracketTrigger({
-    isPickerOpen: bodyPickerOpen,
-    onOpen: () => setBodyPickerOpen(true),
-    onClose: () => setBodyPickerOpen(false),
-    onInsertBracket: () => insertAtCaret(bodyRef, "body_html", "["),
-  });
 
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
