@@ -82,12 +82,12 @@ export function validateTemplateVariables(text: string): {
 
   // Step 1: Find all {{cf.*}} tokens and validate them
   const allCfTokens = cleanedInput.match(CF_ANY_REGEX) || [];
-  const validCfTokens = text.match(CF_TOKEN_REGEX) || [];
+  const validCfTokens = cleanedInput.match(CF_TOKEN_REGEX) || [];
   const validCfSet = new Set(validCfTokens);
   const invalidCfTokens = allCfTokens.filter(t => !validCfSet.has(t));
 
   // Step 2: Remove all cf.* tokens (valid ones) from text before standard validation
-  let cleanedText = text;
+  let cleanedText = cleanedInput;
   for (const token of validCfTokens) {
     cleanedText = cleanedText.replace(token, '');
   }
