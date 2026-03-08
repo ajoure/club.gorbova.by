@@ -1070,9 +1070,41 @@ export default function AdminEmail() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label>Тема письма</Label>
-                  <TokenPicker
+                <Label>Тема письма</Label>
+                <TokenizedRichInput
+                  singleLine
+                  value={templateDialog.template.subject}
+                  onChange={(val) => {
+                    setTemplateValidationError(null);
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template ? { ...prev.template, subject: val } : null,
+                    }));
+                  }}
+                  placeholder="Тема письма..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Тело письма (HTML)</Label>
+                <TokenizedRichInput
+                  value={templateDialog.template.body_html}
+                  onChange={(val) => {
+                    setTemplateValidationError(null);
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template ? { ...prev.template, body_html: val } : null,
+                    }));
+                  }}
+                  placeholder="HTML-тело письма..."
+                  rows={12}
+                />
+                {templateValidationError && (
+                  <p className="text-sm text-destructive flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    {templateValidationError}
+                  </p>
+                )
                     onInsert={(token) => insertAtCaret(subjectRef, "subject", token)}
                   />
                 </div>
