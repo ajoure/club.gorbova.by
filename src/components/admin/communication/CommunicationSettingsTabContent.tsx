@@ -74,53 +74,8 @@ export function CommunicationSettingsTabContent() {
     subject: string;
   }>({ open: false, html: "", subject: "" });
 
+
   const [isRunningWorker, setIsRunningWorker] = useState(false);
-
-  // TokenPicker refs and state for template dialog
-  const tplSubjectRef = useRef<HTMLInputElement>(null);
-  const tplBodyRef = useRef<HTMLTextAreaElement>(null);
-  const tplSubjectAnchorRef = useRef<HTMLSpanElement>(null);
-  const tplBodyAnchorRef = useRef<HTMLSpanElement>(null);
-  const [tplSubjectPickerOpen, setTplSubjectPickerOpen] = useState(false);
-  const [tplBodyPickerOpen, setTplBodyPickerOpen] = useState(false);
-
-  const insertAtCaretTpl = useCallback((ref: React.RefObject<HTMLInputElement | HTMLTextAreaElement>, field: 'subject' | 'body_html', token: string) => {
-    const el = ref.current;
-    if (!el) {
-      setTemplateDialog(prev => ({
-        ...prev,
-        template: prev.template ? { ...prev.template, [field]: prev.template[field] + token } : null,
-      }));
-      return;
-    }
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? start;
-    const before = el.value.slice(0, start);
-    const after = el.value.slice(end);
-    setTemplateDialog(prev => ({
-      ...prev,
-      template: prev.template ? { ...prev.template, [field]: before + token + after } : null,
-    }));
-    requestAnimationFrame(() => {
-      const pos = start + token.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-    });
-  }, []);
-
-  const tplSubjectBracket = useBracketTrigger({
-    onOpen: () => setTplSubjectPickerOpen(true),
-    onInsertBracket: () => insertAtCaretTpl(tplSubjectRef as React.RefObject<HTMLInputElement>, 'subject', '['),
-    isPickerOpen: tplSubjectPickerOpen,
-    onClose: () => setTplSubjectPickerOpen(false),
-  });
-
-  const tplBodyBracket = useBracketTrigger({
-    onOpen: () => setTplBodyPickerOpen(true),
-    onInsertBracket: () => insertAtCaretTpl(tplBodyRef as React.RefObject<HTMLTextAreaElement>, 'body_html', '['),
-    isPickerOpen: tplBodyPickerOpen,
-    onClose: () => setTplBodyPickerOpen(false),
-  });
 
   // Fetch email templates
   const { data: templates = [], isLoading: loadingTemplates } = useQuery({
