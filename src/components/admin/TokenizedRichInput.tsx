@@ -423,7 +423,7 @@ export function TokenizedRichInput({
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
-          (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
+          (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
