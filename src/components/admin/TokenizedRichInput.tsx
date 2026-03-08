@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
 import { Node, mergeAttributes, Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
