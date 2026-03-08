@@ -90,7 +90,6 @@ export function MassBroadcastDialog({ open, onOpenChange }: MassBroadcastDialogP
               onChange={setMessage}
               placeholder="Введите текст сообщения для рассылки..."
               rows={5}
-              showToolbar={true}
               disabled={isSending}
             />
           </div>
