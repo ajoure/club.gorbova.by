@@ -1,6 +1,6 @@
 import {
   Primitive
-} from "./chunk-LB6EDGWV.js";
+} from "./chunk-OIFU75C3.js";
 import {
   require_jsx_runtime
 } from "./chunk-NZAIND7N.js";
@@ -48,4 +48,4 @@ export {
   VisuallyHidden,
   Root
 };
-//# sourceMappingURL=chunk-3BM4YMBY.js.map
+//# sourceMappingURL=chunk-QI7RZRNT.js.map
