@@ -332,6 +332,39 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
+  // Compute caret coords when picker opens or selection changes
+  const updateCaretCoords = useCallback(() => {
+    if (!editor) return;
+    try {
+      const coords = editor.view.coordsAtPos(editor.state.selection.from);
+      setCaretCoords({ top: coords.bottom + 6, left: coords.left });
+    } catch {
+      // fallback: don't update
+    }
+  }, [editor]);
+
+  // Reposition on scroll/resize while picker is open
+  useEffect(() => {
+    if (!pickerOpen) return;
+    updateCaretCoords();
+    const onReposition = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [pickerOpen, updateCaretCoords]);
+
+  // Reposition on selectionUpdate/transaction
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    editor.on("selectionUpdate", handler);
+    editor.on("update", handler);
+    return () => { editor.off("selectionUpdate", handler); editor.off("update", handler); };
+  }, [editor, updateCaretCoords]);
+
   // Load product fields for registry
   const { data: productFields = [] } = useQuery({
     queryKey: ["token-registry-product-fields"],
