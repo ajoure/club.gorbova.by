@@ -644,9 +644,8 @@ export function TokenizedRichInput({
     </div>
   );
 }
-        editor.view.updateState(cleanState);
-      } catch {
-        // editor may be destroyed
+
+
       }
     };
   }, [editor, closePicker]);
