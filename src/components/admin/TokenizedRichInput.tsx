@@ -596,26 +596,27 @@ export function TokenizedRichInput({
       return;
     }
     try {
-      const from = ed.state.selection.from;
-      const to = ed.state.selection.to;
-      const c1 = ed.view.coordsAtPos(from);
-      const c2 = ed.view.coordsAtPos(to);
-      const selRect = {
-        left: Math.min(c1.left, c2.left),
-        right: Math.max(c1.right, c2.right),
-        top: Math.min(c1.top, c2.top),
-        bottom: Math.max(c1.bottom, c2.bottom),
-      };
-      if (selRect.right - selRect.left === 0 && selRect.bottom - selRect.top === 0) {
+      // Use DOM selection range for accurate visual bounding box
+      const domSel = window.getSelection();
+      if (!domSel || domSel.rangeCount === 0) {
         setBubbleOpen(false);
         return;
       }
+      const range = domSel.getRangeAt(0);
+      const rangeRect = range.getBoundingClientRect();
+      if (rangeRect.width === 0 && rangeRect.height === 0) {
+        setBubbleOpen(false);
+        return;
+      }
+      // Clamp within editor bounds (works correctly in modals)
       const editorRect = ed.view.dom.getBoundingClientRect();
       const toolbarW = allowAlign ? 300 : 200;
       const toolbarH = 40;
-      let top = selRect.top - toolbarH - 8;
-      if (top < editorRect.top + 4) top = selRect.bottom + 6;
-      let left = (selRect.left + selRect.right) / 2 - toolbarW / 2;
+      // Position above selection, fallback below if no room
+      let top = rangeRect.top - toolbarH - 8;
+      if (top < editorRect.top + 4) top = rangeRect.bottom + 6;
+      // Center horizontally on selection, clamp within editor
+      let left = rangeRect.left + rangeRect.width / 2 - toolbarW / 2;
       left = Math.max(editorRect.left + 4, Math.min(left, editorRect.right - toolbarW - 4));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
