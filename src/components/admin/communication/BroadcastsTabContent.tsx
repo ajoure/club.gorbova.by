@@ -1,11 +1,10 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -32,6 +31,10 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
+  Alert,
+  AlertDescription,
+} from "@/components/ui/alert";
+import {
   Send,
   Mail,
   MessageCircle,
@@ -50,15 +53,13 @@ import {
   Circle,
   X,
   Paperclip,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
-// TelegramTextToolbar removed from TG broadcast (now using TokenizedRichInput)
 import { TelegramMessagePreview } from "./TelegramMessagePreview";
-import { TokenPicker } from "@/components/admin/TokenPicker";
-import { useBracketTrigger } from "@/hooks/useBracketTrigger";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface BroadcastFilters {
@@ -105,49 +106,8 @@ const [includeButton, setIncludeButton] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
+
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const emailSubjectRef = useRef<HTMLInputElement>(null);
-  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
-  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
-  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
-
-  // TokenPicker open states (email fields only; TG uses TokenizedRichInput)
-  const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
-  const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
-
-  // Insert token at caret helper
-  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<string>>, token: string) => {
-    const el = ref.current;
-    if (!el) { setter(prev => prev + token); return; }
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? start;
-    const before = el.value.slice(0, start);
-    const after = el.value.slice(end);
-    const newVal = before + token + after;
-    setter(newVal);
-    requestAnimationFrame(() => {
-      const pos = start + token.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-    });
-  }, []);
-
-  // Bracket triggers for email fields only (TG uses TokenizedRichInput)
-
-
-  const emailSubjectBracket = useBracketTrigger({
-    onOpen: () => setEmailSubjectPickerOpen(true),
-    onInsertBracket: () => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, "["),
-    isPickerOpen: emailSubjectPickerOpen,
-    onClose: () => setEmailSubjectPickerOpen(false),
-  });
-
-  const emailBodyBracket = useBracketTrigger({
-    onOpen: () => setEmailBodyPickerOpen(true),
-    onInsertBracket: () => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, "["),
-    isPickerOpen: emailBodyPickerOpen,
-    onClose: () => setEmailBodyPickerOpen(false),
-  });
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
@@ -157,6 +117,18 @@ const [includeButton, setIncludeButton] = useState(true);
     tariffId: "",
     clubId: "",
   });
+
+  // cf warning: check if message/email contains cf.product tokens
+  const hasCfTokens = useMemo(() => {
+    const allText = message + emailSubject + emailBody;
+    return allText.includes('{{cf.product.');
+  }, [message, emailSubject, emailBody]);
+
+  const productContextId = useMemo(() => {
+    return (filters.productId && filters.productId !== 'all') ? filters.productId : null;
+  }, [filters.productId]);
+
+  const showCfWarning = hasCfTokens && !productContextId;
 
   // Fetch products
   const { data: products } = useQuery({
@@ -337,6 +309,7 @@ const [includeButton, setIncludeButton] = useState(true);
           button_text: includeButton ? buttonText : undefined,
           button_url: includeButton ? buttonUrl : undefined,
           filters,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
@@ -361,6 +334,7 @@ const [includeButton, setIncludeButton] = useState(true);
           subject: emailSubject.trim(),
           html: emailBody.trim(),
           filters,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
@@ -395,6 +369,7 @@ const [includeButton, setIncludeButton] = useState(true);
           messageText: message.trim(),
           buttonText: includeButton ? buttonText : undefined,
           buttonUrl: includeButton ? buttonUrl : undefined,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
@@ -629,6 +604,14 @@ const [includeButton, setIncludeButton] = useState(true);
                       rows={6}
                       showToolbar={true}
                     />
+                    {showCfWarning && (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>
+                          Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
 
                   {/* WYSIWYG Preview */}
@@ -694,59 +677,32 @@ const [includeButton, setIncludeButton] = useState(true);
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Тема письма</Label>
-                    <div className="relative">
-                      <Input
-                        ref={emailSubjectRef}
-                        placeholder="Тема письма..."
-                        value={emailSubject}
-                        onChange={(e) => {
-                          const corrected = emailSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                          setEmailSubject(corrected ?? e.target.value);
-                        }}
-                        onKeyDown={emailSubjectBracket.handleKeyDown}
-                      />
-                      <TokenPicker
-                        triggerless
-                        anchorRef={emailSubjectPickerAnchorRef}
-                        open={emailSubjectPickerOpen}
-                        onOpenChange={setEmailSubjectPickerOpen}
-                        onInsert={(token) => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, token)}
-                        showContactVars
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
-                      </p>
-                    </div>
+                    <TokenizedRichInput
+                      value={emailSubject}
+                      onChange={setEmailSubject}
+                      placeholder="Тема письма..."
+                      singleLine
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label>Текст письма (HTML)</Label>
-                    <div className="relative">
-                      <Textarea
-                        ref={emailBodyRef}
-                        placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                        value={emailBody}
-                        onChange={(e) => {
-                          const corrected = emailBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                          setEmailBody(corrected ?? e.target.value);
-                        }}
-                        onKeyDown={emailBodyBracket.handleKeyDown}
-                        rows={8}
-                        className="resize-none font-mono text-sm"
-                      />
-                      <TokenPicker
-                        triggerless
-                        anchorRef={emailBodyPickerAnchorRef}
-                        open={emailBodyPickerOpen}
-                        onOpenChange={setEmailBodyPickerOpen}
-                        onInsert={(token) => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, token)}
-                        showContactVars
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной. Поддерживается HTML-разметка.
-                      </p>
-                    </div>
+                    <TokenizedRichInput
+                      value={emailBody}
+                      onChange={setEmailBody}
+                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                      rows={8}
+                    />
                   </div>
+
+                  {showCfWarning && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

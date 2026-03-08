@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveSystemTokens, extractUsedTokens } from '../_shared/systemTokens.ts';
+import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from '../_shared/customFieldTokens.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -56,7 +57,6 @@ interface BroadcastFilters {
 
 /**
  * Resolve standard contact tokens in a message template.
- * Replaces {{full_name}}, {{first_name}}, {{last_name}}, {{email}}, etc.
  */
 function resolveContactTokens(
   text: string,
@@ -126,11 +126,12 @@ Deno.serve(async (req) => {
     let message = '';
     let includeButton = false;
     let buttonText = '';
-    let buttonUrl = ''; // Custom button URL support
+    let buttonUrl = '';
     let filters: BroadcastFilters = {};
     let mediaType: string | null = null;
     let mediaBuffer: ArrayBuffer | null = null;
     let mediaFileName: string | null = null;
+    let productContextId: string | null = null;
 
     const contentType = req.headers.get('content-type') || '';
     
@@ -146,6 +147,9 @@ Deno.serve(async (req) => {
         filters = JSON.parse(filtersStr);
       }
       
+      const rawPcid = formData.get('product_context_id') as string;
+      productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
+      
       mediaType = formData.get('media_type') as string || null;
       const mediaFile = formData.get('media') as File | null;
       
@@ -160,6 +164,8 @@ Deno.serve(async (req) => {
       buttonText = body.button_text || '';
       buttonUrl = body.button_url || '';
       filters = body.filters || {};
+      const rawPcid = body.product_context_id;
+      productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
     }
 
     if (!message && !mediaBuffer) {
@@ -169,7 +175,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType });
+    console.log('Starting mass broadcast...', { filters, hasMedia: !!mediaBuffer, mediaType, productContextId });
 
     // Build user query based on filters
     let query = supabase
@@ -221,7 +227,7 @@ Deno.serve(async (req) => {
       profiles = profiles.filter(p => clubUserIds.has(p.user_id));
     }
 
-    // Always include administrators (so they can see what was sent)
+    // Always include administrators
     const { data: adminRoles } = await supabase
       .from('user_roles')
       .select('user_id')
@@ -229,14 +235,12 @@ Deno.serve(async (req) => {
     
     const adminUserIds = new Set(adminRoles?.map(r => r.user_id) || []);
     
-    // Add admins who have telegram_user_id but might not be in filtered list
     const { data: adminProfiles } = await supabase
       .from('profiles')
       .select('user_id, telegram_user_id, full_name, first_name, last_name, email, phone, telegram_username')
       .not('telegram_user_id', 'is', null)
       .in('user_id', [...adminUserIds]);
     
-    // Merge admin profiles into the list (avoid duplicates)
     const existingUserIds = new Set(profiles.map(p => p.user_id));
     for (const adminProfile of (adminProfiles || [])) {
       if (!existingUserIds.has(adminProfile.user_id)) {
@@ -263,7 +267,6 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bots[0].bot_token_encrypted;
-    // Use custom button URL if provided, otherwise fall back to APP_URL
     const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
 
     let sent = 0;
@@ -277,19 +280,29 @@ Deno.serve(async (req) => {
 
     // Extract token usage from original template (before substitution)
     const tokensInfo = extractUsedTokens(message);
-    // Single `now` for the entire broadcast — all recipients get the same date/time
+    const cfFieldIds = extractCustomFieldTokenIds(message);
+    // Single `now` for the entire broadcast
     const broadcastNow = new Date();
+
+    // Resolve cf tokens once (same product for all recipients)
+    // CF tokens are product-scoped, not per-user, so resolve before the loop
+    let cfTokensIgnored = false;
+    let messageAfterCf = message;
+    if (cfFieldIds.length > 0) {
+      const cfResult = await resolveCustomFieldTokens(message, productContextId, supabase);
+      messageAfterCf = cfResult.text;
+      cfTokensIgnored = cfResult.cfTokensIgnored;
+    }
 
     // Send messages with token substitution
     for (const profile of profiles) {
-      // Resolve contact tokens first, then system tokens
-      const afterContact = resolveContactTokens(message, profile);
+      // Resolve chain: Contact → System (cf already resolved above)
+      const afterContact = resolveContactTokens(messageAfterCf, profile);
       const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
       try {
         let result;
         
         if (mediaBuffer && mediaType && mediaFileName) {
-          // Send media message
           let method: string;
           let mediaField: string;
           
@@ -326,7 +339,6 @@ Deno.serve(async (req) => {
             keyboard
           );
         } else {
-          // Send text message
           result = await telegramRequest(botToken, 'sendMessage', {
             chat_id: profile.telegram_user_id,
             text: personalizedMessage,
@@ -343,7 +355,6 @@ Deno.serve(async (req) => {
           console.error(`Failed to send to ${profile.user_id}:`, result.description);
         }
 
-        // Small delay to avoid rate limits
         await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
         failed++;
@@ -351,12 +362,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Log the broadcast action with full message text
+    // Log the broadcast action
     await supabase.from('telegram_logs').insert({
       action: 'MASS_NOTIFICATION',
       target: `${sent}/${sent + failed} users`,
       status: failed === 0 ? 'ok' : 'partial',
-      message_text: message || null,  // PATCH: Store full message text for history
+      message_text: message || null,
       meta: {
         total_users: sent + failed,
         sent,
@@ -381,6 +392,9 @@ Deno.serve(async (req) => {
         filters,
         tokens_used_contact: tokensInfo.contact,
         tokens_used_system: tokensInfo.system,
+        tokens_used_cf_ids: cfFieldIds,
+        cf_product_id: productContextId,
+        cf_tokens_ignored: cfTokensIgnored,
       },
     });
 

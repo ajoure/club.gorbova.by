@@ -11,14 +11,22 @@
  * - Copy chip → clipboard gets {{token}}, not label
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
  * - Rename-safe: labels resolved at runtime from registry
+ * - singleLine mode: Enter blocked, \n replaced with space
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { Node, mergeAttributes } from "@tiptap/core";
+import { Node, mergeAttributes, Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { useQuery } from "@tanstack/react-query";
+import Document from "@tiptap/extension-document";
+import Paragraph from "@tiptap/extension-paragraph";
+import Text from "@tiptap/extension-text";
+import Bold from "@tiptap/extension-bold";
+import Italic from "@tiptap/extension-italic";
+import Code from "@tiptap/extension-code";
+import History from "@tiptap/extension-history";
+import Link from "@tiptap/extension-link";
 import {
   CONTACT_TOKENS,
   DATETIME_TOKENS,
@@ -32,7 +40,7 @@ import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover"
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Bold, Italic, Code, Link } from "lucide-react";
+import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── TokenNode Extension ────────────────────────────────────────────
@@ -130,6 +138,18 @@ function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
   });
 }
 
+// ─── SingleLine extension ───────────────────────────────────────────
+
+const SingleLine = Extension.create({
+  name: "singleLine",
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => true, // block Enter
+      "Shift-Enter": () => true, // block Shift+Enter too
+    };
+  },
+});
+
 // ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
 
 function serializeDoc(editor: Editor): string {
@@ -223,6 +243,7 @@ interface TokenizedRichInputProps {
   placeholder?: string;
   rows?: number;
   showToolbar?: boolean;
+  singleLine?: boolean;
   disabled?: boolean;
   className?: string;
 }
@@ -233,6 +254,7 @@ export function TokenizedRichInput({
   placeholder = "",
   rows = 4,
   showToolbar = false,
+  singleLine = false,
   disabled = false,
   className,
 }: TokenizedRichInputProps) {
@@ -264,27 +286,28 @@ export function TokenizedRichInput({
     requestAnimationFrame(() => searchInputRef.current?.focus());
   }, []);
 
-  const insertLiteralBracket = useCallback(() => {
-    if (editor) {
-      editor.commands.insertContent("[");
+  // Build extensions list
+  const extensions = useMemo(() => {
+    const exts = [
+      Document,
+      Paragraph,
+      Text,
+      Bold.configure({}),
+      Italic.configure({}),
+      Code.configure({}),
+      History,
+      Link.configure({ openOnClick: false }),
+      TokenNode,
+    ];
+    if (singleLine) {
+      exts.push(SingleLine);
     }
-  }, []);
+    return exts;
+  }, [singleLine]);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        // Disable block-level features we don't need
-        heading: false,
-        blockquote: false,
-        bulletList: false,
-        orderedList: false,
-        codeBlock: false,
-        horizontalRule: false,
-        listItem: false,
-      }),
-      TokenNode,
-    ],
-    content: parseToDoc(value),
+    extensions,
+    content: parseToDoc(singleLine ? value.replace(/\n/g, " ") : value),
     editable: !disabled,
     editorProps: {
       attributes: {
@@ -294,24 +317,27 @@ export function TokenizedRichInput({
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           "placeholder:text-muted-foreground",
           disabled && "cursor-not-allowed opacity-50",
+          singleLine && "min-h-0 py-1.5",
           className
         ),
-        style: `min-height: ${Math.max(rows * 1.5, 3)}rem`,
+        style: singleLine ? "min-height: 2.25rem" : `min-height: ${Math.max(rows * 1.5, 3)}rem`,
         "data-placeholder": placeholder,
       },
     },
     onUpdate: ({ editor: ed }) => {
       isInternalUpdate.current = true;
-      const serialized = serializeDoc(ed);
+      let serialized = serializeDoc(ed);
+      if (singleLine) {
+        serialized = serialized.replace(/\n/g, " ");
+      }
       onChange(serialized);
     },
   });
 
-  // Update insertLiteralBracket ref after editor is created
+  // Register bracket plugin after editor is created
   useEffect(() => {
     if (!editor) return;
 
-    // Register bracket plugin
     const plugin = createBracketPlugin(
       () => {
         setPickerOpen(true);
@@ -322,7 +348,6 @@ export function TokenizedRichInput({
       }
     );
 
-    // Add plugin to editor
     const { state } = editor;
     const newState = state.reconfigure({
       plugins: [...state.plugins, plugin],
@@ -330,7 +355,6 @@ export function TokenizedRichInput({
     editor.view.updateState(newState);
 
     return () => {
-      // Cleanup: remove plugin
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
@@ -352,10 +376,11 @@ export function TokenizedRichInput({
     }
 
     const currentSerialized = serializeDoc(editor);
-    if (currentSerialized !== value) {
-      editor.commands.setContent(parseToDoc(value));
+    const compareValue = singleLine ? value.replace(/\n/g, " ") : value;
+    if (currentSerialized !== compareValue) {
+      editor.commands.setContent(parseToDoc(compareValue));
     }
-  }, [value, editor]);
+  }, [value, editor, singleLine]);
 
   // Handle token selection from picker
   const handleTokenSelect = useCallback(
@@ -379,7 +404,6 @@ export function TokenizedRichInput({
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
-      // Small delay to allow picker clicks
       setTimeout(() => {
         if (!editor.isFocused && pickerOpen) {
           // Don't close if focus went to picker
@@ -400,31 +424,31 @@ export function TokenizedRichInput({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => editor.chain().focus().toggleBold().run()}
+            onClick={() => editor.chain().focus().toggleMark("bold").run()}
             className={cn(editor.isActive("bold") && "bg-muted")}
             title="Жирный"
           >
-            <Bold className="h-4 w-4" />
+            <BoldIcon className="h-4 w-4" />
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => editor.chain().focus().toggleItalic().run()}
+            onClick={() => editor.chain().focus().toggleMark("italic").run()}
             className={cn(editor.isActive("italic") && "bg-muted")}
             title="Курсив"
           >
-            <Italic className="h-4 w-4" />
+            <ItalicIcon className="h-4 w-4" />
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => editor.chain().focus().toggleCode().run()}
+            onClick={() => editor.chain().focus().toggleMark("code").run()}
             className={cn(editor.isActive("code") && "bg-muted")}
             title="Код"
           >
-            <Code className="h-4 w-4" />
+            <CodeIcon className="h-4 w-4" />
           </Button>
           <Button
             type="button"
@@ -442,7 +466,7 @@ export function TokenizedRichInput({
             }}
             title="Ссылка"
           >
-            <Link className="h-4 w-4" />
+            <LinkIcon className="h-4 w-4" />
           </Button>
         </div>
       )}
