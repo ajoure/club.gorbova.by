@@ -130,9 +130,6 @@ export function BroadcastTemplateDialog({
                   placeholder="Введите текст сообщения..."
                   rows={8}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки переменной.
-                </p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -188,9 +185,6 @@ export function BroadcastTemplateDialog({
                   rows={12}
                   allowAlign
                 />
-                <p className="text-xs text-muted-foreground">
-                  Нажмите [ для вставки переменной
-                </p>
               </div>
             </TabsContent>
           </Tabs>
