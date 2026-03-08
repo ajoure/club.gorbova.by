@@ -202,12 +202,20 @@ function serializeInline(nodes: any[]): string {
     .join("");
 }
 
+const ALIGN_PREFIX_RE = /^\[\[align:(left|center|right)\]\]/;
+
 function parseToDoc(value: string): any {
   const lines = value.split("\n");
-  const content = lines.map((line) => ({
-    type: "paragraph",
-    content: parseInline(line),
-  }));
+  const content = lines.map((line) => {
+    const m = line.match(ALIGN_PREFIX_RE);
+    const textAlign = m ? m[1] : null;
+    const cleanLine = m ? line.slice(m[0].length) : line;
+    return {
+      type: "paragraph",
+      attrs: textAlign ? { textAlign } : undefined,
+      content: parseInline(cleanLine),
+    };
+  });
 
   return { type: "doc", content };
 }
