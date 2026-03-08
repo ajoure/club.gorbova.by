@@ -398,28 +398,29 @@ export function TokenizedRichInput({
   // Keep editorRef in sync
   useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
 
-  // ── P0.2: Compute caret coords for floating dropdown (dynamic sizes) ──
+  // ── Compute caret coords for floating dropdown ──
   const updateCaretCoords = useCallback(() => {
     const ed = editorRef.current;
     if (!ed) return;
     try {
-      const coords = ed.view.coordsAtPos(ed.state.selection.from);
+      const pos = ed.state.selection.from;
+      const coords = ed.view.coordsAtPos(pos);
       const viewportH = window.innerHeight;
       const viewportW = window.innerWidth;
-      // Measure real dropdown dimensions if rendered, else fallback
-      const rect = dropdownRef.current?.getBoundingClientRect();
-      const ddH = rect?.height || 280;
-      const ddW = rect?.width || 320;
-      // Clamp by editor rect to stay within modal/editor bounds
-      const editorRect = ed.view.dom.getBoundingClientRect();
-      const minLeft = Math.max(4, editorRect.left);
-      const maxLeft = Math.min(viewportW - ddW - 4, editorRect.right - ddW);
-      let top = coords.bottom + 6;
-      if (top + ddH > viewportH) top = coords.top - ddH - 6;
-      const minTop = Math.max(4, editorRect.top + 4);
-      const maxTop = Math.min(viewportH - ddH - 4, editorRect.bottom - ddH - 4);
-      top = Math.max(minTop, Math.min(top, maxTop));
-      const left = Math.max(minLeft, Math.min(coords.left, maxLeft));
+      // Dropdown dimensions (real or fallback)
+      const ddRect = dropdownRef.current?.getBoundingClientRect();
+      const ddH = ddRect?.height || 280;
+      const ddW = ddRect?.width || 320;
+      // Position directly under caret, flip above if no viewport space below
+      let top = coords.bottom + 4;
+      if (top + ddH > viewportH - 8) {
+        top = coords.top - ddH - 4;
+      }
+      // Clamp vertical to viewport
+      top = Math.max(4, Math.min(top, viewportH - ddH - 4));
+      // Horizontal: start at caret, clamp to viewport
+      let left = coords.left;
+      left = Math.max(8, Math.min(left, viewportW - ddW - 8));
       setCaretCoords({ top, left });
     } catch {
       // editor may not be ready
@@ -608,16 +609,18 @@ export function TokenizedRichInput({
         setBubbleOpen(false);
         return;
       }
-      // Clamp within editor bounds (works correctly in modals)
-      const editorRect = ed.view.dom.getBoundingClientRect();
+      const viewportW = window.innerWidth;
       const toolbarW = allowAlign ? 300 : 200;
       const toolbarH = 40;
-      // Position above selection, fallback below if no room
+      // ALWAYS position ABOVE the selection first
       let top = rangeRect.top - toolbarH - 8;
-      if (top < editorRect.top + 4) top = rangeRect.bottom + 6;
-      // Center horizontally on selection, clamp within editor
+      // Only fall below if bubble would go off viewport top
+      if (top < 4) {
+        top = rangeRect.bottom + 6;
+      }
+      // Center horizontally on selection, clamp to viewport
       let left = rangeRect.left + rangeRect.width / 2 - toolbarW / 2;
-      left = Math.max(editorRect.left + 4, Math.min(left, editorRect.right - toolbarW - 4));
+      left = Math.max(8, Math.min(left, viewportW - toolbarW - 8));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
     } catch {
