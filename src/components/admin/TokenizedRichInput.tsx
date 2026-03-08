@@ -767,10 +767,10 @@ export function TokenizedRichInput({
       )}
 
       {/* Floating dropdown at caret position */}
-      {pickerOpen && caretCoords && (
+      {pickerOpen && caretCoords && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed z-[1000] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
+          className="fixed z-[9998] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
           style={{ top: caretCoords.top, left: caretCoords.left }}
         >
           <Command>
@@ -812,7 +812,8 @@ export function TokenizedRichInput({
               )}
             </CommandList>
           </Command>
-        </div>
+        </div>,
+        document.body
       )}
 
       <p className="text-xs text-muted-foreground">
