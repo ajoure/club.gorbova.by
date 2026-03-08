@@ -1104,9 +1104,10 @@ export default function AdminEmail() {
                     <AlertCircle className="w-4 h-4" />
                     {templateValidationError}
                   </p>
-                )
+                )}
               </div>
-                    value={templateDialog.template.subject}
+
+
                     onKeyDown={subjectBracket.handleKeyDown}
                     onChange={(e) => {
                       const cursor = e.target.selectionStart ?? e.target.value.length;
