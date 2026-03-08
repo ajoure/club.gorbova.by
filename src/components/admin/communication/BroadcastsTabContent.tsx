@@ -366,7 +366,7 @@ const [includeButton, setIncludeButton] = useState(true);
       const { data, error } = await supabase.functions.invoke("telegram-send-test", {
         body: {
           botId: bots[0].id,
-          messageText: message.trim(),
+          messageText: message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""),
           buttonText: includeButton ? buttonText : undefined,
           buttonUrl: includeButton ? buttonUrl : undefined,
           product_context_id: productContextId,
