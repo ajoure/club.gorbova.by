@@ -669,58 +669,32 @@ const [includeButton, setIncludeButton] = useState(true);
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Тема письма</Label>
-                    <div className="relative">
-                      <Input
-                        ref={emailSubjectRef}
-                        placeholder="Тема письма..."
-                        value={emailSubject}
-                        onChange={(e) => {
-                          const corrected = emailSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                          setEmailSubject(corrected ?? e.target.value);
-                        }}
-                        onKeyDown={emailSubjectBracket.handleKeyDown}
-                      />
-                      <TokenPicker
-                        triggerless
-                        anchorRef={emailSubjectPickerAnchorRef}
-                        open={emailSubjectPickerOpen}
-                        onOpenChange={setEmailSubjectPickerOpen}
-                        onInsert={(token) => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, token)}
-                        showContactVars
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
-                      </p>
-                    </div>
+                    <TokenizedRichInput
+                      value={emailSubject}
+                      onChange={setEmailSubject}
+                      placeholder="Тема письма..."
+                      singleLine
+                    />
                   </div>
 
                   <div className="space-y-2">
                     <Label>Текст письма (HTML)</Label>
-                    <div className="relative">
-                      <Textarea
-                        ref={emailBodyRef}
-                        placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
-                        value={emailBody}
-                        onChange={(e) => {
-                          const corrected = emailBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                          setEmailBody(corrected ?? e.target.value);
-                        }}
-                        onKeyDown={emailBodyBracket.handleKeyDown}
-                        rows={8}
-                        className="resize-none font-mono text-sm"
-                      />
-                      <TokenPicker
-                        triggerless
-                        anchorRef={emailBodyPickerAnchorRef}
-                        open={emailBodyPickerOpen}
-                        onOpenChange={setEmailBodyPickerOpen}
-                        onInsert={(token) => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, token)}
-                        showContactVars
-                      />
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной. Поддерживается HTML-разметка.
-                      </p>
-                    </div>
+                    <TokenizedRichInput
+                      value={emailBody}
+                      onChange={setEmailBody}
+                      placeholder="<h1>Заголовок</h1><p>Текст письма...</p>"
+                      rows={8}
+                    />
+                  </div>
+
+                  {showCfWarning && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   </div>
                 </CardContent>
               </Card>
