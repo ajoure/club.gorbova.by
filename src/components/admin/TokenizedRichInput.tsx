@@ -387,6 +387,10 @@ export function TokenizedRichInput({
       if (singleLine) {
         serialized = serialized.replace(/\n/g, " ");
       }
+      // Strip align markers when not allowed (Telegram-safe)
+      if (!allowAlign) {
+        serialized = serialized.replace(/\[\[align:(left|center|right)\]\]/g, "");
+      }
       onChange(serialized);
     },
   });
