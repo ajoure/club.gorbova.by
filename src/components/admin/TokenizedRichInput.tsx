@@ -151,7 +151,7 @@ function createBracketPlugin(
         }
 
         // Any other printable key while pending → cancel pending (don't open picker)
-        if (pending && event.key.length === 1 && !NON_CLOSING_KEYS.has(event.key)) {
+        if (pending && event.key.length === 1 && event.key !== "[") {
           clearPending();
         }
 
