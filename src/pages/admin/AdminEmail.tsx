@@ -208,7 +208,6 @@ export default function AdminEmail() {
 
 
 
-
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
     queryKey: ["products-for-email-preview"],
