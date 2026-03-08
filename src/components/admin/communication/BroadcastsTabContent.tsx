@@ -695,7 +695,6 @@ const [includeButton, setIncludeButton] = useState(true);
                       </AlertDescription>
                     </Alert>
                   )}
-                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
