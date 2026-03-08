@@ -644,8 +644,6 @@ export function TokenizedRichInput({
     </div>
   );
 }
-        );
-        const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
       } catch {
         // editor may be destroyed
