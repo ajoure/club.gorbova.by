@@ -369,6 +369,7 @@ const [includeButton, setIncludeButton] = useState(true);
           messageText: message.trim(),
           buttonText: includeButton ? buttonText : undefined,
           buttonUrl: includeButton ? buttonUrl : undefined,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
