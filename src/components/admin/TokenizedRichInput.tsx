@@ -7,7 +7,7 @@
  * Features:
  * - [ trigger (300ms) opens token picker
  * - [[ inserts literal [
- * - Markdown toolbar (Bold/Italic/Code/Link) when showToolbar=true
+ * - Bubble toolbar on text selection with Bold/Italic/Code/Link + Align L/C/R (multi-line only)
  * - Bubble toolbar on text selection (multi-line only)
  * - Copy chip → clipboard gets {{token}}, not label
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
