@@ -220,6 +220,8 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // NOTE: this 'supabase' is a SERVICE_ROLE client (RLS bypass).
+    // Required by resolveCustomFieldTokens and direct table queries.
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -332,6 +334,7 @@ Deno.serve(async (req) => {
     let subjectAfterCf = subject;
     let htmlAfterCf = html;
     if (cfFieldIds.length > 0) {
+      // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfSubject = await resolveCustomFieldTokens(subject, productContextId, supabase);
       const cfHtml = await resolveCustomFieldTokens(html, productContextId, supabase);
       subjectAfterCf = cfSubject.text;

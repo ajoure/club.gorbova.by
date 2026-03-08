@@ -89,9 +89,21 @@ const TokenNode = Node.create({
 
 // ─── Bracket trigger plugin ─────────────────────────────────────────
 
+const BRACKET_PLUGIN_KEY_STR = "bracketTrigger$";
 const bracketPluginKey = new PluginKey("bracketTrigger");
 
-function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
+const NON_CLOSING_KEYS = new Set([
+  "Escape", "Enter", "Tab", "Backspace", "Delete",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Shift", "Control", "Alt", "Meta", "CapsLock",
+]);
+
+function createBracketPlugin(
+  onOpen: () => void,
+  onInsertBracket: () => void,
+  isPickerOpenRef: React.RefObject<boolean>,
+  closePicker: () => void,
+) {
   let pending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -104,14 +116,32 @@ function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
   return new Plugin({
     key: bracketPluginKey,
     props: {
-      handleKeyDown(view, event) {
+      handleKeyDown(_view, event) {
         if (event.key === "Escape") {
           clearPending();
           return false; // let popover handle
         }
 
+        // Close picker on printable key (not [, not service keys)
+        if (
+          isPickerOpenRef.current &&
+          event.key.length === 1 &&
+          event.key !== "[" &&
+          !event.ctrlKey && !event.metaKey
+        ) {
+          closePicker();
+          return false; // let char through to editor
+        }
+
         if (event.key === "[" && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault();
+
+          // [[ while picker open → insert [ and close picker
+          if (isPickerOpenRef.current) {
+            closePicker();
+            onInsertBracket();
+            return true;
+          }
 
           if (pending) {
             clearPending();
@@ -127,8 +157,8 @@ function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
           return true;
         }
 
-        // Any other key while pending → cancel pending (don't open picker)
-        if (pending && event.key.length === 1) {
+        // Any other printable key while pending → cancel pending (don't open picker)
+        if (pending && event.key.length === 1 && !NON_CLOSING_KEYS.has(event.key)) {
           clearPending();
         }
 
@@ -228,11 +258,49 @@ function parseInline(text: string): any[] {
   return nodes;
 }
 
+/**
+ * One-level markdown parser for `code`, [link](url), *bold*, _italic_.
+ * No nesting. If a pattern is "broken" (unclosed), it stays as plain text.
+ */
 function parseMarkdownText(text: string): any[] {
-  // Simple approach: treat as plain text for now
-  // TipTap will handle markdown parsing via StarterKit inputRules
   if (!text) return [];
-  return [{ type: "text", text }];
+
+  // Regex: `code` | [text](url) | *bold* | _italic_ — first match wins, no nesting
+  const MD_RE = /`([^`]+)`|\[([^\]]+)\]\(((?:[^)\s])+)\)|\*([^*\s][^*]*[^*\s]|\S)\*|_([^_\s][^_]*[^_\s]|\S)_/g;
+
+  const nodes: any[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = MD_RE.exec(text)) !== null) {
+    // Plain text before match
+    if (m.index > lastIndex) {
+      nodes.push({ type: "text", text: text.slice(lastIndex, m.index) });
+    }
+
+    if (m[1] !== undefined) {
+      // `code`
+      nodes.push({ type: "text", text: m[1], marks: [{ type: "code" }] });
+    } else if (m[2] !== undefined && m[3] !== undefined) {
+      // [text](url)
+      nodes.push({ type: "text", text: m[2], marks: [{ type: "link", attrs: { href: m[3] } }] });
+    } else if (m[4] !== undefined) {
+      // *bold*
+      nodes.push({ type: "text", text: m[4], marks: [{ type: "bold" }] });
+    } else if (m[5] !== undefined) {
+      // _italic_
+      nodes.push({ type: "text", text: m[5], marks: [{ type: "italic" }] });
+    }
+
+    lastIndex = m.index + m[0].length;
+  }
+
+  // Remaining plain text
+  if (lastIndex < text.length) {
+    nodes.push({ type: "text", text: text.slice(lastIndex) });
+  }
+
+  return nodes.length > 0 ? nodes : [{ type: "text", text }];
 }
 
 // ─── Component ──────────────────────────────────────────────────────
@@ -259,9 +327,16 @@ export function TokenizedRichInput({
   className,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerOpenRef = useRef(false);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
+
+  // Keep ref in sync with state
+  useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
+
+  const closePicker = useCallback(() => setPickerOpen(false), []);
 
   // Load product fields for registry
   const { data: productFields = [] } = useQuery({
@@ -274,17 +349,6 @@ export function TokenizedRichInput({
   useEffect(() => {
     setProductFieldsCache(productFields);
   }, [productFields]);
-
-  // All tokens for picker
-  const allTokens = useMemo(
-    () => [...CONTACT_TOKENS, ...DATETIME_TOKENS, ...productFields],
-    [productFields]
-  );
-
-  const openPicker = useCallback(() => {
-    setPickerOpen(true);
-    requestAnimationFrame(() => searchInputRef.current?.focus());
-  }, []);
 
   // Build extensions list
   const extensions = useMemo(() => {
@@ -338,6 +402,11 @@ export function TokenizedRichInput({
   useEffect(() => {
     if (!editor) return;
 
+    // Remove any existing bracket plugin first (guard against duplicates)
+    const existingPlugins = editor.state.plugins.filter(
+      (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
+    );
+
     const plugin = createBracketPlugin(
       () => {
         setPickerOpen(true);
@@ -345,12 +414,13 @@ export function TokenizedRichInput({
       },
       () => {
         editor.commands.insertContent("[");
-      }
+      },
+      pickerOpenRef,
+      closePicker,
     );
 
-    const { state } = editor;
-    const newState = state.reconfigure({
-      plugins: [...state.plugins, plugin],
+    const newState = editor.state.reconfigure({
+      plugins: [...existingPlugins, plugin],
     });
     editor.view.updateState(newState);
 
@@ -358,7 +428,7 @@ export function TokenizedRichInput({
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
-          (p) => p !== plugin
+          (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
@@ -366,7 +436,7 @@ export function TokenizedRichInput({
         // editor may be destroyed
       }
     };
-  }, [editor]);
+  }, [editor, closePicker]);
 
   // Sync external value changes (e.g., loading saved template)
   useEffect(() => {
@@ -400,19 +470,22 @@ export function TokenizedRichInput({
     [editor]
   );
 
-  // Close picker when editor loses focus to other content
+  // Close picker when focus leaves both editor and popover
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
       setTimeout(() => {
-        if (!editor.isFocused && pickerOpen) {
-          // Don't close if focus went to picker
+        const active = document.activeElement;
+        // Don't close if focus is inside the popover (CommandInput, etc.)
+        if (popoverRef.current?.contains(active)) return;
+        if (!editor.isFocused && pickerOpenRef.current) {
+          setPickerOpen(false);
         }
-      }, 200);
+      }, 150);
     };
     editor.on("blur", handler);
     return () => { editor.off("blur", handler); };
-  }, [editor, pickerOpen]);
+  }, [editor]);
 
   if (!editor) return null;
 
@@ -479,6 +552,7 @@ export function TokenizedRichInput({
             <span className="absolute bottom-0 left-4 inline-block w-0 h-0" />
           </PopoverAnchor>
           <PopoverContent
+            ref={popoverRef}
             className="max-w-[320px] p-0"
             align="start"
             side="bottom"
