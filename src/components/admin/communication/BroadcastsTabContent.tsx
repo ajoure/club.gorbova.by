@@ -271,7 +271,7 @@ const [includeButton, setIncludeButton] = useState(true);
     mutationFn: async () => {
       if (mediaFile) {
         const formData = new FormData();
-        formData.append("message", message.trim());
+        formData.append("message", message.trim().replace(/\[\[align:(left|center|right)\]\]/g, ""));
         formData.append("include_button", String(includeButton));
         if (includeButton) {
           formData.append("button_text", buttonText);
