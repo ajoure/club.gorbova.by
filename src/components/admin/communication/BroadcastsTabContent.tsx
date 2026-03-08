@@ -334,6 +334,7 @@ const [includeButton, setIncludeButton] = useState(true);
           subject: emailSubject.trim(),
           html: emailBody.trim(),
           filters,
+          product_context_id: productContextId,
         },
       });
       if (error) throw error;
