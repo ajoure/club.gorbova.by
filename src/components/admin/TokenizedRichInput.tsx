@@ -257,11 +257,49 @@ function parseInline(text: string): any[] {
   return nodes;
 }
 
+/**
+ * One-level markdown parser for `code`, [link](url), *bold*, _italic_.
+ * No nesting. If a pattern is "broken" (unclosed), it stays as plain text.
+ */
 function parseMarkdownText(text: string): any[] {
-  // Simple approach: treat as plain text for now
-  // TipTap will handle markdown parsing via StarterKit inputRules
   if (!text) return [];
-  return [{ type: "text", text }];
+
+  // Regex: `code` | [text](url) | *bold* | _italic_ — first match wins, no nesting
+  const MD_RE = /`([^`]+)`|\[([^\]]+)\]\(((?:[^)\s])+)\)|\*([^*\s][^*]*[^*\s]|\S)\*|_([^_\s][^_]*[^_\s]|\S)_/g;
+
+  const nodes: any[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = MD_RE.exec(text)) !== null) {
+    // Plain text before match
+    if (m.index > lastIndex) {
+      nodes.push({ type: "text", text: text.slice(lastIndex, m.index) });
+    }
+
+    if (m[1] !== undefined) {
+      // `code`
+      nodes.push({ type: "text", text: m[1], marks: [{ type: "code" }] });
+    } else if (m[2] !== undefined && m[3] !== undefined) {
+      // [text](url)
+      nodes.push({ type: "text", text: m[2], marks: [{ type: "link", attrs: { href: m[3] } }] });
+    } else if (m[4] !== undefined) {
+      // *bold*
+      nodes.push({ type: "text", text: m[4], marks: [{ type: "bold" }] });
+    } else if (m[5] !== undefined) {
+      // _italic_
+      nodes.push({ type: "text", text: m[5], marks: [{ type: "italic" }] });
+    }
+
+    lastIndex = m.index + m[0].length;
+  }
+
+  // Remaining plain text
+  if (lastIndex < text.length) {
+    nodes.push({ type: "text", text: text.slice(lastIndex) });
+  }
+
+  return nodes.length > 0 ? nodes : [{ type: "text", text }];
 }
 
 // ─── Component ──────────────────────────────────────────────────────
