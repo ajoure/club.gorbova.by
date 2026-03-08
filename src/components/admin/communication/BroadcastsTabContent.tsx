@@ -613,18 +613,6 @@ const [includeButton, setIncludeButton] = useState(true);
                     )}
                   </div>
 
-                  {/* WYSIWYG Preview */}
-                  {message && (
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2">
-                        <Eye className="h-4 w-4" />
-                        Предпросмотр
-                      </Label>
-                      <div className="rounded-lg border bg-muted/30 p-4">
-                        <TelegramMessagePreview text={message} />
-                      </div>
-                    </div>
-                  )}
 
                   <Separator />
 
