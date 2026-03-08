@@ -12,6 +12,7 @@
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
  * - Rename-safe: labels resolved at runtime from registry
  * - singleLine mode: Enter blocked, \n replaced with space
+ * - Floating dropdown positioned at caret (coordsAtPos)
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -40,8 +41,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-// ─── TokenNode Extension ────────────────────────────────────────────
 
 const TokenNode = Node.create({
   name: "token",
@@ -79,13 +78,10 @@ const TokenNode = Node.create({
     ];
   },
 
-  // Clipboard: copy tokenString, not label
   renderText({ node }) {
     return node.attrs.tokenString;
   },
 });
-
-// ─── Bracket trigger plugin ─────────────────────────────────────────
 
 const bracketPluginKey = new PluginKey("bracketTrigger");
 const BRACKET_PLUGIN_KEY_STR = (bracketPluginKey as any).key as string;
@@ -111,10 +107,9 @@ function createBracketPlugin(
       handleKeyDown(_view, event) {
         if (event.key === "Escape") {
           clearPending();
-          return false; // let popover handle
+          return false;
         }
 
-        // Close picker on printable key (not [, not service keys)
         if (
           isPickerOpenRef.current &&
           event.key.length === 1 &&
@@ -122,13 +117,12 @@ function createBracketPlugin(
           !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
         ) {
           closePicker();
-          return false; // let char through to editor
+          return false;
         }
 
         if (event.key === "[" && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault();
 
-          // [[ while picker open → insert [ and close picker
           if (isPickerOpenRef.current) {
             closePicker();
             onInsertBracket();
@@ -149,7 +143,6 @@ function createBracketPlugin(
           return true;
         }
 
-        // Any other printable key while pending → cancel pending (don't open picker)
         if (pending && event.key.length === 1 && event.key !== "[") {
           clearPending();
         }
@@ -160,21 +153,15 @@ function createBracketPlugin(
   });
 }
 
-// ─── SingleLine extension ───────────────────────────────────────────
-
 const SingleLine = Extension.create({
   name: "singleLine",
   addKeyboardShortcuts() {
     return {
-      Enter: () => true, // block Enter
-      "Shift-Enter": () => true, // block Shift+Enter too
+      Enter: () => true,
+      "Shift-Enter": () => true,
     };
   },
 });
-
-// ─── No History extension — not needed for short template inputs ──
-
-// ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
 
 function serializeDoc(editor: Editor): string {
   const doc = editor.getJSON();
@@ -202,7 +189,6 @@ function serializeInline(nodes: any[]): string {
       if (node.type === "text") {
         let text = node.text || "";
         const marks = node.marks || [];
-        // Apply marks in order: code first (innermost), then bold/italic
         for (const mark of marks) {
           if (mark.type === "code") text = "`" + text + "`";
           if (mark.type === "bold") text = "*" + text + "*";
@@ -215,8 +201,6 @@ function serializeInline(nodes: any[]): string {
     })
     .join("");
 }
-
-// ─── Parse markdown string with {{tokens}} → TipTap doc ────────────
 
 function parseToDoc(value: string): any {
   const lines = value.split("\n");
@@ -232,7 +216,6 @@ function parseInline(text: string): any[] {
   if (!text) return [];
 
   const nodes: any[] = [];
-  // Split by {{...}} tokens
   const parts = text.split(/(\{\{[^}]+\}\})/g);
 
   for (const part of parts) {
@@ -243,7 +226,6 @@ function parseInline(text: string): any[] {
         attrs: { tokenString: part },
       });
     } else {
-      // Parse markdown marks in text
       const textNodes = parseMarkdownText(part);
       nodes.push(...textNodes);
     }
@@ -252,14 +234,9 @@ function parseInline(text: string): any[] {
   return nodes;
 }
 
-/**
- * One-level markdown parser for `code`, [link](url), *bold*, _italic_.
- * No nesting. If a pattern is "broken" (unclosed), it stays as plain text.
- */
 function parseMarkdownText(text: string): any[] {
   if (!text) return [];
 
-  // Regex: `code` | [text](url) | *bold* | _italic_ — first match wins, no nesting
   const MD_RE = /`([^`]+)`|\[([^\]]+)\]\(((?:[^)\s])+)\)|\*([^*\s][^*]*[^*\s]|\S)\*|_([^_\s][^_]*[^_\s]|\S)_/g;
 
   const nodes: any[] = [];
@@ -267,29 +244,23 @@ function parseMarkdownText(text: string): any[] {
   let m: RegExpExecArray | null;
 
   while ((m = MD_RE.exec(text)) !== null) {
-    // Plain text before match
     if (m.index > lastIndex) {
       nodes.push({ type: "text", text: text.slice(lastIndex, m.index) });
     }
 
     if (m[1] !== undefined) {
-      // `code`
       nodes.push({ type: "text", text: m[1], marks: [{ type: "code" }] });
     } else if (m[2] !== undefined && m[3] !== undefined) {
-      // [text](url)
       nodes.push({ type: "text", text: m[2], marks: [{ type: "link", attrs: { href: m[3] } }] });
     } else if (m[4] !== undefined) {
-      // *bold*
       nodes.push({ type: "text", text: m[4], marks: [{ type: "bold" }] });
     } else if (m[5] !== undefined) {
-      // _italic_
       nodes.push({ type: "text", text: m[5], marks: [{ type: "italic" }] });
     }
 
     lastIndex = m.index + m[0].length;
   }
 
-  // Remaining plain text
   if (lastIndex < text.length) {
     nodes.push({ type: "text", text: text.slice(lastIndex) });
   }
@@ -326,14 +297,12 @@ export function TokenizedRichInput({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
   const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
+  const editorRef = useRef<Editor | null>(null);
 
   // Keep ref in sync with state
   useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
-
-  // updateCaretCoords — defined after editor, used in effects below
-  const editorRef = useRef<Editor | null>(null);
 
   // Load product fields for registry
   const { data: productFields = [] } = useQuery({
@@ -356,7 +325,6 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      // No History extension needed for template inputs
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
@@ -398,7 +366,7 @@ export function TokenizedRichInput({
   // Keep editorRef in sync
   useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
 
-  // Compute caret coords
+  // Compute caret coords for floating dropdown
   const updateCaretCoords = useCallback(() => {
     const ed = editorRef.current;
     if (!ed) return;
@@ -635,201 +603,6 @@ export function TokenizedRichInput({
           </Command>
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">
-        Нажмите{" "}
-        <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd>{" "}
-        для вставки переменной
-      </p>
-    </div>
-  );
-}
-
-
-      }
-    };
-  }, [editor, closePicker]);
-
-  // Sync external value changes (e.g., loading saved template)
-  useEffect(() => {
-    if (!editor || isInternalUpdate.current) {
-      isInternalUpdate.current = false;
-      return;
-    }
-
-    const currentSerialized = serializeDoc(editor);
-    const compareValue = singleLine ? value.replace(/\n/g, " ") : value;
-    if (currentSerialized !== compareValue) {
-      editor.commands.setContent(parseToDoc(compareValue));
-    }
-  }, [value, editor, singleLine]);
-
-  // Handle token selection from picker
-  const handleTokenSelect = useCallback(
-    (tokenDef: TokenDef) => {
-      if (!editor) return;
-      editor
-        .chain()
-        .focus()
-        .insertContent({
-          type: "token",
-          attrs: { tokenString: tokenDef.tokenString },
-        })
-        .insertContent(" ") // space after chip
-        .run();
-      setPickerOpen(false);
-    },
-    [editor]
-  );
-
-  // Close picker when focus leaves both editor and popover
-  useEffect(() => {
-    if (!editor) return;
-    const handler = () => {
-      setTimeout(() => {
-        const active = document.activeElement;
-        // Don't close if focus is inside the popover (CommandInput, etc.)
-        if (popoverRef.current?.contains(active)) return;
-        if (!editor.isFocused && pickerOpenRef.current) {
-          setPickerOpen(false);
-        }
-      }, 150);
-    };
-    editor.on("blur", handler);
-    return () => { editor.off("blur", handler); };
-  }, [editor]);
-
-  if (!editor) return null;
-
-  return (
-    <div className="space-y-1">
-      {showToolbar && (
-        <div className="flex gap-1 mb-1">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => editor.chain().focus().toggleMark("bold").run()}
-            className={cn(editor.isActive("bold") && "bg-muted")}
-            title="Жирный"
-          >
-            <BoldIcon className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => editor.chain().focus().toggleMark("italic").run()}
-            className={cn(editor.isActive("italic") && "bg-muted")}
-            title="Курсив"
-          >
-            <ItalicIcon className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => editor.chain().focus().toggleMark("code").run()}
-            className={cn(editor.isActive("code") && "bg-muted")}
-            title="Код"
-          >
-            <CodeIcon className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              const url = prompt("Введите URL:");
-              if (url) {
-                editor
-                  .chain()
-                  .focus()
-                  .setMark("link", { href: url })
-                  .run();
-              }
-            }}
-            title="Ссылка"
-          >
-            <LinkIcon className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-
-      <div ref={anchorRef} className="relative">
-        <EditorContent editor={editor} />
-
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <PopoverAnchor asChild>
-            <span className="absolute bottom-0 left-4 inline-block w-0 h-0" />
-          </PopoverAnchor>
-          <PopoverContent
-            ref={popoverRef}
-            className="max-w-[320px] p-0"
-            align="start"
-            side="bottom"
-            collisionPadding={8}
-          >
-            <Command>
-              <CommandInput
-                ref={searchInputRef}
-                placeholder="Поиск по названию..."
-                className="text-xs h-8"
-              />
-              <CommandList className="max-h-[240px] overflow-auto">
-                <CommandEmpty>Токены не найдены</CommandEmpty>
-                <CommandGroup heading="Контакт / Профиль">
-                  {CONTACT_TOKENS.map((t) => (
-                    <CommandItem
-                      key={t.key}
-                      value={t.searchKeywords}
-                      className="text-xs py-1"
-                      onSelect={() => handleTokenSelect(t)}
-                    >
-                      <span className="flex-1 truncate">{t.label}</span>
-                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                        {t.badge}
-                      </Badge>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                <CommandGroup heading="Дата / Время">
-                  {DATETIME_TOKENS.map((t) => (
-                    <CommandItem
-                      key={t.key}
-                      value={t.searchKeywords}
-                      className="text-xs py-1"
-                      onSelect={() => handleTokenSelect(t)}
-                    >
-                      <span className="flex-1 truncate">{t.label}</span>
-                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                        {t.badge}
-                      </Badge>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                {productFields.length > 0 && (
-                  <CommandGroup heading="Продукт">
-                    {productFields.map((t) => (
-                      <CommandItem
-                        key={t.key}
-                        value={t.searchKeywords}
-                        className="text-xs py-1"
-                        onSelect={() => handleTokenSelect(t)}
-                      >
-                        <span className="flex-1 truncate">{t.label}</span>
-                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                          {t.badge}
-                        </Badge>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )}
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
-      </div>
 
       <p className="text-xs text-muted-foreground">
         Нажмите{" "}
