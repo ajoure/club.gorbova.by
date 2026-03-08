@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
+import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -62,7 +63,7 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    // Admin client for reading bot tokens (RLS protected)
+    // Admin client for reading data (RLS bypass)
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
     // Get current user
@@ -78,7 +79,7 @@ Deno.serve(async (req: Request) => {
 
     // Get request body
     const body = await req.json();
-    const { botId, messageText, buttonText, buttonUrl } = body;
+    const { botId, messageText, buttonText, buttonUrl, product_context_id } = body;
 
     if (!botId || !messageText) {
       return new Response(JSON.stringify({ error: "botId and messageText required" }), { 
@@ -86,6 +87,9 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
     }
+
+    // Normalize product_context_id
+    const productContextId = (product_context_id && product_context_id !== 'all') ? product_context_id : null;
 
     // Get user's Telegram ID and contact fields from profile
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -106,7 +110,7 @@ Deno.serve(async (req: Request) => {
 
     const telegramChatId = profile.telegram_user_id;
 
-    // Get bot token from environment (security policy: tokens stored in secrets, not DB)
+    // Get bot token from environment
     const botToken = Deno.env.get("PRIMARY_TELEGRAM_BOT_TOKEN");
     
     if (!botToken) {
@@ -117,11 +121,16 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Resolve tokens: contact first, then system
+    // Resolve chain: Contact → System → Custom Fields
     const now = new Date();
     const tokensInfo = extractUsedTokens(messageText);
+    const cfFieldIds = extractCustomFieldTokenIds(messageText);
+
     let personalizedMessage = resolveContactTokens(messageText, profile);
     personalizedMessage = resolveSystemTokens(personalizedMessage, now);
+    
+    const cfResult = await resolveCustomFieldTokens(personalizedMessage, productContextId, supabaseAdmin);
+    personalizedMessage = cfResult.text;
 
     // Build message with button
     const keyboard = buttonText && buttonUrl ? {
@@ -157,7 +166,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // Log token usage
-    if (tokensInfo.contact.length > 0 || tokensInfo.system.length > 0) {
+    if (tokensInfo.contact.length > 0 || tokensInfo.system.length > 0 || cfFieldIds.length > 0) {
       await supabaseAdmin.from('audit_logs').insert({
         actor_type: 'system',
         actor_user_id: userId,
@@ -170,6 +179,9 @@ Deno.serve(async (req: Request) => {
           failed: 0,
           tokens_used_contact: tokensInfo.contact,
           tokens_used_system: tokensInfo.system,
+          tokens_used_cf_ids: cfFieldIds,
+          cf_product_id: productContextId,
+          cf_tokens_ignored: cfResult.cfTokensIgnored,
         },
       });
     }

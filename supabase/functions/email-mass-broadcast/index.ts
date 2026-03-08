@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { resolveSystemTokens, extractUsedTokens } from "../_shared/systemTokens.ts";
+import { resolveCustomFieldTokens, extractCustomFieldTokenIds } from "../_shared/customFieldTokens.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -116,7 +117,6 @@ async function sendEmailViaSMTP(params: {
   const fromName = account.from_name || "Gorbova.by";
   const fromEmail = account.from_email || account.email;
 
-  // Auto-detect SMTP settings
   if (!smtpHost) {
     const domain = username.split("@")[1]?.toLowerCase();
     const smtpSettings: Record<string, { host: string; port: number }> = {
@@ -257,7 +257,10 @@ Deno.serve(async (req) => {
       );
     }
 
-    const { subject, html, filters } = await req.json();
+    const { subject, html, filters, product_context_id } = await req.json();
+
+    // Normalize product_context_id
+    const productContextId = (product_context_id && product_context_id !== 'all') ? product_context_id : null;
 
     if (!subject || !html) {
       return new Response(
@@ -266,7 +269,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log('Starting email broadcast...');
+    console.log('Starting email broadcast...', { productContextId });
 
     // Get email account
     const emailAccount = await getEmailAccount(supabase);
@@ -318,10 +321,23 @@ Deno.serve(async (req) => {
 
     console.log(`Sending to ${filteredProfiles.length} recipients`);
 
-    // Extract token usage from original templates (before substitution)
-    const tokensInfo = extractUsedTokens(subject + ' ' + html);
-    // Single `now` for the entire broadcast
+    // Extract token usage from original templates
+    const combinedTemplate = subject + ' ' + html;
+    const tokensInfo = extractUsedTokens(combinedTemplate);
+    const cfFieldIds = extractCustomFieldTokenIds(combinedTemplate);
     const broadcastNow = new Date();
+
+    // Resolve cf tokens once (product-scoped, not per-user)
+    let cfTokensIgnored = false;
+    let subjectAfterCf = subject;
+    let htmlAfterCf = html;
+    if (cfFieldIds.length > 0) {
+      const cfSubject = await resolveCustomFieldTokens(subject, productContextId, supabase);
+      const cfHtml = await resolveCustomFieldTokens(html, productContextId, supabase);
+      subjectAfterCf = cfSubject.text;
+      htmlAfterCf = cfHtml.text;
+      cfTokensIgnored = cfSubject.cfTokensIgnored || cfHtml.cfTokensIgnored;
+    }
 
     let sent = 0;
     let failed = 0;
@@ -329,9 +345,9 @@ Deno.serve(async (req) => {
     for (const profile of filteredProfiles) {
       if (!profile.email) continue;
 
-      // Resolve contact tokens first, then system tokens
-      const personalizedSubject = resolveSystemTokens(resolveContactTokens(subject, profile), broadcastNow);
-      const personalizedHtml = resolveSystemTokens(resolveContactTokens(html, profile), broadcastNow);
+      // Resolve chain: Contact → System (cf already resolved)
+      const personalizedSubject = resolveSystemTokens(resolveContactTokens(subjectAfterCf, profile), broadcastNow);
+      const personalizedHtml = resolveSystemTokens(resolveContactTokens(htmlAfterCf, profile), broadcastNow);
 
       try {
         await sendEmailViaSMTP({
@@ -343,7 +359,6 @@ Deno.serve(async (req) => {
         sent++;
         console.log(`Email sent to ${profile.email}`);
 
-        // Log to email_logs
         await supabase.from('email_logs').insert({
           direction: 'outgoing',
           from_email: emailAccount.from_email || emailAccount.email,
@@ -355,7 +370,6 @@ Deno.serve(async (req) => {
           template_code: 'mass_broadcast',
         });
 
-        // Rate limit
         await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         failed++;
@@ -386,6 +400,9 @@ Deno.serve(async (req) => {
         subject,
         tokens_used_contact: tokensInfo.contact,
         tokens_used_system: tokensInfo.system,
+        tokens_used_cf_ids: cfFieldIds,
+        cf_product_id: productContextId,
+        cf_tokens_ignored: cfTokensIgnored,
       },
     });
 
