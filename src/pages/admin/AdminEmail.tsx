@@ -1108,8 +1108,7 @@ export default function AdminEmail() {
               </div>
 
 
-                    onKeyDown={subjectBracket.handleKeyDown}
-                    onChange={(e) => {
+
                       const cursor = e.target.selectionStart ?? e.target.value.length;
                       const corrected = subjectBracket.handleChange(e.target.value, cursor);
                       if (subjectPickerOpen && corrected === null) setSubjectPickerOpen(false);
