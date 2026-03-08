@@ -1,8 +1,8 @@
-// Cache bust v2
+// Cache bust v3
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { MessageCircle, Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram } from "lucide-react";
+import { Send, LifeBuoy, Inbox, Settings, ChevronDown, MessageSquare, Mail, Instagram } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
