@@ -120,7 +120,7 @@ function createBracketPlugin(
           isPickerOpenRef.current &&
           event.key.length === 1 &&
           event.key !== "[" &&
-          !event.ctrlKey && !event.metaKey
+          !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
         ) {
           closePicker();
           return false; // let char through to editor
