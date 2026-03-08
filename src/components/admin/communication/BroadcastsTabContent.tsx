@@ -59,7 +59,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { BroadcastTemplatesSection } from "./BroadcastTemplatesSection";
-import { TelegramMessagePreview } from "./TelegramMessagePreview";
+
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface BroadcastFilters {
