@@ -106,49 +106,18 @@ const [includeButton, setIncludeButton] = useState(true);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
   
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const emailSubjectRef = useRef<HTMLInputElement>(null);
-  const emailBodyRef = useRef<HTMLTextAreaElement>(null);
-  const emailSubjectPickerAnchorRef = useRef<HTMLSpanElement>(null);
-  const emailBodyPickerAnchorRef = useRef<HTMLSpanElement>(null);
 
-  // TokenPicker open states (email fields only; TG uses TokenizedRichInput)
-  const [emailSubjectPickerOpen, setEmailSubjectPickerOpen] = useState(false);
-  const [emailBodyPickerOpen, setEmailBodyPickerOpen] = useState(false);
+  // cf warning: check if message/email contains cf.product tokens
+  const hasCfTokens = useMemo(() => {
+    const allText = message + emailSubject + emailBody;
+    return allText.includes('{{cf.product.');
+  }, [message, emailSubject, emailBody]);
 
-  // Insert token at caret helper
-  const insertAtCaret = useCallback((ref: React.RefObject<HTMLTextAreaElement | HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<string>>, token: string) => {
-    const el = ref.current;
-    if (!el) { setter(prev => prev + token); return; }
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? start;
-    const before = el.value.slice(0, start);
-    const after = el.value.slice(end);
-    const newVal = before + token + after;
-    setter(newVal);
-    requestAnimationFrame(() => {
-      const pos = start + token.length;
-      el.setSelectionRange(pos, pos);
-      el.focus();
-    });
-  }, []);
+  const productContextId = useMemo(() => {
+    return (filters.productId && filters.productId !== 'all') ? filters.productId : null;
+  }, [filters.productId]);
 
-  // Bracket triggers for email fields only (TG uses TokenizedRichInput)
-
-
-  const emailSubjectBracket = useBracketTrigger({
-    onOpen: () => setEmailSubjectPickerOpen(true),
-    onInsertBracket: () => insertAtCaret(emailSubjectRef as React.RefObject<HTMLInputElement>, setEmailSubject, "["),
-    isPickerOpen: emailSubjectPickerOpen,
-    onClose: () => setEmailSubjectPickerOpen(false),
-  });
-
-  const emailBodyBracket = useBracketTrigger({
-    onOpen: () => setEmailBodyPickerOpen(true),
-    onInsertBracket: () => insertAtCaret(emailBodyRef as React.RefObject<HTMLTextAreaElement>, setEmailBody, "["),
-    isPickerOpen: emailBodyPickerOpen,
-    onClose: () => setEmailBodyPickerOpen(false),
-  });
+  const showCfWarning = hasCfTokens && !productContextId;
 
   const [filters, setFilters] = useState<BroadcastFilters>({
     hasActiveSubscription: false,
