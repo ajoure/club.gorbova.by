@@ -469,19 +469,22 @@ export function TokenizedRichInput({
     [editor]
   );
 
-  // Close picker when editor loses focus to other content
+  // Close picker when focus leaves both editor and popover
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
       setTimeout(() => {
-        if (!editor.isFocused && pickerOpen) {
-          // Don't close if focus went to picker
+        const active = document.activeElement;
+        // Don't close if focus is inside the popover (CommandInput, etc.)
+        if (popoverRef.current?.contains(active)) return;
+        if (!editor.isFocused && pickerOpenRef.current) {
+          setPickerOpen(false);
         }
-      }, 200);
+      }, 150);
     };
     editor.on("blur", handler);
     return () => { editor.off("blur", handler); };
-  }, [editor, pickerOpen]);
+  }, [editor]);
 
   if (!editor) return null;
 

@@ -291,6 +291,7 @@ Deno.serve(async (req) => {
     let cfTokensIgnored = false;
     let messageAfterCf = message;
     if (cfFieldIds.length > 0) {
+      // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfResult = await resolveCustomFieldTokens(message, productContextId, supabase);
       messageAfterCf = cfResult.text;
       cfTokensIgnored = cfResult.cfTokensIgnored;

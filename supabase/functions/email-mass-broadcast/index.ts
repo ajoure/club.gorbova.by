@@ -334,6 +334,7 @@ Deno.serve(async (req) => {
     let subjectAfterCf = subject;
     let htmlAfterCf = html;
     if (cfFieldIds.length > 0) {
+      // NOTE: supabase is service_role client — required by resolveCustomFieldTokens
       const cfSubject = await resolveCustomFieldTokens(subject, productContextId, supabase);
       const cfHtml = await resolveCustomFieldTokens(html, productContextId, supabase);
       subjectAfterCf = cfSubject.text;
