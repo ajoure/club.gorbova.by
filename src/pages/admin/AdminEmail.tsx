@@ -69,8 +69,7 @@ import {
 } from "@/lib/email-template-validation";
 import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
-import { TokenPicker } from "@/components/admin/TokenPicker";
-import { useBracketTrigger } from "@/hooks/useBracketTrigger";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 
 interface EmailAccount {
   id: string;
