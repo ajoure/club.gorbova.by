@@ -12,6 +12,7 @@
  * - UNMAPPED fields shown as "UNMAPPED · <uuid…>"
  * - Rename-safe: labels resolved at runtime from registry
  * - singleLine mode: Enter blocked, \n replaced with space
+ * - Floating dropdown positioned at caret (coordsAtPos)
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -35,14 +36,11 @@ import {
   extractShortUuid,
   type TokenDef,
 } from "@/lib/tokens/tokenRegistry";
-import { Popover, PopoverContent, PopoverAnchor } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Bold as BoldIcon, Italic as ItalicIcon, Code as CodeIcon, Link as LinkIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-// ─── TokenNode Extension ────────────────────────────────────────────
 
 const TokenNode = Node.create({
   name: "token",
@@ -80,13 +78,10 @@ const TokenNode = Node.create({
     ];
   },
 
-  // Clipboard: copy tokenString, not label
   renderText({ node }) {
     return node.attrs.tokenString;
   },
 });
-
-// ─── Bracket trigger plugin ─────────────────────────────────────────
 
 const bracketPluginKey = new PluginKey("bracketTrigger");
 const BRACKET_PLUGIN_KEY_STR = (bracketPluginKey as any).key as string;
@@ -112,10 +107,9 @@ function createBracketPlugin(
       handleKeyDown(_view, event) {
         if (event.key === "Escape") {
           clearPending();
-          return false; // let popover handle
+          return false;
         }
 
-        // Close picker on printable key (not [, not service keys)
         if (
           isPickerOpenRef.current &&
           event.key.length === 1 &&
@@ -123,13 +117,12 @@ function createBracketPlugin(
           !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
         ) {
           closePicker();
-          return false; // let char through to editor
+          return false;
         }
 
         if (event.key === "[" && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault();
 
-          // [[ while picker open → insert [ and close picker
           if (isPickerOpenRef.current) {
             closePicker();
             onInsertBracket();
@@ -150,7 +143,6 @@ function createBracketPlugin(
           return true;
         }
 
-        // Any other printable key while pending → cancel pending (don't open picker)
         if (pending && event.key.length === 1 && event.key !== "[") {
           clearPending();
         }
@@ -161,21 +153,15 @@ function createBracketPlugin(
   });
 }
 
-// ─── SingleLine extension ───────────────────────────────────────────
-
 const SingleLine = Extension.create({
   name: "singleLine",
   addKeyboardShortcuts() {
     return {
-      Enter: () => true, // block Enter
-      "Shift-Enter": () => true, // block Shift+Enter too
+      Enter: () => true,
+      "Shift-Enter": () => true,
     };
   },
 });
-
-// ─── No History extension — not needed for short template inputs ──
-
-// ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
 
 function serializeDoc(editor: Editor): string {
   const doc = editor.getJSON();
@@ -203,7 +189,6 @@ function serializeInline(nodes: any[]): string {
       if (node.type === "text") {
         let text = node.text || "";
         const marks = node.marks || [];
-        // Apply marks in order: code first (innermost), then bold/italic
         for (const mark of marks) {
           if (mark.type === "code") text = "`" + text + "`";
           if (mark.type === "bold") text = "*" + text + "*";
@@ -216,8 +201,6 @@ function serializeInline(nodes: any[]): string {
     })
     .join("");
 }
-
-// ─── Parse markdown string with {{tokens}} → TipTap doc ────────────
 
 function parseToDoc(value: string): any {
   const lines = value.split("\n");
@@ -233,7 +216,6 @@ function parseInline(text: string): any[] {
   if (!text) return [];
 
   const nodes: any[] = [];
-  // Split by {{...}} tokens
   const parts = text.split(/(\{\{[^}]+\}\})/g);
 
   for (const part of parts) {
@@ -244,7 +226,6 @@ function parseInline(text: string): any[] {
         attrs: { tokenString: part },
       });
     } else {
-      // Parse markdown marks in text
       const textNodes = parseMarkdownText(part);
       nodes.push(...textNodes);
     }
@@ -253,14 +234,9 @@ function parseInline(text: string): any[] {
   return nodes;
 }
 
-/**
- * One-level markdown parser for `code`, [link](url), *bold*, _italic_.
- * No nesting. If a pattern is "broken" (unclosed), it stays as plain text.
- */
 function parseMarkdownText(text: string): any[] {
   if (!text) return [];
 
-  // Regex: `code` | [text](url) | *bold* | _italic_ — first match wins, no nesting
   const MD_RE = /`([^`]+)`|\[([^\]]+)\]\(((?:[^)\s])+)\)|\*([^*\s][^*]*[^*\s]|\S)\*|_([^_\s][^_]*[^_\s]|\S)_/g;
 
   const nodes: any[] = [];
@@ -268,29 +244,23 @@ function parseMarkdownText(text: string): any[] {
   let m: RegExpExecArray | null;
 
   while ((m = MD_RE.exec(text)) !== null) {
-    // Plain text before match
     if (m.index > lastIndex) {
       nodes.push({ type: "text", text: text.slice(lastIndex, m.index) });
     }
 
     if (m[1] !== undefined) {
-      // `code`
       nodes.push({ type: "text", text: m[1], marks: [{ type: "code" }] });
     } else if (m[2] !== undefined && m[3] !== undefined) {
-      // [text](url)
       nodes.push({ type: "text", text: m[2], marks: [{ type: "link", attrs: { href: m[3] } }] });
     } else if (m[4] !== undefined) {
-      // *bold*
       nodes.push({ type: "text", text: m[4], marks: [{ type: "bold" }] });
     } else if (m[5] !== undefined) {
-      // _italic_
       nodes.push({ type: "text", text: m[5], marks: [{ type: "italic" }] });
     }
 
     lastIndex = m.index + m[0].length;
   }
 
-  // Remaining plain text
   if (lastIndex < text.length) {
     nodes.push({ type: "text", text: text.slice(lastIndex) });
   }
@@ -323,10 +293,11 @@ export function TokenizedRichInput({
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
+  const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
+  const editorRef = useRef<Editor | null>(null);
 
   // Keep ref in sync with state
   useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
@@ -354,7 +325,6 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      // No History extension needed for template inputs
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
@@ -393,11 +363,53 @@ export function TokenizedRichInput({
     },
   });
 
+  // Keep editorRef in sync
+  useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
+
+  // Compute caret coords for floating dropdown
+  const updateCaretCoords = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    try {
+      const coords = ed.view.coordsAtPos(ed.state.selection.from);
+      const viewportH = window.innerHeight;
+      const dropdownH = 280;
+      const top = coords.bottom + 6 + dropdownH > viewportH
+        ? coords.top - dropdownH - 6
+        : coords.bottom + 6;
+      const left = Math.min(coords.left, window.innerWidth - 330);
+      setCaretCoords({ top, left: Math.max(4, left) });
+    } catch {
+      // editor may not be ready
+    }
+  }, []);
+
+  // Reposition on scroll/resize while picker is open
+  useEffect(() => {
+    if (!pickerOpen) return;
+    updateCaretCoords();
+    const onReposition = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    window.addEventListener("scroll", onReposition, true);
+    window.addEventListener("resize", onReposition);
+    return () => {
+      window.removeEventListener("scroll", onReposition, true);
+      window.removeEventListener("resize", onReposition);
+    };
+  }, [pickerOpen, updateCaretCoords]);
+
+  // Reposition on selectionUpdate/transaction
+  useEffect(() => {
+    if (!editor) return;
+    const handler = () => { if (pickerOpenRef.current) updateCaretCoords(); };
+    editor.on("selectionUpdate", handler);
+    editor.on("update", handler);
+    return () => { editor.off("selectionUpdate", handler); editor.off("update", handler); };
+  }, [editor, updateCaretCoords]);
+
   // Register bracket plugin after editor is created
   useEffect(() => {
     if (!editor) return;
 
-    // Remove any existing bracket plugin first (guard against duplicates)
     const existingPlugins = editor.state.plugins.filter(
       (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
     );
@@ -433,7 +445,7 @@ export function TokenizedRichInput({
     };
   }, [editor, closePicker]);
 
-  // Sync external value changes (e.g., loading saved template)
+  // Sync external value changes
   useEffect(() => {
     if (!editor || isInternalUpdate.current) {
       isInternalUpdate.current = false;
@@ -458,21 +470,20 @@ export function TokenizedRichInput({
           type: "token",
           attrs: { tokenString: tokenDef.tokenString },
         })
-        .insertContent(" ") // space after chip
+        .insertContent(" ")
         .run();
       setPickerOpen(false);
     },
     [editor]
   );
 
-  // Close picker when focus leaves both editor and popover
+  // Close picker when focus leaves both editor and dropdown
   useEffect(() => {
     if (!editor) return;
     const handler = () => {
       setTimeout(() => {
         const active = document.activeElement;
-        // Don't close if focus is inside the popover (CommandInput, etc.)
-        if (popoverRef.current?.contains(active)) return;
+        if (dropdownRef.current?.contains(active)) return;
         if (!editor.isFocused && pickerOpenRef.current) {
           setPickerOpen(false);
         }
@@ -482,137 +493,116 @@ export function TokenizedRichInput({
     return () => { editor.off("blur", handler); };
   }, [editor]);
 
+  // Click-outside handler
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as globalThis.Node;
+      if (dropdownRef.current?.contains(target as globalThis.Node)) return;
+      if (editor && editor.view.dom.contains(target as globalThis.Node)) return;
+      setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [pickerOpen, editor]);
+
+  // Esc key closes dropdown and returns focus
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPickerOpen(false);
+        editor?.commands.focus();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [pickerOpen, editor]);
+
   if (!editor) return null;
 
   return (
     <div className="space-y-1">
       {showToolbar && (
         <div className="flex gap-1 mb-1">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <Button type="button" variant="outline" size="sm"
             onClick={() => editor.chain().focus().toggleMark("bold").run()}
-            className={cn(editor.isActive("bold") && "bg-muted")}
-            title="Жирный"
-          >
+            className={cn(editor.isActive("bold") && "bg-muted")} title="Жирный">
             <BoldIcon className="h-4 w-4" />
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <Button type="button" variant="outline" size="sm"
             onClick={() => editor.chain().focus().toggleMark("italic").run()}
-            className={cn(editor.isActive("italic") && "bg-muted")}
-            title="Курсив"
-          >
+            className={cn(editor.isActive("italic") && "bg-muted")} title="Курсив">
             <ItalicIcon className="h-4 w-4" />
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <Button type="button" variant="outline" size="sm"
             onClick={() => editor.chain().focus().toggleMark("code").run()}
-            className={cn(editor.isActive("code") && "bg-muted")}
-            title="Код"
-          >
+            className={cn(editor.isActive("code") && "bg-muted")} title="Код">
             <CodeIcon className="h-4 w-4" />
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
+          <Button type="button" variant="outline" size="sm"
             onClick={() => {
               const url = prompt("Введите URL:");
-              if (url) {
-                editor
-                  .chain()
-                  .focus()
-                  .setMark("link", { href: url })
-                  .run();
-              }
+              if (url) editor.chain().focus().setMark("link", { href: url }).run();
             }}
-            title="Ссылка"
-          >
+            title="Ссылка">
             <LinkIcon className="h-4 w-4" />
           </Button>
         </div>
       )}
 
-      <div ref={anchorRef} className="relative">
+      <div className="relative">
         <EditorContent editor={editor} />
-
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <PopoverAnchor asChild>
-            <span className="absolute bottom-0 left-4 inline-block w-0 h-0" />
-          </PopoverAnchor>
-          <PopoverContent
-            ref={popoverRef}
-            className="max-w-[320px] p-0"
-            align="start"
-            side="bottom"
-            collisionPadding={8}
-          >
-            <Command>
-              <CommandInput
-                ref={searchInputRef}
-                placeholder="Поиск по названию..."
-                className="text-xs h-8"
-              />
-              <CommandList className="max-h-[240px] overflow-auto">
-                <CommandEmpty>Токены не найдены</CommandEmpty>
-                <CommandGroup heading="Контакт / Профиль">
-                  {CONTACT_TOKENS.map((t) => (
-                    <CommandItem
-                      key={t.key}
-                      value={t.searchKeywords}
-                      className="text-xs py-1"
-                      onSelect={() => handleTokenSelect(t)}
-                    >
-                      <span className="flex-1 truncate">{t.label}</span>
-                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                        {t.badge}
-                      </Badge>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                <CommandGroup heading="Дата / Время">
-                  {DATETIME_TOKENS.map((t) => (
-                    <CommandItem
-                      key={t.key}
-                      value={t.searchKeywords}
-                      className="text-xs py-1"
-                      onSelect={() => handleTokenSelect(t)}
-                    >
-                      <span className="flex-1 truncate">{t.label}</span>
-                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                        {t.badge}
-                      </Badge>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-                {productFields.length > 0 && (
-                  <CommandGroup heading="Продукт">
-                    {productFields.map((t) => (
-                      <CommandItem
-                        key={t.key}
-                        value={t.searchKeywords}
-                        className="text-xs py-1"
-                        onSelect={() => handleTokenSelect(t)}
-                      >
-                        <span className="flex-1 truncate">{t.label}</span>
-                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">
-                          {t.badge}
-                        </Badge>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )}
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
       </div>
+
+      {/* Floating dropdown at caret position */}
+      {pickerOpen && caretCoords && (
+        <div
+          ref={dropdownRef}
+          className="fixed z-[1000] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
+          style={{ top: caretCoords.top, left: caretCoords.left }}
+        >
+          <Command>
+            <CommandInput
+              ref={searchInputRef}
+              placeholder="Поиск по названию..."
+              className="text-xs h-8"
+            />
+            <CommandList className="max-h-[240px] overflow-auto">
+              <CommandEmpty>Токены не найдены</CommandEmpty>
+              <CommandGroup heading="Контакт / Профиль">
+                {CONTACT_TOKENS.map((t) => (
+                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                    onSelect={() => handleTokenSelect(t)}>
+                    <span className="flex-1 truncate">{t.label}</span>
+                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+              <CommandGroup heading="Дата / Время">
+                {DATETIME_TOKENS.map((t) => (
+                  <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                    onSelect={() => handleTokenSelect(t)}>
+                    <span className="flex-1 truncate">{t.label}</span>
+                    <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+              {productFields.length > 0 && (
+                <CommandGroup heading="Продукт">
+                  {productFields.map((t) => (
+                    <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                      onSelect={() => handleTokenSelect(t)}>
+                      <span className="flex-1 truncate">{t.label}</span>
+                      <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </div>
+      )}
 
       <p className="text-xs text-muted-foreground">
         Нажмите{" "}
