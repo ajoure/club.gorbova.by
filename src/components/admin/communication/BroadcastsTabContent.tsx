@@ -45,7 +45,7 @@ import {
   CheckCircle,
   XCircle,
   Sparkles,
-  Eye,
+  
   ChevronRight,
   Image,
   Video,
