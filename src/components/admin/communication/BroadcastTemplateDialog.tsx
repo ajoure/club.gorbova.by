@@ -124,15 +124,15 @@ export function BroadcastTemplateDialog({
             <TabsContent value="telegram" className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Текст сообщения</Label>
-                <Textarea
+                <TokenizedRichInput
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
+                  onChange={setMessageText}
                   placeholder="Введите текст сообщения..."
                   rows={8}
-                  className="resize-none"
+                  showToolbar
                 />
                 <p className="text-xs text-muted-foreground">
-                  Поддерживается Markdown: *жирный*, _курсив_, `код`
+                  Поддерживается Markdown: *жирный*, _курсив_, `код`. Нажмите [ для вставки переменной.
                 </p>
               </div>
 
