@@ -89,6 +89,7 @@ const TokenNode = Node.create({
 
 // ─── Bracket trigger plugin ─────────────────────────────────────────
 
+const BRACKET_PLUGIN_KEY_STR = "bracketTrigger$";
 const bracketPluginKey = new PluginKey("bracketTrigger");
 
 const NON_CLOSING_KEYS = new Set([
