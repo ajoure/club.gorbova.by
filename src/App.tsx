@@ -102,8 +102,7 @@ const AdminLessonProgress = lazy(() => import("./pages/admin/AdminLessonProgress
 const AdminBepaidArchiveImport = lazy(() => import("./pages/admin/AdminBepaidArchiveImport"));
 const AdminSupport = lazy(() => import("./pages/admin/AdminSupport"));
 const AdminNews = lazy(() => import("./pages/admin/AdminNews"));
-// Static import to avoid stale HMR chunk errors
-import AdminCommunication from "./pages/admin/AdminCommunication";
+const AdminCommunication = lazy(() => import("./pages/admin/AdminCommunication"));
 const AdminEditorial = lazy(() => import("./pages/admin/AdminEditorial"));
 const AdminIlex = lazy(() => import("./pages/admin/AdminIlex"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
@@ -211,7 +210,7 @@ const App = () => {
               {/* Admin routes - CRM */}
               <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
               <Route path="/admin/inbox" element={<Navigate to="/admin/communication" replace />} />
-              <Route path="/admin/communication" element={<ProtectedRoute><AdminCommunication /></ProtectedRoute>} />
+              <Route path="/admin/communication" element={<ProtectedRoute><LazyRoute><AdminCommunication /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/broadcasts" element={<Navigate to="/admin/communication?tab=broadcasts" replace />} />
               <Route path="/admin/contacts" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContacts /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/contacts/duplicates" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminDuplicates /></AdminLayout></LazyRoute></ProtectedRoute>} />
