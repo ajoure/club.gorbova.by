@@ -185,9 +185,6 @@ export function BroadcastTemplateDialog({
                   rows={12}
                   allowAlign
                 />
-                <p className="text-xs text-muted-foreground">
-                  Нажмите [ для вставки переменной
-                </p>
               </div>
             </TabsContent>
           </Tabs>
