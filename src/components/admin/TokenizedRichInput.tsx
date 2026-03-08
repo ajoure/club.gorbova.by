@@ -88,14 +88,8 @@ const TokenNode = Node.create({
 
 // ─── Bracket trigger plugin ─────────────────────────────────────────
 
-const BRACKET_PLUGIN_KEY_STR = "bracketTrigger$";
 const bracketPluginKey = new PluginKey("bracketTrigger");
-
-const NON_CLOSING_KEYS = new Set([
-  "Escape", "Enter", "Tab", "Backspace", "Delete",
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-  "Shift", "Control", "Alt", "Meta", "CapsLock",
-]);
+const BRACKET_PLUGIN_KEY_STR = (bracketPluginKey as any).key as string;
 
 function createBracketPlugin(
   onOpen: () => void,
@@ -126,7 +120,7 @@ function createBracketPlugin(
           isPickerOpenRef.current &&
           event.key.length === 1 &&
           event.key !== "[" &&
-          !event.ctrlKey && !event.metaKey
+          !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing
         ) {
           closePicker();
           return false; // let char through to editor
@@ -157,7 +151,7 @@ function createBracketPlugin(
         }
 
         // Any other printable key while pending → cancel pending (don't open picker)
-        if (pending && event.key.length === 1 && !NON_CLOSING_KEYS.has(event.key)) {
+        if (pending && event.key.length === 1 && event.key !== "[") {
           clearPending();
         }
 
@@ -405,7 +399,7 @@ export function TokenizedRichInput({
 
     // Remove any existing bracket plugin first (guard against duplicates)
     const existingPlugins = editor.state.plugins.filter(
-      (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
+      (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
     );
 
     const plugin = createBracketPlugin(
@@ -429,7 +423,7 @@ export function TokenizedRichInput({
       try {
         const currentState = editor.state;
         const filtered = currentState.plugins.filter(
-          (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
+          (p) => (p as any).key !== BRACKET_PLUGIN_KEY_STR
         );
         const cleanState = currentState.reconfigure({ plugins: filtered });
         editor.view.updateState(cleanState);
