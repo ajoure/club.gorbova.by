@@ -322,10 +322,10 @@ export function TokenizedRichInput({
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isInternalUpdate = useRef(false);
+  const [caretCoords, setCaretCoords] = useState<{ top: number; left: number } | null>(null);
 
   // Keep ref in sync with state
   useEffect(() => { pickerOpenRef.current = pickerOpen; }, [pickerOpen]);
