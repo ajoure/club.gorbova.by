@@ -179,17 +179,7 @@ const SingleLine = Extension.create({
   },
 });
 
-// ─── History via ProseMirror plugins (no @tiptap/extension-history) ──
-
-const ProseMirrorHistory = Extension.create({
-  name: "prosemirrorHistory",
-  addProseMirrorPlugins() {
-    return [
-      history(),
-      keymap({ "Mod-z": undo, "Mod-Shift-z": redo, "Mod-y": redo }),
-    ];
-  },
-});
+// ─── No History extension — not needed for short template inputs ──
 
 // ─── Serialize TipTap doc → markdown string with {{tokens}} ────────
 
