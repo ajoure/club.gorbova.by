@@ -528,67 +528,34 @@ export function CommunicationSettingsTabContent() {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Тема письма</Label>
-                <div className="relative">
-                  <Input
-                    ref={tplSubjectRef}
-                    value={templateDialog.template.subject}
-                    onChange={(e) => {
-                      const corrected = tplSubjectBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                      const val = corrected ?? e.target.value;
-                      setTemplateDialog((prev) => ({
-                        ...prev,
-                        template: prev.template
-                          ? { ...prev.template, subject: val }
-                          : null,
-                      }));
-                    }}
-                    onKeyDown={tplSubjectBracket.handleKeyDown}
-                  />
-                  <TokenPicker
-                    triggerless
-                    anchorRef={tplSubjectAnchorRef}
-                    open={tplSubjectPickerOpen}
-                    onOpenChange={setTplSubjectPickerOpen}
-                    onInsert={(token) => insertAtCaretTpl(tplSubjectRef as React.RefObject<HTMLInputElement>, 'subject', token)}
-                    showContactVars
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
-                  </p>
-                </div>
+                <TokenizedRichInput
+                  value={templateDialog.template.subject}
+                  onChange={(val) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, subject: val }
+                        : null,
+                    }))
+                  }
+                  singleLine
+                />
               </div>
 
               <div className="space-y-2">
                 <Label>HTML-содержимое</Label>
-                <div className="relative">
-                  <Textarea
-                    ref={tplBodyRef}
-                    className="font-mono text-xs min-h-[300px]"
-                    value={templateDialog.template.body_html}
-                    onChange={(e) => {
-                      const corrected = tplBodyBracket.handleChange(e.target.value, e.target.selectionStart ?? e.target.value.length);
-                      const val = corrected ?? e.target.value;
-                      setTemplateDialog((prev) => ({
-                        ...prev,
-                        template: prev.template
-                          ? { ...prev.template, body_html: val }
-                          : null,
-                      }));
-                    }}
-                    onKeyDown={tplBodyBracket.handleKeyDown}
-                  />
-                  <TokenPicker
-                    triggerless
-                    anchorRef={tplBodyAnchorRef}
-                    open={tplBodyPickerOpen}
-                    onOpenChange={setTplBodyPickerOpen}
-                    onInsert={(token) => insertAtCaretTpl(tplBodyRef as React.RefObject<HTMLTextAreaElement>, 'body_html', token)}
-                    showContactVars
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Нажмите <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono">[</kbd> для вставки переменной
-                  </p>
-                </div>
+                <TokenizedRichInput
+                  value={templateDialog.template.body_html}
+                  onChange={(val) =>
+                    setTemplateDialog((prev) => ({
+                      ...prev,
+                      template: prev.template
+                        ? { ...prev.template, body_html: val }
+                        : null,
+                    }))
+                  }
+                  rows={12}
+                />
               </div>
 
               {templateDialog.template.variables?.length > 0 && (
