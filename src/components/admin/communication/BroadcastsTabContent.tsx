@@ -604,6 +604,14 @@ const [includeButton, setIncludeButton] = useState(true);
                       rows={6}
                       showToolbar={true}
                     />
+                    {showCfWarning && (
+                      <Alert variant="destructive">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>
+                          Для подстановки полей продукта выберите конкретный продукт в фильтре справа.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
 
                   {/* WYSIWYG Preview */}
