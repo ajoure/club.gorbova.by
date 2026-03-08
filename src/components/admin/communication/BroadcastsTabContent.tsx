@@ -118,6 +118,18 @@ const [includeButton, setIncludeButton] = useState(true);
     clubId: "",
   });
 
+  // cf warning: check if message/email contains cf.product tokens
+  const hasCfTokens = useMemo(() => {
+    const allText = message + emailSubject + emailBody;
+    return allText.includes('{{cf.product.');
+  }, [message, emailSubject, emailBody]);
+
+  const productContextId = useMemo(() => {
+    return (filters.productId && filters.productId !== 'all') ? filters.productId : null;
+  }, [filters.productId]);
+
+  const showCfWarning = hasCfTokens && !productContextId;
+
   // Fetch products
   const { data: products } = useQuery({
     queryKey: ["broadcast-products"],
