@@ -360,7 +360,7 @@ export function TokenizedRichInput({
       Bold.configure({}),
       Italic.configure({}),
       Code.configure({}),
-      ProseMirrorHistory,
+      // No History extension needed for template inputs
       Link.configure({ openOnClick: false }),
       TokenNode,
     ];
