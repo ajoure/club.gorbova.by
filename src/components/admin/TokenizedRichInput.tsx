@@ -404,7 +404,7 @@ export function TokenizedRichInput({
 
     // Remove any existing bracket plugin first (guard against duplicates)
     const existingPlugins = editor.state.plugins.filter(
-      (p) => (p as any).key !== bracketPluginKey.key
+      (p) => (p.spec as any).key?.key !== BRACKET_PLUGIN_KEY_STR
     );
 
     const plugin = createBracketPlugin(
