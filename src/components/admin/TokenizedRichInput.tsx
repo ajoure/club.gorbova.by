@@ -296,7 +296,6 @@ interface TokenizedRichInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   rows?: number;
-  showToolbar?: boolean;
   singleLine?: boolean;
   disabled?: boolean;
   className?: string;
@@ -307,7 +306,6 @@ export function TokenizedRichInput({
   onChange,
   placeholder = "",
   rows = 4,
-  showToolbar = false,
   singleLine = false,
   disabled = false,
   className,
