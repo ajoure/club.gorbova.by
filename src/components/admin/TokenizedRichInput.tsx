@@ -91,7 +91,18 @@ const TokenNode = Node.create({
 
 const bracketPluginKey = new PluginKey("bracketTrigger");
 
-function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
+const NON_CLOSING_KEYS = new Set([
+  "Escape", "Enter", "Tab", "Backspace", "Delete",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "Shift", "Control", "Alt", "Meta", "CapsLock",
+]);
+
+function createBracketPlugin(
+  onOpen: () => void,
+  onInsertBracket: () => void,
+  isPickerOpenRef: React.RefObject<boolean>,
+  closePicker: () => void,
+) {
   let pending = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -104,14 +115,32 @@ function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
   return new Plugin({
     key: bracketPluginKey,
     props: {
-      handleKeyDown(view, event) {
+      handleKeyDown(_view, event) {
         if (event.key === "Escape") {
           clearPending();
           return false; // let popover handle
         }
 
+        // Close picker on printable key (not [, not service keys)
+        if (
+          isPickerOpenRef.current &&
+          event.key.length === 1 &&
+          event.key !== "[" &&
+          !event.ctrlKey && !event.metaKey
+        ) {
+          closePicker();
+          return false; // let char through to editor
+        }
+
         if (event.key === "[" && !event.ctrlKey && !event.metaKey && !event.altKey) {
           event.preventDefault();
+
+          // [[ while picker open → insert [ and close picker
+          if (isPickerOpenRef.current) {
+            closePicker();
+            onInsertBracket();
+            return true;
+          }
 
           if (pending) {
             clearPending();
@@ -127,8 +156,8 @@ function createBracketPlugin(onOpen: () => void, onInsertBracket: () => void) {
           return true;
         }
 
-        // Any other key while pending → cancel pending (don't open picker)
-        if (pending && event.key.length === 1) {
+        // Any other printable key while pending → cancel pending (don't open picker)
+        if (pending && event.key.length === 1 && !NON_CLOSING_KEYS.has(event.key)) {
           clearPending();
         }
 
