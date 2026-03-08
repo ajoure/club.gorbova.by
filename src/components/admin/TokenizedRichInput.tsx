@@ -596,23 +596,27 @@ export function TokenizedRichInput({
       return;
     }
     try {
-      const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      const from = ed.state.selection.from;
+      const to = ed.state.selection.to;
+      const c1 = ed.view.coordsAtPos(from);
+      const c2 = ed.view.coordsAtPos(to);
+      const selRect = {
+        left: Math.min(c1.left, c2.left),
+        right: Math.max(c1.right, c2.right),
+        top: Math.min(c1.top, c2.top),
+        bottom: Math.max(c1.bottom, c2.bottom),
+      };
+      if (selRect.right - selRect.left === 0 && selRect.bottom - selRect.top === 0) {
         setBubbleOpen(false);
         return;
       }
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      if (rect.width === 0 && rect.height === 0) {
-        setBubbleOpen(false);
-        return;
-      }
-      const toolbarW = 240;
+      const editorRect = ed.view.dom.getBoundingClientRect();
+      const toolbarW = allowAlign ? 300 : 200;
       const toolbarH = 40;
-      let top = rect.top - toolbarH - 8;
-      if (top < 4) top = rect.bottom + 6;
-      let left = rect.left + rect.width / 2 - toolbarW / 2;
-      left = Math.max(4, Math.min(left, window.innerWidth - toolbarW - 4));
+      let top = selRect.top - toolbarH - 8;
+      if (top < editorRect.top + 4) top = selRect.bottom + 6;
+      let left = (selRect.left + selRect.right) / 2 - toolbarW / 2;
+      left = Math.max(editorRect.left + 4, Math.min(left, editorRect.right - toolbarW - 4));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
     } catch {
