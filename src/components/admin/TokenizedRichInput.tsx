@@ -609,16 +609,18 @@ export function TokenizedRichInput({
         setBubbleOpen(false);
         return;
       }
-      // Clamp within editor bounds (works correctly in modals)
-      const editorRect = ed.view.dom.getBoundingClientRect();
+      const viewportW = window.innerWidth;
       const toolbarW = allowAlign ? 300 : 200;
       const toolbarH = 40;
-      // Position above selection, fallback below if no room
+      // ALWAYS position ABOVE the selection first
       let top = rangeRect.top - toolbarH - 8;
-      if (top < editorRect.top + 4) top = rangeRect.bottom + 6;
-      // Center horizontally on selection, clamp within editor
+      // Only fall below if bubble would go off viewport top
+      if (top < 4) {
+        top = rangeRect.bottom + 6;
+      }
+      // Center horizontally on selection, clamp to viewport
       let left = rangeRect.left + rangeRect.width / 2 - toolbarW / 2;
-      left = Math.max(editorRect.left + 4, Math.min(left, editorRect.right - toolbarW - 4));
+      left = Math.max(8, Math.min(left, viewportW - toolbarW - 8));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
     } catch {
