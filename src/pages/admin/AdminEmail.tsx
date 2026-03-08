@@ -642,7 +642,7 @@ export default function AdminEmail() {
       </GlassCard>
 
       {/* Product Email Mappings */}
-      <ProductEmailMappings />
+      <ProductEmailMappings accounts={accounts} />
 
       {/* Account Edit Dialog */}
       <Dialog
