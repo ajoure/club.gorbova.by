@@ -460,7 +460,7 @@ export default function AdminRoles() {
                             </SelectTrigger>
                             <SelectContent className="backdrop-blur-xl bg-popover/95 border-border/40">
                               {roles
-                                .filter(r => r.code !== "super_admin" || isSuperAdmin())
+                                .filter(r => r.code !== "super_admin" || isSuperAdmin)
                               .map(role => (
                                   <SelectItem key={role.code} value={role.code}>
                                     {getRoleDisplayName(role)}
