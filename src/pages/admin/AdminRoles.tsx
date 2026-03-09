@@ -116,7 +116,7 @@ const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
 export default function AdminRoles() {
   const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
   const { users, refetch: refetchUsers } = useAdminUsers();
-  const { hasPermission, isSuperAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin } = useRbac();
   const { user: currentUser } = useAuth();
 
   // View mode for roles tab
