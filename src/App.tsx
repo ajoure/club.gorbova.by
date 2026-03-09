@@ -52,6 +52,7 @@ const LegalDetailsSettings = lazy(() => import("./pages/settings/LegalDetails"))
 const Learning = lazy(() => import("./pages/Learning"));
 const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
+const CloseYear = lazy(() => import("./pages/CloseYear"));
 
 const LibraryModule = lazy(() => import("./pages/LibraryModule"));
 const LibraryLesson = lazy(() => import("./pages/LibraryLesson"));
