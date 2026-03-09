@@ -2960,7 +2960,7 @@ Deno.serve(async (req) => {
         if (auditE) console.error('[WEBHOOK-LINK] audit error (non-fatal):', auditE);
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'failed_payments_v2_write', http_status: 500,
           processing_ms: Date.now() - startTime, error_message: linkPayResult.error,
         });
