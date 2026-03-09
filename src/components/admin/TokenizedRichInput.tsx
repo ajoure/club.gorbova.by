@@ -674,15 +674,20 @@ export function TokenizedRichInput({
     };
   }, [editor, updateBubble]);
 
-  // Reposition bubble on scroll/resize
+  // Reposition bubble on scroll/resize/visualViewport
   useEffect(() => {
     if (!bubbleOpen) return;
     const onReposition = () => updateBubble();
     window.addEventListener("scroll", onReposition, true);
     window.addEventListener("resize", onReposition);
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", onReposition);
+    vv?.addEventListener("scroll", onReposition);
     return () => {
       window.removeEventListener("scroll", onReposition, true);
       window.removeEventListener("resize", onReposition);
+      vv?.removeEventListener("resize", onReposition);
+      vv?.removeEventListener("scroll", onReposition);
     };
   }, [bubbleOpen, updateBubble]);
 
