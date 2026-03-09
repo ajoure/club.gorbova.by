@@ -2752,7 +2752,7 @@ Deno.serve(async (req) => {
         console.log('[WEBHOOK-LINK] Order already paid (idempotency):', parsedOrderId);
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'already_processed', http_status: 200,
           processing_ms: Date.now() - startTime,
         });
