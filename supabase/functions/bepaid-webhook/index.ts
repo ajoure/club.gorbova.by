@@ -2581,14 +2581,40 @@ Deno.serve(async (req) => {
     // =====================================================================
 
     // =====================================================================
-    // PATCH-LINK-LEGACY: Handle tracking_id format link:{UUID} (kind='link')
-    // For one-time payments created via create-payment-checkout with old format.
-    // Unlike link_order handler, does NOT require isSubscriptionWebhook.
+    // PATCH-LINK-LEGACY: Handle tracking_id formats:
+    //   - link:{UUID} (kind='link') — legacy one-time payments
+    //   - link:order:{UUID} (kind='link_order') — canonical one-time paylink flow
+    //     (only when NOT a subscription webhook; subscription link_order is handled
+    //      exclusively by PATCH-LINK above — STOP-GUARD against double-processing)
+    // Uses idempotent upsertPaymentV2 helper, canonical provider_payment_id dedup.
     // Supports transactionStatus: successful, settled, authorized → succeeded
     // =====================================================================
-    if (tracking.kind === 'link' && parsedOrderId && transactionUid) {
+    // STOP-GUARD: link_order + isSubscriptionWebhook → must ONLY go to PATCH-LINK (line ~1839).
+    // This flag is strictly false for subscription webhooks to prevent double-processing.
+    const isOneTimeLinkOrderWebhook = !isSubscriptionWebhook && tracking.kind === 'link_order';
+
+    if ((tracking.kind === 'link' || isOneTimeLinkOrderWebhook) && parsedOrderId && transactionUid) {
+      const effectiveKind = isOneTimeLinkOrderWebhook ? 'link_order' : 'link';
       const isLinkSuccessful = transactionStatus === 'successful' || transactionStatus === 'settled' || transactionStatus === 'authorized';
-      console.log('[WEBHOOK-LINK] Processing link:{uuid} webhook:', { parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful });
+      console.log('[WEBHOOK-LINK] Processing webhook:', { effectiveKind, parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful, isOneTimeLinkOrderWebhook });
+
+      // Audit marker: log that webhook entered via the new one-time link_order route
+      if (isOneTimeLinkOrderWebhook) {
+        const { error: routeAuditErr } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.webhook.one_time_link_order_routed',
+          created_at: new Date().toISOString(),
+          meta: {
+            order_id: parsedOrderId,
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            bepaid_status: transactionStatus,
+          },
+        });
+        if (routeAuditErr) console.error('[WEBHOOK-LINK] Route audit log error (non-fatal):', routeAuditErr);
+      }
 
       // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingLinkPayment } = await supabase
@@ -2620,7 +2646,7 @@ Deno.serve(async (req) => {
             event_type: 'payment_link',
             transaction_uid: transactionUid,
             tracking_id: rawTrackingId,
-            parsed_kind: 'link',
+            parsed_kind: effectiveKind,
             parsed_order_id: parsedOrderId,
             outcome: 'already_processed',
             http_status: 200,
@@ -2648,7 +2674,7 @@ Deno.serve(async (req) => {
           meta: {
             transaction_uid: transactionUid,
             tracking_id: rawTrackingId,
-            parsed_kind: 'link',
+            parsed_kind: effectiveKind,
             existing_payment_id: existingLinkPayment.id,
             existing_order_id: existingLinkPayment.order_id,
             tracking_order_id: parsedOrderId,
@@ -2672,7 +2698,7 @@ Deno.serve(async (req) => {
           event_type: 'payment_link',
           transaction_uid: transactionUid,
           tracking_id: rawTrackingId,
-          parsed_kind: 'link',
+          parsed_kind: effectiveKind,
           parsed_order_id: parsedOrderId,
           outcome: 'conflict_provider_payment_id',
           http_status: 202,
@@ -2712,7 +2738,7 @@ Deno.serve(async (req) => {
         });
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'link_order_not_found', http_status: 202,
           processing_ms: Date.now() - startTime,
         });
@@ -2726,7 +2752,7 @@ Deno.serve(async (req) => {
         console.log('[WEBHOOK-LINK] Order already paid (idempotency):', parsedOrderId);
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'already_processed', http_status: 200,
           processing_ms: Date.now() - startTime,
         });
@@ -2805,7 +2831,7 @@ Deno.serve(async (req) => {
 
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'skipped_not_successful', http_status: 200,
           processing_ms: Date.now() - startTime,
         });
@@ -2829,7 +2855,7 @@ Deno.serve(async (req) => {
         });
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'stop_guard_user_id_null', http_status: 202,
           processing_ms: Date.now() - startTime,
         });
@@ -2859,7 +2885,7 @@ Deno.serve(async (req) => {
         });
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'stop_guard_profile_not_found', http_status: 202,
           processing_ms: Date.now() - startTime,
         });
@@ -2874,7 +2900,7 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] Amount=0:', { tx_amount: transaction?.amount, order_final_price: linkOrderV2.final_price });
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'failed_amount_zero', http_status: 500,
           processing_ms: Date.now() - startTime,
         });
@@ -2934,7 +2960,7 @@ Deno.serve(async (req) => {
         if (auditE) console.error('[WEBHOOK-LINK] audit error (non-fatal):', auditE);
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'failed_payments_v2_write', http_status: 500,
           processing_ms: Date.now() - startTime, error_message: linkPayResult.error,
         });
@@ -3044,7 +3070,7 @@ Deno.serve(async (req) => {
 
       await recordWebhookEvent(supabase, {
         provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-        tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+        tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
         outcome: 'processed', http_status: 200,
         processing_ms: Date.now() - startTime,
       });
