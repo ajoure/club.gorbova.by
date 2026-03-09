@@ -2698,7 +2698,7 @@ Deno.serve(async (req) => {
           event_type: 'payment_link',
           transaction_uid: transactionUid,
           tracking_id: rawTrackingId,
-          parsed_kind: 'link',
+          parsed_kind: effectiveKind,
           parsed_order_id: parsedOrderId,
           outcome: 'conflict_provider_payment_id',
           http_status: 202,
