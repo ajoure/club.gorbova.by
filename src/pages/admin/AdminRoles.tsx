@@ -424,9 +424,9 @@ export default function AdminRoles() {
 
                   const isCurrentUser = user.user_id === currentUser?.id;
                   const canChangeRole = hasPermission("admins.manage") && !isCurrentUser;
-                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin()
+                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin);
 
-                return (
+                  return (
                     <TableRow
                       key={user.user_id}
                       className={cn(
