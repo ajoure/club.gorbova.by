@@ -118,7 +118,7 @@ export function AppSidebar() {
   const {
     hasAdminAccess,
     isAdmin,
-  } = usePermissions();
+  } = useRbac();
   const collapsed = state === "collapsed";
   const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
 
