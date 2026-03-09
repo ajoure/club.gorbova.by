@@ -2900,7 +2900,7 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] Amount=0:', { tx_amount: transaction?.amount, order_final_price: linkOrderV2.final_price });
         await recordWebhookEvent(supabase, {
           provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
-          tracking_id: rawTrackingId, parsed_kind: 'link', parsed_order_id: parsedOrderId,
+          tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
           outcome: 'failed_amount_zero', http_status: 500,
           processing_ms: Date.now() - startTime,
         });
