@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
 import { useUnmappedProductsCount } from "@/hooks/useUnmappedProductsCount";
