@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 import { useUnreadMessagesCount } from "@/hooks/useUnreadMessagesCount";
 import { useUnreadEmailCount } from "@/hooks/useUnreadEmailCount";
 import { useUnmappedProductsCount } from "@/hooks/useUnmappedProductsCount";
@@ -51,8 +51,7 @@ export function AdminSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { hasPermission, hasAnyPermission, isSuperAdmin: isSuperAdminFn } = usePermissions();
-  const isSuperAdmin = isSuperAdminFn();
+  const { hasPermission, hasAnyPermission, isSuperAdmin } = useRbac();
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
   const { data: unmappedProductsCount = 0 } = useUnmappedProductsCount();

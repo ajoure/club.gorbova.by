@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 // Note: useSidebarModules removed - modules now appear inside page tabs, not sidebar dropdown
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
@@ -118,7 +118,7 @@ export function AppSidebar() {
   const {
     hasAdminAccess,
     isAdmin,
-  } = usePermissions();
+  } = useRbac();
   const collapsed = state === "collapsed";
   const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
 
@@ -182,7 +182,7 @@ export function AppSidebar() {
     return { firstName: user?.email || "Пользователь", lastName: null };
   };
 
-  const showAdminLink = isAdmin() || hasAdminAccess();
+  const showAdminLink = isAdmin || hasAdminAccess;
   const { firstName, lastName } = getNameParts();
 
   // Render menu item - NO dynamic modules in dropdown, just static links

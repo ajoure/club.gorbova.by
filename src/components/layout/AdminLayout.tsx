@@ -1,6 +1,6 @@
 import { ReactNode, useMemo } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
 import { PullToRefresh } from "./PullToRefresh";
@@ -70,7 +70,7 @@ const routeToHelpAnchor: Record<string, string> = {
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { hasAdminAccess, loading } = usePermissions();
+  const { hasAdminAccess, loading } = useRbac();
   
   // Global sound alert for incoming messages on any admin page
   useIncomingMessageAlert();
@@ -113,7 +113,7 @@ export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
     );
   }
 
-  if (!hasAdminAccess()) {
+  if (!hasAdminAccess) {
     navigate("/");
     return null;
   }

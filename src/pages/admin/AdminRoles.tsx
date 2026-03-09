@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useAdminRoles } from "@/hooks/useAdminRoles";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -116,7 +116,7 @@ const SYSTEM_ROLES = ["super_admin", "admin", "user", "support", "editor"];
 export default function AdminRoles() {
   const { roles, allPermissions, loading, assignRole, removeRole, setRolePermissions, createRole, refetch } = useAdminRoles();
   const { users, refetch: refetchUsers } = useAdminUsers();
-  const { hasPermission, isSuperAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin } = useRbac();
   const { user: currentUser } = useAuth();
 
   // View mode for roles tab
@@ -244,7 +244,7 @@ export default function AdminRoles() {
     }
 
     // UI safeguard: only super_admin can change super_admin roles
-    if (currentRoleCode === "super_admin" && !isSuperAdmin()) {
+    if (currentRoleCode === "super_admin" && !isSuperAdmin) {
       toast.error("Только Владелец может изменять роль другого Владельца");
       return;
     }
@@ -424,7 +424,7 @@ export default function AdminRoles() {
 
                   const isCurrentUser = user.user_id === currentUser?.id;
                   const canChangeRole = hasPermission("admins.manage") && !isCurrentUser;
-                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin());
+                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin);
 
                   return (
                     <TableRow
@@ -460,8 +460,8 @@ export default function AdminRoles() {
                             </SelectTrigger>
                             <SelectContent className="backdrop-blur-xl bg-popover/95 border-border/40">
                               {roles
-                                .filter(r => r.code !== "super_admin" || isSuperAdmin())
-                                .map(role => (
+                                .filter(r => r.code !== "super_admin" || isSuperAdmin)
+                              .map(role => (
                                   <SelectItem key={role.code} value={role.code}>
                                     {getRoleDisplayName(role)}
                                   </SelectItem>
@@ -555,7 +555,7 @@ export default function AdminRoles() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {sortedRoles.map((role) => {
                 const isSystemRole = SYSTEM_ROLES.includes(role.code);
-                const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin);
                 const canDelete = hasPermission("roles.manage") && !isSystemRole;
 
                 return (
@@ -600,7 +600,7 @@ export default function AdminRoles() {
                 <TableBody>
                   {sortedRoles.map((role, index) => {
                     const isSystemRole = SYSTEM_ROLES.includes(role.code);
-                    const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                    const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin);
                     const canDelete = hasPermission("roles.manage") && !isSystemRole;
                     const RoleIcon = ROLE_TABLE_ICONS[role.code] || Shield;
                     const iconColors = getRoleIconColors(role.code);
@@ -693,7 +693,7 @@ export default function AdminRoles() {
         roles={roles}
         onSuccess={() => refetchUsers()}
         currentUserId={currentUser?.id}
-        isSuperAdmin={isSuperAdmin()}
+        isSuperAdmin={isSuperAdmin}
       />
 
       {/* New Role Permission Editor */}
@@ -735,7 +735,7 @@ export default function AdminRoles() {
             </SelectTrigger>
             <SelectContent>
               {roles
-                .filter((r) => r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin()))
+                .filter((r) => r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin))
                 .map((role) => (
                   <SelectItem key={role.code} value={role.code}>
                     {getRoleDisplayName(role.code)}
