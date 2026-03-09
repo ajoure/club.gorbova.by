@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useAdminRoles } from "@/hooks/useAdminRoles";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
-import { usePermissions } from "@/hooks/usePermissions";
+import { useRbac } from "@/hooks/useRbac";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
