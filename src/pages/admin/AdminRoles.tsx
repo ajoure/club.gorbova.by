@@ -692,7 +692,7 @@ export default function AdminRoles() {
         roles={roles}
         onSuccess={() => refetchUsers()}
         currentUserId={currentUser?.id}
-        isSuperAdmin={isSuperAdmin()}
+        isSuperAdmin={isSuperAdmin}
       />
 
       {/* New Role Permission Editor */}
