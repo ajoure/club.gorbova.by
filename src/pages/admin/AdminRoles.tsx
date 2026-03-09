@@ -734,7 +734,7 @@ export default function AdminRoles() {
             </SelectTrigger>
             <SelectContent>
               {roles
-                .filter((r) => r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin()))
+                .filter((r) => r.code !== "user" && (r.code !== "super_admin" || isSuperAdmin))
                 .map((role) => (
                   <SelectItem key={role.code} value={role.code}>
                     {getRoleDisplayName(role.code)}
