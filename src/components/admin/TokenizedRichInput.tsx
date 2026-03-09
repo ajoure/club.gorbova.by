@@ -399,6 +399,20 @@ export function TokenizedRichInput({
   // Keep editorRef in sync
   useEffect(() => { editorRef.current = editor ?? null; }, [editor]);
 
+  // ── SSR-safe visual viewport helper ──
+  function getViewportOffsets() {
+    if (typeof window === "undefined") {
+      return { offsetX: 0, offsetY: 0, vw: 0, vh: 0 };
+    }
+    const vv = window.visualViewport;
+    return {
+      offsetX: vv?.offsetLeft ?? 0,
+      offsetY: vv?.offsetTop ?? 0,
+      vw: vv?.width ?? window.innerWidth,
+      vh: vv?.height ?? window.innerHeight,
+    };
+  }
+
   // ── Compute caret coords for floating dropdown ──
   const updateCaretCoords = useCallback(() => {
     const ed = editorRef.current;
@@ -406,46 +420,56 @@ export function TokenizedRichInput({
     try {
       const pos = ed.state.selection.from;
       const coords = ed.view.coordsAtPos(pos);
-      const viewportH = window.innerHeight;
-      const viewportW = window.innerWidth;
+      const { offsetX, offsetY, vw, vh } = getViewportOffsets();
       // Dropdown dimensions (real or fallback)
       const ddRect = dropdownRef.current?.getBoundingClientRect();
       const ddH = ddRect?.height || 280;
       const ddW = ddRect?.width || 320;
-      // Position directly under caret, flip above if no viewport space below
-      let top = coords.bottom + 4;
-      if (top + ddH > viewportH - 8) {
-        top = coords.top - ddH - 4;
-      }
-      // Clamp vertical to viewport
-      top = Math.max(4, Math.min(top, viewportH - ddH - 4));
-      // Horizontal: start at caret, clamp to viewport
-      let left = coords.left;
-      left = Math.max(8, Math.min(left, viewportW - ddW - 8));
+      // Position below caret, flip above if no space
+      const topBelow = coords.bottom + 6 + offsetY;
+      const topAbove = coords.top - ddH - 6 + offsetY;
+      let top = (topBelow + ddH <= offsetY + vh) ? topBelow : topAbove;
+      // Clamp vertical within visual viewport
+      top = Math.max(offsetY + 4, Math.min(top, offsetY + vh - ddH - 4));
+      // Horizontal: start at caret + offset, clamp within visual viewport
+      let left = coords.left + offsetX;
+      left = Math.max(offsetX + 4, Math.min(left, offsetX + vw - ddW - 4));
       setCaretCoords({ top, left });
     } catch {
       // editor may not be ready
     }
   }, []);
 
-  // Reposition on scroll/resize while picker is open
+  // Reposition on scroll/resize/visualViewport while picker is open
   useEffect(() => {
     if (!pickerOpen) return;
     updateCaretCoords();
     const onReposition = () => { if (pickerOpenRef.current) updateCaretCoords(); };
     window.addEventListener("scroll", onReposition, true);
     window.addEventListener("resize", onReposition);
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", onReposition);
+    vv?.addEventListener("scroll", onReposition);
     return () => {
       window.removeEventListener("scroll", onReposition, true);
       window.removeEventListener("resize", onReposition);
+      vv?.removeEventListener("resize", onReposition);
+      vv?.removeEventListener("scroll", onReposition);
     };
   }, [pickerOpen, updateCaretCoords]);
 
-  // P0.2: After dropdown renders, re-measure with real dimensions
+  // P0.2: Double-rAF after dropdown renders (size stabilizes on 2nd frame)
   useEffect(() => {
     if (!pickerOpen) return;
-    const rafId = requestAnimationFrame(() => updateCaretCoords());
-    return () => cancelAnimationFrame(rafId);
+    let id2: number | undefined;
+    const id1 = requestAnimationFrame(() => {
+      updateCaretCoords();
+      id2 = requestAnimationFrame(() => updateCaretCoords());
+    });
+    return () => {
+      cancelAnimationFrame(id1);
+      if (id2 !== undefined) cancelAnimationFrame(id2);
+    };
   }, [pickerOpen, updateCaretCoords]);
 
   // Reposition on selectionUpdate/transaction
