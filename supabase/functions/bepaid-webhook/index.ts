@@ -2581,14 +2581,40 @@ Deno.serve(async (req) => {
     // =====================================================================
 
     // =====================================================================
-    // PATCH-LINK-LEGACY: Handle tracking_id format link:{UUID} (kind='link')
-    // For one-time payments created via create-payment-checkout with old format.
-    // Unlike link_order handler, does NOT require isSubscriptionWebhook.
+    // PATCH-LINK-LEGACY: Handle tracking_id formats:
+    //   - link:{UUID} (kind='link') — legacy one-time payments
+    //   - link:order:{UUID} (kind='link_order') — canonical one-time paylink flow
+    //     (only when NOT a subscription webhook; subscription link_order is handled
+    //      exclusively by PATCH-LINK above — STOP-GUARD against double-processing)
+    // Uses idempotent upsertPaymentV2 helper, canonical provider_payment_id dedup.
     // Supports transactionStatus: successful, settled, authorized → succeeded
     // =====================================================================
-    if (tracking.kind === 'link' && parsedOrderId && transactionUid) {
+    // STOP-GUARD: link_order + isSubscriptionWebhook → must ONLY go to PATCH-LINK (line ~1839).
+    // This flag is strictly false for subscription webhooks to prevent double-processing.
+    const isOneTimeLinkOrderWebhook = !isSubscriptionWebhook && tracking.kind === 'link_order';
+
+    if ((tracking.kind === 'link' || isOneTimeLinkOrderWebhook) && parsedOrderId && transactionUid) {
+      const effectiveKind = isOneTimeLinkOrderWebhook ? 'link_order' : 'link';
       const isLinkSuccessful = transactionStatus === 'successful' || transactionStatus === 'settled' || transactionStatus === 'authorized';
-      console.log('[WEBHOOK-LINK] Processing link:{uuid} webhook:', { parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful });
+      console.log('[WEBHOOK-LINK] Processing webhook:', { effectiveKind, parsedOrderId, transactionUid, transactionStatus, isLinkSuccessful, isOneTimeLinkOrderWebhook });
+
+      // Audit marker: log that webhook entered via the new one-time link_order route
+      if (isOneTimeLinkOrderWebhook) {
+        const { error: routeAuditErr } = await supabase.from('audit_logs').insert({
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'bepaid-webhook',
+          action: 'bepaid.webhook.one_time_link_order_routed',
+          created_at: new Date().toISOString(),
+          meta: {
+            order_id: parsedOrderId,
+            transaction_uid: transactionUid,
+            tracking_id: rawTrackingId,
+            bepaid_status: transactionStatus,
+          },
+        });
+        if (routeAuditErr) console.error('[WEBHOOK-LINK] Route audit log error (non-fatal):', routeAuditErr);
+      }
 
       // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingLinkPayment } = await supabase
