@@ -244,7 +244,7 @@ export default function AdminRoles() {
     }
 
     // UI safeguard: only super_admin can change super_admin roles
-    if (currentRoleCode === "super_admin" && !isSuperAdmin) {
+    if (currentRoleCode === "super_admin" && !isSuperAdmin{
       toast.error("Только Владелец может изменять роль другого Владельца");
       return;
     }
@@ -424,7 +424,7 @@ export default function AdminRoles() {
 
                   const isCurrentUser = user.user_id === currentUser?.id;
                   const canChangeRole = hasPermission("admins.manage") && !isCurrentUser;
-                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin());
+                  const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin()
 
                   return (
                     <TableRow
