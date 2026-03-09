@@ -166,6 +166,7 @@ const App = () => {
               <Route path="/help" element={<LazyRoute><Help /></LazyRoute>} />
               <Route path="/consultation" element={<LazyRoute><Consultation /></LazyRoute>} />
               <Route path="/course-accountant" element={<LazyRoute><CourseAccountant /></LazyRoute>} />
+              <Route path="/close-year" element={<LazyRoute><CloseYear /></LazyRoute>} />
               <Route path="/business-training" element={<LazyRoute><BusinessTraining /></LazyRoute>} />
               <Route path="/club" element={<Landing />} />
               
