@@ -51,8 +51,7 @@ export function AdminSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { hasPermission, hasAnyPermission, isSuperAdmin: isSuperAdminFn } = usePermissions();
-  const isSuperAdmin = isSuperAdminFn();
+  const { hasPermission, hasAnyPermission, isSuperAdmin } = useRbac();
   const unreadMessagesCount = useUnreadMessagesCount();
   const { data: unreadEmailCount = 0 } = useUnreadEmailCount();
   const { data: unmappedProductsCount = 0 } = useUnmappedProductsCount();

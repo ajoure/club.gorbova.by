@@ -182,7 +182,7 @@ export function AppSidebar() {
     return { firstName: user?.email || "Пользователь", lastName: null };
   };
 
-  const showAdminLink = isAdmin() || hasAdminAccess();
+  const showAdminLink = isAdmin || hasAdminAccess;
   const { firstName, lastName } = getNameParts();
 
   // Render menu item - NO dynamic modules in dropdown, just static links
