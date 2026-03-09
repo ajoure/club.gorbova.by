@@ -1,7 +1,6 @@
 import { ReactNode, useMemo } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
-import { useRbac } from "@/hooks/useRbac";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { useRbac } from "@/hooks/useRbacdebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AdminSidebar } from "./AdminSidebar";
 import { PullToRefresh } from "./PullToRefresh";
 import { Loader2, HelpCircle } from "lucide-react";
@@ -70,9 +69,7 @@ const routeToHelpAnchor: Record<string, string> = {
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { hasAdminAccess, loading } = usePermissions();
-  
-  // Global sound alert for incoming messages on any admin page
+  const { hasAdminAccess, loading } = usePermissions();Rbacobal sound alert for incoming messages on any admin page
   useIncomingMessageAlert();
 
   // Get the page title for the current route
