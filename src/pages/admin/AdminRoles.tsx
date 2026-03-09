@@ -244,7 +244,7 @@ export default function AdminRoles() {
     }
 
     // UI safeguard: only super_admin can change super_admin roles
-    if (currentRoleCode === "super_admin" && !isSuperAdmin()) {
+    if (currentRoleCode === "super_admin" && !isSuperAdmin) {
       toast.error("Только Владелец может изменять роль другого Владельца");
       return;
     }
