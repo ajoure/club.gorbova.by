@@ -49,10 +49,13 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { data: userRole } = await userClient.rpc('get_user_role', { _user_id: user.id });
-    const { data: isSuperAdmin } = await userClient.rpc('is_super_admin', { _user_id: user.id });
+    // RBAC-CLEANUP.1: canonical SoT — has_role_v2 (replaces legacy get_user_role + is_super_admin)
+    const [{ data: isAdminRole }, { data: isSuperAdminRole }] = await Promise.all([
+      userClient.rpc('has_role_v2', { _user_id: user.id, _role_code: 'admin' }),
+      userClient.rpc('has_role_v2', { _user_id: user.id, _role_code: 'super_admin' }),
+    ]);
     
-    const isAdmin = !!isSuperAdmin || userRole === 'admin' || userRole === 'superadmin';
+    const isAdmin = !!isAdminRole || !!isSuperAdminRole;
     if (!isAdmin) {
       return new Response(JSON.stringify({ error: 'Admin access required' }), {
         status: 403,
