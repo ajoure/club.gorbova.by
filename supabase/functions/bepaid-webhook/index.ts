@@ -2674,7 +2674,7 @@ Deno.serve(async (req) => {
           meta: {
             transaction_uid: transactionUid,
             tracking_id: rawTrackingId,
-            parsed_kind: 'link',
+            parsed_kind: effectiveKind,
             existing_payment_id: existingLinkPayment.id,
             existing_order_id: existingLinkPayment.order_id,
             tracking_order_id: parsedOrderId,
