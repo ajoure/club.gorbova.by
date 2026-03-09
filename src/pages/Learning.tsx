@@ -94,11 +94,25 @@ const products: Product[] = [
     badge: "Тренинг",
     badgeVariant: "outline",
     price: "250 BYN/мес",
-    image: productCourseImage, // Uses same course image
-    isPurchased: false, // Will be determined by matching module
+    image: productCourseImage,
+    isPurchased: false,
     purchaseLink: "https://club.gorbova.by/business-training",
-    courseSlug: "buhgalteriya-kak-biznes", // Links to real module for isPurchased check
+    courseSlug: "buhgalteriya-kak-biznes",
     duration: "Квест",
+  },
+  // PATCH-5: Витрина "ЗАКРОЙ ГОД" — связь по product_id only
+  {
+    id: "73c29914-63a3-4f4f-ac42-9f5287e58696",
+    title: "ЗАКРОЙ ГОД",
+    description: "Наставничество для бухгалтеров: технология закрытия года с нейросетями. Декабрь 2025 — Февраль 2026",
+    badge: "Новинка",
+    badgeVariant: "secondary",
+    price: "900 BYN",
+    image: productCourseImage,
+    isPurchased: false,
+    purchaseLink: "/close-year",
+    courseSlug: "close-year",
+    duration: "3 месяца",
   },
 ];
 
