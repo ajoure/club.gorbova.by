@@ -599,7 +599,7 @@ export default function AdminRoles() {
                 <TableBody>
                   {sortedRoles.map((role, index) => {
                     const isSystemRole = SYSTEM_ROLES.includes(role.code);
-                    const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                    const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin);
                     const canDelete = hasPermission("roles.manage") && !isSystemRole;
                     const RoleIcon = ROLE_TABLE_ICONS[role.code] || Shield;
                     const iconColors = getRoleIconColors(role.code);
