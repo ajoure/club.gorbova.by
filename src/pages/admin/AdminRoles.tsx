@@ -244,8 +244,7 @@ export default function AdminRoles() {
     }
 
     // UI safeguard: only super_admin can change super_admin roles
-    if (currentRoleCode === "super_admin" && !isSuperAdmin{
-      toast.error("Только Владелец может изменять роль другого Владельца");
+    if (currentRoleCode === "super_admin" && !isSuperAdmin      toast.error("Только Владелец может изменять роль другого Владельца");
       return;
     }
 
@@ -426,7 +425,7 @@ export default function AdminRoles() {
                   const canChangeRole = hasPermission("admins.manage") && !isCurrentUser;
                   const canRemove = canChangeRole && (effectiveRole.code !== "super_admin" || isSuperAdmin()
 
-                  return (
+                return (
                     <TableRow
                       key={user.user_id}
                       className={cn(
@@ -461,7 +460,7 @@ export default function AdminRoles() {
                             <SelectContent className="backdrop-blur-xl bg-popover/95 border-border/40">
                               {roles
                                 .filter(r => r.code !== "super_admin" || isSuperAdmin())
-                                .map(role => (
+                              .map(role => (
                                   <SelectItem key={role.code} value={role.code}>
                                     {getRoleDisplayName(role)}
                                   </SelectItem>
