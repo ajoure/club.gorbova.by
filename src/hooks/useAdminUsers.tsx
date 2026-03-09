@@ -23,9 +23,12 @@ export function useAdminUsers() {
     setLoading(true);
     try {
       // Get profiles with their roles
+      // STOP-guard: if count(user_id IS NOT NULL) > 1000, migrate to useInfiniteQuery + .range()
+      // Current count: ~227 (as of 2026-03-09)
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("*")
+        .not("user_id", "is", null)
         .order("created_at", { ascending: false });
 
       if (profilesError) {
