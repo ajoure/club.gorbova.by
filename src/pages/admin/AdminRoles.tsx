@@ -554,7 +554,7 @@ export default function AdminRoles() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {sortedRoles.map((role) => {
                 const isSystemRole = SYSTEM_ROLES.includes(role.code);
-                const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin());
+                const canEdit = hasPermission("roles.manage") && (role.code !== "super_admin" || isSuperAdmin);
                 const canDelete = hasPermission("roles.manage") && !isSystemRole;
 
                 return (
