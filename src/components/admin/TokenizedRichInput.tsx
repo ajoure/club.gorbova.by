@@ -634,24 +634,26 @@ export function TokenizedRichInput({
         setBubbleOpen(false);
         return;
       }
-      const viewportW = window.innerWidth;
-      const toolbarW = allowAlign ? 300 : 200;
+      const { offsetX, offsetY, vw, vh } = getViewportOffsets();
+      const toolbarW = allowAlign ? 260 : 160;
       const toolbarH = 40;
-      // ALWAYS position ABOVE the selection first
-      let top = rangeRect.top - toolbarH - 8;
-      // Only fall below if bubble would go off viewport top
-      if (top < 4) {
-        top = rangeRect.bottom + 6;
+      // Position ABOVE the selection first, with viewport offsets
+      let top = rangeRect.top - toolbarH - 8 + offsetY;
+      // Flip below if would go off viewport top
+      if (top < offsetY + 4) {
+        top = rangeRect.bottom + 6 + offsetY;
       }
-      // Center horizontally on selection, clamp to viewport
-      let left = rangeRect.left + rangeRect.width / 2 - toolbarW / 2;
-      left = Math.max(8, Math.min(left, viewportW - toolbarW - 8));
+      // Clamp vertical within visual viewport
+      top = Math.max(offsetY + 4, Math.min(top, offsetY + vh - toolbarH - 4));
+      // Center horizontally on selection, clamp within visual viewport
+      let left = rangeRect.left + rangeRect.width / 2 - toolbarW / 2 + offsetX;
+      left = Math.max(offsetX + 4, Math.min(left, offsetX + vw - toolbarW - 4));
       setBubbleCoords({ top, left });
       setBubbleOpen(true);
     } catch {
       setBubbleOpen(false);
     }
-  }, [singleLine]);
+  }, [singleLine, allowAlign]);
 
   useEffect(() => {
     if (!editor) return;
