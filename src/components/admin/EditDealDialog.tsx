@@ -223,6 +223,27 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       
       if (orderError) throw orderError;
 
+      // Audit: log manual deal_date change
+      if (dealDateChanged) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "deal.deal_date.updated",
+          actor_type: "user",
+          actor_user_id: currentUser?.id || null,
+          actor_label: "admin-ui",
+          target_user_id: deal.user_id || null,
+          meta: {
+            order_id: deal.id,
+            order_number: deal.order_number,
+            old_deal_date: oldDealDate,
+            new_deal_date: newDealDate,
+          },
+          created_at: new Date().toISOString(),
+        }).then(({ error: auditErr }) => {
+          if (auditErr) console.error("Audit log error:", auditErr);
+        });
+      }
+
       // 2. Re-fetch subscription inside mutation to avoid stale cache
       const { data: freshSubscription } = await supabase
         .from("subscriptions_v2")
