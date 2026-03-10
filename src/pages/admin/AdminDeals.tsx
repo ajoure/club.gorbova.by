@@ -287,7 +287,7 @@ export default function AdminDeals() {
     },
     { key: "final_price", label: "Сумма", type: "number" },
     { key: "is_trial", label: "Триал", type: "boolean" },
-    { key: "created_at", label: "Дата создания", type: "date" },
+    { key: "deal_date", label: "Дата сделки", type: "date" },
   ], [products, tariffs]);
 
   // Valid deal statuses (excluding pending/failed payment attempts)
