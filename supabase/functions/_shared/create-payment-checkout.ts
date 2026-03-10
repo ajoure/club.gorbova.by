@@ -209,6 +209,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         currency: 'BYN',
         status: 'pending',
         customer_email: customerEmail,
+        deal_date: new Date().toISOString(),
         meta: orderMeta,
       })
       .select('id')
