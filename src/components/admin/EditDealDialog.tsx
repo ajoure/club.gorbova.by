@@ -584,38 +584,38 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                         variant="outline"
                         className={cn(
                           "flex-1 justify-start text-left font-normal bg-background/80 border-border/50",
-                          !formData.created_at && "text-muted-foreground"
+                          !formData.deal_date && "text-muted-foreground"
                         )}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
-                        {formData.created_at ? format(formData.created_at, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
+                        {formData.deal_date ? format(formData.deal_date, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
                       <Calendar
                         mode="single"
-                        selected={formData.created_at || undefined}
+                        selected={formData.deal_date || undefined}
                         onSelect={(date) => {
                           if (date) {
                             // Preserve time from current value
-                            const current = formData.created_at || new Date();
+                            const current = formData.deal_date || new Date();
                             date.setHours(current.getHours(), current.getMinutes(), current.getSeconds());
-                            setFormData(prev => ({ ...prev, created_at: date }));
+                            setFormData(prev => ({ ...prev, deal_date: date }));
                           }
                         }}
                         locale={ru}
                       />
-                      {formData.created_at && (
+                      {formData.deal_date && (
                         <div className="px-3 pb-3">
                           <Label className="text-xs text-muted-foreground">Время</Label>
                           <Input
                             type="time"
-                            value={formData.created_at ? format(formData.created_at, "HH:mm") : ""}
+                            value={formData.deal_date ? format(formData.deal_date, "HH:mm") : ""}
                             onChange={(e) => {
                               const [h, m] = e.target.value.split(":").map(Number);
-                              const d = new Date(formData.created_at!);
+                              const d = new Date(formData.deal_date!);
                               d.setHours(h, m);
-                              setFormData(prev => ({ ...prev, created_at: d }));
+                              setFormData(prev => ({ ...prev, deal_date: d }));
                             }}
                             className="h-8 mt-1 bg-background/80 border-border/50"
                           />
