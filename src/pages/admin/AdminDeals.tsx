@@ -877,7 +877,7 @@ export default function AdminDeals() {
                     <TableCell>
                       <div className="flex items-center gap-2 text-sm">
                         <Calendar className="h-3 w-3 text-muted-foreground" />
-                        {format(new Date(deal.created_at), "dd.MM.yy")}
+                        {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yy")}
                       </div>
                       <button 
                         onClick={(e) => {
