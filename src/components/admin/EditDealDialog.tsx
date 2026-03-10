@@ -209,8 +209,11 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         user_id: formData.user_id || deal.user_id,
       };
       // deal_date: update only if changed
-      if (formData.deal_date) {
-        orderUpdate.deal_date = formData.deal_date.toISOString();
+      const oldDealDate = deal.deal_date || deal.created_at;
+      const newDealDate = formData.deal_date?.toISOString();
+      const dealDateChanged = newDealDate && newDealDate !== oldDealDate;
+      if (newDealDate) {
+        orderUpdate.deal_date = newDealDate;
       }
       // NOTE: created_at is never updated — it's a system timestamp
       const { error: orderError } = await supabase
