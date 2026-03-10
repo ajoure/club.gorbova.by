@@ -176,7 +176,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         product_id: deal.product_id || "",
         tariff_id: deal.tariff_id || "",
         offer_id: deal.offer_id || "",
-        created_at: deal.created_at ? new Date(deal.created_at) : null,
+        deal_date: deal.deal_date ? new Date(deal.deal_date) : deal.created_at ? new Date(deal.created_at) : null,
         access_start_at: subscription?.access_start_at ? new Date(subscription.access_start_at) : null,
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
