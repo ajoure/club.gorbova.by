@@ -86,14 +86,15 @@ export function GrantAccessFromDealDialog({
     enabled: open && !!deal.user_id && !!deal.product_id,
   });
 
-  // Set default start date from deal.created_at when dialog opens
+  // Set default start date from deal_date (canonical) when dialog opens
+  const dealDate = deal.deal_date || deal.created_at;
   useEffect(() => {
-    if (open && deal.created_at) {
-      setCustomStartDate(new Date(deal.created_at));
+    if (open && dealDate) {
+      setCustomStartDate(new Date(dealDate));
     } else if (open) {
       setCustomStartDate(new Date());
     }
-  }, [open, deal.created_at]);
+  }, [open, dealDate]);
 
   // Calculate access period
   const accessDays = customDays ?? tariff?.access_days ?? 30;
