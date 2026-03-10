@@ -161,7 +161,7 @@ export default function AdminDeals() {
 
       // Apply date filter
       if (dateFilter.from) {
-        query = query.gte("created_at", `${dateFilter.from}T00:00:00Z`);
+        query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
       }
       if (dateFilter.to) {
         query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
