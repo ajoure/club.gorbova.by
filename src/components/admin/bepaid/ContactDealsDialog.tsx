@@ -78,7 +78,7 @@ export default function ContactDealsDialog({
           user_id
         `)
         .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+        .order("deal_date", { ascending: false });
 
       if (error) throw error;
 

@@ -39,7 +39,8 @@ interface GrantAccessFromDealDialogProps {
     product_id: string;
     tariff_id: string | null;
     status: string;
-    created_at?: string;  // Deal creation date (should be payment date)
+    created_at?: string;
+    deal_date?: string | null;
   };
   tariff?: { access_days: number; name: string } | null;
   existingSubscription?: { 
