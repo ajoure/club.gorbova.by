@@ -164,7 +164,7 @@ export default function AdminDeals() {
         query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
       }
       if (dateFilter.to) {
-        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+        query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
       }
 
       const { data, error } = await query;
