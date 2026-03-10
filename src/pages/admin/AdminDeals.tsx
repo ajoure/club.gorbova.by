@@ -376,7 +376,7 @@ export default function AdminDeals() {
 
   // Export columns builder
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
-    { header: "Дата", getValue: (d) => d.created_at ? format(new Date(d.created_at), "dd.MM.yyyy HH:mm") : "" },
+    { header: "Дата", getValue: (d) => { const dd = d.deal_date || d.created_at; return dd ? format(new Date(dd), "dd.MM.yyyy HH:mm") : ""; } },
     { header: "Номер", getValue: (d) => d.order_number || "" },
     { header: "Контакт", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.full_name || getLatestPayerName(d) || ""; } },
     { header: "Email", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return d.customer_email || p?.email || ""; } },
