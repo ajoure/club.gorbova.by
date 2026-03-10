@@ -502,6 +502,7 @@ Deno.serve(async (req) => {
                 : null,
               status: 'pending',
               customer_email: emailLower,
+              deal_date: new Date().toISOString(),
               meta: {
                 source: 'admin_test',
                 legacy_order_id: order.id,
