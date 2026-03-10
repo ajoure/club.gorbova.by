@@ -68,6 +68,7 @@ export default function ContactDealsDialog({
           base_price,
           currency,
           created_at,
+          deal_date,
           paid_amount,
           product_id,
           tariff_id,
@@ -77,7 +78,7 @@ export default function ContactDealsDialog({
           user_id
         `)
         .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+        .order("deal_date", { ascending: false });
 
       if (error) throw error;
 
@@ -203,7 +204,7 @@ export default function ContactDealsDialog({
                             {deal.order_number}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(deal.created_at), "dd.MM.yyyy", { locale: ru })}
+                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yyyy", { locale: ru })}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">

@@ -417,7 +417,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
         .in("status", ['paid', 'canceled', 'refunded'] as const)
-        .order("created_at", { ascending: false });
+        .order("deal_date", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -2823,7 +2823,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         <div className="flex items-center justify-between text-sm">
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" />
-                            {format(new Date(deal.created_at), "dd.MM.yy HH:mm")}
+                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yy HH:mm")}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="font-medium flex items-center gap-1">

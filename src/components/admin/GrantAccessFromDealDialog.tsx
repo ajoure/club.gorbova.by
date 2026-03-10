@@ -39,7 +39,8 @@ interface GrantAccessFromDealDialogProps {
     product_id: string;
     tariff_id: string | null;
     status: string;
-    created_at?: string;  // Deal creation date (should be payment date)
+    created_at?: string;
+    deal_date?: string | null;
   };
   tariff?: { access_days: number; name: string } | null;
   existingSubscription?: { 
@@ -86,14 +87,15 @@ export function GrantAccessFromDealDialog({
     enabled: open && !!deal.user_id && !!deal.product_id,
   });
 
-  // Set default start date from deal.created_at when dialog opens
+  // Set default start date from deal_date (canonical) when dialog opens
+  const dealDate = deal.deal_date || deal.created_at;
   useEffect(() => {
-    if (open && deal.created_at) {
-      setCustomStartDate(new Date(deal.created_at));
+    if (open && dealDate) {
+      setCustomStartDate(new Date(dealDate));
     } else if (open) {
       setCustomStartDate(new Date());
     }
-  }, [open, deal.created_at]);
+  }, [open, dealDate]);
 
   // Calculate access period
   const accessDays = customDays ?? tariff?.access_days ?? 30;
@@ -102,8 +104,9 @@ export function GrantAccessFromDealDialog({
     const now = new Date();
     const activeSub = productSubscription || existingSubscription;
     
-    // Base date: customStartDate or deal.created_at or now
-    const baseDate = customStartDate || (deal.created_at ? new Date(deal.created_at) : now);
+    // Base date: customStartDate or deal_date or now
+    const dealDateVal = deal.deal_date || deal.created_at;
+    const baseDate = customStartDate || (dealDateVal ? new Date(dealDateVal) : now);
     
     // Check if there's active access to extend from
     const hasActiveAccess = activeSub?.status === "active" && 
