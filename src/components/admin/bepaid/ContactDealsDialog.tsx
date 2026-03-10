@@ -203,7 +203,7 @@ export default function ContactDealsDialog({
                             {deal.order_number}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(deal.created_at), "dd.MM.yyyy", { locale: ru })}
+                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yyyy", { locale: ru })}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
