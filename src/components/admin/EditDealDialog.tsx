@@ -573,6 +573,56 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Дата сделки</Label>
+                <div className="flex items-center gap-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "flex-1 justify-start text-left font-normal bg-background/80 border-border/50",
+                          !formData.created_at && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {formData.created_at ? format(formData.created_at, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={formData.created_at || undefined}
+                        onSelect={(date) => {
+                          if (date) {
+                            // Preserve time from current value
+                            const current = formData.created_at || new Date();
+                            date.setHours(current.getHours(), current.getMinutes(), current.getSeconds());
+                            setFormData(prev => ({ ...prev, created_at: date }));
+                          }
+                        }}
+                        locale={ru}
+                      />
+                      {formData.created_at && (
+                        <div className="px-3 pb-3">
+                          <Label className="text-xs text-muted-foreground">Время</Label>
+                          <Input
+                            type="time"
+                            value={formData.created_at ? format(formData.created_at, "HH:mm") : ""}
+                            onChange={(e) => {
+                              const [h, m] = e.target.value.split(":").map(Number);
+                              const d = new Date(formData.created_at!);
+                              d.setHours(h, m);
+                              setFormData(prev => ({ ...prev, created_at: d }));
+                            }}
+                            className="h-8 mt-1 bg-background/80 border-border/50"
+                          />
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
             </div>
           </div>
 
