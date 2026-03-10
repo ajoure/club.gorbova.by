@@ -156,15 +156,15 @@ export default function AdminDeals() {
           payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
           profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
         `)
-        .order("created_at", { ascending: false })
+        .order("deal_date", { ascending: false, nullsFirst: false })
         .limit(1000);
 
       // Apply date filter
       if (dateFilter.from) {
-        query = query.gte("created_at", `${dateFilter.from}T00:00:00Z`);
+        query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
       }
       if (dateFilter.to) {
-        query = query.lte("created_at", `${dateFilter.to}T23:59:59Z`);
+        query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
       }
 
       const { data, error } = await query;
@@ -287,7 +287,7 @@ export default function AdminDeals() {
     },
     { key: "final_price", label: "Сумма", type: "number" },
     { key: "is_trial", label: "Триал", type: "boolean" },
-    { key: "created_at", label: "Дата создания", type: "date" },
+    { key: "deal_date", label: "Дата сделки", type: "date" },
   ], [products, tariffs]);
 
   // Valid deal statuses (excluding pending/failed payment attempts)
@@ -376,7 +376,7 @@ export default function AdminDeals() {
 
   // Export columns builder
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
-    { header: "Дата", getValue: (d) => d.created_at ? format(new Date(d.created_at), "dd.MM.yyyy HH:mm") : "" },
+    { header: "Дата", getValue: (d) => { const dd = d.deal_date || d.created_at; return dd ? format(new Date(dd), "dd.MM.yyyy HH:mm") : ""; } },
     { header: "Номер", getValue: (d) => d.order_number || "" },
     { header: "Контакт", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.full_name || getLatestPayerName(d) || ""; } },
     { header: "Email", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return d.customer_email || p?.email || ""; } },
@@ -392,7 +392,7 @@ export default function AdminDeals() {
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
     data: filteredDeals,
-    defaultSortKey: "created_at",
+    defaultSortKey: "deal_date",
     defaultSortDirection: "desc",
     getFieldValue: getDealFieldValue,
   });
@@ -877,7 +877,7 @@ export default function AdminDeals() {
                     <TableCell>
                       <div className="flex items-center gap-2 text-sm">
                         <Calendar className="h-3 w-3 text-muted-foreground" />
-                        {format(new Date(deal.created_at), "dd.MM.yy")}
+                        {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yy")}
                       </div>
                       <button 
                         onClick={(e) => {

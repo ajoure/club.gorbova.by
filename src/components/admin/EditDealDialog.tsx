@@ -70,7 +70,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     product_id: "",
     tariff_id: "",
     offer_id: "",
-    created_at: null as Date | null,
+    deal_date: null as Date | null,
     access_start_at: null as Date | null,
     access_end_at: null as Date | null,
     next_charge_at: null as Date | null,
@@ -176,7 +176,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         product_id: deal.product_id || "",
         tariff_id: deal.tariff_id || "",
         offer_id: deal.offer_id || "",
-        created_at: deal.created_at ? new Date(deal.created_at) : null,
+        deal_date: deal.deal_date ? new Date(deal.deal_date) : deal.created_at ? new Date(deal.created_at) : null,
         access_start_at: subscription?.access_start_at ? new Date(subscription.access_start_at) : null,
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
@@ -208,15 +208,41 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         profile_id: formData.profile_id || null,
         user_id: formData.user_id || deal.user_id,
       };
-      if (formData.created_at) {
-        orderUpdate.created_at = formData.created_at.toISOString();
+      // deal_date: update only if changed
+      const oldDealDate = deal.deal_date || deal.created_at;
+      const newDealDate = formData.deal_date?.toISOString();
+      const dealDateChanged = newDealDate && newDealDate !== oldDealDate;
+      if (newDealDate) {
+        orderUpdate.deal_date = newDealDate;
       }
+      // NOTE: created_at is never updated — it's a system timestamp
       const { error: orderError } = await supabase
         .from("orders_v2")
         .update(orderUpdate)
         .eq("id", deal.id);
       
       if (orderError) throw orderError;
+
+      // Audit: log manual deal_date change
+      if (dealDateChanged) {
+        const { data: { user: currentUser } } = await supabase.auth.getUser();
+        await supabase.from("audit_logs").insert({
+          action: "deal.deal_date.updated",
+          actor_type: "user",
+          actor_user_id: currentUser?.id || null,
+          actor_label: "admin-ui",
+          target_user_id: deal.user_id || null,
+          meta: {
+            order_id: deal.id,
+            order_number: deal.order_number,
+            old_deal_date: oldDealDate,
+            new_deal_date: newDealDate,
+          },
+          created_at: new Date().toISOString(),
+        }).then(({ error: auditErr }) => {
+          if (auditErr) console.error("Audit log error:", auditErr);
+        });
+      }
 
       // 2. Re-fetch subscription inside mutation to avoid stale cache
       const { data: freshSubscription } = await supabase
@@ -582,38 +608,38 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                         variant="outline"
                         className={cn(
                           "flex-1 justify-start text-left font-normal bg-background/80 border-border/50",
-                          !formData.created_at && "text-muted-foreground"
+                          !formData.deal_date && "text-muted-foreground"
                         )}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
-                        {formData.created_at ? format(formData.created_at, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
+                        {formData.deal_date ? format(formData.deal_date, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
                       <Calendar
                         mode="single"
-                        selected={formData.created_at || undefined}
+                        selected={formData.deal_date || undefined}
                         onSelect={(date) => {
                           if (date) {
                             // Preserve time from current value
-                            const current = formData.created_at || new Date();
+                            const current = formData.deal_date || new Date();
                             date.setHours(current.getHours(), current.getMinutes(), current.getSeconds());
-                            setFormData(prev => ({ ...prev, created_at: date }));
+                            setFormData(prev => ({ ...prev, deal_date: date }));
                           }
                         }}
                         locale={ru}
                       />
-                      {formData.created_at && (
+                      {formData.deal_date && (
                         <div className="px-3 pb-3">
                           <Label className="text-xs text-muted-foreground">Время</Label>
                           <Input
                             type="time"
-                            value={formData.created_at ? format(formData.created_at, "HH:mm") : ""}
+                            value={formData.deal_date ? format(formData.deal_date, "HH:mm") : ""}
                             onChange={(e) => {
                               const [h, m] = e.target.value.split(":").map(Number);
-                              const d = new Date(formData.created_at!);
+                              const d = new Date(formData.deal_date!);
                               d.setHours(h, m);
-                              setFormData(prev => ({ ...prev, created_at: d }));
+                              setFormData(prev => ({ ...prev, deal_date: d }));
                             }}
                             className="h-8 mt-1 bg-background/80 border-border/50"
                           />

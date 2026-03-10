@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
           currency: product.currency,
           is_trial: false,
           status: 'paid',
+          deal_date: new Date().toISOString(),
           meta: {
             test_scenario: true,
             is_installment: true,

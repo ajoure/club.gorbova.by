@@ -489,6 +489,7 @@ Deno.serve(async (req) => {
                   currency: payment.currency,
                   customer_email: payment.email || matchedProfile.email,
                   created_at: paymentDate.toISOString(),
+                  deal_date: paymentDate.toISOString(),
                   meta: {
                     source: 'bepaid_import',
                     bepaid_uid: payment.uid,
@@ -669,6 +670,7 @@ Deno.serve(async (req) => {
                 currency: payment.currency,
                 customer_email: payment.email,
                 created_at: paymentDate.toISOString(),
+                deal_date: paymentDate.toISOString(),
                 meta: {
                   source: 'bepaid_import',
                   bepaid_uid: payment.uid,

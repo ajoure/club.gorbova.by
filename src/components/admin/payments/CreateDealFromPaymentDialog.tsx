@@ -275,6 +275,7 @@ export function CreateDealFromPaymentDialog({
         status: "paid",
         is_trial: false,
         created_at: accessStart.toISOString(),
+        deal_date: accessStart.toISOString(),
         meta: { 
           source: "admin_from_payment", 
           created_by: currentUser?.id,

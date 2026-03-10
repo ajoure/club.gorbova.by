@@ -297,6 +297,7 @@ Deno.serve(async (req) => {
         paid_amount: 0,
         currency,
         status: 'pending',
+        deal_date: new Date().toISOString(),
         meta: {
           payment_flow: 'provider_managed_checkout',
           source: 'bepaid-create-subscription-checkout',

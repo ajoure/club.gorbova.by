@@ -225,6 +225,7 @@ Deno.serve(async (req) => {
               import_source: 'file',
             },
             created_at: createdAt,
+            deal_date: createdAt,
             updated_at: paidAt,
           })
           .select('id')

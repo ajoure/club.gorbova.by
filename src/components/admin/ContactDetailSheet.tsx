@@ -1045,6 +1045,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         status: "paid",
         is_trial: false,
         created_at: accessStart.toISOString(), // Use access start date as deal date
+        deal_date: accessStart.toISOString(),
         meta: { 
           source: createDealOnly ? "admin_deal_only" : "admin_grant", 
           granted_by: currentUser?.id,

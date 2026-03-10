@@ -306,6 +306,7 @@ Deno.serve(async (req) => {
           currency: 'BYN',
           status: 'pending',
           customer_email: paymentMethod.meta?.email || null,
+          deal_date: new Date().toISOString(),
           meta: {
             type: 'admin_manual_charge',
             description,

@@ -4501,6 +4501,7 @@ export type Database = {
           customer_email: string | null
           customer_ip: string | null
           customer_phone: string | null
+          deal_date: string | null
           discount_percent: number | null
           final_price: number
           flow_id: string | null
@@ -4536,6 +4537,7 @@ export type Database = {
           customer_email?: string | null
           customer_ip?: string | null
           customer_phone?: string | null
+          deal_date?: string | null
           discount_percent?: number | null
           final_price: number
           flow_id?: string | null
@@ -4571,6 +4573,7 @@ export type Database = {
           customer_email?: string | null
           customer_ip?: string | null
           customer_phone?: string | null
+          deal_date?: string | null
           discount_percent?: number | null
           final_price?: number
           flow_id?: string | null
