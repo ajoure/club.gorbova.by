@@ -70,6 +70,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     product_id: "",
     tariff_id: "",
     offer_id: "",
+    created_at: null as Date | null,
     access_start_at: null as Date | null,
     access_end_at: null as Date | null,
     next_charge_at: null as Date | null,
