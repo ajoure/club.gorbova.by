@@ -68,6 +68,7 @@ export default function ContactDealsDialog({
           base_price,
           currency,
           created_at,
+          deal_date,
           paid_amount,
           product_id,
           tariff_id,
