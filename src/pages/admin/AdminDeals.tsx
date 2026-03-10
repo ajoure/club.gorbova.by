@@ -392,7 +392,7 @@ export default function AdminDeals() {
   // Sorting
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
     data: filteredDeals,
-    defaultSortKey: "created_at",
+    defaultSortKey: "deal_date",
     defaultSortDirection: "desc",
     getFieldValue: getDealFieldValue,
   });
