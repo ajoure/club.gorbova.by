@@ -468,9 +468,21 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                     #{deal.order_number}
                   </button>
                 </SheetTitle>
-                <p className="text-xs sm:text-sm text-muted-foreground">
-                  {format(new Date(deal.created_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
-                </p>
+                {(() => {
+                  const latestSucceededPayment = [...(payments || [])]
+                    .filter(p => p.status === 'succeeded')
+                    .sort((a, b) => {
+                      const dateA = new Date(a.paid_at || a.created_at || 0).getTime();
+                      const dateB = new Date(b.paid_at || b.created_at || 0).getTime();
+                      return dateB - dateA;
+                    })[0];
+                  const effectiveDate = latestSucceededPayment?.paid_at || latestSucceededPayment?.created_at || deal.created_at;
+                  return (
+                    <p className="text-xs sm:text-sm text-muted-foreground">
+                      {format(new Date(effectiveDate), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                    </p>
+                  );
+                })()}
               </div>
             </div>
             <Badge className={`${statusConfig.color} shrink-0 mt-1 h-7 px-2.5 text-xs rounded-full`}>

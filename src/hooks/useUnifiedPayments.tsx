@@ -206,10 +206,10 @@ export function useUnifiedPayments(dateFilter: DateFilter) {
         // PATCH-C1: Removed strict origin filter - show all origins including manual_adjustment
         // Filter by origin based on includeImport toggle (expanded to include all legitimate origins)
         if (includeImport) {
-          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification"]);
+          query = query.in("origin", ["bepaid", "import", "statement_sync", "manual_adjustment", "card_verification", "payment_link"]);
         } else {
-          // Show all non-import origins (PATCH-F: include card_verification)
-          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.is.null");
+          // Show all non-import origins (PATCH-F: include card_verification, PATCH-PL: include payment_link)
+          query = query.or("origin.eq.bepaid,origin.eq.statement_sync,origin.eq.manual_adjustment,origin.eq.card_verification,origin.eq.payment_link,origin.is.null");
         }
         
         query = query.gte("paid_at", `${fromDate}T00:00:00Z`);
