@@ -198,18 +198,22 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       const newStatus = formData.status;
 
       // 1. Update orders_v2
+      const orderUpdate: any = {
+        status: formData.status as any,
+        final_price: parseFloat(formData.final_price) || 0,
+        base_price: parseFloat(formData.final_price) || 0,
+        product_id: formData.product_id || null,
+        tariff_id: formData.tariff_id || null,
+        offer_id: formData.offer_id || null,
+        profile_id: formData.profile_id || null,
+        user_id: formData.user_id || deal.user_id,
+      };
+      if (formData.created_at) {
+        orderUpdate.created_at = formData.created_at.toISOString();
+      }
       const { error: orderError } = await supabase
         .from("orders_v2")
-        .update({
-          status: formData.status as any,
-          final_price: parseFloat(formData.final_price) || 0,
-          base_price: parseFloat(formData.final_price) || 0,
-          product_id: formData.product_id || null,
-          tariff_id: formData.tariff_id || null,
-          offer_id: formData.offer_id || null,
-          profile_id: formData.profile_id || null,
-          user_id: formData.user_id || deal.user_id,
-        })
+        .update(orderUpdate)
         .eq("id", deal.id);
       
       if (orderError) throw orderError;
