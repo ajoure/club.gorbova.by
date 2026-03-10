@@ -156,7 +156,7 @@ export default function AdminDeals() {
           payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
           profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
         `)
-        .order("created_at", { ascending: false })
+        .order("deal_date", { ascending: false, nullsFirst: false })
         .limit(1000);
 
       // Apply date filter
