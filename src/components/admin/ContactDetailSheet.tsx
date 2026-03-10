@@ -417,7 +417,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
         .in("status", ['paid', 'canceled', 'refunded'] as const)
-        .order("created_at", { ascending: false });
+        .order("deal_date", { ascending: false });
       if (error) throw error;
       return data;
     },
