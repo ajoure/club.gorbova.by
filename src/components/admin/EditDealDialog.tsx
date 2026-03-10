@@ -70,6 +70,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     product_id: "",
     tariff_id: "",
     offer_id: "",
+    created_at: null as Date | null,
     access_start_at: null as Date | null,
     access_end_at: null as Date | null,
     next_charge_at: null as Date | null,
@@ -175,6 +176,7 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
         product_id: deal.product_id || "",
         tariff_id: deal.tariff_id || "",
         offer_id: deal.offer_id || "",
+        created_at: deal.created_at ? new Date(deal.created_at) : null,
         access_start_at: subscription?.access_start_at ? new Date(subscription.access_start_at) : null,
         access_end_at: subscription?.access_end_at ? new Date(subscription.access_end_at) : null,
         next_charge_at: subscription?.next_charge_at ? new Date(subscription.next_charge_at) : null,
@@ -196,18 +198,22 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       const newStatus = formData.status;
 
       // 1. Update orders_v2
+      const orderUpdate: any = {
+        status: formData.status as any,
+        final_price: parseFloat(formData.final_price) || 0,
+        base_price: parseFloat(formData.final_price) || 0,
+        product_id: formData.product_id || null,
+        tariff_id: formData.tariff_id || null,
+        offer_id: formData.offer_id || null,
+        profile_id: formData.profile_id || null,
+        user_id: formData.user_id || deal.user_id,
+      };
+      if (formData.created_at) {
+        orderUpdate.created_at = formData.created_at.toISOString();
+      }
       const { error: orderError } = await supabase
         .from("orders_v2")
-        .update({
-          status: formData.status as any,
-          final_price: parseFloat(formData.final_price) || 0,
-          base_price: parseFloat(formData.final_price) || 0,
-          product_id: formData.product_id || null,
-          tariff_id: formData.tariff_id || null,
-          offer_id: formData.offer_id || null,
-          profile_id: formData.profile_id || null,
-          user_id: formData.user_id || deal.user_id,
-        })
+        .update(orderUpdate)
         .eq("id", deal.id);
       
       if (orderError) throw orderError;
@@ -566,6 +572,56 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Дата сделки</Label>
+                <div className="flex items-center gap-2">
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "flex-1 justify-start text-left font-normal bg-background/80 border-border/50",
+                          !formData.created_at && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {formData.created_at ? format(formData.created_at, "dd.MM.yyyy HH:mm", { locale: ru }) : "Выберите"}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={formData.created_at || undefined}
+                        onSelect={(date) => {
+                          if (date) {
+                            // Preserve time from current value
+                            const current = formData.created_at || new Date();
+                            date.setHours(current.getHours(), current.getMinutes(), current.getSeconds());
+                            setFormData(prev => ({ ...prev, created_at: date }));
+                          }
+                        }}
+                        locale={ru}
+                      />
+                      {formData.created_at && (
+                        <div className="px-3 pb-3">
+                          <Label className="text-xs text-muted-foreground">Время</Label>
+                          <Input
+                            type="time"
+                            value={formData.created_at ? format(formData.created_at, "HH:mm") : ""}
+                            onChange={(e) => {
+                              const [h, m] = e.target.value.split(":").map(Number);
+                              const d = new Date(formData.created_at!);
+                              d.setHours(h, m);
+                              setFormData(prev => ({ ...prev, created_at: d }));
+                            }}
+                            className="h-8 mt-1 bg-background/80 border-border/50"
+                          />
+                        </div>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
             </div>
           </div>
