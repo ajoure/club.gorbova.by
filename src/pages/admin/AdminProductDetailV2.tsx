@@ -603,6 +603,7 @@ export default function AdminProductDetailV2() {
                     key={tariff.id}
                     tariff={tariff}
                     offers={getOffersForTariff(tariff.id)}
+                    productIsActive={(product as any)?.is_active ?? true}
                     onEdit={() => openTariffDialog(tariff)}
                     onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
                   />
