@@ -35,6 +35,7 @@ interface TariffCardCompactProps {
     public_id?: string;
   };
   offers: TariffOffer[];
+  productIsActive?: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
@@ -44,6 +45,7 @@ interface TariffCardCompactProps {
 export function TariffCardCompact({
   tariff,
   offers,
+  productIsActive = true,
   onEdit,
   onDelete,
   onDuplicate,
