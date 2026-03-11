@@ -588,8 +588,12 @@ export default function AdminProductsV2() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
               {editingProduct ? "Редактировать продукт" : "Новый продукт"}
+              {editingProduct && (() => {
+                const prod = products?.find((p: any) => p.id === editingProduct);
+                return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
+              })()}
             </DialogTitle>
             <DialogDescription>
               {editingProduct
