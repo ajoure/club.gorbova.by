@@ -31,6 +31,7 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff,
@@ -524,8 +525,8 @@ export default function AdminProductDetailV2() {
                 )}
                 <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 <Badge 
-                  variant={(product as any).status === "active" ? "outline" : "secondary"} 
-                  className="text-[11px]"
+                  variant="outline"
+                  className={`text-[11px] ${getStatusBadgeClass((product as any).status === "active" ? "active" : (product as any).status === "archived" ? "archived" : "hidden")}`}
                 >
                   {(product as any).status === "active" ? "Активный" : (product as any).status === "archived" ? "Архивный" : "Скрытый"}
                 </Badge>
@@ -643,7 +644,7 @@ export default function AdminProductDetailV2() {
                           <CopyableIdChip value={tariff.public_id} />
                         )}
                         {!hasActivePayOffer && (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                          <Badge variant="outline" className={`text-xs ${getStatusBadgeClass("warning")}`}>
                             Нет основной цены
                           </Badge>
                         )}

@@ -26,6 +26,7 @@ import { SelectionBox } from "@/components/admin/SelectionBox";
 import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
 import { useProductReadiness } from "@/hooks/useProductReadiness";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -33,11 +34,8 @@ const STATUS_LABELS: Record<string, string> = {
   archived: "Архивный",
 };
 
-const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  active: "default",
-  hidden: "outline",
-  archived: "secondary",
-};
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import type { StatusBadgeKind } from "@/utils/badgeUtils";
 
 interface ProductFormData {
   name: string;
@@ -404,12 +402,7 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2">
-                            {product.public_id && (
-                              <CopyableIdChip value={product.public_id} />
-                            )}
-                            <span className="font-medium text-sm">{product.name}</span>
-                          </div>
+                          <span className="font-medium text-sm">{product.name}</span>
                           {isParent && (
                             <TooltipProvider>
                               <Tooltip>
@@ -452,7 +445,7 @@ export default function AdminProductsV2() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANTS[product.status] || "outline"} className="text-[11px]">
+                        <Badge variant="outline" className={cn("text-[11px]", getStatusBadgeClass((product.status as StatusBadgeKind) || "inactive"))}>
                           {STATUS_LABELS[product.status] || product.status}
                         </Badge>
                       </TableCell>
@@ -588,12 +581,8 @@ export default function AdminProductsV2() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle>
               {editingProduct ? "Редактировать продукт" : "Новый продукт"}
-              {editingProduct && (() => {
-                const prod = products?.find((p: any) => p.id === editingProduct);
-                return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
-              })()}
             </DialogTitle>
             <DialogDescription>
               {editingProduct
@@ -604,7 +593,13 @@ export default function AdminProductsV2() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Название *</Label>
+              <div className="flex items-center gap-2">
+                <Label>Название *</Label>
+                {editingProduct && (() => {
+                  const prod = products?.find((p: any) => p.id === editingProduct);
+                  return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
+                })()}
+              </div>
               <Input
                 placeholder="Gorbova Club"
                 value={formData.name}

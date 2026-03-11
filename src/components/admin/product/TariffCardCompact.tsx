@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
 
 interface TariffOffer {
   id: string;
@@ -68,7 +69,7 @@ export function TariffCardCompact({
               <CopyableIdChip value={tariff.public_id} />
             )}
             <h3 className="font-semibold text-foreground">{tariff.name}</h3>
-            <Badge variant={tariff.is_active ? "outline" : "secondary"} className="shrink-0 text-xs">
+            <Badge variant="outline" className={`shrink-0 text-xs ${getStatusBadgeClass(tariff.is_active ? "active" : "inactive")}`}>
               {tariff.is_active ? "Активен" : "Неактивен"}
             </Badge>
             {tariff.is_active && !productIsActive && (
@@ -91,7 +92,7 @@ export function TariffCardCompact({
               <span className="text-xs">Trial {trialOffer.trial_days} дн.</span>
             )}
             {!hasMainPayOffer && (
-              <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+              <Badge variant="outline" className={`shrink-0 text-xs ${getStatusBadgeClass("warning")}`}>
                 Нет основной цены
               </Badge>
             )}
