@@ -33,11 +33,8 @@ const STATUS_LABELS: Record<string, string> = {
   archived: "Архивный",
 };
 
-const STATUS_VARIANTS: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  active: "default",
-  hidden: "outline",
-  archived: "secondary",
-};
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import type { StatusBadgeKind } from "@/utils/badgeUtils";
 
 interface ProductFormData {
   name: string;
