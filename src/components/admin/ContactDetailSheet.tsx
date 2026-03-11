@@ -3192,12 +3192,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         />
 
         {/* Edit Deal Dialog */}
-        <EditDealDialog
-          deal={dealToEdit}
-          open={editDealOpen}
-          onOpenChange={setEditDealOpen}
-          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
-        />
+        {dealToEdit && (
+          <EditDealDialog
+            deal={dealToEdit}
+            open={!!dealToEditId}
+            onOpenChange={(v) => { if (!v) setDealToEditId(null); }}
+            onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
+          />
+        )}
 
         {/* Compose Email Dialog */}
         <ComposeEmailDialog
