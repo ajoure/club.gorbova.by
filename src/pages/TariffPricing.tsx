@@ -41,10 +41,18 @@ export default function TariffPricing() {
   const primaryDomain = data.product.primary_domain;
   const tariff = data.tariff;
 
+  // Find primary pay_now offer for PaymentDialog
+  const payNowOffers = (tariff.offers || []).filter(
+    (o: any) => o.offer_type === "pay_now" && o.is_active !== false
+  );
+  const primaryOffer = payNowOffers.find((o: any) => o.is_primary) || payNowOffers[0];
+
   const handleSelectOffer = (offer: any) => {
     setSelectedOffer(offer);
     setPaymentDialogOpen(true);
   };
+
+  const activeOffer = selectedOffer || primaryOffer;
 
   return (
     <div className="min-h-screen bg-background">
@@ -84,13 +92,17 @@ export default function TariffPricing() {
         )}
       </div>
 
-      {selectedOffer && (
+      {activeOffer && (
         <PaymentDialog
           open={paymentDialogOpen}
           onOpenChange={setPaymentDialogOpen}
-          offer={selectedOffer}
-          tariff={tariff}
-          product={data.product}
+          productId={data.product.id}
+          productName={data.product.public_title || data.product.name}
+          price={String(activeOffer.amount || 0)}
+          tariffCode={tariff.code}
+          offerId={activeOffer.id}
+          isTrial={activeOffer.offer_type === "trial"}
+          trialDays={activeOffer.trial_days}
         />
       )}
     </div>
