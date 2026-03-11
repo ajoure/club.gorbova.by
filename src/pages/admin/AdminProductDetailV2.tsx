@@ -638,11 +638,12 @@ export default function AdminProductDetailV2() {
                   return (
                     <GlassCard key={tariff.id} className="p-4">
                       <div className="flex items-center gap-2 mb-3">
-                        <Tag className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">{tariff.name}</span>
-                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{tariff.code}</code>
+                        {tariff.public_id && (
+                          <CopyableIdChip value={tariff.public_id} />
+                        )}
                         {!hasActivePayOffer && (
-                          <Badge variant="destructive" className="text-xs">
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
                             Нет основной цены
                           </Badge>
                         )}
