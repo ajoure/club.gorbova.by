@@ -519,17 +519,12 @@ export default function AdminProductDetailV2() {
             </Button>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 {(product as any).public_id && (
-                  <Badge variant="outline" className="text-[10px] text-muted-foreground cursor-pointer" onClick={() => {
-                    navigator.clipboard.writeText((product as any).public_id);
-                    toast.success("PRD-ID скопирован");
-                  }}>
-                    {(product as any).public_id}
-                  </Badge>
+                  <CopyableIdChip value={(product as any).public_id} />
                 )}
+                <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 <Badge 
-                  variant={(product as any).status === "active" ? "default" : (product as any).status === "archived" ? "secondary" : "outline"} 
+                  variant={(product as any).status === "active" ? "outline" : "secondary"} 
                   className="text-[11px]"
                 >
                   {(product as any).status === "active" ? "Активный" : (product as any).status === "archived" ? "Архивный" : "Скрытый"}
