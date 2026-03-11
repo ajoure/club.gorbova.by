@@ -69,7 +69,7 @@ export function TariffCardCompact({
               <CopyableIdChip value={tariff.public_id} />
             )}
             <h3 className="font-semibold text-foreground">{tariff.name}</h3>
-            <Badge variant={tariff.is_active ? "outline" : "secondary"} className="shrink-0 text-xs">
+            <Badge variant="outline" className={`shrink-0 text-xs ${getStatusBadgeClass(tariff.is_active ? "active" : "inactive")}`}>
               {tariff.is_active ? "Активен" : "Неактивен"}
             </Badge>
             {tariff.is_active && !productIsActive && (
