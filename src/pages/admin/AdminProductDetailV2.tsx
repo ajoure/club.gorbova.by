@@ -780,8 +780,13 @@ export default function AdminProductDetailV2() {
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
+              {tariffDialog.editing?.public_id && (
+                <Badge variant="outline" className="font-mono text-xs">
+                  {tariffDialog.editing.public_id}
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription>
               Тариф определяет пакет доступа. Цены задаются отдельно в кнопках оплаты.
@@ -791,14 +796,6 @@ export default function AdminProductDetailV2() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Код *</Label>
-                <Input
-                  placeholder="full"
-                  value={tariffForm.code}
-                  onChange={(e) => setTariffForm({ ...tariffForm, code: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
                 <Label>Название *</Label>
                 <Input
                   placeholder="CLUB FULL"
@@ -806,9 +803,6 @@ export default function AdminProductDetailV2() {
                   onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Подзаголовок</Label>
                 <Input
@@ -817,12 +811,23 @@ export default function AdminProductDetailV2() {
                   onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Период (label)</Label>
                 <Input
                   placeholder="BYN/мес"
                   value={tariffForm.period_label}
                   onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Бейдж (на карточке)</Label>
+                <Input
+                  placeholder="Популярный"
+                  value={tariffForm.badge}
+                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
                 />
               </div>
             </div>
