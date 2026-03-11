@@ -54,6 +54,7 @@ const Consultation = lazy(() => import("./pages/Consultation"));
 const CourseAccountant = lazy(() => import("./pages/CourseAccountant"));
 const CloseYear = lazy(() => import("./pages/CloseYear"));
 const ProductPricing = lazy(() => import("./pages/ProductPricing"));
+const TariffPricing = lazy(() => import("./pages/TariffPricing"));
 
 const LibraryModule = lazy(() => import("./pages/LibraryModule"));
 const LibraryLesson = lazy(() => import("./pages/LibraryLesson"));
@@ -157,6 +158,7 @@ const App = () => {
               {/* Public routes */}
               <Route path="/" element={<DomainHomePage />} />
               <Route path="/auth" element={<LazyRoute><Auth /></LazyRoute>} />
+              <Route path="/pricing/tariff/:tariffPublicId" element={<LazyRoute><TariffPricing /></LazyRoute>} />
               <Route path="/pricing/:productSlug" element={<LazyRoute><ProductPricing /></LazyRoute>} />
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
               <Route path="/order-payment" element={<LazyRoute><OrderPayment /></LazyRoute>} />

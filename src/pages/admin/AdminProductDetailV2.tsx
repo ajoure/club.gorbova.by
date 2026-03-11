@@ -25,7 +25,7 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
-import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
+import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
@@ -785,14 +785,29 @@ export default function AdminProductDetailV2() {
         </Tabs>
       </div>
 
-      {/* Tariff Dialog */}
+      {/* Tariff Dialog — Glass UI */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-none border-border/30" style={{
+          background: "linear-gradient(135deg, hsl(var(--card) / 0.85), hsl(var(--card) / 0.6))",
+          backdropFilter: "blur(24px)",
+          WebkitBackdropFilter: "blur(24px)",
+        }}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
               {tariffDialog.editing?.public_id && (
                 <CopyableIdChip value={tariffDialog.editing.public_id} />
+              )}
+              {tariffDialog.editing?.public_id && (
+                <CopyableIdChip
+                  value={`…/pricing/tariff/${tariffDialog.editing.public_id}`}
+                  copyValue={
+                    product?.primary_domain
+                      ? `https://${product.primary_domain}/pricing/tariff/${tariffDialog.editing.public_id}`
+                      : `/pricing/tariff/${tariffDialog.editing.public_id}`
+                  }
+                  successMessage="Ссылка скопирована"
+                />
               )}
             </DialogTitle>
             <DialogDescription>
@@ -800,142 +815,98 @@ export default function AdminProductDetailV2() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Название *</Label>
-                <Input
-                  placeholder="CLUB FULL"
-                  value={tariffForm.name}
-                  onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Подзаголовок</Label>
-                <Input
-                  placeholder="Самый популярный"
-                  value={tariffForm.subtitle}
-                  onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Период (label)</Label>
-                <Input
-                  placeholder="BYN/мес"
-                  value={tariffForm.period_label}
-                  onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Бейдж (на карточке)</Label>
-                <Input
-                  placeholder="Популярный"
-                  value={tariffForm.badge}
-                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Срок доступа (дней)</Label>
-                <Input
-                  type="number"
-                  value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
-                  onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                  onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
-                  min={1}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Бейдж (на карточке)</Label>
-                <Input
-                  placeholder="Популярный"
-                  value={tariffForm.badge}
-                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Описание</Label>
-              <Textarea
-                value={tariffForm.description}
-                onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
-                rows={2}
-              />
-            </div>
-
-            <div className="flex items-center gap-6">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={tariffForm.is_popular}
-                  onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
-                />
-                <Label>Популярный</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={tariffForm.is_active}
-                  onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
-                />
-                <Label>Активен</Label>
-              </div>
-            </div>
-
-            {/* Advanced Settings (PATCH 2+9) */}
-            <Collapsible>
-              <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer hover:bg-muted/50 border border-border/50 group">
-                <span className="text-sm text-muted-foreground group-hover:text-foreground">Расширенные настройки</span>
-                <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-3 space-y-3">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Код (авто)</Label>
-                    <Input
-                      value={tariffForm.code || (tariffDialog.editing ? tariffDialog.editing.code : "")}
-                      disabled
-                      className="bg-muted font-mono text-xs"
-                      placeholder="Сгенерируется автоматически"
-                    />
-                  </div>
-                  {tariffDialog.editing?.public_id && (
-                    <div className="space-y-2">
-                      <Label>Public ID</Label>
-                      <Input
-                        value={tariffDialog.editing.public_id}
-                        disabled
-                        className="bg-muted font-mono text-xs"
-                      />
-                    </div>
-                  )}
+          <div className="space-y-5">
+            {/* Section A — Основное */}
+            <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-4">
+              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Основное</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Название *</Label>
+                  <Input
+                    placeholder="CLUB FULL"
+                    value={tariffForm.name}
+                    onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
+                  />
                 </div>
-              </CollapsibleContent>
-            </Collapsible>
+                <div className="space-y-2">
+                  <Label>Подзаголовок</Label>
+                  <Input
+                    placeholder="Самый популярный"
+                    value={tariffForm.subtitle}
+                    onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Срок доступа (дней)</Label>
+                  <Input
+                    type="number"
+                    value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
+                    onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                    onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
+                    min={1}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Период (label)</Label>
+                  <Input
+                    placeholder="BYN/мес"
+                    value={tariffForm.period_label}
+                    onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
 
-            {/* Features Editor */}
+            {/* Section B — Карточка на сайте */}
+            <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-4">
+              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Карточка на сайте</h4>
+              <div className="space-y-2">
+                <Label>Бейдж</Label>
+                <Input
+                  placeholder="Популярный"
+                  value={tariffForm.badge}
+                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Описание</Label>
+                <Textarea
+                  value={tariffForm.description}
+                  onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
+                  rows={3}
+                  className="resize-none"
+                />
+              </div>
+              <div className="flex items-center gap-6">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={tariffForm.is_popular}
+                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+                  />
+                  <Label>Популярный</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={tariffForm.is_active}
+                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                  />
+                  <Label>Активен</Label>
+                </div>
+              </div>
+            </div>
+
+            {/* Section C — Преимущества (edit mode only) */}
             {tariffDialog.editing && (
-              <div className="border-t pt-4">
-                <Label className="mb-3 block">Преимущества (галочки)</Label>
+              <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-3">
+                <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Преимущества</h4>
                 <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
               </div>
             )}
-
-            {/* Welcome Message Editor */}
-            <div className="border-t pt-4">
-              <TariffWelcomeMessageEditor
-                tariffId={tariffDialog.editing?.id || null}
-                meta={tariffForm.meta}
-                onMetaChange={(newMeta) => setTariffForm({ ...tariffForm, meta: newMeta })}
-              />
-            </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sticky bottom-0 pt-4 border-t border-border/20 bg-transparent backdrop-blur-sm">
             <Button variant="outline" onClick={() => setTariffDialog({ open: false, editing: null })}>
               Отмена
             </Button>
