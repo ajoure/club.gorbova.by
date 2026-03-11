@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
 
 interface TariffOffer {
   id: string;
