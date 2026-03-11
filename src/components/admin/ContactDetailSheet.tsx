@@ -3151,7 +3151,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               return successfulPayment?.provider || null;
             })()}
             onSuccess={() => {
-              queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
+              queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
             }}
           />
         )}
