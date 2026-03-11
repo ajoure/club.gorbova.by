@@ -391,8 +391,8 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
     },
     onSuccess: () => {
       toast.success("Сделка обновлена");
-      // PATCH-1: Extended invalidation to refresh all related UI components
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
       queryClient.invalidateQueries({ queryKey: ["deal-payments"] });
       queryClient.invalidateQueries({ queryKey: ["deal-subscription"] });
       queryClient.invalidateQueries({ queryKey: ["deal-subscription-edit"] });

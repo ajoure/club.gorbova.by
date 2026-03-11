@@ -428,6 +428,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       toast.success(deleteWithPayments ? "Сделка и платежи удалены" : "Сделка удалена (платежи сохранены)");
       setDeleteWithPayments(false); // Reset dangerous mode
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+      queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
       queryClient.invalidateQueries({ queryKey: ["payments"] }); // Refresh payments list
       onOpenChange(false);
       onDeleted?.();
@@ -1052,7 +1053,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         deal={deal}
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}
-        onSuccess={() => queryClient.invalidateQueries({ queryKey: ["admin-deals"] })}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
+        }}
       />
       
       {/* Delete Confirmation */}

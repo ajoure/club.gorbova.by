@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -47,8 +47,8 @@ export default function ContactDealsDialog({
   onDealUpdated
 }: ContactDealsDialogProps) {
   const queryClient = useQueryClient();
-  const [selectedDeal, setSelectedDeal] = useState<any>(null);
-  const [dealDetailOpen, setDealDetailOpen] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const dealDetailOpen = !!selectedDealId;
 
   // Fetch deals for this contact
   const { data: deals, isLoading, refetch } = useQuery({
@@ -123,14 +123,18 @@ export default function ContactDealsDialog({
     enabled: !!deals && deals.length > 0,
   });
 
+  const selectedDeal = useMemo(
+    () => deals?.find(d => d.id === selectedDealId) ?? null,
+    [deals, selectedDealId]
+  );
+
   const handleViewDeal = (deal: any) => {
-    setSelectedDeal(deal);
-    setDealDetailOpen(true);
+    setSelectedDealId(deal.id);
   };
 
   const handleDealDetailClosed = (isOpen: boolean) => {
-    setDealDetailOpen(isOpen);
     if (!isOpen) {
+      setSelectedDealId(null);
       refetch();
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       onDealUpdated?.();

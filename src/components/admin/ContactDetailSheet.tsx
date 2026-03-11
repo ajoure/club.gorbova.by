@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -185,8 +185,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     to: addDays(new Date(), 30),
   });
   const [grantComment, setGrantComment] = useState("");
-  const [selectedDeal, setSelectedDeal] = useState<any>(null);
-  const [dealSheetOpen, setDealSheetOpen] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const dealSheetOpen = !!selectedDealId;
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
   const [refundDeal, setRefundDeal] = useState<any>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
@@ -423,6 +423,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
     enabled: !!contact?.id,
   });
+
+  const selectedDeal = useMemo(
+    () => deals?.find(d => d.id === selectedDealId) ?? null,
+    [deals, selectedDealId]
+  );
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
@@ -1254,7 +1259,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           ? `Доступ выдан (${dateStr})` 
           : `Доступ продлён (${dateStr})`
       );
-      queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.id] });
+      queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
@@ -2791,8 +2796,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       key={deal.id} 
                       className="cursor-pointer hover:bg-muted/50 transition-colors"
                       onClick={() => {
-                        setSelectedDeal(deal);
-                        setDealSheetOpen(true);
+                        setSelectedDealId(deal.id);
                       }}
                     >
                       <CardContent className="p-4">
@@ -3131,10 +3135,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
         {/* Deal Detail Sheet */}
         <DealDetailSheet
-          deal={selectedDeal}
+          deal={selectedDeal ?? null}
           profile={contact}
           open={dealSheetOpen}
-          onOpenChange={setDealSheetOpen}
+          onOpenChange={(open) => { if (!open) setSelectedDealId(null); }}
         />
 
         {/* Refund Dialog */}
@@ -3152,7 +3156,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
               return successfulPayment?.provider || null;
             })()}
             onSuccess={() => {
-              queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] });
+              queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
             }}
           />
         )}
@@ -3185,7 +3189,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           deal={dealToEdit}
           open={editDealOpen}
           onOpenChange={setEditDealOpen}
-          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] })}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
         />
 
         {/* Compose Email Dialog */}
