@@ -879,6 +879,37 @@ export default function AdminProductDetailV2() {
               </div>
             </div>
 
+            {/* Advanced Settings (PATCH 2+9) */}
+            <Collapsible>
+              <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer hover:bg-muted/50 border border-border/50 group">
+                <span className="text-sm text-muted-foreground group-hover:text-foreground">Расширенные настройки</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Код (авто)</Label>
+                    <Input
+                      value={tariffForm.code || (tariffDialog.editing ? tariffDialog.editing.code : "")}
+                      disabled
+                      className="bg-muted font-mono text-xs"
+                      placeholder="Сгенерируется автоматически"
+                    />
+                  </div>
+                  {tariffDialog.editing?.public_id && (
+                    <div className="space-y-2">
+                      <Label>Public ID</Label>
+                      <Input
+                        value={tariffDialog.editing.public_id}
+                        disabled
+                        className="bg-muted font-mono text-xs"
+                      />
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+
             {/* Features Editor */}
             {tariffDialog.editing && (
               <div className="border-t pt-4">
