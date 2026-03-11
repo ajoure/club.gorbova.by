@@ -3150,8 +3150,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         {/* Refund Dialog */}
         {refundDeal && (
           <RefundDialog
-            open={refundDialogOpen}
-            onOpenChange={setRefundDialogOpen}
+            open={!!refundDealId}
+            onOpenChange={(v) => { if (!v) setRefundDealId(null); }}
             orderId={refundDeal.id}
             orderNumber={refundDeal.order_number}
             amount={Number(refundDeal.final_price)}
@@ -3163,6 +3163,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             })()}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
+              setRefundDealId(null);
             }}
           />
         )}
