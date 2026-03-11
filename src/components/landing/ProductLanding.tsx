@@ -9,6 +9,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
+interface ProductLandingProps {
+  data: PublicProductData;
+  header?: React.ReactNode;
+  footer?: React.ReactNode;
+  customSections?: React.ReactNode;
+}
+
 export function ProductLanding({ data, header, footer, customSections }: ProductLandingProps) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
