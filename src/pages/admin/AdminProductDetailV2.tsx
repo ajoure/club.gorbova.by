@@ -30,6 +30,7 @@ import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelco
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import {
   useProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff,
