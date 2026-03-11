@@ -121,6 +121,7 @@ export function useUpdateTariffFeature() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
       toast.success("Пункт обновлён");
     },
     onError: (error) => {
