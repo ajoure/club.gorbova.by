@@ -2822,8 +2822,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               variant="ghost"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDealToEdit(deal);
-                                setEditDealOpen(true);
+                                setDealToEditId(deal.id);
                               }}
                               className="h-6 w-6 text-muted-foreground hover:text-primary"
                             >
