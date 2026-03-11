@@ -1700,7 +1700,7 @@ export default function AdminProductDetailV2() {
 
       {/* Flow Dialog */}
       <Dialog open={flowDialog.open} onOpenChange={(open) => setFlowDialog({ ...flowDialog, open })}>
-        <DialogContent className="bg-muted/30">
+        <DialogContent className="bg-background">
           <DialogHeader>
             <DialogTitle>
               {flowDialog.editing ? "Редактировать поток" : "Новый поток"}
