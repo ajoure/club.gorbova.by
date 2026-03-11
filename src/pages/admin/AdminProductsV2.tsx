@@ -404,11 +404,11 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm">{product.name}</span>
+                          <div className="flex items-center gap-2">
                             {product.public_id && (
-                              <span className="text-[10px] text-muted-foreground">{product.public_id}</span>
+                              <CopyableIdChip value={product.public_id} />
                             )}
+                            <span className="font-medium text-sm">{product.name}</span>
                           </div>
                           {isParent && (
                             <TooltipProvider>
