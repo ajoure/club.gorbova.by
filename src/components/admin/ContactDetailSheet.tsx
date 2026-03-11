@@ -2791,8 +2791,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       key={deal.id} 
                       className="cursor-pointer hover:bg-muted/50 transition-colors"
                       onClick={() => {
-                        setSelectedDeal(deal);
-                        setDealSheetOpen(true);
+                        setSelectedDealId(deal.id);
                       }}
                     >
                       <CardContent className="p-4">
