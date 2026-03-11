@@ -942,7 +942,7 @@ export default function AdminProductDetailV2() {
                 <SelectContent>
                   {tariffs?.map((tariff) => (
                     <SelectItem key={tariff.id} value={tariff.id}>
-                      {tariff.name} ({tariff.code})
+                      {tariff.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
