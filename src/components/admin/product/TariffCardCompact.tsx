@@ -92,7 +92,7 @@ export function TariffCardCompact({
               <span className="text-xs">Trial {trialOffer.trial_days} дн.</span>
             )}
             {!hasMainPayOffer && (
-              <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+              <Badge variant="outline" className={`shrink-0 text-xs ${getStatusBadgeClass("warning")}`}>
                 Нет основной цены
               </Badge>
             )}

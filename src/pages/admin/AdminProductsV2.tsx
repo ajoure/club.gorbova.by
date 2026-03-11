@@ -26,6 +26,7 @@ import { SelectionBox } from "@/components/admin/SelectionBox";
 import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
 import { useProductReadiness } from "@/hooks/useProductReadiness";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",

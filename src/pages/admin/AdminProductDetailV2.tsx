@@ -644,7 +644,7 @@ export default function AdminProductDetailV2() {
                           <CopyableIdChip value={tariff.public_id} />
                         )}
                         {!hasActivePayOffer && (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                          <Badge variant="outline" className={`text-xs ${getStatusBadgeClass("warning")}`}>
                             Нет основной цены
                           </Badge>
                         )}
