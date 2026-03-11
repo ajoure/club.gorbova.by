@@ -1385,7 +1385,7 @@ export default function AdminProductDetailV2() {
                                               }
                                             });
                                           }}
-                                          className="rounded border-gray-300"
+                                          className="rounded border-border"
                                         />
                                         <span className="text-sm">{day} {day === 1 ? 'день' : 'дней'}</span>
                                       </label>
