@@ -188,7 +188,7 @@ export function OfferWelcomeMessageEditor({
             <div>
               <Label>Отправлять сообщение для этой кнопки</Label>
               <p className="text-xs text-muted-foreground">
-                Персональное сообщение при покупке через эту кнопку
+                Приоритетное — отправляется при покупке по этой кнопке вместо сообщения тарифа
               </p>
             </div>
             <Switch
