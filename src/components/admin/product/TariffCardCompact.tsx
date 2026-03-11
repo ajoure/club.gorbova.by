@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { 
   Pencil, Trash2, Copy, ExternalLink, ChevronDown,
-  CreditCard, Zap, Tag, Clock
+  CreditCard, Zap, Clock
 } from "lucide-react";
-import { toast } from "sonner";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 
 interface TariffOffer {
   id: string;
@@ -57,13 +56,7 @@ export function TariffCardCompact({
   const mainOffer = offers.find(o => o.offer_type === "pay_now" && o.is_active && o.is_primary) 
     || offers.find(o => o.offer_type === "pay_now" && o.is_active);
   const trialOffer = offers.find(o => o.offer_type === "trial" && o.is_active);
-  // Has main price if there's any active pay_now offer
   const hasMainPayOffer = offers.some(o => o.offer_type === "pay_now" && o.is_active);
-
-  const copyCode = () => {
-    navigator.clipboard.writeText(tariff.code);
-    toast.success("Код скопирован");
-  };
 
   return (
     <GlassCard className="p-4">
@@ -72,47 +65,36 @@ export function TariffCardCompact({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             {tariff.public_id && (
-              <Badge variant="outline" className="shrink-0 font-mono text-xs">
-                {tariff.public_id}
-              </Badge>
+              <CopyableIdChip value={tariff.public_id} />
             )}
             <h3 className="font-semibold text-foreground">{tariff.name}</h3>
-            <Badge variant={tariff.is_active ? "default" : "secondary"} className="shrink-0">
+            <Badge variant={tariff.is_active ? "outline" : "secondary"} className="shrink-0 text-xs">
               {tariff.is_active ? "Активен" : "Неактивен"}
             </Badge>
             {tariff.is_active && !productIsActive && (
-              <Badge variant="outline" className="shrink-0 border-destructive/50 text-destructive text-xs">
+              <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
                 Унаследовано неактивен
               </Badge>
             )}
             {tariff.is_popular && (
-              <Badge variant="outline" className="border-primary text-primary shrink-0">
+              <Badge variant="outline" className="shrink-0 text-xs">
                 Популярный
-              </Badge>
-            )}
-            {trialOffer && (
-              <Badge variant="outline" className="shrink-0">
-                Trial {trialOffer.trial_days} дн.
-              </Badge>
-            )}
-            {!hasMainPayOffer && (
-              <Badge variant="destructive" className="shrink-0 text-xs">
-                Нет основной цены
               </Badge>
             )}
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
-            <button 
-              onClick={copyCode}
-              className="flex items-center gap-1 hover:text-foreground transition-colors"
-            >
-              <Tag className="h-3 w-3" />
-              <code className="bg-muted px-1.5 py-0.5 rounded text-xs">{tariff.code}</code>
-            </button>
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
               {tariff.access_days} дней
             </span>
+            {trialOffer && (
+              <span className="text-xs">Trial {trialOffer.trial_days} дн.</span>
+            )}
+            {!hasMainPayOffer && (
+              <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">
+                Нет основной цены
+              </Badge>
+            )}
           </div>
         </div>
 
@@ -160,7 +142,7 @@ export function TariffCardCompact({
                   </div>
                 </div>
               </div>
-              <Badge variant={mainOffer.is_active ? "default" : "secondary"}>
+              <Badge variant={mainOffer.is_active ? "outline" : "secondary"} className="text-xs">
                 {mainOffer.is_active ? "Активна" : "Неактивна"}
               </Badge>
             </div>
@@ -172,10 +154,10 @@ export function TariffCardCompact({
 
           {/* Trial */}
           {trialOffer && (
-            <div className="flex items-center justify-between p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center">
-                  <Zap className="h-4 w-4 text-amber-500" />
+                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                  <Zap className="h-4 w-4 text-muted-foreground" />
                 </div>
                 <div>
                   <div className="font-medium">
@@ -183,14 +165,14 @@ export function TariffCardCompact({
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {trialOffer.auto_charge_after_trial && (
-                      <span className="text-amber-600">
+                      <span>
                         → автосписание {trialOffer.auto_charge_amount} BYN
                       </span>
                     )}
                   </div>
                 </div>
               </div>
-              <Badge variant={trialOffer.is_active ? "default" : "secondary"}>
+              <Badge variant={trialOffer.is_active ? "outline" : "secondary"} className="text-xs">
                 {trialOffer.is_active ? "Активен" : "Неактивен"}
               </Badge>
             </div>

@@ -30,6 +30,7 @@ import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelco
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import {
   useProductV2,
   useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff,
@@ -518,17 +519,12 @@ export default function AdminProductDetailV2() {
             </Button>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 {(product as any).public_id && (
-                  <Badge variant="outline" className="text-[10px] text-muted-foreground cursor-pointer" onClick={() => {
-                    navigator.clipboard.writeText((product as any).public_id);
-                    toast.success("PRD-ID скопирован");
-                  }}>
-                    {(product as any).public_id}
-                  </Badge>
+                  <CopyableIdChip value={(product as any).public_id} />
                 )}
+                <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 <Badge 
-                  variant={(product as any).status === "active" ? "default" : (product as any).status === "archived" ? "secondary" : "outline"} 
+                  variant={(product as any).status === "active" ? "outline" : "secondary"} 
                   className="text-[11px]"
                 >
                   {(product as any).status === "active" ? "Активный" : (product as any).status === "archived" ? "Архивный" : "Скрытый"}
@@ -642,11 +638,12 @@ export default function AdminProductDetailV2() {
                   return (
                     <GlassCard key={tariff.id} className="p-4">
                       <div className="flex items-center gap-2 mb-3">
-                        <Tag className="h-4 w-4 text-muted-foreground" />
                         <span className="font-medium">{tariff.name}</span>
-                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{tariff.code}</code>
+                        {tariff.public_id && (
+                          <CopyableIdChip value={tariff.public_id} />
+                        )}
                         {!hasActivePayOffer && (
-                          <Badge variant="destructive" className="text-xs">
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
                             Нет основной цены
                           </Badge>
                         )}
@@ -794,9 +791,7 @@ export default function AdminProductDetailV2() {
             <DialogTitle className="flex items-center gap-2">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
               {tariffDialog.editing?.public_id && (
-                <Badge variant="outline" className="font-mono text-xs">
-                  {tariffDialog.editing.public_id}
-                </Badge>
+                <CopyableIdChip value={tariffDialog.editing.public_id} />
               )}
             </DialogTitle>
             <DialogDescription>

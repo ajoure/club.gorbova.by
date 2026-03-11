@@ -25,6 +25,7 @@ import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
 import { useProductReadiness } from "@/hooks/useProductReadiness";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -403,11 +404,11 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm">{product.name}</span>
+                          <div className="flex items-center gap-2">
                             {product.public_id && (
-                              <span className="text-[10px] text-muted-foreground">{product.public_id}</span>
+                              <CopyableIdChip value={product.public_id} />
                             )}
+                            <span className="font-medium text-sm">{product.name}</span>
                           </div>
                           {isParent && (
                             <TooltipProvider>
@@ -587,8 +588,12 @@ export default function AdminProductsV2() {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
               {editingProduct ? "Редактировать продукт" : "Новый продукт"}
+              {editingProduct && (() => {
+                const prod = products?.find((p: any) => p.id === editingProduct);
+                return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
+              })()}
             </DialogTitle>
             <DialogDescription>
               {editingProduct
