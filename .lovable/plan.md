@@ -1,26 +1,83 @@
 
+# SPRINT: TARIFFS v2 — Статус выполнения
 
-# Fix mobile dialog styling — add rounded corners on all screen sizes
+## Выполнено (PATCH 1-9)
 
-## Problem
-The base `DialogContent` in `dialog.tsx` uses `sm:rounded-lg` — rounded corners only appear at 640px+. On mobile, dialogs render as flat rectangles with no border radius, which looks outdated.
+### PATCH 1: public_id для тарифов ✅
+- DB migration: `public_id_sequences` (entity_type='tariff', prefix='T'), trigger `set_tariff_public_id`, backfill 11 tariffs (T-000001..T-000011), NOT NULL + unique index
+- FIX: trigger обновлён на `IF NEW.public_id IS NULL OR NEW.public_id = '' THEN` — ловит и NULL, и пустую строку
+- DEFAULT `''` оставлен для совместимости с TypeScript Insert-типами (trigger перезапишет на INSERT)
+- UI: badge `T-000xxx` в `TariffCardCompact.tsx` + read-only в диалоге редактирования
+- Build ✅, есть runtime warning: `forwardRef` в `DialogFooter` (косметический, не блокирует)
+- DoD-пруфы: total=11, with_pid=11, non_empty=11, empty_cnt=0; 0 дублей; column_default=`''`, nullable=NO
+- **BACKLOG:** future PATCH "Types regen + DROP DEFAULT" — после регена типов и проверки всех insert-путей убрать DEFAULT `''`
 
-## Solution
-One change in `src/components/ui/dialog.tsx` (line 44):
+### PATCH 2: Code — скрыть из формы, автогенерировать ✅
+- STOP-guard: `tariff.code` остаётся NOT NULL, 10+ точек используют `.eq("code", tariffCode)`. Никаких попыток перейти на tariff_id
+- `handleSaveTariff`: если code пуст → `trf_${crypto.randomUUID().slice(0,12)}`
+- Поле "Код *" убрано из основной формы, показано в Collapsible "Расширенные настройки" (read-only)
 
-Replace `sm:rounded-lg sm:p-6` with `rounded-2xl sm:p-6`
+### PATCH 3: effective_active (наследование) ✅
+- `TariffCardCompact`: prop `productIsActive`, badge "Унаследовано неактивен"
+- Превью: если `!product.is_active` → placeholder "Продукт неактивен"
 
-This gives all dialogs consistent rounded corners (`1rem`) on every screen size, matching the modern iOS/Android aesthetic visible in the desktop version. The `p-4` base padding already handles mobile spacing; `sm:p-6` adds more on desktop.
+### PATCH 4: Убрать ручные refetch ✅
+- Убраны `refetch: refetchTariffs` и `refetch: refetchOffers` из деструктуризации
+- Убраны 6 ручных `refetchTariffs()`/`refetchOffers()` вызовов
+- Добавлен invalidate `["preview-tariff-features"]` в 4 мутации `useTariffFeatures.tsx`
 
-Additionally, add a small margin on mobile so the dialog doesn't touch screen edges:
+### PATCH 5: TG Welcome Message — offer-first, tariff-fallback ✅
+- EF `telegram-grant-access/index.ts` строки 699-800: перестроена логика
+- Иерархия: OFFER welcome (приоритет) → TARIFF welcome (fallback) → GC link (last resort)
+- Idempotency: проверка `audit_logs` по 3 полям: `action='telegram_welcome_sent'` + `meta->>source_id` + `actor_label='telegram-grant-access'` → skip если уже отправлено
+- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access', target_user_id=user_id, meta={source_id, welcome_type, offer_id, tariff_id})
+- Error-guard на audit insert (не прерывает основной процесс)
+- UI labels: TariffWelcomeMessageEditor — "(по умолчанию, если на кнопке не задано)"
+- UI labels: OfferWelcomeMessageEditor — "(приоритетное — отправляется вместо сообщения тарифа)"
+- 3 лог-кейса: `Sent OFFER welcome`, `Sent TARIFF welcome (fallback)`, `Sent GC link`
+- DoD-пруф: SQL `SELECT * FROM audit_logs WHERE action='telegram_welcome_sent' AND meta->>'source_id'=X` → 1 row; повторный вызов → лог `Welcome already sent for source_id=X, skipping`
 
-Add `mx-3 sm:mx-0` to the base className (line 42), so the dialog has breathing room on small screens.
+### PATCH 6: Единый компонент TariffCard ✅
+- Вынесен `TariffCard` из `ProductLanding.tsx` → `src/components/landing/TariffCard.tsx`
+- Props: dual source — `resolvedFeatures = props.features ?? tariff.features ?? []`
+- Price logic: `current_price → base_price → price_monthly → primaryOffer.amount`
+- CTA: все offers (pay_now + trial)
+- `ProductLanding.tsx`: импортирует из нового файла
+- `AdminProductDetailV2.tsx`: заменён `TariffPreviewCard` → `TariffCard`
+- Удалён `src/components/admin/product/TariffPreviewCard.tsx`
 
-**Final className:**
-```
-"fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-4 shadow-lg duration-200"
-+ "rounded-2xl mx-3 sm:mx-0"
-```
+### PATCH 7: Standalone pricing page (EF + route) ✅
+- NEW EF `public-product-by-slug/index.ts` — lookup по `slug` OR `public_id`, output 1:1 с public-product + `primary_domain`
+- NEW hook `usePublicProductBySlug` в `usePublicProduct.tsx`
+- NEW page `src/pages/ProductPricing.tsx`
+- Route `/pricing/:productSlug` (выше `/pricing` redirect в App.tsx)
+- Старый `/pricing` → `/#pricing` redirect сохранён
+- EF протестирован: 200 для PRD-000003, 404 для несуществующих
 
-No logic changes. Affects all dialogs globally — consistent rounded corners everywhere.
+### PATCH 8: Banner при primary_domain ✅
+- `primary_domain` добавлен только в output `public-product-by-slug` (контракт `public-product` не тронут)
+- `ProductPricing.tsx`: banner "Полная версия сайта: {domain}" с внешней ссылкой
 
+### PATCH 9: Чистка формы тарифа ✅
+- Основные поля: name*, subtitle, period_label, badge, access_days, description, is_popular, is_active
+- Collapsible "Расширенные": code (read-only), public_id (read-only)
+
+## Изменённые файлы
+
+| Файл | Изменение |
+|---|---|
+| SQL migration (3) | public_id + sequence + trigger + backfill + NOT NULL + DEFAULT + trigger fix |
+| `TariffCardCompact.tsx` | +public_id badge, +productIsActive prop, +inherited inactive badge |
+| `AdminProductDetailV2.tsx` | -6 refetch, -code field, +public_id in dialog, +Advanced collapsible, +productIsActive, TariffPreviewCard→TariffCard |
+| NEW `src/components/landing/TariffCard.tsx` | Unified tariff card component |
+| `ProductLanding.tsx` | Import from TariffCard.tsx instead of inline |
+| `useTariffFeatures.tsx` | +invalidate preview-tariff-features in 4 mutations |
+| DELETE `TariffPreviewCard.tsx` | Replaced by unified TariffCard |
+| `telegram-grant-access/index.ts` | Offer-first → tariff-fallback → GC link + idempotency |
+| `TariffWelcomeMessageEditor.tsx` | Updated label: "(по умолчанию)" |
+| `OfferWelcomeMessageEditor.tsx` | Updated label: "(приоритетное)" |
+| NEW `supabase/functions/public-product-by-slug/index.ts` | EF for slug/public_id lookup |
+| `src/hooks/usePublicProduct.tsx` | +usePublicProductBySlug hook + PublicProductBySlugData type |
+| NEW `src/pages/ProductPricing.tsx` | Standalone pricing page with banner |
+| `src/App.tsx` | +Route /pricing/:productSlug, +lazy import ProductPricing |
+| `supabase/functions.registry.txt` | +public-product-by-slug |
