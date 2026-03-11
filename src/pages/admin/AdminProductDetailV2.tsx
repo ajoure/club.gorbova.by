@@ -53,9 +53,9 @@ export default function AdminProductDetailV2() {
   const navigate = useNavigate();
 
   const { data: product, isLoading: productLoading } = useProductV2(productId || null);
-  const { data: tariffs, refetch: refetchTariffs } = useTariffs(productId);
+  const { data: tariffs } = useTariffs(productId);
   const { data: flows } = useFlows(productId);
-  const { data: offers, refetch: refetchOffers } = useProductOffers(productId);
+  const { data: offers } = useProductOffers(productId);
   
   // Fetch tariff features for preview
   const { data: allTariffFeatures } = useQuery({
