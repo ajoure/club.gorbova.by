@@ -1707,69 +1707,75 @@ export default function AdminProductDetailV2() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">Настройки потока</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Код *</Label>
+                  <Input
+                    placeholder="flow_jan_2026"
+                    value={flowForm.code}
+                    onChange={(e) => setFlowForm({ ...flowForm, code: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Название *</Label>
+                  <Input
+                    placeholder="Поток январь 2026"
+                    value={flowForm.name}
+                    onChange={(e) => setFlowForm({ ...flowForm, name: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Дата старта</Label>
+                  <DatePicker
+                    value={flowForm.start_date}
+                    onChange={(v) => setFlowForm({ ...flowForm, start_date: v })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Дата окончания</Label>
+                  <DatePicker
+                    value={flowForm.end_date}
+                    onChange={(v) => setFlowForm({ ...flowForm, end_date: v })}
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label>Код *</Label>
+                <Label>Макс. участников (пусто = без ограничений)</Label>
                 <Input
-                  placeholder="flow_jan_2026"
-                  value={flowForm.code}
-                  onChange={(e) => setFlowForm({ ...flowForm, code: e.target.value })}
+                  type="number"
+                  value={flowForm.max_participants || ""}
+                  onChange={(e) => setFlowForm({ 
+                    ...flowForm, 
+                    max_participants: e.target.value ? parseInt(e.target.value) : null 
+                  })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Название *</Label>
-                <Input
-                  placeholder="Поток январь 2026"
-                  value={flowForm.name}
-                  onChange={(e) => setFlowForm({ ...flowForm, name: e.target.value })}
-                />
+              <Separator />
+              <div className="flex items-center gap-6">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={flowForm.is_default}
+                    onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_default: checked })}
+                  />
+                  <Label>По умолчанию</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={flowForm.is_active}
+                    onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_active: checked })}
+                  />
+                  <Label>Активен</Label>
+                </div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Дата старта</Label>
-                <DatePicker
-                  value={flowForm.start_date}
-                  onChange={(v) => setFlowForm({ ...flowForm, start_date: v })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Дата окончания</Label>
-                <DatePicker
-                  value={flowForm.end_date}
-                  onChange={(v) => setFlowForm({ ...flowForm, end_date: v })}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Макс. участников (пусто = без ограничений)</Label>
-              <Input
-                type="number"
-                value={flowForm.max_participants || ""}
-                onChange={(e) => setFlowForm({ 
-                  ...flowForm, 
-                  max_participants: e.target.value ? parseInt(e.target.value) : null 
-                })}
-              />
-            </div>
-            <div className="flex items-center gap-6">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={flowForm.is_default}
-                  onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_default: checked })}
-                />
-                <Label>По умолчанию</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={flowForm.is_active}
-                  onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_active: checked })}
-                />
-                <Label>Активен</Label>
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setFlowDialog({ open: false, editing: null })}>
