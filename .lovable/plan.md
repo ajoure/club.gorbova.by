@@ -29,12 +29,13 @@
 ### PATCH 5: TG Welcome Message — offer-first, tariff-fallback ✅
 - EF `telegram-grant-access/index.ts` строки 699-800: перестроена логика
 - Иерархия: OFFER welcome (приоритет) → TARIFF welcome (fallback) → GC link (last resort)
-- Idempotency: проверка `audit_logs` по action=`telegram_welcome_sent`, meta.source_id → skip если уже отправлено
-- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access')
+- Idempotency: проверка `audit_logs` по 3 полям: `action='telegram_welcome_sent'` + `meta->>source_id` + `actor_label='telegram-grant-access'` → skip если уже отправлено
+- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access', target_user_id=user_id, meta={source_id, welcome_type, offer_id, tariff_id})
 - Error-guard на audit insert (не прерывает основной процесс)
 - UI labels: TariffWelcomeMessageEditor — "(по умолчанию, если на кнопке не задано)"
 - UI labels: OfferWelcomeMessageEditor — "(приоритетное — отправляется вместо сообщения тарифа)"
 - 3 лог-кейса: `Sent OFFER welcome`, `Sent TARIFF welcome (fallback)`, `Sent GC link`
+- DoD-пруф: SQL `SELECT * FROM audit_logs WHERE action='telegram_welcome_sent' AND meta->>'source_id'=X` → 1 row; повторный вызов → лог `Welcome already sent for source_id=X, skipping`
 
 ### PATCH 6: Единый компонент TariffCard ✅
 - Вынесен `TariffCard` из `ProductLanding.tsx` → `src/components/landing/TariffCard.tsx`

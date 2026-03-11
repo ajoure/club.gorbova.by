@@ -702,6 +702,7 @@ Deno.serve(async (req) => {
               .from('audit_logs')
               .select('id')
               .eq('action', 'telegram_welcome_sent')
+              .eq('actor_label', 'telegram-grant-access')
               .eq('meta->>source_id', source_id)
               .limit(1)
               .maybeSingle();
