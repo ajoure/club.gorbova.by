@@ -2863,8 +2863,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 className="h-7 px-2 text-xs text-purple-600 hover:text-purple-700"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setRefundDeal(deal);
-                                  setRefundDialogOpen(true);
+                                  setRefundDealId(deal.id);
                                 }}
                               >
                                 <Undo2 className="w-3 h-3 mr-1" />
