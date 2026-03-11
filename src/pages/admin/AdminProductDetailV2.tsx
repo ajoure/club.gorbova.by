@@ -488,11 +488,9 @@ export default function AdminProductDetailV2() {
     switch (deleteConfirm.type) {
       case "tariff":
         await deleteTariff.mutateAsync(deleteConfirm.id);
-        refetchTariffs();
         break;
       case "offer":
         await deleteOffer.mutateAsync(deleteConfirm.id);
-        refetchOffers();
         break;
       case "flow":
         await deleteFlow.mutateAsync(deleteConfirm.id);
