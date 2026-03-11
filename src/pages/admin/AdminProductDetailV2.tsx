@@ -230,14 +230,17 @@ export default function AdminProductDetailV2() {
   };
 
   const handleSaveTariff = async () => {
-    if (!tariffForm.code || !tariffForm.name) {
-      toast.error("Заполните код и название");
+    if (!tariffForm.name) {
+      toast.error("Заполните название");
       return;
     }
+    // Auto-generate code if empty (PATCH 2: code remains NOT NULL in DB, auto-gen on save)
+    const effectiveCode = tariffForm.code || `trf_${crypto.randomUUID().slice(0, 12)}`;
     // Build data with meta field
     const { meta, ...formWithoutMeta } = tariffForm;
     const data: any = { 
-      ...formWithoutMeta, 
+      ...formWithoutMeta,
+      code: effectiveCode,
       product_id: productId!,
       meta: Object.keys(meta).length > 0 ? meta : null,
     };
@@ -247,7 +250,6 @@ export default function AdminProductDetailV2() {
       await createTariff.mutateAsync(data);
     }
     setTariffDialog({ open: false, editing: null });
-    refetchTariffs();
   };
 
   // Offer handlers
