@@ -80,6 +80,11 @@ export function TariffCardCompact({
             <Badge variant={tariff.is_active ? "default" : "secondary"} className="shrink-0">
               {tariff.is_active ? "Активен" : "Неактивен"}
             </Badge>
+            {tariff.is_active && !productIsActive && (
+              <Badge variant="outline" className="shrink-0 border-destructive/50 text-destructive text-xs">
+                Унаследовано неактивен
+              </Badge>
+            )}
             {tariff.is_popular && (
               <Badge variant="outline" className="border-primary text-primary shrink-0">
                 Популярный
