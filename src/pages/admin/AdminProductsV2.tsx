@@ -27,6 +27,7 @@ import { copyToClipboard, getProductPayUrl } from "@/utils/clipboardUtils";
 import { useProductReadiness } from "@/hooks/useProductReadiness";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { cn } from "@/lib/utils";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
