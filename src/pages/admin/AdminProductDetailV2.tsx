@@ -813,7 +813,7 @@ export default function AdminProductDetailV2() {
 
           <div className="space-y-5">
             {/* Section A — Основное */}
-            <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-4">
+            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
               <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Основное</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
