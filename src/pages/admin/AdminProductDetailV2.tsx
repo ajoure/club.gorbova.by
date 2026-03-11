@@ -25,7 +25,7 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
-import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
+import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
