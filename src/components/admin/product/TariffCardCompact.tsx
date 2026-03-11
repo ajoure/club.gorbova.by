@@ -173,7 +173,7 @@ export function TariffCardCompact({
                   </div>
                 </div>
               </div>
-              <Badge variant={trialOffer.is_active ? "outline" : "secondary"} className="text-xs">
+              <Badge variant="outline" className={`text-xs ${getStatusBadgeClass(trialOffer.is_active ? "active" : "inactive")}`}>
                 {trialOffer.is_active ? "Активен" : "Неактивен"}
               </Badge>
             </div>
