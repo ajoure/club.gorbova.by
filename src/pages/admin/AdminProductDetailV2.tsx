@@ -426,17 +426,14 @@ export default function AdminProductDetailV2() {
       await createOffer.mutateAsync(data);
     }
     setOfferDialog({ open: false, editing: null });
-    refetchOffers();
   };
 
   const handleToggleOfferActive = async (id: string, isActive: boolean) => {
     await updateOffer.mutateAsync({ id, is_active: isActive });
-    refetchOffers();
   };
 
   const handleUpdateOfferLabel = async (id: string, label: string) => {
     await updateOffer.mutateAsync({ id, button_label: label });
-    refetchOffers();
   };
 
   // Flow handlers
