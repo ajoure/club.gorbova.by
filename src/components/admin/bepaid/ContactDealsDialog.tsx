@@ -128,8 +128,7 @@ export default function ContactDealsDialog({
   });
 
   const handleViewDeal = (deal: any) => {
-    setSelectedDeal(deal);
-    setDealDetailOpen(true);
+    setSelectedDealId(deal.id);
   };
 
   const handleDealDetailClosed = (isOpen: boolean) => {
