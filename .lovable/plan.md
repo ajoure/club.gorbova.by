@@ -1,38 +1,83 @@
 
+# SPRINT: TARIFFS v2 — Статус выполнения
 
-# Fix scroll clipping + Product dialog styling (Variant A)
+## Выполнено (PATCH 1-9)
 
-## Approach
-**Variant A (safe)**: Do NOT touch `dialog.tsx`. Instead, restructure each scrollable dialog to use `overflow-hidden` on DialogContent (clips to rounded corners) with an inner scrollable `div`.
+### PATCH 1: public_id для тарифов ✅
+- DB migration: `public_id_sequences` (entity_type='tariff', prefix='T'), trigger `set_tariff_public_id`, backfill 11 tariffs (T-000001..T-000011), NOT NULL + unique index
+- FIX: trigger обновлён на `IF NEW.public_id IS NULL OR NEW.public_id = '' THEN` — ловит и NULL, и пустую строку
+- DEFAULT `''` оставлен для совместимости с TypeScript Insert-типами (trigger перезапишет на INSERT)
+- UI: badge `T-000xxx` в `TariffCardCompact.tsx` + read-only в диалоге редактирования
+- Build ✅, есть runtime warning: `forwardRef` в `DialogFooter` (косметический, не блокирует)
+- DoD-пруфы: total=11, with_pid=11, non_empty=11, empty_cnt=0; 0 дублей; column_default=`''`, nullable=NO
+- **BACKLOG:** future PATCH "Types regen + DROP DEFAULT" — после регена типов и проверки всех insert-путей убрать DEFAULT `''`
 
-## Changes
+### PATCH 2: Code — скрыть из формы, автогенерировать ✅
+- STOP-guard: `tariff.code` остаётся NOT NULL, 10+ точек используют `.eq("code", tariffCode)`. Никаких попыток перейти на tariff_id
+- `handleSaveTariff`: если code пуст → `trf_${crypto.randomUUID().slice(0,12)}`
+- Поле "Код *" убрано из основной формы, показано в Collapsible "Расширенные настройки" (read-only)
 
-### 1. `src/pages/admin/AdminProductDetailV2.tsx` — 3 dialogs
+### PATCH 3: effective_active (наследование) ✅
+- `TariffCardCompact`: prop `productIsActive`, badge "Унаследовано неактивен"
+- Превью: если `!product.is_active` → placeholder "Продукт неактивен"
 
-**Tariff Dialog (line 792)**
-- DialogContent: `max-w-2xl bg-background border-border/40 overflow-hidden` (remove `max-h-[90vh] overflow-y-auto scrollbar-none`)
-- Wrap lines 793–928 (DialogHeader through DialogFooter) in `<div className="max-h-[90vh] overflow-y-auto scrollbar-none p-6 sm:p-6">`
-- Remove the default padding from DialogContent by adding `p-0` (the inner wrapper provides it)
+### PATCH 4: Убрать ручные refetch ✅
+- Убраны `refetch: refetchTariffs` и `refetch: refetchOffers` из деструктуризации
+- Убраны 6 ручных `refetchTariffs()`/`refetchOffers()` вызовов
+- Добавлен invalidate `["preview-tariff-features"]` в 4 мутации `useTariffFeatures.tsx`
 
-**Offer Dialog (line 934)**
-- Same pattern: DialogContent gets `overflow-hidden p-0`, inner `div` gets `max-h-[90vh] overflow-y-auto scrollbar-none p-6`
+### PATCH 5: TG Welcome Message — offer-first, tariff-fallback ✅
+- EF `telegram-grant-access/index.ts` строки 699-800: перестроена логика
+- Иерархия: OFFER welcome (приоритет) → TARIFF welcome (fallback) → GC link (last resort)
+- Idempotency: проверка `audit_logs` по 3 полям: `action='telegram_welcome_sent'` + `meta->>source_id` + `actor_label='telegram-grant-access'` → skip если уже отправлено
+- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access', target_user_id=user_id, meta={source_id, welcome_type, offer_id, tariff_id})
+- Error-guard на audit insert (не прерывает основной процесс)
+- UI labels: TariffWelcomeMessageEditor — "(по умолчанию, если на кнопке не задано)"
+- UI labels: OfferWelcomeMessageEditor — "(приоритетное — отправляется вместо сообщения тарифа)"
+- 3 лог-кейса: `Sent OFFER welcome`, `Sent TARIFF welcome (fallback)`, `Sent GC link`
+- DoD-пруф: SQL `SELECT * FROM audit_logs WHERE action='telegram_welcome_sent' AND meta->>'source_id'=X` → 1 row; повторный вызов → лог `Welcome already sent for source_id=X, skipping`
 
-**Flow Dialog (line 1703)**
-- Flow is short and unlikely to scroll, but for consistency apply same pattern if it has potential overflow; otherwise just keep `bg-background overflow-hidden`
+### PATCH 6: Единый компонент TariffCard ✅
+- Вынесен `TariffCard` из `ProductLanding.tsx` → `src/components/landing/TariffCard.tsx`
+- Props: dual source — `resolvedFeatures = props.features ?? tariff.features ?? []`
+- Price logic: `current_price → base_price → price_monthly → primaryOffer.amount`
+- CTA: все offers (pay_now + trial)
+- `ProductLanding.tsx`: импортирует из нового файла
+- `AdminProductDetailV2.tsx`: заменён `TariffPreviewCard` → `TariffCard`
+- Удалён `src/components/admin/product/TariffPreviewCard.tsx`
 
-### 2. `src/pages/admin/AdminProductsV2.tsx` — Product create/edit dialog (line 582)
+### PATCH 7: Standalone pricing page (EF + route) ✅
+- NEW EF `public-product-by-slug/index.ts` — lookup по `slug` OR `public_id`, output 1:1 с public-product + `primary_domain`
+- NEW hook `usePublicProductBySlug` в `usePublicProduct.tsx`
+- NEW page `src/pages/ProductPricing.tsx`
+- Route `/pricing/:productSlug` (выше `/pricing` redirect в App.tsx)
+- Старый `/pricing` → `/#pricing` redirect сохранён
+- EF протестирован: 200 для PRD-000003, 404 для несуществующих
 
-- DialogContent: `max-w-2xl bg-background overflow-hidden p-0`
-- Wrap content (lines 583–648) in `<div className="max-h-[90vh] overflow-y-auto scrollbar-none p-6">`
+### PATCH 8: Banner при primary_domain ✅
+- `primary_domain` добавлен только в output `public-product-by-slug` (контракт `public-product` не тронут)
+- `ProductPricing.tsx`: banner "Полная версия сайта: {domain}" с внешней ссылкой
 
-### Why this works
-- `overflow-hidden` on DialogContent clips content to rounded corners — no "rect inside rounded frame"
-- `overflow-y-auto` moves to inner div — scrolling still works but stays within clipped boundary
-- Select/Dropdown/DatePicker use Radix portals → render outside DialogContent → never clipped
+### PATCH 9: Чистка формы тарифа ✅
+- Основные поля: name*, subtitle, period_label, badge, access_days, description, is_popular, is_active
+- Collapsible "Расширенные": code (read-only), public_id (read-only)
 
-### DoD
-- Fast scroll: content does not peek outside rounded corners (all 4 dialogs)
-- All Select/Dropdown inside dialogs open fully, not clipped
-- Product dialog matches others: `bg-background`, scrollbar hidden
-- No logic/field/layout changes
+## Изменённые файлы
 
+| Файл | Изменение |
+|---|---|
+| SQL migration (3) | public_id + sequence + trigger + backfill + NOT NULL + DEFAULT + trigger fix |
+| `TariffCardCompact.tsx` | +public_id badge, +productIsActive prop, +inherited inactive badge |
+| `AdminProductDetailV2.tsx` | -6 refetch, -code field, +public_id in dialog, +Advanced collapsible, +productIsActive, TariffPreviewCard→TariffCard |
+| NEW `src/components/landing/TariffCard.tsx` | Unified tariff card component |
+| `ProductLanding.tsx` | Import from TariffCard.tsx instead of inline |
+| `useTariffFeatures.tsx` | +invalidate preview-tariff-features in 4 mutations |
+| DELETE `TariffPreviewCard.tsx` | Replaced by unified TariffCard |
+| `telegram-grant-access/index.ts` | Offer-first → tariff-fallback → GC link + idempotency |
+| `TariffWelcomeMessageEditor.tsx` | Updated label: "(по умолчанию)" |
+| `OfferWelcomeMessageEditor.tsx` | Updated label: "(приоритетное)" |
+| NEW `supabase/functions/public-product-by-slug/index.ts` | EF for slug/public_id lookup |
+| `src/hooks/usePublicProduct.tsx` | +usePublicProductBySlug hook + PublicProductBySlugData type |
+| NEW `src/pages/ProductPricing.tsx` | Standalone pricing page with banner |
+| `src/App.tsx` | +Route /pricing/:productSlug, +lazy import ProductPricing |
+| `supabase/functions.registry.txt` | +public-product-by-slug |
