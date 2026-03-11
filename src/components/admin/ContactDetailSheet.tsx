@@ -1254,7 +1254,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           ? `Доступ выдан (${dateStr})` 
           : `Доступ продлён (${dateStr})`
       );
-      queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.id] });
+      queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
       refetchSubs();
       setGrantProductId("");
       setGrantTariffId("");
