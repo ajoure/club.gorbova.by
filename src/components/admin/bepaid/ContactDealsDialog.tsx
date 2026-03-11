@@ -123,6 +123,11 @@ export default function ContactDealsDialog({
     enabled: !!deals && deals.length > 0,
   });
 
+  const selectedDeal = useMemo(
+    () => deals?.find(d => d.id === selectedDealId) ?? null,
+    [deals, selectedDealId]
+  );
+
   const handleViewDeal = (deal: any) => {
     setSelectedDealId(deal.id);
   };

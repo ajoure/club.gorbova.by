@@ -424,6 +424,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id,
   });
 
+  const selectedDeal = useMemo(
+    () => deals?.find(d => d.id === selectedDealId) ?? null,
+    [deals, selectedDealId]
+  );
+
   // Fetch subscriptions for this contact - check both profile.id and user_id
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
     queryKey: ["contact-subscriptions", contact?.id, contact?.user_id],
