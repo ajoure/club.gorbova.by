@@ -789,7 +789,7 @@ export default function AdminProductDetailV2() {
 
       {/* Tariff Dialog — Glass UI */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-none bg-card border-border/40">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-none bg-muted/30 border-border/40">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 flex-wrap">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
