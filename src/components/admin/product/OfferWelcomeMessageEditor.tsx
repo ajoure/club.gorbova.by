@@ -180,8 +180,7 @@ export function OfferWelcomeMessageEditor({
       <CollapsibleContent>
         <div className="border rounded-lg rounded-t-none border-t-0 p-4 space-y-4">
           <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-            💡 Это сообщение отправляется <strong>дополнительно</strong> к сообщению тарифа. 
-            Если настроить оба — пользователь получит 2 сообщения.
+            💡 Это сообщение <strong>приоритетное</strong> — если включено, отправляется вместо сообщения тарифа (не вместе).
           </p>
 
           {/* Enable welcome message */}
