@@ -53,7 +53,7 @@ export default function ProductPricing() {
       <ProductLandingHeader
         productName={data.product.public_title || data.product.name}
       />
-      <ProductLanding productData={data} />
+      <ProductLanding data={data} />
     </div>
   );
 }
