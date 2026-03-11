@@ -790,9 +790,7 @@ export default function AdminProductDetailV2() {
             <DialogTitle className="flex items-center gap-2">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
               {tariffDialog.editing?.public_id && (
-                <Badge variant="outline" className="font-mono text-xs">
-                  {tariffDialog.editing.public_id}
-                </Badge>
+                <CopyableIdChip value={tariffDialog.editing.public_id} />
               )}
             </DialogTitle>
             <DialogDescription>
