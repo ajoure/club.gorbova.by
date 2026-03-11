@@ -1120,6 +1120,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["deal-payments", deal.id] });
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
           setLinkPaymentDialogOpen(false);
         }}
       />
