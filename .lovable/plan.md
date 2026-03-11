@@ -6,9 +6,11 @@
 ### PATCH 1: public_id для тарифов ✅
 - DB migration: `public_id_sequences` (entity_type='tariff', prefix='T'), trigger `set_tariff_public_id`, backfill 11 tariffs (T-000001..T-000011), NOT NULL + unique index
 - FIX: trigger обновлён на `IF NEW.public_id IS NULL OR NEW.public_id = '' THEN` — ловит и NULL, и пустую строку
-- DEFAULT '' оставлен для TypeScript типов (trigger перезапишет на INSERT)
+- DEFAULT `''` оставлен для совместимости с TypeScript Insert-типами (trigger перезапишет на INSERT)
 - UI: badge `T-000xxx` в `TariffCardCompact.tsx` + read-only в диалоге редактирования
-- DoD-пруфы: total=11, with_pid=11, non_empty=11; 0 дублей; column_default='', nullable=NO
+- Build ✅, есть runtime warning: `forwardRef` в `DialogFooter` (косметический, не блокирует)
+- DoD-пруфы: total=11, with_pid=11, non_empty=11, empty_cnt=0; 0 дублей; column_default=`''`, nullable=NO
+- **BACKLOG:** future PATCH "Types regen + DROP DEFAULT" — после регена типов и проверки всех insert-путей убрать DEFAULT `''`
 
 ### PATCH 2: Code — скрыть из формы, автогенерировать ✅
 - STOP-guard: `tariff.code` остаётся NOT NULL, 10+ точек используют `.eq("code", tariffCode)`. Никаких попыток перейти на tariff_id
@@ -27,12 +29,13 @@
 ### PATCH 5: TG Welcome Message — offer-first, tariff-fallback ✅
 - EF `telegram-grant-access/index.ts` строки 699-800: перестроена логика
 - Иерархия: OFFER welcome (приоритет) → TARIFF welcome (fallback) → GC link (last resort)
-- Idempotency: проверка `audit_logs` по action=`telegram_welcome_sent`, meta.source_id → skip если уже отправлено
-- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access')
+- Idempotency: проверка `audit_logs` по 3 полям: `action='telegram_welcome_sent'` + `meta->>source_id` + `actor_label='telegram-grant-access'` → skip если уже отправлено
+- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access', target_user_id=user_id, meta={source_id, welcome_type, offer_id, tariff_id})
 - Error-guard на audit insert (не прерывает основной процесс)
 - UI labels: TariffWelcomeMessageEditor — "(по умолчанию, если на кнопке не задано)"
 - UI labels: OfferWelcomeMessageEditor — "(приоритетное — отправляется вместо сообщения тарифа)"
 - 3 лог-кейса: `Sent OFFER welcome`, `Sent TARIFF welcome (fallback)`, `Sent GC link`
+- DoD-пруф: SQL `SELECT * FROM audit_logs WHERE action='telegram_welcome_sent' AND meta->>'source_id'=X` → 1 row; повторный вызов → лог `Welcome already sent for source_id=X, skipping`
 
 ### PATCH 6: Единый компонент TariffCard ✅
 - Вынесен `TariffCard` из `ProductLanding.tsx` → `src/components/landing/TariffCard.tsx`
