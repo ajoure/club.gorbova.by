@@ -69,6 +69,11 @@ export function TariffCardCompact({
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            {tariff.public_id && (
+              <Badge variant="outline" className="shrink-0 font-mono text-xs">
+                {tariff.public_id}
+              </Badge>
+            )}
             <h3 className="font-semibold text-foreground">{tariff.name}</h3>
             <Badge variant={tariff.is_active ? "default" : "secondary"} className="shrink-0">
               {tariff.is_active ? "Активен" : "Неактивен"}
