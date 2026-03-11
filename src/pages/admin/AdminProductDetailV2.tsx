@@ -902,7 +902,7 @@ export default function AdminProductDetailV2() {
             )}
           </div>
 
-          <DialogFooter className="sticky bottom-0 pt-4 border-t border-border/20 bg-transparent backdrop-blur-sm">
+          <DialogFooter className="pt-4 border-t border-border/40">
             <Button variant="outline" onClick={() => setTariffDialog({ open: false, editing: null })}>
               Отмена
             </Button>
