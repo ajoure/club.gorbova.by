@@ -592,7 +592,13 @@ export default function AdminProductsV2() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Название *</Label>
+              <div className="flex items-center gap-2">
+                <Label>Название *</Label>
+                {editingProduct && (() => {
+                  const prod = products?.find((p: any) => p.id === editingProduct);
+                  return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
+                })()}
+              </div>
               <Input
                 placeholder="Gorbova Club"
                 value={formData.name}
