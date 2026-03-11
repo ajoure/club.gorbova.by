@@ -1120,6 +1120,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["deal-payments", deal.id] });
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
           setLinkPaymentDialogOpen(false);
         }}
       />
@@ -1136,13 +1137,16 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
           product_id: deal.product_id,
           tariff_id: deal.tariff_id,
           status: deal.status,
-          created_at: deal.created_at,  // Pass deal created_at for date calculation
+          deal_date: deal.deal_date,
+          created_at: deal.created_at,
         }}
         tariff={tariff ? { access_days: tariff.access_days, name: tariff.name } : null}
         existingSubscription={subscription}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ["deal-subscription", deal.id] });
           queryClient.invalidateQueries({ queryKey: ["deal-audit", deal.id] });
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
         }}
       />
     </Sheet>

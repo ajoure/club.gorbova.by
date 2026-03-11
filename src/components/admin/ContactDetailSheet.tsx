@@ -187,14 +187,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [grantComment, setGrantComment] = useState("");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const dealSheetOpen = !!selectedDealId;
-  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
-  const [refundDeal, setRefundDeal] = useState<any>(null);
+  const [refundDealId, setRefundDealId] = useState<string | null>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editSubscriptionOpen, setEditSubscriptionOpen] = useState(false);
   const [subscriptionToEdit, setSubscriptionToEdit] = useState<any>(null);
-  const [editDealOpen, setEditDealOpen] = useState(false);
-  const [dealToEdit, setDealToEdit] = useState<any>(null);
+  const [dealToEditId, setDealToEditId] = useState<string | null>(null);
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const [paymentLinkDialogOpen, setPaymentLinkDialogOpen] = useState(false);
@@ -427,6 +425,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const selectedDeal = useMemo(
     () => deals?.find(d => d.id === selectedDealId) ?? null,
     [deals, selectedDealId]
+  );
+
+  const dealToEdit = useMemo(
+    () => deals?.find(d => d.id === dealToEditId) ?? null,
+    [deals, dealToEditId]
+  );
+
+  const refundDeal = useMemo(
+    () => deals?.find(d => d.id === refundDealId) ?? null,
+    [deals, refundDealId]
   );
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
@@ -2814,8 +2822,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               variant="ghost"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setDealToEdit(deal);
-                                setEditDealOpen(true);
+                                setDealToEditId(deal.id);
                               }}
                               className="h-6 w-6 text-muted-foreground hover:text-primary"
                             >
@@ -2856,8 +2863,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 className="h-7 px-2 text-xs text-purple-600 hover:text-purple-700"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setRefundDeal(deal);
-                                  setRefundDialogOpen(true);
+                                  setRefundDealId(deal.id);
                                 }}
                               >
                                 <Undo2 className="w-3 h-3 mr-1" />
@@ -3144,8 +3150,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         {/* Refund Dialog */}
         {refundDeal && (
           <RefundDialog
-            open={refundDialogOpen}
-            onOpenChange={setRefundDialogOpen}
+            open={!!refundDealId}
+            onOpenChange={(v) => { if (!v) setRefundDealId(null); }}
             orderId={refundDeal.id}
             orderNumber={refundDeal.order_number}
             amount={Number(refundDeal.final_price)}
@@ -3157,6 +3163,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             })()}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
+              setRefundDealId(null);
             }}
           />
         )}
@@ -3185,12 +3192,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         />
 
         {/* Edit Deal Dialog */}
-        <EditDealDialog
-          deal={dealToEdit}
-          open={editDealOpen}
-          onOpenChange={setEditDealOpen}
-          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
-        />
+        {dealToEdit && (
+          <EditDealDialog
+            deal={dealToEdit}
+            open={!!dealToEditId}
+            onOpenChange={(v) => { if (!v) setDealToEditId(null); }}
+            onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
+          />
+        )}
 
         {/* Compose Email Dialog */}
         <ComposeEmailDialog
