@@ -525,8 +525,8 @@ export default function AdminProductDetailV2() {
                 )}
                 <h1 className="text-lg font-semibold truncate">{product.name}</h1>
                 <Badge 
-                  variant={(product as any).status === "active" ? "outline" : "secondary"} 
-                  className="text-[11px]"
+                  variant="outline"
+                  className={`text-[11px] ${getStatusBadgeClass((product as any).status === "active" ? "active" : (product as any).status === "archived" ? "archived" : "hidden")}`}
                 >
                   {(product as any).status === "active" ? "Активный" : (product as any).status === "archived" ? "Архивный" : "Скрытый"}
                 </Badge>
