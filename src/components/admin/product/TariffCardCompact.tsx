@@ -32,6 +32,7 @@ interface TariffCardCompactProps {
     is_active: boolean;
     is_popular?: boolean;
     badge?: string;
+    public_id?: string;
   };
   offers: TariffOffer[];
   onEdit: () => void;
