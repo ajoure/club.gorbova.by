@@ -732,34 +732,44 @@ export default function AdminProductDetailV2() {
             </div>
 
             <GlassCard className="p-8">
-              {/* Section Header */}
-              <div className="text-center mb-8">
-                <h2 className="text-3xl font-bold mb-2">
-                  {(product as any).public_title || "Тарифы"}
-                </h2>
-                <p className="text-muted-foreground">
-                  {(product as any).public_subtitle || "Выберите подходящий вариант"}
-                </p>
-              </div>
+              {/* PATCH 3: effective_active guard */}
+              {!(product as any).is_active ? (
+                <div className="py-12 text-center text-muted-foreground">
+                  <p className="text-lg font-medium">Продукт неактивен</p>
+                  <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Section Header */}
+                  <div className="text-center mb-8">
+                    <h2 className="text-3xl font-bold mb-2">
+                      {(product as any).public_title || "Тарифы"}
+                    </h2>
+                    <p className="text-muted-foreground">
+                      {(product as any).public_subtitle || "Выберите подходящий вариант"}
+                    </p>
+                  </div>
 
-              {/* Tariff Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {tariffs?.filter(t => t.is_active).map((tariff: any) => (
-                  <TariffPreviewCard
-                    key={tariff.id}
-                    tariff={tariff}
-                    features={getFeaturesForTariff(tariff.id)}
-                    offers={getOffersForTariff(tariff.id)}
-                    onSelectOffer={handlePreviewSelectOffer}
-                  />
-                ))}
-              </div>
+                  {/* Tariff Grid — unified TariffCard (PATCH 6) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {tariffs?.filter(t => t.is_active).map((tariff: any) => (
+                      <TariffCard
+                        key={tariff.id}
+                        tariff={tariff}
+                        features={getFeaturesForTariff(tariff.id)}
+                        offers={getOffersForTariff(tariff.id)}
+                        onSelectOffer={handlePreviewSelectOffer}
+                      />
+                    ))}
+                  </div>
 
-              {/* Disclaimer */}
-              {(product as any).payment_disclaimer_text && (
-                <p className="text-center text-sm text-muted-foreground mt-8">
-                  {(product as any).payment_disclaimer_text}
-                </p>
+                  {/* Disclaimer */}
+                  {(product as any).payment_disclaimer_text && (
+                    <p className="text-center text-sm text-muted-foreground mt-8">
+                      {(product as any).payment_disclaimer_text}
+                    </p>
+                  )}
+                </>
               )}
             </GlassCard>
           </TabsContent>
