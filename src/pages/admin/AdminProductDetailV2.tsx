@@ -705,7 +705,7 @@ export default function AdminProductDetailV2() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Badge variant={flow.is_active ? "default" : "secondary"}>
+                        <Badge variant="outline" className={getStatusBadgeClass(flow.is_active ? "active" : "inactive")}>
                           {flow.is_active ? "Активен" : "Неактивен"}
                         </Badge>
                         <Button variant="ghost" size="sm" onClick={() => openFlowDialog(flow)}>
