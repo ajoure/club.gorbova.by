@@ -10,6 +10,7 @@ export interface PublicTariffData {
     public_subtitle?: string;
     payment_disclaimer_text?: string;
     primary_domain?: string | null;
+    telegram_club_id?: string | null;
     landing_config?: any;
   };
   tariff: {

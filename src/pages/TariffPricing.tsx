@@ -1,21 +1,83 @@
-import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { usePublicTariffByPublicId } from "@/hooks/usePublicTariff";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { useAuth } from "@/contexts/AuthContext";
-import { Loader2, ExternalLink } from "lucide-react";
+import { Loader2, ExternalLink, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
 
 export default function TariffPricing() {
   const { tariffPublicId } = useParams<{ tariffPublicId: string }>();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { data, isLoading, error } = usePublicTariffByPublicId(
+  const { data, isLoading, error, refetch } = usePublicTariffByPublicId(
     tariffPublicId || null,
     user?.id
   );
 
-  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [selectedOffer, setSelectedOffer] = useState<any>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [selectedOffer, setSelectedOffer] = useState<{
+    offer: any;
+    tariff: any;
+    productId: string;
+  } | null>(null);
+
+  // Restore offer selection from URL after auth redirect (same pattern as ProductLanding)
+  useEffect(() => {
+    const offerId = searchParams.get("offer");
+    if (offerId && user && data?.tariff) {
+      const offer = (data.tariff.offers || []).find(
+        (o: any) => o.id === offerId && o.is_active !== false
+      );
+      if (offer) {
+        // Validate tariff has internal code for payment
+        if (!data.tariff.code) {
+          toast({
+            title: "Ошибка",
+            description: "Тариф настроен некорректно (нет internal code)",
+            variant: "destructive",
+          });
+        } else {
+          setSelectedOffer({
+            offer,
+            tariff: data.tariff,
+            productId: data.product.id,
+          });
+          setPaymentOpen(true);
+        }
+      }
+      // Clear offer param from URL to prevent re-open on refresh/back
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, user, data, setSearchParams]);
+
+  const handleSelectOffer = (offer: any) => {
+    if (!user) {
+      // Auth redirect — exactly as ProductLanding
+      const returnUrl = `${window.location.pathname}?offer=${offer.id}`;
+      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
+      return;
+    }
+
+    if (!data?.tariff?.code) {
+      toast({
+        title: "Ошибка",
+        description: "Тариф настроен некорректно (нет internal code)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSelectedOffer({
+      offer,
+      tariff: data.tariff,
+      productId: data.product.id,
+    });
+    setPaymentOpen(true);
+  };
 
   if (isLoading) {
     return (
@@ -31,8 +93,12 @@ export default function TariffPricing() {
         <div className="text-center space-y-4">
           <h1 className="text-2xl font-bold text-foreground">Тариф не найден</h1>
           <p className="text-muted-foreground">
-            Проверьте ссылку или обратитесь к администратору.
+            Либо тариф неактивен, либо функция ещё не задеплоена.
           </p>
+          <Button variant="outline" onClick={() => refetch()}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Повторить
+          </Button>
         </div>
       </div>
     );
@@ -40,19 +106,6 @@ export default function TariffPricing() {
 
   const primaryDomain = data.product.primary_domain;
   const tariff = data.tariff;
-
-  // Find primary pay_now offer for PaymentDialog
-  const payNowOffers = (tariff.offers || []).filter(
-    (o: any) => o.offer_type === "pay_now" && o.is_active !== false
-  );
-  const primaryOffer = payNowOffers.find((o: any) => o.is_primary) || payNowOffers[0];
-
-  const handleSelectOffer = (offer: any) => {
-    setSelectedOffer(offer);
-    setPaymentDialogOpen(true);
-  };
-
-  const activeOffer = selectedOffer || primaryOffer;
 
   return (
     <div className="min-h-screen bg-background">
@@ -92,17 +145,20 @@ export default function TariffPricing() {
         )}
       </div>
 
-      {activeOffer && (
+      {/* PaymentDialog — props 1:1 with ProductLanding */}
+      {selectedOffer && (
         <PaymentDialog
-          open={paymentDialogOpen}
-          onOpenChange={setPaymentDialogOpen}
-          productId={data.product.id}
-          productName={data.product.public_title || data.product.name}
-          price={String(activeOffer.amount || 0)}
-          tariffCode={tariff.code}
-          offerId={activeOffer.id}
-          isTrial={activeOffer.offer_type === "trial"}
-          trialDays={activeOffer.trial_days}
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          productId={selectedOffer.productId}
+          productName={selectedOffer.tariff.name}
+          price={String(selectedOffer.offer.amount)}
+          tariffCode={selectedOffer.tariff.code}
+          offerId={selectedOffer.offer.id}
+          isTrial={selectedOffer.offer.offer_type === "trial"}
+          trialDays={selectedOffer.offer.trial_days ?? undefined}
+          isClubProduct={!!data.product.telegram_club_id}
+          isSubscription={selectedOffer.offer.requires_card_tokenization}
         />
       )}
     </div>
