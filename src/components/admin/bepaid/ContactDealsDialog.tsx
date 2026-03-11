@@ -47,8 +47,12 @@ export default function ContactDealsDialog({
   onDealUpdated
 }: ContactDealsDialogProps) {
   const queryClient = useQueryClient();
-  const [selectedDeal, setSelectedDeal] = useState<any>(null);
-  const [dealDetailOpen, setDealDetailOpen] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const selectedDeal = useMemo(
+    () => deals?.find(d => d.id === selectedDealId) ?? null,
+    [deals, selectedDealId]
+  );
+  const dealDetailOpen = !!selectedDealId;
 
   // Fetch deals for this contact
   const { data: deals, isLoading, refetch } = useQuery({
