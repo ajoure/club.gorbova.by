@@ -3130,10 +3130,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
         {/* Deal Detail Sheet */}
         <DealDetailSheet
-          deal={selectedDeal}
+          deal={selectedDeal ?? null}
           profile={contact}
           open={dealSheetOpen}
-          onOpenChange={setDealSheetOpen}
+          onOpenChange={(open) => { if (!open) setSelectedDealId(null); }}
         />
 
         {/* Refund Dialog */}
