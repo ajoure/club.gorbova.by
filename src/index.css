@@ -180,3 +180,12 @@ body.impersonation-active .impersonation-offset {
 .ProseMirror [data-token] {
   user-select: all;
 }
+
+/* Hide scrollbar utility */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
