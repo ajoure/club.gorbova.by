@@ -187,14 +187,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [grantComment, setGrantComment] = useState("");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const dealSheetOpen = !!selectedDealId;
-  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
-  const [refundDeal, setRefundDeal] = useState<any>(null);
+  const [refundDealId, setRefundDealId] = useState<string | null>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editSubscriptionOpen, setEditSubscriptionOpen] = useState(false);
   const [subscriptionToEdit, setSubscriptionToEdit] = useState<any>(null);
-  const [editDealOpen, setEditDealOpen] = useState(false);
-  const [dealToEdit, setDealToEdit] = useState<any>(null);
+  const [dealToEditId, setDealToEditId] = useState<string | null>(null);
   const [composeEmailOpen, setComposeEmailOpen] = useState(false);
   const [chargeDialogOpen, setChargeDialogOpen] = useState(false);
   const [paymentLinkDialogOpen, setPaymentLinkDialogOpen] = useState(false);
