@@ -852,7 +852,7 @@ export default function AdminProductDetailV2() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Период (label)</Label>
+                    <Label>Период</Label>
                     <Input
                       placeholder="BYN/мес"
                       value={tariffForm.period_label}

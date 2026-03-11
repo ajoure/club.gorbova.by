@@ -593,56 +593,70 @@ export default function AdminProductsV2() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label>Название *</Label>
-                {editingProduct && (() => {
-                  const prod = products?.find((p: any) => p.id === editingProduct);
-                  return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
-                })()}
-              </div>
-              <Input
-                placeholder="Gorbova Club"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              />
-            </div>
+          <div className="space-y-5">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label>Название *</Label>
+                    {editingProduct && (() => {
+                      const prod = products?.find((p: any) => p.id === editingProduct);
+                      return prod?.public_id ? <CopyableIdChip value={prod.public_id} /> : null;
+                    })()}
+                  </div>
+                  <Input
+                    placeholder="Gorbova Club"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <Label>Статус</Label>
-              <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Активный</SelectItem>
-                  <SelectItem value="hidden">Скрытый</SelectItem>
-                  <SelectItem value="archived">Архивный</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <div className="space-y-2">
+                  <Label>Статус</Label>
+                  <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Активный</SelectItem>
+                      <SelectItem value="hidden">Скрытый</SelectItem>
+                      <SelectItem value="archived">Архивный</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
 
-            <div className="space-y-2">
-              <Label>URL сайта</Label>
-              <Input
-                placeholder="club.gorbova.by"
-                value={formData.primary_domain}
-                onChange={(e) => setFormData({ ...formData, primary_domain: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">Где продаётся продукт (опционально)</p>
-            </div>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Дополнительно</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>URL сайта</Label>
+                  <Input
+                    placeholder="club.gorbova.by"
+                    value={formData.primary_domain}
+                    onChange={(e) => setFormData({ ...formData, primary_domain: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Где продаётся продукт (опционально)</p>
+                </div>
 
-            <div className="space-y-2">
-              <Label>Описание</Label>
-              <Textarea
-                placeholder="Описание продукта..."
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={3}
-              />
-            </div>
+                <div className="space-y-2">
+                  <Label>Описание</Label>
+                  <Textarea
+                    placeholder="Описание продукта..."
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    rows={3}
+                  />
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="pt-4 border-t border-border/40">
             <Button variant="outline" onClick={handleCloseDialog}>Отмена</Button>
             <Button onClick={handleSubmit} disabled={createMutation.isPending || updateMutation.isPending}>
               {editingProduct ? "Сохранить" : "Создать"}
