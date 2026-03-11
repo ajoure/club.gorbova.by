@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -813,92 +815,106 @@ export default function AdminProductDetailV2() {
 
           <div className="space-y-5">
             {/* Section A — Основное */}
-            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
-              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Основное</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Название *</Label>
-                  <Input
-                    placeholder="CLUB FULL"
-                    value={tariffForm.name}
-                    onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
-                  />
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Название *</Label>
+                    <Input
+                      placeholder="CLUB FULL"
+                      value={tariffForm.name}
+                      onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Подзаголовок</Label>
+                    <Input
+                      placeholder="Самый популярный"
+                      value={tariffForm.subtitle}
+                      onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Подзаголовок</Label>
-                  <Input
-                    placeholder="Самый популярный"
-                    value={tariffForm.subtitle}
-                    onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
-                  />
+                <Separator />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Срок доступа (дней)</Label>
+                    <Input
+                      type="number"
+                      value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
+                      onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                      onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
+                      min={1}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Период (label)</Label>
+                    <Input
+                      placeholder="BYN/мес"
+                      value={tariffForm.period_label}
+                      onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Срок доступа (дней)</Label>
-                  <Input
-                    type="number"
-                    value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
-                    onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                    onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
-                    min={1}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Период (label)</Label>
-                  <Input
-                    placeholder="BYN/мес"
-                    value={tariffForm.period_label}
-                    onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
-                  />
-                </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* Section B — Карточка на сайте */}
-            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
-              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Карточка на сайте</h4>
-              <div className="space-y-2">
-                <Label>Бейдж</Label>
-                <Input
-                  placeholder="Популярный"
-                  value={tariffForm.badge}
-                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Описание</Label>
-                <Textarea
-                  value={tariffForm.description}
-                  onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
-              <div className="flex items-center gap-6">
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={tariffForm.is_popular}
-                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Карточка на сайте</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Бейдж</Label>
+                  <Input
+                    placeholder="Популярный"
+                    value={tariffForm.badge}
+                    onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
                   />
-                  <Label>Популярный</Label>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={tariffForm.is_active}
-                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                <div className="space-y-2">
+                  <Label>Описание</Label>
+                  <Textarea
+                    value={tariffForm.description}
+                    onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
+                    rows={3}
+                    className="resize-none"
                   />
-                  <Label>Активен</Label>
                 </div>
-              </div>
-            </div>
+                <Separator />
+                <div className="flex items-center gap-6">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_popular}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+                    />
+                    <Label>Популярный</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_active}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                    />
+                    <Label>Активен</Label>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Section C — Преимущества (edit mode only) */}
             {tariffDialog.editing && (
-              <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-3">
-                <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Преимущества</h4>
-                <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
-              </div>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Преимущества</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
+                </CardContent>
+              </Card>
             )}
           </div>
 
@@ -926,94 +942,108 @@ export default function AdminProductDetailV2() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Тариф *</Label>
-              <Select
-                value={offerForm.tariff_id}
-                onValueChange={(v) => setOfferForm({ ...offerForm, tariff_id: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите тариф" />
-                </SelectTrigger>
-                <SelectContent>
-                  {tariffs?.map((tariff) => (
-                    <SelectItem key={tariff.id} value={tariff.id}>
-                      {tariff.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Основное */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Тариф *</Label>
+                  <Select
+                    value={offerForm.tariff_id}
+                    onValueChange={(v) => setOfferForm({ ...offerForm, tariff_id: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите тариф" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tariffs?.map((tariff) => (
+                        <SelectItem key={tariff.id} value={tariff.id}>
+                          {tariff.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="space-y-2">
-              <Label>Тип кнопки *</Label>
-              <Select
-                value={offerForm.offer_type}
-                onValueChange={(v: "pay_now" | "trial" | "preregistration") => {
-                  setOfferForm({ 
-                    ...offerForm, 
-                    offer_type: v,
-                    button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
-                    requires_card_tokenization: v === "trial" || v === "preregistration",
-                  });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
-                  <SelectItem value="trial">Trial (пробный период)</SelectItem>
-                  <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+                <div className="space-y-2">
+                  <Label>Тип кнопки *</Label>
+                  <Select
+                    value={offerForm.offer_type}
+                    onValueChange={(v: "pay_now" | "trial" | "preregistration") => {
+                      setOfferForm({ 
+                        ...offerForm, 
+                        offer_type: v,
+                        button_label: v === "trial" ? "Trial 1 BYN / 5 дней" : v === "preregistration" ? "Забронировать место" : "Оплатить",
+                        requires_card_tokenization: v === "trial" || v === "preregistration",
+                      });
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pay_now">Оплата (полная стоимость)</SelectItem>
+                      <SelectItem value="trial">Trial (пробный период)</SelectItem>
+                      <SelectItem value="preregistration">Предзапись (привязка карты)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Текст кнопки *</Label>
-                <Input
-                  placeholder="Оплатить"
-                  value={offerForm.button_label}
-                  onChange={(e) => setOfferForm({ ...offerForm, button_label: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Сумма (BYN) *</Label>
-                <Input
-                  type="number"
-                  value={offerForm.amount}
-                  onChange={(e) => setOfferForm({ ...offerForm, amount: parseFloat(e.target.value) || 0 })}
-                />
-              </div>
-            </div>
+                <Separator />
 
-            {/* Reentry pricing - for former club members */}
-            <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
-              <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-                <span className="font-medium text-sm">💰 Цена для повторного вступления</span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Для клиентов, которые ранее были участниками и вышли из клуба. Оставьте пустым, если повышение не требуется.
-              </p>
-              <div className="space-y-2">
-                <Label>Сумма при повторном вступлении (BYN)</Label>
-                <Input
-                  type="number"
-                  placeholder="Например: 150"
-                  value={offerForm.reentry_amount ?? ""}
-                  onChange={(e) => setOfferForm({ 
-                    ...offerForm, 
-                    reentry_amount: e.target.value ? parseFloat(e.target.value) : null 
-                  })}
-                />
-              </div>
-            </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Текст кнопки *</Label>
+                    <Input
+                      placeholder="Оплатить"
+                      value={offerForm.button_label}
+                      onChange={(e) => setOfferForm({ ...offerForm, button_label: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Сумма (BYN) *</Label>
+                    <Input
+                      type="number"
+                      value={offerForm.amount}
+                      onChange={(e) => setOfferForm({ ...offerForm, amount: parseFloat(e.target.value) || 0 })}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Повторное вступление */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Цена для повторного вступления</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Для клиентов, которые ранее были участниками и вышли из клуба. Оставьте пустым, если повышение не требуется.
+                </p>
+                <div className="space-y-2">
+                  <Label>Сумма при повторном вступлении (BYN)</Label>
+                  <Input
+                    type="number"
+                    placeholder="Например: 150"
+                    value={offerForm.reentry_amount ?? ""}
+                    onChange={(e) => setOfferForm({ 
+                      ...offerForm, 
+                      reentry_amount: e.target.value ? parseFloat(e.target.value) : null 
+                    })}
+                  />
+                </div>
+              </CardContent>
+            </Card>
 
             {offerForm.offer_type === "pay_now" && (
-              <div className="border-t pt-4 space-y-4">
-                <div className="space-y-3">
-                  <Label className="text-sm font-medium">Способ оплаты</Label>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Способ оплаты</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <RadioGroup
                     value={offerForm.payment_method}
                     onValueChange={(v: PaymentMethod) => setOfferForm({ ...offerForm, payment_method: v })}
@@ -1044,368 +1074,382 @@ export default function AdminProductDetailV2() {
                       </Label>
                     </div>
                   </RadioGroup>
-                </div>
 
-                {/* Installment settings */}
-                {offerForm.payment_method === "internal_installment" && (
-                  <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-4">
-                    <div className="flex items-center gap-2 text-amber-800 dark:text-amber-200">
-                      <CreditCard className="h-4 w-4" />
-                      <span className="font-medium text-sm">Настройка рассрочки</span>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Количество платежей</Label>
-                        <Input
-                          type="number"
-                          min={2}
-                          max={24}
-                          value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
-                          onChange={(e) => setOfferForm({ ...offerForm, installment_count: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                          onBlur={() => { if (offerForm.installment_count < 2) setOfferForm({ ...offerForm, installment_count: 2 }); }}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Интервал (дней)</Label>
-                        <Input
-                          type="number"
-                          min={7}
-                          max={90}
-                          value={offerForm.installment_interval_days === 0 ? "" : offerForm.installment_interval_days}
-                          onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                          onBlur={() => { if (offerForm.installment_interval_days < 7) setOfferForm({ ...offerForm, installment_interval_days: 7 }); }}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Первый платёж через (дней)</Label>
-                      <div className="flex items-center gap-4">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={30}
-                          value={offerForm.first_payment_delay_days}
-                          onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-muted-foreground">
-                          {offerForm.first_payment_delay_days === 0 ? "Сразу при покупке" : `Через ${offerForm.first_payment_delay_days} дней`}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Payment schedule preview */}
-                    {offerForm.amount > 0 && offerForm.installment_count > 1 && (
-                      <div className="pt-3 border-t border-amber-200 dark:border-amber-800">
-                        <Label className="text-xs text-amber-700 dark:text-amber-300">График платежей:</Label>
-                        <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
-                          {Array.from({ length: offerForm.installment_count }, (_, i) => {
-                            const perPayment = offerForm.amount / offerForm.installment_count;
-                            const delay = offerForm.first_payment_delay_days + (i * offerForm.installment_interval_days);
-                            return (
-                              <div key={i} className="flex justify-between text-sm">
-                                <span className="text-amber-700 dark:text-amber-300">
-                                  {i + 1}. {delay === 0 ? "При покупке" : `Через ${delay} дн.`}
-                                </span>
-                                <span className="font-medium text-amber-900 dark:text-amber-100">
-                                  {perPayment.toFixed(2)} BYN
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800 flex justify-between text-sm font-medium">
-                          <span className="text-amber-700 dark:text-amber-300">Итого:</span>
-                          <span className="text-amber-900 dark:text-amber-100">{offerForm.amount} BYN</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Subscription toggle - only for full payment */}
-                {offerForm.payment_method === "full_payment" && (
-                  <>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <Switch
-                          checked={offerForm.requires_card_tokenization}
-                          onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
-                        />
-                        <Label>Подписка (автопродление)</Label>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {offerForm.requires_card_tokenization 
-                          ? "Карта будет сохранена для автоматического продления" 
-                          : "Разовый платёж без сохранения карты"}
-                      </p>
-                    </div>
-                    
-                    {/* Auto-renewal settings - ONLY for subscriptions */}
-                    {offerForm.requires_card_tokenization && (
-                      <Collapsible 
-                        open={showAdvancedSettings}
-                        onOpenChange={setShowAdvancedSettings}
-                        className="mt-4 border-t pt-4"
-                      >
-                      <CollapsibleTrigger asChild>
-                        <Button variant="ghost" size="sm" className="w-full justify-between text-blue-600 hover:text-blue-700">
-                          <span className="flex items-center gap-2">
-                            <RefreshCw className="h-4 w-4" />
-                            Настройки автопродления
-                          </span>
-                          <ChevronDown className={cn("h-4 w-4 transition-transform", showAdvancedSettings && "rotate-180")} />
-                        </Button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="pt-4 space-y-4">
-                        <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
-                          
-                          {/* Billing period */}
+                  {/* Installment settings */}
+                  {offerForm.payment_method === "internal_installment" && (
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                          <CreditCard className="h-4 w-4" />
+                          Настройка рассрочки
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label className="text-sm">Период списания</Label>
-                            <RadioGroup
-                              value={offerForm.meta?.recurring?.billing_period_mode || 'month'}
-                              onValueChange={(v) => setOfferForm({
-                                ...offerForm,
-                                meta: {
-                                  ...offerForm.meta,
-                                  recurring: {
-                                    ...offerForm.meta?.recurring,
-                                    billing_period_mode: v as 'month' | 'days',
-                                  }
-                                }
-                              })}
-                              className="flex gap-4"
-                            >
-                              <div className="flex items-center space-x-2">
-                                <RadioGroupItem value="month" id="billing-month" />
-                                <Label htmlFor="billing-month" className="font-normal text-sm">1 календарный месяц</Label>
-                              </div>
-                              <div className="flex items-center space-x-2">
-                                <RadioGroupItem value="days" id="billing-days" />
-                                <Label htmlFor="billing-days" className="font-normal text-sm">X дней</Label>
-                              </div>
-                            </RadioGroup>
-                            {offerForm.meta?.recurring?.billing_period_mode === 'days' && (
-                              <Input
-                                type="number"
-                                min={1}
-                                max={90}
-                                value={offerForm.meta?.recurring?.billing_period_days || 30}
-                                onChange={(e) => setOfferForm({
-                                  ...offerForm,
-                                  meta: {
-                                    ...offerForm.meta,
-                                    recurring: {
-                                      ...offerForm.meta?.recurring,
-                                      billing_period_days: parseInt(e.target.value) || 30,
-                                    }
-                                  }
-                                })}
-                                className="w-24"
-                              />
-                            )}
+                            <Label>Количество платежей</Label>
+                            <Input
+                              type="number"
+                              min={2}
+                              max={24}
+                              value={offerForm.installment_count === 0 ? "" : offerForm.installment_count}
+                              onChange={(e) => setOfferForm({ ...offerForm, installment_count: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                              onBlur={() => { if (offerForm.installment_count < 2) setOfferForm({ ...offerForm, installment_count: 2 }); }}
+                            />
                           </div>
-                          
-                          {/* Grace period and attempts */}
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                              <Label className="text-sm">Grace период (часов)</Label>
-                              <Input
-                                type="number"
-                                min={24}
-                                max={168}
-                                value={offerForm.meta?.recurring?.grace_hours || 72}
-                                onChange={(e) => setOfferForm({
-                                  ...offerForm,
-                                  meta: {
-                                    ...offerForm.meta,
-                                    recurring: {
-                                      ...offerForm.meta?.recurring,
-                                      grace_hours: parseInt(e.target.value) || 72,
-                                    }
-                                  }
-                                })}
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                Время для возврата по старой цене
-                              </p>
+                          <div className="space-y-2">
+                            <Label>Интервал (дней)</Label>
+                            <Input
+                              type="number"
+                              min={7}
+                              max={90}
+                              value={offerForm.installment_interval_days === 0 ? "" : offerForm.installment_interval_days}
+                              onChange={(e) => setOfferForm({ ...offerForm, installment_interval_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                              onBlur={() => { if (offerForm.installment_interval_days < 7) setOfferForm({ ...offerForm, installment_interval_days: 7 }); }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Первый платёж через (дней)</Label>
+                          <div className="flex items-center gap-4">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={30}
+                              value={offerForm.first_payment_delay_days}
+                              onChange={(e) => setOfferForm({ ...offerForm, first_payment_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                              className="w-24"
+                            />
+                            <span className="text-sm text-muted-foreground">
+                              {offerForm.first_payment_delay_days === 0 ? "Сразу при покупке" : `Через ${offerForm.first_payment_delay_days} дней`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Payment schedule preview */}
+                        {offerForm.amount > 0 && offerForm.installment_count > 1 && (
+                          <div className="pt-3 border-t">
+                            <Label className="text-xs text-muted-foreground">График платежей:</Label>
+                            <div className="mt-2 space-y-1.5 max-h-32 overflow-y-auto">
+                              {Array.from({ length: offerForm.installment_count }, (_, i) => {
+                                const perPayment = offerForm.amount / offerForm.installment_count;
+                                const delay = offerForm.first_payment_delay_days + (i * offerForm.installment_interval_days);
+                                return (
+                                  <div key={i} className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">
+                                      {i + 1}. {delay === 0 ? "При покупке" : `Через ${delay} дн.`}
+                                    </span>
+                                    <span className="font-medium">
+                                      {perPayment.toFixed(2)} BYN
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            
-                            <div className="space-y-2">
-                              <Label className="text-sm">Попыток в сутки</Label>
-                              <Select
-                                value={String(offerForm.meta?.recurring?.charge_attempts_per_day || 2)}
-                                onValueChange={(v) => setOfferForm({
-                                  ...offerForm,
-                                  meta: {
-                                    ...offerForm.meta,
-                                    recurring: {
-                                      ...offerForm.meta?.recurring,
-                                      charge_attempts_per_day: parseInt(v),
-                                    }
-                                  }
-                                })}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="1">1 раз</SelectItem>
-                                  <SelectItem value="2">2 раза (утро/вечер)</SelectItem>
-                                </SelectContent>
-                              </Select>
+                            <div className="mt-2 pt-2 border-t flex justify-between text-sm font-medium">
+                              <span className="text-muted-foreground">Итого:</span>
+                              <span>{offerForm.amount} BYN</span>
                             </div>
                           </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
 
-                          {/* Timezone */}
-                          <div className="space-y-2">
-                            <Label className="text-sm">Часовой пояс</Label>
-                            <Select
-                              value={offerForm.meta?.recurring?.timezone || 'Europe/Minsk'}
-                              onValueChange={(v) => setOfferForm({
-                                ...offerForm,
-                                meta: {
-                                  ...offerForm.meta,
-                                  recurring: {
-                                    ...offerForm.meta?.recurring,
-                                    timezone: v,
-                                  }
-                                }
-                              })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Europe/Minsk">Europe/Minsk (UTC+3)</SelectItem>
-                                <SelectItem value="Europe/Moscow">Europe/Moscow (UTC+3)</SelectItem>
-                                <SelectItem value="Europe/Warsaw">Europe/Warsaw (UTC+1/+2)</SelectItem>
-                                <SelectItem value="UTC">UTC</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          {/* Charge times */}
-                          <div className="space-y-2">
-                            <Label className="text-sm">Время попыток списания</Label>
-                            <div className="flex gap-2 flex-wrap">
-                              {Array.from({ length: offerForm.meta?.recurring?.charge_attempts_per_day || 2 }).map((_, idx) => (
-                                <Input
-                                  key={idx}
-                                  type="time"
-                                  value={(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])[idx] || '12:00'}
-                                  onChange={(e) => {
-                                    const currentTimes = [...(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])];
-                                    currentTimes[idx] = e.target.value;
-                                    setOfferForm({
+                  {/* Subscription toggle - only for full payment */}
+                  {offerForm.payment_method === "full_payment" && (
+                    <>
+                      <Separator />
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            checked={offerForm.requires_card_tokenization}
+                            onCheckedChange={(checked) => setOfferForm({ ...offerForm, requires_card_tokenization: checked })}
+                          />
+                          <Label>Подписка (автопродление)</Label>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {offerForm.requires_card_tokenization 
+                            ? "Карта будет сохранена для автоматического продления" 
+                            : "Разовый платёж без сохранения карты"}
+                        </p>
+                      </div>
+                      
+                      {/* Auto-renewal settings - ONLY for subscriptions */}
+                      {offerForm.requires_card_tokenization && (
+                        <Collapsible 
+                          open={showAdvancedSettings}
+                          onOpenChange={setShowAdvancedSettings}
+                          className="mt-4 border-t pt-4"
+                        >
+                        <CollapsibleTrigger asChild>
+                          <Button variant="ghost" size="sm" className="w-full justify-between">
+                            <span className="flex items-center gap-2">
+                              <RefreshCw className="h-4 w-4" />
+                              Настройки автопродления
+                            </span>
+                            <ChevronDown className={cn("h-4 w-4 transition-transform", showAdvancedSettings && "rotate-180")} />
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pt-4 space-y-4">
+                          <Card>
+                            <CardContent className="pt-6 space-y-4">
+                              
+                              {/* Billing period */}
+                              <div className="space-y-2">
+                                <Label className="text-sm">Период списания</Label>
+                                <RadioGroup
+                                  value={offerForm.meta?.recurring?.billing_period_mode || 'month'}
+                                  onValueChange={(v) => setOfferForm({
+                                    ...offerForm,
+                                    meta: {
+                                      ...offerForm.meta,
+                                      recurring: {
+                                        ...offerForm.meta?.recurring,
+                                        billing_period_mode: v as 'month' | 'days',
+                                      }
+                                    }
+                                  })}
+                                  className="flex gap-4"
+                                >
+                                  <div className="flex items-center space-x-2">
+                                    <RadioGroupItem value="month" id="billing-month" />
+                                    <Label htmlFor="billing-month" className="font-normal text-sm">1 календарный месяц</Label>
+                                  </div>
+                                  <div className="flex items-center space-x-2">
+                                    <RadioGroupItem value="days" id="billing-days" />
+                                    <Label htmlFor="billing-days" className="font-normal text-sm">X дней</Label>
+                                  </div>
+                                </RadioGroup>
+                                {offerForm.meta?.recurring?.billing_period_mode === 'days' && (
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    max={90}
+                                    value={offerForm.meta?.recurring?.billing_period_days || 30}
+                                    onChange={(e) => setOfferForm({
                                       ...offerForm,
                                       meta: {
                                         ...offerForm.meta,
                                         recurring: {
                                           ...offerForm.meta?.recurring,
-                                          charge_times_local: currentTimes,
+                                          billing_period_days: parseInt(e.target.value) || 30,
                                         }
                                       }
-                                    });
-                                  }}
-                                  className="w-24"
-                                />
-                              ))}
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              Время в выбранном часовом поясе (±15 мин допуск)
-                            </p>
-                          </div>
-                          
-                          {/* Pre-due reminders */}
-                          <div className="space-y-2">
-                            <Label className="text-sm">Напоминания до списания (дней)</Label>
-                            <div className="flex gap-3">
-                              {[7, 3, 1].map(day => {
-                                const currentDays = offerForm.meta?.recurring?.pre_due_reminders_days || [7, 3, 1];
-                                const isChecked = currentDays.includes(day);
-                                return (
-                                  <label key={day} className="flex items-center gap-1.5 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
+                                    })}
+                                    className="w-24"
+                                  />
+                                )}
+                              </div>
+                              
+                              <Separator />
+
+                              {/* Grace period and attempts */}
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                  <Label className="text-sm">Grace период (часов)</Label>
+                                  <Input
+                                    type="number"
+                                    min={24}
+                                    max={168}
+                                    value={offerForm.meta?.recurring?.grace_hours || 72}
+                                    onChange={(e) => setOfferForm({
+                                      ...offerForm,
+                                      meta: {
+                                        ...offerForm.meta,
+                                        recurring: {
+                                          ...offerForm.meta?.recurring,
+                                          grace_hours: parseInt(e.target.value) || 72,
+                                        }
+                                      }
+                                    })}
+                                  />
+                                  <p className="text-xs text-muted-foreground">
+                                    Время для возврата по старой цене
+                                  </p>
+                                </div>
+                                
+                                <div className="space-y-2">
+                                  <Label className="text-sm">Попыток в сутки</Label>
+                                  <Select
+                                    value={String(offerForm.meta?.recurring?.charge_attempts_per_day || 2)}
+                                    onValueChange={(v) => setOfferForm({
+                                      ...offerForm,
+                                      meta: {
+                                        ...offerForm.meta,
+                                        recurring: {
+                                          ...offerForm.meta?.recurring,
+                                          charge_attempts_per_day: parseInt(v),
+                                        }
+                                      }
+                                    })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="1">1 раз</SelectItem>
+                                      <SelectItem value="2">2 раза (утро/вечер)</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+
+                              {/* Timezone */}
+                              <div className="space-y-2">
+                                <Label className="text-sm">Часовой пояс</Label>
+                                <Select
+                                  value={offerForm.meta?.recurring?.timezone || 'Europe/Minsk'}
+                                  onValueChange={(v) => setOfferForm({
+                                    ...offerForm,
+                                    meta: {
+                                      ...offerForm.meta,
+                                      recurring: {
+                                        ...offerForm.meta?.recurring,
+                                        timezone: v,
+                                      }
+                                    }
+                                  })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Europe/Minsk">Europe/Minsk (UTC+3)</SelectItem>
+                                    <SelectItem value="Europe/Moscow">Europe/Moscow (UTC+3)</SelectItem>
+                                    <SelectItem value="Europe/Warsaw">Europe/Warsaw (UTC+1/+2)</SelectItem>
+                                    <SelectItem value="UTC">UTC</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <Separator />
+
+                              {/* Charge times */}
+                              <div className="space-y-2">
+                                <Label className="text-sm">Время попыток списания</Label>
+                                <div className="flex gap-2 flex-wrap">
+                                  {Array.from({ length: offerForm.meta?.recurring?.charge_attempts_per_day || 2 }).map((_, idx) => (
+                                    <Input
+                                      key={idx}
+                                      type="time"
+                                      value={(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])[idx] || '12:00'}
                                       onChange={(e) => {
-                                        const newDays = e.target.checked
-                                          ? [...currentDays, day].sort((a, b) => b - a)
-                                          : currentDays.filter(d => d !== day);
+                                        const currentTimes = [...(offerForm.meta?.recurring?.charge_times_local || ['09:00', '21:00'])];
+                                        currentTimes[idx] = e.target.value;
                                         setOfferForm({
                                           ...offerForm,
                                           meta: {
                                             ...offerForm.meta,
                                             recurring: {
                                               ...offerForm.meta?.recurring,
-                                              pre_due_reminders_days: newDays,
+                                              charge_times_local: currentTimes,
                                             }
                                           }
                                         });
                                       }}
-                                      className="rounded border-gray-300"
+                                      className="w-24"
                                     />
-                                    <span className="text-sm">{day} {day === 1 ? 'день' : 'дней'}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          
-                          {/* Notification toggles */}
-                          <div className="space-y-3 pt-2 border-t border-blue-200 dark:border-blue-700">
-                            <div className="flex items-center justify-between">
-                              <Label className="text-sm font-normal">Уведомлять перед списанием</Label>
-                              <Switch
-                                checked={offerForm.meta?.recurring?.notify_before_each_charge ?? true}
-                                onCheckedChange={(checked) => setOfferForm({
-                                  ...offerForm,
-                                  meta: {
-                                    ...offerForm.meta,
-                                    recurring: {
-                                      ...offerForm.meta?.recurring,
-                                      notify_before_each_charge: checked,
-                                    }
-                                  }
-                                })}
-                              />
-                            </div>
-                            
-                            <div className="flex items-center justify-between">
-                              <Label className="text-sm font-normal">Уведомления в grace (0/24/48/72ч)</Label>
-                              <Switch
-                                checked={offerForm.meta?.recurring?.notify_grace_events ?? true}
-                                onCheckedChange={(checked) => setOfferForm({
-                                  ...offerForm,
-                                  meta: {
-                                    ...offerForm.meta,
-                                    recurring: {
-                                      ...offerForm.meta?.recurring,
-                                      notify_grace_events: checked,
-                                    }
-                                  }
-                                })}
-                              />
-                            </div>
-                          </div>
-                          
-                        </div>
-                      </CollapsibleContent>
-                    </Collapsible>
+                                  ))}
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Время в выбранном часовом поясе (±15 мин допуск)
+                                </p>
+                              </div>
+                              
+                              {/* Pre-due reminders */}
+                              <div className="space-y-2">
+                                <Label className="text-sm">Напоминания до списания (дней)</Label>
+                                <div className="flex gap-3">
+                                  {[7, 3, 1].map(day => {
+                                    const currentDays = offerForm.meta?.recurring?.pre_due_reminders_days || [7, 3, 1];
+                                    const isChecked = currentDays.includes(day);
+                                    return (
+                                      <label key={day} className="flex items-center gap-1.5 cursor-pointer">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={(e) => {
+                                            const newDays = e.target.checked
+                                              ? [...currentDays, day].sort((a, b) => b - a)
+                                              : currentDays.filter(d => d !== day);
+                                            setOfferForm({
+                                              ...offerForm,
+                                              meta: {
+                                                ...offerForm.meta,
+                                                recurring: {
+                                                  ...offerForm.meta?.recurring,
+                                                  pre_due_reminders_days: newDays,
+                                                }
+                                              }
+                                            });
+                                          }}
+                                          className="rounded border-border"
+                                        />
+                                        <span className="text-sm">{day} {day === 1 ? 'день' : 'дней'}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                              
+                              <Separator />
+
+                              {/* Notification toggles */}
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm font-normal">Уведомлять перед списанием</Label>
+                                  <Switch
+                                    checked={offerForm.meta?.recurring?.notify_before_each_charge ?? true}
+                                    onCheckedChange={(checked) => setOfferForm({
+                                      ...offerForm,
+                                      meta: {
+                                        ...offerForm.meta,
+                                        recurring: {
+                                          ...offerForm.meta?.recurring,
+                                          notify_before_each_charge: checked,
+                                        }
+                                      }
+                                    })}
+                                  />
+                                </div>
+                                
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm font-normal">Уведомления в grace (0/24/48/72ч)</Label>
+                                  <Switch
+                                    checked={offerForm.meta?.recurring?.notify_grace_events ?? true}
+                                    onCheckedChange={(checked) => setOfferForm({
+                                      ...offerForm,
+                                      meta: {
+                                        ...offerForm.meta,
+                                        recurring: {
+                                          ...offerForm.meta?.recurring,
+                                          notify_grace_events: checked,
+                                        }
+                                      }
+                                    })}
+                                  />
+                                </div>
+                              </div>
+                              
+                            </CardContent>
+                          </Card>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                    </>
                   )}
-                  </>
-                )}
-              </div>
+                </CardContent>
+              </Card>
             )}
 
             {offerForm.offer_type === "trial" && (
-              <>
-                <div className="border-t pt-4">
-                  <h4 className="font-medium mb-3 text-sm">Настройки Trial</h4>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Настройки Trial</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Дней trial</Label>
@@ -1428,55 +1472,58 @@ export default function AdminProductDetailV2() {
                       />
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={offerForm.auto_charge_after_trial}
-                    onCheckedChange={(checked) => setOfferForm({ ...offerForm, auto_charge_after_trial: checked })}
-                  />
-                  <Label>Автосписание после trial</Label>
-                </div>
+                  <Separator />
 
-                {offerForm.auto_charge_after_trial && (
-                  <div className="space-y-2">
-                    <Label>Кнопка для автосписания *</Label>
-                    <Select
-                      value={offerForm.auto_charge_offer_id}
-                      onValueChange={(v) => setOfferForm({ ...offerForm, auto_charge_offer_id: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Выберите кнопку полной оплаты" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {payNowOffersForTariff.length === 0 ? (
-                          <div className="p-2 text-sm text-muted-foreground">
-                            Сначала создайте кнопку "Оплата" для этого тарифа
-                          </div>
-                        ) : (
-                          payNowOffersForTariff.map((offer: any) => (
-                            <SelectItem key={offer.id} value={offer.id}>
-                              {offer.button_label} — {offer.amount} BYN
-                              {offer.is_primary && " (основная)"}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={offerForm.auto_charge_after_trial}
+                      onCheckedChange={(checked) => setOfferForm({ ...offerForm, auto_charge_after_trial: checked })}
+                    />
+                    <Label>Автосписание после trial</Label>
                   </div>
-                )}
-              </>
+
+                  {offerForm.auto_charge_after_trial && (
+                    <div className="space-y-2">
+                      <Label>Кнопка для автосписания *</Label>
+                      <Select
+                        value={offerForm.auto_charge_offer_id}
+                        onValueChange={(v) => setOfferForm({ ...offerForm, auto_charge_offer_id: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Выберите кнопку полной оплаты" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {payNowOffersForTariff.length === 0 ? (
+                            <div className="p-2 text-sm text-muted-foreground">
+                              Сначала создайте кнопку "Оплата" для этого тарифа
+                            </div>
+                          ) : (
+                            payNowOffersForTariff.map((offer: any) => (
+                              <SelectItem key={offer.id} value={offer.id}>
+                                {offer.button_label} — {offer.amount} BYN
+                                {offer.is_primary && " (основная)"}
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
 
             {/* Preregistration settings */}
             {offerForm.offer_type === "preregistration" && (
-              <div className="border-t pt-4 space-y-4">
-                <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                  <Calendar className="h-4 w-4" />
-                  <h4 className="font-medium text-sm">Настройки Предзаписи</h4>
-                </div>
-                
-                <div className="space-y-4 p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Calendar className="h-4 w-4" />
+                    Настройки Предзаписи
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-1.5">
@@ -1502,6 +1549,8 @@ export default function AdminProductDetailV2() {
                       />
                     </div>
                   </div>
+
+                  <Separator />
 
                   <div className="space-y-2">
                     <Label>Кнопка для списания</Label>
@@ -1566,8 +1615,8 @@ export default function AdminProductDetailV2() {
                       </p>
                     </div>
                   </div>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Advanced Settings - Collapsible */}
@@ -1581,7 +1630,7 @@ export default function AdminProductDetailV2() {
               <CollapsibleContent className="space-y-4 pt-4">
                 {/* Virtual card blocking */}
                 {(offerForm.requires_card_tokenization || offerForm.offer_type === "trial" || offerForm.payment_method === "internal_installment") && (
-                  <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <div className="flex items-center space-x-2 p-3 rounded-lg border">
                     <Switch
                       checked={offerForm.reject_virtual_cards}
                       onCheckedChange={(checked) => setOfferForm({ ...offerForm, reject_virtual_cards: checked })}
@@ -1616,6 +1665,8 @@ export default function AdminProductDetailV2() {
                 />
               </CollapsibleContent>
             </Collapsible>
+
+            <Separator />
 
             <div className="flex items-center space-x-2">
               <Switch
@@ -1656,69 +1707,75 @@ export default function AdminProductDetailV2() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">Настройки потока</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Код *</Label>
+                  <Input
+                    placeholder="flow_jan_2026"
+                    value={flowForm.code}
+                    onChange={(e) => setFlowForm({ ...flowForm, code: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Название *</Label>
+                  <Input
+                    placeholder="Поток январь 2026"
+                    value={flowForm.name}
+                    onChange={(e) => setFlowForm({ ...flowForm, name: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Дата старта</Label>
+                  <DatePicker
+                    value={flowForm.start_date}
+                    onChange={(v) => setFlowForm({ ...flowForm, start_date: v })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Дата окончания</Label>
+                  <DatePicker
+                    value={flowForm.end_date}
+                    onChange={(v) => setFlowForm({ ...flowForm, end_date: v })}
+                  />
+                </div>
+              </div>
               <div className="space-y-2">
-                <Label>Код *</Label>
+                <Label>Макс. участников (пусто = без ограничений)</Label>
                 <Input
-                  placeholder="flow_jan_2026"
-                  value={flowForm.code}
-                  onChange={(e) => setFlowForm({ ...flowForm, code: e.target.value })}
+                  type="number"
+                  value={flowForm.max_participants || ""}
+                  onChange={(e) => setFlowForm({ 
+                    ...flowForm, 
+                    max_participants: e.target.value ? parseInt(e.target.value) : null 
+                  })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label>Название *</Label>
-                <Input
-                  placeholder="Поток январь 2026"
-                  value={flowForm.name}
-                  onChange={(e) => setFlowForm({ ...flowForm, name: e.target.value })}
-                />
+              <Separator />
+              <div className="flex items-center gap-6">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={flowForm.is_default}
+                    onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_default: checked })}
+                  />
+                  <Label>По умолчанию</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={flowForm.is_active}
+                    onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_active: checked })}
+                  />
+                  <Label>Активен</Label>
+                </div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Дата старта</Label>
-                <DatePicker
-                  value={flowForm.start_date}
-                  onChange={(v) => setFlowForm({ ...flowForm, start_date: v })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Дата окончания</Label>
-                <DatePicker
-                  value={flowForm.end_date}
-                  onChange={(v) => setFlowForm({ ...flowForm, end_date: v })}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Макс. участников (пусто = без ограничений)</Label>
-              <Input
-                type="number"
-                value={flowForm.max_participants || ""}
-                onChange={(e) => setFlowForm({ 
-                  ...flowForm, 
-                  max_participants: e.target.value ? parseInt(e.target.value) : null 
-                })}
-              />
-            </div>
-            <div className="flex items-center gap-6">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={flowForm.is_default}
-                  onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_default: checked })}
-                />
-                <Label>По умолчанию</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={flowForm.is_active}
-                  onCheckedChange={(checked) => setFlowForm({ ...flowForm, is_active: checked })}
-                />
-                <Label>Активен</Label>
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setFlowDialog({ open: false, editing: null })}>
