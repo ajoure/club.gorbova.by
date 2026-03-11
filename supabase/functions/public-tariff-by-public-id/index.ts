@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
       .select(`
         id, name, code, slug, status, primary_domain, currency,
         public_title, public_subtitle, payment_disclaimer_text,
-        landing_config, is_active
+        landing_config, is_active, telegram_club_id
       `)
       .eq("id", tariff.product_id)
       .eq("is_active", true)
