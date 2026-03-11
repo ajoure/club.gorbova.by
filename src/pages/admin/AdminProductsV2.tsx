@@ -647,6 +647,7 @@ export default function AdminProductsV2() {
               {editingProduct ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

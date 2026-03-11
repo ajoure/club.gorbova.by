@@ -1790,6 +1790,7 @@ export default function AdminProductDetailV2() {
               {flowDialog.editing ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
