@@ -94,6 +94,7 @@ export function useCreateTariffFeature() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
       toast.success("Пункт добавлен");
     },
     onError: (error) => {
@@ -120,6 +121,7 @@ export function useUpdateTariffFeature() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
       toast.success("Пункт обновлён");
     },
     onError: (error) => {
@@ -143,6 +145,7 @@ export function useDeleteTariffFeature() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
       toast.success("Пункт удалён");
     },
     onError: (error) => {
@@ -174,6 +177,7 @@ export function useBulkUpdateTariffFeatures() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
     },
   });
 }

@@ -32,8 +32,10 @@ interface TariffCardCompactProps {
     is_active: boolean;
     is_popular?: boolean;
     badge?: string;
+    public_id?: string;
   };
   offers: TariffOffer[];
+  productIsActive?: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
@@ -43,6 +45,7 @@ interface TariffCardCompactProps {
 export function TariffCardCompact({
   tariff,
   offers,
+  productIsActive = true,
   onEdit,
   onDelete,
   onDuplicate,
@@ -68,10 +71,20 @@ export function TariffCardCompact({
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            {tariff.public_id && (
+              <Badge variant="outline" className="shrink-0 font-mono text-xs">
+                {tariff.public_id}
+              </Badge>
+            )}
             <h3 className="font-semibold text-foreground">{tariff.name}</h3>
             <Badge variant={tariff.is_active ? "default" : "secondary"} className="shrink-0">
               {tariff.is_active ? "Активен" : "Неактивен"}
             </Badge>
+            {tariff.is_active && !productIsActive && (
+              <Badge variant="outline" className="shrink-0 border-destructive/50 text-destructive text-xs">
+                Унаследовано неактивен
+              </Badge>
+            )}
             {tariff.is_popular && (
               <Badge variant="outline" className="border-primary text-primary shrink-0">
                 Популярный

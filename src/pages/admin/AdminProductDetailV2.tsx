@@ -24,7 +24,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
-import { TariffPreviewCard } from "@/components/admin/product/TariffPreviewCard";
+import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffWelcomeMessageEditor, type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
@@ -53,9 +53,9 @@ export default function AdminProductDetailV2() {
   const navigate = useNavigate();
 
   const { data: product, isLoading: productLoading } = useProductV2(productId || null);
-  const { data: tariffs, refetch: refetchTariffs } = useTariffs(productId);
+  const { data: tariffs } = useTariffs(productId);
   const { data: flows } = useFlows(productId);
-  const { data: offers, refetch: refetchOffers } = useProductOffers(productId);
+  const { data: offers } = useProductOffers(productId);
   
   // Fetch tariff features for preview
   const { data: allTariffFeatures } = useQuery({
@@ -230,14 +230,17 @@ export default function AdminProductDetailV2() {
   };
 
   const handleSaveTariff = async () => {
-    if (!tariffForm.code || !tariffForm.name) {
-      toast.error("Заполните код и название");
+    if (!tariffForm.name) {
+      toast.error("Заполните название");
       return;
     }
+    // Auto-generate code if empty (PATCH 2: code remains NOT NULL in DB, auto-gen on save)
+    const effectiveCode = tariffForm.code || `trf_${crypto.randomUUID().slice(0, 12)}`;
     // Build data with meta field
     const { meta, ...formWithoutMeta } = tariffForm;
     const data: any = { 
-      ...formWithoutMeta, 
+      ...formWithoutMeta,
+      code: effectiveCode,
       product_id: productId!,
       meta: Object.keys(meta).length > 0 ? meta : null,
     };
@@ -247,7 +250,6 @@ export default function AdminProductDetailV2() {
       await createTariff.mutateAsync(data);
     }
     setTariffDialog({ open: false, editing: null });
-    refetchTariffs();
   };
 
   // Offer handlers
@@ -424,17 +426,14 @@ export default function AdminProductDetailV2() {
       await createOffer.mutateAsync(data);
     }
     setOfferDialog({ open: false, editing: null });
-    refetchOffers();
   };
 
   const handleToggleOfferActive = async (id: string, isActive: boolean) => {
     await updateOffer.mutateAsync({ id, is_active: isActive });
-    refetchOffers();
   };
 
   const handleUpdateOfferLabel = async (id: string, label: string) => {
     await updateOffer.mutateAsync({ id, button_label: label });
-    refetchOffers();
   };
 
   // Flow handlers
@@ -489,11 +488,9 @@ export default function AdminProductDetailV2() {
     switch (deleteConfirm.type) {
       case "tariff":
         await deleteTariff.mutateAsync(deleteConfirm.id);
-        refetchTariffs();
         break;
       case "offer":
         await deleteOffer.mutateAsync(deleteConfirm.id);
-        refetchOffers();
         break;
       case "flow":
         await deleteFlow.mutateAsync(deleteConfirm.id);
@@ -606,6 +603,7 @@ export default function AdminProductDetailV2() {
                     key={tariff.id}
                     tariff={tariff}
                     offers={getOffersForTariff(tariff.id)}
+                    productIsActive={(product as any)?.is_active ?? true}
                     onEdit={() => openTariffDialog(tariff)}
                     onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
                   />
@@ -735,34 +733,44 @@ export default function AdminProductDetailV2() {
             </div>
 
             <GlassCard className="p-8">
-              {/* Section Header */}
-              <div className="text-center mb-8">
-                <h2 className="text-3xl font-bold mb-2">
-                  {(product as any).public_title || "Тарифы"}
-                </h2>
-                <p className="text-muted-foreground">
-                  {(product as any).public_subtitle || "Выберите подходящий вариант"}
-                </p>
-              </div>
+              {/* PATCH 3: effective_active guard */}
+              {!(product as any).is_active ? (
+                <div className="py-12 text-center text-muted-foreground">
+                  <p className="text-lg font-medium">Продукт неактивен</p>
+                  <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Section Header */}
+                  <div className="text-center mb-8">
+                    <h2 className="text-3xl font-bold mb-2">
+                      {(product as any).public_title || "Тарифы"}
+                    </h2>
+                    <p className="text-muted-foreground">
+                      {(product as any).public_subtitle || "Выберите подходящий вариант"}
+                    </p>
+                  </div>
 
-              {/* Tariff Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {tariffs?.filter(t => t.is_active).map((tariff: any) => (
-                  <TariffPreviewCard
-                    key={tariff.id}
-                    tariff={tariff}
-                    features={getFeaturesForTariff(tariff.id)}
-                    offers={getOffersForTariff(tariff.id)}
-                    onSelectOffer={handlePreviewSelectOffer}
-                  />
-                ))}
-              </div>
+                  {/* Tariff Grid — unified TariffCard (PATCH 6) */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {tariffs?.filter(t => t.is_active).map((tariff: any) => (
+                      <TariffCard
+                        key={tariff.id}
+                        tariff={tariff}
+                        features={getFeaturesForTariff(tariff.id)}
+                        offers={getOffersForTariff(tariff.id)}
+                        onSelectOffer={handlePreviewSelectOffer}
+                      />
+                    ))}
+                  </div>
 
-              {/* Disclaimer */}
-              {(product as any).payment_disclaimer_text && (
-                <p className="text-center text-sm text-muted-foreground mt-8">
-                  {(product as any).payment_disclaimer_text}
-                </p>
+                  {/* Disclaimer */}
+                  {(product as any).payment_disclaimer_text && (
+                    <p className="text-center text-sm text-muted-foreground mt-8">
+                      {(product as any).payment_disclaimer_text}
+                    </p>
+                  )}
+                </>
               )}
             </GlassCard>
           </TabsContent>
@@ -783,8 +791,13 @@ export default function AdminProductDetailV2() {
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
+              {tariffDialog.editing?.public_id && (
+                <Badge variant="outline" className="font-mono text-xs">
+                  {tariffDialog.editing.public_id}
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription>
               Тариф определяет пакет доступа. Цены задаются отдельно в кнопках оплаты.
@@ -794,14 +807,6 @@ export default function AdminProductDetailV2() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Код *</Label>
-                <Input
-                  placeholder="full"
-                  value={tariffForm.code}
-                  onChange={(e) => setTariffForm({ ...tariffForm, code: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
                 <Label>Название *</Label>
                 <Input
                   placeholder="CLUB FULL"
@@ -809,9 +814,6 @@ export default function AdminProductDetailV2() {
                   onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Подзаголовок</Label>
                 <Input
@@ -820,12 +822,23 @@ export default function AdminProductDetailV2() {
                   onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Период (label)</Label>
                 <Input
                   placeholder="BYN/мес"
                   value={tariffForm.period_label}
                   onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Бейдж (на карточке)</Label>
+                <Input
+                  placeholder="Популярный"
+                  value={tariffForm.badge}
+                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
                 />
               </div>
             </div>
@@ -876,6 +889,37 @@ export default function AdminProductDetailV2() {
                 <Label>Активен</Label>
               </div>
             </div>
+
+            {/* Advanced Settings (PATCH 2+9) */}
+            <Collapsible>
+              <CollapsibleTrigger className="w-full flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer hover:bg-muted/50 border border-border/50 group">
+                <span className="text-sm text-muted-foreground group-hover:text-foreground">Расширенные настройки</span>
+                <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Код (авто)</Label>
+                    <Input
+                      value={tariffForm.code || (tariffDialog.editing ? tariffDialog.editing.code : "")}
+                      disabled
+                      className="bg-muted font-mono text-xs"
+                      placeholder="Сгенерируется автоматически"
+                    />
+                  </div>
+                  {tariffDialog.editing?.public_id && (
+                    <div className="space-y-2">
+                      <Label>Public ID</Label>
+                      <Input
+                        value={tariffDialog.editing.public_id}
+                        disabled
+                        className="bg-muted font-mono text-xs"
+                      />
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* Features Editor */}
             {tariffDialog.editing && (

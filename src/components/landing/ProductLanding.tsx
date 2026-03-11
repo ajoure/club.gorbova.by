@@ -2,11 +2,11 @@ import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { GlassCard } from "@/components/ui/GlassCard";
 import { AnimatedSection } from "./AnimatedSection";
+import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { useAuth } from "@/contexts/AuthContext";
-import { Check, Zap, Clock, ChevronRight, Shield } from "lucide-react";
+import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
 interface ProductLandingProps {
@@ -14,126 +14,6 @@ interface ProductLandingProps {
   header?: React.ReactNode;
   footer?: React.ReactNode;
   customSections?: React.ReactNode;
-}
-
-function TariffCard({ 
-  tariff, 
-  onSelectOffer,
-  showBadges = true,
-}: { 
-  tariff: PublicTariff;
-  onSelectOffer: (offer: TariffOffer, tariff: PublicTariff) => void;
-  showBadges?: boolean;
-}) {
-  // Show ALL active offers, sorted by sort_order
-  const payNowOffers = tariff.offers?.filter(o => o.offer_type === "pay_now") || [];
-  const trialOffers = tariff.offers?.filter(o => o.offer_type === "trial") || [];
-  
-  // Get primary offer for price display
-  const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
-  const displayPrice = tariff.current_price ?? tariff.base_price ?? primaryOffer?.amount ?? 0;
-  
-  const visibleFeatures = tariff.features?.filter(f => {
-    if (f.visibility_mode === "always") return true;
-    const now = new Date();
-    if (f.visibility_mode === "until_date" && f.active_to) {
-      return now <= new Date(f.active_to);
-    }
-    if (f.visibility_mode === "date_range") {
-      const from = f.active_from ? new Date(f.active_from) : null;
-      const to = f.active_to ? new Date(f.active_to) : null;
-      if (from && now < from) return false;
-      if (to && now > to) return false;
-      return true;
-    }
-    return true;
-  }) || [];
-
-  return (
-    <GlassCard 
-      className={`p-6 relative flex flex-col h-full ${tariff.is_popular ? 'border-primary/50 ring-2 ring-primary/20' : ''}`}
-    >
-      {showBadges && tariff.is_popular && (
-        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground">
-          Популярный
-        </Badge>
-      )}
-      
-      {showBadges && tariff.badge && !tariff.is_popular && (
-        <Badge variant="secondary" className="absolute -top-3 left-1/2 -translate-x-1/2">
-          {tariff.badge}
-        </Badge>
-      )}
-
-      <div className="text-center mb-4">
-        <div className={`w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center ${tariff.is_popular ? 'bg-primary/20' : 'bg-muted'}`}>
-          {tariff.is_popular ? <Zap className="text-primary" size={24} /> : <Clock className="text-muted-foreground" size={24} />}
-        </div>
-        <h3 className="text-xl font-bold text-foreground">{tariff.name}</h3>
-        {tariff.subtitle && (
-          <p className="text-sm text-muted-foreground mt-1">{tariff.subtitle}</p>
-        )}
-      </div>
-
-      <div className="text-center mb-4">
-        {tariff.discount_percent && tariff.base_price && (
-          <div className="text-sm text-muted-foreground line-through">
-            {tariff.base_price} BYN
-          </div>
-        )}
-        <div className="text-3xl font-bold text-foreground">
-          {displayPrice} <span className="text-base font-normal text-muted-foreground">{tariff.period_label || "BYN"}</span>
-        </div>
-        {tariff.discount_percent && (
-          <Badge variant="destructive" className="mt-1">
-            -{tariff.discount_percent}%
-          </Badge>
-        )}
-      </div>
-
-      {visibleFeatures.length > 0 && (
-        <ul className="space-y-2 mb-6 flex-1">
-          {visibleFeatures.map((feature) => (
-            <li key={feature.id} className={`flex items-start gap-2 text-sm ${feature.is_highlighted ? 'text-primary font-medium' : 'text-foreground'}`}>
-              <Check size={16} className={`mt-0.5 flex-shrink-0 ${feature.is_highlighted ? 'text-primary' : 'text-primary/70'}`} />
-              <span>
-                {feature.text}
-                {feature.is_bonus && (
-                  <Badge variant="secondary" className="ml-2 text-xs">Бонус</Badge>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="space-y-2 mt-auto">
-        {/* All trial offers */}
-        {trialOffers.map((offer) => (
-          <Button 
-            key={offer.id}
-            onClick={() => onSelectOffer(offer, tariff)}
-            variant="outline"
-            className="w-full"
-          >
-            {offer.button_label || `Пробный период ${offer.trial_days} дней`}
-          </Button>
-        ))}
-        {/* All pay_now offers */}
-        {payNowOffers.map((offer, index) => (
-          <Button 
-            key={offer.id}
-            onClick={() => onSelectOffer(offer, tariff)}
-            variant={tariff.is_popular && index === 0 ? "default" : "outline"}
-            className="w-full"
-          >
-            {offer.button_label || "Оплатить"}
-            <ChevronRight className="ml-2 h-4 w-4" />
-          </Button>
-        ))}
-      </div>
-    </GlassCard>
-  );
 }
 
 export function ProductLanding({ data, header, footer, customSections }: ProductLandingProps) {
