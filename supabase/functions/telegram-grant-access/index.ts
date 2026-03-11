@@ -696,79 +696,108 @@ Deno.serve(async (req) => {
               media?: { type?: string; storage_path?: string };
             } | undefined;
             
-            // 1. Send TARIFF welcome message if configured
-            if (welcomeMessage?.enabled) {
-              // Send media first if present
-              if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
-                await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
-              }
-              
-              // Send text with optional button
-              if (welcomeMessage.text) {
-                const keyboard = welcomeMessage.button?.enabled && welcomeMessage.button.url ? {
-                  inline_keyboard: [[{
-                    text: welcomeMessage.button.text || 'Открыть',
-                    url: welcomeMessage.button.url,
-                  }]]
-                } : undefined;
+            // PATCH 5: offer-first → tariff-fallback → GC link, never two, idempotency
+            // 0. Idempotency check: skip if welcome already sent for this source_id
+            const { data: existingWelcome } = await supabase
+              .from('audit_logs')
+              .select('id')
+              .eq('action', 'telegram_welcome_sent')
+              .eq('meta->>source_id', source_id)
+              .limit(1)
+              .maybeSingle();
+
+            if (existingWelcome) {
+              console.log(`[telegram-grant-access] Welcome already sent for source_id=${source_id}, skipping`);
+            } else {
+              let welcomeSent = false;
+              let welcomeType = '';
+
+              // 1. OFFER welcome (priority) — only if offerId exists
+              if (!welcomeSent && offerId) {
+                const { data: offerData } = await supabase
+                  .from('tariff_offers')
+                  .select('meta')
+                  .eq('id', offerId)
+                  .maybeSingle();
                 
-                await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
-                console.log('Sent tariff welcome message to user', telegramUserId);
-              }
-            }
-            
-            // 2. Send OFFER welcome message if configured (additional message)
-            let offerWelcomeEnabled = false;
-            if (offerId) {
-              const { data: offerData } = await supabase
-                .from('tariff_offers')
-                .select('meta')
-                .eq('id', offerId)
-                .maybeSingle();
-              
-              const offerMeta = offerData?.meta as Record<string, unknown> | null;
-              const offerWelcomeMessage = offerMeta?.welcome_message as {
-                enabled?: boolean;
-                text?: string;
-                button?: { enabled?: boolean; text?: string; url?: string };
-                media?: { type?: string; storage_path?: string };
-              } | undefined;
-              
-              offerWelcomeEnabled = !!offerWelcomeMessage?.enabled;
-              
-              if (offerWelcomeMessage?.enabled) {
-                // Send offer media first if present
-                if (offerWelcomeMessage.media?.type && offerWelcomeMessage.media?.storage_path) {
-                  await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                const offerMeta = offerData?.meta as Record<string, unknown> | null;
+                const offerWelcomeMessage = offerMeta?.welcome_message as {
+                  enabled?: boolean;
+                  text?: string;
+                  button?: { enabled?: boolean; text?: string; url?: string };
+                  media?: { type?: string; storage_path?: string };
+                } | undefined;
+                
+                if (offerWelcomeMessage?.enabled) {
+                  // Send offer media first if present
+                  if (offerWelcomeMessage.media?.type && offerWelcomeMessage.media?.storage_path) {
+                    await sendTariffMedia(supabase, botToken, telegramUserId, offerWelcomeMessage.media);
+                  }
+                  // Send offer text with optional button
+                  if (offerWelcomeMessage.text) {
+                    const keyboard = offerWelcomeMessage.button?.enabled && offerWelcomeMessage.button.url ? {
+                      inline_keyboard: [[{
+                        text: offerWelcomeMessage.button.text || 'Открыть',
+                        url: offerWelcomeMessage.button.url,
+                      }]]
+                    } : undefined;
+                    await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
+                  }
+                  welcomeSent = true;
+                  welcomeType = 'offer';
+                  console.log(`[telegram-grant-access] Sent OFFER welcome for offer ${offerId}`);
                 }
-                
-                // Send offer text with optional button
-                if (offerWelcomeMessage.text) {
-                  const keyboard = offerWelcomeMessage.button?.enabled && offerWelcomeMessage.button.url ? {
+              }
+
+              // 2. TARIFF welcome (fallback) — only if offer didn't send
+              if (!welcomeSent && welcomeMessage?.enabled) {
+                if (welcomeMessage.media?.type && welcomeMessage.media?.storage_path) {
+                  await sendTariffMedia(supabase, botToken, telegramUserId, welcomeMessage.media);
+                }
+                if (welcomeMessage.text) {
+                  const keyboard = welcomeMessage.button?.enabled && welcomeMessage.button.url ? {
                     inline_keyboard: [[{
-                      text: offerWelcomeMessage.button.text || 'Открыть',
-                      url: offerWelcomeMessage.button.url,
+                      text: welcomeMessage.button.text || 'Открыть',
+                      url: welcomeMessage.button.url,
                     }]]
                   } : undefined;
-                  
-                  await sendMessage(botToken, telegramUserId, offerWelcomeMessage.text, keyboard);
-                  console.log('Sent offer welcome message to user', telegramUserId);
+                  await sendMessage(botToken, telegramUserId, welcomeMessage.text, keyboard);
+                }
+                welcomeSent = true;
+                welcomeType = 'tariff';
+                console.log(`[telegram-grant-access] Sent TARIFF welcome (fallback) for tariff ${orderInfo.tariff_id}`);
+              }
+
+              // 3. GC link (last resort) — only if nothing sent
+              const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
+              const getcourseOfferId = tariffData?.getcourse_offer_id;
+              if (!welcomeSent && (getcourseOfferId || gcUrl)) {
+                const gcMessage = 
+                  `📚 Материалы доступны на GetCourse.\n\n` +
+                  `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
+                  (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
+                await sendMessage(botToken, telegramUserId, gcMessage);
+                welcomeSent = true;
+                welcomeType = 'gc_link';
+                console.log(`[telegram-grant-access] Sent GC link (no welcome configured)`);
+              }
+
+              // 4. Log idempotency record
+              if (welcomeSent) {
+                try {
+                  await supabase.from('audit_logs').insert({
+                    action: 'telegram_welcome_sent',
+                    actor_type: 'system',
+                    actor_user_id: null,
+                    actor_label: 'telegram-grant-access',
+                    target_user_id: user_id,
+                    meta: { source_id, welcome_type: welcomeType, offer_id: offerId || null, tariff_id: orderInfo.tariff_id },
+                    created_at: new Date().toISOString(),
+                  });
+                } catch (auditErr) {
+                  console.error('[telegram-grant-access] Failed to log welcome audit:', auditErr);
                 }
               }
-            }
-            
-            // Send GetCourse link ONLY if NEITHER tariff NOR offer have welcome messages enabled
-            const gcUrl = tariffMeta?.getcourse_lesson_url as string | undefined;
-            const getcourseOfferId = tariffData?.getcourse_offer_id;
-            
-            if (!welcomeMessage?.enabled && !offerWelcomeEnabled && (getcourseOfferId || gcUrl)) {
-              const gcMessage = 
-                `📚 Материалы доступны на GetCourse.\n\n` +
-                `Письмо с доступом придёт на email в течение ~5 минут.\n\n` +
-                (gcUrl ? `Ссылка: ${gcUrl}` : 'https://gorbova.getcourse.ru/teach');
-              
-              await sendMessage(botToken, telegramUserId, gcMessage);
-              console.log('Sent GetCourse link message to user', telegramUserId);
             }
           }
         } catch (gcError) {
