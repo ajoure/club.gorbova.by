@@ -177,6 +177,7 @@ export function useBulkUpdateTariffFeatures() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariff-features"] });
       queryClient.invalidateQueries({ queryKey: ["product-tariff-features"] });
+      queryClient.invalidateQueries({ queryKey: ["preview-tariff-features"] });
     },
   });
 }
