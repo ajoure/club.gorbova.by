@@ -787,11 +787,7 @@ export default function AdminProductDetailV2() {
 
       {/* Tariff Dialog — Glass UI */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-none border-border/30" style={{
-          background: "linear-gradient(135deg, hsl(var(--card) / 0.85), hsl(var(--card) / 0.6))",
-          backdropFilter: "blur(24px)",
-          WebkitBackdropFilter: "blur(24px)",
-        }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-none bg-card border-border/40">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 flex-wrap">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
@@ -817,7 +813,7 @@ export default function AdminProductDetailV2() {
 
           <div className="space-y-5">
             {/* Section A — Основное */}
-            <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-4">
+            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
               <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Основное</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -860,7 +856,7 @@ export default function AdminProductDetailV2() {
             </div>
 
             {/* Section B — Карточка на сайте */}
-            <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-4">
+            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
               <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Карточка на сайте</h4>
               <div className="space-y-2">
                 <Label>Бейдж</Label>
@@ -899,14 +895,14 @@ export default function AdminProductDetailV2() {
 
             {/* Section C — Преимущества (edit mode only) */}
             {tariffDialog.editing && (
-              <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-3">
+              <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-3">
                 <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Преимущества</h4>
                 <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
               </div>
             )}
           </div>
 
-          <DialogFooter className="sticky bottom-0 pt-4 border-t border-border/20 bg-transparent backdrop-blur-sm">
+          <DialogFooter className="pt-4 border-t border-border/40">
             <Button variant="outline" onClick={() => setTariffDialog({ open: false, editing: null })}>
               Отмена
             </Button>
