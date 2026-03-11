@@ -1698,6 +1698,7 @@ export default function AdminProductDetailV2() {
               {offerDialog.editing ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
