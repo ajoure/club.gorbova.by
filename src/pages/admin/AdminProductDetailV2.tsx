@@ -815,92 +815,106 @@ export default function AdminProductDetailV2() {
 
           <div className="space-y-5">
             {/* Section A — Основное */}
-            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
-              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Основное</h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Название *</Label>
-                  <Input
-                    placeholder="CLUB FULL"
-                    value={tariffForm.name}
-                    onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
-                  />
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Название *</Label>
+                    <Input
+                      placeholder="CLUB FULL"
+                      value={tariffForm.name}
+                      onChange={(e) => setTariffForm({ ...tariffForm, name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Подзаголовок</Label>
+                    <Input
+                      placeholder="Самый популярный"
+                      value={tariffForm.subtitle}
+                      onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Подзаголовок</Label>
-                  <Input
-                    placeholder="Самый популярный"
-                    value={tariffForm.subtitle}
-                    onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
-                  />
+                <Separator />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Срок доступа (дней)</Label>
+                    <Input
+                      type="number"
+                      value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
+                      onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                      onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
+                      min={1}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Период (label)</Label>
+                    <Input
+                      placeholder="BYN/мес"
+                      value={tariffForm.period_label}
+                      onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Срок доступа (дней)</Label>
-                  <Input
-                    type="number"
-                    value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
-                    onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                    onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
-                    min={1}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Период (label)</Label>
-                  <Input
-                    placeholder="BYN/мес"
-                    value={tariffForm.period_label}
-                    onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
-                  />
-                </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* Section B — Карточка на сайте */}
-            <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-4">
-              <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Карточка на сайте</h4>
-              <div className="space-y-2">
-                <Label>Бейдж</Label>
-                <Input
-                  placeholder="Популярный"
-                  value={tariffForm.badge}
-                  onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Описание</Label>
-                <Textarea
-                  value={tariffForm.description}
-                  onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
-                  rows={3}
-                  className="resize-none"
-                />
-              </div>
-              <div className="flex items-center gap-6">
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={tariffForm.is_popular}
-                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Карточка на сайте</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Бейдж</Label>
+                  <Input
+                    placeholder="Популярный"
+                    value={tariffForm.badge}
+                    onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
                   />
-                  <Label>Популярный</Label>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={tariffForm.is_active}
-                    onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                <div className="space-y-2">
+                  <Label>Описание</Label>
+                  <Textarea
+                    value={tariffForm.description}
+                    onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
+                    rows={3}
+                    className="resize-none"
                   />
-                  <Label>Активен</Label>
                 </div>
-              </div>
-            </div>
+                <Separator />
+                <div className="flex items-center gap-6">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_popular}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
+                    />
+                    <Label>Популярный</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.is_active}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
+                    />
+                    <Label>Активен</Label>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Section C — Преимущества (edit mode only) */}
             {tariffDialog.editing && (
-              <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-3">
-                <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Преимущества</h4>
-                <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
-              </div>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Преимущества</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
+                </CardContent>
+              </Card>
             )}
           </div>
 
