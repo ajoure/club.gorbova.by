@@ -444,7 +444,7 @@ export default function AdminProductsV2() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANTS[product.status] || "outline"} className="text-[11px]">
+                        <Badge variant="outline" className={cn("text-[11px]", getStatusBadgeClass((product.status as StatusBadgeKind) || "inactive"))}>
                           {STATUS_LABELS[product.status] || product.status}
                         </Badge>
                       </TableCell>
