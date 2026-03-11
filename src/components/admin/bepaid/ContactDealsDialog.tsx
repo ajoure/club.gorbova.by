@@ -132,8 +132,8 @@ export default function ContactDealsDialog({
   };
 
   const handleDealDetailClosed = (isOpen: boolean) => {
-    setDealDetailOpen(isOpen);
     if (!isOpen) {
+      setSelectedDealId(null);
       refetch();
       queryClient.invalidateQueries({ queryKey: ["bepaid-queue"] });
       onDealUpdated?.();

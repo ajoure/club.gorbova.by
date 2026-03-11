@@ -3184,7 +3184,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           deal={dealToEdit}
           open={editDealOpen}
           onOpenChange={setEditDealOpen}
-          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.user_id] })}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ["contact-deals"] })}
         />
 
         {/* Compose Email Dialog */}
