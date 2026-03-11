@@ -213,6 +213,7 @@ Deno.serve(async (req) => {
           public_subtitle: product.public_subtitle,
           payment_disclaimer_text: product.payment_disclaimer_text,
           primary_domain: product.primary_domain || null,
+          telegram_club_id: product.telegram_club_id || null,
           landing_config: product.landing_config || {
             tariffs_title: "Тариф",
             tariffs_subtitle: "",
