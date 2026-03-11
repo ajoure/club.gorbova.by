@@ -3163,6 +3163,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
             })()}
             onSuccess={() => {
               queryClient.invalidateQueries({ queryKey: ["contact-deals"] });
+              queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+              queryClient.invalidateQueries({ queryKey: ["deal-payments"] });
               setRefundDealId(null);
             }}
           />
