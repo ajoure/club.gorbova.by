@@ -185,8 +185,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     to: addDays(new Date(), 30),
   });
   const [grantComment, setGrantComment] = useState("");
-  const [selectedDeal, setSelectedDeal] = useState<any>(null);
-  const [dealSheetOpen, setDealSheetOpen] = useState(false);
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const dealSheetOpen = !!selectedDealId;
   const [refundDialogOpen, setRefundDialogOpen] = useState(false);
   const [refundDeal, setRefundDeal] = useState<any>(null);
   const [historySheetOpen, setHistorySheetOpen] = useState(false);
