@@ -401,12 +401,7 @@ export default function AdminProductsV2() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-2">
-                            {product.public_id && (
-                              <CopyableIdChip value={product.public_id} />
-                            )}
-                            <span className="font-medium text-sm">{product.name}</span>
-                          </div>
+                          <span className="font-medium text-sm">{product.name}</span>
                           {isParent && (
                             <TooltipProvider>
                               <Tooltip>
