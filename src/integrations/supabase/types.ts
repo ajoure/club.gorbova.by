@@ -7679,7 +7679,7 @@ export type Database = {
           period_label?: string | null
           price_monthly?: number | null
           product_id: string
-          public_id: string
+          public_id?: string
           sort_order?: number | null
           subtitle?: string | null
           trial_auto_charge?: boolean | null
