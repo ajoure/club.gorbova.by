@@ -6,9 +6,11 @@
 ### PATCH 1: public_id для тарифов ✅
 - DB migration: `public_id_sequences` (entity_type='tariff', prefix='T'), trigger `set_tariff_public_id`, backfill 11 tariffs (T-000001..T-000011), NOT NULL + unique index
 - FIX: trigger обновлён на `IF NEW.public_id IS NULL OR NEW.public_id = '' THEN` — ловит и NULL, и пустую строку
-- DEFAULT '' оставлен для TypeScript типов (trigger перезапишет на INSERT)
+- DEFAULT `''` оставлен для совместимости с TypeScript Insert-типами (trigger перезапишет на INSERT)
 - UI: badge `T-000xxx` в `TariffCardCompact.tsx` + read-only в диалоге редактирования
-- DoD-пруфы: total=11, with_pid=11, non_empty=11; 0 дублей; column_default='', nullable=NO
+- Build ✅, есть runtime warning: `forwardRef` в `DialogFooter` (косметический, не блокирует)
+- DoD-пруфы: total=11, with_pid=11, non_empty=11, empty_cnt=0; 0 дублей; column_default=`''`, nullable=NO
+- **BACKLOG:** future PATCH "Types regen + DROP DEFAULT" — после регена типов и проверки всех insert-путей убрать DEFAULT `''`
 
 ### PATCH 2: Code — скрыть из формы, автогенерировать ✅
 - STOP-guard: `tariff.code` остаётся NOT NULL, 10+ точек используют `.eq("code", tariffCode)`. Никаких попыток перейти на tariff_id
