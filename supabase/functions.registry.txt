@@ -34,6 +34,7 @@ integration-sync
 payment-method-verify-recurring
 payment-methods-tokenize
 public-product
+public-product-by-slug
 send-email
 email-mass-broadcast
 getcourse-sync

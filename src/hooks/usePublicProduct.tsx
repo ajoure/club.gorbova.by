@@ -143,10 +143,49 @@ export function usePublicProduct(domain: string | null, userId?: string | null) 
   });
 }
 
+// Extended product type for slug-based lookup (includes primary_domain for banner)
+export interface PublicProductBySlug extends PublicProduct {
+  primary_domain?: string | null;
+}
+
+export interface PublicProductBySlugData extends Omit<PublicProductData, 'product'> {
+  product: PublicProductBySlug;
+}
+
+export function usePublicProductBySlug(slug: string | null, userId?: string | null) {
+  return useQuery({
+    queryKey: ["public-product-by-slug", slug, userId],
+    queryFn: async (): Promise<PublicProductBySlugData | null> => {
+      if (!slug) return null;
+
+      let fetchUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product-by-slug?slug=${encodeURIComponent(slug)}`;
+      if (userId) {
+        fetchUrl += `&user_id=${encodeURIComponent(userId)}`;
+      }
+
+      const response = await fetch(fetchUrl, {
+        headers: {
+          "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new Error("Failed to fetch product by slug");
+      }
+
+      return response.json();
+    },
+    enabled: !!slug,
+    staleTime: 1000 * 60 * 5,
+    retry: false,
+  });
+}
+
 // Helper to get current domain
 export function getCurrentDomain(): string {
   const hostname = window.location.hostname;
-  // For localhost, return a test domain or empty
   if (hostname === "localhost" || hostname === "127.0.0.1") {
     return "";
   }

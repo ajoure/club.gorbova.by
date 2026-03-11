@@ -202,7 +202,7 @@ export function TariffWelcomeMessageEditor({
             <div>
               <Label>Отправлять персональное сообщение</Label>
               <p className="text-xs text-muted-foreground">
-                Кастомный текст, кнопки и медиа после оплаты
+                По умолчанию — если на кнопке оплаты не задано своё сообщение
               </p>
             </div>
             <Switch
