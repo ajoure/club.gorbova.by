@@ -927,6 +927,7 @@ export default function AdminProductDetailV2() {
               {tariffDialog.editing ? "Сохранить" : "Создать"}
             </Button>
           </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
