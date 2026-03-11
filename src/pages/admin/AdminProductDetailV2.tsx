@@ -895,7 +895,7 @@ export default function AdminProductDetailV2() {
 
             {/* Section C — Преимущества (edit mode only) */}
             {tariffDialog.editing && (
-              <div className="rounded-xl bg-muted/30 border border-border/20 p-4 space-y-3">
+              <div className="rounded-xl bg-muted/50 border border-border/40 p-4 space-y-3">
                 <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Преимущества</h4>
                 <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
               </div>
