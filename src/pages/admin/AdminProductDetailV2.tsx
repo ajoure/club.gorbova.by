@@ -1168,7 +1168,16 @@ export default function AdminProductDetailV2() {
                     />
                   </div>
                 </div>
-                <Separator />
+              </CardContent>
+            </Card>
+
+            {/* Section — Доступ */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-muted-foreground">Доступ</CardTitle>
+                <p className="text-xs text-destructive/80">⚠ Влияет на выдачу доступа и продление подписки</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Срок доступа (дней)</Label>
@@ -1181,7 +1190,7 @@ export default function AdminProductDetailV2() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Период</Label>
+                    <Label className="text-muted-foreground">Период <span className="text-xs">(legacy, не отображается на сайте)</span></Label>
                     <Input
                       placeholder="BYN/мес"
                       value={tariffForm.period_label}
