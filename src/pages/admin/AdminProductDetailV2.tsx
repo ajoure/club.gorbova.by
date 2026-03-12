@@ -674,14 +674,14 @@ export default function AdminProductDetailV2() {
 
           {/* Flows Tab */}
           <TabsContent value="flows" className="space-y-4 mt-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Потоки</h2>
                 <p className="text-sm text-muted-foreground">
                   Потоки для запуска продукта в разное время
                 </p>
               </div>
-              <Button onClick={() => openFlowDialog()}>
+              <Button onClick={() => openFlowDialog()} className="w-full sm:w-auto">
                 <Plus className="h-4 w-4 mr-2" />
                 Добавить поток
               </Button>
