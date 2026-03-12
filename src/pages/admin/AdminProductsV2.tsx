@@ -196,41 +196,6 @@ function ProductCard({
   );
 }
 
-/* ── Sort Pill Button ── */
-function SortPill({
-  label,
-  sortKey: pillKey,
-  currentSortKey,
-  currentSortDirection,
-  onSort,
-}: {
-  label: string;
-  sortKey: string;
-  currentSortKey: string | null;
-  currentSortDirection: SortDirection;
-  onSort: (key: string) => void;
-}) {
-  const isActive = currentSortKey === pillKey;
-  return (
-    <button
-      onClick={() => onSort(pillKey)}
-      className={cn(
-        "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-        isActive
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-      )}
-    >
-      {label}
-      {isActive ? (
-        currentSortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
-      ) : (
-        <ArrowUpDown className="h-3 w-3 opacity-50" />
-      )}
-    </button>
-  );
-}
-
 const defaultFormData: ProductFormData = {
   name: "",
   description: "",
