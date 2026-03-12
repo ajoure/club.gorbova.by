@@ -8,6 +8,9 @@ import { Loader2, ExternalLink } from "lucide-react";
 export default function ProductPricing() {
   const { productSlug } = useParams<{ productSlug: string }>();
   const { user } = useAuth();
+  
+  // EF public-product-by-slug supports both slug and PRD- public_id lookup
+  // via .or(`slug.eq.${slug},public_id.eq.${slug}`)
   const { data, isLoading, error } = usePublicProductBySlug(productSlug || null, user?.id);
 
   if (isLoading) {
@@ -35,7 +38,6 @@ export default function ProductPricing() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* PATCH 8: Banner when primary_domain exists */}
       {primaryDomain && (
         <div className="bg-primary/10 border-b border-primary/20 py-2 px-4 text-center">
           <a
