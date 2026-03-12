@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -17,8 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { 
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree
+import {
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X
 } from "lucide-react";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
@@ -27,6 +28,10 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
+import { SelectionBox } from "@/components/admin/SelectionBox";
+import { SortPill } from "@/components/admin/SortPill";
+import { useTableSort } from "@/hooks/useTableSort";
+import { useDragSelect } from "@/hooks/useDragSelect";
 import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
 import { OfferWelcomeMessageEditor } from "@/components/admin/product/OfferWelcomeMessageEditor";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
@@ -790,7 +795,7 @@ export default function AdminProductDetailV2() {
       {/* Tariff Dialog — Glass UI */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
         <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background border-border/40">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 flex-wrap">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
@@ -934,7 +939,7 @@ export default function AdminProductDetailV2() {
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
         <DialogContent className="max-w-lg w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader className="pr-8">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
@@ -1705,7 +1710,7 @@ export default function AdminProductDetailV2() {
       {/* Flow Dialog */}
       <Dialog open={flowDialog.open} onOpenChange={(open) => setFlowDialog({ ...flowDialog, open })}>
         <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               {flowDialog.editing ? "Редактировать поток" : "Новый поток"}

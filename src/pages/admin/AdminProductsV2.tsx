@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
@@ -26,9 +26,9 @@ import { useProductReadiness } from "@/hooks/useProductReadiness";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { cn } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { SortPill } from "@/components/admin/SortPill";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import type { StatusBadgeKind } from "@/utils/badgeUtils";
-import type { SortDirection } from "@/components/ui/sortable-table-head";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
@@ -193,41 +193,6 @@ function ProductCard({
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
     </div>
-  );
-}
-
-/* ── Sort Pill Button ── */
-function SortPill({
-  label,
-  sortKey: pillKey,
-  currentSortKey,
-  currentSortDirection,
-  onSort,
-}: {
-  label: string;
-  sortKey: string;
-  currentSortKey: string | null;
-  currentSortDirection: SortDirection;
-  onSort: (key: string) => void;
-}) {
-  const isActive = currentSortKey === pillKey;
-  return (
-    <button
-      onClick={() => onSort(pillKey)}
-      className={cn(
-        "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-        isActive
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-      )}
-    >
-      {label}
-      {isActive ? (
-        currentSortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
-      ) : (
-        <ArrowUpDown className="h-3 w-3 opacity-50" />
-      )}
-    </button>
   );
 }
 
@@ -652,7 +617,7 @@ export default function AdminProductsV2() {
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               {editingProduct ? "Редактировать продукт" : "Новый продукт"}
