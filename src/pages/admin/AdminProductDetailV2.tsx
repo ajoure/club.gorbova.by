@@ -106,6 +106,85 @@ export default function AdminProductDetailV2() {
   const [offerDialog, setOfferDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [flowDialog, setFlowDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{ type: "tariff" | "offer" | "flow"; ids: string[] } | null>(null);
+
+  // === Sorting (client-side, in-memory) ===
+  const tariffSort = useTableSort<any>({ data: tariffs || [] });
+  const offerSort = useTableSort<any>({ data: offers || [] });
+  const flowSort = useTableSort<any>({ data: flows || [] });
+
+  // Client sort helper
+  const clientSort = useCallback((items: any[], sortKey: string | null, sortDir: "asc" | "desc" | null) => {
+    if (!sortKey || !sortDir) return items;
+    return [...items].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "name" || sortKey === "code") {
+        cmp = String(a[sortKey] || "").localeCompare(String(b[sortKey] || ""), "ru");
+      } else if (sortKey === "is_active") {
+        cmp = (a.is_active === b.is_active) ? 0 : a.is_active ? -1 : 1;
+      } else if (sortKey === "amount") {
+        cmp = (a.amount ?? 0) - (b.amount ?? 0);
+      } else if (sortKey === "offer_type") {
+        const order: Record<string, number> = { pay_now: 0, trial: 1, preregistration: 2 };
+        cmp = (order[a.offer_type] ?? 9) - (order[b.offer_type] ?? 9);
+      } else if (sortKey === "start_date") {
+        const aD = a.start_date ? new Date(a.start_date).getTime() : Infinity;
+        const bD = b.start_date ? new Date(b.start_date).getTime() : Infinity;
+        cmp = aD - bD;
+      }
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+  }, []);
+
+  // Sorted arrays
+  const sortedTariffs = useMemo(() => clientSort(tariffs || [], tariffSort.sortKey, tariffSort.sortDirection), [tariffs, tariffSort.sortKey, tariffSort.sortDirection, clientSort]);
+  const sortedFlows = useMemo(() => clientSort(flows || [], flowSort.sortKey, flowSort.sortDirection), [flows, flowSort.sortKey, flowSort.sortDirection, clientSort]);
+  // allOffers flat for selection/bulk (sorted offers used inside groups for UI)
+  const allOffers = useMemo(() => offers ?? [], [offers]);
+
+  // === Selection (3 independent stores) ===
+  const tariffSelect = useDragSelect({ items: sortedTariffs, getItemId: (t: any) => t.id });
+  const offerSelect = useDragSelect({ items: allOffers, getItemId: (o: any) => o.id });
+  const flowSelect = useDragSelect({ items: sortedFlows, getItemId: (f: any) => f.id });
+
+  // === Bulk action handlers ===
+  const handleBulkActivate = useCallback(async (type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    const mutate = type === "tariff" ? updateTariff : type === "offer" ? updateOffer : updateFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync({ id, is_active: true })));
+    select.clearSelection();
+    toast.success(`Активировано: ${ids.length}`);
+  }, [tariffSelect, offerSelect, flowSelect, updateTariff, updateOffer, updateFlow]);
+
+  const handleBulkDeactivate = useCallback(async (type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    const mutate = type === "tariff" ? updateTariff : type === "offer" ? updateOffer : updateFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync({ id, is_active: false })));
+    select.clearSelection();
+    toast.success(`Деактивировано: ${ids.length}`);
+  }, [tariffSelect, offerSelect, flowSelect, updateTariff, updateOffer, updateFlow]);
+
+  const handleBulkDeleteStart = useCallback((type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    setBulkDeleteConfirm({ type, ids });
+  }, [tariffSelect, offerSelect, flowSelect]);
+
+  const handleBulkDeleteConfirm = useCallback(async () => {
+    if (!bulkDeleteConfirm) return;
+    const { type, ids } = bulkDeleteConfirm;
+    const mutate = type === "tariff" ? deleteTariff : type === "offer" ? deleteOffer : deleteFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync(id)));
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    select.clearSelection();
+    setBulkDeleteConfirm(null);
+    toast.success(`Удалено: ${ids.length}`);
+  }, [bulkDeleteConfirm, deleteTariff, deleteOffer, deleteFlow, tariffSelect, offerSelect, flowSelect]);
   
   // Payment dialog state for preview
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
