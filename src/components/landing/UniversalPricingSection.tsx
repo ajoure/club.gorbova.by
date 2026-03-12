@@ -56,8 +56,11 @@ export function UniversalPricingSection({
         if (offer) {
           setSelectedOffer({ offer, tariff, productId: product.id });
           setPaymentOpen(true);
-          searchParams.delete("offer");
-          setSearchParams(searchParams, { replace: true });
+          setSearchParams(prev => {
+            const p = new URLSearchParams(prev);
+            p.delete("offer");
+            return p;
+          }, { replace: true });
           break;
         }
       }
