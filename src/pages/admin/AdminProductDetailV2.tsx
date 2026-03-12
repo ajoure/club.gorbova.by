@@ -300,8 +300,8 @@ export default function AdminProductDetailV2() {
   // Tariff handlers
   const openTariffDialog = (tariff?: any) => {
     if (tariff) {
-      // Parse meta from tariff
       const meta = (tariff.meta || {}) as TariffMetaConfig;
+      const cc = (meta as any).card_config as CardConfig | undefined;
       setTariffForm({
         code: tariff.code,
         name: tariff.name,
@@ -313,6 +313,13 @@ export default function AdminProductDetailV2() {
         access_days: tariff.access_days,
         is_active: tariff.is_active,
         meta,
+        cc_price_display: cc?.price_display ?? null,
+        cc_old_price: cc?.old_price ?? tariff.original_price ?? null,
+        cc_price_suffix: cc?.price_suffix || "BYN",
+        cc_cta_text: cc?.cta_text || "",
+        cc_footnote: cc?.footnote || "",
+        cc_is_highlighted: cc?.is_highlighted ?? tariff.is_popular ?? false,
+        cc_style_variant: cc?.style_variant || "default",
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -327,6 +334,13 @@ export default function AdminProductDetailV2() {
         access_days: 30,
         is_active: true,
         meta: {},
+        cc_price_display: null,
+        cc_old_price: null,
+        cc_price_suffix: "BYN",
+        cc_cta_text: "",
+        cc_footnote: "",
+        cc_is_highlighted: false,
+        cc_style_variant: "default",
       });
       setTariffDialog({ open: true, editing: null });
     }
