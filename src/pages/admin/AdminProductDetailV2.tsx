@@ -1430,7 +1430,7 @@ export default function AdminProductDetailV2() {
                         badge: tariffForm.badge || null,
                         subtitle: tariffForm.subtitle || null,
                         period_label: tariffForm.period_label,
-                        is_popular: tariffForm.cc_is_highlighted,
+                        is_popular: tariffForm.cc_style_variant === "highlighted",
                         current_price: tariffForm.cc_price_display,
                         meta: {
                           card_config: {
@@ -1438,13 +1438,13 @@ export default function AdminProductDetailV2() {
                             price_display: tariffForm.cc_price_display,
                             old_price: tariffForm.cc_old_price,
                             price_suffix: tariffForm.cc_price_suffix,
-                            cta_text: tariffForm.cc_cta_text || null,
+                            cta_text: null,
                             footnote: tariffForm.cc_footnote || null,
-                            is_highlighted: tariffForm.cc_is_highlighted,
+                            is_highlighted: tariffForm.cc_style_variant === "highlighted",
                             style_variant: tariffForm.cc_style_variant,
                           }
                         },
-                      }, (product as any)?.landing_config?.price_suffix)}
+                      }, tariffForm.cc_price_suffix || (product as any)?.landing_config?.price_suffix)}
                       features={tariffDialog.editing ? getFeaturesForTariff(tariffDialog.editing.id) : []}
                       offers={tariffDialog.editing ? getOffersForTariff(tariffDialog.editing.id) : []}
                       showButtons={!!tariffDialog.editing}
