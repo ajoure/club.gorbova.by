@@ -39,9 +39,11 @@ export function ProductLanding({ data, header, footer, customSections }: Product
         if (offer) {
           setSelectedOffer({ offer, tariff, productId: product.id });
           setPaymentOpen(true);
-          // Clear the offer param from URL
-          searchParams.delete("offer");
-          setSearchParams(searchParams, { replace: true });
+          setSearchParams(prev => {
+            const p = new URLSearchParams(prev);
+            p.delete("offer");
+            return p;
+          }, { replace: true });
           break;
         }
       }
