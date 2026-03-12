@@ -1331,7 +1331,6 @@ export default function AdminProductDetailV2() {
                           <SelectItem value="compact">Компактный</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Подпись под кнопками</Label>
