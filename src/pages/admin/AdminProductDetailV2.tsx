@@ -1315,18 +1315,8 @@ export default function AdminProductDetailV2() {
                       className="resize-y min-h-[80px]"
                     />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Текст CTA кнопки</Label>
-                      <Input
-                        placeholder="Оплатить"
-                        value={tariffForm.cc_cta_text}
-                        onChange={(e) => setTariffForm({ ...tariffForm, cc_cta_text: e.target.value })}
-                      />
-                      <p className="text-xs text-muted-foreground">Перезаписывает текст основной кнопки</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Стиль карточки</Label>
+                  <div className="space-y-2">
+                    <Label>Стиль карточки</Label>
                       <Select
                         value={tariffForm.cc_style_variant}
                         onValueChange={(v: any) => setTariffForm({ ...tariffForm, cc_style_variant: v })}
