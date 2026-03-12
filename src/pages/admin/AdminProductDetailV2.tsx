@@ -933,8 +933,8 @@ export default function AdminProductDetailV2() {
 
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
-        <DialogContent className="max-w-lg overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto scrollbar-none p-4 sm:p-6">
+        <DialogContent className="max-w-lg w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
+          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader className="pr-8">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
