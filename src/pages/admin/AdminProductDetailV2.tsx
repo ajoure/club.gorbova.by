@@ -2143,6 +2143,26 @@ export default function AdminProductDetailV2() {
         </DialogContent>
       </Dialog>
 
+      {/* Bulk Delete Confirmation */}
+      <AlertDialog open={!!bulkDeleteConfirm} onOpenChange={() => setBulkDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Удалить {bulkDeleteConfirm?.ids.length}{" "}
+              {bulkDeleteConfirm?.type === "tariff" ? "тарифов" : bulkDeleteConfirm?.type === "offer" ? "кнопок оплаты" : "потоков"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Payment Dialog for Preview Testing */}
       {selectedOfferForPayment && (
         <PaymentDialog
