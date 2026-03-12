@@ -334,9 +334,7 @@ export default function AdminProductDetailV2() {
         cc_price_display: null,
         cc_old_price: null,
         cc_price_suffix: "BYN",
-        cc_cta_text: "",
         cc_footnote: "",
-        cc_is_highlighted: false,
         cc_style_variant: "default",
       });
       setTariffDialog({ open: true, editing: null });
