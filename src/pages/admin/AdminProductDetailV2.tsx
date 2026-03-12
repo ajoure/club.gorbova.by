@@ -225,6 +225,7 @@ export default function AdminProductDetailV2() {
 
   // Preview mode for tariff dialog
   const [tariffPreviewMode, setTariffPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const isMobile = useIsMobile();
 
   // Offer form
