@@ -380,7 +380,7 @@ export default function AdminProductDetailV2() {
       ...formBase,
       code: effectiveCode,
       product_id: productId!,
-      is_popular: tariffForm.cc_is_highlighted, // backward compat mapping
+      is_popular: tariffForm.cc_style_variant === "highlighted", // backward compat mapping
       meta: Object.keys(mergedMeta).length > 0 ? mergedMeta : null,
     };
     if (tariffDialog.editing) {

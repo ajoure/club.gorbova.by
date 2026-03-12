@@ -76,8 +76,8 @@ export function buildTariffCardViewModel(
   // Resolve badge: card_config > tariff.badge
   const badge = cc?.badge_text ?? tariff.badge ?? null;
 
-  // Resolve is_popular: card_config.is_highlighted > tariff.is_popular
-  const isHighlighted = cc?.is_highlighted ?? tariff.is_popular ?? false;
+  // Resolve is_highlighted: style_variant "highlighted" > card_config.is_highlighted > tariff.is_popular (legacy fallback)
+  const isHighlighted = cc?.style_variant === "highlighted" || cc?.is_highlighted || tariff.is_popular || false;
 
   // Resolve old_price: card_config.old_price > tariff.original_price
   const oldPrice = cc?.old_price ?? (tariff as any).original_price ?? null;

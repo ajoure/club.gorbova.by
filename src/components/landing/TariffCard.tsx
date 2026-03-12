@@ -168,7 +168,7 @@ export function TariffCard({
                 {oldPrice} {resolvedSuffix}
               </div>
             )}
-            <div className="text-3xl font-bold text-foreground">
+            <div className="text-3xl font-bold text-foreground price-value">
               {displayPrice} <span className="text-base font-normal text-muted-foreground">{resolvedSuffix}</span>
             </div>
           </div>
