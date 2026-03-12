@@ -25,6 +25,8 @@ import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
+import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
+import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
