@@ -29,8 +29,10 @@ import { TariffFeaturesEditor } from "@/components/admin/TariffFeaturesEditor";
 import { TariffCardCompact } from "@/components/admin/product/TariffCardCompact";
 import { OfferRowCompact } from "@/components/admin/product/OfferRowCompact";
 import { TariffCard } from "@/components/landing/TariffCard";
+import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { SortPill } from "@/components/admin/SortPill";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDragSelect } from "@/hooks/useDragSelect";
 import { type TariffMetaConfig } from "@/components/admin/product/TariffWelcomeMessageEditor";
@@ -211,7 +213,20 @@ export default function AdminProductDetailV2() {
     access_days: 30,
     is_active: true,
     meta: {} as TariffMetaConfig,
+    // card_config fields (stored in meta.card_config)
+    cc_price_display: null as number | null,
+    cc_old_price: null as number | null,
+    cc_price_suffix: "BYN",
+    cc_cta_text: "",
+    cc_footnote: "",
+    cc_is_highlighted: false,
+    cc_style_variant: "default" as "default" | "highlighted" | "minimal" | "compact",
   });
+
+  // Preview mode for tariff dialog
+  const [tariffPreviewMode, setTariffPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const isMobile = useIsMobile();
 
   // Offer form
   const [offerForm, setOfferForm] = useState({
@@ -286,8 +301,8 @@ export default function AdminProductDetailV2() {
   // Tariff handlers
   const openTariffDialog = (tariff?: any) => {
     if (tariff) {
-      // Parse meta from tariff
       const meta = (tariff.meta || {}) as TariffMetaConfig;
+      const cc = (meta as any).card_config as CardConfig | undefined;
       setTariffForm({
         code: tariff.code,
         name: tariff.name,
@@ -299,6 +314,13 @@ export default function AdminProductDetailV2() {
         access_days: tariff.access_days,
         is_active: tariff.is_active,
         meta,
+        cc_price_display: cc?.price_display ?? null,
+        cc_old_price: cc?.old_price ?? tariff.original_price ?? null,
+        cc_price_suffix: cc?.price_suffix || "BYN",
+        cc_cta_text: cc?.cta_text || "",
+        cc_footnote: cc?.footnote || "",
+        cc_is_highlighted: cc?.is_highlighted ?? tariff.is_popular ?? false,
+        cc_style_variant: cc?.style_variant || "default",
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -313,6 +335,13 @@ export default function AdminProductDetailV2() {
         access_days: 30,
         is_active: true,
         meta: {},
+        cc_price_display: null,
+        cc_old_price: null,
+        cc_price_suffix: "BYN",
+        cc_cta_text: "",
+        cc_footnote: "",
+        cc_is_highlighted: false,
+        cc_style_variant: "default",
       });
       setTariffDialog({ open: true, editing: null });
     }
@@ -323,15 +352,36 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните название");
       return;
     }
-    // Auto-generate code if empty (PATCH 2: code remains NOT NULL in DB, auto-gen on save)
     const effectiveCode = tariffForm.code || `trf_${crypto.randomUUID().slice(0, 12)}`;
-    // Build data with meta field
-    const { meta, ...formWithoutMeta } = tariffForm;
+    
+    // Build card_config from cc_ fields
+    const cardConfig: CardConfig = {
+      price_display: tariffForm.cc_price_display,
+      old_price: tariffForm.cc_old_price,
+      price_suffix: tariffForm.cc_price_suffix || "BYN",
+      cta_text: tariffForm.cc_cta_text || null,
+      footnote: tariffForm.cc_footnote || null,
+      is_highlighted: tariffForm.cc_is_highlighted,
+      style_variant: tariffForm.cc_style_variant,
+      badge_text: tariffForm.badge || null,
+    };
+
+    // Deep merge meta: preserve existing fields, update only card_config
+    const existingMeta = tariffForm.meta || {};
+    const mergedMeta = {
+      ...existingMeta,
+      card_config: cardConfig,
+    };
+
+    // Extract cc_ fields out, keep the rest
+    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_cta_text, cc_footnote, cc_is_highlighted, cc_style_variant, ...formBase } = tariffForm;
+    
     const data: any = { 
-      ...formWithoutMeta,
+      ...formBase,
       code: effectiveCode,
       product_id: productId!,
-      meta: Object.keys(meta).length > 0 ? meta : null,
+      is_popular: tariffForm.cc_is_highlighted, // backward compat mapping
+      meta: Object.keys(mergedMeta).length > 0 ? mergedMeta : null,
     };
     if (tariffDialog.editing) {
       await updateTariff.mutateAsync({ id: tariffDialog.editing.id, ...data });
@@ -1052,56 +1102,77 @@ export default function AdminProductDetailV2() {
             )}
           </TabsContent>
           <TabsContent value="preview" className="space-y-4 mt-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-semibold">Превью секции тарифов</h2>
-                <p className="text-sm text-muted-foreground">
-                  Так будет выглядеть секция на сайте
-                </p>
-              </div>
-            </div>
-
-            <GlassCard className="p-4 sm:p-8">
-              {/* PATCH 3: effective_active guard */}
-              {!(product as any).is_active ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  <p className="text-lg font-medium">Продукт неактивен</p>
-                  <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
-                </div>
-              ) : (
-                <>
-                  {/* Section Header */}
-                  <div className="text-center mb-8">
-                    <h2 className="text-3xl font-bold mb-2">
-                      {(product as any).public_title || "Тарифы"}
-                    </h2>
-                    <p className="text-muted-foreground">
-                      {(product as any).public_subtitle || "Выберите подходящий вариант"}
-                    </p>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold">Превью секции тарифов</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Так будет выглядеть секция на сайте
+                      </p>
+                    </div>
+                    <div className="flex gap-1 border rounded-lg p-1">
+                      <Button
+                        variant={sectionPreviewMode === "desktop" ? "default" : "ghost"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setSectionPreviewMode("desktop")}
+                      >
+                        Desktop
+                      </Button>
+                      <Button
+                        variant={sectionPreviewMode === "mobile" ? "default" : "ghost"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setSectionPreviewMode("mobile")}
+                      >
+                        Mobile
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* Tariff Grid — unified TariffCard (PATCH 6) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {tariffs?.filter(t => t.is_active).map((tariff: any) => (
-                      <TariffCard
-                        key={tariff.id}
-                        tariff={tariff}
-                        features={getFeaturesForTariff(tariff.id)}
-                        offers={getOffersForTariff(tariff.id)}
-                        onSelectOffer={handlePreviewSelectOffer}
-                      />
-                    ))}
-                  </div>
+                  <GlassCard className="p-4 sm:p-8">
+                    {!(product as any).is_active ? (
+                      <div className="py-12 text-center text-muted-foreground">
+                        <p className="text-lg font-medium">Продукт неактивен</p>
+                        <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
+                      </div>
+                    ) : (
+                      <div className={cn("mx-auto transition-all", sectionPreviewMode === "mobile" ? "max-w-[360px]" : "")}>
+                        <div className="text-center mb-8">
+                          <h2 className="text-3xl font-bold mb-2">
+                            {(product as any).public_title || "Тарифы"}
+                          </h2>
+                          <p className="text-muted-foreground">
+                            {(product as any).public_subtitle || "Выберите подходящий вариант"}
+                          </p>
+                        </div>
 
-                  {/* Disclaimer */}
-                  {(product as any).payment_disclaimer_text && (
-                    <p className="text-center text-sm text-muted-foreground mt-8">
-                      {(product as any).payment_disclaimer_text}
-                    </p>
-                  )}
-                </>
-              )}
-            </GlassCard>
+                        <div className={cn(
+                          "grid gap-6",
+                          sectionPreviewMode === "mobile" ? "grid-cols-1" : "grid-cols-1 md:grid-cols-3"
+                        )}>
+                          {tariffs?.filter(t => t.is_active).map((tariff: any) => {
+                            const vm = buildTariffCardViewModel(tariff, (product as any)?.landing_config?.price_suffix);
+                            return (
+                              <TariffCard
+                                key={tariff.id}
+                                tariff={vm}
+                                features={getFeaturesForTariff(tariff.id)}
+                                offers={getOffersForTariff(tariff.id)}
+                                onSelectOffer={handlePreviewSelectOffer}
+                                priceSuffix={(product as any)?.landing_config?.price_suffix || "BYN"}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        {(product as any).payment_disclaimer_text && (
+                          <p className="text-center text-sm text-muted-foreground mt-8">
+                            {(product as any).payment_disclaimer_text}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </GlassCard>
           </TabsContent>
 
           {/* Custom Fields Tab */}
@@ -1116,41 +1187,53 @@ export default function AdminProductDetailV2() {
         </Tabs>
       </div>
 
-      {/* Tariff Dialog — Glass UI */}
+      {/* Tariff Dialog — Visual Tariff Editor */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background border-border/40">
+        <DialogContent className="max-w-5xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background border-border/40 rounded-2xl">
           <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 flex-wrap">
-              {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
-              {tariffDialog.editing?.public_id && (
-                <CopyableIdChip value={tariffDialog.editing.public_id} />
-              )}
-              {tariffDialog.editing?.public_id && (
-                <CopyableIdChip
-                  value={`…/pricing/tariff/${tariffDialog.editing.public_id}`}
-                  copyValue={
-                    product?.primary_domain
-                      ? `https://${product.primary_domain}/pricing/tariff/${tariffDialog.editing.public_id}`
-                      : `/pricing/tariff/${tariffDialog.editing.public_id}`
-                  }
-                  successMessage="Ссылка скопирована"
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <DialogTitle className="flex items-center gap-2 flex-wrap">
+                {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
+                {tariffDialog.editing?.public_id && (
+                  <CopyableIdChip value={tariffDialog.editing.public_id} />
+                )}
+                {tariffDialog.editing?.public_id && (
+                  <CopyableIdChip
+                    value={`…/pricing/tariff/${tariffDialog.editing.public_id}`}
+                    copyValue={
+                      product?.primary_domain
+                        ? `https://${product.primary_domain}/pricing/tariff/${tariffDialog.editing.public_id}`
+                        : `/pricing/tariff/${tariffDialog.editing.public_id}`
+                    }
+                    successMessage="Ссылка скопирована"
+                  />
+                )}
+              </DialogTitle>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={tariffForm.is_active}
+                  onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
                 />
-              )}
-            </DialogTitle>
+                <Label className={tariffForm.is_active ? "text-primary" : "text-muted-foreground"}>
+                  {tariffForm.is_active ? "Активен" : "Неактивен"}
+                </Label>
+              </div>
+            </div>
             <DialogDescription>
-              Тариф определяет пакет доступа. Цены задаются отдельно в кнопках оплаты.
+              Конструктор карточки тарифа. Цены задаются отдельно в кнопках оплаты.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5">
-            {/* Section A — Основное */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="flex flex-col lg:flex-row gap-6 mt-4">
+            {/* LEFT: Form */}
+            <div className="flex-1 min-w-0 space-y-5">
+              {/* Section — Основное */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <Label>Название *</Label>
                     <Input
@@ -1167,95 +1250,274 @@ export default function AdminProductDetailV2() {
                       onChange={(e) => setTariffForm({ ...tariffForm, subtitle: e.target.value })}
                     />
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Section — Доступ */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Доступ</CardTitle>
-                <p className="text-xs text-destructive/80">⚠ Влияет на выдачу доступа и продление подписки</p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Срок доступа (дней)</Label>
-                    <Input
-                      type="number"
-                      value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
-                      onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
-                      onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
-                      min={1}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">Период <span className="text-xs">(legacy, не отображается на сайте)</span></Label>
-                    <Input
-                      placeholder="BYN/мес"
-                      value={tariffForm.period_label}
-                      onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Section B — Карточка на сайте */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Карточка на сайте</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Бейдж</Label>
-                  <Input
-                    placeholder="Популярный"
-                    value={tariffForm.badge}
-                    onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Описание</Label>
-                  <Textarea
-                    value={tariffForm.description}
-                    onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
-                    rows={3}
-                    className="resize-none"
-                  />
-                </div>
-                <Separator />
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={tariffForm.is_popular}
-                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_popular: checked })}
-                    />
-                    <Label>Популярный</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={tariffForm.is_active}
-                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, is_active: checked })}
-                    />
-                    <Label>Активен</Label>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Section C — Преимущества (edit mode only) */}
-            {tariffDialog.editing && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-muted-foreground">Преимущества</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
                 </CardContent>
               </Card>
+
+              {/* Section — Цена на карточке */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Цена на карточке</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Визуальная цена</Label>
+                      <Input
+                        type="number"
+                        placeholder="500"
+                        value={tariffForm.cc_price_display ?? ""}
+                        onChange={(e) => setTariffForm({ ...tariffForm, cc_price_display: e.target.value ? parseFloat(e.target.value) : null })}
+                      />
+                      <p className="text-xs text-muted-foreground">Отображается если нет активной кнопки оплаты</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Валюта / суффикс</Label>
+                      <Input
+                        placeholder="BYN"
+                        value={tariffForm.cc_price_suffix}
+                        onChange={(e) => setTariffForm({ ...tariffForm, cc_price_suffix: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Старая цена (зачёркнутая)</Label>
+                    <Input
+                      type="number"
+                      placeholder="1000"
+                      value={tariffForm.cc_old_price ?? ""}
+                      onChange={(e) => setTariffForm({ ...tariffForm, cc_old_price: e.target.value ? parseFloat(e.target.value) : null })}
+                    />
+                    <p className="text-xs text-muted-foreground">Показывается зачёркнутой, если больше основной цены</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Section — Карточка на сайте */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground">Карточка на сайте</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Бейдж</Label>
+                    <Input
+                      placeholder="Популярный"
+                      value={tariffForm.badge}
+                      onChange={(e) => setTariffForm({ ...tariffForm, badge: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Описание</Label>
+                    <Textarea
+                      value={tariffForm.description}
+                      onChange={(e) => setTariffForm({ ...tariffForm, description: e.target.value })}
+                      rows={3}
+                      className="resize-y min-h-[80px]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Текст CTA кнопки</Label>
+                      <Input
+                        placeholder="Оплатить"
+                        value={tariffForm.cc_cta_text}
+                        onChange={(e) => setTariffForm({ ...tariffForm, cc_cta_text: e.target.value })}
+                      />
+                      <p className="text-xs text-muted-foreground">Перезаписывает текст основной кнопки</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Стиль карточки</Label>
+                      <Select
+                        value={tariffForm.cc_style_variant}
+                        onValueChange={(v: any) => setTariffForm({ ...tariffForm, cc_style_variant: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Стандартный</SelectItem>
+                          <SelectItem value="highlighted">Выделенный</SelectItem>
+                          <SelectItem value="minimal">Минимальный</SelectItem>
+                          <SelectItem value="compact">Компактный</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Подпись под кнопками</Label>
+                    <Input
+                      placeholder="Гарантия возврата 7 дней"
+                      value={tariffForm.cc_footnote}
+                      onChange={(e) => setTariffForm({ ...tariffForm, cc_footnote: e.target.value })}
+                    />
+                  </div>
+                  <Separator />
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      checked={tariffForm.cc_is_highlighted}
+                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, cc_is_highlighted: checked })}
+                    />
+                    <Label>Выделить карточку</Label>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Section — Доступ (legacy) */}
+              <Collapsible>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="w-full justify-between px-0 hover:bg-transparent">
+                    <span className="text-sm font-medium text-muted-foreground">Доступ (legacy)</span>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <Card className="mt-2">
+                    <CardContent className="pt-4 space-y-4">
+                      <p className="text-xs text-amber-600">⚠ Будет перенесено в настройки кнопки оплаты</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Срок доступа (дней)</Label>
+                          <Input
+                            type="number"
+                            value={tariffForm.access_days === 0 ? "" : tariffForm.access_days}
+                            onChange={(e) => setTariffForm({ ...tariffForm, access_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
+                            onBlur={() => { if (tariffForm.access_days < 1) setTariffForm({ ...tariffForm, access_days: 1 }); }}
+                            min={1}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-muted-foreground">Период <span className="text-xs">(legacy)</span></Label>
+                          <Input
+                            placeholder="BYN/мес"
+                            value={tariffForm.period_label}
+                            onChange={(e) => setTariffForm({ ...tariffForm, period_label: e.target.value })}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </CollapsibleContent>
+              </Collapsible>
+
+              {/* Section — Преимущества (edit mode only) */}
+              {tariffDialog.editing && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm text-muted-foreground">Преимущества</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <TariffFeaturesEditor tariffId={tariffDialog.editing.id} />
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            {/* RIGHT: Live Preview */}
+            {!isMobile && (
+              <div className="w-[420px] shrink-0 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">Превью</span>
+                  <div className="flex gap-1 border rounded-lg p-0.5">
+                    <Button
+                      variant={tariffPreviewMode === "desktop" ? "default" : "ghost"}
+                      size="sm"
+                      className="h-6 text-xs px-2"
+                      onClick={() => setTariffPreviewMode("desktop")}
+                    >
+                      Desktop
+                    </Button>
+                    <Button
+                      variant={tariffPreviewMode === "mobile" ? "default" : "ghost"}
+                      size="sm"
+                      className="h-6 text-xs px-2"
+                      onClick={() => setTariffPreviewMode("mobile")}
+                    >
+                      Mobile
+                    </Button>
+                  </div>
+                </div>
+                <div className={cn(
+                  "mx-auto border rounded-xl bg-muted/30 p-4 flex items-start justify-center",
+                  tariffPreviewMode === "mobile" ? "w-[320px]" : "w-full"
+                )}>
+                  <div className="w-full">
+                    <TariffCard
+                      tariff={buildTariffCardViewModel({
+                        id: tariffDialog.editing?.id || "preview",
+                        code: tariffForm.code,
+                        name: tariffForm.name || "Название тарифа",
+                        description: tariffForm.description || null,
+                        badge: tariffForm.badge || null,
+                        subtitle: tariffForm.subtitle || null,
+                        period_label: tariffForm.period_label,
+                        is_popular: tariffForm.cc_is_highlighted,
+                        current_price: tariffForm.cc_price_display,
+                        meta: {
+                          card_config: {
+                            badge_text: tariffForm.badge || null,
+                            price_display: tariffForm.cc_price_display,
+                            old_price: tariffForm.cc_old_price,
+                            price_suffix: tariffForm.cc_price_suffix,
+                            cta_text: tariffForm.cc_cta_text || null,
+                            footnote: tariffForm.cc_footnote || null,
+                            is_highlighted: tariffForm.cc_is_highlighted,
+                            style_variant: tariffForm.cc_style_variant,
+                          }
+                        },
+                      }, (product as any)?.landing_config?.price_suffix)}
+                      features={tariffDialog.editing ? getFeaturesForTariff(tariffDialog.editing.id) : []}
+                      offers={tariffDialog.editing ? getOffersForTariff(tariffDialog.editing.id) : []}
+                      showButtons={!!tariffDialog.editing}
+                      priceSuffix={(product as any)?.landing_config?.price_suffix || tariffForm.cc_price_suffix || "BYN"}
+                    />
+                  </div>
+                </div>
+              </div>
             )}
           </div>
+
+          {/* Mobile preview: Collapsible */}
+          {isMobile && (
+            <Collapsible className="mt-4">
+              <CollapsibleTrigger asChild>
+                <Button variant="outline" size="sm" className="w-full gap-2">
+                  <Eye className="h-3.5 w-3.5" />
+                  Показать превью
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3">
+                <div className="border rounded-xl bg-muted/30 p-3">
+                  <TariffCard
+                    tariff={buildTariffCardViewModel({
+                      id: tariffDialog.editing?.id || "preview",
+                      name: tariffForm.name || "Название тарифа",
+                      description: tariffForm.description || null,
+                      badge: tariffForm.badge || null,
+                      subtitle: tariffForm.subtitle || null,
+                      is_popular: tariffForm.cc_is_highlighted,
+                      current_price: tariffForm.cc_price_display,
+                      meta: {
+                        card_config: {
+                          badge_text: tariffForm.badge || null,
+                          price_display: tariffForm.cc_price_display,
+                          old_price: tariffForm.cc_old_price,
+                          price_suffix: tariffForm.cc_price_suffix,
+                          cta_text: tariffForm.cc_cta_text || null,
+                          footnote: tariffForm.cc_footnote || null,
+                          is_highlighted: tariffForm.cc_is_highlighted,
+                          style_variant: tariffForm.cc_style_variant,
+                        }
+                      },
+                    }, (product as any)?.landing_config?.price_suffix)}
+                    features={tariffDialog.editing ? getFeaturesForTariff(tariffDialog.editing.id) : []}
+                    offers={tariffDialog.editing ? getOffersForTariff(tariffDialog.editing.id) : []}
+                    showButtons={!!tariffDialog.editing}
+                    priceSuffix={(product as any)?.landing_config?.price_suffix || tariffForm.cc_price_suffix || "BYN"}
+                  />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          )}
 
           <DialogFooter className="pt-4 border-t border-border/40">
             <Button variant="outline" onClick={() => setTariffDialog({ open: false, editing: null })}>

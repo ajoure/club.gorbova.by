@@ -39,9 +39,11 @@ export function ProductLanding({ data, header, footer, customSections }: Product
         if (offer) {
           setSelectedOffer({ offer, tariff, productId: product.id });
           setPaymentOpen(true);
-          // Clear the offer param from URL
-          searchParams.delete("offer");
-          setSearchParams(searchParams, { replace: true });
+          setSearchParams(prev => {
+            const p = new URLSearchParams(prev);
+            p.delete("offer");
+            return p;
+          }, { replace: true });
           break;
         }
       }
@@ -50,7 +52,9 @@ export function ProductLanding({ data, header, footer, customSections }: Product
 
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     if (!user) {
-      const returnUrl = `${window.location.pathname}?offer=${offer.id}`;
+      const sp = new URLSearchParams(window.location.search);
+      sp.set("offer", offer.id);
+      const returnUrl = `${window.location.pathname}?${sp.toString()}`;
       navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
       return;
     }
