@@ -45,6 +45,90 @@ interface ProductFormData {
   primary_domain: string;
 }
 
+/* ── Mobile Product Card (inline component, no new files) ── */
+function MobileProductCard({
+  product,
+  isSelected,
+  isParent,
+  isChild,
+  readiness,
+  onToggleSelect,
+  onNavigate,
+  onEdit,
+  onDelete,
+  onCopyLink,
+}: {
+  product: any;
+  isSelected: boolean;
+  isParent: boolean;
+  isChild: boolean;
+  readiness: { isReady: boolean; reasonLabel?: string } | undefined;
+  onToggleSelect: () => void;
+  onNavigate: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onCopyLink: () => void;
+}) {
+  const statusKind: StatusBadgeKind = product.status === "active" ? "active" : product.status === "archived" ? "archived" : product.status === "hidden" ? "hidden" : "inactive";
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 p-3 rounded-xl border bg-card transition-colors",
+        isSelected && "bg-primary/5 border-primary/20"
+      )}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("button, [role=checkbox]")) return;
+        onNavigate();
+      }}
+    >
+      {/* Checkbox */}
+      <Checkbox
+        checked={isSelected}
+        onCheckedChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        className="shrink-0"
+      />
+
+      {/* Center: name + meta */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm truncate">{product.name}</span>
+          {isParent && <FolderTree className="h-3 w-3 text-primary/60 shrink-0" />}
+          {isChild && <CornerDownRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5">
+          <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", getStatusBadgeClass(statusKind))}>
+            {STATUS_LABELS[product.status] || product.status}
+          </Badge>
+          {product.primary_domain ? (
+            <span className="text-[11px] text-muted-foreground truncate max-w-[140px]">
+              {product.primary_domain}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">без сайта</span>
+          )}
+        </div>
+      </div>
+
+      {/* Right: actions */}
+      <div className="flex items-center gap-1 shrink-0">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onCopyLink(); }}>
+          <Link className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+    </div>
+  );
+}
+
 const defaultFormData: ProductFormData = {
   name: "",
   description: "",
