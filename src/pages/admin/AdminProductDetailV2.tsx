@@ -351,15 +351,36 @@ export default function AdminProductDetailV2() {
       toast.error("Заполните название");
       return;
     }
-    // Auto-generate code if empty (PATCH 2: code remains NOT NULL in DB, auto-gen on save)
     const effectiveCode = tariffForm.code || `trf_${crypto.randomUUID().slice(0, 12)}`;
-    // Build data with meta field
-    const { meta, ...formWithoutMeta } = tariffForm;
+    
+    // Build card_config from cc_ fields
+    const cardConfig: CardConfig = {
+      price_display: tariffForm.cc_price_display,
+      old_price: tariffForm.cc_old_price,
+      price_suffix: tariffForm.cc_price_suffix || "BYN",
+      cta_text: tariffForm.cc_cta_text || null,
+      footnote: tariffForm.cc_footnote || null,
+      is_highlighted: tariffForm.cc_is_highlighted,
+      style_variant: tariffForm.cc_style_variant,
+      badge_text: tariffForm.badge || null,
+    };
+
+    // Deep merge meta: preserve existing fields, update only card_config
+    const existingMeta = tariffForm.meta || {};
+    const mergedMeta = {
+      ...existingMeta,
+      card_config: cardConfig,
+    };
+
+    // Extract cc_ fields out, keep the rest
+    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_cta_text, cc_footnote, cc_is_highlighted, cc_style_variant, ...formBase } = tariffForm;
+    
     const data: any = { 
-      ...formWithoutMeta,
+      ...formBase,
       code: effectiveCode,
       product_id: productId!,
-      meta: Object.keys(meta).length > 0 ? meta : null,
+      is_popular: tariffForm.cc_is_highlighted, // backward compat mapping
+      meta: Object.keys(mergedMeta).length > 0 ? mergedMeta : null,
     };
     if (tariffDialog.editing) {
       await updateTariff.mutateAsync({ id: tariffDialog.editing.id, ...data });
