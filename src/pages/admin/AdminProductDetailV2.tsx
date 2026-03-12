@@ -840,7 +840,7 @@ export default function AdminProductDetailV2() {
                   </div>
                 </div>
                 <Separator />
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Срок доступа (дней)</Label>
                     <Input
