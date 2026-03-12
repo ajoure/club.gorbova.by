@@ -1101,11 +1101,6 @@ export default function AdminProductDetailV2() {
             )}
           </TabsContent>
           <TabsContent value="preview" className="space-y-4 mt-6">
-            {(() => {
-              // eslint-disable-next-line react-hooks/rules-of-hooks
-              const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
-              return (
-                <>
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div>
                       <h2 className="text-lg font-semibold">Превью секции тарифов</h2>
@@ -1177,9 +1172,6 @@ export default function AdminProductDetailV2() {
                       </div>
                     )}
                   </GlassCard>
-                </>
-              );
-            })()}
           </TabsContent>
 
           {/* Custom Fields Tab */}
