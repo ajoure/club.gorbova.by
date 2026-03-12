@@ -81,7 +81,7 @@ export function OfferRowCompact({
   const installmentInfo = getInstallmentInfo();
 
   return (
-    <div className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
       isPrimary 
         ? "bg-primary/5 border-primary/30" 
         : "bg-card/50 border-border/50 hover:bg-card"
