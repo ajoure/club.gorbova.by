@@ -52,7 +52,9 @@ export function ProductLanding({ data, header, footer, customSections }: Product
 
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     if (!user) {
-      const returnUrl = `${window.location.pathname}?offer=${offer.id}`;
+      const sp = new URLSearchParams(window.location.search);
+      sp.set("offer", offer.id);
+      const returnUrl = `${window.location.pathname}?${sp.toString()}`;
       navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
       return;
     }

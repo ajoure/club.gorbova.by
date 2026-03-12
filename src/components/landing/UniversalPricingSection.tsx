@@ -70,7 +70,9 @@ export function UniversalPricingSection({
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
     if (!user) {
       const basePath = redirectBasePath || window.location.pathname;
-      const returnUrl = `${basePath}?offer=${offer.id}`;
+      const sp = new URLSearchParams(window.location.search);
+      sp.set("offer", offer.id);
+      const returnUrl = `${basePath}?${sp.toString()}`;
       navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
       return;
     }
