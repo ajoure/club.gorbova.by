@@ -368,7 +368,7 @@ export default function AdminProductDetailV2() {
     };
 
     // Extract cc_ fields out, keep the rest
-    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_cta_text, cc_footnote, cc_is_highlighted, cc_style_variant, ...formBase } = tariffForm;
+    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_footnote, cc_style_variant, ...formBase } = tariffForm;
     
     const data: any = { 
       ...formBase,
