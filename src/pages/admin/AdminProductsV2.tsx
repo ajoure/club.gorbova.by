@@ -654,43 +654,42 @@ export default function AdminProductsV2() {
         {/* Bulk Actions Bar */}
         {hasSelection && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
-            <div className="bg-background border rounded-xl shadow-lg px-4 py-3 flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+          <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
+              <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+                <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs sm:text-sm">
                   {selectedCount}
                 </div>
-                <span className="text-muted-foreground">
-                  продуктов выбрано из {sortedData.length}
+                <span className="text-muted-foreground whitespace-nowrap">
+                  из {sortedData.length}
                 </span>
               </div>
-              <div className="h-6 w-px bg-border" />
+              <div className="h-5 w-px bg-border hidden sm:block" />
               {selectedCount < sortedData.length && (
-                <Button variant="ghost" size="sm" onClick={selectAll} className="gap-2">
-                  Выбрать все
+                <Button variant="ghost" size="sm" onClick={selectAll} className="gap-1.5 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm">
+                  Все
                 </Button>
               )}
-              <Button variant="ghost" size="sm" className="gap-1.5 text-primary" onClick={() => handleBulkStatus("active")}>
-                <Eye className="h-4 w-4" />
-                Активные
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-primary" onClick={() => handleBulkStatus("active")}>
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Активные</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("hidden")}>
-                <EyeOff className="h-4 w-4" />
-                Скрытые
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkStatus("hidden")}>
+                <EyeOff className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Скрытые</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("archived")}>
-                <Archive className="h-4 w-4" />
-                Архив
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkStatus("archived")}>
+                <Archive className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Архив</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={handleCopyLink}>
-                <Link className="h-4 w-4" />
-                Ссылка
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={handleCopyLink}>
+                <Link className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Ссылка</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
-                <Trash2 className="h-4 w-4" />
-                Удалить
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Удалить</span>
               </Button>
-              <div className="h-6 w-px bg-border" />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clearSelection}>
+              <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={clearSelection}>
                 <span className="text-xs">✕</span>
               </Button>
             </div>
