@@ -7,9 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ChevronRight, Copy, ExternalLink, Search, FileText, FolderTree, CornerDownRight, Link, Eye, EyeOff, Archive, CircleCheck, AlertTriangle, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { toast } from "sonner";
@@ -18,7 +17,6 @@ import { useProductRelationCounts } from "@/hooks/useProductRelations";
 import { useBulkDeleteDryRun, useBulkDeleteExecute, useBulkStatusChange, type DryRunResult } from "@/hooks/useProductsBulkActions";
 import { useNavigate } from "react-router-dom";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useDragSelect } from "@/hooks/useDragSelect";
@@ -28,15 +26,15 @@ import { useProductReadiness } from "@/hooks/useProductReadiness";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { cn } from "@/lib/utils";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { getStatusBadgeClass } from "@/utils/badgeUtils";
+import type { StatusBadgeKind } from "@/utils/badgeUtils";
+import type { SortDirection } from "@/components/ui/sortable-table-head";
 
 const STATUS_LABELS: Record<string, string> = {
   active: "Активный",
   hidden: "Скрытый",
   archived: "Архивный",
 };
-
-import { getStatusBadgeClass } from "@/utils/badgeUtils";
-import type { StatusBadgeKind } from "@/utils/badgeUtils";
 
 interface ProductFormData {
   name: string;
@@ -45,8 +43,8 @@ interface ProductFormData {
   primary_domain: string;
 }
 
-/* ── Mobile Product Card (inline component, no new files) ── */
-function MobileProductCard({
+/* ── Universal Product Card ── */
+function ProductCard({
   product,
   isSelected,
   isParent,
@@ -57,6 +55,8 @@ function MobileProductCard({
   onEdit,
   onDelete,
   onCopyLink,
+  onDuplicate,
+  innerRef,
 }: {
   product: any;
   isSelected: boolean;
@@ -68,18 +68,31 @@ function MobileProductCard({
   onEdit: () => void;
   onDelete: () => void;
   onCopyLink: () => void;
+  onDuplicate: () => void;
+  innerRef?: (el: HTMLElement | null) => void;
 }) {
   const statusKind: StatusBadgeKind = product.status === "active" ? "active" : product.status === "archived" ? "archived" : product.status === "hidden" ? "hidden" : "inactive";
 
   return (
     <div
+      ref={innerRef}
       className={cn(
-        "flex items-center gap-3 p-3 rounded-xl border bg-card transition-colors",
+        "flex items-center gap-3 p-3 sm:p-4 rounded-xl border bg-card transition-colors cursor-pointer",
         isSelected && "bg-primary/5 border-primary/20"
       )}
+      data-state={isSelected ? "selected" : undefined}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         if (target.closest("button, [role=checkbox]")) return;
+        if (e.shiftKey) {
+          e.preventDefault();
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          onToggleSelect();
+          return;
+        }
         onNavigate();
       }}
     >
@@ -94,29 +107,83 @@ function MobileProductCard({
       {/* Center: name + meta */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm truncate">{product.name}</span>
-          {isParent && <FolderTree className="h-3 w-3 text-primary/60 shrink-0" />}
-          {isChild && <CornerDownRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+          <span className="font-medium text-sm truncate sm:whitespace-normal sm:line-clamp-2">{product.name}</span>
+          {isParent && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <FolderTree className="h-3.5 w-3.5 text-primary/60 shrink-0" />
+                </TooltipTrigger>
+                <TooltipContent>Содержит дочерние продукты</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {isChild && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <CornerDownRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </TooltipTrigger>
+                <TooltipContent>Входит в состав другого продукта</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
-        <div className="flex items-center gap-2 mt-0.5">
-          <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", getStatusBadgeClass(statusKind))}>
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <Badge variant="outline" className={cn("text-[10px] sm:text-[11px] px-1.5 py-0", getStatusBadgeClass(statusKind))}>
             {STATUS_LABELS[product.status] || product.status}
           </Badge>
           {product.primary_domain ? (
-            <span className="text-[11px] text-muted-foreground truncate max-w-[140px]">
+            <span className="text-[11px] sm:text-xs text-muted-foreground truncate sm:truncate-none sm:break-all max-w-[140px] sm:max-w-none">
               {product.primary_domain}
             </span>
           ) : (
-            <span className="text-[11px] text-muted-foreground">без сайта</span>
+            <span className="text-[11px] sm:text-xs text-muted-foreground">без сайта</span>
           )}
         </div>
       </div>
 
       {/* Right: actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onCopyLink(); }}>
-          <Link className="h-3.5 w-3.5" />
-        </Button>
+      <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+        {(() => {
+          const isReady = readiness?.isReady ?? true;
+          return (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onCopyLink(); }}>
+                    <Link className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="flex items-center gap-1.5">
+                  {isReady ? (
+                    <>
+                      <CircleCheck className="h-3 w-3 text-green-600" />
+                      <span>Копировать ссылку на оплату</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="h-3 w-3 text-amber-500" />
+                      <span>{readiness?.reasonLabel || "Не готов к оплате"}</span>
+                    </>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        })()}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-7 w-7 hidden sm:inline-flex" onClick={(e) => { e.stopPropagation(); onDuplicate(); }}>
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {product.public_id ? `${product.public_id} — копировать UUID` : "Копировать UUID"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
           <Pencil className="h-3.5 w-3.5" />
         </Button>
@@ -126,6 +193,41 @@ function MobileProductCard({
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
     </div>
+  );
+}
+
+/* ── Sort Pill Button ── */
+function SortPill({
+  label,
+  sortKey: pillKey,
+  currentSortKey,
+  currentSortDirection,
+  onSort,
+}: {
+  label: string;
+  sortKey: string;
+  currentSortKey: string | null;
+  currentSortDirection: SortDirection;
+  onSort: (key: string) => void;
+}) {
+  const isActive = currentSortKey === pillKey;
+  return (
+    <button
+      onClick={() => onSort(pillKey)}
+      className={cn(
+        "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+        isActive
+          ? "bg-primary/10 text-primary"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      )}
+    >
+      {label}
+      {isActive ? (
+        currentSortDirection === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-50" />
+      )}
+    </button>
   );
 }
 
@@ -199,11 +301,9 @@ export default function AdminProductsV2() {
     };
 
     if (editingProduct) {
-      // On update: don't touch code
       await updateMutation.mutateAsync({ id: editingProduct, ...payload });
       handleCloseDialog();
     } else {
-      // On create: auto-generate code
       payload.code = 'prd_' + crypto.randomUUID().replace(/-/g, '').slice(0, 12);
       const newProduct = await createMutation.mutateAsync(payload);
       handleCloseDialog();
@@ -277,7 +377,7 @@ export default function AdminProductsV2() {
     },
   });
 
-  // Drag-select (Contacts-like)
+  // Drag-select
   const {
     selectedIds,
     isDragging,
@@ -414,12 +514,12 @@ export default function AdminProductsV2() {
           )}
           <Button size="sm" className="h-8" onClick={() => handleOpenDialog()}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
-            Добавить продукт
+            <span className="hidden sm:inline">Добавить продукт</span>
+            <span className="sm:hidden">Добавить</span>
           </Button>
         </div>
 
-        {/* Flat products table */}
-        {/* Empty / Loading states */}
+        {/* Loading / Empty */}
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground text-sm">Загрузка...</div>
         ) : !products?.length ? (
@@ -432,24 +532,51 @@ export default function AdminProductsV2() {
           </div>
         ) : (
           <>
-            {/* ── Mobile: card list ── */}
-            <div className="md:hidden space-y-2 px-1">
+            {/* ── Select-all + Sort controls ── */}
+            <div className="flex items-center justify-between px-1 gap-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  checked={selectedCount > 0 && selectedCount === sortedData.length}
+                  onCheckedChange={(checked) => {
+                    if (checked) selectAll();
+                    else clearSelection();
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">
+                  {selectedCount > 0
+                    ? `${selectedCount} из ${sortedData.length}`
+                    : `${sortedData.length} продуктов`}
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <SortPill label="Имя" sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} />
+                <SortPill label="Сайт" sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} />
+                <SortPill label="Статус" sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort} />
+              </div>
+            </div>
+
+            {/* ── Card list (all breakpoints) ── */}
+            <div className="space-y-2 px-1">
               {sortedData.map((product: any) => {
                 const isParent = relationCounts?.parentIds?.has(product.id) ?? false;
                 const isChild = relationCounts?.childIds?.has(product.id) ?? false;
                 const readiness = readinessMap?.get(product.id);
                 return (
-                  <MobileProductCard
+                  <ProductCard
                     key={product.id}
                     product={product}
                     isSelected={selectedIds.has(product.id)}
                     isParent={isParent}
                     isChild={isChild}
                     readiness={readiness}
+                    innerRef={(el) => registerItemRef(product.id, el)}
                     onToggleSelect={() => toggleSelection(product.id, true)}
                     onNavigate={() => navigate(`/admin/products-v2/${product.id}`)}
                     onEdit={() => handleOpenDialog(product)}
                     onDelete={() => setDeleteConfirmId(product.id)}
+                    onDuplicate={() => {
+                      copyToClipboard(product.id, "UUID скопирован");
+                    }}
                     onCopyLink={() => {
                       const url = getProductPayUrl(product.id);
                       if (readiness && !readiness.isReady) {
@@ -463,181 +590,6 @@ export default function AdminProductsV2() {
                 );
               })}
             </div>
-
-            {/* ── Desktop: table ── */}
-            <GlassCard className="p-0 overflow-hidden hidden md:block">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={selectedCount > 0 && selectedCount === sortedData.length}
-                        onCheckedChange={(checked) => {
-                          if (checked) selectAll();
-                          else clearSelection();
-                        }}
-                      />
-                    </TableHead>
-                    <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                      Продукт
-                    </SortableTableHead>
-                    <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                      Сайт
-                    </SortableTableHead>
-                    <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                      Статус
-                    </SortableTableHead>
-                    <TableHead className="text-right">Действия</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedData.map((product: any) => {
-                    const isParent = relationCounts?.parentIds?.has(product.id);
-                    const isChild = relationCounts?.childIds?.has(product.id);
-                    const isSelected = selectedIds.has(product.id);
-                    return (
-                      <TableRow
-                        key={product.id}
-                        ref={(el) => registerItemRef(product.id, el)}
-                        className={`cursor-pointer hover:bg-muted/50 ${isSelected ? "bg-primary/5" : ""}`}
-                        data-state={isSelected ? "selected" : undefined}
-                        onClick={(e) => {
-                          const target = e.target as HTMLElement;
-                          if (target.closest("button, [role=checkbox], a")) return;
-                          if (e.shiftKey) {
-                            handleRangeSelect(product.id, true);
-                          } else if (e.ctrlKey || e.metaKey) {
-                            toggleSelection(product.id, true);
-                          } else {
-                            navigate(`/admin/products-v2/${product.id}`);
-                          }
-                        }}
-                      >
-                        <TableCell className="w-10">
-                          <Checkbox
-                            checked={isSelected}
-                            onCheckedChange={() => toggleSelection(product.id, true)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-sm">{product.name}</span>
-                            {isParent && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <FolderTree className="h-3.5 w-3.5 text-primary/60" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>Содержит дочерние продукты</TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                            {isChild && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <CornerDownRight className="h-3.5 w-3.5 text-muted-foreground" />
-                                  </TooltipTrigger>
-                                  <TooltipContent>Входит в состав другого продукта</TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {product.primary_domain ? (
-                            <div className="flex items-center gap-1.5">
-                              <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                              <span className="text-xs">{product.primary_domain}</span>
-                              <a
-                                href={`https://${product.primary_domain}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-muted-foreground hover:text-foreground"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={cn("text-[11px]", getStatusBadgeClass((product.status as StatusBadgeKind) || "inactive"))}>
-                            {STATUS_LABELS[product.status] || product.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-0.5">
-                            {(() => {
-                              const readiness = readinessMap?.get(product.id);
-                              const isReady = readiness?.isReady ?? true;
-                              return (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
-                                        e.stopPropagation();
-                                        const url = getProductPayUrl(product.id);
-                                        if (!isReady && readiness) {
-                                          copyToClipboard(url, "Ссылка скопирована");
-                                          toast.warning(`Продукт не готов к оплате: ${readiness.reasonLabel}. Ссылка скопирована, но покупатель увидит ошибку.`);
-                                        } else {
-                                          copyToClipboard(url, "Ссылка на оплату скопирована");
-                                        }
-                                      }}>
-                                        <Link className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent className="flex items-center gap-1.5">
-                                      {isReady ? (
-                                        <>
-                                          <CircleCheck className="h-3 w-3 text-green-600" />
-                                          <span>Копировать ссылку на оплату</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <AlertTriangle className="h-3 w-3 text-amber-500" />
-                                          <span>{readiness?.reasonLabel || "Не готов к оплате"}</span>
-                                        </>
-                                      )}
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              );
-                            })()}
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
-                                    e.stopPropagation();
-                                    copyToClipboard(product.id, "UUID скопирован");
-                                  }}>
-                                    <Copy className="h-3.5 w-3.5" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  {product.public_id ? `${product.public_id} — копировать UUID` : "Копировать UUID"}
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </GlassCard>
           </>
         )}
 
