@@ -1343,18 +1343,17 @@ export default function AdminProductDetailV2() {
                 </CardContent>
               </Card>
 
-              {/* Section — Доступ (legacy) */}
+              {/* Секция — Доступ */}
               <Collapsible>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between px-0 hover:bg-transparent">
-                    <span className="text-sm font-medium text-muted-foreground">Доступ (legacy)</span>
+                    <span className="text-sm font-medium text-muted-foreground">Доступ</span>
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <Card className="mt-2">
                     <CardContent className="pt-4 space-y-4">
-                      <p className="text-xs text-amber-600">⚠ Будет перенесено в настройки кнопки оплаты</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>Срок доступа (дней)</Label>
@@ -1367,7 +1366,7 @@ export default function AdminProductDetailV2() {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label className="text-muted-foreground">Период <span className="text-xs">(legacy)</span></Label>
+                          <Label>Период</Label>
                           <Input
                             placeholder="BYN/мес"
                             value={tariffForm.period_label}
