@@ -732,7 +732,7 @@ export default function AdminProductDetailV2() {
               </div>
             </div>
 
-            <GlassCard className="p-8">
+            <GlassCard className="p-4 sm:p-8">
               {/* PATCH 3: effective_active guard */}
               {!(product as any).is_active ? (
                 <div className="py-12 text-center text-muted-foreground">
