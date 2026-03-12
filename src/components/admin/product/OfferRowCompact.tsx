@@ -81,7 +81,7 @@ export function OfferRowCompact({
   const installmentInfo = getInstallmentInfo();
 
   return (
-    <div className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+    <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
       isPrimary 
         ? "bg-primary/5 border-primary/30" 
         : "bg-card/50 border-border/50 hover:bg-card"
@@ -173,7 +173,7 @@ export function OfferRowCompact({
       </div>
 
       {/* Right: Primary toggle + Active toggle + Actions */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
         {/* Set as Primary button - only for pay_now offers */}
         {canBePrimary && onSetPrimary && (
           <Button 
