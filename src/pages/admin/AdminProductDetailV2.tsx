@@ -547,8 +547,8 @@ export default function AdminProductDetailV2() {
 
         {/* Pill-style tabs */}
         <Tabs defaultValue="tariffs">
-          <div className="px-1">
-            <TabsList>
+          <div className="px-1 overflow-x-auto scrollbar-none">
+            <TabsList className="w-full sm:w-auto">
               <TabsTrigger value="tariffs" className="gap-1.5 text-xs">
                 <Tag className="h-3.5 w-3.5" />
                 Тарифы
