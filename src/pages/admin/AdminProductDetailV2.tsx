@@ -217,9 +217,7 @@ export default function AdminProductDetailV2() {
     cc_price_display: null as number | null,
     cc_old_price: null as number | null,
     cc_price_suffix: "BYN",
-    cc_cta_text: "",
     cc_footnote: "",
-    cc_is_highlighted: false,
     cc_style_variant: "default" as "default" | "highlighted" | "minimal" | "compact",
   });
 
