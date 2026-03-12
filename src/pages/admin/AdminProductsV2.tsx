@@ -617,7 +617,7 @@ export default function AdminProductsV2() {
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               {editingProduct ? "Редактировать продукт" : "Новый продукт"}
