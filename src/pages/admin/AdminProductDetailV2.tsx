@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useParams, useNavigate } from "react-router-dom";
@@ -18,8 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff
 } from "lucide-react";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
@@ -105,6 +106,85 @@ export default function AdminProductDetailV2() {
   const [offerDialog, setOfferDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [flowDialog, setFlowDialog] = useState<{ open: boolean; editing: any }>({ open: false, editing: null });
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: string; id: string } | null>(null);
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{ type: "tariff" | "offer" | "flow"; ids: string[] } | null>(null);
+
+  // === Sorting (client-side, in-memory) ===
+  const tariffSort = useTableSort<any>({ data: tariffs || [] });
+  const offerSort = useTableSort<any>({ data: offers || [] });
+  const flowSort = useTableSort<any>({ data: flows || [] });
+
+  // Client sort helper
+  const clientSort = useCallback((items: any[], sortKey: string | null, sortDir: "asc" | "desc" | null) => {
+    if (!sortKey || !sortDir) return items;
+    return [...items].sort((a, b) => {
+      let cmp = 0;
+      if (sortKey === "name" || sortKey === "code") {
+        cmp = String(a[sortKey] || "").localeCompare(String(b[sortKey] || ""), "ru");
+      } else if (sortKey === "is_active") {
+        cmp = (a.is_active === b.is_active) ? 0 : a.is_active ? -1 : 1;
+      } else if (sortKey === "amount") {
+        cmp = (a.amount ?? 0) - (b.amount ?? 0);
+      } else if (sortKey === "offer_type") {
+        const order: Record<string, number> = { pay_now: 0, trial: 1, preregistration: 2 };
+        cmp = (order[a.offer_type] ?? 9) - (order[b.offer_type] ?? 9);
+      } else if (sortKey === "start_date") {
+        const aD = a.start_date ? new Date(a.start_date).getTime() : Infinity;
+        const bD = b.start_date ? new Date(b.start_date).getTime() : Infinity;
+        cmp = aD - bD;
+      }
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+  }, []);
+
+  // Sorted arrays
+  const sortedTariffs = useMemo(() => clientSort(tariffs || [], tariffSort.sortKey, tariffSort.sortDirection), [tariffs, tariffSort.sortKey, tariffSort.sortDirection, clientSort]);
+  const sortedFlows = useMemo(() => clientSort(flows || [], flowSort.sortKey, flowSort.sortDirection), [flows, flowSort.sortKey, flowSort.sortDirection, clientSort]);
+  // allOffers flat for selection/bulk (sorted offers used inside groups for UI)
+  const allOffers = useMemo(() => offers ?? [], [offers]);
+
+  // === Selection (3 independent stores) ===
+  const tariffSelect = useDragSelect({ items: sortedTariffs, getItemId: (t: any) => t.id });
+  const offerSelect = useDragSelect({ items: allOffers, getItemId: (o: any) => o.id });
+  const flowSelect = useDragSelect({ items: sortedFlows, getItemId: (f: any) => f.id });
+
+  // === Bulk action handlers ===
+  const handleBulkActivate = useCallback(async (type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    const mutate = type === "tariff" ? updateTariff : type === "offer" ? updateOffer : updateFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync({ id, is_active: true })));
+    select.clearSelection();
+    toast.success(`Активировано: ${ids.length}`);
+  }, [tariffSelect, offerSelect, flowSelect, updateTariff, updateOffer, updateFlow]);
+
+  const handleBulkDeactivate = useCallback(async (type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    const mutate = type === "tariff" ? updateTariff : type === "offer" ? updateOffer : updateFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync({ id, is_active: false })));
+    select.clearSelection();
+    toast.success(`Деактивировано: ${ids.length}`);
+  }, [tariffSelect, offerSelect, flowSelect, updateTariff, updateOffer, updateFlow]);
+
+  const handleBulkDeleteStart = useCallback((type: "tariff" | "offer" | "flow") => {
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    const ids = Array.from(select.selectedIds);
+    if (ids.length > 50 && !confirm(`Выбрано ${ids.length}. Продолжить?`)) return;
+    setBulkDeleteConfirm({ type, ids });
+  }, [tariffSelect, offerSelect, flowSelect]);
+
+  const handleBulkDeleteConfirm = useCallback(async () => {
+    if (!bulkDeleteConfirm) return;
+    const { type, ids } = bulkDeleteConfirm;
+    const mutate = type === "tariff" ? deleteTariff : type === "offer" ? deleteOffer : deleteFlow;
+    await Promise.all(ids.map(id => mutate.mutateAsync(id)));
+    const select = type === "tariff" ? tariffSelect : type === "offer" ? offerSelect : flowSelect;
+    select.clearSelection();
+    setBulkDeleteConfirm(null);
+    toast.success(`Удалено: ${ids.length}`);
+  }, [bulkDeleteConfirm, deleteTariff, deleteOffer, deleteFlow, tariffSelect, offerSelect, flowSelect]);
   
   // Payment dialog state for preview
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
@@ -601,18 +681,99 @@ export default function AdminProductDetailV2() {
                 Нет тарифов. Создайте первый тариф для этого продукта.
               </GlassCard>
             ) : (
-              <div className="space-y-3">
-                {tariffs.map((tariff) => (
-                  <TariffCardCompact
-                    key={tariff.id}
-                    tariff={tariff}
-                    offers={getOffersForTariff(tariff.id)}
-                    productIsActive={(product as any)?.is_active ?? true}
-                    onEdit={() => openTariffDialog(tariff)}
-                    onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
+              <>
+                {/* Select All + Sort Pills */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Checkbox
+                    checked={tariffSelect.selectedCount > 0 && tariffSelect.selectedCount === sortedTariffs.length}
+                    onCheckedChange={(checked) => checked ? tariffSelect.selectAll() : tariffSelect.clearSelection()}
                   />
-                ))}
-              </div>
+                  <span className="text-xs text-muted-foreground">
+                    {tariffSelect.selectedCount > 0 ? `Выбрано: ${tariffSelect.selectedCount}` : "Выбрать все"}
+                  </span>
+                  {tariffSelect.hasSelection && (
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={tariffSelect.clearSelection}>Сбросить</Button>
+                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    <SortPill label="Имя" sortKey="name" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
+                    <SortPill label="Статус" sortKey="is_active" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
+                  </div>
+                </div>
+
+                <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
+                  {sortedTariffs.map((tariff) => (
+                    <div
+                      key={tariff.id}
+                      ref={(el) => tariffSelect.registerItemRef(tariff.id, el)}
+                      className={cn(
+                        "flex items-start gap-2 group cursor-pointer",
+                        tariffSelect.selectedIds.has(tariff.id) && "ring-2 ring-primary/30 rounded-xl"
+                      )}
+                      onClick={(e) => {
+                        if (e.shiftKey) { tariffSelect.handleRangeSelect(tariff.id, true); }
+                        else if (e.ctrlKey || e.metaKey) { tariffSelect.toggleSelection(tariff.id, true); }
+                        else { openTariffDialog(tariff); }
+                      }}
+                    >
+                      <div className="pt-4 pl-1" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={tariffSelect.selectedIds.has(tariff.id)}
+                          onCheckedChange={() => tariffSelect.toggleSelection(tariff.id, true)}
+                        />
+                      </div>
+                      <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                        <TariffCardCompact
+                          tariff={tariff}
+                          offers={getOffersForTariff(tariff.id)}
+                          productIsActive={(product as any)?.is_active ?? true}
+                          onEdit={() => openTariffDialog(tariff)}
+                          onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
+                        />
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Selection box overlay */}
+                  {tariffSelect.isDragging && tariffSelect.selectionBox && (
+                    <SelectionBox
+                      startX={tariffSelect.selectionBox.startX}
+                      startY={tariffSelect.selectionBox.startY}
+                      endX={tariffSelect.selectionBox.endX}
+                      endY={tariffSelect.selectionBox.endY}
+                    />
+                  )}
+                </div>
+
+                {/* Bulk Actions Bar */}
+                {tariffSelect.hasSelection && (
+                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
+                    <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+                        <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs sm:text-sm">
+                          {tariffSelect.selectedCount}
+                        </div>
+                        <span className="text-muted-foreground whitespace-nowrap">из {sortedTariffs.length}</span>
+                      </div>
+                      <div className="h-5 w-px bg-border hidden sm:block" />
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-primary" onClick={() => handleBulkActivate("tariff")}>
+                        <Power className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Активировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkDeactivate("tariff")}>
+                        <PowerOff className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Деактивировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={() => handleBulkDeleteStart("tariff")}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Удалить</span>
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={tariffSelect.clearSelection}>
+                        <span className="text-xs">✕</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
 
@@ -636,44 +797,126 @@ export default function AdminProductDetailV2() {
                 Нет кнопок оплаты. Создайте кнопки для отображения на сайте.
               </GlassCard>
             ) : (
-              <div className="space-y-6">
-                {tariffs?.map((tariff) => {
-                  const tariffOffers = getOffersForTariff(tariff.id);
-                  if (!tariffOffers.length) return null;
-                  
-                  const hasActivePayOffer = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active);
-                  
-                  return (
-                    <GlassCard key={tariff.id} className="p-4">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="font-medium">{tariff.name}</span>
-                        {tariff.public_id && (
-                          <CopyableIdChip value={tariff.public_id} />
-                        )}
-                        {!hasActivePayOffer && (
-                          <Badge variant="outline" className={`text-xs ${getStatusBadgeClass("warning")}`}>
-                            Нет основной цены
-                          </Badge>
-                        )}
+              <>
+                {/* Select All + Sort Pills */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Checkbox
+                    checked={offerSelect.selectedCount > 0 && offerSelect.selectedCount === allOffers.length}
+                    onCheckedChange={(checked) => checked ? offerSelect.selectAll() : offerSelect.clearSelection()}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {offerSelect.selectedCount > 0 ? `Выбрано: ${offerSelect.selectedCount}` : "Выбрать все"}
+                  </span>
+                  {offerSelect.hasSelection && (
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={offerSelect.clearSelection}>Сбросить</Button>
+                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    <SortPill label="Сумма" sortKey="amount" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
+                    <SortPill label="Тип" sortKey="offer_type" currentSortKey={offerSort.sortKey} currentSortDirection={offerSort.sortDirection} onSort={offerSort.handleSort} />
+                  </div>
+                </div>
+
+                <div className="relative space-y-6" onMouseDown={offerSelect.handleMouseDown}>
+                  {tariffs?.map((tariff) => {
+                    const tariffOffers = clientSort(getOffersForTariff(tariff.id), offerSort.sortKey, offerSort.sortDirection);
+                    if (!tariffOffers.length) return null;
+                    
+                    const hasActivePayOffer = tariffOffers.some((o: any) => o.offer_type === 'pay_now' && o.is_active);
+                    
+                    return (
+                      <GlassCard key={tariff.id} className="p-4">
+                        {/* Tariff group header — NOT selectable */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="font-medium">{tariff.name}</span>
+                          {tariff.public_id && (
+                            <CopyableIdChip value={tariff.public_id} />
+                          )}
+                          {!hasActivePayOffer && (
+                            <Badge variant="outline" className={`text-xs ${getStatusBadgeClass("warning")}`}>
+                              Нет основной цены
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          {tariffOffers.map((offer: any) => (
+                            <div
+                              key={offer.id}
+                              ref={(el) => offerSelect.registerItemRef(offer.id, el)}
+                              className={cn(
+                                "flex items-start gap-2 cursor-pointer",
+                                offerSelect.selectedIds.has(offer.id) && "ring-2 ring-primary/30 rounded-lg"
+                              )}
+                              onClick={(e) => {
+                                if (e.shiftKey) { offerSelect.handleRangeSelect(offer.id, true); }
+                                else if (e.ctrlKey || e.metaKey) { offerSelect.toggleSelection(offer.id, true); }
+                                else { openOfferDialog(offer); }
+                              }}
+                            >
+                              <div className="pt-2 pl-1" onClick={(e) => e.stopPropagation()}>
+                                <Checkbox
+                                  checked={offerSelect.selectedIds.has(offer.id)}
+                                  onCheckedChange={() => offerSelect.toggleSelection(offer.id, true)}
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                                <OfferRowCompact
+                                  offer={offer}
+                                  onToggleActive={handleToggleOfferActive}
+                                  onUpdateLabel={handleUpdateOfferLabel}
+                                  onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
+                                  onEdit={() => openOfferDialog(offer)}
+                                  onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
+                                  hasPrimaryInTariff={hasActivePayOffer}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </GlassCard>
+                    );
+                  })}
+
+                  {/* Selection box overlay */}
+                  {offerSelect.isDragging && offerSelect.selectionBox && (
+                    <SelectionBox
+                      startX={offerSelect.selectionBox.startX}
+                      startY={offerSelect.selectionBox.startY}
+                      endX={offerSelect.selectionBox.endX}
+                      endY={offerSelect.selectionBox.endY}
+                    />
+                  )}
+                </div>
+
+                {/* Bulk Actions Bar */}
+                {offerSelect.hasSelection && (
+                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
+                    <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+                        <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs sm:text-sm">
+                          {offerSelect.selectedCount}
+                        </div>
+                        <span className="text-muted-foreground whitespace-nowrap">из {allOffers.length}</span>
                       </div>
-                      <div className="space-y-2">
-                        {tariffOffers.map((offer: any) => (
-                          <OfferRowCompact
-                            key={offer.id}
-                            offer={offer}
-                            onToggleActive={handleToggleOfferActive}
-                            onUpdateLabel={handleUpdateOfferLabel}
-                            onSetPrimary={(offerId) => setPrimaryOffer.mutate({ offerId, tariffId: tariff.id })}
-                            onEdit={() => openOfferDialog(offer)}
-                            onDelete={() => setDeleteConfirm({ type: "offer", id: offer.id })}
-                            hasPrimaryInTariff={hasActivePayOffer}
-                          />
-                        ))}
-                      </div>
-                    </GlassCard>
-                  );
-                })}
-              </div>
+                      <div className="h-5 w-px bg-border hidden sm:block" />
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-primary" onClick={() => handleBulkActivate("offer")}>
+                        <Power className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Активировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkDeactivate("offer")}>
+                        <PowerOff className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Деактивировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={() => handleBulkDeleteStart("offer")}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Удалить</span>
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={offerSelect.clearSelection}>
+                        <span className="text-xs">✕</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
 
@@ -697,36 +940,117 @@ export default function AdminProductDetailV2() {
                 Нет потоков.
               </GlassCard>
             ) : (
-              <div className="space-y-2">
-                {flows.map((flow) => (
-                  <GlassCard key={flow.id} className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{flow.name}</span>
-                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{flow.code}</code>
-                          {flow.is_default && <Badge variant="outline">По умолчанию</Badge>}
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          {flow.max_participants ? `Макс. ${flow.max_participants} уч.` : "Без ограничений"}
-                        </div>
+              <>
+                {/* Select All + Sort Pills */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Checkbox
+                    checked={flowSelect.selectedCount > 0 && flowSelect.selectedCount === sortedFlows.length}
+                    onCheckedChange={(checked) => checked ? flowSelect.selectAll() : flowSelect.clearSelection()}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {flowSelect.selectedCount > 0 ? `Выбрано: ${flowSelect.selectedCount}` : "Выбрать все"}
+                  </span>
+                  {flowSelect.hasSelection && (
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={flowSelect.clearSelection}>Сбросить</Button>
+                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    <SortPill label="Имя" sortKey="name" currentSortKey={flowSort.sortKey} currentSortDirection={flowSort.sortDirection} onSort={flowSort.handleSort} />
+                    <SortPill label="Статус" sortKey="is_active" currentSortKey={flowSort.sortKey} currentSortDirection={flowSort.sortDirection} onSort={flowSort.handleSort} />
+                  </div>
+                </div>
+
+                <div className="relative space-y-2" onMouseDown={flowSelect.handleMouseDown}>
+                  {sortedFlows.map((flow) => (
+                    <div
+                      key={flow.id}
+                      ref={(el) => flowSelect.registerItemRef(flow.id, el)}
+                      className={cn(
+                        "flex items-start gap-2 cursor-pointer",
+                        flowSelect.selectedIds.has(flow.id) && "ring-2 ring-primary/30 rounded-xl"
+                      )}
+                      onClick={(e) => {
+                        if (e.shiftKey) { flowSelect.handleRangeSelect(flow.id, true); }
+                        else if (e.ctrlKey || e.metaKey) { flowSelect.toggleSelection(flow.id, true); }
+                        else { openFlowDialog(flow); }
+                      }}
+                    >
+                      <div className="pt-4 pl-1" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={flowSelect.selectedIds.has(flow.id)}
+                          onCheckedChange={() => flowSelect.toggleSelection(flow.id, true)}
+                        />
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={getStatusBadgeClass(flow.is_active ? "active" : "inactive")}>
-                          {flow.is_active ? "Активен" : "Неактивен"}
-                        </Badge>
-                        <Button variant="ghost" size="sm" onClick={() => openFlowDialog(flow)}>
-                          Редактировать
-                        </Button>
-                      </div>
+                      <GlassCard className="flex-1 p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{flow.name}</span>
+                              <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{flow.code}</code>
+                              {flow.is_default && <Badge variant="outline">По умолчанию</Badge>}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              {flow.max_participants ? `Макс. ${flow.max_participants} уч.` : "Без ограничений"}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <Badge variant="outline" className={getStatusBadgeClass(flow.is_active ? "active" : "inactive")}>
+                              {flow.is_active ? "Активен" : "Неактивен"}
+                            </Badge>
+                            <Button variant="ghost" size="sm" onClick={() => openFlowDialog(flow)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm({ type: "flow", id: flow.id })}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+                      </GlassCard>
                     </div>
-                  </GlassCard>
-                ))}
-              </div>
+                  ))}
+
+                  {/* Selection box overlay */}
+                  {flowSelect.isDragging && flowSelect.selectionBox && (
+                    <SelectionBox
+                      startX={flowSelect.selectionBox.startX}
+                      startY={flowSelect.selectionBox.startY}
+                      endX={flowSelect.selectionBox.endX}
+                      endY={flowSelect.selectionBox.endY}
+                    />
+                  )}
+                </div>
+
+                {/* Bulk Actions Bar */}
+                {flowSelect.hasSelection && (
+                  <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
+                    <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+                        <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs sm:text-sm">
+                          {flowSelect.selectedCount}
+                        </div>
+                        <span className="text-muted-foreground whitespace-nowrap">из {sortedFlows.length}</span>
+                      </div>
+                      <div className="h-5 w-px bg-border hidden sm:block" />
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-primary" onClick={() => handleBulkActivate("flow")}>
+                        <Power className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Активировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkDeactivate("flow")}>
+                        <PowerOff className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Деактивировать</span>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={() => handleBulkDeleteStart("flow")}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Удалить</span>
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={flowSelect.clearSelection}>
+                        <span className="text-xs">✕</span>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
-
-          {/* Preview Tab */}
           <TabsContent value="preview" className="space-y-4 mt-6">
             <div className="flex justify-between items-center">
               <div>
@@ -1819,6 +2143,26 @@ export default function AdminProductDetailV2() {
         </DialogContent>
       </Dialog>
 
+      {/* Bulk Delete Confirmation */}
+      <AlertDialog open={!!bulkDeleteConfirm} onOpenChange={() => setBulkDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Удалить {bulkDeleteConfirm?.ids.length}{" "}
+              {bulkDeleteConfirm?.type === "tariff" ? "тарифов" : bulkDeleteConfirm?.type === "offer" ? "кнопок оплаты" : "потоков"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {/* Payment Dialog for Preview Testing */}
       {selectedOfferForPayment && (
         <PaymentDialog
