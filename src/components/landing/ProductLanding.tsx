@@ -131,7 +131,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
               </div>
             </AnimatedSection>
 
-            <div className={`grid gap-6 max-w-5xl mx-auto items-stretch ${
+            <div className={`grid grid-cols-1 gap-6 max-w-5xl mx-auto items-stretch ${
               tariffs.length === 1 ? 'md:grid-cols-1 max-w-md' :
               tariffs.length === 2 ? 'md:grid-cols-2 max-w-3xl' :
               'md:grid-cols-3'

@@ -144,7 +144,7 @@ export function LandingPricing() {
           </AnimatedSection>
         )}
 
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto items-stretch">
           {hasDynamicTariffs
             ? // Dynamic tariffs from edge function
               (() => {
