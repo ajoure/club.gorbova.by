@@ -1710,7 +1710,7 @@ export default function AdminProductDetailV2() {
       {/* Flow Dialog */}
       <Dialog open={flowDialog.open} onOpenChange={(open) => setFlowDialog({ ...flowDialog, open })}>
         <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
+          <div className="max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               {flowDialog.editing ? "Редактировать поток" : "Новый поток"}
