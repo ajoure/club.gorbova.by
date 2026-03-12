@@ -1115,7 +1115,7 @@ export default function AdminProductDetailV2() {
 
                         <div className="space-y-2">
                           <Label>Первый платёж через (дней)</Label>
-                          <div className="flex items-center gap-4">
+                          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
                             <Input
                               type="number"
                               min={0}
