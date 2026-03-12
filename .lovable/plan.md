@@ -1,154 +1,307 @@
-# План: Исправление скролла + Унификация карточек (v3 — финальный)
+# План: Visual Tariff Editor + Багфиксы UniversalPricingSection (v4)
 
 ---
 
-## Фаза 1: Исправление вертикального скролла (4 замены)
+## STOP-GUARD (глобальный)
 
-### Проблема
-Внутренние контейнеры диалогов используют `max-h-full overflow-y-auto`, но родитель `DialogContent` задаёт только `max-height` (без явного `height`). CSS `max-height: 100%` от элемента без фиксированной `height` = `auto` → `overflow-y-auto` не срабатывает → контент обрезается `overflow-hidden` на `DialogContent`.
-
-### Целевая формула (зафиксировано)
-- **DialogContent**: `overflow-hidden p-0 bg-background` (без `max-h-*`) — уже так везде ✅
-- **Внутренний wrapper**: `max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6`
-- Формула `-4rem` = padding p-4 (1rem×2) + визуальный запас (~1rem×2). Везде одинаково, без исключений.
-
-### Точные места замены (4 штуки)
-
-| # | Файл | Строка | Контекст | Замена |
-|---|-------|--------|----------|--------|
-| 1 | `AdminProductDetailV2.tsx` | **793** | Tariff Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
-| 2 | `AdminProductDetailV2.tsx` | **937** | Offer Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
-| 3 | `AdminProductDetailV2.tsx` | **1708** | Flow Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
-| 4 | `AdminProductsV2.tsx` | **655** | Create/Edit Product Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
-
-**Не требуют изменений (не трогаем):**
-- Delete Confirmation Dialog (строка 1798) — маленький диалог, контент не переполняется
-- Dry-run reasons list (строка 772) — фиксированная `max-h-40`, работает корректно
+- Если рефактор TariffCard создаёт риск для club.* / consultation.* → НЕ ломать текущий компонент, выделить thin shared render layer, публичный контракт сохранить backward compatible.
+- Production pricing flow ломать НЕЛЬЗЯ.
+- Фаза 3 = **UI-only в TariffCard**. Бизнес-логика продаж, доступов, оплат, entitlements НЕ переносится в UI.
+- `meta` update — только deep merge (add-only), не перезатирать existing fields (welcome_message и др.).
 
 ---
 
-## Фаза 2: Унификация карточек + bulk-действия
+## Фаза 1: Багфиксы UniversalPricingSection.tsx (2 обязательных)
 
-### 2.0 STOP-GUARD
-Фаза 2 = **UI-only**. Новых хуков, миграций, RPC не создаём. В bulk используем напрямую `updateX.mutateAsync` / `deleteX.mutateAsync`; invalidate уже есть по prefix (как сейчас).
+### 1a. Мутация searchParams (строки 59-60)
 
-### 2.1 Аудит существующих мутаций (всё есть ✅)
+**Проблема:** `searchParams.delete("offer")` мутирует объект → нестабильное поведение / зацикливания.
 
-| Сущность | Update (is_active) | Delete | Тип delete | Confirm dialog | Каскады |
-|----------|-------------------|--------|------------|----------------|---------|
-| **Tariff** | `useUpdateTariff` → `.update({is_active})` ✅ | `useDeleteTariff` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` state | FK cascade → удаляет офферы тарифа |
-| **Offer** | `useUpdateTariffOffer` → `.update({is_active})` ✅ | `useDeleteTariffOffer` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
-| **Flow** | `useUpdateFlow` → `.update({is_active})` ✅ | `useDeleteFlow` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
-
-### 2.2 Bulk-действия
-
-**Bulk activate/deactivate:** `Promise.all(ids.map(id => updateX.mutateAsync({ id, is_active: true/false })))`
-
-**Bulk delete:**
-- Нажатие «Удалить (N)» → **один** confirm dialog: «Удалить N элементов?»
-- По confirm → `Promise.all(ids.map(id => deleteX.mutateAsync(id)))`
-- Старый `setDeleteConfirm({type, id})` остаётся для одиночных 🗑 кнопок
-
-**Новых хуков не создаём; invalidate уже есть по prefix.**
-
-### 2.3 Сортировка (клиентская, в памяти)
-
-**Источник:** `useTableSort` по уже загруженным массивам через `useQuery`. Без refetch, без query params.
-
-| Вкладка | Поля сортировки |
-|---------|----------------|
-| Тарифы | `name`, `is_active` (статус) |
-| Кнопки оплаты | `amount`, `offer_type` (без `tariff_name` — группировка по тарифам уже задаёт порядок) |
-| Потоки | `name`, `start_date`, `is_active` |
-
-### 2.4 Выделение / drag-select
-
-Копируем usage из `AdminProductsV2` и применяем к карточкам. Контракт хука — как уже реализован в `useDragSelect`:
-
+**Замена:**
 ```tsx
-const tariffSelect = useDragSelect({ items: tariffs, getItemId: t => t.id });
-const offerSelect = useDragSelect({ items: allOffers, getItemId: o => o.id });
-const flowSelect = useDragSelect({ items: flows, getItemId: f => f.id });
+setSearchParams(prev => {
+  const p = new URLSearchParams(prev);
+  p.delete("offer");
+  return p;
+}, { replace: true });
 ```
+Удаляет только `offer`, сохраняет utm, ref и прочие query params.
 
-**3 независимых инстанса** — по одному на вкладку.
+### 1b. Auth redirect затирает query-параметры (строки 69-71)
 
-**DoD выделения:**
-- ☐ Клик по чекбоксу — toggle одного элемента
-- ☐ Ctrl/Cmd + клик — additive toggle
-- ☐ Shift + клик — range select
-- ☐ Drag-select (зажатие и протягивание) — выделение прямоугольником
-- ☐ «Выбрать все» чекбокс — выделяет все элементы текущей вкладки
-- ☐ Переключение вкладки — не сбрасывает выделение других вкладок
+**Проблема:** `${basePath}?offer=${offer.id}` теряет существующие параметры (utm и др.).
 
-### 2.5 Поведение клика по карточке
-
-**Клик → открыть edit dialog** (единообразно для всех):
-- Тариф → `setTariffDialog({ open: true, editing: tariff })`
-- Оффер → `setOfferDialog({ open: true, editing: offer })`
-- Поток → `setFlowDialog({ open: true, editing: flow })`
-- `stopPropagation` на: checkbox, кнопки (edit, delete, switch, copy)
-
-### 2.6 Группировка офферов
-
-Сохраняем группировку заголовком тарифа (**не selectable**, без чекбокса):
-
-```
-[Select All] [SortPill: Сумма] [SortPill: Тип]
-
-─── Тариф «Базовый» (заголовок, не selectable) ───
-  ☐ Оплатить  1500 BYN  pay_now  ★Основная  🔛 ✎ 🗑
-  ☐ Попробовать  1 BYN  trial  ✎ 🗑
-
-─── Тариф «Продвинутый» ───
-  ☐ Оплатить  3000 BYN  pay_now  ★Основная  🔛 ✎ 🗑
-```
-
-- Группы тарифов идут в порядке `tariff.name` (алфавитно)
-- Внутри каждой группы офферы сортируются по выбранному SortPill (amount / offer_type)
-- SortPill «Тариф» **убран** — при фиксированной группировке он бессмысленен
-- «Выбрать все» выделяет только офферы, не заголовки
-
-### 2.7 SortPill — вынос в компонент
-
-**Файл:** `src/components/admin/SortPill.tsx`
-
-**API:**
+**Замена:**
 ```tsx
-interface SortPillProps {
-  label: string;
-  sortKey: string;
-  currentSortKey: string | null;
-  currentSortDirection: SortDirection;
-  onSort: (key: string) => void;
+const basePath = redirectBasePath || window.location.pathname;
+const sp = new URLSearchParams(window.location.search);
+sp.set("offer", offer.id);
+const returnUrl = `${basePath}?${sp.toString()}`;
+navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
+```
+
+---
+
+## Фаза 2: Редизайн диалога тарифа — Visual Tariff Editor
+
+### 2.0 Архитектура данных
+
+#### card_config внутри tariffs.meta (без миграции БД)
+
+```text
+tariffs.meta = {
+  card_config: {
+    badge_text: string | null        // Произвольный текст бейджа
+    price_display: number | null     // Visual-only fallback цены (НЕ каноническая цена продажи)
+    old_price: number | null         // Зачёркнутая старая цена (override)
+    price_suffix: string             // "BYN", "BYN/мес", "BYN/год"
+    cta_text: string | null          // Override текста CTA кнопки
+    footnote: string | null          // Подпись под кнопкой
+    is_highlighted: boolean          // Выделенная карточка (ring + highlight)
+    style_variant: "default" | "highlighted" | "minimal" | "compact"
+  },
+  ...other existing meta fields (welcome_message etc — НЕ трогать)
 }
 ```
 
-**DoD:** `AdminProductsV2` импортирует из нового файла, сортировка продуктов (Имя/Сайт/Статус) не ломается.
+#### Жёсткие правила данных
+
+1. **price_display — только visual fallback:**
+   - Реальная цена покупки берётся ТОЛЬКО из offers (primaryOffer.amount)
+   - card_config.price_display — visual fallback для превью/лендинга, когда нет active pay_now offer
+   - checkout / payments / order flow НЕ используют price_display
+   - UI не забирает бизнес-логику продаж на себя
+
+2. **old_price — приоритет с fallback:**
+   - `card_config.old_price` → first priority (override)
+   - `tariff.original_price` → fallback (existing field)
+   - Показывать только если old_price > displayPrice
+   - Совместимость со старыми тарифами сохраняется
+
+3. **is_highlighted vs is_popular — разделение:**
+   - `is_highlighted` = новый UI-флаг в card_config
+   - `is_popular` = legacy compat field в tariffs table
+   - Источник для рендера: сначала `card_config.is_highlighted`, потом fallback в `tariff.is_popular`
+   - При сохранении: `is_popular = is_highlighted` (backward compat маппинг)
+   - НЕ смешивать как одно и то же навсегда
+
+4. **meta deep merge при сохранении:**
+   - Сохранить все существующие `meta.*` поля
+   - Обновить только `meta.card_config`
+   - НЕ удалять `welcome_message` и другие текущие поля
+   - Код: `{ ...existingMeta, card_config: { ...newCardConfig } }`
+
+### 2.1 Разделение формы: System fields / Card content
+
+**System fields** (компактная секция):
+- Статус (Активен) — Switch вынесен в заголовок диалога
+- `access_days` — **оставить в диалоге** как editable поле с пометкой _"Legacy — будет перенесено в настройки кнопки оплаты"_. НЕ скрывать полностью до явного replacement flow в offer.
+- `period_label` — оставить как read-only / legacy с пометкой
+- `code` — авто-генерация, скрыт
+
+**Card content** (визуальный конструктор):
+- Название — полная ширина, чтобы длинный текст был виден
+- Подзаголовок — полная ширина, под названием
+- Описание — Textarea с `resize-y`, min 3 строки, расширяемое
+- Цена на карточке: цена + суффикс (2 поля в строку)
+- Старая цена (зачёркнутая) — необязательное
+- Бейдж — текстовое поле (произвольный текст)
+- Выделить карточку — Switch (`is_highlighted`)
+- Преимущества — TariffFeaturesEditor (как есть)
+
+### 2.2 Новая структура диалога (max-w-4xl)
+
+```text
+┌─────────────────────────────────────────────────┐
+│ Новый тариф / Редактировать         [Активен ●] │
+├──────────────────────┬──────────────────────────┤
+│ FORM (left ~60%)     │ PREVIEW (right ~40%)     │
+│                      │                          │
+│ ┌─ Основное ───────┐ │  [Desktop] [Mobile]      │
+│ │ Название (full)  │ │                          │
+│ │ Подзаголовок     │ │  ┌──────────────────┐   │
+│ └──────────────────┘ │  │   TariffCard     │   │
+│                      │  │   (live)         │   │
+│ ┌─ Цена ───────────┐ │  │                  │   │
+│ │ Цена  │ Суффикс  │ │  └──────────────────┘   │
+│ │ Старая цена      │ │                          │
+│ └──────────────────┘ │                          │
+│                      │                          │
+│ ┌─ Карточка ───────┐ │                          │
+│ │ Бейдж            │ │                          │
+│ │ Описание (resize)│ │                          │
+│ │ [Выделить]       │ │                          │
+│ └──────────────────┘ │                          │
+│                      │                          │
+│ ┌─ Доступ (legacy) ┐ │                          │
+│ │ access_days      │ │                          │
+│ │ period_label     │ │                          │
+│ └──────────────────┘ │                          │
+│                      │                          │
+│ ┌─ Преимущества ───┐ │                          │
+│ │ TariffFeatures   │ │                          │
+│ └──────────────────┘ │                          │
+├──────────────────────┴──────────────────────────┤
+│                  [Отмена] [Сохранить]           │
+└─────────────────────────────────────────────────┘
+
+На mobile (<768px): preview сворачивается в Collapsible
+```
+
+### 2.3 View-model нормализатор
+
+Выделить функцию, чтобы TariffCard не перегружался админскими знаниями:
+
+```tsx
+// src/lib/tariffCardViewModel.ts
+function buildTariffCardViewModel(
+  tariff: TariffData,
+  offers: TariffOffer[],
+  cardConfig: CardConfig | null,
+  priceSuffix: string
+): TariffCardData
+```
+
+- Используется и в UniversalPricingSection, и в админском preview
+- TariffCard остаётся чистым render-component
+- Вычислительная логика (price priority, old_price fallback, badge resolution) — в view-model
+
+### 2.4 Live Preview
+
+- Preview рендерит тот же `TariffCard` через `buildTariffCardViewModel`
+- Обновляется локально по state формы (без network save на каждый input)
+- Сохранение только по кнопке Save
+
+### 2.5 Desktop / Mobile preview
+
+НЕ через "max-width контейнера" — через отдельный viewport wrapper:
+
+```tsx
+<div className={previewMode === 'mobile' ? 'w-[320px]' : 'w-[400px]'}>
+  <TariffCard {...viewModel} />
+</div>
+```
+
+Одинаковый card render inside, разный viewport wrapper.
 
 ---
 
-## Файлы
+## Фаза 3: TariffCard — поддержка card_config
+
+### 3.0 STOP-GUARD
+
+Если TariffCard уже завязан на старые пропсы слишком глубоко и рефактор создаёт риск для club.* / consultation.* → НЕ ломать текущий компонент, выделить thin shared render layer, публичный контракт сохранить backward compatible.
+
+### 3.1 Новые поля в TariffCardData
+
+```tsx
+card_config?: {
+  badge_text?: string | null;
+  old_price?: number | null;
+  price_suffix?: string;
+  footnote?: string | null;
+  is_highlighted?: boolean;
+  style_variant?: "default" | "highlighted" | "minimal" | "compact";
+}
+```
+
+### 3.2 Логика рендера (приоритеты)
+
+- **Цена:** `primaryOffer?.amount` > `card_config.price_display` > `tariff.current_price` > "Цена не задана"
+- **Зачёркнутая цена:** `card_config.old_price` > `tariff.original_price` > не показывать. Только если > displayPrice.
+- **Бейдж:** `card_config.badge_text` > `tariff.badge` > не показывать
+- **Highlight:** `card_config.is_highlighted` > `tariff.is_popular` > false
+- **Суффикс:** `priceSuffix` prop (из product.landing_config) > `card_config.price_suffix` > "BYN"
+- **Footnote:** `card_config.footnote` — текст под кнопками (мелким шрифтом)
+- **Style variant:** CSS-класс на GlassCard (default/highlighted/minimal/compact)
+
+### 3.3 Backward compatibility
+
+- Старый тариф без `meta.card_config` → рендерится как раньше (все fallback-и работают)
+- Новый тариф с `meta.card_config` → рендерится с новыми возможностями
+- Mixed list (старые + новые) → работает без ошибок
+
+---
+
+## Фаза 4: Preview на вкладке «Превью» (AdminProductDetailV2)
+
+- Desktop / Mobile переключатель над сеткой тарифов
+- Mobile = viewport wrapper 320px, Desktop = full width
+- Используется тот же `TariffCard` + `buildTariffCardViewModel`
+- Preview всей pricing section: все тарифы продукта рядом, чтобы видеть highlighted, длину features, высоту карточек
+
+---
+
+## Файлы с изменениями
 
 | Файл | Действие |
 |------|----------|
-| `src/components/admin/SortPill.tsx` | **Создать** |
-| `src/pages/admin/AdminProductsV2.tsx` | Импорт SortPill, фикс скролла (строка 655), удалить inline SortPill |
-| `src/pages/admin/AdminProductDetailV2.tsx` | Фикс скролла (3 строки), карточки + bulk для tariffs/offers/flows |
+| `src/components/landing/UniversalPricingSection.tsx` | 2 багфикса (searchParams + redirect) |
+| `src/lib/tariffCardViewModel.ts` | **Создать** — view-model нормализатор |
+| `src/pages/admin/AdminProductDetailV2.tsx` | Редизайн диалога тарифа + live preview + desktop/mobile toggle |
+| `src/components/landing/TariffCard.tsx` | card_config support (old_price, badge_text, footnote, style_variant) |
+
+## Что НЕ меняем
+
+- Edge Functions — не трогаем, `meta` jsonb прозрачно проходит
+- Бизнес-логика оплат/доступов — НЕ затрагивается
+- `access_days` — остаётся в data layer И в UI тарифа (с пометкой legacy)
+- `TariffFeaturesEditor` — без изменений
+- `UniversalPricingSection` — только 2 багфикса, логика не меняется
+- Consultation.tsx, LandingPricing.tsx, ProductLanding.tsx — не трогаем
+
+## Ограничения (что НЕ делаем)
+
+- Произвольный HTML / rich-text editor
+- Custom CSS / drag-drop builder
+- Ручное изменение шрифтов / размеров / цветов
+- Кастомные иконки поэлементно
+- Анимации в админке
+
+## Preset styles (v1)
+
+- `default` — стандартная карточка
+- `highlighted` — ring + primary accent
+- `minimal` — упрощённая, без бейджа
+- `compact` — компактная для списков
+
+---
 
 ## DoD (Definition of Done)
 
 ### Фаза 1
-- ☐ Вертикальный скролл работает во всех 4 диалогах (tariff, offer, flow, product) на 390×844
-- ☐ Контент не обрезается, все поля доступны
-- ☐ Scrollbar track не виден (scrollbar-none)
+- ☐ searchParams очищается через клон (удаляется только offer, сохраняются utm/ref)
+- ☐ Auth redirect сохраняет существующие query-параметры
+- ☐ Возврат из /auth по ?offer=... → PaymentDialog открывается → URL очищается корректно
 
 ### Фаза 2
-- ☐ Карточки тарифов/офферов/потоков визуально идентичны ProductCard
-- ☐ SortPill вынесен, сортировка продуктов не сломана
-- ☐ Сортировка на каждой вкладке работает с индикацией направления
-- ☐ Выделение: click, ctrl/cmd toggle, shift-range, drag-select, select-all — на каждой вкладке (3 независимых стора)
-- ☐ Bulk Actions Bar: Активировать / Деактивировать / Удалить (один confirm dialog для bulk delete)
-- ☐ Клик по карточке → edit dialog (единообразно)
-- ☐ Группировка офферов: заголовки тарифов не selectable, сортировка внутри групп
-- ☐ Нет горизонтального скролла: Тарифы/Офферы/Потоки на 390px, 768px, 1024px — все action-кнопки доступны
+- ☐ Диалог тарифа разделён на System fields и Card content
+- ☐ Название и подзаголовок — полная ширина
+- ☐ Описание — Textarea с resize-y
+- ☐ Есть поля: Цена, Суффикс, Старая цена (зачёркнутая)
+- ☐ Бейдж — произвольный текст
+- ☐ access_days — editable, с пометкой legacy
+- ☐ Live preview карточки в диалоге (тот же TariffCard через buildTariffCardViewModel)
+- ☐ Desktop/Mobile переключатель в preview (viewport wrapper, не max-width)
+- ☐ meta сохраняется через deep merge (existing fields не теряются)
+
+### Фаза 3
+- ☐ TariffCard поддерживает card_config
+- ☐ Зачёркнутая цена отображается если old_price > displayPrice
+- ☐ Бейдж из card_config.badge_text с fallback в tariff.badge
+- ☐ is_highlighted с fallback в is_popular
+- ☐ Footnote под кнопками
+- ☐ **Backward compat:** старый тариф без card_config рендерится как раньше
+- ☐ **Mixed list:** старые + новые тарифы рядом — без ошибок
+
+### Фаза 4
+- ☐ Preview всей pricing section на вкладке «Превью» с desktop/mobile toggle
+- ☐ Все тарифы продукта видны рядом
+- ☐ Highlighted/обычные карточки визуально различимы
+
+### Общий DoD
+- ☐ Нет HTML/CSS конструктора, только типизированные поля
+- ☐ Existing pricing flow не сломан (club.*, consultation.*)
+- ☐ card_config хранится в tariffs.meta.card_config (без миграции БД)
+- ☐ price_display НЕ используется в checkout/payments/orders
+- ☐ Нет дублированной карточной логики (единый TariffCard)
