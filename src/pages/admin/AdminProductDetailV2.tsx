@@ -213,7 +213,19 @@ export default function AdminProductDetailV2() {
     access_days: 30,
     is_active: true,
     meta: {} as TariffMetaConfig,
+    // card_config fields (stored in meta.card_config)
+    cc_price_display: null as number | null,
+    cc_old_price: null as number | null,
+    cc_price_suffix: "BYN",
+    cc_cta_text: "",
+    cc_footnote: "",
+    cc_is_highlighted: false,
+    cc_style_variant: "default" as "default" | "highlighted" | "minimal" | "compact",
   });
+
+  // Preview mode for tariff dialog
+  const [tariffPreviewMode, setTariffPreviewMode] = useState<"desktop" | "mobile">("desktop");
+  const isMobile = useIsMobile();
 
   // Offer form
   const [offerForm, setOfferForm] = useState({
