@@ -1271,7 +1271,7 @@ export default function AdminProductDetailV2() {
                       <p className="text-xs text-muted-foreground">Отображается если нет активной кнопки оплаты</p>
                     </div>
                     <div className="space-y-2">
-                      <Label>Валюта / суффикс</Label>
+                      <Label>Валюта</Label>
                       <Input
                         placeholder="BYN"
                         value={tariffForm.cc_price_suffix}
