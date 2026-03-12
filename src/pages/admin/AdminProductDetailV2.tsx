@@ -613,14 +613,14 @@ export default function AdminProductDetailV2() {
 
           {/* Offers Tab */}
           <TabsContent value="offers" className="space-y-4 mt-6">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Кнопки оплаты</h2>
                 <p className="text-sm text-muted-foreground">
                   Кнопка = способ покупки тарифа. Здесь задаётся цена.
                 </p>
               </div>
-              <Button onClick={() => openOfferDialog()}>
+              <Button onClick={() => openOfferDialog()} className="w-full sm:w-auto">
                 <Plus className="h-4 w-4 mr-2" />
                 Добавить кнопку
               </Button>
