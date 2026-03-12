@@ -173,7 +173,7 @@ export function OfferRowCompact({
       </div>
 
       {/* Right: Primary toggle + Active toggle + Actions */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
         {/* Set as Primary button - only for pay_now offers */}
         {canBePrimary && onSetPrimary && (
           <Button 
