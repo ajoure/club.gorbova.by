@@ -65,9 +65,9 @@ interface TariffCardProps {
 
 const styleVariantClasses: Record<string, string> = {
   default: "",
-  highlighted: "border-primary/50 ring-2 ring-primary/20",
-  minimal: "border-border/30",
-  compact: "p-4",
+  highlighted: "border-primary/50 ring-2 ring-primary/20 bg-primary/[0.03]",
+  minimal: "border-border/20 shadow-none bg-card/50",
+  compact: "p-4 [&_h3]:text-lg [&_.price-value]:text-2xl",
 };
 
 export function TariffCard({
