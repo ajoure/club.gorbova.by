@@ -65,9 +65,9 @@ interface TariffCardProps {
 
 const styleVariantClasses: Record<string, string> = {
   default: "",
-  highlighted: "border-primary/50 ring-2 ring-primary/20",
-  minimal: "border-border/30",
-  compact: "p-4",
+  highlighted: "border-primary/50 ring-2 ring-primary/20 bg-primary/[0.03]",
+  minimal: "border-border/20 shadow-none bg-card/50",
+  compact: "p-4 [&_h3]:text-lg [&_.price-value]:text-2xl",
 };
 
 export function TariffCard({
@@ -105,12 +105,12 @@ export function TariffCard({
   // Badge: card_config.badge_text > tariff.badge
   const badgeText = cc?.badge_text ?? tariff.badge ?? null;
 
-  // Highlight: card_config.is_highlighted > tariff.is_popular
-  const isHighlighted = cc?.is_highlighted ?? tariff.is_popular ?? false;
-
   // Style variant
   const styleVariant = cc?.style_variant || "default";
   const variantClass = styleVariantClasses[styleVariant] || "";
+
+  // Highlight: style_variant "highlighted" > card_config.is_highlighted > tariff.is_popular (legacy fallback)
+  const isHighlighted = styleVariant === "highlighted" || cc?.is_highlighted || tariff.is_popular || false;
 
   // Footnote
   const footnote = cc?.footnote;
@@ -168,7 +168,7 @@ export function TariffCard({
                 {oldPrice} {resolvedSuffix}
               </div>
             )}
-            <div className="text-3xl font-bold text-foreground">
+            <div className="text-3xl font-bold text-foreground price-value">
               {displayPrice} <span className="text-base font-normal text-muted-foreground">{resolvedSuffix}</span>
             </div>
           </div>

@@ -217,9 +217,7 @@ export default function AdminProductDetailV2() {
     cc_price_display: null as number | null,
     cc_old_price: null as number | null,
     cc_price_suffix: "BYN",
-    cc_cta_text: "",
     cc_footnote: "",
-    cc_is_highlighted: false,
     cc_style_variant: "default" as "default" | "highlighted" | "minimal" | "compact",
   });
 
@@ -317,10 +315,8 @@ export default function AdminProductDetailV2() {
         cc_price_display: cc?.price_display ?? null,
         cc_old_price: cc?.old_price ?? tariff.original_price ?? null,
         cc_price_suffix: cc?.price_suffix || "BYN",
-        cc_cta_text: cc?.cta_text || "",
         cc_footnote: cc?.footnote || "",
-        cc_is_highlighted: cc?.is_highlighted ?? tariff.is_popular ?? false,
-        cc_style_variant: cc?.style_variant || "default",
+        cc_style_variant: cc?.style_variant || (cc?.is_highlighted || tariff.is_popular ? "highlighted" : "default"),
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
@@ -338,9 +334,7 @@ export default function AdminProductDetailV2() {
         cc_price_display: null,
         cc_old_price: null,
         cc_price_suffix: "BYN",
-        cc_cta_text: "",
         cc_footnote: "",
-        cc_is_highlighted: false,
         cc_style_variant: "default",
       });
       setTariffDialog({ open: true, editing: null });
@@ -359,9 +353,9 @@ export default function AdminProductDetailV2() {
       price_display: tariffForm.cc_price_display,
       old_price: tariffForm.cc_old_price,
       price_suffix: tariffForm.cc_price_suffix || "BYN",
-      cta_text: tariffForm.cc_cta_text || null,
+      cta_text: (tariffForm.meta as any)?.card_config?.cta_text ?? null,
       footnote: tariffForm.cc_footnote || null,
-      is_highlighted: tariffForm.cc_is_highlighted,
+      is_highlighted: tariffForm.cc_style_variant === "highlighted",
       style_variant: tariffForm.cc_style_variant,
       badge_text: tariffForm.badge || null,
     };
@@ -374,13 +368,13 @@ export default function AdminProductDetailV2() {
     };
 
     // Extract cc_ fields out, keep the rest
-    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_cta_text, cc_footnote, cc_is_highlighted, cc_style_variant, ...formBase } = tariffForm;
+    const { meta, cc_price_display, cc_old_price, cc_price_suffix, cc_footnote, cc_style_variant, ...formBase } = tariffForm;
     
     const data: any = { 
       ...formBase,
       code: effectiveCode,
       product_id: productId!,
-      is_popular: tariffForm.cc_is_highlighted, // backward compat mapping
+      is_popular: tariffForm.cc_style_variant === "highlighted", // backward compat mapping
       meta: Object.keys(mergedMeta).length > 0 ? mergedMeta : null,
     };
     if (tariffDialog.editing) {
@@ -1271,7 +1265,7 @@ export default function AdminProductDetailV2() {
                       <p className="text-xs text-muted-foreground">Отображается если нет активной кнопки оплаты</p>
                     </div>
                     <div className="space-y-2">
-                      <Label>Валюта / суффикс</Label>
+                      <Label>Валюта</Label>
                       <Input
                         placeholder="BYN"
                         value={tariffForm.cc_price_suffix}
@@ -1315,18 +1309,8 @@ export default function AdminProductDetailV2() {
                       className="resize-y min-h-[80px]"
                     />
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Текст CTA кнопки</Label>
-                      <Input
-                        placeholder="Оплатить"
-                        value={tariffForm.cc_cta_text}
-                        onChange={(e) => setTariffForm({ ...tariffForm, cc_cta_text: e.target.value })}
-                      />
-                      <p className="text-xs text-muted-foreground">Перезаписывает текст основной кнопки</p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Стиль карточки</Label>
+                  <div className="space-y-2">
+                    <Label>Стиль карточки</Label>
                       <Select
                         value={tariffForm.cc_style_variant}
                         onValueChange={(v: any) => setTariffForm({ ...tariffForm, cc_style_variant: v })}
@@ -1341,7 +1325,6 @@ export default function AdminProductDetailV2() {
                           <SelectItem value="compact">Компактный</SelectItem>
                         </SelectContent>
                       </Select>
-                    </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Подпись под кнопками</Label>
@@ -1351,29 +1334,20 @@ export default function AdminProductDetailV2() {
                       onChange={(e) => setTariffForm({ ...tariffForm, cc_footnote: e.target.value })}
                     />
                   </div>
-                  <Separator />
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={tariffForm.cc_is_highlighted}
-                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, cc_is_highlighted: checked })}
-                    />
-                    <Label>Выделить карточку</Label>
-                  </div>
                 </CardContent>
               </Card>
 
-              {/* Section — Доступ (legacy) */}
+              {/* Секция — Доступ */}
               <Collapsible>
                 <CollapsibleTrigger asChild>
                   <Button variant="ghost" size="sm" className="w-full justify-between px-0 hover:bg-transparent">
-                    <span className="text-sm font-medium text-muted-foreground">Доступ (legacy)</span>
+                    <span className="text-sm font-medium text-muted-foreground">Доступ</span>
                     <ChevronDown className="h-4 w-4 text-muted-foreground" />
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent>
                   <Card className="mt-2">
                     <CardContent className="pt-4 space-y-4">
-                      <p className="text-xs text-amber-600">⚠ Будет перенесено в настройки кнопки оплаты</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label>Срок доступа (дней)</Label>
@@ -1386,7 +1360,7 @@ export default function AdminProductDetailV2() {
                           />
                         </div>
                         <div className="space-y-2">
-                          <Label className="text-muted-foreground">Период <span className="text-xs">(legacy)</span></Label>
+                          <Label>Период</Label>
                           <Input
                             placeholder="BYN/мес"
                             value={tariffForm.period_label}
@@ -1450,7 +1424,7 @@ export default function AdminProductDetailV2() {
                         badge: tariffForm.badge || null,
                         subtitle: tariffForm.subtitle || null,
                         period_label: tariffForm.period_label,
-                        is_popular: tariffForm.cc_is_highlighted,
+                        is_popular: tariffForm.cc_style_variant === "highlighted",
                         current_price: tariffForm.cc_price_display,
                         meta: {
                           card_config: {
@@ -1458,17 +1432,17 @@ export default function AdminProductDetailV2() {
                             price_display: tariffForm.cc_price_display,
                             old_price: tariffForm.cc_old_price,
                             price_suffix: tariffForm.cc_price_suffix,
-                            cta_text: tariffForm.cc_cta_text || null,
+                            cta_text: null,
                             footnote: tariffForm.cc_footnote || null,
-                            is_highlighted: tariffForm.cc_is_highlighted,
+                            is_highlighted: tariffForm.cc_style_variant === "highlighted",
                             style_variant: tariffForm.cc_style_variant,
                           }
                         },
-                      }, (product as any)?.landing_config?.price_suffix)}
+                      }, tariffForm.cc_price_suffix || (product as any)?.landing_config?.price_suffix)}
                       features={tariffDialog.editing ? getFeaturesForTariff(tariffDialog.editing.id) : []}
                       offers={tariffDialog.editing ? getOffersForTariff(tariffDialog.editing.id) : []}
                       showButtons={!!tariffDialog.editing}
-                      priceSuffix={(product as any)?.landing_config?.price_suffix || tariffForm.cc_price_suffix || "BYN"}
+                       priceSuffix={tariffForm.cc_price_suffix || (product as any)?.landing_config?.price_suffix || "BYN"}
                     />
                   </div>
                 </div>
@@ -1494,7 +1468,7 @@ export default function AdminProductDetailV2() {
                       description: tariffForm.description || null,
                       badge: tariffForm.badge || null,
                       subtitle: tariffForm.subtitle || null,
-                      is_popular: tariffForm.cc_is_highlighted,
+                      is_popular: tariffForm.cc_style_variant === "highlighted",
                       current_price: tariffForm.cc_price_display,
                       meta: {
                         card_config: {
@@ -1502,17 +1476,17 @@ export default function AdminProductDetailV2() {
                           price_display: tariffForm.cc_price_display,
                           old_price: tariffForm.cc_old_price,
                           price_suffix: tariffForm.cc_price_suffix,
-                          cta_text: tariffForm.cc_cta_text || null,
+                          cta_text: null,
                           footnote: tariffForm.cc_footnote || null,
-                          is_highlighted: tariffForm.cc_is_highlighted,
+                          is_highlighted: tariffForm.cc_style_variant === "highlighted",
                           style_variant: tariffForm.cc_style_variant,
                         }
                       },
-                    }, (product as any)?.landing_config?.price_suffix)}
+                    }, tariffForm.cc_price_suffix || (product as any)?.landing_config?.price_suffix)}
                     features={tariffDialog.editing ? getFeaturesForTariff(tariffDialog.editing.id) : []}
                     offers={tariffDialog.editing ? getOffersForTariff(tariffDialog.editing.id) : []}
                     showButtons={!!tariffDialog.editing}
-                    priceSuffix={(product as any)?.landing_config?.price_suffix || tariffForm.cc_price_suffix || "BYN"}
+                    priceSuffix={tariffForm.cc_price_suffix || (product as any)?.landing_config?.price_suffix || "BYN"}
                   />
                 </div>
               </CollapsibleContent>
