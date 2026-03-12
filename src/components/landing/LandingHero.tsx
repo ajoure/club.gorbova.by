@@ -68,7 +68,7 @@ export function LandingHero() {
           </AnimatedSection>
 
           {/* Feature cards */}
-          <div className="grid sm:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <AnimatedSection animation="fade-up" delay={500}>
               <div
                 className="p-6 rounded-2xl border border-border/50"
