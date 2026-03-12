@@ -887,7 +887,7 @@ export default function AdminProductDetailV2() {
                   />
                 </div>
                 <Separator />
-                <div className="flex items-center gap-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
                   <div className="flex items-center space-x-2">
                     <Switch
                       checked={tariffForm.is_popular}
