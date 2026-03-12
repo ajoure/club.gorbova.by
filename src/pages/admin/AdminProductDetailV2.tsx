@@ -1340,14 +1340,6 @@ export default function AdminProductDetailV2() {
                       onChange={(e) => setTariffForm({ ...tariffForm, cc_footnote: e.target.value })}
                     />
                   </div>
-                  <Separator />
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      checked={tariffForm.cc_is_highlighted}
-                      onCheckedChange={(checked) => setTariffForm({ ...tariffForm, cc_is_highlighted: checked })}
-                    />
-                    <Label>Выделить карточку</Label>
-                  </div>
                 </CardContent>
               </Card>
 
