@@ -315,10 +315,8 @@ export default function AdminProductDetailV2() {
         cc_price_display: cc?.price_display ?? null,
         cc_old_price: cc?.old_price ?? tariff.original_price ?? null,
         cc_price_suffix: cc?.price_suffix || "BYN",
-        cc_cta_text: cc?.cta_text || "",
         cc_footnote: cc?.footnote || "",
-        cc_is_highlighted: cc?.is_highlighted ?? tariff.is_popular ?? false,
-        cc_style_variant: cc?.style_variant || "default",
+        cc_style_variant: cc?.style_variant || (cc?.is_highlighted || tariff.is_popular ? "highlighted" : "default"),
       });
       setTariffDialog({ open: true, editing: tariff });
     } else {
