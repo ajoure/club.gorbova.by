@@ -45,6 +45,90 @@ interface ProductFormData {
   primary_domain: string;
 }
 
+/* ── Mobile Product Card (inline component, no new files) ── */
+function MobileProductCard({
+  product,
+  isSelected,
+  isParent,
+  isChild,
+  readiness,
+  onToggleSelect,
+  onNavigate,
+  onEdit,
+  onDelete,
+  onCopyLink,
+}: {
+  product: any;
+  isSelected: boolean;
+  isParent: boolean;
+  isChild: boolean;
+  readiness: { isReady: boolean; reasonLabel?: string } | undefined;
+  onToggleSelect: () => void;
+  onNavigate: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onCopyLink: () => void;
+}) {
+  const statusKind: StatusBadgeKind = product.status === "active" ? "active" : product.status === "archived" ? "archived" : product.status === "hidden" ? "hidden" : "inactive";
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 p-3 rounded-xl border bg-card transition-colors",
+        isSelected && "bg-primary/5 border-primary/20"
+      )}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.closest("button, [role=checkbox]")) return;
+        onNavigate();
+      }}
+    >
+      {/* Checkbox */}
+      <Checkbox
+        checked={isSelected}
+        onCheckedChange={onToggleSelect}
+        onClick={(e) => e.stopPropagation()}
+        className="shrink-0"
+      />
+
+      {/* Center: name + meta */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-sm truncate">{product.name}</span>
+          {isParent && <FolderTree className="h-3 w-3 text-primary/60 shrink-0" />}
+          {isChild && <CornerDownRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5">
+          <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0", getStatusBadgeClass(statusKind))}>
+            {STATUS_LABELS[product.status] || product.status}
+          </Badge>
+          {product.primary_domain ? (
+            <span className="text-[11px] text-muted-foreground truncate max-w-[140px]">
+              {product.primary_domain}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">без сайта</span>
+          )}
+        </div>
+      </div>
+
+      {/* Right: actions */}
+      <div className="flex items-center gap-1 shrink-0">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onCopyLink(); }}>
+          <Link className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(); }}>
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+      </div>
+    </div>
+  );
+}
+
 const defaultFormData: ProductFormData = {
   name: "",
   description: "",
@@ -335,191 +419,227 @@ export default function AdminProductsV2() {
         </div>
 
         {/* Flat products table */}
-        <GlassCard className="p-0 overflow-hidden">
-          {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">Загрузка...</div>
-          ) : !products?.length ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">
-              Нет продуктов. Создайте первый продукт.
+        {/* Empty / Loading states */}
+        {isLoading ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">Загрузка...</div>
+        ) : !products?.length ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            Нет продуктов. Создайте первый продукт.
+          </div>
+        ) : searchFiltered.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            Ничего не найдено по запросу «{debouncedSearch}»
+          </div>
+        ) : (
+          <>
+            {/* ── Mobile: card list ── */}
+            <div className="md:hidden space-y-2 px-1">
+              {sortedData.map((product: any) => {
+                const isParent = relationCounts?.parentIds?.has(product.id) ?? false;
+                const isChild = relationCounts?.childIds?.has(product.id) ?? false;
+                const readiness = readinessMap?.get(product.id);
+                return (
+                  <MobileProductCard
+                    key={product.id}
+                    product={product}
+                    isSelected={selectedIds.has(product.id)}
+                    isParent={isParent}
+                    isChild={isChild}
+                    readiness={readiness}
+                    onToggleSelect={() => toggleSelection(product.id, true)}
+                    onNavigate={() => navigate(`/admin/products-v2/${product.id}`)}
+                    onEdit={() => handleOpenDialog(product)}
+                    onDelete={() => setDeleteConfirmId(product.id)}
+                    onCopyLink={() => {
+                      const url = getProductPayUrl(product.id);
+                      if (readiness && !readiness.isReady) {
+                        copyToClipboard(url, "Ссылка скопирована");
+                        toast.warning(`Продукт не готов: ${readiness.reasonLabel}`);
+                      } else {
+                        copyToClipboard(url, "Ссылка на оплату скопирована");
+                      }
+                    }}
+                  />
+                );
+              })}
             </div>
-          ) : searchFiltered.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground text-sm">
-              Ничего не найдено по запросу «{debouncedSearch}»
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={selectedCount > 0 && selectedCount === sortedData.length}
-                      onCheckedChange={(checked) => {
-                        if (checked) selectAll();
-                        else clearSelection();
-                      }}
-                    />
-                  </TableHead>
-                  <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                    Продукт
-                  </SortableTableHead>
-                  <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                    Сайт
-                  </SortableTableHead>
-                  <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
-                    Статус
-                  </SortableTableHead>
-                  <TableHead className="text-right">Действия</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedData.map((product: any) => {
-                  const isParent = relationCounts?.parentIds?.has(product.id);
-                  const isChild = relationCounts?.childIds?.has(product.id);
-                  const isSelected = selectedIds.has(product.id);
-                  return (
-                    <TableRow
-                      key={product.id}
-                      ref={(el) => registerItemRef(product.id, el)}
-                      className={`cursor-pointer hover:bg-muted/50 ${isSelected ? "bg-primary/5" : ""}`}
-                      data-state={isSelected ? "selected" : undefined}
-                      onClick={(e) => {
-                        const target = e.target as HTMLElement;
-                        if (target.closest("button, [role=checkbox], a")) return;
-                        if (e.shiftKey) {
-                          handleRangeSelect(product.id, true);
-                        } else if (e.ctrlKey || e.metaKey) {
-                          toggleSelection(product.id, true);
-                        } else {
-                          navigate(`/admin/products-v2/${product.id}`);
-                        }
-                      }}
-                    >
-                      <TableCell className="w-10">
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() => toggleSelection(product.id, true)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-sm">{product.name}</span>
-                          {isParent && (
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <FolderTree className="h-3.5 w-3.5 text-primary/60" />
-                                </TooltipTrigger>
-                                <TooltipContent>Содержит дочерние продукты</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          )}
-                          {isChild && (
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <CornerDownRight className="h-3.5 w-3.5 text-muted-foreground" />
-                                </TooltipTrigger>
-                                <TooltipContent>Входит в состав другого продукта</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {product.primary_domain ? (
-                          <div className="flex items-center gap-1.5">
-                            <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="text-xs">{product.primary_domain}</span>
-                            <a
-                              href={`https://${product.primary_domain}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-muted-foreground hover:text-foreground"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className={cn("text-[11px]", getStatusBadgeClass((product.status as StatusBadgeKind) || "inactive"))}>
-                          {STATUS_LABELS[product.status] || product.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-0.5">
-                          {(() => {
-                            const readiness = readinessMap?.get(product.id);
-                            const isReady = readiness?.isReady ?? true;
-                            return (
+
+            {/* ── Desktop: table ── */}
+            <GlassCard className="p-0 overflow-hidden hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={selectedCount > 0 && selectedCount === sortedData.length}
+                        onCheckedChange={(checked) => {
+                          if (checked) selectAll();
+                          else clearSelection();
+                        }}
+                      />
+                    </TableHead>
+                    <SortableTableHead sortKey="name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                      Продукт
+                    </SortableTableHead>
+                    <SortableTableHead sortKey="domain" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                      Сайт
+                    </SortableTableHead>
+                    <SortableTableHead sortKey="status" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                      Статус
+                    </SortableTableHead>
+                    <TableHead className="text-right">Действия</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedData.map((product: any) => {
+                    const isParent = relationCounts?.parentIds?.has(product.id);
+                    const isChild = relationCounts?.childIds?.has(product.id);
+                    const isSelected = selectedIds.has(product.id);
+                    return (
+                      <TableRow
+                        key={product.id}
+                        ref={(el) => registerItemRef(product.id, el)}
+                        className={`cursor-pointer hover:bg-muted/50 ${isSelected ? "bg-primary/5" : ""}`}
+                        data-state={isSelected ? "selected" : undefined}
+                        onClick={(e) => {
+                          const target = e.target as HTMLElement;
+                          if (target.closest("button, [role=checkbox], a")) return;
+                          if (e.shiftKey) {
+                            handleRangeSelect(product.id, true);
+                          } else if (e.ctrlKey || e.metaKey) {
+                            toggleSelection(product.id, true);
+                          } else {
+                            navigate(`/admin/products-v2/${product.id}`);
+                          }
+                        }}
+                      >
+                        <TableCell className="w-10">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelection(product.id, true)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{product.name}</span>
+                            {isParent && (
                               <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
-                                      e.stopPropagation();
-                                      const url = getProductPayUrl(product.id);
-                                      if (!isReady && readiness) {
-                                        copyToClipboard(url, "Ссылка скопирована");
-                                        toast.warning(`Продукт не готов к оплате: ${readiness.reasonLabel}. Ссылка скопирована, но покупатель увидит ошибку.`);
-                                      } else {
-                                        copyToClipboard(url, "Ссылка на оплату скопирована");
-                                      }
-                                    }}>
-                                      <Link className="h-3.5 w-3.5" />
-                                    </Button>
+                                    <FolderTree className="h-3.5 w-3.5 text-primary/60" />
                                   </TooltipTrigger>
-                                  <TooltipContent className="flex items-center gap-1.5">
-                                    {isReady ? (
-                                      <>
-                                        <CircleCheck className="h-3 w-3 text-green-600" />
-                                        <span>Копировать ссылку на оплату</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <AlertTriangle className="h-3 w-3 text-amber-500" />
-                                        <span>{readiness?.reasonLabel || "Не готов к оплате"}</span>
-                                      </>
-                                    )}
-                                  </TooltipContent>
+                                  <TooltipContent>Содержит дочерние продукты</TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
-                            );
-                          })()}
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
-                                  e.stopPropagation();
-                                  copyToClipboard(product.id, "UUID скопирован");
-                                }}>
-                                  <Copy className="h-3.5 w-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {product.public_id ? `${product.public_id} — копировать UUID` : "Копировать UUID"}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </GlassCard>
+                            )}
+                            {isChild && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <CornerDownRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  </TooltipTrigger>
+                                  <TooltipContent>Входит в состав другого продукта</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {product.primary_domain ? (
+                            <div className="flex items-center gap-1.5">
+                              <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-xs">{product.primary_domain}</span>
+                              <a
+                                href={`https://${product.primary_domain}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={cn("text-[11px]", getStatusBadgeClass((product.status as StatusBadgeKind) || "inactive"))}>
+                            {STATUS_LABELS[product.status] || product.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            {(() => {
+                              const readiness = readinessMap?.get(product.id);
+                              const isReady = readiness?.isReady ?? true;
+                              return (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                                        e.stopPropagation();
+                                        const url = getProductPayUrl(product.id);
+                                        if (!isReady && readiness) {
+                                          copyToClipboard(url, "Ссылка скопирована");
+                                          toast.warning(`Продукт не готов к оплате: ${readiness.reasonLabel}. Ссылка скопирована, но покупатель увидит ошибку.`);
+                                        } else {
+                                          copyToClipboard(url, "Ссылка на оплату скопирована");
+                                        }
+                                      }}>
+                                        <Link className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="flex items-center gap-1.5">
+                                      {isReady ? (
+                                        <>
+                                          <CircleCheck className="h-3 w-3 text-green-600" />
+                                          <span>Копировать ссылку на оплату</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <AlertTriangle className="h-3 w-3 text-amber-500" />
+                                          <span>{readiness?.reasonLabel || "Не готов к оплате"}</span>
+                                        </>
+                                      )}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              );
+                            })()}
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(product.id, "UUID скопирован");
+                                  }}>
+                                    <Copy className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  {product.public_id ? `${product.public_id} — копировать UUID` : "Копировать UUID"}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleOpenDialog(product); }}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(product.id); }}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground ml-1" />
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </GlassCard>
+          </>
+        )}
 
         {/* Selection box overlay */}
         {isDragging && selectionBox && (
@@ -534,43 +654,42 @@ export default function AdminProductsV2() {
         {/* Bulk Actions Bar */}
         {hasSelection && (
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-4">
-            <div className="bg-background border rounded-xl shadow-lg px-4 py-3 flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+          <div className="bg-background border rounded-xl shadow-lg px-3 sm:px-4 py-2.5 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[calc(100vw-2rem)]">
+              <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+                <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs sm:text-sm">
                   {selectedCount}
                 </div>
-                <span className="text-muted-foreground">
-                  продуктов выбрано из {sortedData.length}
+                <span className="text-muted-foreground whitespace-nowrap">
+                  из {sortedData.length}
                 </span>
               </div>
-              <div className="h-6 w-px bg-border" />
+              <div className="h-5 w-px bg-border hidden sm:block" />
               {selectedCount < sortedData.length && (
-                <Button variant="ghost" size="sm" onClick={selectAll} className="gap-2">
-                  Выбрать все
+                <Button variant="ghost" size="sm" onClick={selectAll} className="gap-1.5 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm">
+                  Все
                 </Button>
               )}
-              <Button variant="ghost" size="sm" className="gap-1.5 text-primary" onClick={() => handleBulkStatus("active")}>
-                <Eye className="h-4 w-4" />
-                Активные
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-primary" onClick={() => handleBulkStatus("active")}>
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Активные</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("hidden")}>
-                <EyeOff className="h-4 w-4" />
-                Скрытые
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkStatus("hidden")}>
+                <EyeOff className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Скрытые</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => handleBulkStatus("archived")}>
-                <Archive className="h-4 w-4" />
-                Архив
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={() => handleBulkStatus("archived")}>
+                <Archive className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Архив</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5" onClick={handleCopyLink}>
-                <Link className="h-4 w-4" />
-                Ссылка
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" onClick={handleCopyLink}>
+                <Link className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Ссылка</span>
               </Button>
-              <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
-                <Trash2 className="h-4 w-4" />
-                Удалить
+              <Button variant="ghost" size="sm" className="gap-1 h-7 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm text-destructive hover:text-destructive" onClick={handleBulkDeleteStart}>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Удалить</span>
               </Button>
-              <div className="h-6 w-px bg-border" />
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={clearSelection}>
+              <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" onClick={clearSelection}>
                 <span className="text-xs">✕</span>
               </Button>
             </div>
