@@ -1,83 +1,133 @@
+# План: Исправление скролла + Унификация карточек (v2 — финальный)
 
-# SPRINT: TARIFFS v2 — Статус выполнения
+---
 
-## Выполнено (PATCH 1-9)
+## Фаза 1: Исправление вертикального скролла
 
-### PATCH 1: public_id для тарифов ✅
-- DB migration: `public_id_sequences` (entity_type='tariff', prefix='T'), trigger `set_tariff_public_id`, backfill 11 tariffs (T-000001..T-000011), NOT NULL + unique index
-- FIX: trigger обновлён на `IF NEW.public_id IS NULL OR NEW.public_id = '' THEN` — ловит и NULL, и пустую строку
-- DEFAULT `''` оставлен для совместимости с TypeScript Insert-типами (trigger перезапишет на INSERT)
-- UI: badge `T-000xxx` в `TariffCardCompact.tsx` + read-only в диалоге редактирования
-- Build ✅, есть runtime warning: `forwardRef` в `DialogFooter` (косметический, не блокирует)
-- DoD-пруфы: total=11, with_pid=11, non_empty=11, empty_cnt=0; 0 дублей; column_default=`''`, nullable=NO
-- **BACKLOG:** future PATCH "Types regen + DROP DEFAULT" — после регена типов и проверки всех insert-путей убрать DEFAULT `''`
+### Проблема
+Внутренние контейнеры диалогов используют `max-h-full overflow-y-auto`, но родитель `DialogContent` задаёт только `max-height` (без явного `height`). CSS `max-height: 100%` от элемента без фиксированной `height` = `auto` → `overflow-y-auto` не срабатывает → контент обрезается `overflow-hidden` на `DialogContent`.
 
-### PATCH 2: Code — скрыть из формы, автогенерировать ✅
-- STOP-guard: `tariff.code` остаётся NOT NULL, 10+ точек используют `.eq("code", tariffCode)`. Никаких попыток перейти на tariff_id
-- `handleSaveTariff`: если code пуст → `trf_${crypto.randomUUID().slice(0,12)}`
-- Поле "Код *" убрано из основной формы, показано в Collapsible "Расширенные настройки" (read-only)
+### Целевая формула
+`max-h-[calc(100dvh-2rem)]` — идентична стандарту из memory `global-dialog-standards-v2`. Внутренний padding `p-4 sm:p-6` входит в скроллируемый контент (Variant A), header/footer — тоже внутри scroll-контейнера, поэтому вычитаем только отступ самого `DialogContent` от edges viewport.
 
-### PATCH 3: effective_active (наследование) ✅
-- `TariffCardCompact`: prop `productIsActive`, badge "Унаследовано неактивен"
-- Превью: если `!product.is_active` → placeholder "Продукт неактивен"
+### Точные места замены (4 реальных замены)
 
-### PATCH 4: Убрать ручные refetch ✅
-- Убраны `refetch: refetchTariffs` и `refetch: refetchOffers` из деструктуризации
-- Убраны 6 ручных `refetchTariffs()`/`refetchOffers()` вызовов
-- Добавлен invalidate `["preview-tariff-features"]` в 4 мутации `useTariffFeatures.tsx`
+| # | Файл | Строка | Контекст | Замена |
+|---|-------|--------|----------|--------|
+| 1 | `AdminProductDetailV2.tsx` | **793** | Tariff Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
+| 2 | `AdminProductDetailV2.tsx` | **937** | Offer Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
+| 3 | `AdminProductDetailV2.tsx` | **1708** | Flow Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
+| 4 | `AdminProductsV2.tsx` | **655** | Create/Edit Product Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
 
-### PATCH 5: TG Welcome Message — offer-first, tariff-fallback ✅
-- EF `telegram-grant-access/index.ts` строки 699-800: перестроена логика
-- Иерархия: OFFER welcome (приоритет) → TARIFF welcome (fallback) → GC link (last resort)
-- Idempotency: проверка `audit_logs` по 3 полям: `action='telegram_welcome_sent'` + `meta->>source_id` + `actor_label='telegram-grant-access'` → skip если уже отправлено
-- После отправки — INSERT audit_log (actor_type='system', actor_label='telegram-grant-access', target_user_id=user_id, meta={source_id, welcome_type, offer_id, tariff_id})
-- Error-guard на audit insert (не прерывает основной процесс)
-- UI labels: TariffWelcomeMessageEditor — "(по умолчанию, если на кнопке не задано)"
-- UI labels: OfferWelcomeMessageEditor — "(приоритетное — отправляется вместо сообщения тарифа)"
-- 3 лог-кейса: `Sent OFFER welcome`, `Sent TARIFF welcome (fallback)`, `Sent GC link`
-- DoD-пруф: SQL `SELECT * FROM audit_logs WHERE action='telegram_welcome_sent' AND meta->>'source_id'=X` → 1 row; повторный вызов → лог `Welcome already sent for source_id=X, skipping`
+**Не требуют изменений:**
+- Delete Confirmation Dialog (строка 1798) — маленький диалог, контент не переполняется
+- Dry-run reasons list (строка 772) — фиксированная `max-h-40`, работает корректно
 
-### PATCH 6: Единый компонент TariffCard ✅
-- Вынесен `TariffCard` из `ProductLanding.tsx` → `src/components/landing/TariffCard.tsx`
-- Props: dual source — `resolvedFeatures = props.features ?? tariff.features ?? []`
-- Price logic: `current_price → base_price → price_monthly → primaryOffer.amount`
-- CTA: все offers (pay_now + trial)
-- `ProductLanding.tsx`: импортирует из нового файла
-- `AdminProductDetailV2.tsx`: заменён `TariffPreviewCard` → `TariffCard`
-- Удалён `src/components/admin/product/TariffPreviewCard.tsx`
+---
 
-### PATCH 7: Standalone pricing page (EF + route) ✅
-- NEW EF `public-product-by-slug/index.ts` — lookup по `slug` OR `public_id`, output 1:1 с public-product + `primary_domain`
-- NEW hook `usePublicProductBySlug` в `usePublicProduct.tsx`
-- NEW page `src/pages/ProductPricing.tsx`
-- Route `/pricing/:productSlug` (выше `/pricing` redirect в App.tsx)
-- Старый `/pricing` → `/#pricing` redirect сохранён
-- EF протестирован: 200 для PRD-000003, 404 для несуществующих
+## Фаза 2: Унификация карточек + bulk-действия
 
-### PATCH 8: Banner при primary_domain ✅
-- `primary_domain` добавлен только в output `public-product-by-slug` (контракт `public-product` не тронут)
-- `ProductPricing.tsx`: banner "Полная версия сайта: {domain}" с внешней ссылкой
+### 2.1 Аудит существующих мутаций
 
-### PATCH 9: Чистка формы тарифа ✅
-- Основные поля: name*, subtitle, period_label, badge, access_days, description, is_popular, is_active
-- Collapsible "Расширенные": code (read-only), public_id (read-only)
+| Сущность | Update (is_active) | Delete | Тип delete | Confirm dialog | Каскады |
+|----------|-------------------|--------|------------|----------------|---------|
+| **Tariff** | `useUpdateTariff` → `.update({is_active})` ✅ | `useDeleteTariff` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` state | FK cascade → удаляет офферы тарифа |
+| **Offer** | `useUpdateTariffOffer` → `.update({is_active})` ✅ | `useDeleteTariffOffer` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
+| **Flow** | `useUpdateFlow` → `.update({is_active})` ✅ | `useDeleteFlow` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
 
-## Изменённые файлы
+**Bulk-обёртки (новые, UI-only):**
+- Bulk activate/deactivate: `Promise.all` по существующим `updateTariff/updateOffer/updateFlow`
+- Bulk delete: `Promise.all` по существующим `deleteTariff/deleteOffer/deleteFlow` + confirm dialog
+- **Новых миграций/RPC не нужно**
 
-| Файл | Изменение |
-|---|---|
-| SQL migration (3) | public_id + sequence + trigger + backfill + NOT NULL + DEFAULT + trigger fix |
-| `TariffCardCompact.tsx` | +public_id badge, +productIsActive prop, +inherited inactive badge |
-| `AdminProductDetailV2.tsx` | -6 refetch, -code field, +public_id in dialog, +Advanced collapsible, +productIsActive, TariffPreviewCard→TariffCard |
-| NEW `src/components/landing/TariffCard.tsx` | Unified tariff card component |
-| `ProductLanding.tsx` | Import from TariffCard.tsx instead of inline |
-| `useTariffFeatures.tsx` | +invalidate preview-tariff-features in 4 mutations |
-| DELETE `TariffPreviewCard.tsx` | Replaced by unified TariffCard |
-| `telegram-grant-access/index.ts` | Offer-first → tariff-fallback → GC link + idempotency |
-| `TariffWelcomeMessageEditor.tsx` | Updated label: "(по умолчанию)" |
-| `OfferWelcomeMessageEditor.tsx` | Updated label: "(приоритетное)" |
-| NEW `supabase/functions/public-product-by-slug/index.ts` | EF for slug/public_id lookup |
-| `src/hooks/usePublicProduct.tsx` | +usePublicProductBySlug hook + PublicProductBySlugData type |
-| NEW `src/pages/ProductPricing.tsx` | Standalone pricing page with banner |
-| `src/App.tsx` | +Route /pricing/:productSlug, +lazy import ProductPricing |
-| `supabase/functions.registry.txt` | +public-product-by-slug |
+### 2.2 Сортировка
+
+**Источник:** Клиентская сортировка через `useTableSort` (данные загружены целиком через `useQuery`).
+
+| Вкладка | Поля сортировки |
+|---------|----------------|
+| Тарифы | `name`, `is_active` (статус) |
+| Кнопки оплаты | `tariff_name`, `amount`, `offer_type` |
+| Потоки | `name`, `start_date`, `is_active` |
+
+### 2.3 Выделение / drag-select
+
+`useDragSelect` работает через `registerItemRef(id, HTMLElement)` — не зависит от `<table>`.
+
+**3 независимых инстанса** — по одному на вкладку (tariffs, offers, flows).
+
+**DoD выделения:**
+- ☐ Клик по чекбоксу — toggle одного элемента
+- ☐ Ctrl/Cmd + клик — additive toggle
+- ☐ Shift + клик — range select
+- ☐ Drag-select (зажатие и протягивание) — выделение прямоугольником
+- ☐ «Выбрать все» чекбокс — выделяет все элементы текущей вкладки
+- ☐ Переключение вкладки — не сбрасывает выделение других вкладок
+
+### 2.4 Поведение клика по карточке
+
+**Вариант A: клик → открыть edit dialog** (единообразно для всех):
+- Тариф → `setTariffDialog({ open: true, editing: tariff })`
+- Оффер → `setOfferDialog({ open: true, editing: offer })`
+- Поток → `setFlowDialog({ open: true, editing: flow })`
+- `stopPropagation` на: checkbox, кнопки (edit, delete, switch, copy)
+
+### 2.5 Группировка офферов
+
+Сохраняем группировку заголовком тарифа (**не selectable**, без чекбокса):
+```
+[Select All] [SortPill: Тариф] [SortPill: Сумма] [SortPill: Тип]
+
+─── Тариф «Базовый» (заголовок) ───
+  ☐ Оплатить  1500 BYN  pay_now  ★Основная  🔛 ✎ 🗑
+  ☐ Попробовать  1 BYN  trial  ✎ 🗑
+
+─── Тариф «Продвинутый» ───
+  ☐ Оплатить  3000 BYN  pay_now  ★Основная  🔛 ✎ 🗑
+```
+
+«Выбрать все» выделяет только офферы. Сортировка внутри групп.
+
+### 2.6 SortPill — вынос в компонент
+
+**Файл:** `src/components/admin/SortPill.tsx`
+
+**API:**
+```tsx
+interface SortPillProps {
+  label: string;
+  sortKey: string;
+  currentSortKey: string | null;
+  currentSortDirection: SortDirection;
+  onSort: (key: string) => void;
+}
+```
+
+**DoD:** `AdminProductsV2` импортирует из нового файла, сортировка продуктов (Имя/Сайт/Статус) не ломается.
+
+---
+
+## Файлы
+
+| Файл | Действие |
+|------|----------|
+| `src/components/admin/SortPill.tsx` | **Создать** |
+| `src/pages/admin/AdminProductsV2.tsx` | Импорт SortPill, фикс скролла (строка 655), удалить inline SortPill |
+| `src/pages/admin/AdminProductDetailV2.tsx` | Фикс скролла (3 строки), карточки + bulk для tariffs/offers/flows |
+
+## DoD (Definition of Done)
+
+### Фаза 1
+- ☐ Вертикальный скролл работает во всех 3 диалогах (tariff, offer, flow) на 390×844
+- ☐ Скролл работает в диалоге создания/редактирования продукта
+- ☐ Контент не обрезается, все поля доступны
+
+### Фаза 2
+- ☐ Карточки тарифов/офферов/потоков визуально идентичны ProductCard
+- ☐ SortPill вынесен, сортировка продуктов не сломана
+- ☐ Сортировка на каждой вкладке работает с индикацией направления
+- ☐ Выделение: click, ctrl, shift, drag, select-all — на каждой вкладке (3 независимых стора)
+- ☐ Bulk Actions Bar: Активировать / Деактивировать / Удалить
+- ☐ Клик по карточке → edit dialog
+- ☐ Группировка офферов с несортируемыми заголовками
+- ☐ Нет горизонтального скролла на 390px, 768px, 1024px
