@@ -789,8 +789,8 @@ export default function AdminProductDetailV2() {
 
       {/* Tariff Dialog — Glass UI */}
       <Dialog open={tariffDialog.open} onOpenChange={(open) => setTariffDialog({ ...tariffDialog, open })}>
-        <DialogContent className="max-w-2xl overflow-hidden p-0 bg-background border-border/40">
-          <div className="max-h-full overflow-y-auto scrollbar-none p-4 sm:p-6">
+        <DialogContent className="max-w-2xl w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background border-border/40">
+          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 flex-wrap">
               {tariffDialog.editing ? "Редактировать тариф" : "Новый тариф"}
@@ -821,7 +821,7 @@ export default function AdminProductDetailV2() {
                 <CardTitle className="text-sm text-muted-foreground">Основное</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Название *</Label>
                     <Input
@@ -840,7 +840,7 @@ export default function AdminProductDetailV2() {
                   </div>
                 </div>
                 <Separator />
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Срок доступа (дней)</Label>
                     <Input
@@ -887,7 +887,7 @@ export default function AdminProductDetailV2() {
                   />
                 </div>
                 <Separator />
-                <div className="flex items-center gap-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
                   <div className="flex items-center space-x-2">
                     <Switch
                       checked={tariffForm.is_popular}
@@ -933,8 +933,8 @@ export default function AdminProductDetailV2() {
 
       {/* Offer Dialog */}
       <Dialog open={offerDialog.open} onOpenChange={(open) => setOfferDialog({ ...offerDialog, open })}>
-        <DialogContent className="max-w-lg overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto scrollbar-none p-4 sm:p-6">
+        <DialogContent className="max-w-lg w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
+          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader className="pr-8">
             <DialogTitle>
               {offerDialog.editing ? "Редактировать кнопку" : "Новая кнопка оплаты"}
@@ -996,7 +996,7 @@ export default function AdminProductDetailV2() {
 
                 <Separator />
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Текст кнопки *</Label>
                     <Input
@@ -1088,7 +1088,7 @@ export default function AdminProductDetailV2() {
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <Label>Количество платежей</Label>
                             <Input
@@ -1115,7 +1115,7 @@ export default function AdminProductDetailV2() {
 
                         <div className="space-y-2">
                           <Label>Первый платёж через (дней)</Label>
-                          <div className="flex items-center gap-4">
+                          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-4">
                             <Input
                               type="number"
                               min={0}
@@ -1214,7 +1214,7 @@ export default function AdminProductDetailV2() {
                                       }
                                     }
                                   })}
-                                  className="flex gap-4"
+                                  className="flex flex-col gap-3 sm:flex-row sm:gap-4"
                                 >
                                   <div className="flex items-center space-x-2">
                                     <RadioGroupItem value="month" id="billing-month" />
@@ -1249,7 +1249,7 @@ export default function AdminProductDetailV2() {
                               <Separator />
 
                               {/* Grace period and attempts */}
-                              <div className="grid grid-cols-2 gap-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                   <Label className="text-sm">Grace период (часов)</Label>
                                   <Input
@@ -1453,7 +1453,7 @@ export default function AdminProductDetailV2() {
                   <CardTitle className="text-sm text-muted-foreground">Настройки Trial</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Дней trial</Label>
                       <Input
@@ -1527,7 +1527,7 @@ export default function AdminProductDetailV2() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="flex items-center gap-1.5">
                         <Calendar className="h-3.5 w-3.5" />
@@ -1583,7 +1583,7 @@ export default function AdminProductDetailV2() {
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Окно списания (с числа)</Label>
                       <Input
@@ -1704,8 +1704,8 @@ export default function AdminProductDetailV2() {
 
       {/* Flow Dialog */}
       <Dialog open={flowDialog.open} onOpenChange={(open) => setFlowDialog({ ...flowDialog, open })}>
-        <DialogContent className="overflow-hidden p-0 bg-background">
-          <div className="max-h-full overflow-y-auto scrollbar-none p-4 sm:p-6">
+        <DialogContent className="w-[calc(100vw-1.5rem)] sm:w-full overflow-hidden p-0 bg-background">
+          <div className="max-h-full overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               {flowDialog.editing ? "Редактировать поток" : "Новый поток"}
@@ -1717,7 +1717,7 @@ export default function AdminProductDetailV2() {
               <CardTitle className="text-sm text-muted-foreground">Настройки потока</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Код *</Label>
                   <Input
@@ -1735,7 +1735,7 @@ export default function AdminProductDetailV2() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Дата старта</Label>
                   <DatePicker
@@ -1763,7 +1763,7 @@ export default function AdminProductDetailV2() {
                 />
               </div>
               <Separator />
-              <div className="flex items-center gap-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
                 <div className="flex items-center space-x-2">
                   <Switch
                     checked={flowForm.is_default}

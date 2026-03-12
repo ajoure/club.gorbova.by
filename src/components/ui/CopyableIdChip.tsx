@@ -19,13 +19,14 @@ export function CopyableIdChip({
   return (
     <button
       type="button"
+      title={value}
       onClick={(e) => {
         e.stopPropagation();
         copyToClipboard(copyValue ?? value, successMessage);
       }}
       className={cn(
-        "inline-flex items-center rounded-sm border border-border/50 bg-muted/50 px-1.5 py-0",
-        "text-[11px] leading-4 font-mono text-muted-foreground",
+        "inline-flex shrink min-w-0 max-w-full items-center rounded-sm border border-border/50 bg-muted/50 px-1.5 py-0",
+        "text-[11px] leading-4 font-mono text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis",
         "cursor-pointer transition-colors duration-150",
         "hover:bg-muted/60 hover:border-border/60",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
