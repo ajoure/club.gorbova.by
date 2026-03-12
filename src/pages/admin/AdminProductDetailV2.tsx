@@ -359,9 +359,9 @@ export default function AdminProductDetailV2() {
       price_display: tariffForm.cc_price_display,
       old_price: tariffForm.cc_old_price,
       price_suffix: tariffForm.cc_price_suffix || "BYN",
-      cta_text: tariffForm.cc_cta_text || null,
+      cta_text: (tariffForm.meta as any)?.card_config?.cta_text ?? null,
       footnote: tariffForm.cc_footnote || null,
-      is_highlighted: tariffForm.cc_is_highlighted,
+      is_highlighted: tariffForm.cc_style_variant === "highlighted",
       style_variant: tariffForm.cc_style_variant,
       badge_text: tariffForm.badge || null,
     };
