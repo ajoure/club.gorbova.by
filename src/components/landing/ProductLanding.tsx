@@ -142,6 +142,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
                     tariff={tariff}
                     onSelectOffer={handleSelectOffer}
                     showBadges={config.show_badges !== false}
+                    priceSuffix={config.price_suffix || "BYN"}
                   />
                 </AnimatedSection>
               ))}
