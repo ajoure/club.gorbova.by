@@ -1101,56 +1101,85 @@ export default function AdminProductDetailV2() {
             )}
           </TabsContent>
           <TabsContent value="preview" className="space-y-4 mt-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-lg font-semibold">Превью секции тарифов</h2>
-                <p className="text-sm text-muted-foreground">
-                  Так будет выглядеть секция на сайте
-                </p>
-              </div>
-            </div>
-
-            <GlassCard className="p-4 sm:p-8">
-              {/* PATCH 3: effective_active guard */}
-              {!(product as any).is_active ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  <p className="text-lg font-medium">Продукт неактивен</p>
-                  <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
-                </div>
-              ) : (
+            {(() => {
+              // eslint-disable-next-line react-hooks/rules-of-hooks
+              const [sectionPreviewMode, setSectionPreviewMode] = useState<"desktop" | "mobile">("desktop");
+              return (
                 <>
-                  {/* Section Header */}
-                  <div className="text-center mb-8">
-                    <h2 className="text-3xl font-bold mb-2">
-                      {(product as any).public_title || "Тарифы"}
-                    </h2>
-                    <p className="text-muted-foreground">
-                      {(product as any).public_subtitle || "Выберите подходящий вариант"}
-                    </p>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold">Превью секции тарифов</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Так будет выглядеть секция на сайте
+                      </p>
+                    </div>
+                    <div className="flex gap-1 border rounded-lg p-1">
+                      <Button
+                        variant={sectionPreviewMode === "desktop" ? "default" : "ghost"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setSectionPreviewMode("desktop")}
+                      >
+                        Desktop
+                      </Button>
+                      <Button
+                        variant={sectionPreviewMode === "mobile" ? "default" : "ghost"}
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setSectionPreviewMode("mobile")}
+                      >
+                        Mobile
+                      </Button>
+                    </div>
                   </div>
 
-                  {/* Tariff Grid — unified TariffCard (PATCH 6) */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {tariffs?.filter(t => t.is_active).map((tariff: any) => (
-                      <TariffCard
-                        key={tariff.id}
-                        tariff={tariff}
-                        features={getFeaturesForTariff(tariff.id)}
-                        offers={getOffersForTariff(tariff.id)}
-                        onSelectOffer={handlePreviewSelectOffer}
-                      />
-                    ))}
-                  </div>
+                  <GlassCard className="p-4 sm:p-8">
+                    {!(product as any).is_active ? (
+                      <div className="py-12 text-center text-muted-foreground">
+                        <p className="text-lg font-medium">Продукт неактивен</p>
+                        <p className="text-sm mt-1">Превью недоступно. Активируйте продукт для просмотра.</p>
+                      </div>
+                    ) : (
+                      <div className={cn("mx-auto transition-all", sectionPreviewMode === "mobile" ? "max-w-[360px]" : "")}>
+                        <div className="text-center mb-8">
+                          <h2 className="text-3xl font-bold mb-2">
+                            {(product as any).public_title || "Тарифы"}
+                          </h2>
+                          <p className="text-muted-foreground">
+                            {(product as any).public_subtitle || "Выберите подходящий вариант"}
+                          </p>
+                        </div>
 
-                  {/* Disclaimer */}
-                  {(product as any).payment_disclaimer_text && (
-                    <p className="text-center text-sm text-muted-foreground mt-8">
-                      {(product as any).payment_disclaimer_text}
-                    </p>
-                  )}
+                        <div className={cn(
+                          "grid gap-6",
+                          sectionPreviewMode === "mobile" ? "grid-cols-1" : "grid-cols-1 md:grid-cols-3"
+                        )}>
+                          {tariffs?.filter(t => t.is_active).map((tariff: any) => {
+                            const vm = buildTariffCardViewModel(tariff, (product as any)?.landing_config?.price_suffix);
+                            return (
+                              <TariffCard
+                                key={tariff.id}
+                                tariff={vm}
+                                features={getFeaturesForTariff(tariff.id)}
+                                offers={getOffersForTariff(tariff.id)}
+                                onSelectOffer={handlePreviewSelectOffer}
+                                priceSuffix={(product as any)?.landing_config?.price_suffix || "BYN"}
+                              />
+                            );
+                          })}
+                        </div>
+
+                        {(product as any).payment_disclaimer_text && (
+                          <p className="text-center text-sm text-muted-foreground mt-8">
+                            {(product as any).payment_disclaimer_text}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </GlassCard>
                 </>
-              )}
-            </GlassCard>
+              );
+            })()}
           </TabsContent>
 
           {/* Custom Fields Tab */}
