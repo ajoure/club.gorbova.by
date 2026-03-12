@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Check, ChevronRight } from "lucide-react";
+import type { CardConfig } from "@/lib/tariffCardViewModel";
+import { cn } from "@/lib/utils";
 
 export interface TariffCardFeature {
   id: string;
@@ -45,6 +47,8 @@ export interface TariffCardData {
   // Nested data (from public EF)
   features?: TariffCardFeature[];
   offers?: TariffCardOffer[];
+  // Visual config from meta.card_config
+  card_config?: CardConfig;
 }
 
 interface TariffCardProps {
@@ -59,6 +63,13 @@ interface TariffCardProps {
   priceSuffix?: string;
 }
 
+const styleVariantClasses: Record<string, string> = {
+  default: "",
+  highlighted: "border-primary/50 ring-2 ring-primary/20",
+  minimal: "border-border/30",
+  compact: "p-4",
+};
+
 export function TariffCard({
   tariff,
   features: featuresProp,
@@ -68,6 +79,8 @@ export function TariffCard({
   showButtons = true,
   priceSuffix = "BYN",
 }: TariffCardProps) {
+  const cc = tariff.card_config;
+
   // Resolve data: props override → nested in tariff → empty
   const resolvedFeatures = featuresProp ?? tariff.features ?? [];
   const resolvedOffers = offersProp ?? tariff.offers ?? [];
@@ -77,8 +90,30 @@ export function TariffCard({
 
   // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
-  const displayPrice = primaryOffer?.amount ?? null;
+  
+  // Price resolution: primaryOffer.amount > card_config.price_display > tariff.current_price > null
+  const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
+
+  // Old/strikethrough price: card_config.old_price > tariff.original_price (via base_price). Show only if > displayPrice
+  const oldPrice = cc?.old_price ?? tariff.base_price ?? null;
+  const showOldPrice = oldPrice != null && displayPrice != null && oldPrice > displayPrice;
+
+  // Resolved suffix: priceSuffix prop > card_config.price_suffix > "BYN"
+  const resolvedSuffix = priceSuffix !== "BYN" ? priceSuffix : (cc?.price_suffix || "BYN");
+
+  // Badge: card_config.badge_text > tariff.badge
+  const badgeText = cc?.badge_text ?? tariff.badge ?? null;
+
+  // Highlight: card_config.is_highlighted > tariff.is_popular
+  const isHighlighted = cc?.is_highlighted ?? tariff.is_popular ?? false;
+
+  // Style variant
+  const styleVariant = cc?.style_variant || "default";
+  const variantClass = styleVariantClasses[styleVariant] || "";
+
+  // Footnote
+  const footnote = cc?.footnote;
 
   // Filter features by visibility (client-side, for admin preview)
   const visibleFeatures = resolvedFeatures.filter(f => {
@@ -99,17 +134,22 @@ export function TariffCard({
 
   return (
     <GlassCard
-      className={`p-6 relative flex flex-col h-full ${tariff.is_popular ? 'border-primary/50 ring-2 ring-primary/20' : ''}`}
-    >
-      {showBadges && tariff.is_popular && (
-        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground">
-          Популярный
-        </Badge>
+      className={cn(
+        "p-6 relative flex flex-col h-full",
+        isHighlighted && styleVariant !== "highlighted" && "border-primary/50 ring-2 ring-primary/20",
+        variantClass
       )}
-
-      {showBadges && tariff.badge && !tariff.is_popular && (
-        <Badge variant="secondary" className="absolute -top-3 left-1/2 -translate-x-1/2">
-          {tariff.badge}
+    >
+      {showBadges && badgeText && (
+        <Badge
+          className={cn(
+            "absolute -top-3 left-1/2 -translate-x-1/2",
+            isHighlighted
+              ? "bg-primary text-primary-foreground"
+              : "bg-secondary text-secondary-foreground"
+          )}
+        >
+          {badgeText}
         </Badge>
       )}
 
@@ -122,19 +162,36 @@ export function TariffCard({
 
       <div className="text-center mb-4">
         {displayPrice !== null ? (
-          <div className="text-3xl font-bold text-foreground">
-            {displayPrice} <span className="text-base font-normal text-muted-foreground">{priceSuffix}</span>
+          <div>
+            {showOldPrice && (
+              <div className="text-lg text-muted-foreground line-through">
+                {oldPrice} {resolvedSuffix}
+              </div>
+            )}
+            <div className="text-3xl font-bold text-foreground">
+              {displayPrice} <span className="text-base font-normal text-muted-foreground">{resolvedSuffix}</span>
+            </div>
           </div>
         ) : (
           <div className="text-sm text-muted-foreground">Цена не задана</div>
         )}
       </div>
 
+      {tariff.description && (
+        <p className="text-sm text-muted-foreground text-center mb-4">{tariff.description}</p>
+      )}
+
       {visibleFeatures.length > 0 && (
         <ul className="space-y-2 mb-6 flex-1">
           {visibleFeatures.map((feature) => (
-            <li key={feature.id} className={`flex items-start gap-2 text-sm ${feature.is_highlighted ? 'text-primary font-medium' : 'text-foreground'}`}>
-              <Check size={16} className={`mt-0.5 flex-shrink-0 ${feature.is_highlighted ? 'text-primary' : 'text-primary/70'}`} />
+            <li key={feature.id} className={cn(
+              "flex items-start gap-2 text-sm",
+              feature.is_highlighted ? "text-primary font-medium" : "text-foreground"
+            )}>
+              <Check size={16} className={cn(
+                "mt-0.5 flex-shrink-0",
+                feature.is_highlighted ? "text-primary" : "text-primary/70"
+              )} />
               <span>
                 {feature.text}
                 {feature.is_bonus && (
@@ -162,14 +219,18 @@ export function TariffCard({
             <Button
               key={offer.id}
               onClick={() => onSelectOffer?.(offer, tariff)}
-              variant={tariff.is_popular && index === 0 ? "default" : "outline"}
+              variant={isHighlighted && index === 0 ? "default" : "outline"}
               className="w-full"
             >
-              {offer.button_label || "Оплатить"}
+              {cc?.cta_text && index === 0 ? cc.cta_text : (offer.button_label || "Оплатить")}
               <ChevronRight className="ml-2 h-4 w-4" />
             </Button>
           ))}
         </div>
+      )}
+
+      {footnote && (
+        <p className="text-xs text-muted-foreground text-center mt-3">{footnote}</p>
       )}
     </GlassCard>
   );
