@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Check, Zap, Clock, ChevronRight } from "lucide-react";
+import { Check, ChevronRight } from "lucide-react";
 
 export interface TariffCardFeature {
   id: string;
@@ -55,6 +55,8 @@ interface TariffCardProps {
   onSelectOffer?: (offer: TariffCardOffer, tariff: TariffCardData) => void;
   showBadges?: boolean;
   showButtons?: boolean;
+  /** Price suffix from product.landing_config.price_suffix (e.g. "BYN/мес"). Fallback: "BYN" */
+  priceSuffix?: string;
 }
 
 export function TariffCard({
@@ -64,6 +66,7 @@ export function TariffCard({
   onSelectOffer,
   showBadges = true,
   showButtons = true,
+  priceSuffix = "BYN",
 }: TariffCardProps) {
   // Resolve data: props override → nested in tariff → empty
   const resolvedFeatures = featuresProp ?? tariff.features ?? [];
@@ -72,9 +75,10 @@ export function TariffCard({
   const payNowOffers = resolvedOffers.filter(o => o.offer_type === "pay_now" && o.is_active !== false);
   const trialOffers = resolvedOffers.filter(o => o.offer_type === "trial" && o.is_active !== false);
 
-  // Primary offer for price display
+  // Primary offer for price display — strictly from offers only
   const primaryOffer = payNowOffers.find(o => o.is_primary) || payNowOffers[0];
-  const displayPrice = tariff.current_price ?? tariff.base_price ?? tariff.price_monthly ?? primaryOffer?.amount ?? null;
+  const displayPrice = primaryOffer?.amount ?? null;
+  const hasActivePayOffers = payNowOffers.length > 0;
 
   // Filter features by visibility (client-side, for admin preview)
   const visibleFeatures = resolvedFeatures.filter(f => {
@@ -110,9 +114,6 @@ export function TariffCard({
       )}
 
       <div className="text-center mb-4">
-        <div className={`w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center ${tariff.is_popular ? 'bg-primary/20' : 'bg-muted'}`}>
-          {tariff.is_popular ? <Zap className="text-primary" size={24} /> : <Clock className="text-muted-foreground" size={24} />}
-        </div>
         <h3 className="text-xl font-bold text-foreground">{tariff.name}</h3>
         {tariff.subtitle && (
           <p className="text-sm text-muted-foreground mt-1">{tariff.subtitle}</p>
@@ -120,22 +121,12 @@ export function TariffCard({
       </div>
 
       <div className="text-center mb-4">
-        {tariff.discount_percent && tariff.base_price && (
-          <div className="text-sm text-muted-foreground line-through">
-            {tariff.base_price} BYN
-          </div>
-        )}
         {displayPrice !== null ? (
           <div className="text-3xl font-bold text-foreground">
-            {displayPrice} <span className="text-base font-normal text-muted-foreground">{tariff.period_label || "BYN"}</span>
+            {displayPrice} <span className="text-base font-normal text-muted-foreground">{priceSuffix}</span>
           </div>
         ) : (
-          <div className="text-sm text-destructive">Не задана основная цена</div>
-        )}
-        {tariff.discount_percent && (
-          <Badge variant="destructive" className="mt-1">
-            -{tariff.discount_percent}%
-          </Badge>
+          <div className="text-sm text-muted-foreground">Цена не задана</div>
         )}
       </div>
 
@@ -155,7 +146,7 @@ export function TariffCard({
         </ul>
       )}
 
-      {showButtons && (
+      {showButtons && hasActivePayOffers && (
         <div className="space-y-2 mt-auto">
           {trialOffers.map((offer) => (
             <Button
