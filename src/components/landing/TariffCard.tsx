@@ -105,8 +105,8 @@ export function TariffCard({
   // Badge: card_config.badge_text > tariff.badge
   const badgeText = cc?.badge_text ?? tariff.badge ?? null;
 
-  // Highlight: card_config.is_highlighted > tariff.is_popular
-  const isHighlighted = cc?.is_highlighted ?? tariff.is_popular ?? false;
+  // Highlight: style_variant "highlighted" > card_config.is_highlighted > tariff.is_popular (legacy fallback)
+  const isHighlighted = styleVariant === "highlighted" || cc?.is_highlighted || tariff.is_popular || false;
 
   // Style variant
   const styleVariant = cc?.style_variant || "default";
