@@ -6,11 +6,11 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { ConsultationHeader } from "@/components/consultation/ConsultationHeader";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
-import { ConsultationPaymentDialog } from "@/components/payment/ConsultationPaymentDialog";
+import { UniversalPricingSection, UniversalPricingSkeleton } from "@/components/landing/UniversalPricingSection";
+import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
+import { useAuth } from "@/contexts/AuthContext";
 import { 
   Check, 
-  Clock, 
-  Zap,
   Shield, 
   Scale, 
   Building2,
@@ -69,86 +69,10 @@ const results = [
   "Выигрывать суды по делам о незаконной предпринимательской деятельности и уклонении от уплаты налогов",
 ];
 
-interface TariffProps {
-  title: string;
-  price: number;
-  description: string;
-  waitTime: string;
-  isPopular?: boolean;
-  onSelect: () => void;
-}
-
-function TariffCard({ title, price, description, waitTime, isPopular, onSelect }: TariffProps) {
-  return (
-    <GlassCard 
-      className={`p-8 relative ${isPopular ? 'border-primary/50 ring-2 ring-primary/20' : ''}`}
-    >
-      {isPopular && (
-        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground">
-          Популярный
-        </Badge>
-      )}
-      
-      <div className="text-center mb-6">
-        <div className={`w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center ${isPopular ? 'bg-primary/20' : 'bg-muted'}`}>
-          {isPopular ? <Zap className="text-primary" size={28} /> : <Clock className="text-muted-foreground" size={28} />}
-        </div>
-        <h3 className="text-xl font-bold text-foreground mb-2">{title}</h3>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      
-      <div className="text-center mb-6">
-        <div className="text-4xl font-bold text-foreground mb-1">{price} BYN</div>
-        <div className="text-sm text-muted-foreground flex items-center justify-center gap-2">
-          <Clock size={14} />
-          {waitTime}
-        </div>
-      </div>
-      
-      <Button 
-        onClick={onSelect}
-        className="w-full"
-        variant={isPopular ? "default" : "outline"}
-        size="lg"
-      >
-        Записаться
-        <ChevronRight className="ml-2 h-4 w-4" />
-      </Button>
-    </GlassCard>
-  );
-}
-
 export default function Consultation() {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [paymentOpen, setPaymentOpen] = useState(false);
-  const [selectedTariff, setSelectedTariff] = useState<{
-    code: string;
-    name: string;
-    price: number;
-  } | null>(null);
-
-  // Restore tariff selection from URL after auth redirect
-  useEffect(() => {
-    const tariffParam = searchParams.get("tariff");
-    if (tariffParam === "CONSULTATION_STANDARD") {
-      setSelectedTariff({ code: "CONSULTATION_STANDARD", name: "Несрочная консультация", price: 500 });
-      setPaymentOpen(true);
-      searchParams.delete("tariff");
-      setSearchParams(searchParams, { replace: true });
-    } else if (tariffParam === "CONSULTATION_URGENT") {
-      setSelectedTariff({ code: "CONSULTATION_URGENT", name: "Срочная консультация", price: 800 });
-      setPaymentOpen(true);
-      searchParams.delete("tariff");
-      setSearchParams(searchParams, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
-
-  const handleSelectTariff = (code: string, name: string, price: number) => {
-    setSelectedTariff({ code, name, price });
-    setSearchParams({ tariff: code });
-    setPaymentOpen(true);
-  };
+  const { user } = useAuth();
+  const domain = getCurrentDomain();
+  const { data: productData, isLoading } = usePublicProduct(domain || null, user?.id);
 
   return (
     <div className="min-h-screen bg-background">
@@ -291,44 +215,23 @@ export default function Consultation() {
         </div>
       </section>
 
-      {/* Tariffs Section */}
-      <section id="tariffs" className="py-20">
-        <div className="container mx-auto px-4">
-          <AnimatedSection animation="fade-up">
-            <div className="text-center mb-12">
-              <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-                Тарифы консультации
-              </h2>
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Выберите подходящий вариант в зависимости от срочности вашего вопроса
-              </p>
-            </div>
-          </AnimatedSection>
-
-          <div className="max-w-3xl mx-auto grid md:grid-cols-2 gap-8">
-            <AnimatedSection animation="fade-right">
-              <TariffCard
-                title="Несрочная консультация"
-                price={500}
-                description="Подходит для вопросов, не требующих срочного решения"
-                waitTime="Срок ожидания — до 2 месяцев"
-                onSelect={() => handleSelectTariff("CONSULTATION_STANDARD", "Несрочная консультация", 500)}
-              />
-            </AnimatedSection>
-
-            <AnimatedSection animation="fade-left">
-              <TariffCard
-                title="Срочная консультация"
-                price={800}
-                description="Подходит для срочных и чувствительных ситуаций"
-                waitTime="Срок ожидания — 2-3 рабочих дня"
-                isPopular
-                onSelect={() => handleSelectTariff("CONSULTATION_URGENT", "Срочная консультация", 800)}
-              />
-            </AnimatedSection>
+      {/* Dynamic Tariffs Section */}
+      {isLoading ? (
+        <UniversalPricingSkeleton />
+      ) : productData?.product && productData.tariffs.length > 0 ? (
+        <UniversalPricingSection
+          product={productData.product}
+          tariffs={productData.tariffs}
+          isReentryPricing={productData.is_reentry_pricing}
+          reentryMessage={productData.reentry_message}
+        />
+      ) : (
+        <section id="tariffs" className="py-20">
+          <div className="container mx-auto px-4 text-center">
+            <p className="text-muted-foreground">Тарифы временно недоступны</p>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* After Payment Section */}
       <section id="after-payment" className="py-20 relative overflow-hidden">
@@ -387,17 +290,6 @@ export default function Consultation() {
       </section>
 
       <LandingFooter />
-
-      {/* Payment Dialog */}
-      {selectedTariff && (
-        <ConsultationPaymentDialog
-          open={paymentOpen}
-          onOpenChange={setPaymentOpen}
-          tariffCode={selectedTariff.code}
-          tariffName={selectedTariff.name}
-          price={selectedTariff.price}
-        />
-      )}
     </div>
   );
 }
