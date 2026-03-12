@@ -1,25 +1,27 @@
-# План: Исправление скролла + Унификация карточек (v2 — финальный)
+# План: Исправление скролла + Унификация карточек (v3 — финальный)
 
 ---
 
-## Фаза 1: Исправление вертикального скролла
+## Фаза 1: Исправление вертикального скролла (4 замены)
 
 ### Проблема
 Внутренние контейнеры диалогов используют `max-h-full overflow-y-auto`, но родитель `DialogContent` задаёт только `max-height` (без явного `height`). CSS `max-height: 100%` от элемента без фиксированной `height` = `auto` → `overflow-y-auto` не срабатывает → контент обрезается `overflow-hidden` на `DialogContent`.
 
-### Целевая формула
-`max-h-[calc(100dvh-2rem)]` — идентична стандарту из memory `global-dialog-standards-v2`. Внутренний padding `p-4 sm:p-6` входит в скроллируемый контент (Variant A), header/footer — тоже внутри scroll-контейнера, поэтому вычитаем только отступ самого `DialogContent` от edges viewport.
+### Целевая формула (зафиксировано)
+- **DialogContent**: `overflow-hidden p-0 bg-background` (без `max-h-*`) — уже так везде ✅
+- **Внутренний wrapper**: `max-h-[calc(100dvh-4rem)] overflow-y-auto overflow-x-hidden scrollbar-none p-4 sm:p-6`
+- Формула `-4rem` = padding p-4 (1rem×2) + визуальный запас (~1rem×2). Везде одинаково, без исключений.
 
-### Точные места замены (4 реальных замены)
+### Точные места замены (4 штуки)
 
 | # | Файл | Строка | Контекст | Замена |
 |---|-------|--------|----------|--------|
-| 1 | `AdminProductDetailV2.tsx` | **793** | Tariff Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
-| 2 | `AdminProductDetailV2.tsx` | **937** | Offer Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
-| 3 | `AdminProductDetailV2.tsx` | **1708** | Flow Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
-| 4 | `AdminProductsV2.tsx` | **655** | Create/Edit Product Dialog: `max-h-full overflow-y-auto` | `max-h-full` → `max-h-[calc(100dvh-2rem)]` |
+| 1 | `AdminProductDetailV2.tsx` | **793** | Tariff Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
+| 2 | `AdminProductDetailV2.tsx` | **937** | Offer Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
+| 3 | `AdminProductDetailV2.tsx` | **1708** | Flow Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
+| 4 | `AdminProductsV2.tsx` | **655** | Create/Edit Product Dialog wrapper | `max-h-full` → `max-h-[calc(100dvh-4rem)]` |
 
-**Не требуют изменений:**
+**Не требуют изменений (не трогаем):**
 - Delete Confirmation Dialog (строка 1798) — маленький диалог, контент не переполняется
 - Dry-run reasons list (строка 772) — фиксированная `max-h-40`, работает корректно
 
@@ -27,7 +29,10 @@
 
 ## Фаза 2: Унификация карточек + bulk-действия
 
-### 2.1 Аудит существующих мутаций
+### 2.0 STOP-GUARD
+Фаза 2 = **UI-only**. Новых хуков, миграций, RPC не создаём. В bulk используем напрямую `updateX.mutateAsync` / `deleteX.mutateAsync`; invalidate уже есть по prefix (как сейчас).
+
+### 2.1 Аудит существующих мутаций (всё есть ✅)
 
 | Сущность | Update (is_active) | Delete | Тип delete | Confirm dialog | Каскады |
 |----------|-------------------|--------|------------|----------------|---------|
@@ -35,26 +40,38 @@
 | **Offer** | `useUpdateTariffOffer` → `.update({is_active})` ✅ | `useDeleteTariffOffer` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
 | **Flow** | `useUpdateFlow` → `.update({is_active})` ✅ | `useDeleteFlow` → `.delete()` ✅ | **Hard** | Общий `deleteConfirm` | Нет каскадов |
 
-**Bulk-обёртки (новые, UI-only):**
-- Bulk activate/deactivate: `Promise.all` по существующим `updateTariff/updateOffer/updateFlow`
-- Bulk delete: `Promise.all` по существующим `deleteTariff/deleteOffer/deleteFlow` + confirm dialog
-- **Новых миграций/RPC не нужно**
+### 2.2 Bulk-действия
 
-### 2.2 Сортировка
+**Bulk activate/deactivate:** `Promise.all(ids.map(id => updateX.mutateAsync({ id, is_active: true/false })))`
 
-**Источник:** Клиентская сортировка через `useTableSort` (данные загружены целиком через `useQuery`).
+**Bulk delete:**
+- Нажатие «Удалить (N)» → **один** confirm dialog: «Удалить N элементов?»
+- По confirm → `Promise.all(ids.map(id => deleteX.mutateAsync(id)))`
+- Старый `setDeleteConfirm({type, id})` остаётся для одиночных 🗑 кнопок
+
+**Новых хуков не создаём; invalidate уже есть по prefix.**
+
+### 2.3 Сортировка (клиентская, в памяти)
+
+**Источник:** `useTableSort` по уже загруженным массивам через `useQuery`. Без refetch, без query params.
 
 | Вкладка | Поля сортировки |
 |---------|----------------|
 | Тарифы | `name`, `is_active` (статус) |
-| Кнопки оплаты | `tariff_name`, `amount`, `offer_type` |
+| Кнопки оплаты | `amount`, `offer_type` (без `tariff_name` — группировка по тарифам уже задаёт порядок) |
 | Потоки | `name`, `start_date`, `is_active` |
 
-### 2.3 Выделение / drag-select
+### 2.4 Выделение / drag-select
 
-`useDragSelect` работает через `registerItemRef(id, HTMLElement)` — не зависит от `<table>`.
+Копируем usage из `AdminProductsV2` и применяем к карточкам. Контракт хука — как уже реализован в `useDragSelect`:
 
-**3 независимых инстанса** — по одному на вкладку (tariffs, offers, flows).
+```tsx
+const tariffSelect = useDragSelect({ items: tariffs, getItemId: t => t.id });
+const offerSelect = useDragSelect({ items: allOffers, getItemId: o => o.id });
+const flowSelect = useDragSelect({ items: flows, getItemId: f => f.id });
+```
+
+**3 независимых инстанса** — по одному на вкладку.
 
 **DoD выделения:**
 - ☐ Клик по чекбоксу — toggle одного элемента
@@ -64,21 +81,22 @@
 - ☐ «Выбрать все» чекбокс — выделяет все элементы текущей вкладки
 - ☐ Переключение вкладки — не сбрасывает выделение других вкладок
 
-### 2.4 Поведение клика по карточке
+### 2.5 Поведение клика по карточке
 
-**Вариант A: клик → открыть edit dialog** (единообразно для всех):
+**Клик → открыть edit dialog** (единообразно для всех):
 - Тариф → `setTariffDialog({ open: true, editing: tariff })`
 - Оффер → `setOfferDialog({ open: true, editing: offer })`
 - Поток → `setFlowDialog({ open: true, editing: flow })`
 - `stopPropagation` на: checkbox, кнопки (edit, delete, switch, copy)
 
-### 2.5 Группировка офферов
+### 2.6 Группировка офферов
 
 Сохраняем группировку заголовком тарифа (**не selectable**, без чекбокса):
-```
-[Select All] [SortPill: Тариф] [SortPill: Сумма] [SortPill: Тип]
 
-─── Тариф «Базовый» (заголовок) ───
+```
+[Select All] [SortPill: Сумма] [SortPill: Тип]
+
+─── Тариф «Базовый» (заголовок, не selectable) ───
   ☐ Оплатить  1500 BYN  pay_now  ★Основная  🔛 ✎ 🗑
   ☐ Попробовать  1 BYN  trial  ✎ 🗑
 
@@ -86,9 +104,12 @@
   ☐ Оплатить  3000 BYN  pay_now  ★Основная  🔛 ✎ 🗑
 ```
 
-«Выбрать все» выделяет только офферы. Сортировка внутри групп.
+- Группы тарифов идут в порядке `tariff.name` (алфавитно)
+- Внутри каждой группы офферы сортируются по выбранному SortPill (amount / offer_type)
+- SortPill «Тариф» **убран** — при фиксированной группировке он бессмысленен
+- «Выбрать все» выделяет только офферы, не заголовки
 
-### 2.6 SortPill — вынос в компонент
+### 2.7 SortPill — вынос в компонент
 
 **Файл:** `src/components/admin/SortPill.tsx`
 
@@ -118,16 +139,16 @@ interface SortPillProps {
 ## DoD (Definition of Done)
 
 ### Фаза 1
-- ☐ Вертикальный скролл работает во всех 3 диалогах (tariff, offer, flow) на 390×844
-- ☐ Скролл работает в диалоге создания/редактирования продукта
+- ☐ Вертикальный скролл работает во всех 4 диалогах (tariff, offer, flow, product) на 390×844
 - ☐ Контент не обрезается, все поля доступны
+- ☐ Scrollbar track не виден (scrollbar-none)
 
 ### Фаза 2
 - ☐ Карточки тарифов/офферов/потоков визуально идентичны ProductCard
 - ☐ SortPill вынесен, сортировка продуктов не сломана
 - ☐ Сортировка на каждой вкладке работает с индикацией направления
-- ☐ Выделение: click, ctrl, shift, drag, select-all — на каждой вкладке (3 независимых стора)
-- ☐ Bulk Actions Bar: Активировать / Деактивировать / Удалить
-- ☐ Клик по карточке → edit dialog
-- ☐ Группировка офферов с несортируемыми заголовками
-- ☐ Нет горизонтального скролла на 390px, 768px, 1024px
+- ☐ Выделение: click, ctrl/cmd toggle, shift-range, drag-select, select-all — на каждой вкладке (3 независимых стора)
+- ☐ Bulk Actions Bar: Активировать / Деактивировать / Удалить (один confirm dialog для bulk delete)
+- ☐ Клик по карточке → edit dialog (единообразно)
+- ☐ Группировка офферов: заголовки тарифов не selectable, сортировка внутри групп
+- ☐ Нет горизонтального скролла: Тарифы/Офферы/Потоки на 390px, 768px, 1024px — все action-кнопки доступны
