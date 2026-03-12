@@ -1214,7 +1214,7 @@ export default function AdminProductDetailV2() {
                                       }
                                     }
                                   })}
-                                  className="flex gap-4"
+                                  className="flex flex-col gap-3 sm:flex-row sm:gap-4"
                                 >
                                   <div className="flex items-center space-x-2">
                                     <RadioGroupItem value="month" id="billing-month" />
