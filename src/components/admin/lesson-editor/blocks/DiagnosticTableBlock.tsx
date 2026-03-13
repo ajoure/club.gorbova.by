@@ -109,7 +109,8 @@ export function DiagnosticTableBlock({
   onRowsChange,
   onComplete,
   isCompleted = false,
-  onReset
+  onReset,
+  saveStatus: externalSaveStatus,
 }: DiagnosticTableBlockProps) {
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   

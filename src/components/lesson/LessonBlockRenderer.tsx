@@ -355,6 +355,7 @@ export function LessonBlockRenderer({
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
             onReset={kvestProps?.onReset}
+            saveStatus={kvestProps?.saveStatus}
           />
         );
       case 'sequential_form':
