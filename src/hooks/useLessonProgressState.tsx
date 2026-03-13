@@ -6,8 +6,10 @@ import { useQueryClient } from "@tanstack/react-query";
 export interface LessonProgressStateData {
   role?: string;                          // Selected role from quiz_survey
   videoProgress?: Record<string, number>; // blockId -> percent watched
-  pointA_rows?: Record<string, unknown>[]; // Diagnostic table data
+  pointA_rows?: Record<string, unknown>[]; // Diagnostic table V1 data
   pointA_completed?: boolean;
+  pointA_v2_rows?: Record<string, unknown>[]; // Diagnostic table V2 data
+  pointA_v2_completed?: boolean;
   pointB_answers?: Record<string, string>; // Answers to sequential form steps
   pointB_completed?: boolean;
   pointB_summary?: string;                 // AI-generated summary for Point B
