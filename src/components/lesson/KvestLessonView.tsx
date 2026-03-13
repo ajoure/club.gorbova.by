@@ -430,6 +430,7 @@ export function KvestLessonView({
                   onComplete: isReadOnly ? undefined : () => handleDiagnosticTableV2Complete(blockId),
                   isCompleted: state?.pointA_v2_completed || false,
                   onReset: (state?.pointA_v2_completed) ? () => handleDiagnosticTableV2Reset(blockId) : undefined,
+                  saveStatus: saveStatus,
                 }}
               />
             </div>
