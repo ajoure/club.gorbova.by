@@ -503,6 +503,55 @@ export function DiagnosticTableBlock({
           </Card>
         )}
 
+        {/* V2: Source lesson ID setting */}
+        {isV2 && (
+          <Card className="p-4">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Link2 className="h-3.5 w-3.5" />
+                Урок-источник для переноса данных (lesson ID)
+              </Label>
+              <Input
+                value={sourceLessonInput}
+                onChange={(e) => setSourceLessonInput(e.target.value)}
+                placeholder="UUID урока с диагностической таблицей V1"
+                className="font-mono text-xs"
+              />
+              {/* Validation status */}
+              {sourceValidation.status === 'idle' && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Info className="h-3 w-3" />
+                  Перенос данных отключён: урок-источник не указан
+                </p>
+              )}
+              {sourceValidation.status === 'loading' && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Проверка…
+                </p>
+              )}
+              {sourceValidation.status === 'valid' && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" />
+                  Источник найден: {sourceValidation.lessonTitle}
+                </p>
+              )}
+              {sourceValidation.status === 'error_not_found' && (
+                <p className="text-xs text-destructive flex items-center gap-1">
+                  <XCircle className="h-3 w-3" />
+                  Урок не найден — проверьте ID
+                </p>
+              )}
+              {sourceValidation.status === 'error_no_v1' && (
+                <p className="text-xs text-destructive flex items-center gap-1">
+                  <XCircle className="h-3 w-3" />
+                  В уроке «{sourceValidation.lessonTitle}» нет диагностической таблицы V1
+                </p>
+              )}
+            </div>
+          </Card>
+        )}
+
         {/* Preview */}
         <div className="mt-4 border rounded-lg p-4 bg-muted/30">
           <p className="text-sm text-muted-foreground mb-2">Предпросмотр таблицы ({content.layout === 'vertical' ? 'вертикальная' : 'горизонтальная'})</p>
