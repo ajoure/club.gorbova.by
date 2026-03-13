@@ -61,7 +61,7 @@ export function KvestLessonView({
 }: KvestLessonViewProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { state, saveStatus, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
+  const { state, loading: progressLoading, saveStatus, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
   const { resetProgress: resetViaEdge } = useResetProgress();
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const userNavigatedRef = useRef(false);
