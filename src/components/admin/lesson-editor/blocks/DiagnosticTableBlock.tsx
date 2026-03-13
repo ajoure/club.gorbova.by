@@ -901,39 +901,6 @@ export function DiagnosticTableBlock({
         </Card>
       )}
 
-      {/* V2: Extended aggregates */}
-      {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
-        <Card className="bg-primary/5 border-primary/20">
-          <CardContent className="py-3">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm mb-3">
-              <div className="text-center">
-                <p className="text-muted-foreground text-xs">Общий доход</p>
-                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
-              </div>
-              <div className="text-center">
-                <p className="text-muted-foreground text-xs">Общие часы</p>
-                <p className="font-semibold">{v2Aggregates.total_hours} ч</p>
-              </div>
-              <div className="text-center bg-primary/10 rounded-lg py-1">
-                <p className="text-muted-foreground text-xs">Средний доход/час</p>
-                <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
-              </div>
-            </div>
-            {Object.keys(v2Aggregates.category_counts).length > 0 && (
-              <div className="border-t pt-3">
-                <p className="text-xs text-muted-foreground mb-2">Распределение клиентов по категориям</p>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(v2Aggregates.category_counts).map(([cat, count]) => (
-                    <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
-                      {cat}: {count}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Complete button */}
       {!isCompleted ? (
