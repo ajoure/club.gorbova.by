@@ -11,7 +11,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink, ChevronRight } from "lucide-react";
+import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink, ChevronRight, Bug } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminLessonBlockEditor() {
@@ -216,6 +216,26 @@ export default function AdminLessonBlockEditor() {
               currentThumbnail={lesson.thumbnail_url}
               onThumbnailChange={handleThumbnailChange}
             />
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Debug Info Collapsible */}
+        <Collapsible className="mb-4">
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground gap-1.5">
+              <Bug className="h-3 w-3" />
+              Debug info
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 p-3 bg-muted/50 border rounded-lg font-mono text-xs space-y-1">
+            <div><span className="text-muted-foreground">lesson_id:</span> {lessonId}</div>
+            <div><span className="text-muted-foreground">module_id:</span> {moduleId}</div>
+            {blocks.filter(b => b.block_type === 'diagnostic_table' && (b.content as any)?.version === 'v2').map(b => (
+              <div key={b.id}>
+                <span className="text-muted-foreground">V2 block source_lesson_id:</span>{' '}
+                {(b.content as any)?.source_lesson_id || <span className="italic text-muted-foreground">пусто (автопоиск)</span>}
+              </div>
+            ))}
           </CollapsibleContent>
         </Collapsible>
 
