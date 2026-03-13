@@ -258,6 +258,80 @@ export function StudentProgressModal({
             </Card>
           )}
 
+          {/* Point A V2 - Portfolio Analytics */}
+          {(state?.pointA_v2_rows?.length || state?.pointA_v2_completed) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Target className="h-5 w-5 text-teal-600" />
+                  Аналитика портфеля клиентов
+                  {state?.pointA_v2_completed && (
+                    <Badge variant="default" className="ml-2">Завершено</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {(state?.pointA_v2_rows?.length ?? 0) > 0 ? (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Клиент</TableHead>
+                          <TableHead>Тип</TableHead>
+                          <TableHead className="text-right">Доход</TableHead>
+                          <TableHead className="text-right">Часы</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {state.pointA_v2_rows!.map((row: any, idx: number) => (
+                          <TableRow key={idx}>
+                            <TableCell>{row.client || "—"}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="text-xs">
+                                {row.source_type || "—"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">{row.monthly_income || 0} BYN</TableCell>
+                            <TableCell className="text-right">
+                              {(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    
+                    <Separator className="my-4" />
+                    
+                    {(() => {
+                      const v2Rows = state.pointA_v2_rows!;
+                      const totalIncome = v2Rows.reduce((s: number, r: any) => s + (Number(r.monthly_income) || 0), 0);
+                      const totalHours = v2Rows.reduce((s: number, r: any) => s + (Number(r.direct_hours) || 0) + (Number(r.mental_hours) || 0), 0);
+                      const avgRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
+                      return (
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <Label className="text-muted-foreground">Общий доход</Label>
+                            <p className="font-semibold">{totalIncome} BYN</p>
+                          </div>
+                          <div>
+                            <Label className="text-muted-foreground">Общие часы</Label>
+                            <p className="font-semibold">{totalHours} ч</p>
+                          </div>
+                          <div>
+                            <Label className="text-muted-foreground">Доход/час</Label>
+                            <p className="font-semibold text-primary">{avgRate} BYN/ч</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <p className="text-muted-foreground">Данные не заполнены</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Point B - Sequential Form Answers */}
           {(state?.pointB_answers || state?.pointB_completed) && (
             <Card>

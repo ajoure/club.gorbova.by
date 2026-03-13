@@ -531,18 +531,28 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                   </Badge>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent sideOffset={2} alignOffset={-5}>
-                  {types.map((type) => {
+                {types.map((type) => {
                     const config = blockTypeConfig[type];
                     const BlockIcon = config.icon;
                     return (
-                      <DropdownMenuItem 
-                        key={type} 
-                        onClick={() => handleAddBlock(type)}
-                        className="gap-2 cursor-pointer"
-                      >
-                        <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
-                        {config.label}
-                      </DropdownMenuItem>
+                      <div key={type}>
+                        <DropdownMenuItem 
+                          onClick={() => handleAddBlock(type)}
+                          className="gap-2 cursor-pointer"
+                        >
+                          <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
+                          {config.label}
+                        </DropdownMenuItem>
+                        {type === 'diagnostic_table' && (
+                          <DropdownMenuItem 
+                            onClick={handleAddDiagnosticTableV2}
+                            className="gap-2 cursor-pointer"
+                          >
+                            <Table className="h-4 w-4 text-teal-600" />
+                            Диагн. таблица V2
+                          </DropdownMenuItem>
+                        )}
+                      </div>
                     );
                   })}
                 </DropdownMenuSubContent>

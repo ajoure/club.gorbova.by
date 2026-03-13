@@ -616,7 +616,11 @@ export function KvestLessonView({
                   {block.block_type === 'quiz_survey' && <span className="text-sm text-muted-foreground">Тест</span>}
                   {block.block_type === 'role_description' && <span className="text-sm text-muted-foreground">Описание роли</span>}
                   {block.block_type === 'video_unskippable' && <span className="text-sm text-muted-foreground">Видео</span>}
-                  {block.block_type === 'diagnostic_table' && <span className="text-sm text-muted-foreground">Точка А</span>}
+                  {block.block_type === 'diagnostic_table' && (
+                    <span className="text-sm text-muted-foreground">
+                      {(block.content as any)?.version === 'v2' ? 'Аналитика портфеля' : 'Точка А'}
+                    </span>
+                  )}
                   {block.block_type === 'sequential_form' && <span className="text-sm text-muted-foreground">Точка Б</span>}
                 </div>
                 {isCompleted && (
