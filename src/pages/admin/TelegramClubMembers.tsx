@@ -76,6 +76,7 @@ import {
   ChevronDown,
   Send,
   ShieldCheck,
+  Bot,
 } from 'lucide-react';
 import { 
   useTelegramClubs, 
