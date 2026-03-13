@@ -545,8 +545,20 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                         <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
                         {config.label}
                       </DropdownMenuItem>
-                    );
-                  })}
+                  )}
+                  {/* V2 diagnostic table — separate menu item */}
+                  {category === 'input' && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem 
+                        onClick={handleAddDiagnosticTableV2}
+                        className="gap-2 cursor-pointer"
+                      >
+                        <Table className="h-4 w-4 text-teal-600" />
+                        Диагностическая таблица V2
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             );
