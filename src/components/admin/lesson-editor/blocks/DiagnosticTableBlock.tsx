@@ -192,9 +192,6 @@ export function DiagnosticTableBlock({
       onChange({ ...content, source_lesson_id: trimmed } as any);
     }
   }, [debouncedSourceId]); // intentionally minimal deps to avoid loops
-  const columns = isV2 
-    ? (content.columns?.length ? content.columns : DEFAULT_V2_COLUMNS as DiagnosticTableColumn[])
-    : (content.columns?.length ? content.columns : DEFAULT_COLUMNS);
 
   // PATCH: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
