@@ -448,20 +448,24 @@ export function KvestLessonView({
     state, 
     userRole,
     pointARows,
+    pointAV2Rows,
     pointBAnswers,
     savedSummary,
     handleRoleSelected,
     handleQuizSurveyReset,
     handleRoleDescriptionComplete,
-    
     handleVideoComplete,
     handleDiagnosticTableUpdate,
     handleDiagnosticTableComplete,
     handleDiagnosticTableReset,
+    handleDiagnosticTableV2Update,
+    handleDiagnosticTableV2Complete,
+    handleDiagnosticTableV2Reset,
     handleSequentialFormUpdate,
     handleSequentialFormComplete,
     handleSequentialFormReset,
     handleSummaryGenerated,
+    updateState,
   ]);
 
   // Get gate explanation for current block
