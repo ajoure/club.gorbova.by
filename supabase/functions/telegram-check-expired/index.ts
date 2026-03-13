@@ -95,90 +95,21 @@ Deno.serve(async (req) => {
     for (const access of expiredAccess || []) {
       results.processed++;
       
-      // Check if user has active manual access for this club
-      const { data: manualAccess } = await supabase
-        .from('telegram_manual_access')
-        .select('*')
-        .eq('user_id', access.user_id)
-        .eq('club_id', access.club_id)
-        .eq('is_active', true)
-        .or(`valid_until.is.null,valid_until.gt.${now}`)
-        .maybeSingle();
-
-      if (manualAccess) {
-        console.log(`User ${access.user_id} has active manual access, skipping`);
-        results.skipped++;
-        continue;
-      }
-
-      // PATCH 11B: Check if user has active entitlement (club product)
-      const { data: activeEntitlement } = await supabase
-        .from('entitlements')
-        .select('id, product_code, expires_at')
-        .eq('user_id', access.user_id)
-        .eq('status', 'active')
-        .or(`expires_at.is.null,expires_at.gt.${now}`)
-        .limit(1)
-        .maybeSingle();
-
-      if (activeEntitlement) {
-        console.log(`User ${access.user_id} has active entitlement ${activeEntitlement.product_code}, skipping revoke`);
-        // Update access record to match entitlement expiry
-        await supabase
-          .from('telegram_access')
-          .update({ 
-            active_until: activeEntitlement.expires_at || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-            last_sync_at: now,
-          })
-          .eq('id', access.id);
-        results.skipped++;
-        continue;
-      }
-
-      // Check if user has active telegram_access_grants (renewed subscription)
-      const { data: activeGrant } = await supabase
-        .from('telegram_access_grants')
-        .select('*')
-        .eq('user_id', access.user_id)
-        .eq('club_id', access.club_id)
-        .eq('status', 'active')
-        .gt('end_at', now)
-        .maybeSingle();
-
-      if (activeGrant) {
-        // Subscription renewed, update access record
-        console.log(`User ${access.user_id} has renewed subscription, updating access`);
-        await supabase
-          .from('telegram_access')
-          .update({ 
-            active_until: activeGrant.end_at,
-            last_sync_at: now,
-          })
-          .eq('id', access.id);
-        
-        results.skipped++;
-        continue;
-      }
-
-      // PATCH 11B: Check if user has active subscription
-      const { data: activeSub } = await supabase
-        .from('subscriptions_v2')
-        .select('id, access_end_at')
-        .eq('user_id', access.user_id)
-        .in('status', ['active', 'trial', 'past_due'])
-        .gt('access_end_at', now)
-        .limit(1)
-        .maybeSingle();
-
-      if (activeSub) {
-        console.log(`User ${access.user_id} has active subscription, updating access`);
-        await supabase
-          .from('telegram_access')
-          .update({ 
-            active_until: activeSub.access_end_at,
-            last_sync_at: now,
-          })
-          .eq('id', access.id);
+      // PATCH TG-REVOKE-FALSE-REGRANT: Use centralized hasValidAccess instead of ad-hoc checks
+      const accessCheck = await hasValidAccess(supabase, access.user_id, access.club_id);
+      
+      if (accessCheck.valid) {
+        console.log(`User ${access.user_id} has valid access via ${accessCheck.source}, skipping. Reason: skipped_valid_access`);
+        // Update access record to match real expiry
+        if (accessCheck.endAt) {
+          await supabase
+            .from('telegram_access')
+            .update({ 
+              active_until: accessCheck.endAt,
+              last_sync_at: now,
+            })
+            .eq('id', access.id);
+        }
         results.skipped++;
         continue;
       }
