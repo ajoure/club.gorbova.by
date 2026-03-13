@@ -371,11 +371,13 @@ export function SequentialFormBlock({
     <div className="space-y-4">
       {/* Header with progress */}
       {content.title && (
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
-          <Badge variant="outline">
-            Шаг {currentStepIndex + 1} из {totalSteps}
-          </Badge>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="w-full min-w-0" dangerouslySetInnerHTML={{ __html: content.title! }} />
+            <Badge variant="outline" className="shrink-0 ml-2">
+              Шаг {currentStepIndex + 1} из {totalSteps}
+            </Badge>
+          </div>
         </div>
       )}
 

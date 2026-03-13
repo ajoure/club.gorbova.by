@@ -737,8 +737,8 @@ export function DiagnosticTableBlock({
   return (
     <div className="space-y-4">
       {content.title && (
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+        <div className="space-y-1">
+          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
           {/* Save status indicator */}
           {saveStatus !== 'idle' && (
             <span className={`text-xs flex items-center gap-1 ${
@@ -759,6 +759,88 @@ export function DiagnosticTableBlock({
           className="text-sm text-muted-foreground prose prose-sm max-w-none"
           dangerouslySetInnerHTML={{ __html: content.instruction }}
         />
+      )}
+
+      {/* V2: Summary analytics — ABOVE the rows */}
+      {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="py-3 space-y-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Общий доход</p>
+                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
+              </div>
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Общие часы</p>
+                <p className="font-semibold">{v2Aggregates.total_hours} ч</p>
+              </div>
+              <div className="text-center bg-primary/10 rounded-lg py-1">
+                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
+              </div>
+            </div>
+
+            {/* Compact client table — desktop */}
+            {(() => {
+              const clientRows = localRows
+                .map((row, idx) => ({ row, idx }))
+                .filter(({ row }) => String(row.source_type) === 'клиент' && !isRowEmpty(row));
+              if (clientRows.length === 0) return null;
+              const totalIncome = v2Aggregates.total_income;
+              return (
+                <div className="border-t pt-3">
+                  <p className="text-xs text-muted-foreground mb-2">Обзор клиентов</p>
+                  {/* Desktop compact table */}
+                  <div className="hidden sm:block">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs py-1">Клиент</TableHead>
+                          <TableHead className="text-xs py-1 text-right">Доход</TableHead>
+                          <TableHead className="text-xs py-1 text-right">Часы</TableHead>
+                          <TableHead className="text-xs py-1 text-right">Доля</TableHead>
+                          <TableHead className="text-xs py-1">Категория</TableHead>
+                          <TableHead className="text-xs py-1">Решение</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {clientRows.map(({ row, idx }) => {
+                          const computed = v2ComputedMap?.[idx];
+                          const income = Number(row.monthly_income) || 0;
+                          const share = totalIncome > 0 ? Math.round((income / totalIncome) * 100) : 0;
+                          return (
+                            <TableRow key={row._id as string || idx}>
+                              <TableCell className="text-xs py-1 font-medium">{String(row.client || '—')}</TableCell>
+                              <TableCell className="text-xs py-1 text-right">{income.toLocaleString()}</TableCell>
+                              <TableCell className="text-xs py-1 text-right">{computed?.total_hours || 0}</TableCell>
+                              <TableCell className="text-xs py-1 text-right">{share}%</TableCell>
+                              <TableCell className="text-xs py-1">
+                                {computed?.client_category && (
+                                  <Badge className={`text-[10px] px-1.5 py-0 ${CATEGORY_COLORS[computed.client_category] || 'bg-muted text-muted-foreground'}`}>
+                                    {computed.client_category}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-xs py-1 max-w-[200px] truncate">{String(row.management_decision || '—')}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  {/* Mobile: category badges only */}
+                  <div className="sm:hidden flex flex-wrap gap-2">
+                    {Object.entries(v2Aggregates.category_counts).map(([cat, count]) => (
+                      <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
+                        {cat}: {count}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </CardContent>
+        </Card>
       )}
 
       {/* Inline validation summary — calm, no toast */}
@@ -901,39 +983,6 @@ export function DiagnosticTableBlock({
         </Card>
       )}
 
-      {/* V2: Extended aggregates */}
-      {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
-        <Card className="bg-primary/5 border-primary/20">
-          <CardContent className="py-3">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm mb-3">
-              <div className="text-center">
-                <p className="text-muted-foreground text-xs">Общий доход</p>
-                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
-              </div>
-              <div className="text-center">
-                <p className="text-muted-foreground text-xs">Общие часы</p>
-                <p className="font-semibold">{v2Aggregates.total_hours} ч</p>
-              </div>
-              <div className="text-center bg-primary/10 rounded-lg py-1">
-                <p className="text-muted-foreground text-xs">Средний доход/час</p>
-                <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
-              </div>
-            </div>
-            {Object.keys(v2Aggregates.category_counts).length > 0 && (
-              <div className="border-t pt-3">
-                <p className="text-xs text-muted-foreground mb-2">Распределение клиентов по категориям</p>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(v2Aggregates.category_counts).map(([cat, count]) => (
-                    <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
-                      {cat}: {count}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Complete button */}
       {!isCompleted ? (
