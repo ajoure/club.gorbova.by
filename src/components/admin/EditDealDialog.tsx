@@ -381,7 +381,9 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
                 body: { 
                   user_id: deal.user_id, 
                   club_id: productData.telegram_club_id,
-                  reason: 'deal_status_changed'
+                  reason: 'deal_status_changed',
+                  is_manual: true,
+                  admin_id: (await supabase.auth.getUser()).data.user?.id,
                 }
               }).catch(console.error);
             }

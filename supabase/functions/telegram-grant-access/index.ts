@@ -417,7 +417,59 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get clubs — filter strictly by resolvedClubIds (NEVER select all)
+    // ============================================================
+    // PATCH TG-CLUB-LINKAGE-INTEGRITY: Verify club-product mapping for auto grants
+    // ============================================================
+    if (!is_manual && source_id) {
+      // Try to resolve product from source subscription
+      const { data: sourceSub } = await supabase
+        .from('subscriptions_v2')
+        .select('product_id')
+        .eq('id', source_id)
+        .maybeSingle();
+
+      if (sourceSub?.product_id) {
+        for (const cid of resolvedClubIds) {
+          const { data: mapping } = await supabase
+            .from('product_club_mappings')
+            .select('id')
+            .eq('product_id', sourceSub.product_id)
+            .eq('club_id', cid)
+            .eq('is_active', true)
+            .maybeSingle();
+
+          if (!mapping) {
+            console.log(`[grant-access] BLOCKED: club_product_mismatch — product ${sourceSub.product_id} not mapped to club ${cid}`);
+            
+            await supabase.from('audit_logs').insert({
+              action: 'telegram.grant_blocked',
+              actor_type: 'system',
+              actor_label: 'telegram-grant-access',
+              meta: {
+                user_id,
+                club_id: cid,
+                product_id: sourceSub.product_id,
+                source,
+                source_id,
+                reason_code: 'club_product_mismatch',
+                trigger_type: 'queue',
+                decision: 'blocked',
+              },
+            });
+
+            return new Response(JSON.stringify({ 
+              success: false, 
+              blocked: true, 
+              reason: 'Product is not mapped to this club',
+              code: 'CLUB_PRODUCT_MISMATCH',
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+      }
+    }
+
     let clubsQuery = supabase.from('telegram_clubs').select('*, telegram_bots(*)').eq('is_active', true);
     clubsQuery = clubsQuery.in('id', resolvedClubIds);
     const { data: clubs, error: clubsError } = await clubsQuery;

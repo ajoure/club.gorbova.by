@@ -10778,6 +10778,19 @@ export type Database = {
         Args: { stuck_seconds?: number }
         Returns: number
       }
+      validate_club_product_linkage: {
+        Args: {
+          p_club_id: string
+          p_product_id?: string
+          p_subscription_id?: string
+        }
+        Returns: {
+          reason: string
+          resolved_club_id: string
+          resolved_product_id: string
+          valid: boolean
+        }[]
+      }
     }
     Enums: {
       app_role: "user" | "admin" | "superadmin"

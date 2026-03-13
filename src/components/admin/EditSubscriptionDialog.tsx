@@ -234,29 +234,67 @@ export function EditSubscriptionDialog({
     mutationFn: async () => {
       if (!subscription?.id) throw new Error("No subscription ID");
       
+      // PATCH TG-SUBSCRIPTION-SAVE-FALSE-GRANT: Diff-only UPDATE
+      // Only send fields that actually changed to prevent trigger from firing on no-op saves
+      const changes: Record<string, any> = {};
+      
+      if (formData.status !== subscription.status) {
+        changes.status = formData.status;
+      }
+      if ((formData.product_id || null) !== (subscription.product_id || null)) {
+        changes.product_id = formData.product_id || null;
+      }
+      if ((formData.tariff_id || null) !== (subscription.tariff_id || null)) {
+        changes.tariff_id = formData.tariff_id || null;
+      }
+      
+      // Compare dates carefully to avoid toISOString() precision mismatch
+      const newStartAt = dateRange?.from?.toISOString();
+      const newEndAt = dateRange?.to?.toISOString() || null;
+      const newNextCharge = nextChargeAt?.toISOString() || null;
+      
+      if (newStartAt && newStartAt !== subscription.access_start_at) {
+        changes.access_start_at = newStartAt;
+      }
+      // Compare date portions only (ignore sub-second precision)
+      const oldEndDate = subscription.access_end_at ? subscription.access_end_at.substring(0, 10) : null;
+      const newEndDate = newEndAt ? newEndAt.substring(0, 10) : null;
+      if (newEndDate !== oldEndDate) {
+        changes.access_end_at = newEndAt;
+      }
+      
+      const oldNextCharge = subscription.next_charge_at ? subscription.next_charge_at.substring(0, 10) : null;
+      const newNextChargeDate = newNextCharge ? newNextCharge.substring(0, 10) : null;
+      if (newNextChargeDate !== oldNextCharge) {
+        changes.next_charge_at = newNextCharge;
+      }
+
+      // Always update meta (lightweight, doesn't trigger access)
+      const newMeta = {
+        ...(subscription.meta as object || {}),
+        offer_id: formData.offer_id || undefined,
+        telegram_club_id: formData.telegram_club_id || undefined,
+        last_edit_comment: formData.comment || undefined,
+        last_edit_at: new Date().toISOString(),
+      };
+      changes.meta = newMeta;
+      
+      // Check if only meta changed (no access-relevant fields)
+      const accessRelevantKeys = Object.keys(changes).filter(k => k !== 'meta');
+      if (accessRelevantKeys.length === 0 && !formData.comment) {
+        toast.info("Нет значимых изменений для сохранения");
+        return;
+      }
+
       const { error } = await supabase
         .from("subscriptions_v2")
-        .update({
-          status: formData.status as any,
-          product_id: formData.product_id || null,
-          tariff_id: formData.tariff_id || null,
-          access_start_at: dateRange?.from?.toISOString(),
-          access_end_at: dateRange?.to?.toISOString() || null,
-          next_charge_at: nextChargeAt?.toISOString() || null, // FIX: save next_charge_at
-          meta: {
-            ...(subscription.meta as object || {}),
-            offer_id: formData.offer_id || undefined,
-            telegram_club_id: formData.telegram_club_id || undefined,
-            last_edit_comment: formData.comment || undefined,
-            last_edit_at: new Date().toISOString(),
-          },
-        })
+        .update(changes)
         .eq("id", subscription.id);
       
       if (error) throw error;
 
-      // Update entitlements if dates changed
-      if (subscription.user_id && subscription.product_id) {
+      // Update entitlements if dates or status changed
+      if (subscription.user_id && (changes.access_end_at !== undefined || changes.status !== undefined || changes.product_id !== undefined)) {
         const resolvedProductId = formData.product_id || subscription.product_id;
         const { data: product } = await supabase
           .from("products_v2")
@@ -275,13 +313,8 @@ export function EditSubscriptionDialog({
         }
       }
 
-      // Update telegram_access active_until if dates changed
-      if (telegramAccess && dateRange?.to) {
-        await supabase
-          .from("telegram_access")
-          .update({ active_until: dateRange.to.toISOString() })
-          .eq("id", telegramAccess.id);
-      }
+      // PATCH TG-SUBSCRIPTION-SAVE-FALSE-GRANT: REMOVED direct write to telegram_access.active_until
+      // All access state changes go through backend edge functions only
     },
     onSuccess: () => {
       toast.success("Подписка обновлена");
@@ -321,44 +354,36 @@ export function EditSubscriptionDialog({
     }
   };
 
-  // Manual Telegram grant
+  // Manual Telegram grant — PATCH TG-SUBSCRIPTION-SAVE-FALSE-GRANT: Only via backend
   const grantTelegramAccess = async () => {
     if (!subscription?.user_id || !currentClubId) return;
     
     setIsTelegramLoading(true);
     try {
-      // If no access record exists, create one first
-      if (!telegramAccess) {
-        await supabase.from("telegram_access").insert({
-          user_id: subscription.user_id,
-          club_id: currentClubId,
-          active_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          state_chat: "granted",
-          state_channel: "granted",
-        });
-      } else {
-        // Update existing
-        await supabase
-          .from("telegram_access")
-          .update({ 
-            state_chat: "granted", 
-            state_channel: "granted",
-            active_until: dateRange?.to?.toISOString() || telegramAccess.active_until,
-          })
-          .eq("id", telegramAccess.id);
-      }
-
-      // Also call the edge function to actually grant access in Telegram
-      const { error } = await supabase.functions.invoke("telegram-grant-access", {
+      const adminUser = (await supabase.auth.getUser()).data.user;
+      
+      // PATCH: All grant operations go through backend edge function ONLY
+      // No direct writes to telegram_access from UI
+      const { data, error } = await supabase.functions.invoke("telegram-grant-access", {
         body: {
           user_id: subscription.user_id,
           club_id: currentClubId,
           valid_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
           is_manual: true,
+          admin_id: adminUser?.id,
         },
       });
       
-      if (error) console.error("Grant function error:", error);
+      if (error) {
+        console.error("Grant function error:", error);
+        toast.error("Ошибка выдачи доступа");
+        return;
+      }
+
+      if (data?.blocked) {
+        toast.warning(`Выдача заблокирована: ${data.reason || 'неизвестная причина'}`);
+        return;
+      }
       
       await refetchTelegram();
       toast.success("Доступ в Telegram выдан");
