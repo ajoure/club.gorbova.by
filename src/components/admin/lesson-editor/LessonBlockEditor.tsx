@@ -440,6 +440,15 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
     });
   };
 
+  // V2 preset: creates diagnostic_table with version='v2'
+  const handleAddDiagnosticTableV2 = async () => {
+    const { DEFAULT_V2_CONTENT } = await import("@/lib/diagnosticTableV1toV2");
+    await addBlock({
+      block_type: 'diagnostic_table' as BlockType,
+      content: DEFAULT_V2_CONTENT,
+    });
+  };
+
   const handleUpdateBlock = (id: string) => (content: LessonBlock['content']) => {
     updateBlock(id, { content });
   };
