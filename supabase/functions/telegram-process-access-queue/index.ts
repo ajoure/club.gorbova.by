@@ -145,17 +145,18 @@ serve(async (req) => {
             continue;
           }
 
-          // Fetch subscription details for tariff/product logging
+          // Fetch subscription details for tariff/product logging + club linkage check
           let tariffName: string | null = null;
           let productName: string | null = null;
+          let subscriptionProductId: string | null = null;
           
           if (item.subscription_id) {
             const { data: sub } = await supabase
               .from("subscriptions_v2")
               .select(`
                 tariff_id,
-                tariffs(name, code),
                 product_id,
+                tariffs(name, code),
                 products_v2(name)
               `)
               .eq("id", item.subscription_id)
@@ -166,12 +167,58 @@ serve(async (req) => {
               tariffName = sub.tariffs?.name || sub.tariffs?.code || "UNKNOWN";
               // @ts-ignore - nested join types
               productName = sub.products_v2?.name || "UNKNOWN";
+              subscriptionProductId = sub.product_id;
               console.log(`[telegram-process-access-queue] Subscription ${item.subscription_id}: tariff=${tariffName}, product=${productName}`);
             }
           }
           
           tariffName = tariffName || "UNKNOWN";
           productName = productName || "UNKNOWN";
+
+          // ============================================================
+          // PATCH TG-CLUB-LINKAGE-INTEGRITY: Guard 3 — club-product mapping check
+          // ============================================================
+          if (subscriptionProductId) {
+            const { data: mappingCheck } = await supabase
+              .from("product_club_mappings")
+              .select("id")
+              .eq("product_id", subscriptionProductId)
+              .eq("club_id", item.club_id)
+              .eq("is_active", true)
+              .maybeSingle();
+
+            if (!mappingCheck) {
+              console.log(`[telegram-process-access-queue] SKIP item ${item.id}: club_product_mismatch — product ${subscriptionProductId} not mapped to club ${item.club_id}`);
+              
+              await supabase
+                .from("telegram_access_queue")
+                .update({
+                  status: "skipped",
+                  last_error: "club_product_mismatch",
+                  processed_at: new Date().toISOString(),
+                })
+                .eq("id", item.id);
+
+              await supabase.from("audit_logs").insert({
+                action: "telegram.queue_skipped",
+                actor_type: "system",
+                actor_label: "telegram-process-access-queue",
+                meta: {
+                  queue_item_id: item.id,
+                  user_id: item.user_id,
+                  club_id: item.club_id,
+                  subscription_id: item.subscription_id,
+                  product_id: subscriptionProductId,
+                  reason_code: "club_product_mismatch",
+                  trigger_type: "queue",
+                  decision: "skipped",
+                },
+              });
+
+              results.push({ id: item.id, success: false, error: "club_product_mismatch", decision: "skipped" });
+              continue;
+            }
+          }
           
           // Call telegram-grant-access
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
