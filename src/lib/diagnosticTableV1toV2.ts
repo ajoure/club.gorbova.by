@@ -352,7 +352,16 @@ export const DEFAULT_V2_CONTENT = {
   showAggregates: true,
   submitButtonText: 'Аналитика завершена',
   layout: 'vertical' as const,
+  source_lesson_id: '' as string, // Must be set to V1 diagnostic lesson ID
 };
+
+// IDs of text fields that should render as textarea (multi-line)
+export const V2_TEXTAREA_FIELD_IDS = new Set([
+  'client_factors',
+  'strategic_value',
+  'what_to_change',
+  'management_decision',
+]);
 
 // Category display helpers
 export const CATEGORY_COLORS: Record<string, string> = {
