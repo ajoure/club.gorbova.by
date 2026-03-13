@@ -232,7 +232,7 @@ export function KvestLessonView({
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for diagnostic table (memoized)
+  // Handler for diagnostic table V1 (memoized)
   const handleDiagnosticTableUpdate = useCallback((rows: Record<string, unknown>[]) => {
     updateState({ pointA_rows: rows });
   }, [updateState]);
@@ -240,22 +240,40 @@ export function KvestLessonView({
   const handleDiagnosticTableComplete = useCallback((blockId: string) => {
     updateState({ pointA_completed: true });
     markBlockCompleted(blockId);
-    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
       goToStep(currentStepIndex + 1, true);
     }
   }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for diagnostic table reset
   const handleDiagnosticTableReset = useCallback((blockId: string) => {
-    console.log('[KvestLessonView] DiagnosticTable reset:', blockId.slice(0, 8));
-    // Исправление 1 (КРИТИЧНО): НЕ очищаем pointA_rows — данные остаются для редактирования
-    // Исправление 4: остаёмся на текущем шаге, не откатываемся назад
+    console.log('[KvestLessonView] DiagnosticTable V1 reset:', blockId.slice(0, 8));
     updateState({ 
       pointA_completed: false,
-      // pointA_rows: [] — УДАЛЕНО, чтобы данные не терялись при нажатии "Редактировать"
       completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
-      currentStepIndex: currentStepIndex, // остаёмся на том же шаге
+      currentStepIndex: currentStepIndex,
+    });
+    toast.success("Вы можете отредактировать данные");
+  }, [state?.completedSteps, currentStepIndex, updateState]);
+
+  // Handler for diagnostic table V2
+  const handleDiagnosticTableV2Update = useCallback((rows: Record<string, unknown>[]) => {
+    updateState({ pointA_v2_rows: rows });
+  }, [updateState]);
+
+  const handleDiagnosticTableV2Complete = useCallback((blockId: string) => {
+    updateState({ pointA_v2_completed: true });
+    markBlockCompleted(blockId);
+    if (currentStepIndex < totalSteps - 1) {
+      goToStep(currentStepIndex + 1, true);
+    }
+  }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
+
+  const handleDiagnosticTableV2Reset = useCallback((blockId: string) => {
+    console.log('[KvestLessonView] DiagnosticTable V2 reset:', blockId.slice(0, 8));
+    updateState({ 
+      pointA_v2_completed: false,
+      completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
+      currentStepIndex: currentStepIndex,
     });
     toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
