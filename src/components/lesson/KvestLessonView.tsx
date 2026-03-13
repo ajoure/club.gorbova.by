@@ -301,7 +301,7 @@ export function KvestLessonView({
   const savedSummary = useMemo(() => state?.pointB_summary || undefined, [state?.pointB_summary]);
 
   const pointARows = useMemo(() => state?.pointA_rows || [], [state?.pointA_rows]);
-  const pointAV2Rows = useMemo(() => state?.pointA_v2_rows || [], [state?.pointA_v2_rows]);
+  const pointAV2Rows = useMemo(() => (state?.pointA_v2_rows || []) as unknown as Record<string, unknown>[], [state?.pointA_v2_rows]);
   const pointBAnswers = useMemo(() => state?.pointB_answers || {}, [state?.pointB_answers]);
   const userRole = useMemo(() => state?.role || null, [state?.role]);
 

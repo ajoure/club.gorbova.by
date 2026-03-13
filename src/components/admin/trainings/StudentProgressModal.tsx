@@ -600,7 +600,7 @@ export function StudentProgressModal({
       {feedbackTarget && lessonId && record && (
         <FeedbackDrawer
           open={!!feedbackTarget}
-          onClose={() => setFeedbackTarget(null)}
+          onOpenChange={(v) => !v && setFeedbackTarget(null)}
           studentUserId={record.user_id}
           lessonId={lessonId}
           blockId={feedbackTarget.blockId}
