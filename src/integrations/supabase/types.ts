@@ -10610,6 +10610,10 @@ export type Database = {
         Args: { _role_code: string; _user_id: string }
         Returns: boolean
       }
+      has_valid_access_for_club: {
+        Args: { p_club_id: string; p_user_id: string }
+        Returns: boolean
+      }
       instagram_outbox_pull_v1: {
         Args: { p_account_id: string; p_limit: number; p_lock_id: string }
         Returns: {

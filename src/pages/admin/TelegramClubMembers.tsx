@@ -244,17 +244,22 @@ export default function TelegramClubMembers() {
       in_club: members.filter(m => m.in_any).length,
       with_access: members.filter(m => m.has_active_access).length,
       bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
+      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from violators
       violators: members.filter(m => m.is_violator && !adminTelegramIds.has(m.telegram_user_id)).length,
-      removed: members.filter(m => m.access_status === 'removed' && !m.in_any).length,
+      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from removed
+      removed: members.filter(m => m.access_status === 'removed' && !m.in_any && !adminTelegramIds.has(m.telegram_user_id)).length,
       admins: adminsList.length,
     };
-  }, [members, adminsList]);
+  }, [members, adminsList, adminTelegramIds]);
 
-  // Filter members by active tab - search is now server-side via RPC
+  // Filter members by active tab
   const filteredMembers = useMemo(() => {
     if (!members) return [];
     
     return members.filter(member => {
+      // Anti-contradiction guard: admin is never violator or removed
+      const isAdmin = adminTelegramIds.has(member.telegram_user_id);
+      
       switch (activeTab) {
         case 'in_club':
           return member.in_any;
@@ -263,11 +268,13 @@ export default function TelegramClubMembers() {
         case 'bought_not_joined':
           return member.is_bought_not_joined;
         case 'violators':
-          return member.is_violator && !adminTelegramIds.has(member.telegram_user_id);
+          // PATCH: exclude admins, anti-contradiction: violator can't have valid access
+          return member.is_violator && !isAdmin;
         case 'removed':
-          return member.access_status === 'removed' && !member.in_any;
+          // PATCH: exclude admins from removed
+          return member.access_status === 'removed' && !member.in_any && !isAdmin;
         case 'admins':
-          return adminTelegramIds.has(member.telegram_user_id);
+          return isAdmin;
         default:
           return true;
       }
@@ -681,9 +688,10 @@ export default function TelegramClubMembers() {
     return selectedMembers.filter(m => m.in_chat || m.in_channel);
   }, [selectedMembers]);
 
+  // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
   const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
-    // has_active_access is the source of truth — overrides cached access_status
-    if (hasActiveAccess) {
+    // has_active_access from backend is the SOLE source of truth
+    if (hasActiveAccess === true) {
       return (
         <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
           <CheckCircle className="h-3 w-3" />
@@ -691,6 +699,32 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
+    // If has_active_access is false — NEVER show green, regardless of cached access_status
+    if (hasActiveAccess === false) {
+      if (status === 'removed') {
+        return (
+          <Badge variant="secondary" className="gap-1">
+            <Trash2 className="h-3 w-3" />
+            Удалён
+          </Badge>
+        );
+      }
+      if (status === 'expired') {
+        return (
+          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
+            <AlertTriangle className="h-3 w-3" />
+            Истёк
+          </Badge>
+        );
+      }
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <XCircle className="h-3 w-3" />
+          Без доступа
+        </Badge>
+      );
+    }
+    // Fallback for cases where has_active_access is undefined
     switch (status) {
       case 'ok':
         return (
