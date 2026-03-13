@@ -755,7 +755,10 @@ export function DiagnosticTableBlock({
       )}
       
       {content.instruction && (
-        <p className="text-muted-foreground">{content.instruction}</p>
+        <div
+          className="text-sm text-muted-foreground prose prose-sm max-w-none"
+          dangerouslySetInnerHTML={{ __html: content.instruction }}
+        />
       )}
 
       {/* Inline validation summary — calm, no toast */}
