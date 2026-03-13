@@ -561,9 +561,12 @@ export function KvestLessonView({
               const isAccessible = idx <= currentStepIndex || completed;
               
               return (
-                <button
+                 <button
                   key={block.id}
-                  onClick={() => isAccessible && goToStep(idx)}
+                  onClick={() => {
+                    userNavigatedRef.current = true;
+                    if (isAccessible) goToStep(idx);
+                  }}
                   disabled={!isAccessible}
                   title={`Шаг ${idx + 1}`}
                   className={cn(
