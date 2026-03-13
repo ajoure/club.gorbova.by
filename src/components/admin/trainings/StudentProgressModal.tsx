@@ -140,6 +140,8 @@ export function StudentProgressModal({
     role?: string;
     pointA_rows?: PointARow[];
     pointA_completed?: boolean;
+    pointA_v2_rows?: Record<string, unknown>[];
+    pointA_v2_completed?: boolean;
     pointB_answers?: Record<string, string>;
     pointB_completed?: boolean;
     completedSteps?: string[];
