@@ -24,6 +24,7 @@ export interface DiagnosticTableV2Row {
   // Client-only fields (empty for non-client rows)
   business_type: string;
   client_factors: string;
+  strategic_value: string;
   what_to_change: string;
   management_decision: string;
 }
