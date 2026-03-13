@@ -187,23 +187,25 @@ export function DiagnosticTableBlock({
     }
   }, [rows, isCompleted, genId]);
 
-  // Debounced commit with save status
+  // Debounced commit (only sets local status if no external saveStatus)
   const debouncedCommit = useCallback((newRows: Record<string, unknown>[]) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
-    setSaveStatus('saving');
+    if (!externalSaveStatus) setLocalSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(() => {
       try {
         onRowsChange?.(newRows);
-        setSaveStatus('saved');
-        if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
-        saveStatusTimeoutRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+        if (!externalSaveStatus) {
+          setLocalSaveStatus('saved');
+          if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
+          saveStatusTimeoutRef.current = setTimeout(() => setLocalSaveStatus('idle'), 2000);
+        }
       } catch {
-        setSaveStatus('error');
+        if (!externalSaveStatus) setLocalSaveStatus('error');
       }
     }, 300);
-  }, [onRowsChange]);
+  }, [onRowsChange, externalSaveStatus]);
 
   // Immediate commit (flush debounce)
   const flushAndCommit = useCallback(() => {
