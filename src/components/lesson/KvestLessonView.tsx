@@ -9,6 +9,8 @@ import { LessonBlock, BlockType } from "@/hooks/useLessonBlocks";
 import { TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonProgressState, LessonProgressStateData } from "@/hooks/useLessonProgressState";
 import { useResetProgress } from "@/hooks/useResetProgress";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
