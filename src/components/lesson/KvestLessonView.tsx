@@ -377,16 +377,37 @@ export function KvestLessonView({
         );
       }
       
-      case 'diagnostic_table':
+      case 'diagnostic_table': {
+        const dtVersion = (block.content as any)?.version;
+        if (dtVersion === 'v2') {
+          // V2: Runtime prefill from V1 if needed
+          let v2Rows = pointAV2Rows;
+          if (v2Rows.length === 0 && pointARows.length > 0) {
+            v2Rows = prefillV2FromV1(pointARows);
+            updateState({ pointA_v2_rows: v2Rows });
+          }
+          return (
+            <div className={isReadOnly ? "opacity-80" : ""}>
+              <LessonBlockRenderer 
+                {...commonProps}
+                kvestProps={{
+                  rows: v2Rows,
+                  onRowsChange: isReadOnly ? undefined : handleDiagnosticTableV2Update,
+                  onComplete: isReadOnly ? undefined : () => handleDiagnosticTableV2Complete(blockId),
+                  isCompleted: state?.pointA_v2_completed || false,
+                  onReset: (state?.pointA_v2_completed) ? () => handleDiagnosticTableV2Reset(blockId) : undefined,
+                }}
+              />
+            </div>
+          );
+        }
+        // V1 — existing code unchanged
         return (
-          // Исправление 3: opacity-80 остаётся для визуального индикатора read-only,
-          // НО pointer-events-none убран с обёртки — кнопка "Редактировать" должна быть кликабельной.
-          // DiagnosticTableBlock сам блокирует inputs через disabled={isCompleted}.
           <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
-                rows: pointARows,  // ← КРИТИЧЕСКИ: данные передаются ВСЕГДА
+                rows: pointARows,
                 onRowsChange: isReadOnly ? undefined : handleDiagnosticTableUpdate,
                 onComplete: isReadOnly ? undefined : () => handleDiagnosticTableComplete(blockId),
                 isCompleted: state?.pointA_completed || false,
@@ -395,6 +416,7 @@ export function KvestLessonView({
             />
           </div>
         );
+      }
       
       case 'sequential_form':
         return (
