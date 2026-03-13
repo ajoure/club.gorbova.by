@@ -59,8 +59,11 @@ export function KvestLessonView({
   allowBypassEmptyVideo = false
 }: KvestLessonViewProps) {
   const navigate = useNavigate();
-  const { state, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
+  const { user } = useAuth();
+  const { state, saveStatus, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
   const { resetProgress: resetViaEdge } = useResetProgress();
+  const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const userNavigatedRef = useRef(false);
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   // Filter blocks that are "steps"
