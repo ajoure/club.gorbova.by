@@ -34,10 +34,17 @@ export interface DiagnosticTableV2Row {
 export interface DiagnosticTableV2Computed {
   total_hours: number;
   hourly_income: number;
-  efficiency: string;        // 'высокая' | 'низкая'
+  efficiency: string;        // 'высокая' | 'низкая' | ''
   load_share: number;        // 0–1
-  load_level: string;        // 'высокая' | 'низкая'
-  client_category: string;   // масштабируемый/рискованный/низкомаржинальный/токсичный
+  load_level: string;        // 'высокая' | 'низкая' | ''
+  client_category: string;   // масштабируемый/рискованный/низкомаржинальный/токсичный | ''
+}
+
+// ──────────────────────────────────────────────
+// Version guard utility
+// ──────────────────────────────────────────────
+export function isDiagnosticV2(content: unknown): boolean {
+  return (content as any)?.version === 'v2';
 }
 
 // ──────────────────────────────────────────────
@@ -64,14 +71,14 @@ export const DEFAULT_V2_COLUMNS: V2ColumnDef[] = [
   { id: 'mental_hours', name: 'Часы ментальной нагрузки', type: 'number' },
   { id: 'total_hours', name: 'Общие часы', type: 'computed' },
   { id: 'hourly_income', name: 'Доход за час', type: 'computed' },
-  { id: 'legal_risk', name: 'Юр. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'financial_risk', name: 'Фин. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'reputation_risk', name: 'Реп. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'emotional_load', name: 'Эмоц. нагрузка (1-10)', type: 'slider', min: 1, max: 10 },
+  { id: 'legal_risk', name: 'Юридические риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'financial_risk', name: 'Финансовые риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'reputation_risk', name: 'Репутационные риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'emotional_load', name: 'Эмоциональная нагрузка (1-10)', type: 'slider', min: 1, max: 10 },
   { id: 'comment', name: 'Комментарий', type: 'text' },
   // Client-only fields
   { id: 'business_type', name: 'Тип бизнеса', type: 'select', options: ['ИП', 'ООО', 'самозанятый', 'физлицо', 'другое'], condition: 'client_only' },
-  { id: 'efficiency', name: 'Экон. эффективность', type: 'computed', condition: 'client_only' },
+  { id: 'efficiency', name: 'Экономическая эффективность', type: 'computed', condition: 'client_only' },
   { id: 'load_share', name: 'Доля нагрузки', type: 'computed', condition: 'client_only' },
   { id: 'load_level', name: 'Уровень нагрузки', type: 'computed', condition: 'client_only' },
   { id: 'client_category', name: 'Категория клиента', type: 'computed', condition: 'client_only' },
@@ -86,33 +93,58 @@ export const V2_CLIENT_ONLY_IDS = new Set(
 );
 
 // ──────────────────────────────────────────────
+// Helper: check if a row is completely empty (skip in validation)
+// ──────────────────────────────────────────────
+export function isRowEmpty(row: Record<string, unknown>): boolean {
+  const client = String(row.client || '').trim();
+  const sourceType = String(row.source_type || '').trim();
+  const income = Number(row.monthly_income) || 0;
+  return !client && !sourceType && income === 0;
+}
+
+// ──────────────────────────────────────────────
 // V2 Computed field calculation (safe, no eval)
 // ──────────────────────────────────────────────
 export function calculateV2Computed(
   row: Record<string, unknown>,
   allRows: Record<string, unknown>[]
 ): DiagnosticTableV2Computed {
-  const monthlyIncome = Number(row.monthly_income) || 0;
-  const directHours = Number(row.direct_hours) || 0;
-  const mentalHours = Number(row.mental_hours) || 0;
+  const monthlyIncome = Math.max(0, Number(row.monthly_income) || 0);
+  const directHours = Math.max(0, Number(row.direct_hours) || 0);
+  const mentalHours = Math.max(0, Number(row.mental_hours) || 0);
   const totalHours = directHours + mentalHours;
   const hourlyIncome = totalHours > 0
     ? Math.round((monthlyIncome / totalHours) * 100) / 100
     : 0;
 
-  // Cross-row computations
-  const allTotalHours = allRows.reduce((sum, r) => {
-    return sum + (Number(r.direct_hours) || 0) + (Number(r.mental_hours) || 0);
+  const isClient = String(row.source_type) === 'клиент';
+
+  // Cross-row computations (only for non-empty rows)
+  const validRows = allRows.filter(r => !isRowEmpty(r));
+  const allTotalHours = validRows.reduce((sum, r) => {
+    return sum + Math.max(0, Number(r.direct_hours) || 0) + Math.max(0, Number(r.mental_hours) || 0);
   }, 0);
 
-  const allTotalIncome = allRows.reduce(
-    (sum, r) => sum + (Number(r.monthly_income) || 0), 0
+  const allTotalIncome = validRows.reduce(
+    (sum, r) => sum + Math.max(0, Number(r.monthly_income) || 0), 0
   );
   const avgHourlyIncome = allTotalHours > 0 ? allTotalIncome / allTotalHours : 0;
 
   const loadShare = allTotalHours > 0
     ? Math.round((totalHours / allTotalHours) * 100) / 100
     : 0;
+
+  // For non-client rows: return empty client-specific computed values
+  if (!isClient) {
+    return {
+      total_hours: totalHours,
+      hourly_income: hourlyIncome,
+      efficiency: '',
+      load_share: 0,
+      load_level: '',
+      client_category: '',
+    };
+  }
 
   const efficiency = hourlyIncome >= avgHourlyIncome ? 'высокая' : 'низкая';
   const loadLevel = loadShare > 0.2 ? 'высокая' : 'низкая';
@@ -139,9 +171,14 @@ export function formatV2Computed(
   value: number | string,
   colId: string
 ): string {
-  if (colId === 'load_share') return `${Math.round((value as number) * 100)}%`;
+  if (colId === 'load_share') {
+    const num = value as number;
+    if (!Number.isFinite(num) || num === 0) return '—';
+    return `${Math.round(num * 100)}%`;
+  }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return '—';
+    if (value === 0 && (colId === 'efficiency' || colId === 'load_level' || colId === 'client_category')) return '—';
     return String(Math.round(value * 100) / 100);
   }
   return String(value || '—');
@@ -160,13 +197,14 @@ export interface V2Aggregates {
 export function calculateV2Aggregates(
   rows: Record<string, unknown>[]
 ): V2Aggregates | null {
-  if (rows.length === 0) return null;
+  const validRows = rows.filter(r => !isRowEmpty(r));
+  if (validRows.length === 0) return null;
 
-  const totalIncome = rows.reduce(
-    (sum, r) => sum + (Number(r.monthly_income) || 0), 0
+  const totalIncome = validRows.reduce(
+    (sum, r) => sum + Math.max(0, Number(r.monthly_income) || 0), 0
   );
-  const totalHours = rows.reduce((sum, r) => {
-    return sum + (Number(r.direct_hours) || 0) + (Number(r.mental_hours) || 0);
+  const totalHours = validRows.reduce((sum, r) => {
+    return sum + Math.max(0, Number(r.direct_hours) || 0) + Math.max(0, Number(r.mental_hours) || 0);
   }, 0);
   const avgHourlyIncome = totalHours > 0
     ? Math.round((totalIncome / totalHours) * 100) / 100
@@ -174,9 +212,9 @@ export function calculateV2Aggregates(
 
   // Count client categories
   const categoryCounts: Record<string, number> = {};
-  rows.forEach(row => {
+  validRows.forEach(row => {
     if (String(row.source_type) === 'клиент') {
-      const computed = calculateV2Computed(row, rows);
+      const computed = calculateV2Computed(row, validRows);
       const cat = computed.client_category;
       if (cat) categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
     }
@@ -205,6 +243,9 @@ export function validateV2Rows(
   const errors: V2ValidationError[] = [];
 
   rows.forEach((row, idx) => {
+    // Skip completely empty rows
+    if (isRowEmpty(row)) return;
+
     const sourceType = String(row.source_type || '');
     const client = String(row.client || '').trim();
     const monthlyIncome = Number(row.monthly_income) || 0;
@@ -274,20 +315,20 @@ export function validateV2Rows(
 // ──────────────────────────────────────────────
 export function prefillV2FromV1(
   v1Rows: Record<string, unknown>[]
-): Record<string, unknown>[] {
+): DiagnosticTableV2Row[] {
   return v1Rows.map(row => ({
     _id: Math.random().toString(36).substring(2, 9),
-    client: row.source || '',
-    source_type: row.type || '',
+    client: String(row.source || ''),
+    source_type: String(row.type || ''),
     monthly_income: Number(row.income) || 0,
     direct_hours: Number(row.work_hours) || 0,
     mental_hours: Number(row.overhead_hours) || 0,
     // hourly_rate is NOT copied — computed as hourly_income at runtime
-    legal_risk: row.legal_risk || '',
-    financial_risk: row.financial_risk || '',
-    reputation_risk: row.reputation_risk || '',
-    emotional_load: row.emotional_load ?? 5,
-    comment: row.comment || '',
+    legal_risk: String(row.legal_risk || ''),
+    financial_risk: String(row.financial_risk || ''),
+    reputation_risk: String(row.reputation_risk || ''),
+    emotional_load: Number(row.emotional_load) || 5,
+    comment: String(row.comment || ''),
     // V2 new fields — empty, user fills manually
     business_type: '',
     client_factors: '',

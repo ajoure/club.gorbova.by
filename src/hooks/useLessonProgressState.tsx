@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQueryClient } from "@tanstack/react-query";
+import type { DiagnosticTableV2Row } from "@/lib/diagnosticTableV1toV2";
 
 export interface LessonProgressStateData {
   role?: string;                          // Selected role from quiz_survey
   videoProgress?: Record<string, number>; // blockId -> percent watched
   pointA_rows?: Record<string, unknown>[]; // Diagnostic table V1 data
   pointA_completed?: boolean;
-  pointA_v2_rows?: Record<string, unknown>[]; // Diagnostic table V2 data
+  pointA_v2_rows?: DiagnosticTableV2Row[]; // Diagnostic table V2 data (typed)
   pointA_v2_completed?: boolean;
   pointB_answers?: Record<string, string>; // Answers to sequential form steps
   pointB_completed?: boolean;

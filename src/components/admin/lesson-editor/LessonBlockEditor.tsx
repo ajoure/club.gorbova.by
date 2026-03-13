@@ -387,7 +387,9 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         </button>
         <Badge variant="secondary" className={`${config?.color || ''} gap-1.5`}>
           <Icon className="h-3 w-3" />
-          {config?.label || block.block_type}
+          {block.block_type === 'diagnostic_table' && (block.content as any)?.version === 'v2'
+            ? 'Диагн. таблица V2'
+            : config?.label || block.block_type}
         </Badge>
         <div className="flex-1" />
         <Button
@@ -535,26 +537,28 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
                     const config = blockTypeConfig[type];
                     const BlockIcon = config.icon;
                     return (
-                      <div key={type}>
-                        <DropdownMenuItem 
-                          onClick={() => handleAddBlock(type)}
-                          className="gap-2 cursor-pointer"
-                        >
-                          <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
-                          {config.label}
-                        </DropdownMenuItem>
-                        {type === 'diagnostic_table' && (
-                          <DropdownMenuItem 
-                            onClick={handleAddDiagnosticTableV2}
-                            className="gap-2 cursor-pointer"
-                          >
-                            <Table className="h-4 w-4 text-teal-600" />
-                            Диагн. таблица V2
-                          </DropdownMenuItem>
-                        )}
-                      </div>
+                      <DropdownMenuItem 
+                        key={type}
+                        onClick={() => handleAddBlock(type)}
+                        className="gap-2 cursor-pointer"
+                      >
+                        <BlockIcon className={`h-4 w-4 ${config.color.split(' ')[1]}`} />
+                        {config.label}
+                      </DropdownMenuItem>
                     );
                   })}
+                  {category === 'input' && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem 
+                        onClick={handleAddDiagnosticTableV2}
+                        className="gap-2 cursor-pointer"
+                      >
+                        <Table className="h-4 w-4 text-teal-600" />
+                        Диагностическая таблица V2
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             );

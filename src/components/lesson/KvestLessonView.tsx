@@ -12,7 +12,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { prefillV2FromV1 } from "@/lib/diagnosticTableV1toV2";
+import { prefillV2FromV1, isDiagnosticV2 } from "@/lib/diagnosticTableV1toV2";
 
 // Block types that count as "steps" in kvest mode
 const STEP_BLOCK_TYPES: BlockType[] = [
@@ -79,23 +79,43 @@ export function KvestLessonView({
     }
   }, [state?.currentStepIndex]);
 
+  // ── V2 Prefill: guarded one-time useEffect ──
+  const v2PrefillDoneRef = useRef(false);
+  useEffect(() => {
+    if (v2PrefillDoneRef.current) return;
+    if (!state) return; // state not loaded yet
+    
+    const hasV2Block = stepBlocks.some(b => 
+      b.block_type === 'diagnostic_table' && isDiagnosticV2(b.content)
+    );
+    if (!hasV2Block) return;
+    
+    const v2Rows = state.pointA_v2_rows;
+    const v1Rows = state.pointA_rows;
+    
+    if ((!v2Rows || v2Rows.length === 0) && v1Rows && v1Rows.length > 0) {
+      const prefilled = prefillV2FromV1(v1Rows);
+      updateState({ pointA_v2_rows: prefilled });
+      v2PrefillDoneRef.current = true;
+    } else {
+      v2PrefillDoneRef.current = true; // no prefill needed
+    }
+  }, [state, stepBlocks, updateState]);
+
   const totalSteps = stepBlocks.length;
   const progressPercent = totalSteps > 0 ? ((currentStepIndex + 1) / totalSteps) * 100 : 0;
 
   // Check if a specific block's gate is open
   const isBlockGateOpen = useCallback((block: LessonBlock, idx: number): boolean => {
-    // Already completed blocks are always open
     if (isBlockCompleted(block.id)) return true;
     
     const blockType = block.block_type;
     
-    // Specific gate rules per block type
     switch (blockType) {
       case 'quiz_survey':
         return !!state?.role;
       
       case 'role_description':
-        // Gate opens when button clicked (block marked completed)
         return isBlockCompleted(block.id);
       
       case 'video_unskippable': {
@@ -103,7 +123,6 @@ export function KvestLessonView({
         if (!videoUrl) {
           return allowBypassEmptyVideo === true;
         }
-        // P0.9.12: completion is via manual button, checked by isBlockCompleted above
         return false;
       }
       
@@ -111,8 +130,7 @@ export function KvestLessonView({
         return true;
       
       case 'diagnostic_table': {
-        const version = (block.content as any)?.version;
-        if (version === 'v2') {
+        if (isDiagnosticV2(block.content)) {
           const hasV2Rows = (state?.pointA_v2_rows?.length ?? 0) > 0;
           return hasV2Rows && state?.pointA_v2_completed === true;
         }
@@ -128,11 +146,10 @@ export function KvestLessonView({
     }
   }, [state, isBlockCompleted]);
 
-  // Current block gate status
   const currentBlock = stepBlocks[currentStepIndex];
   const isCurrentBlockGateOpen = currentBlock ? isBlockGateOpen(currentBlock, currentStepIndex) : false;
 
-  // Scroll to block
+  // Scroll to block — only on explicit user action
   const scrollToBlock = useCallback((blockId: string) => {
     const el = blockRefs.current.get(blockId);
     if (el) {
@@ -140,11 +157,10 @@ export function KvestLessonView({
     }
   }, []);
 
-  // Navigate to step
+  // Navigate to step — scroll only on explicit navigation
   const goToStep = useCallback((index: number, force = false) => {
     if (index < 0 || index >= totalSteps) return;
     
-    // Can go back freely
     if (index < currentStepIndex) {
       setCurrentStepIndex(index);
       updateState({ currentStepIndex: index });
@@ -153,14 +169,11 @@ export function KvestLessonView({
       return;
     }
     
-    // Check if current block gate is open before moving forward
-    // force=true skips this check (used when completion handler just marked the block)
     if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
       toast.error("Сначала завершите текущий шаг");
       return;
     }
     
-    // Mark current block as completed
     if (index > currentStepIndex && currentBlock) {
       markBlockCompleted(currentBlock.id);
     }
@@ -168,14 +181,12 @@ export function KvestLessonView({
     setCurrentStepIndex(index);
     updateState({ currentStepIndex: index });
     
-    // Scroll to new block after state update
     setTimeout(() => {
       const block = stepBlocks[index];
       if (block) scrollToBlock(block.id);
     }, 100);
   }, [currentStepIndex, totalSteps, isCurrentBlockGateOpen, currentBlock, markBlockCompleted, updateState, stepBlocks, scrollToBlock]);
 
-  // Handle completion of entire lesson
   const handleFinishLesson = useCallback(async () => {
     if (currentBlock) {
       markBlockCompleted(currentBlock.id);
@@ -185,54 +196,39 @@ export function KvestLessonView({
     toast.success("Урок пройден! 🎉");
   }, [currentBlock, markBlockCompleted, markLessonCompleted, onComplete]);
 
-  // Is this the last step?
   const isLastStep = currentStepIndex === totalSteps - 1;
 
-  // Handler for quiz_survey role selection
   const handleRoleSelected = useCallback((role: string) => {
     updateState({ role });
   }, [updateState]);
 
-  // Handler for quiz_survey reset via canonical Edge Function
   const handleQuizSurveyReset = useCallback(async (blockId: string) => {
     console.log('[KvestLessonView] Quiz reset via Edge Function:', blockId.slice(0, 8));
-    
     const result = await resetViaEdge(lesson.id, 'quiz_only', blockId);
-    
     if (!result.ok) {
       console.error('[KvestLessonView] Reset failed:', result.error);
       return;
     }
-    
-    // Force refetch state from DB (Edge Function already cleared it)
     await refetchProgress();
-    
-    // Reset local step index
     setCurrentStepIndex(0);
-    
     console.log('[KvestLessonView] Reset success:', result);
   }, [lesson.id, resetViaEdge, refetchProgress]);
 
-  // Handler for role_description block completion
   const handleRoleDescriptionComplete = useCallback((blockId: string) => {
     markBlockCompleted(blockId);
-    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
       goToStep(currentStepIndex + 1, true);
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-
-  // Handler for video completion
   const handleVideoComplete = useCallback((blockId: string) => {
     markBlockCompleted(blockId);
-    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
       goToStep(currentStepIndex + 1, true);
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for diagnostic table V1 (memoized)
+  // V1 diagnostic table handlers
   const handleDiagnosticTableUpdate = useCallback((rows: Record<string, unknown>[]) => {
     updateState({ pointA_rows: rows });
   }, [updateState]);
@@ -255,9 +251,8 @@ export function KvestLessonView({
     toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
 
-  // Handler for diagnostic table V2
   const handleDiagnosticTableV2Update = useCallback((rows: Record<string, unknown>[]) => {
-    updateState({ pointA_v2_rows: rows });
+    updateState({ pointA_v2_rows: rows as any });
   }, [updateState]);
 
   const handleDiagnosticTableV2Complete = useCallback((blockId: string) => {
@@ -278,7 +273,7 @@ export function KvestLessonView({
     toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
 
-  // Handler for sequential form (memoized)
+  // Sequential form handlers
   const handleSequentialFormUpdate = useCallback((answers: Record<string, string>) => {
     updateState({ pointB_answers: answers });
   }, [updateState]);
@@ -288,7 +283,6 @@ export function KvestLessonView({
     markBlockCompleted(blockId);
   }, [updateState, markBlockCompleted]);
 
-  // Handler for sequential form reset
   const handleSequentialFormReset = useCallback((blockId: string) => {
     console.log('[KvestLessonView] SequentialForm reset:', blockId.slice(0, 8));
     updateState({ 
@@ -300,17 +294,14 @@ export function KvestLessonView({
     toast.success("Данные сброшены — можете заполнить заново");
   }, [state?.completedSteps, updateState]);
 
-  // PATCH-5: Handler for AI summary generation
   const handleSummaryGenerated = useCallback((summary: string) => {
     updateState({ pointB_summary: summary });
   }, [updateState]);
 
-  // Memoized saved summary
   const savedSummary = useMemo(() => state?.pointB_summary || undefined, [state?.pointB_summary]);
 
-  // Memoized props for blocks to prevent unnecessary re-renders
   const pointARows = useMemo(() => state?.pointA_rows || [], [state?.pointA_rows]);
-  const pointAV2Rows = useMemo(() => state?.pointA_v2_rows || [], [state?.pointA_v2_rows]);
+  const pointAV2Rows = useMemo(() => (state?.pointA_v2_rows || []) as unknown as Record<string, unknown>[], [state?.pointA_v2_rows]);
   const pointBAnswers = useMemo(() => state?.pointB_answers || {}, [state?.pointB_answers]);
   const userRole = useMemo(() => state?.role || null, [state?.role]);
 
@@ -319,17 +310,13 @@ export function KvestLessonView({
     const blockType = block.block_type;
     const blockId = block.id;
     
-    // Common props for LessonBlockRenderer
     const commonProps = {
       blocks: [block],
       lessonId: lesson.id,
     };
 
-    // isReadOnly: завершённые блоки, но НЕ текущие — read-only режим с данными
     const isReadOnly = isCompleted && !isCurrent;
 
-    // Render with specific props based on block type
-    // ВАЖНО: kvestProps передаются ВСЕГДА, даже для read-only блоков!
     switch (blockType) {
       case 'quiz_survey':
         return (
@@ -353,7 +340,7 @@ export function KvestLessonView({
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
-                role: userRole,  // ← КРИТИЧЕСКИ: роль передаётся ВСЕГДА
+                role: userRole,
                 onComplete: isReadOnly ? undefined : () => handleRoleDescriptionComplete(blockId),
                 isCompleted: isCompleted,
               }}
@@ -378,20 +365,14 @@ export function KvestLessonView({
       }
       
       case 'diagnostic_table': {
-        const dtVersion = (block.content as any)?.version;
-        if (dtVersion === 'v2') {
-          // V2: Runtime prefill from V1 if needed
-          let v2Rows = pointAV2Rows;
-          if (v2Rows.length === 0 && pointARows.length > 0) {
-            v2Rows = prefillV2FromV1(pointARows);
-            updateState({ pointA_v2_rows: v2Rows });
-          }
+        if (isDiagnosticV2(block.content)) {
+          // V2: rows come from state (prefill handled by useEffect above)
           return (
             <div className={isReadOnly ? "opacity-80" : ""}>
               <LessonBlockRenderer 
                 {...commonProps}
                 kvestProps={{
-                  rows: v2Rows,
+                  rows: pointAV2Rows,
                   onRowsChange: isReadOnly ? undefined : handleDiagnosticTableV2Update,
                   onComplete: isReadOnly ? undefined : () => handleDiagnosticTableV2Complete(blockId),
                   isCompleted: state?.pointA_v2_completed || false,
@@ -401,7 +382,7 @@ export function KvestLessonView({
             </div>
           );
         }
-        // V1 — existing code unchanged
+        // V1
         return (
           <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
@@ -424,12 +405,12 @@ export function KvestLessonView({
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
-                answers: pointBAnswers,  // ← КРИТИЧЕСКИ: ответы передаются ВСЕГДА
+                answers: pointBAnswers,
                 onAnswersChange: isReadOnly ? undefined : handleSequentialFormUpdate,
                 onComplete: isReadOnly ? undefined : () => handleSequentialFormComplete(blockId),
                 isCompleted: state?.pointB_completed || false,
-                savedSummary: savedSummary,  // PATCH-5: Pass saved summary
-                onSummaryGenerated: isReadOnly ? undefined : handleSummaryGenerated,  // PATCH-5
+                savedSummary: savedSummary,
+                onSummaryGenerated: isReadOnly ? undefined : handleSummaryGenerated,
                 onReset: (state?.pointB_completed) ? () => handleSequentialFormReset(blockId) : undefined,
               }}
             />
@@ -465,10 +446,8 @@ export function KvestLessonView({
     handleSequentialFormComplete,
     handleSequentialFormReset,
     handleSummaryGenerated,
-    updateState,
   ]);
 
-  // Get gate explanation for current block
   const getGateExplanation = useCallback((block: LessonBlock): string => {
     switch (block.block_type) {
       case 'quiz_survey':
@@ -498,7 +477,7 @@ export function KvestLessonView({
 
   return (
     <div className="space-y-6">
-      {/* Progress Header - Sticky with Glass Effect */}
+      {/* Progress Header */}
       <div 
         className="sticky top-0 z-10 rounded-2xl backdrop-blur-2xl border border-primary/30 shadow-xl overflow-hidden"
         style={{
@@ -506,7 +485,6 @@ export function KvestLessonView({
           boxShadow: "0 12px 40px hsl(var(--primary) / 0.15), inset 0 1px 0 hsl(0 0% 100% / 0.2)"
         }}
       >
-        {/* Decorative orb */}
         <div className="absolute -top-16 -right-16 w-48 h-48 bg-primary/20 rounded-full blur-3xl pointer-events-none" />
         
         <div className="relative px-6 py-4">
@@ -559,7 +537,7 @@ export function KvestLessonView({
         </div>
       </div>
 
-      {/* PATCH-2: Cumulative Block Rendering - All blocks up to currentStepIndex are visible */}
+      {/* Cumulative Block Rendering */}
       <div className="space-y-4">
         {stepBlocks.map((block, idx) => {
           const isVisible = idx <= currentStepIndex;
@@ -594,7 +572,7 @@ export function KvestLessonView({
                   : "0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.15)"
               }}
             >
-              {/* Block header with step indicator */}
+              {/* Block header */}
               <div className={cn(
                 "px-4 py-3 border-b border-white/10 flex items-center justify-between",
                 isCompleted 
@@ -618,7 +596,7 @@ export function KvestLessonView({
                   {block.block_type === 'video_unskippable' && <span className="text-sm text-muted-foreground">Видео</span>}
                   {block.block_type === 'diagnostic_table' && (
                     <span className="text-sm text-muted-foreground">
-                      {(block.content as any)?.version === 'v2' ? 'Аналитика портфеля' : 'Точка А'}
+                      {isDiagnosticV2(block.content) ? 'Аналитика портфеля' : 'Точка А'}
                     </span>
                   )}
                   {block.block_type === 'sequential_form' && <span className="text-sm text-muted-foreground">Точка Б</span>}
@@ -632,7 +610,7 @@ export function KvestLessonView({
                 {renderBlockWithProps(block, isCompleted, isCurrent)}
               </CardContent>
 
-              {/* Gate explanation for current incomplete block */}
+              {/* Gate explanation */}
               {isCurrent && !gateOpen && (
                 <div className="px-4 py-3 border-t border-destructive/20 bg-destructive/10 text-center text-sm text-destructive backdrop-blur-sm">
                   {getGateExplanation(block)}
@@ -643,7 +621,7 @@ export function KvestLessonView({
         })}
       </div>
 
-      {/* Next step indicator when current is complete */}
+      {/* Next step */}
       {isCurrentBlockGateOpen && !isLastStep && (
         <div className="flex justify-center">
           <Button
@@ -657,7 +635,7 @@ export function KvestLessonView({
         </div>
       )}
 
-      {/* Final step: Finish lesson */}
+      {/* Final step */}
       {isLastStep && isCurrentBlockGateOpen && (
         <div className="flex justify-center">
           <Button
@@ -672,7 +650,7 @@ export function KvestLessonView({
         </div>
       )}
 
-      {/* Navigation bar at bottom */}
+      {/* Navigation bar */}
       <div className="flex items-center justify-between gap-4 pt-4 border-t">
         <Button
           variant="outline"

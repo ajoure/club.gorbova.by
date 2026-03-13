@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   Select, 
   SelectContent, 
@@ -22,16 +23,17 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw } from "lucide-react";
-import { toast } from "sonner";
+import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw, AlertCircle, Save, Loader2 } from "lucide-react";
 import {
   DEFAULT_V2_COLUMNS,
   calculateV2Computed,
   calculateV2Aggregates,
   formatV2Computed,
   validateV2Rows,
+  isRowEmpty,
   CATEGORY_COLORS,
   type DiagnosticTableV2Computed,
+  type V2ValidationError,
 } from "@/lib/diagnosticTableV1toV2";
 
 export interface DiagnosticTableColumn {
@@ -71,7 +73,7 @@ interface DiagnosticTableBlockProps {
   onReset?: () => void;
 }
 
-// Default columns for Point A diagnostic (updated per spec)
+// Default columns for Point A diagnostic — FULL names, no abbreviations
 const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'source', name: 'Источник дохода', type: 'text', required: true },
   { id: 'type', name: 'Тип', type: 'select', options: ['найм', 'клиент'] },
@@ -79,10 +81,10 @@ const DEFAULT_COLUMNS: DiagnosticTableColumn[] = [
   { id: 'work_hours', name: 'Часы по задачам', type: 'number' },
   { id: 'overhead_hours', name: 'Часы переписки', type: 'number' },
   { id: 'hourly_rate', name: 'Доход за час', type: 'computed', formula: 'income / (work_hours + overhead_hours)' },
-  { id: 'legal_risk', name: 'Юр. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'financial_risk', name: 'Фин. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'reputation_risk', name: 'Реп. риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
-  { id: 'emotional_load', name: 'Эмоц. (1-10)', type: 'slider', min: 1, max: 10 },
+  { id: 'legal_risk', name: 'Юридические риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'financial_risk', name: 'Финансовые риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'reputation_risk', name: 'Репутационные риски', type: 'select', options: ['низкий', 'средний', 'высокий'] },
+  { id: 'emotional_load', name: 'Эмоциональная нагрузка (1-10)', type: 'slider', min: 1, max: 10 },
   { id: 'comment', name: 'Комментарий', type: 'text' },
 ];
 
@@ -113,56 +115,62 @@ export function DiagnosticTableBlock({
     ? (content.columns?.length ? content.columns : DEFAULT_V2_COLUMNS as DiagnosticTableColumn[])
     : (content.columns?.length ? content.columns : DEFAULT_COLUMNS);
 
-  // PATCH-1: Local state for rows to prevent focus loss
+  // PATCH: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
   
-  // PATCH P0.9.5: Debounce timeout ref for immediate update + debounced commit
+  // PATCH: Validation errors (inline, no toast)
+  const [validationErrors, setValidationErrors] = useState<V2ValidationError[]>([]);
+  
+  // PATCH: Save status indicator
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Debounce timeout ref for immediate update + debounced commit
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  // PATCH-C: Refs for stable dependencies (avoid infinite loops)
+  // Refs for stable dependencies (avoid infinite loops)
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
   
   const onRowsChangeRef = useRef(onRowsChange);
   onRowsChangeRef.current = onRowsChange;
   
-  // PATCH-C: Flag to ensure one-time initialization
+  // Flag to ensure one-time initialization
   const initDoneRef = useRef(false);
   
-  // Local rows ref for flush (P0.9.5)
+  // Local rows ref for flush
   const localRowsRef = useRef(localRows);
   localRowsRef.current = localRows;
   
-  // Generate unique ID (stable function outside render)
+  // Generate unique ID
   const genId = useCallback(() => Math.random().toString(36).substring(2, 9), []);
   
-  // PATCH P0.9.5: Cleanup debounce timer on unmount + flush pending changes
+  // Cleanup debounce timer on unmount + flush pending changes
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
-        // Flush pending changes on unmount
         if (localRowsRef.current.length > 0) {
           onRowsChangeRef.current?.(localRowsRef.current);
         }
       }
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
     };
   }, []);
   
-  // PATCH-C: Initialize local rows from props OR create first empty row
+  // Initialize local rows from props OR create first empty row
   useEffect(() => {
-    // Если пришли реальные данные — ВСЕГДА применить (даже после init)
     if (rows.length > 0) {
       setLocalRows(rows);
       initDoneRef.current = true;
       return;
     }
     
-    // Одноразовая инициализация пустой строкой
     if (initDoneRef.current) return;
     
     if (!isCompleted) {
-      // Создать первую пустую строку
       const newRow: Record<string, unknown> = { _id: genId() };
       columnsRef.current.forEach(col => {
         newRow[col.id] = col.type === 'number' ? 0 : col.type === 'slider' ? 5 : '';
@@ -173,17 +181,25 @@ export function DiagnosticTableBlock({
     }
   }, [rows, isCompleted, genId]);
 
-  // PATCH P0.9.5: Debounced commit - schedule save after 300ms
+  // Debounced commit with save status
   const debouncedCommit = useCallback((newRows: Record<string, unknown>[]) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
+    setSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(() => {
-      onRowsChange?.(newRows);
+      try {
+        onRowsChange?.(newRows);
+        setSaveStatus('saved');
+        if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
+        saveStatusTimeoutRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+      } catch {
+        setSaveStatus('error');
+      }
     }, 300);
   }, [onRowsChange]);
 
-  // PATCH P0.9.5: Immediate commit (flush debounce)
+  // Immediate commit (flush debounce)
   const flushAndCommit = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -194,19 +210,14 @@ export function DiagnosticTableBlock({
     }
   }, [onRowsChange]);
 
-  // Legacy commitRows for backwards compat (now flushes)
-  const commitRows = flushAndCommit;
-
-  // PATCH-V3: Calculate computed columns SAFELY (no eval!)
-  // V1 only — hardcoded support for known computed fields
+  // V1: Calculate computed columns SAFELY (no eval)
   const calculateComputed = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn): number => {
     if (col.type !== 'computed') return 0;
     
-    // SAFE: Only support known computed field IDs with hardcoded logic
     if (col.id === 'hourly_rate') {
-      const income = Number(row.income) || 0;
-      const workHours = Number(row.work_hours) || 0;
-      const overheadHours = Number(row.overhead_hours) || 0;
+      const income = Math.max(0, Number(row.income) || 0);
+      const workHours = Math.max(0, Number(row.work_hours) || 0);
+      const overheadHours = Math.max(0, Number(row.overhead_hours) || 0);
       const totalHours = workHours + overheadHours;
       
       if (totalHours <= 0) return 0;
@@ -226,7 +237,7 @@ export function DiagnosticTableBlock({
     return localRows.map(row => calculateV2Computed(row, localRows));
   }, [isV2, localRows]);
 
-  // PATCH-5: Calculate aggregates per spec (4 values) — V1
+  // V1 aggregates
   const totalAggregates = useMemo(() => {
     if (isV2 || localRows.length === 0) return null;
     
@@ -239,13 +250,13 @@ export function DiagnosticTableBlock({
     return { total_income, total_work_hours, total_overhead_hours, avg_hourly_rate };
   }, [isV2, localRows]);
 
-  // V2: Extended aggregates with category distribution
+  // V2 aggregates
   const v2Aggregates = useMemo(() => {
     if (!isV2) return null;
     return calculateV2Aggregates(localRows);
   }, [isV2, localRows]);
 
-  // Add new row - commit first then add
+  // Add new row
   const addRow = () => {
     const newRow: Record<string, unknown> = { _id: genId() };
     columns.forEach(col => {
@@ -253,29 +264,43 @@ export function DiagnosticTableBlock({
     });
     const newRows = [...localRows, newRow];
     setLocalRows(newRows);
-    onRowsChange?.(newRows); // Immediate commit for add
+    onRowsChange?.(newRows);
   };
 
-  // PATCH P0.9.5: Update local row with debounced commit
+  // Update local row with debounced commit
   const updateLocalRow = (index: number, colId: string, value: unknown) => {
     setLocalRows(prev => {
       const newRows = [...prev];
       newRows[index] = { ...newRows[index], [colId]: value };
-      // Schedule debounced commit
       debouncedCommit(newRows);
       return newRows;
     });
+    // Clear validation error for this field
+    if (validationErrors.length > 0) {
+      setValidationErrors(prev => prev.filter(e => !(e.rowIndex === index && e.field === colId)));
+    }
   };
 
-  // Delete row - commit immediately
+  // Delete row
   const deleteRow = (index: number) => {
     const newRows = localRows.filter((_, i) => i !== index);
     setLocalRows(newRows);
     onRowsChange?.(newRows);
+    // Clear errors for deleted row
+    setValidationErrors([]);
   };
 
-  // Check if can complete (basic check — V2 validation runs on submit)
-  const canComplete = localRows.length >= (content.minRows || 1);
+  // Check if can complete (non-empty rows count)
+  const nonEmptyRowCount = useMemo(() => {
+    if (isV2) return localRows.filter(r => !isRowEmpty(r)).length;
+    return localRows.length;
+  }, [isV2, localRows]);
+  const canComplete = nonEmptyRowCount >= (content.minRows || 1);
+
+  // Helper: get field error for inline display
+  const getFieldError = useCallback((rowIndex: number, fieldId: string): string | undefined => {
+    return validationErrors.find(e => e.rowIndex === rowIndex && e.field === fieldId)?.message;
+  }, [validationErrors]);
 
   // Helper: get computed display value (V1 or V2)
   const getComputedDisplay = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn, rowIndex: number): string => {
@@ -283,6 +308,7 @@ export function DiagnosticTableBlock({
       const computed = v2ComputedMap[rowIndex];
       if (computed) {
         const val = computed[col.id as keyof DiagnosticTableV2Computed];
+        if (val === '' || val === undefined) return '—';
         return formatV2Computed(val ?? 0, col.id);
       }
       return '—';
@@ -448,42 +474,151 @@ export function DiagnosticTableBlock({
     );
   }
 
-  // P0.9.11: Determine effective layout — force vertical on mobile
+  // Effective layout
   const effectiveLayout = content.layout || 'horizontal';
 
-  // V2: Handle complete with validation
+  // V2: Handle complete with inline validation (no toast errors)
   const handleV2Complete = () => {
     flushAndCommit();
     if (isV2) {
       const errors = validateV2Rows(localRows);
       if (errors.length > 0) {
-        // Show first 3 errors
-        const messages = errors.slice(0, 3).map(e => e.message);
-        if (errors.length > 3) messages.push(`...и ещё ${errors.length - 3} ошибок`);
-        toast.error(messages.join('\n'));
+        setValidationErrors(errors);
         return;
       }
+      setValidationErrors([]);
     }
     onComplete?.();
+  };
+
+  // Render field with optional error highlight
+  const renderFieldInput = (
+    row: Record<string, unknown>,
+    col: DiagnosticTableColumn,
+    rowIndex: number,
+    compact = false
+  ) => {
+    const fieldError = getFieldError(rowIndex, col.id);
+    const hasError = !!fieldError;
+    const inputClass = compact
+      ? `h-8 text-xs ${hasError ? 'border-destructive ring-1 ring-destructive/30' : ''}`
+      : `h-9 text-sm w-full ${hasError ? 'border-destructive ring-1 ring-destructive/30' : ''}`;
+
+    if (col.type === 'computed') {
+      return (
+        <Badge variant="secondary" className="font-mono">
+          {getComputedDisplay(row, col, rowIndex)}
+        </Badge>
+      );
+    }
+
+    if (col.type === 'select' && col.options) {
+      return (
+        <div>
+          <Select
+            value={String(row[col.id] || '')}
+            onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
+            disabled={isCompleted}
+          >
+            <SelectTrigger className={inputClass}>
+              <SelectValue placeholder="—" />
+            </SelectTrigger>
+            <SelectContent>
+              {col.options.map(opt => (
+                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
+        </div>
+      );
+    }
+
+    if (col.type === 'slider') {
+      return (
+        <div className="flex items-center gap-3">
+          <Slider
+            value={[Number(row[col.id]) || 5]}
+            onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+            min={col.min || 1}
+            max={col.max || 10}
+            step={1}
+            disabled={isCompleted}
+            className="flex-1"
+          />
+          <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
+            {String(row[col.id] || 5)}
+          </Badge>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <Input
+          type={col.type === 'number' ? 'number' : 'text'}
+          value={String(row[col.id] || '')}
+          onChange={(e) => {
+            let val: unknown = e.target.value;
+            if (col.type === 'number') {
+              val = Math.max(0, Number(e.target.value) || 0);
+            }
+            updateLocalRow(rowIndex, col.id, val);
+          }}
+          className={inputClass}
+          disabled={isCompleted}
+          min={col.type === 'number' ? 0 : undefined}
+        />
+        {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
+      </div>
+    );
   };
 
   // Player mode
   return (
     <div className="space-y-4">
       {content.title && (
-        <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          {/* Save status indicator */}
+          {saveStatus !== 'idle' && (
+            <span className={`text-xs flex items-center gap-1 ${
+              saveStatus === 'saving' ? 'text-muted-foreground' :
+              saveStatus === 'saved' ? 'text-green-600' :
+              'text-destructive'
+            }`}>
+              {saveStatus === 'saving' && <><Loader2 className="h-3 w-3 animate-spin" /> Сохраняется…</>}
+              {saveStatus === 'saved' && <><Save className="h-3 w-3" /> Сохранено</>}
+              {saveStatus === 'error' && 'Не удалось сохранить'}
+            </span>
+          )}
+        </div>
       )}
       
       {content.instruction && (
         <p className="text-muted-foreground">{content.instruction}</p>
       )}
 
-      {/* P0.9.11: On mobile always render vertical cards; on sm+ respect effectiveLayout */}
+      {/* Inline validation summary — calm, no toast */}
+      {validationErrors.length > 0 && (
+        <Alert variant="default" className="border-amber-300 bg-amber-50 dark:bg-amber-950/30">
+          <AlertCircle className="h-4 w-4 text-amber-600" />
+          <AlertDescription>
+            <p className="font-medium text-sm mb-1">Что нужно заполнить:</p>
+            <ul className="text-xs space-y-0.5">
+              {validationErrors.map((err, i) => (
+                <li key={i}>• {err.message}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Vertical card layout — always on mobile, optional on desktop */}
       <div className={effectiveLayout === 'vertical' ? 'block' : 'block sm:hidden'}>
         <div className="space-y-3">
           {localRows.map((row, rowIndex) => (
-            <Card key={row._id as string || rowIndex}>
+            <Card key={row._id as string || rowIndex} className={isRowEmpty(row) && isV2 ? 'opacity-60' : ''}>
               <CardContent className="py-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">Строка {rowIndex + 1}</span>
@@ -494,7 +629,6 @@ export function DiagnosticTableBlock({
                   )}
                 </div>
                 {columns.map(col => {
-                  // V2: Skip client-only columns for non-client rows
                   if (!isColumnVisible(col, row)) return null;
                   return (
                     <div key={col.id} className="space-y-1">
@@ -503,58 +637,16 @@ export function DiagnosticTableBlock({
                         {col.required && <span className="text-destructive ml-1">*</span>}
                       </Label>
                       <div className="w-full">
-                        {col.type === 'computed' ? (
-                          <Badge variant="secondary" className="font-mono">
-                            {getComputedDisplay(row, col, rowIndex)}
-                          </Badge>
-                        ) : col.type === 'select' && col.options ? (
-                          <Select
-                            value={String(row[col.id] || '')}
-                            onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
-                            disabled={isCompleted}
-                          >
-                            <SelectTrigger className="h-9 text-sm w-full">
-                              <SelectValue placeholder="—" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {col.options.map(opt => (
-                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : col.type === 'slider' ? (
-                          <div className="flex items-center gap-3">
-                            <Slider
-                              value={[Number(row[col.id]) || 5]}
-                              onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
-                              min={col.min || 1}
-                              max={col.max || 10}
-                              step={1}
-                              disabled={isCompleted}
-                              className="flex-1"
-                            />
-                            <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
-                              {String(row[col.id] || 5)}
-                            </Badge>
-                          </div>
-                        ) : (
-                          <Input
-                            type={col.type === 'number' ? 'number' : 'text'}
-                            value={String(row[col.id] || '')}
-                            onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
-                            className="h-9 text-sm w-full"
-                            disabled={isCompleted}
-                          />
-                        )}
+                        {renderFieldInput(row, col, rowIndex)}
                       </div>
                     </div>
                   );
                 })}
                 {/* V2: Show client category badge */}
-                {isV2 && String(row.source_type) === 'клиент' && v2ComputedMap?.[rowIndex] && (
+                {isV2 && String(row.source_type) === 'клиент' && v2ComputedMap?.[rowIndex] && v2ComputedMap[rowIndex].client_category && (
                   <div className="pt-2 border-t">
                     <Badge className={CATEGORY_COLORS[v2ComputedMap[rowIndex].client_category] || 'bg-muted text-muted-foreground'}>
-                      {v2ComputedMap[rowIndex].client_category || '—'}
+                      {v2ComputedMap[rowIndex].client_category}
                     </Badge>
                   </div>
                 )}
@@ -564,7 +656,7 @@ export function DiagnosticTableBlock({
         </div>
       </div>
 
-      {/* Horizontal table layout — hidden on mobile, shown on sm+ when layout is horizontal */}
+      {/* Horizontal table layout */}
       {effectiveLayout !== 'vertical' && (
         <div className="hidden sm:block">
           <div className="relative overflow-x-auto overflow-y-auto max-h-[70vh] border rounded-lg">
@@ -572,24 +664,20 @@ export function DiagnosticTableBlock({
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
                 <TableHead className="w-8">#</TableHead>
-                {columns.map(col => {
-                  // V2: Always show all column headers (client-only cols show "—" for non-client rows)
-                  return (
-                    <TableHead key={col.id} className="text-xs whitespace-nowrap">
-                      {col.name}
-                      {col.required && <span className="text-destructive ml-1">*</span>}
-                    </TableHead>
-                  );
-                })}
+                {columns.map(col => (
+                  <TableHead key={col.id} className="text-xs whitespace-nowrap">
+                    {col.name}
+                    {col.required && <span className="text-destructive ml-1">*</span>}
+                  </TableHead>
+                ))}
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {localRows.map((row, rowIndex) => (
-                <TableRow key={row._id as string || rowIndex}>
+                <TableRow key={row._id as string || rowIndex} className={isRowEmpty(row) && isV2 ? 'opacity-60' : ''}>
                   <TableCell className="text-muted-foreground">{rowIndex + 1}</TableCell>
                   {columns.map(col => {
-                    // V2: Show "—" for client-only columns in non-client rows
                     if (!isColumnVisible(col, row)) {
                       return (
                         <TableCell key={col.id} className="p-1">
@@ -599,49 +687,7 @@ export function DiagnosticTableBlock({
                     }
                     return (
                       <TableCell key={col.id} className="p-1">
-                        {col.type === 'computed' ? (
-                          <Badge variant="secondary" className="font-mono">
-                            {getComputedDisplay(row, col, rowIndex)}
-                          </Badge>
-                        ) : col.type === 'select' && col.options ? (
-                          <Select
-                            value={String(row[col.id] || '')}
-                            onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
-                            disabled={isCompleted}
-                          >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="—" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {col.options.map(opt => (
-                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : col.type === 'slider' ? (
-                          <div className="flex items-center gap-2 min-w-[100px]">
-                            <Slider
-                              value={[Number(row[col.id]) || 5]}
-                              onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
-                              min={col.min || 1}
-                              max={col.max || 10}
-                              step={1}
-                              disabled={isCompleted}
-                              className="w-16"
-                            />
-                            <Badge variant="outline" className="w-6 text-center text-xs">
-                              {String(row[col.id] || 5)}
-                            </Badge>
-                          </div>
-                        ) : (
-                          <Input
-                            type={col.type === 'number' ? 'number' : 'text'}
-                            value={String(row[col.id] || '')}
-                            onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
-                            className="h-8 text-xs"
-                            disabled={isCompleted}
-                          />
-                        )}
+                        {renderFieldInput(row, col, rowIndex, true)}
                       </TableCell>
                     );
                   })}
@@ -667,7 +713,7 @@ export function DiagnosticTableBlock({
         </Button>
       )}
 
-      {/* V1: Aggregates per spec - 4 values */}
+      {/* V1: Aggregates */}
       {!isV2 && content.showAggregates && totalAggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="py-3">
@@ -693,7 +739,7 @@ export function DiagnosticTableBlock({
         </Card>
       )}
 
-      {/* V2: Extended aggregates with category distribution */}
+      {/* V2: Extended aggregates */}
       {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="py-3">
