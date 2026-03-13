@@ -230,6 +230,13 @@ export default function TelegramClubMembers() {
   // Set of admin telegram_user_ids for filtering
   const adminTelegramIds = useMemo(() => new Set(adminsList.map(a => a.telegram_user_id)), [adminsList]);
 
+  // Bot admins not present in members table (e.g. the club bot itself)
+  const botAdminsNotInMembers = useMemo(() => {
+    if (!members) return adminsList.filter(a => a.is_bot);
+    const memberTgIds = new Set(members.map(m => m.telegram_user_id));
+    return adminsList.filter(a => a.is_bot && !memberTgIds.has(a.telegram_user_id));
+  }, [adminsList, members]);
+
   const counts = useMemo(() => {
     if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
     
