@@ -198,6 +198,8 @@ export function KvestLessonView({
 
   // Scroll to block — only on explicit user action
   const scrollToBlock = useCallback((blockId: string) => {
+    if (!userNavigatedRef.current) return; // guard: no scroll unless user explicitly navigated
+    userNavigatedRef.current = false;
     const el = blockRefs.current.get(blockId);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
