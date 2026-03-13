@@ -310,6 +310,7 @@ export function KvestLessonView({
 
   // Memoized props for blocks to prevent unnecessary re-renders
   const pointARows = useMemo(() => state?.pointA_rows || [], [state?.pointA_rows]);
+  const pointAV2Rows = useMemo(() => state?.pointA_v2_rows || [], [state?.pointA_v2_rows]);
   const pointBAnswers = useMemo(() => state?.pointB_answers || {}, [state?.pointB_answers]);
   const userRole = useMemo(() => state?.role || null, [state?.role]);
 
