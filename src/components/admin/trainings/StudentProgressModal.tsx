@@ -565,7 +565,7 @@ export function StudentProgressModal({
                       </div>
                       <div className="space-y-1.5">
                         {files.map((file, fi) => {
-                          const { icon: FileIcon, color } = getFileTypeIcon(file.original_name);
+                          const { Icon: FileIcon, colorClass } = getFileTypeIcon(file.original_name);
                           const sizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : null;
                           return (
                             <div key={fi} className="flex items-center gap-2 group">
