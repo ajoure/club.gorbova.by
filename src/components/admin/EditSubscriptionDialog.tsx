@@ -354,44 +354,36 @@ export function EditSubscriptionDialog({
     }
   };
 
-  // Manual Telegram grant
+  // Manual Telegram grant — PATCH TG-SUBSCRIPTION-SAVE-FALSE-GRANT: Only via backend
   const grantTelegramAccess = async () => {
     if (!subscription?.user_id || !currentClubId) return;
     
     setIsTelegramLoading(true);
     try {
-      // If no access record exists, create one first
-      if (!telegramAccess) {
-        await supabase.from("telegram_access").insert({
-          user_id: subscription.user_id,
-          club_id: currentClubId,
-          active_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          state_chat: "granted",
-          state_channel: "granted",
-        });
-      } else {
-        // Update existing
-        await supabase
-          .from("telegram_access")
-          .update({ 
-            state_chat: "granted", 
-            state_channel: "granted",
-            active_until: dateRange?.to?.toISOString() || telegramAccess.active_until,
-          })
-          .eq("id", telegramAccess.id);
-      }
-
-      // Also call the edge function to actually grant access in Telegram
-      const { error } = await supabase.functions.invoke("telegram-grant-access", {
+      const adminUser = (await supabase.auth.getUser()).data.user;
+      
+      // PATCH: All grant operations go through backend edge function ONLY
+      // No direct writes to telegram_access from UI
+      const { data, error } = await supabase.functions.invoke("telegram-grant-access", {
         body: {
           user_id: subscription.user_id,
           club_id: currentClubId,
           valid_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
           is_manual: true,
+          admin_id: adminUser?.id,
         },
       });
       
-      if (error) console.error("Grant function error:", error);
+      if (error) {
+        console.error("Grant function error:", error);
+        toast.error("Ошибка выдачи доступа");
+        return;
+      }
+
+      if (data?.blocked) {
+        toast.warning(`Выдача заблокирована: ${data.reason || 'неизвестная причина'}`);
+        return;
+      }
       
       await refetchTelegram();
       toast.success("Доступ в Telegram выдан");

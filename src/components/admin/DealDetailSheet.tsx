@@ -338,7 +338,13 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
         if (!otherActiveDeals && !activeSubscriptions) {
           await supabase.functions
             .invoke("telegram-revoke-access", {
-              body: { user_id: order.user_id, club_id: telegramClubId, reason: "deal_deleted" },
+              body: { 
+                user_id: order.user_id, 
+                club_id: telegramClubId, 
+                reason: "deal_deleted",
+                is_manual: true,
+                admin_id: (await supabase.auth.getUser()).data.user?.id,
+              },
             })
             .catch(console.error);
         } else {
