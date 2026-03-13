@@ -208,11 +208,14 @@ export function useLessonProgressState(lessonId?: string) {
     return { ok: true };
   }, [fetchState, queryClient]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+      }
+      if (saveStatusResetRef.current) {
+        clearTimeout(saveStatusResetRef.current);
       }
     };
   }, []);
