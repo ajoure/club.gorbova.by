@@ -733,6 +733,173 @@ export function DiagnosticTableBlock({
     );
   };
 
+  // ── V2 SUMMARY MODE: isCompleted && isV2 → clean read-only analytics ──
+  if (isV2 && isCompleted && !isEditing) {
+    const nonEmptyRows = localRows.filter(r => !isRowEmpty(r));
+    const clientRows = nonEmptyRows
+      .map((row, idx) => ({ row, origIdx: localRows.indexOf(row) }))
+      .filter(({ row }) => String(row.source_type) === 'клиент');
+    const totalIncome = v2Aggregates?.total_income || 0;
+
+    return (
+      <div className="space-y-4">
+        {content.title && (
+          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
+        )}
+
+        {/* Summary analytics card */}
+        {v2Aggregates && nonEmptyRows.length > 0 && (
+          <Card className="bg-primary/5 border-primary/20">
+            <CardContent className="py-4 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">Общий доход</p>
+                  <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-muted-foreground text-xs">Общие часы</p>
+                  <p className="font-semibold text-lg">{v2Aggregates.total_hours} ч</p>
+                </div>
+                <div className="text-center bg-primary/10 rounded-lg py-1">
+                  <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                  <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
+                </div>
+              </div>
+
+              {/* Category distribution */}
+              {Object.keys(v2Aggregates.category_counts).length > 0 && (
+                <div className="border-t pt-3">
+                  <p className="text-xs text-muted-foreground mb-2">Распределение по категориям</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(v2Aggregates.category_counts).map(([cat, count]) => (
+                      <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
+                        {cat}: {count}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Read-only compact table — Desktop */}
+        <div className="hidden sm:block">
+          <div className="relative overflow-x-auto border rounded-lg">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background z-10">
+                <TableRow>
+                  <TableHead className="text-xs py-1.5 w-8">#</TableHead>
+                  <TableHead className="text-xs py-1.5">Клиент</TableHead>
+                  <TableHead className="text-xs py-1.5">Тип</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Часы</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доход/час</TableHead>
+                  <TableHead className="text-xs py-1.5 text-right">Доля нагр.</TableHead>
+                  <TableHead className="text-xs py-1.5">Категория</TableHead>
+                  <TableHead className="text-xs py-1.5">Стр. ценность</TableHead>
+                  <TableHead className="text-xs py-1.5">Что изменить</TableHead>
+                  <TableHead className="text-xs py-1.5">Решение</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {nonEmptyRows.map((row, i) => {
+                  const origIdx = localRows.indexOf(row);
+                  const computed = v2ComputedMap?.[origIdx];
+                  const isClient = String(row.source_type) === 'клиент';
+                  const income = Number(row.monthly_income) || 0;
+                  const share = totalIncome > 0 ? Math.round((income / totalIncome) * 100) : 0;
+                  return (
+                    <TableRow key={row._id as string || i}>
+                      <TableCell className="text-xs py-1.5 text-muted-foreground">{i + 1}</TableCell>
+                      <TableCell className="text-xs py-1.5 font-medium max-w-[120px] truncate">{String(row.client || '—')}</TableCell>
+                      <TableCell className="text-xs py-1.5">
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">{String(row.source_type || '—')}</Badge>
+                      </TableCell>
+                      <TableCell className="text-xs py-1.5 text-right font-mono">{income.toLocaleString()}</TableCell>
+                      <TableCell className="text-xs py-1.5 text-right">{computed?.total_hours || 0}</TableCell>
+                      <TableCell className="text-xs py-1.5 text-right font-mono">{computed?.hourly_income || 0}</TableCell>
+                      <TableCell className="text-xs py-1.5 text-right">{isClient && computed ? `${Math.round(computed.load_share * 100)}%` : '—'}</TableCell>
+                      <TableCell className="text-xs py-1.5">
+                        {isClient && computed?.client_category ? (
+                          <Badge className={`text-[10px] px-1.5 py-0 ${CATEGORY_COLORS[computed.client_category] || 'bg-muted text-muted-foreground'}`}>
+                            {computed.client_category}
+                          </Badge>
+                        ) : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs py-1.5 max-w-[140px] truncate" title={String(row.strategic_value || '')}>
+                        {isClient ? String(row.strategic_value || '—') : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs py-1.5 max-w-[140px] truncate" title={String(row.what_to_change || '')}>
+                        {isClient ? String(row.what_to_change || '—') : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs py-1.5 max-w-[160px] truncate" title={String(row.management_decision || '')}>
+                        {isClient ? String(row.management_decision || '—') : '—'}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+
+        {/* Read-only cards — Mobile */}
+        <div className="sm:hidden space-y-3">
+          {nonEmptyRows.map((row, i) => {
+            const origIdx = localRows.indexOf(row);
+            const computed = v2ComputedMap?.[origIdx];
+            const isClient = String(row.source_type) === 'клиент';
+            const income = Number(row.monthly_income) || 0;
+            return (
+              <Card key={row._id as string || i}>
+                <CardContent className="py-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">{String(row.client || '—')}</span>
+                    <Badge variant="outline" className="text-[10px]">{String(row.source_type || '—')}</Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div><span className="text-muted-foreground">Доход:</span> <span className="font-mono">{income.toLocaleString()}</span></div>
+                    <div><span className="text-muted-foreground">Часы:</span> {computed?.total_hours || 0}</div>
+                    <div><span className="text-muted-foreground">BYN/ч:</span> <span className="font-mono">{computed?.hourly_income || 0}</span></div>
+                  </div>
+                  {isClient && computed?.client_category && (
+                    <Badge className={`text-[10px] ${CATEGORY_COLORS[computed.client_category] || 'bg-muted text-muted-foreground'}`}>
+                      {computed.client_category}
+                    </Badge>
+                  )}
+                  {isClient && String(row.management_decision || '') && (
+                    <p className="text-xs text-muted-foreground"><span className="font-medium">Решение:</span> {String(row.management_decision)}</p>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Completed status + edit button */}
+        <div className="flex flex-col items-center gap-3 py-2">
+          <div className="flex items-center gap-2 text-primary">
+            <CheckCircle2 className="h-5 w-5" />
+            <span className="font-medium">Аналитика завершена</span>
+          </div>
+          {onReset && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onReset}
+              className="gap-2"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Редактировать таблицу
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── EDIT MODE (V1 + V2 not completed) ──
   // Player mode
   return (
     <div className="space-y-4">
@@ -761,7 +928,7 @@ export function DiagnosticTableBlock({
         />
       )}
 
-      {/* V2: Summary analytics — ABOVE the rows */}
+      {/* V2: Summary analytics — ABOVE the rows (edit mode) */}
       {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="py-3 space-y-3">
@@ -866,11 +1033,9 @@ export function DiagnosticTableBlock({
               <CardContent className="py-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">Строка {rowIndex + 1}</span>
-                  {!isCompleted && (
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteRow(rowIndex)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  )}
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteRow(rowIndex)}>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
                 {columns.map(col => {
                   if (!isColumnVisible(col, row)) return null;
@@ -936,11 +1101,9 @@ export function DiagnosticTableBlock({
                     );
                   })}
                   <TableCell>
-                    {!isCompleted && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteRow(rowIndex)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteRow(rowIndex)}>
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -950,12 +1113,10 @@ export function DiagnosticTableBlock({
         </div>
       )}
 
-      {!isCompleted && (
-        <Button variant="outline" onClick={addRow} className="w-full">
-          <Plus className="h-4 w-4 mr-2" />
-          Добавить строку
-        </Button>
-      )}
+      <Button variant="outline" onClick={addRow} className="w-full">
+        <Plus className="h-4 w-4 mr-2" />
+        Добавить строку
+      </Button>
 
       {/* V1: Aggregates */}
       {!isV2 && content.showAggregates && totalAggregates && localRows.length > 0 && (
@@ -983,39 +1144,18 @@ export function DiagnosticTableBlock({
         </Card>
       )}
 
-
       {/* Complete button */}
-      {!isCompleted ? (
-        <Button
-          onClick={handleV2Complete}
-          disabled={!canComplete}
-          variant="default"
-          className="w-full"
-        >
-          <CheckCircle2 className="h-4 w-4 mr-2" />
-          {content.submitButtonText || 'Диагностика завершена'}
-        </Button>
-      ) : (
-        <div className="flex flex-col items-center gap-3 py-2">
-          <div className="flex items-center gap-2 text-primary">
-            <CheckCircle2 className="h-5 w-5" />
-            <span className="font-medium">{isV2 ? 'Аналитика завершена' : 'Диагностика завершена'}</span>
-          </div>
-          {onReset && (
-            <Button 
-              variant="ghost" 
-              size="sm"
-              onClick={onReset}
-              className="gap-2 text-muted-foreground hover:text-foreground"
-            >
-              <RotateCcw className="h-4 w-4" />
-              Редактировать данные
-            </Button>
-          )}
-        </div>
-      )}
+      <Button
+        onClick={handleV2Complete}
+        disabled={!canComplete}
+        variant="default"
+        className="w-full"
+      >
+        <CheckCircle2 className="h-4 w-4 mr-2" />
+        {content.submitButtonText || 'Диагностика завершена'}
+      </Button>
 
-      {!canComplete && !isCompleted && (
+      {!canComplete && (
         <p className="text-center text-sm text-muted-foreground">
           Добавьте минимум {content.minRows || 1} {(content.minRows || 1) === 1 ? 'строку' : 'строки'} для продолжения
         </p>
