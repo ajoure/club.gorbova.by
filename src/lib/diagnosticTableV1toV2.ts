@@ -334,9 +334,9 @@ export function prefillV2FromV1(
     _id: Math.random().toString(36).substring(2, 9),
     client: String(row.source || ''),
     source_type: String(row.income_type || row.type || ''),
-    monthly_income: Number(row.income) || 0,
-    direct_hours: Number(row.work_hours) || 0,
-    mental_hours: Number(row.overhead_hours) || 0,
+    monthly_income: Number(row.income || row.monthly_income) || 0,
+    direct_hours: Number(row.direct_hours || row.work_hours) || 0,
+    mental_hours: Number(row.mental_hours || row.overhead_hours) || 0,
     // hourly_rate is NOT copied — computed as hourly_income at runtime
     legal_risk: mapRiskValue(String(row.legal_risk || '')),
     financial_risk: mapRiskValue(String(row.financial_risk || '')),
