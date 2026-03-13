@@ -250,9 +250,9 @@ Deno.serve(async (req) => {
         const userId = violator.profile_id ? profileUserMap.get(violator.profile_id) : null;
         const hasValidAccessResult = userId ? (accessValidMap.get(userId) ?? false) : false;
 
-        // PATCH 2: If user has valid access, fix status instead of kicking
+        // PATCH TG-REVOKE-FALSE-REGRANT: If user has valid access, fix status — with reason log
         if (hasValidAccessResult) {
-          console.log(`GUARD_SKIP violator ${violator.telegram_user_id} - has valid access, fixing status`);
+          console.log(`GUARD_SKIP violator ${violator.telegram_user_id} - has valid access, fixing status. Reason: skipped_valid_access`);
           
           await supabase
             .from('telegram_club_members')
