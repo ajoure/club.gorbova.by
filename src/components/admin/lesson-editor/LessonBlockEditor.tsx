@@ -387,7 +387,9 @@ function SortableBlockItem({ block, onUpdate, onDelete, lessonId }: SortableBloc
         </button>
         <Badge variant="secondary" className={`${config?.color || ''} gap-1.5`}>
           <Icon className="h-3 w-3" />
-          {config?.label || block.block_type}
+          {block.block_type === 'diagnostic_table' && (block.content as any)?.version === 'v2'
+            ? 'Диагн. таблица V2'
+            : config?.label || block.block_type}
         </Badge>
         <div className="flex-1" />
         <Button
