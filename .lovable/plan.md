@@ -1,234 +1,317 @@
-# План: Visual Tariff Editor + Багфиксы UniversalPricingSection (v4)
+# План: Исправление системы отзыва доступа и ложной повторной выдачи (TG-REVOKE-FALSE-REGRANT)
 
 ---
 
 ## STOP-GUARD (глобальный)
 
-- Если рефактор TariffCard создаёт риск для club.* / consultation.* → НЕ ломать текущий компонент, выделить thin shared render layer, публичный контракт сохранить backward compatible.
-- Production pricing flow ломать НЕЛЬЗЯ.
-- Фаза 3 = **UI-only в TariffCard**. Бизнес-логика продаж, доступов, оплат, entitlements НЕ переносится в UI.
-- `meta` update — только deep merge (add-only), не перезатирать existing fields (welcome_message и др.).
+1. **До фикса trigger/queue НЕ запускать** массовые revoke/kick/regrant операции по клубу.
+2. **НЕ выполнять** ручные «исправления статусов» напрямую в БД без объяснимого audit trail.
+3. **Первым шагом** — диагностика и блокировка ложного auto-grant, только потом косметика UI.
 
 ---
 
-## Фаза 1: Багфиксы UniversalPricingSection.tsx (2 обязательных)
+## Корневая причина (доказано по данным)
 
-### 1a. Мутация searchParams (строки 59-60)
-
-**Проблема:** `searchParams.delete("offer")` мутирует объект → нестабильное поведение / зацикливания.
-
-**Замена:**
-```tsx
-setSearchParams(prev => {
-  const p = new URLSearchParams(prev);
-  p.delete("offer");
-  return p;
-}, { replace: true });
-```
-Удаляет только `offer`, сохраняет utm, ref и прочие query params.
-
-### 1b. Auth redirect затирает query-параметры (строки 69-71)
-
-**Проблема:** `${basePath}?offer=${offer.id}` теряет существующие параметры (utm и др.).
-
-**Замена:**
-```tsx
-const basePath = redirectBasePath || window.location.pathname;
-const sp = new URLSearchParams(window.location.search);
-sp.set("offer", offer.id);
-const returnUrl = `${basePath}?${sp.toString()}`;
-navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
-```
-
----
-
-## Фаза 2: Редизайн диалога тарифа — Visual Tariff Editor
-
-### 2.0 Архитектура данных
-
-#### card_config внутри tariffs.meta (без миграции БД)
+Полная цепочка бага на примере Рыштаковой (13.03.2026, 19:06):
 
 ```text
-tariffs.meta = {
-  card_config: {
-    badge_text: string | null        // Произвольный текст бейджа
-    price_display: number | null     // Visual-only fallback цены (НЕ каноническая цена продажи)
-    old_price: number | null         // Зачёркнутая старая цена (override)
-    price_suffix: string             // "BYN", "BYN/мес", "BYN/год"
-    cta_text: string | null          // Override текста CTA кнопки
-    footnote: string | null          // Подпись под кнопкой
-    is_highlighted: boolean          // Выделенная карточка (ring + highlight)
-    style_variant: "default" | "highlighted" | "minimal" | "compact"
-  },
-  ...other existing meta fields (welcome_message etc — НЕ трогать)
-}
+1. Admin нажимает "Отозвать" в EditSubscriptionDialog
+   → вызывает telegram-revoke-access БЕЗ is_manual/admin_id
+
+2. telegram-revoke-access: guard НЕ пропущен (isAdminAction=false)
+   → находит subscription 90d3dda1 (status='active')
+   → БЛОКИРУЕТ revoke, возвращает {blocked: true}
+
+3. EditSubscriptionDialog ИГНОРИРУЕТ ответ backend
+   → принудительно пишет telegram_access.state_*='revoked' (строка 387-390)
+   → UI показывает "отозван", но backend НЕ отозвал
+
+4. ПАРАЛЛЕЛЬНО: что-то обновило subscription 90d3dda1 (updated_at=19:06:02)
+   → сработал SQL-триггер subscription_grant_telegram
+   → вставил запись в telegram_access_queue (action='grant')
+
+5. telegram-process-access-queue обработал очередь
+   → вызвал telegram-grant-access без проверки revoke
+   → отправил DM с invite-ссылкой "Авто-выдача: Бухгалтерия как бизнес"
+   → записал telegram_logs: AUTO_GRANT с invite-ссылкой
 ```
 
-#### Жёсткие правила данных
-
-1. **price_display — только visual fallback:**
-   - Реальная цена покупки берётся ТОЛЬКО из offers (primaryOffer.amount)
-   - card_config.price_display — visual fallback для превью/лендинга, когда нет active pay_now offer
-   - checkout / payments / order flow НЕ используют price_display
-   - UI не забирает бизнес-логику продаж на себя
-
-2. **old_price — приоритет с fallback:**
-   - `card_config.old_price` → first priority (override)
-   - `tariff.original_price` → fallback (existing field)
-   - Показывать только если old_price > displayPrice
-   - Совместимость со старыми тарифами сохраняется
-
-3. **is_highlighted vs is_popular — разделение:**
-   - `is_highlighted` = новый UI-флаг в card_config
-   - `is_popular` = legacy compat field в tariffs table
-   - Источник для рендера: сначала `card_config.is_highlighted`, потом fallback в `tariff.is_popular`
-   - При сохранении: `is_popular = is_highlighted` (backward compat маппинг)
-   - НЕ смешивать как одно и то же навсегда
-
-4. **meta deep merge при сохранении:**
-   - Сохранить все существующие `meta.*` поля
-   - Обновить только `meta.card_config`
-   - НЕ удалять `welcome_message` и другие текущие поля
-   - Код: `{ ...existingMeta, card_config: { ...newCardConfig } }`
-
-### 2.1 Разделение формы: System fields / Card content
-
-**System fields** (компактная секция):
-- Статус (Активен) — Switch вынесен в заголовок диалога
-- `access_days` — **оставить в диалоге** как editable поле с пометкой _"Legacy — будет перенесено в настройки кнопки оплаты"_. НЕ скрывать полностью до явного replacement flow в offer.
-- `period_label` — оставить как read-only / legacy с пометкой
-- `code` — авто-генерация, скрыт
-
-**Card content** (визуальный конструктор):
-- Название — полная ширина, чтобы длинный текст был виден
-- Подзаголовок — полная ширина, под названием
-- Описание — Textarea с `resize-y`, min 3 строки, расширяемое
-- Цена на карточке: цена + суффикс (2 поля в строку)
-- Старая цена (зачёркнутая) — необязательное
-- Бейдж — текстовое поле (произвольный текст)
-- Выделить карточку — Switch (`is_highlighted`)
-- Преимущества — TariffFeaturesEditor (как есть)
-
-### 2.2 Новая структура диалога (max-w-4xl)
-
-```text
-┌─────────────────────────────────────────────────┐
-│ Новый тариф / Редактировать         [Активен ●] │
-├──────────────────────┬──────────────────────────┤
-│ FORM (left ~60%)     │ PREVIEW (right ~40%)     │
-│                      │                          │
-│ ┌─ Основное ───────┐ │  [Desktop] [Mobile]      │
-│ │ Название (full)  │ │                          │
-│ │ Подзаголовок     │ │  ┌──────────────────┐   │
-│ └──────────────────┘ │  │   TariffCard     │   │
-│                      │  │   (live)         │   │
-│ ┌─ Цена ───────────┐ │  │                  │   │
-│ │ Цена  │ Суффикс  │ │  └──────────────────┘   │
-│ │ Старая цена      │ │                          │
-│ └──────────────────┘ │                          │
-│                      │                          │
-│ ┌─ Карточка ───────┐ │                          │
-│ │ Бейдж            │ │                          │
-│ │ Описание (resize)│ │                          │
-│ │ [Выделить]       │ │                          │
-│ └──────────────────┘ │                          │
-│                      │                          │
-│ ┌─ Доступ (legacy) ┐ │                          │
-│ │ access_days      │ │                          │
-│ │ period_label     │ │                          │
-│ └──────────────────┘ │                          │
-│                      │                          │
-│ ┌─ Преимущества ───┐ │                          │
-│ │ TariffFeatures   │ │                          │
-│ └──────────────────┘ │                          │
-├──────────────────────┴──────────────────────────┤
-│                  [Отмена] [Сохранить]           │
-└─────────────────────────────────────────────────┘
-
-На mobile (<768px): preview сворачивается в Collapsible
-```
-
-### 2.3 View-model нормализатор
-
-Выделить функцию, чтобы TariffCard не перегружался админскими знаниями:
-
-```tsx
-// src/lib/tariffCardViewModel.ts
-function buildTariffCardViewModel(
-  tariff: TariffData,
-  offers: TariffOffer[],
-  cardConfig: CardConfig | null,
-  priceSuffix: string
-): TariffCardData
-```
-
-- Используется и в UniversalPricingSection, и в админском preview
-- TariffCard остаётся чистым render-component
-- Вычислительная логика (price priority, old_price fallback, badge resolution) — в view-model
-
-### 2.4 Live Preview
-
-- Preview рендерит тот же `TariffCard` через `buildTariffCardViewModel`
-- Обновляется локально по state формы (без network save на каждый input)
-- Сохранение только по кнопке Save
-
-### 2.5 Desktop / Mobile preview
-
-НЕ через "max-width контейнера" — через отдельный viewport wrapper:
-
-```tsx
-<div className={previewMode === 'mobile' ? 'w-[320px]' : 'w-[400px]'}>
-  <TariffCard {...viewModel} />
-</div>
-```
-
-Одинаковый card render inside, разный viewport wrapper.
+**Три корневых дефекта:**
+1. UI (`EditSubscriptionDialog`) не передает `is_manual: true` → revoke блокируется автогардом
+2. UI игнорирует `{blocked: true}` от backend и форсит локальный state
+3. SQL-триггер `subscription_grant_telegram` слепо ставит grant в очередь при любом UPDATE, не проверяя контекст
+4. `telegram-grant-access` не проверяет, был ли только что revoke — слепо выдаёт доступ по запросу из очереди
 
 ---
 
-## Фаза 3: TariffCard — поддержка card_config
+## PATCH TG-REVOKE-FALSE-REGRANT (выделенный корневой патч)
 
-### 3.0 STOP-GUARD
+**Цель:** после любого revoke пользователь НЕ должен получать сообщение о новой выдаче доступа без нового валидного grant-события.
 
-Если TariffCard уже завязан на старые пропсы слишком глубоко и рефактор создаёт риск для club.* / consultation.* → НЕ ломать текущий компонент, выделить thin shared render layer, публичный контракт сохранить backward compatible.
+### Компоненты патча:
 
-### 3.1 Новые поля в TariffCardData
+#### A. SQL-триггер `subscription_grant_telegram` — корень бага
 
-```tsx
-card_config?: {
-  badge_text?: string | null;
-  old_price?: number | null;
-  price_suffix?: string;
-  footnote?: string | null;
-  is_highlighted?: boolean;
-  style_variant?: "default" | "highlighted" | "minimal" | "compact";
-}
-```
+Триггер НЕ должен ставить grant в очередь если:
+1. `access_end_at` уже истёк (`NEW.access_end_at IS NOT NULL AND NEW.access_end_at < NOW()`)
+2. По данному `user_id + club_id` есть свежий revoke/remove сценарий (проверка `telegram_access.state_chat = 'revoked'` за последние 5 минут)
+3. UPDATE не связан с реальной выдачей доступа (технические обновления — `updated_at`, `meta`, `notes` — не должны триггерить grant)
 
-### 3.2 Логика рендера (приоритеты)
+Конкретно: триггер должен реагировать ТОЛЬКО на изменение полей `status`, `access_end_at`, `tariff_id` (реальные grant-события).
 
-- **Цена:** `primaryOffer?.amount` > `card_config.price_display` > `tariff.current_price` > "Цена не задана"
-- **Зачёркнутая цена:** `card_config.old_price` > `tariff.original_price` > не показывать. Только если > displayPrice.
-- **Бейдж:** `card_config.badge_text` > `tariff.badge` > не показывать
-- **Highlight:** `card_config.is_highlighted` > `tariff.is_popular` > false
-- **Суффикс:** `priceSuffix` prop (из product.landing_config) > `card_config.price_suffix` > "BYN"
-- **Footnote:** `card_config.footnote` — текст под кнопками (мелким шрифтом)
-- **Style variant:** CSS-класс на GlassCard (default/highlighted/minimal/compact)
+#### B. Guard в `telegram-grant-access`
 
-### 3.3 Backward compatibility
+Перед выдачей доступа:
+- Если `telegram_access.state_chat = 'revoked'` для данного user+club И `source !== 'manual'` → проверить `hasValidAccess(user_id, club_id)`
+- Если нет валидного доступа → refuse grant, log `telegram.grant_blocked_after_revoke`
 
-- Старый тариф без `meta.card_config` → рендерится как раньше (все fallback-и работают)
-- Новый тариф с `meta.card_config` → рендерится с новыми возможностями
-- Mixed list (старые + новые) → работает без ошибок
+#### C. Guard в `telegram-process-access-queue`
+
+Перед вызовом `telegram-grant-access`:
+- Проверить `hasValidAccess(item.user_id, item.club_id)` (импорт из `_shared/accessValidation.ts`)
+- Если нет валидного доступа → пометить queue item как `skipped`, reason: `no_valid_access`
+
+#### D. Защита от гонок revoke vs auto-grant
+
+- Если revoke и grant пришли почти одновременно — **revoke побеждает**
+- Grant после revoke допускается ТОЛЬКО при доказуемом новом основании:
+  - Новый active grant / new entitlement / новая оплата / manual regrant admin
+- Механизм: перед grant проверять `telegram_access_audit` на наличие revoke за последние 60 секунд для того же user+club; если есть — требовать явный `force: true` или `source: 'manual'`
 
 ---
 
-## Фаза 4: Preview на вкладке «Превью» (AdminProductDetailV2)
+## Обязательная диагностика (ФАЗА 0)
 
-- Desktop / Mobile переключатель над сеткой тарифов
-- Mobile = viewport wrapper 320px, Desktop = full width
-- Используется тот же `TariffCard` + `buildTariffCardViewModel`
-- Preview всей pricing section: все тарифы продукта рядом, чтобы видеть highlighted, длину features, высоту карточек
+### 0.1 Источник UPDATE subscription 90d3dda1 в 19:06:02
+
+**Требуется доказать:**
+- Какие поля были before/after (diff)
+- Кто был actor/source (UI, edge function, cron, trigger)
+- Какой код/функция это изменила
+
+**Методы:**
+- Проверить `audit_logs` за ±5 секунд от 19:06:02 для subscription 90d3dda1
+- Проверить `telegram_access_audit` за тот же период
+- Проверить `telegram_access_queue` — кто вставил запись
+- Проверить edge function logs `telegram-revoke-access` за 19:06
+
+### 0.2 Источник ложного сообщения
+
+- Проверить `telegram_logs` за 19:06-19:10 для Рыштаковой
+- Найти source_function, message type, trigger chain
+
+---
+
+## ФАЗА 1: Починить revoke flow из UI
+
+### Жёсткое правило: Backend response is source of truth
+
+1. Если backend вернул `blocked`, `success=false` или ошибку — **UI ничего локально не меняет**
+2. **Никаких прямых `update telegram_access` из клиента** — backend сам управляет состоянием
+3. После revoke — только refetch/refresh из backend
+
+### `src/components/admin/EditSubscriptionDialog.tsx`:
+- Вызов `telegram-revoke-access` с `is_manual: true, admin_id: user.id, club_id`
+- Проверить ответ: если `data.blocked === true` → `toast.warning` с причиной, НЕ менять локальный state
+- **Убрать** принудительный `update telegram_access.state_*='revoked'` (строки 387-390)
+- После успешного revoke — refetch данных из backend
+
+### Аналогично проверить и исправить:
+- `ContactDetailSheet`
+- `DealDetailSheet`
+- `EditDealDialog`
+- `AdminDeals`
+- `MemberDetailsDrawer`
+
+---
+
+## ФАЗА 2: SQL-триггер subscription_grant_telegram
+
+Миграция: обновить триггерную функцию.
+
+```sql
+-- Guard 1: не ставить в очередь, если access_end_at уже истёк
+IF NEW.access_end_at IS NOT NULL AND NEW.access_end_at < NOW() THEN
+  RETURN NEW;
+END IF;
+
+-- Guard 2: реагировать только на значимые изменения
+IF NOT (
+  OLD.status IS DISTINCT FROM NEW.status OR
+  OLD.access_end_at IS DISTINCT FROM NEW.access_end_at OR
+  OLD.tariff_id IS DISTINCT FROM NEW.tariff_id
+) THEN
+  RETURN NEW;
+END IF;
+
+-- Guard 3: не ставить в очередь, если есть свежий revoke
+IF EXISTS (
+  SELECT 1 FROM telegram_access
+  WHERE user_id = NEW.user_id
+    AND state_chat = 'revoked'
+    AND updated_at > NOW() - INTERVAL '5 minutes'
+) THEN
+  RETURN NEW;
+END IF;
+```
+
+---
+
+## ФАЗА 3: Guards в backend функциях
+
+### `telegram-process-access-queue`:
+- Импорт `hasValidAccess` из `_shared/accessValidation.ts`
+- Перед вызовом grant: `hasValidAccess(item.user_id, item.club_id)`
+- Если нет доступа → status = `skipped`, reason = `no_valid_access`
+
+### `telegram-grant-access`:
+- Перед выдачей: проверка `telegram_access.state_chat` для user+club
+- Если `revoked` и source ≠ manual → проверить `hasValidAccess`
+- Если нет доступа → refuse, log `grant_blocked_after_revoke`
+- Проверка гонки: `telegram_access_audit` на revoke за последние 60 секунд
+
+---
+
+## ФАЗА 4: Аудит причины отправки Telegram-сообщений
+
+### Обязательные поля для каждого access-related события:
+
+| Поле | Описание |
+|------|----------|
+| `user_id` | ID пользователя |
+| `club_id` | ID клуба |
+| `source_function` | Имя edge function |
+| `source_entity` | Таблица-источник (subscription, entitlement, manual) |
+| `source_entity_id` | ID записи-источника |
+| `reason_code` | grant, regrant, renewal, manual_grant, queue_auto, revoke_blocked |
+| `trigger_type` | manual, cron, trigger, queue, system |
+| `decision` | granted, blocked, skipped, revoked |
+
+### Классификация событий Telegram (PATCH отдельный):
+
+| Тип | Описание |
+|-----|----------|
+| `grant_access` | Первичная выдача доступа |
+| `regrant_access` | Повторная выдача после истечения/отзыва с новым основанием |
+| `revoke_access` | Отзыв доступа (ручной или автоматический) |
+| `kick_violator` | Кик нарушителя из чата/канала |
+| `service_notification` | Сервисное уведомление (напоминание, инфо) |
+| `subscription_reminder` | Напоминание об оплате/продлении |
+
+### Куда писать:
+- `audit_logs`: action = `telegram.access_dm_sent`, meta содержит все поля выше
+- `telegram_logs`: добавить `reason_code` и `trigger_type`
+
+### Все outbound notification flows должны использовать единый SoT:
+- `telegram-grant-access` — перед отправкой DM
+- `telegram-send-notification` — все типы уведомлений
+- `telegram-reinvite-ghosts` — перед генерацией invite link
+- `telegram-mass-broadcast` — при access-related рассылках
+
+---
+
+## ФАЗА 5: UI — backend truth wins
+
+### Anti-contradiction guards (пользователь НЕ может одновременно быть):
+- `removed` И `has_active_access=true`
+- `violator` И `admin`
+- `with_access` при `revoked` backend-state без валидного access-source
+
+### `src/pages/admin/TelegramClubMembers.tsx`:
+- `getAccessStatusBadge`: если `has_active_access === false` → всегда "Без доступа" (не зелёный)
+- Вкладка "Удалённые": исключить админов
+- Вкладка "Нарушители": исключить админов
+- Не показывать кнопки "Выдать доступ" / "Повторно активировать" без явного нового grant-события
+- Если backend говорит `no valid access` — UI не показывает зелёные статусы, активные плашки и кнопки, ведущие к выдаче/повторной активации
+
+---
+
+## ФАЗА 6: Обновить v_club_members_enriched
+
+SQL миграция: добавить проверки в `has_active_access`:
+- `subscriptions_v2` (active/trial/past_due + access_end_at)
+- `entitlements` (active + expires_at)
+- Существующие: `telegram_manual_access`, `telegram_access`, `telegram_access_grants`
+- Guard против revoked-state: `state_chat != 'revoked' AND state_channel != 'revoked'`
+
+---
+
+## ФАЗА 7: Синхронизация cron/автокик
+
+### `telegram-check-expired`:
+- Синхронизировать с `_shared/accessValidation.ts`
+- Явный skip для админов
+- Убрать дефектный инкремент/декремент счётчиков
+
+### `telegram-kick-violators`:
+- Использовать `hasValidAccessBatch` для определения нарушителей
+- Принудительно исключать админов из кандидатов на kick/removed
+
+### `telegram-club-members` (actions kick/kick_present/mark_removed):
+- Не допускать попадания админов в `removed`-состояние при массовых действиях
+
+---
+
+## Порядок внедрения
+
+1. **Диагностика**: найти точный источник UPDATE subscription 90d3dda1 в 19:06:02 (ФАЗА 0)
+2. **Заблокировать** ложный auto-grant: исправить SQL-trigger `subscription_grant_telegram` (ФАЗА 2)
+3. **Backend guards**: `telegram-process-access-queue` + `telegram-grant-access` (ФАЗА 3)
+4. **Починить revoke flow** в UI: `EditSubscriptionDialog` и все точки вызова (ФАЗА 1)
+5. **Аудит**: добавить reason_code, trigger_type, decision в DM-отправки (ФАЗА 4)
+6. **UI бейджи**: backend truth wins, anti-contradiction guards (ФАЗА 5)
+7. **SQL view**: обновить `v_club_members_enriched` (ФАЗА 6)
+8. **Cron sync**: обновить автокик с единой валидацией и admin-guard (ФАЗА 7)
+
+---
+
+## DoD (Definition of Done)
+
+### Негативный E2E-сценарий «revoke → не должно прийти сообщение о выдаче» (обязательный отдельный)
+
+1. Вручную отозвать доступ из карточки контакта/подписки
+2. Backend возвращает `{success: true}` (не blocked)
+3. `telegram_access.state_* = 'revoked'`
+4. Бот **НЕ** отправляет DM "Доступ открыт" / invite-ссылку
+5. SQL-лог `telegram_logs` **НЕ** содержит AUTO_GRANT после revoke
+6. `telegram_access_queue` **НЕ** содержит нового grant item после revoke без основания
+7. `audit_logs` содержит `reason_code` для каждого отправленного сообщения
+
+### Негативный сценарий Рыштаковой (обязательный отдельный)
+
+1. Отозвать доступ
+2. Пользователь уходит в корректный статус (violator/removed)
+3. Бот **НЕ** отправляет сообщение о новой выдаче доступа
+4. Приложить: SQL-дамп queue items, telegram_logs, audit_logs, скрины карточки участника
+
+### SQL-пруф по очереди
+
+- Queue item created / skipped / processed — с reason
+- Отсутствие нового grant item после revoke без основания
+- Каждый processed item имеет `reason_code` и `decision`
+
+### Статусы в UI соответствуют backend
+
+- Плашки "С доступом" / "Без доступа" совпадают с `hasValidAccess`
+- Вкладка "Удалённые" не содержит админов
+- Anti-contradiction: нет одновременных `removed + has_active_access`, `violator + admin`, `with_access + revoked`
+
+### Очередь не выдаёт доступ после revoke
+
+- Queue processor пропускает item для revoked пользователя с `status=skipped, reason=no_valid_access`
+- SQL-trigger не вставляет grant при технических UPDATE
+
+### Аудит-лог полный
+
+- Каждое Telegram-сообщение о доступе имеет запись с:
+  - `source_function`, `reason_code`, `trigger_type`, `decision`
+  - `user_id`, `club_id`, `source_entity`, `source_entity_id`
+
+### Правила статусов после фикса
+
+- Нет валидного доступа + в чате/канале → `violator`
+- После успешного кика/бана → `removed`, `in_chat/in_channel=false`
+- Админы: не кикаются автологикой, не в "Нарушители", не в "Удалённые", всегда в "Админы"
 
 ---
 
@@ -236,72 +319,19 @@ card_config?: {
 
 | Файл | Действие |
 |------|----------|
-| `src/components/landing/UniversalPricingSection.tsx` | 2 багфикса (searchParams + redirect) |
-| `src/lib/tariffCardViewModel.ts` | **Создать** — view-model нормализатор |
-| `src/pages/admin/AdminProductDetailV2.tsx` | Редизайн диалога тарифа + live preview + desktop/mobile toggle |
-| `src/components/landing/TariffCard.tsx` | card_config support (old_price, badge_text, footnote, style_variant) |
+| SQL trigger `subscription_grant_telegram` | Миграция: guards на expired, технические UPDATE, свежий revoke |
+| `supabase/functions/telegram-process-access-queue/index.ts` | Guard: hasValidAccess перед grant |
+| `supabase/functions/telegram-grant-access/index.ts` | Guard: revoked state + hasValidAccess + race protection |
+| `src/components/admin/EditSubscriptionDialog.tsx` | Убрать прямой update telegram_access, передать is_manual, проверять blocked |
+| `src/pages/admin/TelegramClubMembers.tsx` | Backend truth wins для бейджей, anti-contradiction guards |
+| SQL view `v_club_members_enriched` | Миграция: полный набор access-источников |
+| `supabase/functions/telegram-check-expired/index.ts` | Синхронизация с единой валидацией, admin-guard |
+| `supabase/functions/telegram-kick-violators/index.ts` | hasValidAccessBatch, admin-guard |
+| Все outbound notification flows | reason_code, trigger_type, decision в audit |
 
 ## Что НЕ меняем
 
-- Edge Functions — не трогаем, `meta` jsonb прозрачно проходит
-- Бизнес-логика оплат/доступов — НЕ затрагивается
-- `access_days` — остаётся в data layer И в UI тарифа (с пометкой legacy)
-- `TariffFeaturesEditor` — без изменений
-- `UniversalPricingSection` — только 2 багфикса, логика не меняется
-- Consultation.tsx, LandingPricing.tsx, ProductLanding.tsx — не трогаем
-
-## Ограничения (что НЕ делаем)
-
-- Произвольный HTML / rich-text editor
-- Custom CSS / drag-drop builder
-- Ручное изменение шрифтов / размеров / цветов
-- Кастомные иконки поэлементно
-- Анимации в админке
-
-## Preset styles (v1)
-
-- `default` — стандартная карточка
-- `highlighted` — ring + primary accent
-- `minimal` — упрощённая, без бейджа
-- `compact` — компактная для списков
-
----
-
-## DoD (Definition of Done)
-
-### Фаза 1
-- ☐ searchParams очищается через клон (удаляется только offer, сохраняются utm/ref)
-- ☐ Auth redirect сохраняет существующие query-параметры
-- ☐ Возврат из /auth по ?offer=... → PaymentDialog открывается → URL очищается корректно
-
-### Фаза 2
-- ☐ Диалог тарифа разделён на System fields и Card content
-- ☐ Название и подзаголовок — полная ширина
-- ☐ Описание — Textarea с resize-y
-- ☐ Есть поля: Цена, Суффикс, Старая цена (зачёркнутая)
-- ☐ Бейдж — произвольный текст
-- ☐ access_days — editable, с пометкой legacy
-- ☐ Live preview карточки в диалоге (тот же TariffCard через buildTariffCardViewModel)
-- ☐ Desktop/Mobile переключатель в preview (viewport wrapper, не max-width)
-- ☐ meta сохраняется через deep merge (existing fields не теряются)
-
-### Фаза 3
-- ☐ TariffCard поддерживает card_config
-- ☐ Зачёркнутая цена отображается если old_price > displayPrice
-- ☐ Бейдж из card_config.badge_text с fallback в tariff.badge
-- ☐ is_highlighted с fallback в is_popular
-- ☐ Footnote под кнопками
-- ☐ **Backward compat:** старый тариф без card_config рендерится как раньше
-- ☐ **Mixed list:** старые + новые тарифы рядом — без ошибок
-
-### Фаза 4
-- ☐ Preview всей pricing section на вкладке «Превью» с desktop/mobile toggle
-- ☐ Все тарифы продукта видны рядом
-- ☐ Highlighted/обычные карточки визуально различимы
-
-### Общий DoD
-- ☐ Нет HTML/CSS конструктора, только типизированные поля
-- ☐ Existing pricing flow не сломан (club.*, consultation.*)
-- ☐ card_config хранится в tariffs.meta.card_config (без миграции БД)
-- ☐ price_display НЕ используется в checkout/payments/orders
-- ☐ Нет дублированной карточной логики (единый TariffCard)
+- Схему `_shared/accessValidation.ts` — используем as-is (единый SoT)
+- Основную логику подписок/оплат
+- Telegram Bot API интеграцию
+- Структуру таблиц (только view + trigger)
