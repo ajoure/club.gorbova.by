@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { hasValidAccess } from "../_shared/accessValidation.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -50,7 +51,7 @@ serve(async (req) => {
 
     console.log(`[telegram-process-access-queue] Processing ${pendingItems.length} items`);
 
-    const results: { id: string; success: boolean; error?: string }[] = [];
+    const results: { id: string; success: boolean; error?: string; decision?: string }[] = [];
 
     for (const item of pendingItems as QueueItem[]) {
       console.log(`[telegram-process-access-queue] Processing item ${item.id}: ${item.action} for user ${item.user_id}`);
@@ -63,7 +64,88 @@ serve(async (req) => {
 
       try {
         if (item.action === "grant") {
-          // FIX-2: Fetch subscription details for tariff/product logging
+          // ============================================================
+          // PATCH TG-REVOKE-FALSE-REGRANT: Guard 1 — hasValidAccess check
+          // ============================================================
+          const accessCheck = await hasValidAccess(supabase, item.user_id, item.club_id);
+          
+          if (!accessCheck.valid) {
+            console.log(`[telegram-process-access-queue] SKIP item ${item.id}: no valid access for user ${item.user_id} in club ${item.club_id}`);
+            
+            await supabase
+              .from("telegram_access_queue")
+              .update({
+                status: "skipped",
+                last_error: "no_valid_access",
+                processed_at: new Date().toISOString(),
+              })
+              .eq("id", item.id);
+
+            // Audit log
+            await supabase.from("audit_logs").insert({
+              action: "telegram.queue_skipped",
+              actor_type: "system",
+              actor_label: "telegram-process-access-queue",
+              meta: {
+                queue_item_id: item.id,
+                user_id: item.user_id,
+                club_id: item.club_id,
+                subscription_id: item.subscription_id,
+                reason_code: "queue_skipped",
+                trigger_type: "queue",
+                decision: "skipped",
+              },
+            });
+
+            results.push({ id: item.id, success: false, error: "no_valid_access", decision: "skipped" });
+            continue;
+          }
+
+          // ============================================================
+          // PATCH TG-REVOKE-FALSE-REGRANT: Guard 2 — recent revoke check (race protection)
+          // ============================================================
+          const { data: recentRevoke } = await supabase
+            .from("telegram_access")
+            .select("id, state_chat, updated_at")
+            .eq("user_id", item.user_id)
+            .eq("club_id", item.club_id)
+            .eq("state_chat", "revoked")
+            .gt("updated_at", new Date(Date.now() - 5 * 60 * 1000).toISOString())
+            .maybeSingle();
+
+          if (recentRevoke) {
+            console.log(`[telegram-process-access-queue] SKIP item ${item.id}: recent revoke for user ${item.user_id} (revoke at ${recentRevoke.updated_at})`);
+            
+            await supabase
+              .from("telegram_access_queue")
+              .update({
+                status: "skipped",
+                last_error: "recent_revoke",
+                processed_at: new Date().toISOString(),
+              })
+              .eq("id", item.id);
+
+            await supabase.from("audit_logs").insert({
+              action: "telegram.queue_skipped",
+              actor_type: "system",
+              actor_label: "telegram-process-access-queue",
+              meta: {
+                queue_item_id: item.id,
+                user_id: item.user_id,
+                club_id: item.club_id,
+                reason_code: "queue_skipped",
+                trigger_type: "queue",
+                decision: "skipped",
+                detail: "recent_revoke_race_guard",
+                revoke_at: recentRevoke.updated_at,
+              },
+            });
+
+            results.push({ id: item.id, success: false, error: "recent_revoke", decision: "skipped" });
+            continue;
+          }
+
+          // Fetch subscription details for tariff/product logging
           let tariffName: string | null = null;
           let productName: string | null = null;
           
@@ -88,11 +170,10 @@ serve(async (req) => {
             }
           }
           
-          // Fallback to UNKNOWN if no subscription data
           tariffName = tariffName || "UNKNOWN";
           productName = productName || "UNKNOWN";
           
-          // Call telegram-grant-access with Service Role token for authentication
+          // Call telegram-grant-access
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "telegram-grant-access",
             {
@@ -129,10 +210,10 @@ serve(async (req) => {
             .eq("id", item.id);
 
           console.log(`[telegram-process-access-queue] Item ${item.id} completed successfully`);
-          results.push({ id: item.id, success: true });
+          results.push({ id: item.id, success: true, decision: "granted" });
 
         } else if (item.action === "revoke") {
-          // Call telegram-revoke-access with Service Role token for authentication
+          // Call telegram-revoke-access
           const { data: revokeResult, error: revokeError } = await supabase.functions.invoke(
             "telegram-revoke-access",
             {
@@ -160,7 +241,7 @@ serve(async (req) => {
             .eq("id", item.id);
 
           console.log(`[telegram-process-access-queue] Item ${item.id} revoked successfully`);
-          results.push({ id: item.id, success: true });
+          results.push({ id: item.id, success: true, decision: "revoked" });
         }
 
       } catch (itemError) {
@@ -178,14 +259,15 @@ serve(async (req) => {
           })
           .eq("id", item.id);
 
-        results.push({ id: item.id, success: false, error: errorMessage });
+        results.push({ id: item.id, success: false, error: errorMessage, decision: "error" });
       }
     }
 
     const successCount = results.filter((r) => r.success).length;
     const failCount = results.filter((r) => !r.success).length;
+    const skippedCount = results.filter((r) => r.decision === "skipped").length;
 
-    console.log(`[telegram-process-access-queue] Completed: ${successCount} success, ${failCount} failed`);
+    console.log(`[telegram-process-access-queue] Completed: ${successCount} success, ${failCount} failed, ${skippedCount} skipped`);
 
     return new Response(
       JSON.stringify({
@@ -193,6 +275,7 @@ serve(async (req) => {
         processed: results.length,
         successCount,
         failCount,
+        skippedCount,
         results,
       }),
       {
