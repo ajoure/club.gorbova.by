@@ -363,6 +363,59 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ============================================================
+    // PATCH TG-REVOKE-FALSE-REGRANT: Guard — revoke race protection
+    // For non-manual (auto) grants, check if user was recently revoked
+    // ============================================================
+    if (!is_manual) {
+      for (const cid of resolvedClubIds) {
+        // Check for recent revoke (within 5 minutes)
+        const { data: recentRevoke } = await supabase
+          .from('telegram_access')
+          .select('id, state_chat, updated_at')
+          .eq('user_id', user_id)
+          .eq('club_id', cid)
+          .eq('state_chat', 'revoked')
+          .gt('updated_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
+          .maybeSingle();
+
+        if (recentRevoke) {
+          // Double-check: does the user actually have valid access?
+          const accessCheck = await hasValidAccess(supabase, user_id, cid);
+          
+          if (!accessCheck.valid) {
+            console.log(`[grant-access] BLOCKED: user ${user_id} was recently revoked in club ${cid} and has no valid access. Refusing auto-grant.`);
+            
+            await supabase.from('audit_logs').insert({
+              action: 'telegram.grant_blocked',
+              actor_type: 'system',
+              actor_label: 'telegram-grant-access',
+              meta: {
+                user_id,
+                club_id: cid,
+                source,
+                source_id,
+                reason_code: 'grant_blocked',
+                trigger_type: is_manual ? 'manual' : 'queue',
+                decision: 'blocked',
+                detail: 'recent_revoke_no_valid_access',
+                revoke_at: recentRevoke.updated_at,
+              },
+            });
+
+            return new Response(JSON.stringify({ 
+              success: false, 
+              blocked: true, 
+              reason: 'User was recently revoked and has no valid access',
+              code: 'GRANT_BLOCKED_AFTER_REVOKE',
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        }
+      }
+    }
+
     // Get clubs — filter strictly by resolvedClubIds (NEVER select all)
     let clubsQuery = supabase.from('telegram_clubs').select('*, telegram_bots(*)').eq('is_active', true);
     clubsQuery = clubsQuery.in('id', resolvedClubIds);
