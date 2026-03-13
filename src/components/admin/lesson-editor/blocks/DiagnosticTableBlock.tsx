@@ -73,6 +73,8 @@ interface DiagnosticTableBlockProps {
   isCompleted?: boolean;
   // Reset handler
   onReset?: () => void;
+  // Real save status from useLessonProgressState (optional — not used in editor mode)
+  saveStatus?: 'idle' | 'saving' | 'saved' | 'error';
 }
 
 // Default columns for Point A diagnostic — FULL names, no abbreviations
