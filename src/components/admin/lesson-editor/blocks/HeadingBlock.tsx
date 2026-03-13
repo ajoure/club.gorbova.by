@@ -23,9 +23,10 @@ export function HeadingBlock({ content, onChange, isEditing = true }: HeadingBlo
       4: "text-lg font-medium",
     };
     return (
-      <Tag className={sizeClasses[content.level || 2]}>
-        <span dangerouslySetInnerHTML={{ __html: content.text || "Заголовок" }} />
-      </Tag>
+      <Tag 
+        className={sizeClasses[content.level || 2]}
+        dangerouslySetInnerHTML={{ __html: content.text || "Заголовок" }}
+      />
     );
   }
 
