@@ -174,6 +174,12 @@ function V2ClientRowDetails({ row, allRows }: { row: DiagnosticTableV2Row; allRo
               {row.client_factors}
             </div>
           )}
+          {row.strategic_value && (
+            <div className="col-span-2">
+              <span className="text-muted-foreground">Стратегическая ценность:</span>{' '}
+              {row.strategic_value}
+            </div>
+          )}
           <div>
             <span className="text-muted-foreground">Эффективность:</span>{' '}
             {computed.efficiency || '—'}
