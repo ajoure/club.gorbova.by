@@ -224,6 +224,7 @@ export function useLessonProgressState(lessonId?: string) {
     state: record?.state_json ?? null,
     isCompleted: !!record?.completed_at,
     loading,
+    saveStatus,
     updateState,
     markBlockCompleted,
     isBlockCompleted,
