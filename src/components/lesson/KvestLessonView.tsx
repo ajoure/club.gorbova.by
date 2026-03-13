@@ -15,7 +15,7 @@ import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { prefillV2FromV1, isDiagnosticV2 } from "@/lib/diagnosticTableV1toV2";
-import { findV1DiagnosticSource } from "@/lib/findV1DiagnosticSource";
+// findV1DiagnosticSource removed — prefill logic inlined with user data check
 
 // Block types that count as "steps" in kvest mode
 const STEP_BLOCK_TYPES: BlockType[] = [
