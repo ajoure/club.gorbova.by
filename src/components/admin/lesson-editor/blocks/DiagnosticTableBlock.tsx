@@ -23,7 +23,9 @@ import {
   TableHeader, 
   TableRow 
 } from "@/components/ui/table";
-import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw, AlertCircle, Save, Loader2 } from "lucide-react";
+import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw, AlertCircle, Save, Loader2, Link2, CheckCircle, XCircle, Info } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_V2_COLUMNS,
