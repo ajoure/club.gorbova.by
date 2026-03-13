@@ -24,6 +24,7 @@ import {
   TableRow 
 } from "@/components/ui/table";
 import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw, AlertCircle, Save, Loader2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_V2_COLUMNS,
   calculateV2Computed,
@@ -32,6 +33,7 @@ import {
   validateV2Rows,
   isRowEmpty,
   CATEGORY_COLORS,
+  V2_TEXTAREA_FIELD_IDS,
   type DiagnosticTableV2Computed,
   type V2ValidationError,
 } from "@/lib/diagnosticTableV1toV2";
