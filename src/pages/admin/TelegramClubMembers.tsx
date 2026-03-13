@@ -1290,6 +1290,33 @@ export default function TelegramClubMembers() {
                     </TableRow>
                     );
                   })}
+                  {activeTab === 'admins' && botAdminsNotInMembers.map((bot) => (
+                    <TableRow key={`bot-${bot.telegram_user_id}`} className="bg-muted/30">
+                      <TableCell />
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Bot className="h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <div className="font-medium">{bot.full_name || bot.telegram_username || `Bot ${bot.telegram_user_id}`}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {bot.telegram_username ? `@${bot.telegram_username}` : `ID: ${bot.telegram_user_id}`}
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-muted-foreground">Бот</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">
+                          <ShieldCheck className="h-3 w-3 mr-1" />
+                          {bot.role === 'creator' ? 'Создатель' : 'Администратор'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-center">—</TableCell>
+                      <TableCell className="text-right">—</TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             ) : (
