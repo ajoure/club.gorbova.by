@@ -64,7 +64,6 @@ export function KvestLessonView({
   const { resetProgress: resetViaEdge } = useResetProgress();
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const userNavigatedRef = useRef(false);
-  const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   // Filter blocks that are "steps"
   const stepBlocks = useMemo(() => 
