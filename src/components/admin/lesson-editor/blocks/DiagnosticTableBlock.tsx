@@ -737,8 +737,8 @@ export function DiagnosticTableBlock({
   return (
     <div className="space-y-4">
       {content.title && (
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+        <div className="space-y-1">
+          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
           {/* Save status indicator */}
           {saveStatus !== 'idle' && (
             <span className={`text-xs flex items-center gap-1 ${
