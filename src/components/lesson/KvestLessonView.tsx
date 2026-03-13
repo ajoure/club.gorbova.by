@@ -251,9 +251,8 @@ export function KvestLessonView({
     toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
 
-  // V2 diagnostic table handlers
   const handleDiagnosticTableV2Update = useCallback((rows: Record<string, unknown>[]) => {
-    updateState({ pointA_v2_rows: rows });
+    updateState({ pointA_v2_rows: rows as any });
   }, [updateState]);
 
   const handleDiagnosticTableV2Complete = useCallback((blockId: string) => {
