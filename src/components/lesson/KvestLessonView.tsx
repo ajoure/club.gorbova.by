@@ -84,21 +84,22 @@ export function KvestLessonView({
     }
   }, [state?.currentStepIndex]);
 
-  // ── V2 Prefill: cross-lesson, one-time, source_lesson_id based ──
+  // ── V2 Prefill: auto-discover V1 source or use override ──
   const v2PrefillDoneRef = useRef(false);
+  const [v2PrefillInfo, setV2PrefillInfo] = useState<string | null>(null);
   useEffect(() => {
     if (v2PrefillDoneRef.current) return;
-    if (!state) return; // state not loaded yet
+    if (!state) return;
     if (!user?.id) return;
-    
-    const v2Block = stepBlocks.find(b => 
+
+    const v2Block = stepBlocks.find(b =>
       b.block_type === 'diagnostic_table' && isDiagnosticV2(b.content)
     );
     if (!v2Block) {
       v2PrefillDoneRef.current = true;
       return;
     }
-    
+
     // Strict guard: if V2 rows already exist, never overwrite
     const v2Rows = state.pointA_v2_rows;
     if (v2Rows && v2Rows.length > 0) {
@@ -106,21 +107,36 @@ export function KvestLessonView({
       return;
     }
 
-    // Get explicit source_lesson_id from V2 block content
-    const sourceLessonId = (v2Block.content as any)?.source_lesson_id;
-    if (!sourceLessonId || typeof sourceLessonId !== 'string' || sourceLessonId.length < 10) {
-      console.warn('[V2 Prefill] No valid source_lesson_id in V2 block content — guarded skip');
-      v2PrefillDoneRef.current = true;
-      return;
-    }
-
     const doPrefill = async () => {
       try {
+        const overrideId = (v2Block.content as any)?.source_lesson_id || '';
+
+        // Auto-discover V1 source (or validate override)
+        const sourceResult = await findV1DiagnosticSource({
+          currentLessonId: lesson.id,
+          moduleId: lesson.module_id,
+          currentSortOrder: lesson.sort_order,
+          overrideSourceId: overrideId || undefined,
+        });
+
+        if (!sourceResult) {
+          console.log('[V2 Prefill] No V1 source found — user fills manually');
+          setV2PrefillInfo('auto_not_found');
+          v2PrefillDoneRef.current = true;
+          return;
+        }
+
+        if (overrideId && sourceResult.method === 'auto') {
+          console.log('[V2 Prefill] Override invalid, used auto-discover');
+          setV2PrefillInfo('override_fallback');
+        }
+
+        // Fetch V1 progress from source lesson
         const { data, error } = await supabase
           .from('lesson_progress_state')
           .select('state_json')
           .eq('user_id', user.id)
-          .eq('lesson_id', sourceLessonId)
+          .eq('lesson_id', sourceResult.sourceLessonId)
           .maybeSingle();
 
         if (error) {
@@ -131,15 +147,15 @@ export function KvestLessonView({
 
         const v1Rows = (data?.state_json as any)?.pointA_rows;
         if (!v1Rows || !Array.isArray(v1Rows) || v1Rows.length === 0) {
-          console.log('[V2 Prefill] Source lesson has no V1 rows — guarded skip');
+          console.log('[V2 Prefill] Source lesson has no V1 rows');
+          setV2PrefillInfo('auto_not_found');
           v2PrefillDoneRef.current = true;
           return;
         }
 
-        // Double-check v2 rows haven't been set while we were fetching
         const prefilled = prefillV2FromV1(v1Rows);
         updateState({ pointA_v2_rows: prefilled });
-        console.log(`[V2 Prefill] Imported ${prefilled.length} rows from lesson ${sourceLessonId.slice(0, 8)}`);
+        console.log(`[V2 Prefill] Imported ${prefilled.length} rows from ${sourceResult.sourceLessonId.slice(0, 8)} (${sourceResult.method})`);
       } catch (err) {
         console.error('[V2 Prefill] Unexpected error:', err);
       } finally {
@@ -147,7 +163,7 @@ export function KvestLessonView({
       }
     };
     doPrefill();
-  }, [state, stepBlocks, updateState, user?.id]);
+  }, [state, stepBlocks, updateState, user?.id, lesson.id, lesson.module_id, lesson.sort_order]);
 
   const totalSteps = stepBlocks.length;
   const progressPercent = totalSteps > 0 ? ((currentStepIndex + 1) / totalSteps) * 100 : 0;
