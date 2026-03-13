@@ -12,6 +12,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { prefillV2FromV1 } from "@/lib/diagnosticTableV1toV2";
 
 // Block types that count as "steps" in kvest mode
 const STEP_BLOCK_TYPES: BlockType[] = [
