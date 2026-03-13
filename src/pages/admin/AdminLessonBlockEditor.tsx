@@ -11,7 +11,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink, ChevronRight } from "lucide-react";
+import { ArrowLeft, BookOpen, Eye, Edit, RefreshCw, ImageIcon, ChevronDown, RotateCcw, ExternalLink, ChevronRight, Bug } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminLessonBlockEditor() {

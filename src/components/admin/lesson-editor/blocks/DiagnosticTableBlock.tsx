@@ -503,25 +503,34 @@ export function DiagnosticTableBlock({
           </Card>
         )}
 
-        {/* V2: Source lesson ID setting */}
+        {/* V2: Source lesson ID setting (optional override) */}
         {isV2 && (
           <Card className="p-4">
             <div className="space-y-2">
               <Label className="flex items-center gap-1.5">
                 <Link2 className="h-3.5 w-3.5" />
-                Урок-источник для переноса данных (lesson ID)
+                Урок-источник (override)
               </Label>
+              <p className="text-xs text-muted-foreground">
+                Оставьте пустым для автопоиска V1 в текущем модуле (по sort_order)
+              </p>
               <Input
                 value={sourceLessonInput}
                 onChange={(e) => setSourceLessonInput(e.target.value)}
-                placeholder="UUID урока с диагностической таблицей V1"
+                placeholder="UUID урока (необязательно)"
                 className="font-mono text-xs"
               />
               {/* Validation status */}
-              {sourceValidation.status === 'idle' && (
+              {sourceValidation.status === 'idle' && !sourceLessonInput.trim() && (
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <Info className="h-3 w-3" />
-                  Перенос данных отключён: урок-источник не указан
+                  Автопоиск: V1 будет найден автоматически в этом модуле
+                </p>
+              )}
+              {sourceValidation.status === 'idle' && sourceLessonInput.trim() && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Info className="h-3 w-3" />
+                  Проверка формата…
                 </p>
               )}
               {sourceValidation.status === 'loading' && (
@@ -533,19 +542,19 @@ export function DiagnosticTableBlock({
               {sourceValidation.status === 'valid' && (
                 <p className="text-xs text-green-600 flex items-center gap-1">
                   <CheckCircle className="h-3 w-3" />
-                  Источник найден: {sourceValidation.lessonTitle}
+                  Override: {sourceValidation.lessonTitle}
                 </p>
               )}
               {sourceValidation.status === 'error_not_found' && (
-                <p className="text-xs text-destructive flex items-center gap-1">
-                  <XCircle className="h-3 w-3" />
-                  Урок не найден — проверьте ID
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  Урок не найден — будет использован автопоиск
                 </p>
               )}
               {sourceValidation.status === 'error_no_v1' && (
-                <p className="text-xs text-destructive flex items-center gap-1">
-                  <XCircle className="h-3 w-3" />
-                  В уроке «{sourceValidation.lessonTitle}» нет диагностической таблицы V1
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  В «{sourceValidation.lessonTitle}» нет V1 таблицы — будет использован автопоиск
                 </p>
               )}
             </div>

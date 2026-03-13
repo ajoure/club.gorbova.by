@@ -442,12 +442,17 @@ export function LessonBlockEditor({ lessonId }: LessonBlockEditorProps) {
     });
   };
 
-  // V2 preset: creates diagnostic_table with version='v2'
+  // V2 preset: creates diagnostic_table with version='v2', auto-discovers V1 source
   const handleAddDiagnosticTableV2 = async () => {
     const { DEFAULT_V2_CONTENT } = await import("@/lib/diagnosticTableV1toV2");
+    const { findV1SourceForNewBlock } = await import("@/lib/findV1DiagnosticSource");
+    
+    // Try to auto-set source_lesson_id
+    const sourceId = await findV1SourceForNewBlock(lessonId);
+    
     await addBlock({
       block_type: 'diagnostic_table' as BlockType,
-      content: DEFAULT_V2_CONTENT,
+      content: { ...DEFAULT_V2_CONTENT, source_lesson_id: sourceId },
     });
   };
 
