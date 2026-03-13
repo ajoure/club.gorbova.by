@@ -334,6 +334,7 @@ export function prefillV2FromV1(
     // V2 new fields — empty, user fills manually
     business_type: '',
     client_factors: '',
+    strategic_value: '',
     what_to_change: '',
     management_decision: '',
   }));
