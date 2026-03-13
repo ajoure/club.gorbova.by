@@ -33,8 +33,11 @@ export function useLessonProgressState(lessonId?: string) {
   const queryClient = useQueryClient();
   const [record, setRecord] = useState<LessonProgressStateRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingStateRef = useRef<LessonProgressStateData | null>(null);
+  const saveStatusResetRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedJsonRef = useRef<string | null>(null);
 
   // Fetch current state
   const fetchState = useCallback(async () => {
@@ -74,7 +77,14 @@ export function useLessonProgressState(lessonId?: string) {
   const saveState = useCallback(async (newState: LessonProgressStateData) => {
     if (!lessonId || !user) return;
 
+    // Skip save if data is identical to last saved version
+    const newJson = JSON.stringify(newState);
+    if (lastSavedJsonRef.current === newJson) {
+      return;
+    }
+
     try {
+      setSaveStatus('saving');
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .upsert({
@@ -90,12 +100,18 @@ export function useLessonProgressState(lessonId?: string) {
 
       if (error) throw error;
       
+      lastSavedJsonRef.current = newJson;
       setRecord({
         ...data,
         state_json: (data.state_json || {}) as LessonProgressStateData
       });
+      
+      setSaveStatus('saved');
+      if (saveStatusResetRef.current) clearTimeout(saveStatusResetRef.current);
+      saveStatusResetRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (error) {
       console.error("Error saving lesson progress state:", error);
+      setSaveStatus('error');
     }
   }, [lessonId, user]);
 
@@ -192,11 +208,14 @@ export function useLessonProgressState(lessonId?: string) {
     return { ok: true };
   }, [fetchState, queryClient]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+      }
+      if (saveStatusResetRef.current) {
+        clearTimeout(saveStatusResetRef.current);
       }
     };
   }, []);
@@ -205,6 +224,7 @@ export function useLessonProgressState(lessonId?: string) {
     state: record?.state_json ?? null,
     isCompleted: !!record?.completed_at,
     loading,
+    saveStatus,
     updateState,
     markBlockCompleted,
     isBlockCompleted,

@@ -9,6 +9,8 @@ import { LessonBlock, BlockType } from "@/hooks/useLessonBlocks";
 import { TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useLessonProgressState, LessonProgressStateData } from "@/hooks/useLessonProgressState";
 import { useResetProgress } from "@/hooks/useResetProgress";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -57,9 +59,11 @@ export function KvestLessonView({
   allowBypassEmptyVideo = false
 }: KvestLessonViewProps) {
   const navigate = useNavigate();
-  const { state, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
+  const { user } = useAuth();
+  const { state, saveStatus, updateState, markBlockCompleted, isBlockCompleted, markLessonCompleted, refetch: refetchProgress } = useLessonProgressState(lesson.id);
   const { resetProgress: resetViaEdge } = useResetProgress();
   const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const userNavigatedRef = useRef(false);
   
   // Filter blocks that are "steps"
   const stepBlocks = useMemo(() => 
@@ -79,28 +83,70 @@ export function KvestLessonView({
     }
   }, [state?.currentStepIndex]);
 
-  // ── V2 Prefill: guarded one-time useEffect ──
+  // ── V2 Prefill: cross-lesson, one-time, source_lesson_id based ──
   const v2PrefillDoneRef = useRef(false);
   useEffect(() => {
     if (v2PrefillDoneRef.current) return;
     if (!state) return; // state not loaded yet
+    if (!user?.id) return;
     
-    const hasV2Block = stepBlocks.some(b => 
+    const v2Block = stepBlocks.find(b => 
       b.block_type === 'diagnostic_table' && isDiagnosticV2(b.content)
     );
-    if (!hasV2Block) return;
-    
-    const v2Rows = state.pointA_v2_rows;
-    const v1Rows = state.pointA_rows;
-    
-    if ((!v2Rows || v2Rows.length === 0) && v1Rows && v1Rows.length > 0) {
-      const prefilled = prefillV2FromV1(v1Rows);
-      updateState({ pointA_v2_rows: prefilled });
+    if (!v2Block) {
       v2PrefillDoneRef.current = true;
-    } else {
-      v2PrefillDoneRef.current = true; // no prefill needed
+      return;
     }
-  }, [state, stepBlocks, updateState]);
+    
+    // Strict guard: if V2 rows already exist, never overwrite
+    const v2Rows = state.pointA_v2_rows;
+    if (v2Rows && v2Rows.length > 0) {
+      v2PrefillDoneRef.current = true;
+      return;
+    }
+
+    // Get explicit source_lesson_id from V2 block content
+    const sourceLessonId = (v2Block.content as any)?.source_lesson_id;
+    if (!sourceLessonId || typeof sourceLessonId !== 'string' || sourceLessonId.length < 10) {
+      console.warn('[V2 Prefill] No valid source_lesson_id in V2 block content — guarded skip');
+      v2PrefillDoneRef.current = true;
+      return;
+    }
+
+    const doPrefill = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('lesson_progress_state')
+          .select('state_json')
+          .eq('user_id', user.id)
+          .eq('lesson_id', sourceLessonId)
+          .maybeSingle();
+
+        if (error) {
+          console.error('[V2 Prefill] DB error:', error);
+          v2PrefillDoneRef.current = true;
+          return;
+        }
+
+        const v1Rows = (data?.state_json as any)?.pointA_rows;
+        if (!v1Rows || !Array.isArray(v1Rows) || v1Rows.length === 0) {
+          console.log('[V2 Prefill] Source lesson has no V1 rows — guarded skip');
+          v2PrefillDoneRef.current = true;
+          return;
+        }
+
+        // Double-check v2 rows haven't been set while we were fetching
+        const prefilled = prefillV2FromV1(v1Rows);
+        updateState({ pointA_v2_rows: prefilled });
+        console.log(`[V2 Prefill] Imported ${prefilled.length} rows from lesson ${sourceLessonId.slice(0, 8)}`);
+      } catch (err) {
+        console.error('[V2 Prefill] Unexpected error:', err);
+      } finally {
+        v2PrefillDoneRef.current = true;
+      }
+    };
+    doPrefill();
+  }, [state, stepBlocks, updateState, user?.id]);
 
   const totalSteps = stepBlocks.length;
   const progressPercent = totalSteps > 0 ? ((currentStepIndex + 1) / totalSteps) * 100 : 0;
@@ -151,6 +197,8 @@ export function KvestLessonView({
 
   // Scroll to block — only on explicit user action
   const scrollToBlock = useCallback((blockId: string) => {
+    if (!userNavigatedRef.current) return; // guard: no scroll unless user explicitly navigated
+    userNavigatedRef.current = false;
     const el = blockRefs.current.get(blockId);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -161,6 +209,9 @@ export function KvestLessonView({
   const goToStep = useCallback((index: number, force = false) => {
     if (index < 0 || index >= totalSteps) return;
     
+    // Mark as user navigation so scrollToBlock will fire
+    userNavigatedRef.current = true;
+    
     if (index < currentStepIndex) {
       setCurrentStepIndex(index);
       updateState({ currentStepIndex: index });
@@ -170,6 +221,7 @@ export function KvestLessonView({
     }
     
     if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
+      userNavigatedRef.current = false;
       toast.error("Сначала завершите текущий шаг");
       return;
     }
@@ -377,6 +429,7 @@ export function KvestLessonView({
                   onComplete: isReadOnly ? undefined : () => handleDiagnosticTableV2Complete(blockId),
                   isCompleted: state?.pointA_v2_completed || false,
                   onReset: (state?.pointA_v2_completed) ? () => handleDiagnosticTableV2Reset(blockId) : undefined,
+                  saveStatus: saveStatus,
                 }}
               />
             </div>
@@ -507,9 +560,12 @@ export function KvestLessonView({
               const isAccessible = idx <= currentStepIndex || completed;
               
               return (
-                <button
+                 <button
                   key={block.id}
-                  onClick={() => isAccessible && goToStep(idx)}
+                  onClick={() => {
+                    userNavigatedRef.current = true;
+                    if (isAccessible) goToStep(idx);
+                  }}
                   disabled={!isAccessible}
                   title={`Шаг ${idx + 1}`}
                   className={cn(

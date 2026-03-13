@@ -67,6 +67,9 @@ export interface KvestBlockProps {
   
   // PATCH-V1/V2: Admin bypass for empty video URL
   allowBypassEmptyVideo?: boolean;
+  
+  // Save status from useLessonProgressState (real DB write status)
+  saveStatus?: 'idle' | 'saving' | 'saved' | 'error';
 }
 
 export interface LessonBlockRendererProps {
@@ -352,6 +355,7 @@ export function LessonBlockRenderer({
             onComplete={kvestProps?.onComplete}
             isCompleted={kvestProps?.isCompleted}
             onReset={kvestProps?.onReset}
+            saveStatus={kvestProps?.saveStatus}
           />
         );
       case 'sequential_form':

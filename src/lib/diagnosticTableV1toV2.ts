@@ -24,6 +24,7 @@ export interface DiagnosticTableV2Row {
   // Client-only fields (empty for non-client rows)
   business_type: string;
   client_factors: string;
+  strategic_value: string;
   what_to_change: string;
   management_decision: string;
 }
@@ -83,6 +84,7 @@ export const DEFAULT_V2_COLUMNS: V2ColumnDef[] = [
   { id: 'load_level', name: 'Уровень нагрузки', type: 'computed', condition: 'client_only' },
   { id: 'client_category', name: 'Категория клиента', type: 'computed', condition: 'client_only' },
   { id: 'client_factors', name: 'Факторы клиента', type: 'text', condition: 'client_only' },
+  { id: 'strategic_value', name: 'Стратегическая ценность клиента', type: 'text', condition: 'client_only' },
   { id: 'what_to_change', name: 'Что нужно изменить', type: 'text', condition: 'client_only' },
   { id: 'management_decision', name: 'Управленческое решение', type: 'text', condition: 'client_only' },
 ];
@@ -332,6 +334,7 @@ export function prefillV2FromV1(
     // V2 new fields — empty, user fills manually
     business_type: '',
     client_factors: '',
+    strategic_value: '',
     what_to_change: '',
     management_decision: '',
   }));
@@ -349,7 +352,16 @@ export const DEFAULT_V2_CONTENT = {
   showAggregates: true,
   submitButtonText: 'Аналитика завершена',
   layout: 'vertical' as const,
+  source_lesson_id: '' as string, // Must be set to V1 diagnostic lesson ID
 };
+
+// IDs of text fields that should render as textarea (multi-line)
+export const V2_TEXTAREA_FIELD_IDS = new Set([
+  'client_factors',
+  'strategic_value',
+  'what_to_change',
+  'management_decision',
+]);
 
 // Category display helpers
 export const CATEGORY_COLORS: Record<string, string> = {

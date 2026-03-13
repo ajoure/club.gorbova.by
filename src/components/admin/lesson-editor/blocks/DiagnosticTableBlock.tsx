@@ -24,6 +24,7 @@ import {
   TableRow 
 } from "@/components/ui/table";
 import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw, AlertCircle, Save, Loader2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_V2_COLUMNS,
   calculateV2Computed,
@@ -32,6 +33,7 @@ import {
   validateV2Rows,
   isRowEmpty,
   CATEGORY_COLORS,
+  V2_TEXTAREA_FIELD_IDS,
   type DiagnosticTableV2Computed,
   type V2ValidationError,
 } from "@/lib/diagnosticTableV1toV2";
@@ -71,6 +73,8 @@ interface DiagnosticTableBlockProps {
   isCompleted?: boolean;
   // Reset handler
   onReset?: () => void;
+  // Real save status from useLessonProgressState (optional — not used in editor mode)
+  saveStatus?: 'idle' | 'saving' | 'saved' | 'error';
 }
 
 // Default columns for Point A diagnostic — FULL names, no abbreviations
@@ -105,7 +109,8 @@ export function DiagnosticTableBlock({
   onRowsChange,
   onComplete,
   isCompleted = false,
-  onReset
+  onReset,
+  saveStatus: externalSaveStatus,
 }: DiagnosticTableBlockProps) {
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   
@@ -121,8 +126,9 @@ export function DiagnosticTableBlock({
   // PATCH: Validation errors (inline, no toast)
   const [validationErrors, setValidationErrors] = useState<V2ValidationError[]>([]);
   
-  // PATCH: Save status indicator
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // PATCH: Save status — use external (real DB) if provided, else local fallback for editor
+  const [localSaveStatus, setLocalSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveStatus = externalSaveStatus ?? localSaveStatus;
   const saveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Debounce timeout ref for immediate update + debounced commit
@@ -181,23 +187,25 @@ export function DiagnosticTableBlock({
     }
   }, [rows, isCompleted, genId]);
 
-  // Debounced commit with save status
+  // Debounced commit (only sets local status if no external saveStatus)
   const debouncedCommit = useCallback((newRows: Record<string, unknown>[]) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
-    setSaveStatus('saving');
+    if (!externalSaveStatus) setLocalSaveStatus('saving');
     saveTimeoutRef.current = setTimeout(() => {
       try {
         onRowsChange?.(newRows);
-        setSaveStatus('saved');
-        if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
-        saveStatusTimeoutRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+        if (!externalSaveStatus) {
+          setLocalSaveStatus('saved');
+          if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
+          saveStatusTimeoutRef.current = setTimeout(() => setLocalSaveStatus('idle'), 2000);
+        }
       } catch {
-        setSaveStatus('error');
+        if (!externalSaveStatus) setLocalSaveStatus('error');
       }
     }, 300);
-  }, [onRowsChange]);
+  }, [onRowsChange, externalSaveStatus]);
 
   // Immediate commit (flush debounce)
   const flushAndCommit = useCallback(() => {
@@ -549,6 +557,26 @@ export function DiagnosticTableBlock({
           <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
             {String(row[col.id] || 5)}
           </Badge>
+        </div>
+      );
+    }
+
+    // Textarea for long analytical fields (V2)
+    if (isV2 && col.type === 'text' && V2_TEXTAREA_FIELD_IDS.has(col.id)) {
+      const placeholder = col.id === 'strategic_value'
+        ? 'стабильность, перспективность, отрасль, рекомендации, стратегический доступ'
+        : '';
+      return (
+        <div>
+          <Textarea
+            value={String(row[col.id] || '')}
+            onChange={(e) => updateLocalRow(rowIndex, col.id, e.target.value)}
+            className={`text-sm min-h-[60px] ${hasError ? 'border-destructive ring-1 ring-destructive/30' : ''}`}
+            disabled={isCompleted}
+            placeholder={placeholder}
+            rows={2}
+          />
+          {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
         </div>
       );
     }
