@@ -688,9 +688,10 @@ export default function TelegramClubMembers() {
     return selectedMembers.filter(m => m.in_chat || m.in_channel);
   }, [selectedMembers]);
 
+  // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
   const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
-    // has_active_access is the source of truth — overrides cached access_status
-    if (hasActiveAccess) {
+    // has_active_access from backend is the SOLE source of truth
+    if (hasActiveAccess === true) {
       return (
         <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">
           <CheckCircle className="h-3 w-3" />
@@ -698,6 +699,32 @@ export default function TelegramClubMembers() {
         </Badge>
       );
     }
+    // If has_active_access is false — NEVER show green, regardless of cached access_status
+    if (hasActiveAccess === false) {
+      if (status === 'removed') {
+        return (
+          <Badge variant="secondary" className="gap-1">
+            <Trash2 className="h-3 w-3" />
+            Удалён
+          </Badge>
+        );
+      }
+      if (status === 'expired') {
+        return (
+          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 gap-1">
+            <AlertTriangle className="h-3 w-3" />
+            Истёк
+          </Badge>
+        );
+      }
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <XCircle className="h-3 w-3" />
+          Без доступа
+        </Badge>
+      );
+    }
+    // Fallback for cases where has_active_access is undefined
     switch (status) {
       case 'ok':
         return (

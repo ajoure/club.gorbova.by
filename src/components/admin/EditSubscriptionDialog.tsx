@@ -369,26 +369,35 @@ export function EditSubscriptionDialog({
     }
   };
 
-  // Manual Telegram revoke
+  // Manual Telegram revoke — PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins
   const revokeTelegramAccess = async () => {
     if (!subscription?.user_id || !currentClubId || !telegramAccess) return;
     
     setIsTelegramLoading(true);
     try {
-      const { error } = await supabase.functions.invoke("telegram-revoke-access", {
+      const { data, error } = await supabase.functions.invoke("telegram-revoke-access", {
         body: {
           user_id: subscription.user_id,
           club_id: currentClubId,
+          is_manual: true,
+          admin_id: (await supabase.auth.getUser()).data.user?.id,
         },
       });
       
-      if (error) console.error("Revoke function error:", error);
-      
-      await supabase
-        .from("telegram_access")
-        .update({ state_chat: "revoked", state_channel: "revoked" })
-        .eq("id", telegramAccess.id);
-      
+      if (error) {
+        console.error("Revoke function error:", error);
+        toast.error("Ошибка отзыва доступа");
+        return;
+      }
+
+      // PATCH TG-REVOKE-FALSE-REGRANT: Backend response is source of truth
+      // If backend says blocked — show warning, do NOT change local state
+      if (data?.blocked) {
+        toast.warning(`Отзыв заблокирован: ${data.reason || 'у пользователя есть активный доступ'}. Локальный статус не изменён.`);
+        return;
+      }
+
+      // Only refetch from backend — NO direct update to telegram_access
       await refetchTelegram();
       toast.success("Доступ в Telegram отозван");
     } catch (err) {
