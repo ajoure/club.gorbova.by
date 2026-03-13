@@ -77,7 +77,14 @@ export function useLessonProgressState(lessonId?: string) {
   const saveState = useCallback(async (newState: LessonProgressStateData) => {
     if (!lessonId || !user) return;
 
+    // Skip save if data is identical to last saved version
+    const newJson = JSON.stringify(newState);
+    if (lastSavedJsonRef.current === newJson) {
+      return;
+    }
+
     try {
+      setSaveStatus('saving');
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .upsert({
@@ -93,12 +100,18 @@ export function useLessonProgressState(lessonId?: string) {
 
       if (error) throw error;
       
+      lastSavedJsonRef.current = newJson;
       setRecord({
         ...data,
         state_json: (data.state_json || {}) as LessonProgressStateData
       });
+      
+      setSaveStatus('saved');
+      if (saveStatusResetRef.current) clearTimeout(saveStatusResetRef.current);
+      saveStatusResetRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
     } catch (error) {
       console.error("Error saving lesson progress state:", error);
+      setSaveStatus('error');
     }
   }, [lessonId, user]);
 
