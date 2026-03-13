@@ -264,7 +264,7 @@ export function QuizSequenceBlock({
 
     return (
       <div data-testid="quiz-sequence" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg">{content.question || "Расставьте в правильном порядке"}</div>
+        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Расставьте в правильном порядке" }} />
 
         <DndContext
           sensors={sensors}

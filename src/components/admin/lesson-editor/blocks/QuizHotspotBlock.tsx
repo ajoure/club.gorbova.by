@@ -192,7 +192,7 @@ export function QuizHotspotBlock({
 
     return (
       <div data-testid="quiz-hotspot" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg">{content.question || "Нажмите на правильную область"}</div>
+        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Нажмите на правильную область" }} />
 
         {content.imageUrl && !imageError ? (
           <div 

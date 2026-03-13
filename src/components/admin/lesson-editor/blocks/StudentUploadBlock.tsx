@@ -403,9 +403,9 @@ function StudentUploadStudentView({
         <div className="flex items-center gap-2">
           <Upload className="h-5 w-5 text-primary shrink-0" />
           <div>
-            <p className="font-medium">{content.title || "Загрузите файл"}</p>
+            <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Загрузите файл" }} />
             {content.instructions && (
-              <p className="text-sm text-muted-foreground">{content.instructions}</p>
+              <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.instructions }} />
             )}
           </div>
         </div>

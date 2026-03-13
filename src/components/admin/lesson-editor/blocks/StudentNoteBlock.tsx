@@ -145,9 +145,9 @@ function StudentNoteStudentView({
           <div className="flex items-center gap-2">
             <PenLine className="h-5 w-5 text-primary shrink-0" />
             <div>
-              <p className="font-medium">{content.title || "Ваш ответ"}</p>
+              <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Ваш ответ" }} />
               {content.hint && (
-                <p className="text-sm text-muted-foreground">{content.hint}</p>
+                <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.hint }} />
               )}
             </div>
           </div>
