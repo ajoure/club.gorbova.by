@@ -561,6 +561,26 @@ export function DiagnosticTableBlock({
       );
     }
 
+    // Textarea for long analytical fields (V2)
+    if (isV2 && col.type === 'text' && V2_TEXTAREA_FIELD_IDS.has(col.id)) {
+      const placeholder = col.id === 'strategic_value'
+        ? 'стабильность, перспективность, отрасль, рекомендации, стратегический доступ'
+        : '';
+      return (
+        <div>
+          <Textarea
+            value={String(row[col.id] || '')}
+            onChange={(e) => updateLocalRow(rowIndex, col.id, e.target.value)}
+            className={`text-sm min-h-[60px] ${hasError ? 'border-destructive ring-1 ring-destructive/30' : ''}`}
+            disabled={isCompleted}
+            placeholder={placeholder}
+            rows={2}
+          />
+          {hasError && <p className="text-xs text-destructive mt-1">{col.name}: обязательное поле</p>}
+        </div>
+      );
+    }
+
     return (
       <div>
         <Input
