@@ -160,14 +160,6 @@ function V2ClientRowDetails({ row, allRows }: { row: DiagnosticTableV2Row; allRo
             <span className="text-muted-foreground">Тип бизнеса:</span>{' '}
             {row.business_type || '—'}
           </div>
-          <div className="col-span-2">
-            <span className="text-muted-foreground">Что нужно изменить:</span>{' '}
-            {row.what_to_change || '—'}
-          </div>
-          <div className="col-span-2">
-            <span className="text-muted-foreground">Управленческое решение:</span>{' '}
-            {row.management_decision || '—'}
-          </div>
           {row.client_factors && (
             <div className="col-span-2">
               <span className="text-muted-foreground">Факторы клиента:</span>{' '}
@@ -180,6 +172,14 @@ function V2ClientRowDetails({ row, allRows }: { row: DiagnosticTableV2Row; allRo
               {row.strategic_value}
             </div>
           )}
+          <div className="col-span-2">
+            <span className="text-muted-foreground">Что нужно изменить:</span>{' '}
+            {row.what_to_change || '—'}
+          </div>
+          <div className="col-span-2">
+            <span className="text-muted-foreground">Управленческое решение:</span>{' '}
+            {row.management_decision || '—'}
+          </div>
           <div>
             <span className="text-muted-foreground">Эффективность:</span>{' '}
             {computed.efficiency || '—'}
