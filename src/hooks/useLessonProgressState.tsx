@@ -33,8 +33,11 @@ export function useLessonProgressState(lessonId?: string) {
   const queryClient = useQueryClient();
   const [record, setRecord] = useState<LessonProgressStateRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingStateRef = useRef<LessonProgressStateData | null>(null);
+  const saveStatusResetRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedJsonRef = useRef<string | null>(null);
 
   // Fetch current state
   const fetchState = useCallback(async () => {
