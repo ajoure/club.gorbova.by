@@ -126,8 +126,9 @@ export function DiagnosticTableBlock({
   // PATCH: Validation errors (inline, no toast)
   const [validationErrors, setValidationErrors] = useState<V2ValidationError[]>([]);
   
-  // PATCH: Save status indicator
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // PATCH: Save status — use external (real DB) if provided, else local fallback for editor
+  const [localSaveStatus, setLocalSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const saveStatus = externalSaveStatus ?? localSaveStatus;
   const saveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Debounce timeout ref for immediate update + debounced commit
