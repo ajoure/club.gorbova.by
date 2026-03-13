@@ -90,7 +90,7 @@ export function QuizSingleBlock({
 
     return (
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg">{content.question || "Вопрос не задан"}</div>
+        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Вопрос не задан" }} />
         
         <RadioGroup 
           value={selectedAnswer} 
@@ -109,7 +109,7 @@ export function QuizSingleBlock({
               )}
             >
               <RadioGroupItem value={option.id} />
-              <span className="flex-1">{option.text}</span>
+              <span className="flex-1" dangerouslySetInnerHTML={{ __html: option.text }} />
               {isSubmitted && option.isCorrect && (
                 <Check className="h-5 w-5 text-green-500" />
               )}
