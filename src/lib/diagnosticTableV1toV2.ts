@@ -84,6 +84,7 @@ export const DEFAULT_V2_COLUMNS: V2ColumnDef[] = [
   { id: 'load_level', name: 'Уровень нагрузки', type: 'computed', condition: 'client_only' },
   { id: 'client_category', name: 'Категория клиента', type: 'computed', condition: 'client_only' },
   { id: 'client_factors', name: 'Факторы клиента', type: 'text', condition: 'client_only' },
+  { id: 'strategic_value', name: 'Стратегическая ценность клиента', type: 'text', condition: 'client_only' },
   { id: 'what_to_change', name: 'Что нужно изменить', type: 'text', condition: 'client_only' },
   { id: 'management_decision', name: 'Управленческое решение', type: 'text', condition: 'client_only' },
 ];
