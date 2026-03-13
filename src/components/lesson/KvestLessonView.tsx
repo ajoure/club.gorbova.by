@@ -210,6 +210,9 @@ export function KvestLessonView({
   const goToStep = useCallback((index: number, force = false) => {
     if (index < 0 || index >= totalSteps) return;
     
+    // Mark as user navigation so scrollToBlock will fire
+    userNavigatedRef.current = true;
+    
     if (index < currentStepIndex) {
       setCurrentStepIndex(index);
       updateState({ currentStepIndex: index });
@@ -219,6 +222,7 @@ export function KvestLessonView({
     }
     
     if (index > currentStepIndex && !force && !isCurrentBlockGateOpen) {
+      userNavigatedRef.current = false;
       toast.error("Сначала завершите текущий шаг");
       return;
     }
