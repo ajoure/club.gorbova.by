@@ -12,6 +12,7 @@ import { useResetProgress } from "@/hooks/useResetProgress";
 import { LessonBlockRenderer } from "./LessonBlockRenderer";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { prefillV2FromV1 } from "@/lib/diagnosticTableV1toV2";
 
 // Block types that count as "steps" in kvest mode
 const STEP_BLOCK_TYPES: BlockType[] = [
@@ -109,9 +110,15 @@ export function KvestLessonView({
       case 'video':
         return true;
       
-      case 'diagnostic_table':
+      case 'diagnostic_table': {
+        const version = (block.content as any)?.version;
+        if (version === 'v2') {
+          const hasV2Rows = (state?.pointA_v2_rows?.length ?? 0) > 0;
+          return hasV2Rows && state?.pointA_v2_completed === true;
+        }
         const hasRows = (state?.pointA_rows?.length ?? 0) > 0;
         return hasRows && state?.pointA_completed === true;
+      }
       
       case 'sequential_form':
         return state?.pointB_completed === true;
@@ -225,7 +232,7 @@ export function KvestLessonView({
     }
   }, [markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for diagnostic table (memoized)
+  // Handler for diagnostic table V1 (memoized)
   const handleDiagnosticTableUpdate = useCallback((rows: Record<string, unknown>[]) => {
     updateState({ pointA_rows: rows });
   }, [updateState]);
@@ -233,22 +240,40 @@ export function KvestLessonView({
   const handleDiagnosticTableComplete = useCallback((blockId: string) => {
     updateState({ pointA_completed: true });
     markBlockCompleted(blockId);
-    // Auto-advance to next step (force=true to skip stale gate check)
     if (currentStepIndex < totalSteps - 1) {
       goToStep(currentStepIndex + 1, true);
     }
   }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
 
-  // Handler for diagnostic table reset
   const handleDiagnosticTableReset = useCallback((blockId: string) => {
-    console.log('[KvestLessonView] DiagnosticTable reset:', blockId.slice(0, 8));
-    // Исправление 1 (КРИТИЧНО): НЕ очищаем pointA_rows — данные остаются для редактирования
-    // Исправление 4: остаёмся на текущем шаге, не откатываемся назад
+    console.log('[KvestLessonView] DiagnosticTable V1 reset:', blockId.slice(0, 8));
     updateState({ 
       pointA_completed: false,
-      // pointA_rows: [] — УДАЛЕНО, чтобы данные не терялись при нажатии "Редактировать"
       completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
-      currentStepIndex: currentStepIndex, // остаёмся на том же шаге
+      currentStepIndex: currentStepIndex,
+    });
+    toast.success("Вы можете отредактировать данные");
+  }, [state?.completedSteps, currentStepIndex, updateState]);
+
+  // Handler for diagnostic table V2
+  const handleDiagnosticTableV2Update = useCallback((rows: Record<string, unknown>[]) => {
+    updateState({ pointA_v2_rows: rows });
+  }, [updateState]);
+
+  const handleDiagnosticTableV2Complete = useCallback((blockId: string) => {
+    updateState({ pointA_v2_completed: true });
+    markBlockCompleted(blockId);
+    if (currentStepIndex < totalSteps - 1) {
+      goToStep(currentStepIndex + 1, true);
+    }
+  }, [updateState, markBlockCompleted, currentStepIndex, totalSteps, goToStep]);
+
+  const handleDiagnosticTableV2Reset = useCallback((blockId: string) => {
+    console.log('[KvestLessonView] DiagnosticTable V2 reset:', blockId.slice(0, 8));
+    updateState({ 
+      pointA_v2_completed: false,
+      completedSteps: (state?.completedSteps || []).filter(id => id !== blockId),
+      currentStepIndex: currentStepIndex,
     });
     toast.success("Вы можете отредактировать данные");
   }, [state?.completedSteps, currentStepIndex, updateState]);
@@ -285,6 +310,7 @@ export function KvestLessonView({
 
   // Memoized props for blocks to prevent unnecessary re-renders
   const pointARows = useMemo(() => state?.pointA_rows || [], [state?.pointA_rows]);
+  const pointAV2Rows = useMemo(() => state?.pointA_v2_rows || [], [state?.pointA_v2_rows]);
   const pointBAnswers = useMemo(() => state?.pointB_answers || {}, [state?.pointB_answers]);
   const userRole = useMemo(() => state?.role || null, [state?.role]);
 
@@ -351,16 +377,37 @@ export function KvestLessonView({
         );
       }
       
-      case 'diagnostic_table':
+      case 'diagnostic_table': {
+        const dtVersion = (block.content as any)?.version;
+        if (dtVersion === 'v2') {
+          // V2: Runtime prefill from V1 if needed
+          let v2Rows = pointAV2Rows;
+          if (v2Rows.length === 0 && pointARows.length > 0) {
+            v2Rows = prefillV2FromV1(pointARows);
+            updateState({ pointA_v2_rows: v2Rows });
+          }
+          return (
+            <div className={isReadOnly ? "opacity-80" : ""}>
+              <LessonBlockRenderer 
+                {...commonProps}
+                kvestProps={{
+                  rows: v2Rows,
+                  onRowsChange: isReadOnly ? undefined : handleDiagnosticTableV2Update,
+                  onComplete: isReadOnly ? undefined : () => handleDiagnosticTableV2Complete(blockId),
+                  isCompleted: state?.pointA_v2_completed || false,
+                  onReset: (state?.pointA_v2_completed) ? () => handleDiagnosticTableV2Reset(blockId) : undefined,
+                }}
+              />
+            </div>
+          );
+        }
+        // V1 — existing code unchanged
         return (
-          // Исправление 3: opacity-80 остаётся для визуального индикатора read-only,
-          // НО pointer-events-none убран с обёртки — кнопка "Редактировать" должна быть кликабельной.
-          // DiagnosticTableBlock сам блокирует inputs через disabled={isCompleted}.
           <div className={isReadOnly ? "opacity-80" : ""}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
-                rows: pointARows,  // ← КРИТИЧЕСКИ: данные передаются ВСЕГДА
+                rows: pointARows,
                 onRowsChange: isReadOnly ? undefined : handleDiagnosticTableUpdate,
                 onComplete: isReadOnly ? undefined : () => handleDiagnosticTableComplete(blockId),
                 isCompleted: state?.pointA_completed || false,
@@ -369,6 +416,7 @@ export function KvestLessonView({
             />
           </div>
         );
+      }
       
       case 'sequential_form':
         return (
@@ -400,20 +448,24 @@ export function KvestLessonView({
     state, 
     userRole,
     pointARows,
+    pointAV2Rows,
     pointBAnswers,
     savedSummary,
     handleRoleSelected,
     handleQuizSurveyReset,
     handleRoleDescriptionComplete,
-    
     handleVideoComplete,
     handleDiagnosticTableUpdate,
     handleDiagnosticTableComplete,
     handleDiagnosticTableReset,
+    handleDiagnosticTableV2Update,
+    handleDiagnosticTableV2Complete,
+    handleDiagnosticTableV2Reset,
     handleSequentialFormUpdate,
     handleSequentialFormComplete,
     handleSequentialFormReset,
     handleSummaryGenerated,
+    updateState,
   ]);
 
   // Get gate explanation for current block
@@ -564,7 +616,11 @@ export function KvestLessonView({
                   {block.block_type === 'quiz_survey' && <span className="text-sm text-muted-foreground">Тест</span>}
                   {block.block_type === 'role_description' && <span className="text-sm text-muted-foreground">Описание роли</span>}
                   {block.block_type === 'video_unskippable' && <span className="text-sm text-muted-foreground">Видео</span>}
-                  {block.block_type === 'diagnostic_table' && <span className="text-sm text-muted-foreground">Точка А</span>}
+                  {block.block_type === 'diagnostic_table' && (
+                    <span className="text-sm text-muted-foreground">
+                      {(block.content as any)?.version === 'v2' ? 'Аналитика портфеля' : 'Точка А'}
+                    </span>
+                  )}
                   {block.block_type === 'sequential_form' && <span className="text-sm text-muted-foreground">Точка Б</span>}
                 </div>
                 {isCompleted && (

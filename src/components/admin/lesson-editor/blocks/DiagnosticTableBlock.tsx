@@ -23,6 +23,16 @@ import {
   TableRow 
 } from "@/components/ui/table";
 import { Plus, Trash2, CheckCircle2, Settings2, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
+import {
+  DEFAULT_V2_COLUMNS,
+  calculateV2Computed,
+  calculateV2Aggregates,
+  formatV2Computed,
+  validateV2Rows,
+  CATEGORY_COLORS,
+  type DiagnosticTableV2Computed,
+} from "@/lib/diagnosticTableV1toV2";
 
 export interface DiagnosticTableColumn {
   id: string;
@@ -34,6 +44,7 @@ export interface DiagnosticTableColumn {
   required?: boolean;
   min?: number;
   max?: number;
+  condition?: 'client_only';
 }
 
 export interface DiagnosticTableContent {
@@ -44,6 +55,7 @@ export interface DiagnosticTableContent {
   showAggregates: boolean;
   submitButtonText: string;
   layout?: 'horizontal' | 'vertical';
+  version?: 'v1' | 'v2';
 }
 
 interface DiagnosticTableBlockProps {
@@ -94,7 +106,12 @@ export function DiagnosticTableBlock({
   onReset
 }: DiagnosticTableBlockProps) {
   const [showColumnSettings, setShowColumnSettings] = useState(false);
-  const columns = content.columns || DEFAULT_COLUMNS;
+  
+  // V2 version flag — all V2 logic branches on this
+  const isV2 = content.version === 'v2';
+  const columns = isV2 
+    ? (content.columns?.length ? content.columns : DEFAULT_V2_COLUMNS as DiagnosticTableColumn[])
+    : (content.columns?.length ? content.columns : DEFAULT_COLUMNS);
 
   // PATCH-1: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
@@ -181,7 +198,7 @@ export function DiagnosticTableBlock({
   const commitRows = flushAndCommit;
 
   // PATCH-V3: Calculate computed columns SAFELY (no eval!)
-  // Hardcoded support for known computed fields only
+  // V1 only — hardcoded support for known computed fields
   const calculateComputed = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn): number => {
     if (col.type !== 'computed') return 0;
     
@@ -192,23 +209,26 @@ export function DiagnosticTableBlock({
       const overheadHours = Number(row.overhead_hours) || 0;
       const totalHours = workHours + overheadHours;
       
-      // Prevent division by zero or negative hours
       if (totalHours <= 0) return 0;
       
       const result = income / totalHours;
-      // Ensure result is finite and positive
       if (!Number.isFinite(result) || result < 0) return 0;
       
       return Math.round(result * 100) / 100;
     }
     
-    // Unknown computed field — return 0 (no arbitrary formula execution)
     return 0;
   }, []);
 
-  // PATCH-5: Calculate aggregates per spec (4 values)
+  // V2: Pre-calculate all computed values (cross-row dependencies)
+  const v2ComputedMap = useMemo(() => {
+    if (!isV2) return null;
+    return localRows.map(row => calculateV2Computed(row, localRows));
+  }, [isV2, localRows]);
+
+  // PATCH-5: Calculate aggregates per spec (4 values) — V1
   const totalAggregates = useMemo(() => {
-    if (localRows.length === 0) return null;
+    if (isV2 || localRows.length === 0) return null;
     
     const total_income = localRows.reduce((sum, r) => sum + (Number(r.income) || 0), 0);
     const total_work_hours = localRows.reduce((sum, r) => sum + (Number(r.work_hours) || 0), 0);
@@ -217,7 +237,13 @@ export function DiagnosticTableBlock({
     const avg_hourly_rate = total_hours > 0 ? Math.round((total_income / total_hours) * 100) / 100 : 0;
     
     return { total_income, total_work_hours, total_overhead_hours, avg_hourly_rate };
-  }, [localRows]);
+  }, [isV2, localRows]);
+
+  // V2: Extended aggregates with category distribution
+  const v2Aggregates = useMemo(() => {
+    if (!isV2) return null;
+    return calculateV2Aggregates(localRows);
+  }, [isV2, localRows]);
 
   // Add new row - commit first then add
   const addRow = () => {
@@ -248,18 +274,44 @@ export function DiagnosticTableBlock({
     onRowsChange?.(newRows);
   };
 
-  // Check if can complete
+  // Check if can complete (basic check — V2 validation runs on submit)
   const canComplete = localRows.length >= (content.minRows || 1);
+
+  // Helper: get computed display value (V1 or V2)
+  const getComputedDisplay = useCallback((row: Record<string, unknown>, col: DiagnosticTableColumn, rowIndex: number): string => {
+    if (isV2 && v2ComputedMap) {
+      const computed = v2ComputedMap[rowIndex];
+      if (computed) {
+        const val = computed[col.id as keyof DiagnosticTableV2Computed];
+        return formatV2Computed(val ?? 0, col.id);
+      }
+      return '—';
+    }
+    return String(calculateComputed(row, col));
+  }, [isV2, v2ComputedMap, calculateComputed]);
+
+  // Helper: should column be visible for this row?
+  const isColumnVisible = useCallback((col: DiagnosticTableColumn, row: Record<string, unknown>): boolean => {
+    if (!isV2) return true;
+    if (col.condition === 'client_only' && String(row.source_type) !== 'клиент') return false;
+    return true;
+  }, [isV2]);
 
   if (isEditing) {
     return (
       <div className="space-y-4">
+        {isV2 && (
+          <Badge variant="outline" className="bg-teal-500/10 text-teal-600 border-teal-200">
+            Диагностическая таблица V2 — Аналитика портфеля
+          </Badge>
+        )}
+
         <div className="space-y-2">
           <Label>Заголовок</Label>
           <RichTextarea
             value={content.title || ''}
             onChange={(html) => onChange({ ...content, title: html })}
-            placeholder="Диагностика точки А"
+            placeholder={isV2 ? "Аналитика портфеля клиентов" : "Диагностика точки А"}
             inline
           />
         </div>
@@ -333,6 +385,11 @@ export function DiagnosticTableBlock({
             <p className="text-sm text-muted-foreground mb-2">
               Колонки: {columns.map(c => c.name).join(', ')}
             </p>
+            {isV2 && (
+              <p className="text-xs text-muted-foreground mb-1">
+                🔹 Клиентские поля (13–20) видны только для строк с типом «клиент»
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               Расширенная настройка колонок будет доступна в следующей версии
             </p>
@@ -345,7 +402,7 @@ export function DiagnosticTableBlock({
           {(content.layout === 'vertical') ? (
             <Card>
               <CardContent className="py-3 space-y-2">
-                {columns.map(col => (
+                {columns.filter(c => !c.condition).map(col => (
                   <div key={col.id} className="flex items-center justify-between gap-4 py-1 border-b last:border-b-0">
                     <span className="text-xs font-medium text-muted-foreground">{col.name}</span>
                     <span className="text-xs">
@@ -353,6 +410,11 @@ export function DiagnosticTableBlock({
                     </span>
                   </div>
                 ))}
+                {isV2 && (
+                  <div className="pt-2 border-t">
+                    <p className="text-xs text-muted-foreground italic">+ клиентские поля для строк типа «клиент»</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ) : (
@@ -361,7 +423,7 @@ export function DiagnosticTableBlock({
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs whitespace-nowrap w-8">#</TableHead>
-                    {columns.map(col => (
+                    {columns.filter(c => !c.condition).map(col => (
                       <TableHead key={col.id} className="text-xs whitespace-nowrap">
                         {col.name}
                       </TableHead>
@@ -371,7 +433,7 @@ export function DiagnosticTableBlock({
                 <TableBody>
                   <TableRow>
                     <TableCell className="text-xs text-muted-foreground">1</TableCell>
-                    {columns.map(col => (
+                    {columns.filter(c => !c.condition).map(col => (
                       <TableCell key={col.id} className="text-xs text-muted-foreground">
                         {col.type === 'computed' ? '(авто)' : col.type === 'select' ? (col.options?.[0] || '—') : col.type === 'slider' ? '5' : col.type === 'number' ? '0' : 'Пример'}
                       </TableCell>
@@ -388,6 +450,22 @@ export function DiagnosticTableBlock({
 
   // P0.9.11: Determine effective layout — force vertical on mobile
   const effectiveLayout = content.layout || 'horizontal';
+
+  // V2: Handle complete with validation
+  const handleV2Complete = () => {
+    flushAndCommit();
+    if (isV2) {
+      const errors = validateV2Rows(localRows);
+      if (errors.length > 0) {
+        // Show first 3 errors
+        const messages = errors.slice(0, 3).map(e => e.message);
+        if (errors.length > 3) messages.push(`...и ещё ${errors.length - 3} ошибок`);
+        toast.error(messages.join('\n'));
+        return;
+      }
+    }
+    onComplete?.();
+  };
 
   // Player mode
   return (
@@ -415,59 +493,71 @@ export function DiagnosticTableBlock({
                     </Button>
                   )}
                 </div>
-                {columns.map(col => (
-                  <div key={col.id} className="space-y-1">
-                    <Label className="text-xs">
-                      {col.name}
-                      {col.required && <span className="text-destructive ml-1">*</span>}
-                    </Label>
-                    <div className="w-full">
-                      {col.type === 'computed' ? (
-                        <Badge variant="secondary" className="font-mono">
-                          {calculateComputed(row, col)}
-                        </Badge>
-                      ) : col.type === 'select' && col.options ? (
-                        <Select
-                          value={String(row[col.id] || '')}
-                          onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
-                          disabled={isCompleted}
-                        >
-                          <SelectTrigger className="h-9 text-sm w-full">
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {col.options.map(opt => (
-                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : col.type === 'slider' ? (
-                        <div className="flex items-center gap-3">
-                          <Slider
-                            value={[Number(row[col.id]) || 5]}
-                            onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
-                            min={col.min || 1}
-                            max={col.max || 10}
-                            step={1}
-                            disabled={isCompleted}
-                            className="flex-1"
-                          />
-                          <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
-                            {String(row[col.id] || 5)}
+                {columns.map(col => {
+                  // V2: Skip client-only columns for non-client rows
+                  if (!isColumnVisible(col, row)) return null;
+                  return (
+                    <div key={col.id} className="space-y-1">
+                      <Label className="text-xs">
+                        {col.name}
+                        {col.required && <span className="text-destructive ml-1">*</span>}
+                      </Label>
+                      <div className="w-full">
+                        {col.type === 'computed' ? (
+                          <Badge variant="secondary" className="font-mono">
+                            {getComputedDisplay(row, col, rowIndex)}
                           </Badge>
-                        </div>
-                      ) : (
-                        <Input
-                          type={col.type === 'number' ? 'number' : 'text'}
-                          value={String(row[col.id] || '')}
-                          onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
-                          className="h-9 text-sm w-full"
-                          disabled={isCompleted}
-                        />
-                      )}
+                        ) : col.type === 'select' && col.options ? (
+                          <Select
+                            value={String(row[col.id] || '')}
+                            onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
+                            disabled={isCompleted}
+                          >
+                            <SelectTrigger className="h-9 text-sm w-full">
+                              <SelectValue placeholder="—" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {col.options.map(opt => (
+                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : col.type === 'slider' ? (
+                          <div className="flex items-center gap-3">
+                            <Slider
+                              value={[Number(row[col.id]) || 5]}
+                              onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+                              min={col.min || 1}
+                              max={col.max || 10}
+                              step={1}
+                              disabled={isCompleted}
+                              className="flex-1"
+                            />
+                            <Badge variant="outline" className="w-8 text-center text-xs shrink-0">
+                              {String(row[col.id] || 5)}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <Input
+                            type={col.type === 'number' ? 'number' : 'text'}
+                            value={String(row[col.id] || '')}
+                            onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
+                            className="h-9 text-sm w-full"
+                            disabled={isCompleted}
+                          />
+                        )}
+                      </div>
                     </div>
+                  );
+                })}
+                {/* V2: Show client category badge */}
+                {isV2 && String(row.source_type) === 'клиент' && v2ComputedMap?.[rowIndex] && (
+                  <div className="pt-2 border-t">
+                    <Badge className={CATEGORY_COLORS[v2ComputedMap[rowIndex].client_category] || 'bg-muted text-muted-foreground'}>
+                      {v2ComputedMap[rowIndex].client_category || '—'}
+                    </Badge>
                   </div>
-                ))}
+                )}
               </CardContent>
             </Card>
           ))}
@@ -482,12 +572,15 @@ export function DiagnosticTableBlock({
             <TableHeader className="sticky top-0 bg-background z-10">
               <TableRow>
                 <TableHead className="w-8">#</TableHead>
-                {columns.map(col => (
-                  <TableHead key={col.id} className="text-xs whitespace-nowrap">
-                    {col.name}
-                    {col.required && <span className="text-destructive ml-1">*</span>}
-                  </TableHead>
-                ))}
+                {columns.map(col => {
+                  // V2: Always show all column headers (client-only cols show "—" for non-client rows)
+                  return (
+                    <TableHead key={col.id} className="text-xs whitespace-nowrap">
+                      {col.name}
+                      {col.required && <span className="text-destructive ml-1">*</span>}
+                    </TableHead>
+                  );
+                })}
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
@@ -495,53 +588,63 @@ export function DiagnosticTableBlock({
               {localRows.map((row, rowIndex) => (
                 <TableRow key={row._id as string || rowIndex}>
                   <TableCell className="text-muted-foreground">{rowIndex + 1}</TableCell>
-                  {columns.map(col => (
-                    <TableCell key={col.id} className="p-1">
-                      {col.type === 'computed' ? (
-                        <Badge variant="secondary" className="font-mono">
-                          {calculateComputed(row, col)}
-                        </Badge>
-                      ) : col.type === 'select' && col.options ? (
-                        <Select
-                          value={String(row[col.id] || '')}
-                          onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
-                          disabled={isCompleted}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {col.options.map(opt => (
-                              <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : col.type === 'slider' ? (
-                        <div className="flex items-center gap-2 min-w-[100px]">
-                          <Slider
-                            value={[Number(row[col.id]) || 5]}
-                            onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
-                            min={col.min || 1}
-                            max={col.max || 10}
-                            step={1}
-                            disabled={isCompleted}
-                            className="w-16"
-                          />
-                          <Badge variant="outline" className="w-6 text-center text-xs">
-                            {String(row[col.id] || 5)}
+                  {columns.map(col => {
+                    // V2: Show "—" for client-only columns in non-client rows
+                    if (!isColumnVisible(col, row)) {
+                      return (
+                        <TableCell key={col.id} className="p-1">
+                          <span className="text-muted-foreground text-xs">—</span>
+                        </TableCell>
+                      );
+                    }
+                    return (
+                      <TableCell key={col.id} className="p-1">
+                        {col.type === 'computed' ? (
+                          <Badge variant="secondary" className="font-mono">
+                            {getComputedDisplay(row, col, rowIndex)}
                           </Badge>
-                        </div>
-                      ) : (
-                        <Input
-                          type={col.type === 'number' ? 'number' : 'text'}
-                          value={String(row[col.id] || '')}
-                          onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
-                          className="h-8 text-xs"
-                          disabled={isCompleted}
-                        />
-                      )}
-                    </TableCell>
-                  ))}
+                        ) : col.type === 'select' && col.options ? (
+                          <Select
+                            value={String(row[col.id] || '')}
+                            onValueChange={(v) => updateLocalRow(rowIndex, col.id, v)}
+                            disabled={isCompleted}
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue placeholder="—" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {col.options.map(opt => (
+                                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : col.type === 'slider' ? (
+                          <div className="flex items-center gap-2 min-w-[100px]">
+                            <Slider
+                              value={[Number(row[col.id]) || 5]}
+                              onValueChange={([v]) => updateLocalRow(rowIndex, col.id, v)}
+                              min={col.min || 1}
+                              max={col.max || 10}
+                              step={1}
+                              disabled={isCompleted}
+                              className="w-16"
+                            />
+                            <Badge variant="outline" className="w-6 text-center text-xs">
+                              {String(row[col.id] || 5)}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <Input
+                            type={col.type === 'number' ? 'number' : 'text'}
+                            value={String(row[col.id] || '')}
+                            onChange={(e) => updateLocalRow(rowIndex, col.id, col.type === 'number' ? Number(e.target.value) : e.target.value)}
+                            className="h-8 text-xs"
+                            disabled={isCompleted}
+                          />
+                        )}
+                      </TableCell>
+                    );
+                  })}
                   <TableCell>
                     {!isCompleted && (
                       <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => deleteRow(rowIndex)}>
@@ -564,8 +667,8 @@ export function DiagnosticTableBlock({
         </Button>
       )}
 
-      {/* PATCH-5: Aggregates per spec - 4 values */}
-      {content.showAggregates && totalAggregates && localRows.length > 0 && (
+      {/* V1: Aggregates per spec - 4 values */}
+      {!isV2 && content.showAggregates && totalAggregates && localRows.length > 0 && (
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="py-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -590,14 +693,44 @@ export function DiagnosticTableBlock({
         </Card>
       )}
 
+      {/* V2: Extended aggregates with category distribution */}
+      {isV2 && content.showAggregates && v2Aggregates && localRows.length > 0 && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardContent className="py-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm mb-3">
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Общий доход</p>
+                <p className="font-bold text-lg">{v2Aggregates.total_income.toLocaleString()} BYN/мес</p>
+              </div>
+              <div className="text-center">
+                <p className="text-muted-foreground text-xs">Общие часы</p>
+                <p className="font-semibold">{v2Aggregates.total_hours} ч</p>
+              </div>
+              <div className="text-center bg-primary/10 rounded-lg py-1">
+                <p className="text-muted-foreground text-xs">Средний доход/час</p>
+                <p className="font-bold text-lg text-primary">{v2Aggregates.avg_hourly_income} BYN</p>
+              </div>
+            </div>
+            {Object.keys(v2Aggregates.category_counts).length > 0 && (
+              <div className="border-t pt-3">
+                <p className="text-xs text-muted-foreground mb-2">Распределение клиентов по категориям</p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(v2Aggregates.category_counts).map(([cat, count]) => (
+                    <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
+                      {cat}: {count}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Complete button */}
       {!isCompleted ? (
         <Button
-          onClick={() => {
-            // PATCH P0.9.5: Flush any pending debounced saves before completing
-            flushAndCommit();
-            onComplete?.();
-          }}
+          onClick={handleV2Complete}
           disabled={!canComplete}
           variant="default"
           className="w-full"
@@ -609,7 +742,7 @@ export function DiagnosticTableBlock({
         <div className="flex flex-col items-center gap-3 py-2">
           <div className="flex items-center gap-2 text-primary">
             <CheckCircle2 className="h-5 w-5" />
-            <span className="font-medium">Диагностика завершена</span>
+            <span className="font-medium">{isV2 ? 'Аналитика завершена' : 'Диагностика завершена'}</span>
           </div>
           {onReset && (
             <Button 
