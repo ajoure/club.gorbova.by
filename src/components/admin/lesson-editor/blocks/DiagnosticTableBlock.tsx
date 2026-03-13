@@ -122,6 +122,80 @@ export function DiagnosticTableBlock({
     ? (content.columns?.length ? content.columns : DEFAULT_V2_COLUMNS as DiagnosticTableColumn[])
     : (content.columns?.length ? content.columns : DEFAULT_COLUMNS);
 
+  // ── Source lesson ID editor state (admin only, V2 only) ──
+  const [sourceLessonInput, setSourceLessonInput] = useState((content as any).source_lesson_id || '');
+  const debouncedSourceId = useDebouncedValue(sourceLessonInput, 600);
+  const [sourceValidation, setSourceValidation] = useState<{
+    status: 'idle' | 'loading' | 'valid' | 'error_not_found' | 'error_no_v1';
+    lessonTitle?: string;
+  }>({ status: sourceLessonInput ? 'loading' : 'idle' });
+
+  // Validate source_lesson_id on debounced value change
+  useEffect(() => {
+    if (!isV2 || !isEditing) return;
+    
+    const id = debouncedSourceId.trim();
+    if (!id) {
+      setSourceValidation({ status: 'idle' });
+      return;
+    }
+
+    // UUID format check
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(id)) {
+      setSourceValidation({ status: 'error_not_found' });
+      return;
+    }
+
+    let cancelled = false;
+    setSourceValidation({ status: 'loading' });
+
+    (async () => {
+      // 1. Check lesson exists
+      const { data: lesson } = await supabase
+        .from('training_lessons')
+        .select('id, title')
+        .eq('id', id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (!lesson) {
+        setSourceValidation({ status: 'error_not_found' });
+        return;
+      }
+      // 2. Check has V1 diagnostic_table block
+      const { data: blocks } = await supabase
+        .from('lesson_blocks')
+        .select('id, content')
+        .eq('lesson_id', id)
+        .eq('block_type', 'diagnostic_table');
+      if (cancelled) return;
+      const hasV1 = blocks?.some(b => {
+        const ver = (b.content as any)?.version;
+        return !ver || ver !== 'v2';
+      });
+      if (!hasV1) {
+        setSourceValidation({ status: 'error_no_v1', lessonTitle: lesson.title });
+        return;
+      }
+      setSourceValidation({ status: 'valid', lessonTitle: lesson.title });
+    })();
+
+    return () => { cancelled = true; };
+  }, [debouncedSourceId, isV2, isEditing]);
+
+  // Commit source_lesson_id to content on debounced change
+  useEffect(() => {
+    if (!isV2 || !isEditing) return;
+    const current = (content as any).source_lesson_id || '';
+    const trimmed = debouncedSourceId.trim();
+    if (trimmed !== current) {
+      onChange({ ...content, source_lesson_id: trimmed } as any);
+    }
+  }, [debouncedSourceId]); // intentionally minimal deps to avoid loops
+  const columns = isV2 
+    ? (content.columns?.length ? content.columns : DEFAULT_V2_COLUMNS as DiagnosticTableColumn[])
+    : (content.columns?.length ? content.columns : DEFAULT_COLUMNS);
+
   // PATCH: Local state for rows to prevent focus loss
   const [localRows, setLocalRows] = useState<Record<string, unknown>[]>([]);
   
