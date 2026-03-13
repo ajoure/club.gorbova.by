@@ -110,9 +110,15 @@ export function KvestLessonView({
       case 'video':
         return true;
       
-      case 'diagnostic_table':
+      case 'diagnostic_table': {
+        const version = (block.content as any)?.version;
+        if (version === 'v2') {
+          const hasV2Rows = (state?.pointA_v2_rows?.length ?? 0) > 0;
+          return hasV2Rows && state?.pointA_v2_completed === true;
+        }
         const hasRows = (state?.pointA_rows?.length ?? 0) > 0;
         return hasRows && state?.pointA_completed === true;
+      }
       
       case 'sequential_form':
         return state?.pointB_completed === true;
