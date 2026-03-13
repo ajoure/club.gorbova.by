@@ -569,7 +569,7 @@ export function StudentProgressModal({
                           const sizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : null;
                           return (
                             <div key={fi} className="flex items-center gap-2 group">
-                              <FileIcon className={`h-4 w-4 shrink-0 ${color}`} />
+                              <FileIcon className={`h-4 w-4 shrink-0 ${colorClass}`} />
                               <button
                                 onClick={() => downloadFile(file.storage_path, file.original_name)}
                                 className="text-sm text-primary hover:underline truncate"
