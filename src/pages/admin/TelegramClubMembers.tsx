@@ -81,7 +81,7 @@ import {
 import { 
   useTelegramClubs, 
   useClubMembers, 
-  useClubMemberStats,
+  useClubMemberSummary,
   useClubBusinessStats,
   useSyncClubMembers,
   useKickViolators,
@@ -89,6 +89,7 @@ import {
   useRevokeTelegramAccess,
   EnrichedClubMember,
   ClubMemberScope,
+  ClubMemberSummary,
 } from '@/hooks/useTelegramIntegration';
 import { useClubAdmins } from '@/hooks/useClubAdmins';
 import { Switch } from '@/components/ui/switch';
