@@ -636,6 +636,7 @@ export interface ClubMemberSummary {
   bought_not_joined_count: number;
   violators_count: number;
   removed_count: number;
+  admins_total: number;
   outside_system_count: number | null;
   total_synced: number;
   orphaned: number;
