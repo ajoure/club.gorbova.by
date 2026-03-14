@@ -902,11 +902,7 @@ export default function TelegramClubMembers() {
           isError={isStatsError}
           onTabChange={setActiveTab}
           violatorsCount={counts.violators}
-          outsideSystemCount={
-            club?.members_count_chat !== undefined && stats?.in_chat !== undefined
-              ? Math.max(0, (club.members_count_chat ?? 0) - (stats.in_chat ?? 0))
-              : null
-          }
+          outsideSystemCount={summary?.outside_system_count ?? null}
           period={businessStatsPeriod}
           onPeriodChange={setBusinessStatsPeriod}
         />
