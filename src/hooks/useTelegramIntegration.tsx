@@ -777,7 +777,6 @@ export interface ClubTariffStat {
 
 export interface ClubBusinessStats {
   tariffs: ClubTariffStat[];
-  totalWithAccess: number;
   newCount: number | null;
   revokedCount: number | null;
 }
