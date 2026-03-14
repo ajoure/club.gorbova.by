@@ -1188,12 +1188,12 @@ export default function TelegramClubMembers() {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-center gap-1 cursor-help">
-                            <span>В Telegram</span>
+                            <span>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}</span>
                             <HelpCircle className="h-3 w-3 text-muted-foreground" />
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Чат / Канал (getChatMember)</p>
+                          <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
                           <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
                         </TooltipContent>
                       </Tooltip>
