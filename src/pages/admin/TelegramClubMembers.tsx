@@ -151,6 +151,9 @@ export default function TelegramClubMembers() {
     search: debouncedSearch 
   });
   const { data: summary, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberSummary(clubId || null);
+  const resourceMode = summary?.resource_mode ?? 'chat_and_channel';
+  const hasChat = resourceMode !== 'channel_only';
+  const hasChannel = resourceMode !== 'chat_only';
   const [businessStatsPeriod, setBusinessStatsPeriod] = useState(30);
   const { data: businessStats, isLoading: isBusinessStatsLoading } = useClubBusinessStats(clubId || null, businessStatsPeriod);
   
@@ -284,18 +287,24 @@ export default function TelegramClubMembers() {
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
 
-    const headers = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа', 'Чат', 'Канал', 'Email', 'Телефон'];
-    const rows = filteredMembers.map(m => [
-      m.telegram_user_id,
-      m.telegram_username || '',
-      `${m.telegram_first_name || ''} ${m.telegram_last_name || ''}`.trim(),
-      m.link_status === 'linked' ? 'Связан' : 'Не связан',
-      m.access_status === 'ok' ? 'OK' : m.access_status === 'no_access' ? 'Нет доступа' : m.access_status,
-      m.in_chat ? 'Да' : 'Нет',
-      m.in_channel ? 'Да' : 'Нет',
-      m.profiles?.email || '',
-      m.profiles?.phone || '',
-    ]);
+    const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
+    if (hasChat) baseHeaders.push('Чат');
+    if (hasChannel) baseHeaders.push('Канал');
+    baseHeaders.push('Email', 'Телефон');
+    const headers = baseHeaders;
+    const rows = filteredMembers.map(m => {
+      const row: (string | number | boolean | null)[] = [
+        m.telegram_user_id,
+        m.telegram_username || '',
+        `${m.telegram_first_name || ''} ${m.telegram_last_name || ''}`.trim(),
+        m.link_status === 'linked' ? 'Связан' : 'Не связан',
+        m.access_status === 'ok' ? 'OK' : m.access_status === 'no_access' ? 'Нет доступа' : m.access_status,
+      ];
+      if (hasChat) row.push(m.in_chat ? 'Да' : 'Нет');
+      if (hasChannel) row.push(m.in_channel ? 'Да' : 'Нет');
+      row.push(m.profiles?.email || '', m.profiles?.phone || '');
+      return row;
+    });
 
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -683,9 +692,9 @@ export default function TelegramClubMembers() {
     }
   };
 
-  // Calculate selected members present in chat/channel
+  // Calculate selected members present in chat/channel (resource-mode aware)
   const selectedPresentMembers = useMemo(() => {
-    return selectedMembers.filter(m => m.in_chat || m.in_channel);
+    return selectedMembers.filter(m => m.in_any);
   }, [selectedMembers]);
 
   // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
@@ -764,7 +773,7 @@ export default function TelegramClubMembers() {
     }
   };
 
-  // Telegram status display - CHAT is master, CHANNEL is derived
+  // Telegram status display — resource-mode aware
   const getTelegramStatus = (member: EnrichedClubMember) => {
     const inChat = member.in_chat;
     const inChannel = member.in_channel;
@@ -803,6 +812,40 @@ export default function TelegramClubMembers() {
       `Проверено: ${format(new Date(lastCheck), 'dd.MM.yy HH:mm', { locale: ru })}` : 
       'Не проверялось';
 
+    // Resource-mode aware: only show relevant icons
+    if (!hasChannel) {
+      // Chat-only mode
+      return (
+        <div className="flex items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger>{getChatIcon()}</TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Чат</p>
+              <p>{getChatTooltip()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      );
+    }
+
+    if (!hasChat) {
+      // Channel-only mode
+      return (
+        <div className="flex items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger>{getChannelIcon()}</TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Канал</p>
+              <p>{getChannelTooltip()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      );
+    }
+
+    // Chat + Channel mode
     return (
       <div className="flex items-center justify-center gap-1">
         <Tooltip>
@@ -872,7 +915,8 @@ export default function TelegramClubMembers() {
           <div>
             <h1 className="text-2xl font-bold">Участники: {club.club_name}</h1>
             <p className="text-muted-foreground">
-              Управление участниками чата и канала
+              {hasChat && hasChannel ? 'Управление участниками чата и канала' :
+               hasChat ? 'Управление участниками чата' : 'Управление участниками канала'}
             </p>
           </div>
         </div>
@@ -1144,12 +1188,12 @@ export default function TelegramClubMembers() {
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <div className="flex items-center justify-center gap-1 cursor-help">
-                            <span>В Telegram</span>
+                            <span>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'В чате' : 'В канале'}</span>
                             <HelpCircle className="h-3 w-3 text-muted-foreground" />
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>Чат / Канал (getChatMember)</p>
+                          <p>{hasChat && hasChannel ? 'Чат / Канал' : hasChat ? 'Чат' : 'Канал'} (getChatMember)</p>
                           <p className="text-xs text-muted-foreground">Выберите участников и нажмите «Проверить статусы»</p>
                         </TooltipContent>
                       </Tooltip>
@@ -1160,7 +1204,7 @@ export default function TelegramClubMembers() {
                 <TableBody>
                   {filteredMembers.map((member) => {
                     // Use has_active_access as source of truth for violator detection
-                    const isViolator = !member.has_active_access && (member.in_chat === true || member.in_channel === true);
+                    const isViolator = !member.has_active_access && member.in_any;
                     const effectiveNoAccess = !member.has_active_access && (member.access_status === 'no_access' || member.access_status === 'removed');
                     
                     return (
@@ -1196,7 +1240,7 @@ export default function TelegramClubMembers() {
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <p className="font-medium text-red-500">Нарушитель</p>
-                                    <p>Находится в {member.in_chat ? 'чате' : ''}{member.in_chat && member.in_channel ? ' и ' : ''}{member.in_channel ? 'канале' : ''}, но без доступа</p>
+                                    <p>Находится в {hasChat && member.in_chat ? 'чате' : ''}{hasChat && member.in_chat && hasChannel && member.in_channel ? ' и ' : ''}{hasChannel && member.in_channel ? 'канале' : ''}, но без доступа</p>
                                     <p className="text-xs mt-1">Подлежит автоматическому удалению</p>
                                   </TooltipContent>
                                 </Tooltip>
