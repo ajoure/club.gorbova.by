@@ -767,7 +767,7 @@ export default function TelegramClubMembers() {
     }
   };
 
-  // Telegram status display - CHAT is master, CHANNEL is derived
+  // Telegram status display — resource-mode aware
   const getTelegramStatus = (member: EnrichedClubMember) => {
     const inChat = member.in_chat;
     const inChannel = member.in_channel;
@@ -806,6 +806,40 @@ export default function TelegramClubMembers() {
       `Проверено: ${format(new Date(lastCheck), 'dd.MM.yy HH:mm', { locale: ru })}` : 
       'Не проверялось';
 
+    // Resource-mode aware: only show relevant icons
+    if (!hasChannel) {
+      // Chat-only mode
+      return (
+        <div className="flex items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger>{getChatIcon()}</TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Чат</p>
+              <p>{getChatTooltip()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      );
+    }
+
+    if (!hasChat) {
+      // Channel-only mode
+      return (
+        <div className="flex items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger>{getChannelIcon()}</TooltipTrigger>
+            <TooltipContent>
+              <p className="font-medium">Канал</p>
+              <p>{getChannelTooltip()}</p>
+              <p className="text-xs text-muted-foreground mt-1">{lastCheckInfo}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      );
+    }
+
+    // Chat + Channel mode
     return (
       <div className="flex items-center justify-center gap-1">
         <Tooltip>
