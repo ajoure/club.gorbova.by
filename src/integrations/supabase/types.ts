@@ -10735,7 +10735,7 @@ export type Database = {
         }[]
       }
       search_club_members_enriched: {
-        Args: { p_club_id: string; p_query: string; p_scope?: string }
+        Args: { p_club_id: string; p_scope?: string; p_search: string }
         Returns: {
           access_status: string
           auth_user_id: string

@@ -243,15 +243,17 @@ export default function TelegramClubMembers() {
 
   // Phase 8: Use backend summary counts instead of client-side .filter()
   const counts = useMemo(() => {
-    if (!summary) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
+    if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
     
     return {
       in_club: summary.in_club_total,
+      in_club_regular: summary.in_club_regular,
+      in_club_admins: summary.in_club_admins,
       with_access: summary.with_access_total,
       bought_not_joined: summary.bought_not_joined_count,
       violators: summary.violators_count,
       removed: summary.removed_count,
-      admins: summary.in_club_admins + botAdminsNotInMembers.length,
+      admins: summary.admins_total ?? (summary.in_club_admins + botAdminsNotInMembers.length),
     };
   }, [summary, botAdminsNotInMembers]);
 
@@ -989,7 +991,11 @@ export default function TelegramClubMembers() {
               <TabsTrigger value="in_club" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><Users className="h-4 w-4" /></span>
                 В клубе
-                <Badge variant="secondary" className="h-5 px-1.5 text-xs">{counts.in_club}</Badge>
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                  {counts.in_club_admins > 0 
+                    ? `${counts.in_club_regular} (+${counts.in_club_admins} адм.) = ${counts.in_club}`
+                    : counts.in_club}
+                </Badge>
               </TabsTrigger>
               <TabsTrigger value="with_access" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
                 <span className="hidden sm:inline"><UserCheck className="h-4 w-4" /></span>
