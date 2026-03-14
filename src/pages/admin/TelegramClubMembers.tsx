@@ -1240,7 +1240,7 @@ export default function TelegramClubMembers() {
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <p className="font-medium text-red-500">Нарушитель</p>
-                                    <p>Находится в {member.in_chat ? 'чате' : ''}{member.in_chat && member.in_channel ? ' и ' : ''}{member.in_channel ? 'канале' : ''}, но без доступа</p>
+                                    <p>Находится в {hasChat && member.in_chat ? 'чате' : ''}{hasChat && member.in_chat && hasChannel && member.in_channel ? ' и ' : ''}{hasChannel && member.in_channel ? 'канале' : ''}, но без доступа</p>
                                     <p className="text-xs mt-1">Подлежит автоматическому удалению</p>
                                   </TooltipContent>
                                 </Tooltip>
