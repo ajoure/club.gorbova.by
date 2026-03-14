@@ -14,6 +14,43 @@
 
 > **Club ↔ Product integrity.** Доступ в клуб выдаётся ТОЛЬКО если источник доступа (subscription/deal/order) относится именно к продукту, замапленному на этот клуб. Cross-product / cross-club выдача запрещена.
 
+> **Architectural gate.** ФАЗЫ 8–10 НЕ переходят в execute-режим, пока не завершены 11A и 11B. Если при 11A найден хоть один club-specific branch или hardcoded path — STOP, сначала закрыть 11B.
+
+> **Club SoT chain.** `club_id` + `telegram_clubs` + `product_club_mappings` = единственный SoT клубной логики. Все derived flags (`in_any`, `has_active_access`, `is_bought_not_joined`, `is_violator`, `removed-visible`, counters, quick stats, restore eligibility) считаются ТОЛЬКО от этого SoT. Client-side reinterpretations backend-флагов запрещены.
+
+> **Club-as-SoT.** `club_id` — единственный ключ всей клубной логики. Не допускается отдельных реализаций для разных клубов. Один движок, одна логика меню/статистики/вкладок/участников/доступов/уведомлений. Различия — только через `club_id` и `club_config`.
+
+> **Club-specific code запрещён.** Запрещены:
+> - `if`/`switch`/`branch` по названию клуба
+> - Hardcoded club UUID или name в логике (SQL, RPC, edge functions, UI)
+> - Отдельные RPC/SQL/view/cron под конкретный клуб
+> - Разрешена ТОЛЬКО параметризация по `club_id` и config клуба
+
+> **Per-club isolation.** Запрещено использовать "общий telegram presence" пользователя. Только chat/channel states именно этого `club_id`. Если пользователь состоит в чате клуба A, это не влияет на его статус в клубе B.
+
+> **No club_id → no send.** Любая outbound Telegram action (DM, invite link, notification) без валидного `club_id` блокируется на уровне edge function. Отсутствие `club_id` = ошибка, не fallback.
+
+> **БкБ — P0.** Сначала довести БкБ до полной консистентности (все фазы, все proofs). Затем GC проходит через **тот же code path** без отдельной логики. Если GC требует отдельной ветки — это дефект.
+
+---
+
+## Club Config как authoritative source
+
+Единый конфиг клуба (из таблицы `telegram_clubs`) — единственный источник ресурсной конфигурации:
+
+```text
+club_config = {
+  club_id,
+  telegram_chat_id,       -- может быть NULL
+  telegram_channel_id,    -- может быть NULL
+  has_chat: telegram_chat_id IS NOT NULL,
+  has_channel: telegram_channel_id IS NOT NULL,
+  product_ids: (из product_club_mappings)
+}
+```
+
+Вся логика `in_any`, `not_joined`, `violators`, `removed`, counters и UI строится от этого конфига. `has_chat`/`has_channel` — computed поля, не хранятся отдельно.
+
 ---
 
 ## STOP-GUARD (глобальный)
@@ -97,207 +134,58 @@
 
 ## ФАЗА 0: Диагностика (root-cause с доказательствами)
 
-### 0.1 Источник UPDATE subscription 90d3dda1 в 19:06:02
-
-**Требуется доказать (не предположить):**
-- Какие **конкретные поля** были before/after (diff)
-- Кто был **actor/source** (UI, edge function, cron, trigger) — имя функции/компонента
-- Какой **код/функция** инициировала UPDATE
-- Какой **queue item** был создан из-за этого UPDATE (id, created_at, action)
-- Полная цепочка: UPDATE → trigger → queue item → grant invoke → DM sent
-
-**Методы:**
-- `audit_logs` за ±5 секунд от 19:06:02 для subscription 90d3dda1
-- `telegram_access_audit` за тот же период
-- `telegram_access_queue` — запись с user_id Рыштаковой, created_at ~19:06
-- Edge function logs `telegram-revoke-access` за 19:06
-- Edge function logs `telegram-grant-access` за 19:06-19:10
-- `telegram_logs` за 19:06-19:10 для Рыштаковой — source_function, message type
-
-### 0.2 Что именно сделал UI при Save
-
-- Проверить, обновляет ли `EditSubscriptionDialog` поля подписки (status, access_end_at, notes и т.д.) ДО или ПОСЛЕ вызова revoke
-- Если да — это и есть источник UPDATE, запускающего trigger
+- Собрать логи queue items, telegram_logs, audit_logs для подозрительных случаев
+- Проверить, что UI форсит локальный state при revoke
+- Проверить SQL-триггер subscription_grant_telegram на whitelist полей
+- Проверить, что Save вызывает grant без изменения основания
+- Проверить, что нет проверки club-product linkage в edge functions
+- Составить список всех мест с hardcoded club UUID/name
 
 ---
 
 ## ФАЗА 1: SQL-триггер `subscription_grant_telegram` — корень ложного auto-grant
 
-### Whitelist полей, при изменении которых допускается grant:
-
-Grant в очередь допускается **ТОЛЬКО** если изменились поля, реально влияющие на доступ:
-- `status` (переход в active/trial)
-- `access_end_at` (продление)
-- `tariff_id` (смена тарифа)
-- `product_id` (смена продукта)
-
-Любые другие UPDATE (`notes`, `meta`, `updated_at`, `payment_method_id` и т.д.) — **НЕ триггерят grant**.
-
-### Guards в триггерной функции:
-
-```sql
--- Guard 1: whitelist полей — реагировать ТОЛЬКО на значимые изменения
-IF NOT (
-  OLD.status IS DISTINCT FROM NEW.status OR
-  OLD.access_end_at IS DISTINCT FROM NEW.access_end_at OR
-  OLD.tariff_id IS DISTINCT FROM NEW.tariff_id OR
-  OLD.product_id IS DISTINCT FROM NEW.product_id
-) THEN
-  RETURN NEW; -- технический UPDATE, игнорируем
-END IF;
-
--- Guard 2: не ставить в очередь, если access_end_at уже истёк
-IF NEW.access_end_at IS NOT NULL AND NEW.access_end_at < NOW() THEN
-  RETURN NEW;
-END IF;
-
--- Guard 3: не ставить в очередь, если есть свежий revoke (race protection)
-IF EXISTS (
-  SELECT 1 FROM telegram_access
-  WHERE user_id = NEW.user_id
-    AND state_chat = 'revoked'
-    AND updated_at > NOW() - INTERVAL '5 minutes'
-) THEN
-  RETURN NEW;
-END IF;
-
--- Guard 4 (NEW): бизнес-смысл — не ставить grant если статус не перешёл
--- в реально активное состояние и срок не продлён вперёд
-IF TG_OP = 'UPDATE' THEN
-  IF OLD.status = NEW.status
-     AND (OLD.access_end_at IS NOT DISTINCT FROM NEW.access_end_at
-          OR NEW.access_end_at <= OLD.access_end_at)
-     AND OLD.tariff_id IS NOT DISTINCT FROM NEW.tariff_id
-     AND OLD.product_id IS NOT DISTINCT FROM NEW.product_id
-  THEN
-    RETURN NEW; -- пересохранение без бизнес-изменения
-  END IF;
-END IF;
-```
+- Добавить whitelist полей, при изменении которых триггер срабатывает
+- Добавить guard на expired подписки
+- Добавить guard на race condition с revoke (проверять состояние revoke)
+- Добавить guard на бизнес-смысл (только при реальном изменении основания)
+- Логировать reason_code в audit_logs
 
 ---
 
 ## ФАЗА 1.5 (NEW): Диагностика Save-flow
 
-**Цель:** доказуемо установить, что именно меняет Save и почему это приводит к ложному grant.
-
-### Что нужно доказать:
-
-1. Какие поля в `subscriptions_v2` меняются при **обычном Save** (без изменений в форме)
-2. Какие поля меняются после сценария **Revoke → Save**
-3. Какой именно UPDATE снова активирует `subscription_grant_telegram`
-4. Не меняются ли при Save поля `status`, `access_end_at`, `tariff_id`, `product_id` — или меняются из-за serialization mismatch (toISOString vs DB format)
-
-### Методы диагностики:
-
-1. **Код `EditSubscriptionDialog.tsx`**: точный diff updateMutation — какие поля отправляются
-2. **SQL diff before/after**: запрос `subscriptions_v2` до и после Save для конкретной записи
-3. **`telegram_access_queue`**: появился ли новый queue item после Save
-4. **`audit_logs`**: запись с trigger_type / source_function
-
-### DoD фазы:
-
-- [ ] SQL diff before/after Save по записи подписки
-- [ ] Proof, какой UPDATE создал queue item
-- [ ] Proof, какие поля реально изменились, а какие были пересохранены без смысла
-- [ ] Proof из кода, какие поля передаются в updateMutation
+- Проверить все UI-точки Save (EditSubscriptionDialog, EditDealDialog, DealDetailSheet, AdminDeals)
+- Проверить, что updateMutation отправляет все поля
+- Проверить, что UI напрямую пишет telegram_access (active_until, state_chat, state_channel)
+- Проверить, что Save не передаёт is_manual/admin_id
 
 ---
 
 ## ФАЗА 2: Backend guards — единая централизованная проверка доступа
 
-### Единое правило:
-
-> `telegram-process-access-queue`, `telegram-grant-access`, `v_club_members_enriched`, и UI — все опираются на **одну и ту же** централизованную проверку доступа (`_shared/accessValidation.ts` / SQL-функция `has_valid_access_for_club`).
-> Нельзя допускать отдельных локальных трактовок валидного доступа.
-
-### Правило приоритета гонок:
-
-> **Revoke сильнее grant.** Если revoke и grant пересеклись по времени, grant блокируется, пока не появится новое валидное основание после revoke.
-> Механизм: перед grant проверять `telegram_access.updated_at` на наличие revoke за последние 60 секунд для того же user+club; если есть — требовать явный `source: 'manual'` или новое валидное основание.
-
-### `telegram-process-access-queue/index.ts`:
-
-- Импорт `hasValidAccess` из `_shared/accessValidation.ts`
-- Перед вызовом `telegram-grant-access`: `hasValidAccess(item.user_id, item.club_id)`
-- Если нет доступа → status = `skipped`, reason = `no_valid_access`, **НЕ** вызывать grant
-- Проверка race: если `telegram_access.state_chat = 'revoked'` и `updated_at` < 5 min назад → status = `skipped`, reason = `recent_revoke`
-
-### `telegram-grant-access/index.ts`:
-
-- Перед выдачей доступа:
-  1. Проверить `telegram_access.state_chat` для user+club
-  2. Если `revoked` и source ≠ `manual` → проверить `hasValidAccess(user_id, club_id)`
-  3. Если нет валидного доступа → refuse grant, log с `decision: 'grant_blocked'`, `reason_code: 'no_valid_access_after_revoke'`
-- Перед отправкой DM: финальная повторная проверка `hasValidAccess`
+- В `telegram-grant-access` и `telegram-process-access-queue` добавить проверку:
+  - Проверять, что нет активного revoke
+  - Проверять, что subscription.product_id соответствует club_id через product_club_mappings
+  - Проверять, что grant создаётся только при валидном основании
+- Логировать все решения с reason_code, trigger_type, decision
 
 ---
 
 ## ФАЗА 2.5 (NEW): Save ≠ Grant — исправление `EditSubscriptionDialog.tsx`
 
-### Жёсткое правило:
-
-> Обычное сохранение карточки подписки НЕ равно grant. Если пользователь не изменил ни одного поля — UPDATE не должен отправляться вообще.
-
-### Конкретные изменения в `EditSubscriptionDialog.tsx`:
-
-#### 1. Diff-only UPDATE в `updateMutation`:
-
-```typescript
-const changes: Record<string, any> = {};
-if (formData.status !== subscription.status) changes.status = formData.status;
-if (formData.access_end_at !== subscription.access_end_at) changes.access_end_at = formData.access_end_at;
-if (formData.tariff_id !== subscription.tariff_id) changes.tariff_id = formData.tariff_id;
-if (formData.product_id !== subscription.product_id) changes.product_id = formData.product_id;
-// ... другие поля
-
-if (Object.keys(changes).length === 0) {
-  toast.info("Нет изменений");
-  return;
-}
-// Только тогда: await supabase.from('subscriptions_v2').update(changes).eq('id', ...)
-```
-
-#### 2. Убрать прямой write `telegram_access.active_until` (строки 280-283):
-
-Если нужно синхронизировать active_until — делать через backend (edge function или trigger), не из UI напрямую.
-
-#### 3. Убрать прямой write `state_chat/state_channel='granted'` (строки 341-348 в `grantTelegramAccess`):
-
-Вызывать только `telegram-grant-access` edge function. UI не должен напрямую менять state в telegram_access.
-
-#### 4. After Save — НЕ должен:
-- ставить queue item grant
-- вызывать telegram-grant-access
-- отправлять DM
-- менять telegram_access в сторону выдачи
+- Убрать прямые update telegram_access из UI
+- Передавать `is_manual: true` и `admin_id` при revoke/grant
+- Обрабатывать ответ backend, если `blocked: true` — не менять локальный state, показывать toast.warning
+- Все UI-точки revoke и grant должны следовать этому правилу
 
 ---
 
 ## ФАЗА 2.6 (NEW): Club-product linkage integrity
 
-### Guard соответствия club ↔ product при grant:
-
-В `telegram-grant-access` и `telegram-process-access-queue` перед выдачей доступа проверить:
-
-```text
-subscription.product_id → product_club_mappings → club_id
-                                                    ↓
-                                              совпадает с запрашиваемым club_id?
-```
-
-**Если несоответствие → блокировать grant с reason:**
-- `club_product_mismatch` — product не замаплен на этот клуб
-- `tariff_product_mismatch` — tariff принадлежит другому product
-- `source_not_entitled_for_club` — источник доступа не относится к данному клубу
-
-### Обязательная проверка полной цепочки для БкБ:
-
-```text
-product → tariff → offer/button → deal/order → subscription → product_club_mapping → telegram_access_queue → telegram_access
-```
-
-**Правило:** Доступ в БкБ получает ТОЛЬКО тот, кто оплатил именно БкБ. Не "похожий продукт", не другой клуб, не чужой тариф.
+- В edge functions и backend guards добавить проверку, что subscription.product_id → product_club_mappings → club_id совпадает с запрашиваемым club_id
+- Блокировать grant/revoke, если linkage не совпадает
+- Логировать reason_code `club_product_mismatch`
 
 ---
 
@@ -328,158 +216,342 @@ product → tariff → offer/button → deal/order → subscription → product_
 
 ## ФАЗА 3.5 (NEW): Все точки Save — проверить на скрытый regrant
 
-### Проверить ВСЕ точки, где есть Save subscription / Save deal / Save access:
-
-| Компонент | Что проверить |
-|-----------|---------------|
-| `EditSubscriptionDialog` | Save не запускает скрытый regrant через побочный UPDATE |
-| `EditDealDialog` | Save не запускает скрытый regrant через побочный UPDATE |
-| `DealDetailSheet` | Save не запускает скрытый regrant через побочный UPDATE |
-| `AdminDeals` | Save не запускает скрытый regrant через побочный UPDATE |
-| `ContactDetailSheet` | manual access actions не запускают побочный grant |
-
-**Правило:** нигде Save не запускает скрытый regrant по побочному UPDATE.
-
-### DoD фазы:
-
-- [ ] Для каждого компонента: proof, что Save не создаёт queue item grant
-- [ ] Для каждого компонента: proof, что Save не пишет напрямую в telegram_access
+- Проверить, что Save не вызывает grant без изменения основания
+- Проверить, что UI не пишет напрямую в telegram_access
+- Проверить, что queue items не создаются без основания
+- Проверить, что нет ложных DM/уведомлений после Save
 
 ---
 
 ## ФАЗА 4: Аудит причины отправки Telegram-сообщений
 
-### Два слоя аудита (НЕ дублировать тяжёлый payload):
-
-| Слой | Таблица | Назначение | Что писать |
-|------|---------|------------|------------|
-| Технический аудит | `audit_logs` | Полный trail для разбора | action, actor_type, actor_user_id, meta (все поля ниже) |
-| Бизнес-событие | `telegram_logs` | Короткое бизнес-событие | reason_code, trigger_type, decision (лёгкий payload) |
-
-### Обязательные поля в `audit_logs.meta` для access-related событий:
-
-| Поле | Описание |
-|------|----------|
-| `user_id` | ID пользователя |
-| `club_id` | ID клуба |
-| `source_function` | Имя edge function |
-| `source_entity` | Таблица-источник (subscription, entitlement, manual) |
-| `source_entity_id` | ID записи-источника |
-| `reason_code` | см. классификацию ниже |
-| `trigger_type` | manual, cron, trigger, queue, system |
-| `decision` | granted, blocked, skipped, revoked |
-
-### Классификация событий (reason_code):
-
-| Код | Описание |
-|-----|----------|
-| `grant_access` | Первичная выдача доступа |
-| `regrant_access` | Повторная выдача с новым основанием |
-| `revoke_access` | Отзыв доступа |
-| `kick_violator` | Кик нарушителя |
-| `service_notification` | Сервисное уведомление |
-| `subscription_reminder` | Напоминание об оплате |
-| `grant_blocked` | Grant заблокирован (нет доступа / revoke race) |
-| `queue_skipped` | Queue item пропущен (нет доступа / revoke race) |
-| `revoke_blocked` | Revoke заблокирован (активная подписка) |
-| `club_product_mismatch` | Grant заблокирован: product не замаплен на клуб |
-| `tariff_product_mismatch` | Grant заблокирован: tariff принадлежит другому product |
-| `source_not_entitled_for_club` | Grant заблокирован: источник не относится к клубу |
-| `save_no_change` | Save без изменений — grant не запущен |
-
-### Все outbound notification flows должны использовать единый SoT:
-- `telegram-grant-access` — перед отправкой DM
-- `telegram-send-notification` — все типы уведомлений
-- `telegram-reinvite-ghosts` — перед генерацией invite link
-- `telegram-mass-broadcast` — при access-related рассылках
+- В audit_logs добавить поля:
+  - `source_function`
+  - `reason_code`
+  - `trigger_type`
+  - `decision`
+  - `user_id`
+  - `club_id`
+  - `source_entity`
+  - `source_entity_id`
+- Логировать все события grant/revoke/auto-grant/kick с подробностями
 
 ---
 
 ## ФАЗА 5: UI — backend truth wins
 
-### Anti-contradiction guards (пользователь НЕ может одновременно быть):
-
-| Запрещённая комбинация | Что делать |
-|------------------------|------------|
-| `removed` И `has_active_access=true` | Невозможно: если есть доступ, не removed |
-| `removed` И `in_chat=true` или `in_channel=true` | Невозможно: если в чате, не removed |
-| `violator` И `admin` | Невозможно: админ никогда не violator |
-| `violator` И `has_valid_access=true` | Невозможно: если есть доступ, не violator |
-| `with_access` при `revoked` backend-state без валидного access-source | Невозможно: revoked без source = без доступа |
-
-### `src/pages/admin/TelegramClubMembers.tsx`:
-- `getAccessStatusBadge`: если `has_active_access === false` → всегда "Без доступа" (не зелёный)
-- Вкладка "Удалённые": исключить админов
-- Вкладка "Нарушители": исключить админов
-- Не показывать кнопки "Выдать доступ" / "Повторно активировать" без явного нового grant-события
-- Если backend говорит `no valid access` — UI не показывает зелёные статусы, активные плашки и кнопки
+- UI не должен переопределять статусы вручную
+- Все counters, badges, tabs должны отображать данные из backend payload
+- UI должен обрабатывать `blocked` и ошибки backend корректно
+- UI не должен делать локальные update telegram_access
 
 ---
 
 ## ФАЗА 6: SQL-функция `has_valid_access_for_club` + обновление `v_club_members_enriched`
 
-### Не дублировать сложную access-логику во view.
-
-Вынести в одну SQL-функцию:
-```sql
-CREATE OR REPLACE FUNCTION has_valid_access_for_club(p_user_id uuid, p_club_id uuid)
-RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path = public
-AS $$
-  -- Проверяет все 5 источников доступа аналогично _shared/accessValidation.ts
-  -- subscriptions_v2, entitlements, telegram_manual_access, telegram_access, telegram_access_grants
-  -- с guard против revoked-state
-$$;
-```
-
-Использовать эту функцию в:
-- `v_club_members_enriched.has_active_access`
-- RPC для диагностики
-- Cron-функции (через SQL, где применимо)
+- Создать функцию `has_valid_access_for_club(user_id, club_id)` — единый SoT для SQL-слоя
+- Обновить view `v_club_members_enriched`:
+  - Использовать `has_valid_access_for_club`
+  - Добавить conditional `in_any` на основе ресурсов клуба (chat-only, channel-only, chat+channel)
+  - Отделить админов от обычных участников
+  - Добавить флаги `is_bought_not_joined`, `is_violator`, `removed_visible`
+- Обновить RPC `get_club_members_enriched` и `get_club_business_stats` для использования нового view и функции
 
 ---
 
 ## ФАЗА 7: Синхронизация cron/автокик
 
-### Обязательный reason-лог для каждого действия cron:
+- Использовать `hasValidAccessBatch` из `_shared/accessValidation.ts` для проверки доступа
+- Убрать локальные проверки доступа в cron, использовать единую функцию
+- Добавить guard на админов (не кикать)
+- Логировать все действия с reason_code
+- Обновить edge function `telegram-cron-sync` согласно новым правилам
 
-| Reason | Описание |
-|--------|----------|
-| `skipped_admin` | Пропущен: администратор |
-| `skipped_valid_access` | Пропущен: есть валидный доступ |
-| `kicked_violator` | Кикнут: нарушитель без доступа |
-| `marked_removed` | Помечен как удалённый |
+---
 
-### `telegram-check-expired`:
-- Синхронизировать с `_shared/accessValidation.ts`
-- Явный skip для админов с reason `skipped_admin`
-- Убрать дефектный инкремент/декремент счётчиков
+## ═══════════════════════════════════════════
+## АРХИТЕКТУРНЫЙ GATE: ФАЗЫ 11A → 11B → 8 → 9 → 10
+## ═══════════════════════════════════════════
 
-### `telegram-kick-violators`:
-- Использовать `hasValidAccessBatch` для определения нарушителей
-- Принудительно исключать админов с reason `skipped_admin`
-- Логировать каждое действие с reason
+> **GATE RULE:** ФАЗЫ 8–10 НЕ переходят в execute-режим, пока 11A и 11B не завершены.
+> Если найден хоть один club-specific branch / hardcoded path → STOP, сначала закрыть 11B.
 
-### `telegram-club-members` (actions kick/kick_present/mark_removed):
-- Не допускать попадания админов в `removed`-состояние при массовых действиях
+---
+
+## ФАЗА 11A: Dry-run аудит расслоения БкБ / GC
+
+### 11A.1 Обязательный отчёт-таблица
+
+| Область | БкБ использует | GC использует | Общее / Раздельное |
+|---------|---------------|--------------|-------------------|
+| Page route | ? | ? | ? |
+| RPC `get_club_members_enriched` | ? | ? | ? |
+| RPC `get_club_business_stats` | ? | ? | ? |
+| View `v_club_members_enriched` | ? | ? | ? |
+| Edge function `telegram-grant-access` | ? | ? | ? |
+| Edge function `telegram-revoke-access` | ? | ? | ? |
+| Edge function `telegram-club-members` | ? | ? | ? |
+| Edge function `telegram-kick-violators` | ? | ? | ? |
+| Edge function `telegram-cron-sync` | ? | ? | ? |
+| UI `TelegramClubMembers.tsx` | ? | ? | ? |
+| UI `ClubQuickStats.tsx` | ? | ? | ? |
+| UI member filters / tabs | ? | ? | ? |
+| `useClubMemberStats` hook | ? | ? | ? |
+| `useClubBusinessStats` hook | ? | ? | ? |
+| Quick stats source | ? | ? | ? |
+| Tabs/filter source | ? | ? | ? |
+| Drawers/details/actions | ? | ? | ? |
+| Restore/regrant flows | ? | ? | ? |
+| Hardcoded club names / IDs | ? | ? | ? |
+
+### 11A.2 Обязательный grep/scan proof
+
+- `grep -rn` по repo на все club UUID (из `telegram_clubs.id`)
+- `grep -rn` по repo на club names ("Бухгалтерия как бизнес", "Gorbova Club", "БкБ", "GC")
+- Scope: `*.tsx`, `*.ts` (UI/hooks), `*.sql` (RPC/views/triggers), edge functions
+- Результат: таблица найденных мест + статус (устранено / не применимо / дефект)
+- DoD: **0 hardcoded club branches in production logic** (исключение: display-only labels, test fixtures)
+
+### 11A.3 Flow mapping per club
+
+Для каждого клуба (БкБ, GC) составить mapping:
+
+```text
+экран → hook → query key → RPC/view → edge actions → quick stats source → tab source
+```
+
+Цель: доказать, что оба клуба проходят через один и тот же flow, или зафиксировать расхождения как дефекты.
+
+### 11A.4 Dry-run: два разных меню / две разных статистики
+
+Сравнительная таблица для БкБ и GC:
+
+| Аспект | БкБ | GC | Совпадает? |
+|--------|-----|-----|-----------|
+| Page route | ? | ? | ? |
+| Hooks | ? | ? | ? |
+| Quick stats source (RPC/hook) | ? | ? | ? |
+| Tabs/filter source | ? | ? | ? |
+| Drawers/details/actions | ? | ? | ? |
+| Restore/regrant flows | ? | ? | ? |
+| `invalidateQueries` / query keys | ? | ? | ? |
+
+DoD: proof, что после 11B это один и тот же UI-flow.
+
+**DoD ФАЗЫ 11A:** отчёт с пруфами — что общее, что реализовано двумя путями. Если найдены club-specific ветки — зафиксировать как дефект.
+
+---
+
+## ФАЗА 11B: Устранение club-specific code paths
+
+Для каждого расхождения, найденного в 11A:
+- Убрать club-specific код
+- Параметризировать по `club_id`
+- Убедиться, что БкБ и GC проходят через идентичный code path
+
+### `club_id` как главный ключ
+
+Все нижеследующие сущности строго по `club_id`:
+- member state (`telegram_club_members`)
+- access state (`telegram_access`, `telegram_access_grants`)
+- Telegram resources (`chat_id`, `channel_id` из `telegram_clubs`)
+- queue / grants / revoke (`telegram_access_queue`)
+- counters / tabs / quick stats
+- notifications / invite links
+
+**DoD ФАЗЫ 11B:** proof, что после фикса это один и тот же code path для БкБ и GC (same RPC, same counters logic, same tabs logic, same member state logic, same access flow, no hardcoded club UUIDs).
+
+---
+
+## ФАЗА 8: Single SoT для tabs/counters/quick stats
+
+### Один backend payload для всего экрана
+
+> Tab counters и upper stats (ClubQuickStats) считаются из **одного backend-запроса** (один payload). Два разных вычисления "по одинаковой логике" запрещены — это источник дрейфа.
+
+Payload содержит:
+- `members[]` — полный список с derived flags
+- `in_club_regular`, `in_club_admins`, `in_club_total`
+- `with_access_regular`, `with_access_total`
+- `removed_count`
+- `bought_not_joined_count`
+- `violators_count`
+- `resource_mode`: `'chat-only' | 'channel-only' | 'chat+channel'`
+
+UI **только отображает**, не re-interprets.
+
+### Формат "В клубе" — backend-driven
+
+Backend (RPC) возвращает:
+```typescript
+{
+  in_club_regular: number,
+  in_club_admins: number,
+  in_club_total: number,
+  with_access_regular: number,
+  with_access_total: number,
+}
+```
+UI показывает: `"26 (+4 админа) = 30"`. Работает по **любому** клубу, не только БкБ.
+
+### 8.5 Removed flow (усиленный)
+
+- Removed members **обязаны** возвращаться из RPC даже при `in_any=false`
+- Restore работает строго по `club_id`
+- Restore **не создаёт grant без valid source** (restore ≠ grant)
+- Restore **не трогает другие клубы пользователя**
+- Removed history **сохраняется** (не удаляется при restore)
+- После restore member уходит из removed и появляется **только в допустимой вкладке**
+- Removed counter **всегда** равен длине списка removed tab
+
+### "Не вошли" (усиленное правило)
+
+```text
+is_bought_not_joined =
+  has_valid_access_for_club(user_id, club_id) = TRUE
+  AND user physically absent from Telegram resources of THIS club
+  AND (for chat-only clubs: only in_chat matters, stale in_channel IGNORED)
+```
+
+Users without valid access **CANNOT** appear in "Не вошли". Anti-contradiction guard в SQL и UI.
+
+---
+
+## ФАЗА 9: Club-Telegram resource integrity
+
+### Club resources authoritative (3 режима)
+
+Для каждого клуба поддерживается один из трёх режимов:
+- **chat-only** (`telegram_channel_id IS NULL`)
+- **channel-only** (`telegram_chat_id IS NULL`)
+- **chat+channel** (оба заполнены)
+
+```sql
+CASE
+  WHEN club.telegram_channel_id IS NULL THEN v.in_chat
+  WHEN club.telegram_chat_id IS NULL THEN v.in_channel
+  ELSE (v.in_chat OR v.in_channel)
+END AS in_any
+```
+
+Stale `in_channel` **обязан** игнорироваться для chat-only клубов.
+
+### 9.x Resource-mode aware UI
+
+- **chat-only**: не показывать channel icons/status/wording в таблице и карточках
+- **channel-only**: не показывать chat wording
+- **chat+channel**: показывать оба
+- `resource_mode` приходит из backend payload, UI рендерит колонки/иконки условно
+
+### 9.y Stale-resource-state guard
+
+- Stale `in_channel=true` для chat-only клуба: попадает в dry-run report, **не участвует** в flags/counters/UI
+- Stale `in_chat=true` для channel-only клуба: аналогично
+- SQL/RPC уровень: conditional `in_any` автоматически исключает stale states
+- Stale states не участвуют в `not_joined`, `removed`, quick stats
+
+### Admin presentation rule
+
+| Правило | Реализация |
+|---------|-----------|
+| Админ всегда с бейджем «Администратор» | `getAccessStatusBadge` |
+| Админ никогда не «Удалён» | filter в `removed` tab: `&& !isAdmin` |
+| Админ никогда не «Без доступа» | исключить из `no_access` статуса |
+| Админ исключён из regular member counters | `in_club_regular` = `in_any && !isAdmin` |
+| Админ исключён из removed / violators tabs | filter guards |
+
+---
+
+## ФАЗА 10: Data diagnostic + repair
+
+### 10.1 Dry-run диагностика
+
+Все repair-запросы выполнять отдельно для БкБ и GC.
+
+### 10.2 Repair SQL (примеры)
+
+```sql
+-- Clear false in_channel for chat-only clubs
+UPDATE telegram_club_members SET in_channel = NULL
+WHERE club_id IN (SELECT id FROM telegram_clubs WHERE telegram_channel_id IS NULL)
+AND in_channel = true;
+
+-- Remove admins from 'removed' status
+UPDATE telegram_club_members SET access_status = 'ok'
+WHERE telegram_user_id IN (SELECT telegram_user_id FROM telegram_club_admins WHERE club_id = ?)
+AND access_status = 'removed' AND club_id = ?;
+```
+
+### 10.3 Жёсткий protocol для repair execute
+
+```text
+1. Counts/rows preview (dry-run SQL → SELECT COUNT / SELECT *)
+2. Snapshot affected rows (SELECT * для rollback)
+3. Approval (явное подтверждение)
+4. Execute (UPDATE/DELETE)
+5. Post-check SQL snapshot (те же SELECT после execute)
+6. UI proof (скриншоты)
+```
+
+STOP-guard: без approval ничего не execute.
+
+### 10.x Rollback-safety protocol
+
+1. **Snapshot** affected rows before execute
+2. **Repair log** с old values (в `audit_logs` с `action: 'data_repair'`)
+3. **Возможность rollback** конкретного repair patch (через saved old values)
+
+### 10.4 Cross-club contamination diagnostic
+
+Отдельно искать:
+- Один и тот же `telegram_user_id` с конфликтными статусами по двум клубам
+- `telegram_access` на клуб, для которого нет валидного source
+- `telegram_club_members` записи, противоречащие resources конкретного клуба
+- Уведомления/DM/invite links, отправленные не тому `club_id`
+- Invite link создан по одному `club_id`, а записан/показан в контексте другого
+- `telegram_logs` / `audit_logs` / `queue items` с несогласованным `club_id`
+- Сообщения, отправленные "от имени" не того клуба
+
+### 10.5 Унификация уведомлений и invite links по club_id
+
+- Все outbound Telegram notifications строго по `club_id`
+- Invite links строго по `club_id`
+- reason/source/audit строго по `club_id`
+- Исключить возможность отправки уведомления клуба A по source клуба B
+
+### 10.6 Подпакет proof для БкБ — полная цепочка
+
+- Кто реально оплатил БкБ (SQL: `orders_v2` + `subscriptions_v2` + `products` WHERE product mapped to БкБ)
+- Кто имеет доступ в БкБ (SQL: `telegram_access` WHERE `club_id` = БкБ AND active)
+- Где расхождения (access есть, оплаты нет; оплата есть, access нет)
+- Кто получил доступ без валидного основания
+- Кто оплатил другой продукт, но попал в БкБ
 
 ---
 
 ## Порядок внедрения
 
-1. **ФАЗА 0 — Диагностика**: root-cause UPDATE subscription + полная цепочка до DM
-2. **ФАЗА 1 — SQL-trigger**: guard с whitelist полей + expired + revoke race + бизнес-смысл (остановить ложную выдачу)
-3. **ФАЗА 1.5 — Диагностика Save-flow**: SQL diff before/after Save, proof какой UPDATE создал queue item
-4. **ФАЗА 2 — Backend guards**: `telegram-process-access-queue` + `telegram-grant-access` (второй барьер)
-5. **ФАЗА 2.5 — Save ≠ Grant**: diff-only UPDATE в EditSubscriptionDialog, убрать прямые writes telegram_access
-6. **ФАЗА 2.6 — Club-product linkage**: guard соответствия club↔product↔tariff при grant
-7. **ФАЗА 3 — UI revoke flow**: `EditSubscriptionDialog` и все точки (третий барьер)
-8. **ФАЗА 3.5 — Все точки Save**: проверить EditDeal, DealDetail, AdminDeals, ContactDetail на скрытый regrant
-9. **ФАЗА 4 — Аудит**: reason_code, trigger_type, decision
-10. **ФАЗА 5 — UI бейджи**: backend truth wins, anti-contradiction guards
-11. **ФАЗА 6 — SQL-функция**: `has_valid_access_for_club` + view
-12. **ФАЗА 7 — Cron sync**: автокик с единой валидацией и reason-логом
+```text
+ФАЗА 0   — Диагностика root-cause
+ФАЗА 1   — SQL-trigger guard
+ФАЗА 1.5 — Диагностика Save-flow
+ФАЗА 2   — Backend guards
+ФАЗА 2.5 — Save ≠ Grant
+ФАЗА 2.6 — Club-product linkage
+ФАЗА 3   — UI revoke flow
+ФАЗА 3.5 — Все точки Save
+ФАЗА 4   — Аудит
+ФАЗА 5   — UI бейджи (backend truth wins)
+ФАЗА 6   — SQL-функция has_valid_access_for_club + view
+ФАЗА 7   — Cron sync
+─── АРХИТЕКТУРНЫЙ GATE ───
+ФАЗА 11A — Dry-run аудит расслоения БкБ / GC
+ФАЗА 11B — Устранение club-specific code paths
+─── GATE RULE: ФАЗЫ 8–10 НЕ переходят в execute, пока 11A+11B не завершены ───
+ФАЗА 8   — Single SoT для tabs/counters/quick stats
+ФАЗА 9   — Club-Telegram resource integrity
+ФАЗА 10  — Data diagnostic + repair
+```
 
 ---
 
@@ -578,6 +650,93 @@ $$;
 - [ ] Доступ БкБ выдаётся только по валидной оплате БкБ
 - [ ] Приложены SQL-пруфы, queue items, telegram_logs, audit_logs и скрины UI
 
+### 13. "Не вошли" tab correctness
+
+- [ ] Users without valid access do NOT appear in "Не вошли"
+- [ ] SQL proof: `is_bought_not_joined` only true when `has_valid_access_for_club = true`
+- [ ] For chat-only clubs: channel state does not affect "Не вошли"
+
+### 14. Counter consistency
+
+- [ ] Top stats (ClubQuickStats) и tab counters считаются из **одного** backend payload
+- [ ] "В клубе" shows format: "26 (+4 админа) = 30" (backend fields)
+- [ ] "С доступом" matches backend truth
+
+### 15. Admin isolation
+
+- [ ] Admins shown with "Администратор" badge
+- [ ] Admins NOT in "Удалённые" / "Нарушители"
+- [ ] Admins NOT inflating regular member counters
+
+### 16. "Удалённые" tab functional
+
+- [ ] List populates from backend (even with `in_any=false`)
+- [ ] Restore works strictly by `club_id`, no cross-club regrant
+- [ ] Restore does NOT create grant without valid source
+- [ ] Counter matches list length
+- [ ] After restore, counters update without reload
+
+### 17. Club-Telegram resource integrity
+
+- [ ] For clubs without channel: no channel-state in filters/counters/UI
+- [ ] No cross-club state mixing
+- [ ] Proof по 3 типам: chat-only, channel-only, chat+channel
+
+### 18. Data repair proof (per club)
+
+- [ ] Dry-run → snapshot → approval → execute → post-check → UI proof
+- [ ] Executed separately for БкБ and GC
+- [ ] Rollback possible via saved old values
+
+### 19. Club unification proof
+
+- [ ] БкБ and GC use identical RPC/view
+- [ ] БкБ and GC use identical counter/tab/filter/member state/access logic
+- [ ] No hardcoded club IDs or names in code
+- [ ] Diagnostic report: что было общее vs раздельное
+
+### 20. Per-club post-fix proof (отдельно для БкБ И отдельно для GC)
+
+Для каждого клуба независимый блок:
+- [ ] SQL snapshot: regular members / admins / with_access / not_joined / removed / violators
+- [ ] UI screenshots с теми же цифрами
+- [ ] Counts parity (top stats = tab counts)
+- [ ] Removed tab functional
+- [ ] Admins isolated
+- [ ] No false not_joined
+- [ ] No wrong channel logic
+
+### 20.x Consistency proof на одном срезе
+
+- Top stats = tabs counters = list `.length` = SQL snapshot — всё на **одном timestamp**
+- Один refresh → все цифры совпадают
+- Не допускается "цифры совпадают если обновить дважды"
+
+### 21. Уведомления и invite links по club_id
+
+- [ ] Все outbound notifications строго по club_id
+- [ ] Invite links строго по club_id
+- [ ] Нет отправки уведомления клуба A по source клуба B
+
+### 22. Финальный глобальный инвариант
+
+После фикса **невозможно**, чтобы:
+- [ ] Пользователь без valid access попал в "Не вошли"
+- [ ] Админ попал в removed/violators
+- [ ] Chat-only клуб использовал channel state
+- [ ] Counters вверху и во вкладках расходились
+- [ ] Клуб A влиял на клуб B
+- [ ] БкБ и GC шли через разные code paths
+- [ ] Removed user с `access_status='removed'` отсутствовал в removed-tab
+- [ ] Save / restore / refresh меняли club isolation или resource-mode логику
+
+### 23. Resource modes proof
+
+- [ ] chat-only клуб: корректные flags/counters/UI (channel логика отсутствует)
+- [ ] channel-only клуб: корректные flags/counters/UI (chat логика отсутствует)
+- [ ] chat+channel клуб: корректные flags/counters/UI (оба присутствуют)
+- Если режима нет в prod — proof через SQL simulation
+
 ---
 
 ## Файлы с изменениями
@@ -586,19 +745,26 @@ $$;
 |------|----------|
 | SQL trigger `subscription_grant_telegram` | Миграция: whitelist полей + guard expired + guard revoke race + guard бизнес-смысл |
 | SQL function `has_valid_access_for_club` | Миграция: новая функция — единый SoT для SQL-слоя |
-| SQL view `v_club_members_enriched` | Миграция: использовать `has_valid_access_for_club` |
+| SQL view `v_club_members_enriched` | Миграция: использовать `has_valid_access_for_club`, conditional `in_any` based on club resources |
+| SQL RPC `get_club_members_enriched` | Conditional `in_any`, admin-separated counts, removed scope |
+| SQL RPC `get_club_business_stats` | Align с единым SoT или объединить в один payload |
 | `supabase/functions/telegram-process-access-queue/index.ts` | Guard: hasValidAccess + revoke race check + club-product linkage |
 | `supabase/functions/telegram-grant-access/index.ts` | Guard: revoked state + hasValidAccess + race protection + club-product linkage + аудит |
-| `src/components/admin/EditSubscriptionDialog.tsx` | Diff-only UPDATE, убрать прямые writes telegram_access (строки 280-283, 341-348), передать is_manual, проверять blocked |
+| `src/components/admin/EditSubscriptionDialog.tsx` | Diff-only UPDATE, убрать прямые writes telegram_access, передать is_manual, проверять blocked |
 | `src/components/admin/EditDealDialog.tsx` | Проверить Save на побочные grant, добавить is_manual + admin_id |
 | `src/components/admin/DealDetailSheet.tsx` | Проверить Save на побочные grant, добавить is_manual + admin_id |
 | `src/components/admin/AdminDeals.tsx` | Проверить Save на побочные grant, добавить is_manual + admin_id |
 | `src/components/admin/ContactDetailSheet.tsx` | Проверить manual access actions на побочный grant |
 | Все UI-точки revoke (Contact, Deal, Member, Bulk) | Backend truth wins, нет локальных update |
-| `src/pages/admin/TelegramClubMembers.tsx` | Backend truth wins для бейджей, anti-contradiction guards |
+| `src/pages/admin/TelegramClubMembers.tsx` | Единый payload, убрать client-side recomputation counters, channel-aware UI |
+| `src/components/telegram/ClubQuickStats.tsx` | Получать данные из единого payload, admin-separated display |
+| `src/hooks/useTelegramIntegration.tsx` (`useClubMemberStats`) | Убрать отдельный source, использовать единый payload из RPC |
+| `src/hooks/useTelegramIntegration.tsx` (`useClubBusinessStats`) | Объединить с `useClubMemberStats` или гарантировать единый backend-source |
 | `supabase/functions/telegram-check-expired/index.ts` | Единая валидация, admin-guard, reason-лог |
 | `supabase/functions/telegram-kick-violators/index.ts` | hasValidAccessBatch, admin-guard, reason-лог |
-| Все outbound notification flows | reason_code, trigger_type, decision в audit |
+| Все outbound notification flows | reason_code, trigger_type, decision в audit; no club_id → no send |
+| Все edge functions | Verify no hardcoded club IDs, notifications by club_id |
+| Diagnostic SQL (one-time) | Расслоение report, cross-club contamination, per-club repair |
 
 ## Что НЕ меняем
 
