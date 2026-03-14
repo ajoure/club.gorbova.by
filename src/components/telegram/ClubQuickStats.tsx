@@ -268,6 +268,7 @@ export function ClubQuickStats({
   onTabChange,
   violatorsCount,
   outsideSystemCount,
+  withAccessTotal,
   period,
   onPeriodChange,
 }: ClubQuickStatsProps) {
