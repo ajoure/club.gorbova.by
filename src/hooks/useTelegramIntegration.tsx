@@ -606,7 +606,7 @@ export function useClubMembers(
       if (search && search.length >= 2) {
         const { data, error } = await supabase.rpc('search_club_members_enriched', {
           p_club_id: clubId,
-          p_query: search,
+          p_search: search,
           p_scope: effectiveScope,
         });
         if (error) throw error;
