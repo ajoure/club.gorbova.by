@@ -33,9 +33,10 @@ interface ClubQuickStatsProps {
   isLoading?: boolean;
   isError?: boolean;
   onTabChange?: (tab: FilterTab) => void;
-  // Данные из useClubMemberStats для нарушителей и вне системы
+  // Данные из useClubMemberSummary
   violatorsCount?: number;
   outsideSystemCount?: number | null;
+  withAccessTotal?: number | null;
   // Управляемый период (из родителя)
   period: number;
   onPeriodChange: (v: number) => void;
