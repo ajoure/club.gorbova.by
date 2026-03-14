@@ -238,20 +238,19 @@ export default function TelegramClubMembers() {
     return adminsList.filter(a => a.is_bot && !memberTgIds.has(a.telegram_user_id));
   }, [adminsList, members]);
 
+  // Phase 8: Use backend summary counts instead of client-side .filter()
   const counts = useMemo(() => {
-    if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
+    if (!summary) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
     
     return {
-      in_club: members.filter(m => m.in_any).length,
-      with_access: members.filter(m => m.has_active_access).length,
-      bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
-      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from violators
-      violators: members.filter(m => m.is_violator && !adminTelegramIds.has(m.telegram_user_id)).length,
-      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from removed
-      removed: members.filter(m => m.access_status === 'removed' && !m.in_any && !adminTelegramIds.has(m.telegram_user_id)).length,
-      admins: adminsList.length,
+      in_club: summary.in_club_total,
+      with_access: summary.with_access_total,
+      bought_not_joined: summary.bought_not_joined_count,
+      violators: summary.violators_count,
+      removed: summary.removed_count,
+      admins: summary.in_club_admins + botAdminsNotInMembers.length,
     };
-  }, [members, adminsList, adminTelegramIds]);
+  }, [summary, botAdminsNotInMembers]);
 
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
