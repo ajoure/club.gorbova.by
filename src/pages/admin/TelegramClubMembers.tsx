@@ -287,18 +287,24 @@ export default function TelegramClubMembers() {
   const handleExportCSV = () => {
     if (!filteredMembers.length) return;
 
-    const headers = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа', 'Чат', 'Канал', 'Email', 'Телефон'];
-    const rows = filteredMembers.map(m => [
-      m.telegram_user_id,
-      m.telegram_username || '',
-      `${m.telegram_first_name || ''} ${m.telegram_last_name || ''}`.trim(),
-      m.link_status === 'linked' ? 'Связан' : 'Не связан',
-      m.access_status === 'ok' ? 'OK' : m.access_status === 'no_access' ? 'Нет доступа' : m.access_status,
-      m.in_chat ? 'Да' : 'Нет',
-      m.in_channel ? 'Да' : 'Нет',
-      m.profiles?.email || '',
-      m.profiles?.phone || '',
-    ]);
+    const baseHeaders = ['Telegram ID', 'Username', 'Имя', 'Статус связки', 'Статус доступа'];
+    if (hasChat) baseHeaders.push('Чат');
+    if (hasChannel) baseHeaders.push('Канал');
+    baseHeaders.push('Email', 'Телефон');
+    const headers = baseHeaders;
+    const rows = filteredMembers.map(m => {
+      const row: (string | number | boolean | null)[] = [
+        m.telegram_user_id,
+        m.telegram_username || '',
+        `${m.telegram_first_name || ''} ${m.telegram_last_name || ''}`.trim(),
+        m.link_status === 'linked' ? 'Связан' : 'Не связан',
+        m.access_status === 'ok' ? 'OK' : m.access_status === 'no_access' ? 'Нет доступа' : m.access_status,
+      ];
+      if (hasChat) row.push(m.in_chat ? 'Да' : 'Нет');
+      if (hasChannel) row.push(m.in_channel ? 'Да' : 'Нет');
+      row.push(m.profiles?.email || '', m.profiles?.phone || '');
+      return row;
+    });
 
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
