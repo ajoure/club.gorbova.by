@@ -624,50 +624,60 @@ export function useClubMembers(
     enabled: !!clubId,
   });
 }
+// ---------- Club Member Summary (Phase 8: single backend payload) ----------
+export interface ClubMemberSummary {
+  resource_mode: 'chat_only' | 'channel_only' | 'chat_and_channel';
+  in_club_total: number;
+  in_club_admins: number;
+  in_club_regular: number;
+  with_access_total: number;
+  with_access_admins: number;
+  with_access_regular: number;
+  bought_not_joined_count: number;
+  violators_count: number;
+  removed_count: number;
+  outside_system_count: number | null;
+  total_synced: number;
+  orphaned: number;
+}
 
-// Separate hook for member statistics - uses RPC 'all' scope for aggregates
-export function useClubMemberStats(clubId: string | null) {
+export function useClubMemberSummary(clubId: string | null) {
   return useQuery({
-    queryKey: ['telegram-club-member-stats', clubId],
-    queryFn: async () => {
+    queryKey: ['club-member-summary', clubId],
+    queryFn: async (): Promise<ClubMemberSummary | null> => {
       if (!clubId) return null;
-      
-      // Get all members with computed flags via RPC
-      const { data: members, error } = await supabase
-        .rpc('get_club_members_enriched', {
-          p_club_id: clubId,
-          p_scope: 'all',
-        });
-      
+      const { data, error } = await supabase.rpc('get_club_member_summary', {
+        p_club_id: clubId,
+      });
       if (error) throw error;
-      if (!members) return null;
-      
-      // Filter out orphaned for most counts
-      const nonOrphaned = members.filter((m: any) => !m.is_orphaned);
-      
-      return {
-        total: members.length,
-        orphaned: members.filter((m: any) => m.is_orphaned).length,
-        relevant: nonOrphaned.filter((m: any) => m.is_relevant).length,
-        in_chat: nonOrphaned.filter((m: any) => m.in_chat === true).length,
-        in_channel: nonOrphaned.filter((m: any) => m.in_channel === true).length,
-        in_any: nonOrphaned.filter((m: any) => m.in_any).length,
-        // Correct: uses has_active_access (computed via EXISTS on 3 tables)
-        has_active_access: nonOrphaned.filter((m: any) => m.has_active_access).length,
-        // Correct: violators = in club but NO active access
-        violators: nonOrphaned.filter((m: any) => m.is_violator).length,
-        // Correct: bought but not joined = has active access but NOT in club
-        bought_not_joined: nonOrphaned.filter((m: any) => m.is_bought_not_joined).length,
-        // Unknown: not in any working tab (synced but no access/presence)
-        unknown: nonOrphaned.filter((m: any) => m.is_unknown).length,
-        // Legacy status counts (for reference)
-        status_ok: nonOrphaned.filter((m: any) => m.access_status === 'ok').length,
-        status_removed: nonOrphaned.filter((m: any) => m.access_status === 'removed').length,
-        status_no_access: nonOrphaned.filter((m: any) => m.access_status === 'no_access').length,
-      };
+      return (data as unknown as ClubMemberSummary) ?? null;
     },
     enabled: !!clubId,
+    staleTime: 30_000,
   });
+}
+
+// Legacy alias — kept for backward compat but delegates to summary
+export function useClubMemberStats(clubId: string | null) {
+  const { data: summary, ...rest } = useClubMemberSummary(clubId);
+  return {
+    ...rest,
+    data: summary ? {
+      total: summary.total_synced + summary.orphaned,
+      orphaned: summary.orphaned,
+      relevant: summary.total_synced,
+      in_chat: 0, // deprecated — use summary.in_club_total
+      in_channel: 0, // deprecated
+      in_any: summary.in_club_total,
+      has_active_access: summary.with_access_total,
+      violators: summary.violators_count,
+      bought_not_joined: summary.bought_not_joined_count,
+      unknown: 0,
+      status_ok: 0,
+      status_removed: summary.removed_count,
+      status_no_access: 0,
+    } : null,
+  };
 }
 
 export function useSyncClubMembers() {

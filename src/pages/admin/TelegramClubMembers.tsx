@@ -81,7 +81,7 @@ import {
 import { 
   useTelegramClubs, 
   useClubMembers, 
-  useClubMemberStats,
+  useClubMemberSummary,
   useClubBusinessStats,
   useSyncClubMembers,
   useKickViolators,
@@ -89,6 +89,7 @@ import {
   useRevokeTelegramAccess,
   EnrichedClubMember,
   ClubMemberScope,
+  ClubMemberSummary,
 } from '@/hooks/useTelegramIntegration';
 import { useClubAdmins } from '@/hooks/useClubAdmins';
 import { Switch } from '@/components/ui/switch';
@@ -149,7 +150,7 @@ export default function TelegramClubMembers() {
     scope, 
     search: debouncedSearch 
   });
-  const { data: stats, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberStats(clubId || null);
+  const { data: summary, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberSummary(clubId || null);
   const [businessStatsPeriod, setBusinessStatsPeriod] = useState(30);
   const { data: businessStats, isLoading: isBusinessStatsLoading } = useClubBusinessStats(clubId || null, businessStatsPeriod);
   
@@ -237,20 +238,19 @@ export default function TelegramClubMembers() {
     return adminsList.filter(a => a.is_bot && !memberTgIds.has(a.telegram_user_id));
   }, [adminsList, members]);
 
+  // Phase 8: Use backend summary counts instead of client-side .filter()
   const counts = useMemo(() => {
-    if (!members) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
+    if (!summary) return { in_club: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
     
     return {
-      in_club: members.filter(m => m.in_any).length,
-      with_access: members.filter(m => m.has_active_access).length,
-      bought_not_joined: members.filter(m => m.is_bought_not_joined).length,
-      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from violators
-      violators: members.filter(m => m.is_violator && !adminTelegramIds.has(m.telegram_user_id)).length,
-      // PATCH TG-REVOKE-FALSE-REGRANT: Exclude admins from removed
-      removed: members.filter(m => m.access_status === 'removed' && !m.in_any && !adminTelegramIds.has(m.telegram_user_id)).length,
-      admins: adminsList.length,
+      in_club: summary.in_club_total,
+      with_access: summary.with_access_total,
+      bought_not_joined: summary.bought_not_joined_count,
+      violators: summary.violators_count,
+      removed: summary.removed_count,
+      admins: summary.in_club_admins + botAdminsNotInMembers.length,
     };
-  }, [members, adminsList, adminTelegramIds]);
+  }, [summary, botAdminsNotInMembers]);
 
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
@@ -902,11 +902,7 @@ export default function TelegramClubMembers() {
           isError={isStatsError}
           onTabChange={setActiveTab}
           violatorsCount={counts.violators}
-          outsideSystemCount={
-            club?.members_count_chat !== undefined && stats?.in_chat !== undefined
-              ? Math.max(0, (club.members_count_chat ?? 0) - (stats.in_chat ?? 0))
-              : null
-          }
+          outsideSystemCount={summary?.outside_system_count ?? null}
           period={businessStatsPeriod}
           onPeriodChange={setBusinessStatsPeriod}
         />
