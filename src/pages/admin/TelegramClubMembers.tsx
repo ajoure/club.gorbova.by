@@ -686,9 +686,9 @@ export default function TelegramClubMembers() {
     }
   };
 
-  // Calculate selected members present in chat/channel
+  // Calculate selected members present in chat/channel (resource-mode aware)
   const selectedPresentMembers = useMemo(() => {
-    return selectedMembers.filter(m => m.in_chat || m.in_channel);
+    return selectedMembers.filter(m => m.in_any);
   }, [selectedMembers]);
 
   // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
