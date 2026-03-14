@@ -1204,7 +1204,7 @@ export default function TelegramClubMembers() {
                 <TableBody>
                   {filteredMembers.map((member) => {
                     // Use has_active_access as source of truth for violator detection
-                    const isViolator = !member.has_active_access && (member.in_chat === true || member.in_channel === true);
+                    const isViolator = !member.has_active_access && member.in_any;
                     const effectiveNoAccess = !member.has_active_access && (member.access_status === 'no_access' || member.access_status === 'removed');
                     
                     return (
