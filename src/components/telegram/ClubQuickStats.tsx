@@ -33,9 +33,10 @@ interface ClubQuickStatsProps {
   isLoading?: boolean;
   isError?: boolean;
   onTabChange?: (tab: FilterTab) => void;
-  // Данные из useClubMemberStats для нарушителей и вне системы
+  // Данные из useClubMemberSummary
   violatorsCount?: number;
   outsideSystemCount?: number | null;
+  withAccessTotal?: number | null;
   // Управляемый период (из родителя)
   period: number;
   onPeriodChange: (v: number) => void;
@@ -267,6 +268,7 @@ export function ClubQuickStats({
   onTabChange,
   violatorsCount,
   outsideSystemCount,
+  withAccessTotal,
   period,
   onPeriodChange,
 }: ClubQuickStatsProps) {
@@ -326,7 +328,7 @@ export function ClubQuickStats({
             {/* Карточка «Всего с доступом» — всегда последняя */}
             <GlassStatCard
               title="Всего с доступом"
-              value={isError ? "—" : fmt(businessStats?.totalWithAccess)}
+              value={isError ? "—" : fmt(withAccessTotal)}
               subtitle="уникальных участников"
               icon={<UserCheck className="h-4 w-4 text-emerald-300" />}
               variant="success"
