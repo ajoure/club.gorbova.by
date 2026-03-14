@@ -848,7 +848,6 @@ export function useClubBusinessStats(clubId: string | null, periodDays: number =
 
       return {
         tariffs,
-        totalWithAccess: stats?.total_with_access ?? 0,
         newCount: stats?.new_count ?? 0,
         revokedCount: stats?.revoked_count ?? 0,
       };

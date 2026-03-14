@@ -328,7 +328,7 @@ export function ClubQuickStats({
             {/* Карточка «Всего с доступом» — всегда последняя */}
             <GlassStatCard
               title="Всего с доступом"
-              value={isError ? "—" : fmt(businessStats?.totalWithAccess)}
+              value={isError ? "—" : fmt(withAccessTotal)}
               subtitle="уникальных участников"
               icon={<UserCheck className="h-4 w-4 text-emerald-300" />}
               variant="success"

@@ -947,6 +947,7 @@ export default function TelegramClubMembers() {
           onTabChange={setActiveTab}
           violatorsCount={counts.violators}
           outsideSystemCount={summary?.outside_system_count ?? null}
+          withAccessTotal={summary?.with_access_total ?? null}
           period={businessStatsPeriod}
           onPeriodChange={setBusinessStatsPeriod}
         />
