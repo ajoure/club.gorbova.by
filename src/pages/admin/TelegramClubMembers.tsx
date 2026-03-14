@@ -909,7 +909,8 @@ export default function TelegramClubMembers() {
           <div>
             <h1 className="text-2xl font-bold">Участники: {club.club_name}</h1>
             <p className="text-muted-foreground">
-              Управление участниками чата и канала
+              {hasChat && hasChannel ? 'Управление участниками чата и канала' :
+               hasChat ? 'Управление участниками чата' : 'Управление участниками канала'}
             </p>
           </div>
         </div>
