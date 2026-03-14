@@ -1,10 +1,12 @@
 /**
- * PATCH 3 + P0.9.5: Centralized Access Validation
+ * PATCH 3 + P0.9.5 + PATCH-STAT-1: Centralized Access Validation
  * 
  * ЕДИНСТВЕННАЯ реализация hasValidAccess() для всего проекта.
  * Все edge functions должны импортировать из этого файла.
  * 
- * PATCH P0.9.5: Added telegram_access and telegram_access_grants checks
+ * PATCH-STAT-1: When clubId is provided, subscriptions and entitlements
+ * are scoped via product_club_mappings to prevent cross-club access leak.
+ * Policy: entitlement without product_id does NOT grant club access.
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
@@ -21,19 +23,35 @@ export interface AccessCheckResult {
 }
 
 /**
+ * Fetch product IDs mapped to a specific club.
+ * Returns null if no clubId provided (global/unscoped check).
+ */
+async function getClubProductIds(
+  supabase: SupabaseClient,
+  clubId?: string
+): Promise<string[] | null> {
+  if (!clubId) return null;
+  
+  const { data } = await supabase
+    .from('product_club_mappings')
+    .select('product_id')
+    .eq('club_id', clubId)
+    .eq('is_active', true);
+  
+  return (data || []).map((m: any) => m.product_id).filter(Boolean);
+}
+
+/**
  * ЕДИНСТВЕННАЯ реализация проверки доступа.
  * 
  * Проверяет 5 источников в порядке приоритета:
  * 1. subscriptions_v2 (status IN ['active', 'trial', 'past_due'] AND access_end_at > now)
+ *    — when clubId provided: scoped via product_club_mappings
  * 2. entitlements (status = 'active' AND (expires_at IS NULL OR expires_at > now))
+ *    — when clubId provided: scoped via product_club_mappings (product_id IS NULL = no access)
  * 3. telegram_manual_access (is_active = true AND (valid_until IS NULL OR valid_until > now))
  * 4. telegram_access (active_until IS NULL OR active_until > now)
  * 5. telegram_access_grants (status = 'active' AND (end_at IS NULL OR end_at > now))
- * 
- * @param supabase - Supabase client with service role
- * @param userId - User ID (auth.users.id)
- * @param clubId - Optional club ID for telegram-specific checks
- * @param now - Optional current timestamp (defaults to new Date())
  */
 export async function hasValidAccess(
   supabase: SupabaseClient,
@@ -43,15 +61,30 @@ export async function hasValidAccess(
 ): Promise<AccessCheckResult> {
   const nowStr = (now || new Date()).toISOString();
 
-  // 1. Check active subscription (HIGHEST PRIORITY - P0.9.5)
-  const { data: activeSub } = await supabase
+  // PATCH-STAT-1: Get club-scoped product IDs when clubId is provided
+  const clubProductIds = await getClubProductIds(supabase, clubId);
+
+  // 1. Check active subscription
+  const subQuery = supabase
     .from('subscriptions_v2')
     .select('id, access_end_at')
     .eq('user_id', userId)
     .in('status', ['active', 'trial', 'past_due'])
     .or(`access_end_at.is.null,access_end_at.gt.${nowStr}`)
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+
+  // PATCH-STAT-1: scope by club products when clubId provided
+  if (clubProductIds !== null) {
+    if (clubProductIds.length === 0) {
+      // No products mapped to this club — skip subscription check
+    } else {
+      subQuery.in('product_id', clubProductIds);
+    }
+  }
+
+  const { data: activeSub } = clubProductIds !== null && clubProductIds.length === 0
+    ? { data: null }
+    : await subQuery.maybeSingle();
 
   if (activeSub) {
     return {
@@ -63,22 +96,32 @@ export async function hasValidAccess(
   }
 
   // 2. Check active entitlement
-  const { data: activeEntitlement } = await supabase
-    .from('entitlements')
-    .select('id, expires_at')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .or(`expires_at.is.null,expires_at.gt.${nowStr}`)
-    .limit(1)
-    .maybeSingle();
+  // PATCH-STAT-1: scope by club products; entitlements with NULL product_id = no club access
+  if (clubProductIds !== null && clubProductIds.length === 0) {
+    // No products mapped — skip entitlement check
+  } else {
+    const entQuery = supabase
+      .from('entitlements')
+      .select('id, expires_at')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .or(`expires_at.is.null,expires_at.gt.${nowStr}`)
+      .limit(1);
 
-  if (activeEntitlement) {
-    return {
-      valid: true,
-      source: 'entitlement',
-      endAt: activeEntitlement.expires_at,
-      entitlementId: activeEntitlement.id,
-    };
+    if (clubProductIds !== null) {
+      entQuery.in('product_id', clubProductIds);
+    }
+
+    const { data: activeEntitlement } = await entQuery.maybeSingle();
+
+    if (activeEntitlement) {
+      return {
+        valid: true,
+        source: 'entitlement',
+        endAt: activeEntitlement.expires_at,
+        entitlementId: activeEntitlement.id,
+      };
+    }
   }
 
   // 3. Check manual access
@@ -105,8 +148,7 @@ export async function hasValidAccess(
     };
   }
 
-  // 4. Check telegram_access (P0.9.5)
-  // PATCH: Also filter out revoked state — active_until=NULL with state='revoked' must NOT grant access
+  // 4. Check telegram_access
   const telegramAccessQuery = supabase
     .from('telegram_access')
     .select('id, active_until, state_chat, state_channel')
@@ -131,7 +173,7 @@ export async function hasValidAccess(
     };
   }
 
-  // 5. Check telegram_access_grants (P0.9.5)
+  // 5. Check telegram_access_grants
   const grantsQuery = supabase
     .from('telegram_access_grants')
     .select('id, end_at')
@@ -162,7 +204,8 @@ export async function hasValidAccess(
  * Batch check access for multiple users (set-based, no N+1)
  * Returns a Map of userId -> AccessCheckResult
  * 
- * PATCH P0.9.5: Added telegram_access and telegram_access_grants checks
+ * PATCH-STAT-1: When clubId is provided, subscriptions and entitlements
+ * are scoped via product_club_mappings.
  */
 export async function hasValidAccessBatch(
   supabase: SupabaseClient,
@@ -180,34 +223,52 @@ export async function hasValidAccessBatch(
 
   if (userIds.length === 0) return results;
 
-  // 1. Batch check subscriptions (HIGHEST PRIORITY - P0.9.5)
-  const { data: activeSubs } = await supabase
-    .from('subscriptions_v2')
-    .select('id, user_id, access_end_at')
-    .in('user_id', userIds)
-    .in('status', ['active', 'trial', 'past_due'])
-    .or(`access_end_at.is.null,access_end_at.gt.${nowStr}`);
+  // PATCH-STAT-1: Get club-scoped product IDs when clubId is provided
+  const clubProductIds = await getClubProductIds(supabase, clubId);
 
-  for (const sub of activeSubs || []) {
-    if (!results.get(sub.user_id)?.valid) {
-      results.set(sub.user_id, {
-        valid: true,
-        source: 'subscription',
-        endAt: sub.access_end_at,
-        subscriptionId: sub.id,
-      });
+  // 1. Batch check subscriptions
+  if (clubProductIds === null || clubProductIds.length > 0) {
+    const subQuery = supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, access_end_at')
+      .in('user_id', userIds)
+      .in('status', ['active', 'trial', 'past_due'])
+      .or(`access_end_at.is.null,access_end_at.gt.${nowStr}`);
+
+    if (clubProductIds !== null) {
+      subQuery.in('product_id', clubProductIds);
+    }
+
+    const { data: activeSubs } = await subQuery;
+
+    for (const sub of activeSubs || []) {
+      if (!results.get(sub.user_id)?.valid) {
+        results.set(sub.user_id, {
+          valid: true,
+          source: 'subscription',
+          endAt: sub.access_end_at,
+          subscriptionId: sub.id,
+        });
+      }
     }
   }
 
   // 2. Batch check entitlements (only for users without subscription)
   const usersWithoutAccess = userIds.filter((uid) => !results.get(uid)?.valid);
-  if (usersWithoutAccess.length > 0) {
-    const { data: activeEntitlements } = await supabase
+  if (usersWithoutAccess.length > 0 && (clubProductIds === null || clubProductIds.length > 0)) {
+    const entQuery = supabase
       .from('entitlements')
       .select('id, user_id, expires_at')
       .in('user_id', usersWithoutAccess)
       .eq('status', 'active')
       .or(`expires_at.is.null,expires_at.gt.${nowStr}`);
+
+    // PATCH-STAT-1: scope by club products
+    if (clubProductIds !== null) {
+      entQuery.in('product_id', clubProductIds);
+    }
+
+    const { data: activeEntitlements } = await entQuery;
 
     for (const ent of activeEntitlements || []) {
       if (!results.get(ent.user_id)?.valid) {
@@ -249,8 +310,7 @@ export async function hasValidAccessBatch(
     }
   }
 
-  // 4. Batch check telegram_access (P0.9.5)
-  // PATCH: Also filter out revoked state — active_until=NULL with state='revoked' must NOT grant access
+  // 4. Batch check telegram_access
   const stillWithoutAccess2 = userIds.filter((uid) => !results.get(uid)?.valid);
   if (stillWithoutAccess2.length > 0) {
     const telegramQuery = supabase
@@ -279,7 +339,7 @@ export async function hasValidAccessBatch(
     }
   }
 
-  // 5. Batch check telegram_access_grants (P0.9.5)
+  // 5. Batch check telegram_access_grants
   const stillWithoutAccess3 = userIds.filter((uid) => !results.get(uid)?.valid);
   if (stillWithoutAccess3.length > 0) {
     const grantsQuery = supabase
