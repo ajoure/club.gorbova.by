@@ -115,7 +115,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
       { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 8, permission: "roles.view" },
       { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 9, permission: "roles.view" },
-      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram/clubs/fa547c41-3a84-4c4f-904a-427332a0506e/members", icon: "MessageCircle", order: 10 },
+      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 10 },
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 11, permission: "news.view" },
       // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
