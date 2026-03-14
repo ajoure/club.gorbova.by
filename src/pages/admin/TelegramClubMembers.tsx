@@ -151,6 +151,9 @@ export default function TelegramClubMembers() {
     search: debouncedSearch 
   });
   const { data: summary, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberSummary(clubId || null);
+  const resourceMode = summary?.resource_mode ?? 'chat_and_channel';
+  const hasChat = resourceMode !== 'channel_only';
+  const hasChannel = resourceMode !== 'chat_only';
   const [businessStatsPeriod, setBusinessStatsPeriod] = useState(30);
   const { data: businessStats, isLoading: isBusinessStatsLoading } = useClubBusinessStats(clubId || null, businessStatsPeriod);
   
