@@ -150,7 +150,7 @@ export default function TelegramClubMembers() {
     scope, 
     search: debouncedSearch 
   });
-  const { data: stats, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberStats(clubId || null);
+  const { data: summary, isError: isStatsError, error: statsError, refetch: refetchStats } = useClubMemberSummary(clubId || null);
   const [businessStatsPeriod, setBusinessStatsPeriod] = useState(30);
   const { data: businessStats, isLoading: isBusinessStatsLoading } = useClubBusinessStats(clubId || null, businessStatsPeriod);
   
