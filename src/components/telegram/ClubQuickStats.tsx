@@ -454,27 +454,25 @@ export function ClubQuickStats({
           <SkeletonGrid count={4} />
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {/* Новые */}
+            {/* Новые — информационная метрика, без onClick */}
             <GlassStatCard
               title="Новые"
               value={isError ? "—" : fmt(businessStats?.newCount)}
               subtitle="получили первый доступ"
               icon={<TrendingUp className="h-4 w-4 text-emerald-300" />}
               variant="success"
-              tooltip={`Пользователи, чей первый доступ (грант) был создан за последние ${period} дней. Включает тех, кто уже ушёл.`}
-              onClick={() => onTabChange?.("with_access")}
+              tooltip={`Информационная метрика за ${period} дн. Пользователи, чей первый доступ был создан за этот период. Не является фильтром по вкладке.`}
               isLoading={isLoading}
             />
 
-            {/* Не продлили */}
+            {/* Не продлили — информационная метрика, без onClick */}
             <GlassStatCard
               title="Не продлили"
               value={isError ? "—" : fmt(businessStats?.revokedCount)}
               subtitle="ушли из клуба"
               icon={<TrendingDown className="h-4 w-4 text-rose-300" />}
               variant="danger"
-              tooltip={`Участники, чей последний доступ истёк за последние ${period} дней и которые не вернулись`}
-              onClick={() => onTabChange?.("removed")}
+              tooltip={`Информационная метрика за ${period} дн. Участники, чей последний доступ истёк и которые не вернулись. Не является фильтром по вкладке.`}
               isLoading={isLoading}
             />
 
