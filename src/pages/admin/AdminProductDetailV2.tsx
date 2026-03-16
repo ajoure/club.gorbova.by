@@ -20,8 +20,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, ArrowUp, ArrowDown
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical
 } from "lucide-react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
