@@ -1191,6 +1191,7 @@ export default function TelegramClubMembers() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8 text-center text-muted-foreground">#</TableHead>
                     <TableHead className="w-10">
                       <Checkbox 
                         checked={selectedIds.size > 0 && selectedIds.size === filteredMembers.length}
