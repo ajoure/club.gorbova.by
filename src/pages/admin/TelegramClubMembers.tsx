@@ -950,6 +950,7 @@ export default function TelegramClubMembers() {
           violatorsCount={counts.violators}
           outsideSystemCount={summary?.outside_system_count ?? null}
           withAccessTotal={summary?.with_access_total ?? null}
+          summary={summary}
           period={businessStatsPeriod}
           onPeriodChange={setBusinessStatsPeriod}
         />
