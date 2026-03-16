@@ -20,8 +20,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, ArrowUp, ArrowDown
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical
 } from "lucide-react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
 import { ProductCustomFields } from "@/components/products/ProductCustomFields";
 import { ProductCompositionTab } from "@/components/products/ProductCompositionTab";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -45,7 +48,7 @@ import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
-  useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useSwapTariffOrder,
+  useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useReorderTariffs,
   useFlows, useCreateFlow, useUpdateFlow, useDeleteFlow,
 } from "@/hooks/useProductsV2";
 import {
@@ -96,7 +99,28 @@ export default function AdminProductDetailV2() {
   const createTariff = useCreateTariff();
   const updateTariff = useUpdateTariff();
   const deleteTariff = useDeleteTariff();
-  const swapTariffOrder = useSwapTariffOrder();
+  const reorderTariffs = useReorderTariffs();
+
+  // DnD sensors for tariff reorder
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const handleTariffDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !tariffs?.length) return;
+
+    const oldIndex = tariffs.findIndex(t => t.id === active.id);
+    const newIndex = tariffs.findIndex(t => t.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = [...tariffs];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+
+    const updates = reordered.map((t, i) => ({ id: t.id, sort_order: i }));
+    reorderTariffs.mutate(updates);
+  }, [tariffs, reorderTariffs]);
   const createFlow = useCreateFlow();
   const updateFlow = useUpdateFlow();
   const deleteFlow = useDeleteFlow();
@@ -113,7 +137,6 @@ export default function AdminProductDetailV2() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{ type: "tariff" | "offer" | "flow"; ids: string[] } | null>(null);
 
   // === Sorting (client-side, in-memory) ===
-  const tariffSort = useTableSort<any>({ data: tariffs || [] });
   const offerSort = useTableSort<any>({ data: offers || [] });
   const flowSort = useTableSort<any>({ data: flows || [] });
 
@@ -140,8 +163,8 @@ export default function AdminProductDetailV2() {
     });
   }, []);
 
-  // Sorted arrays
-  const sortedTariffs = useMemo(() => clientSort(tariffs || [], tariffSort.sortKey, tariffSort.sortDirection), [tariffs, tariffSort.sortKey, tariffSort.sortDirection, clientSort]);
+  // Sorted arrays — tariffs use sort_order only (no client sort)
+  const sortedTariffs = useMemo(() => tariffs || [], [tariffs]);
   const sortedFlows = useMemo(() => clientSort(flows || [], flowSort.sortKey, flowSort.sortDirection), [flows, flowSort.sortKey, flowSort.sortDirection, clientSort]);
   // allOffers flat for selection/bulk (sorted offers used inside groups for UI)
   const allOffers = useMemo(() => offers ?? [], [offers]);
@@ -740,72 +763,43 @@ export default function AdminProductDetailV2() {
                   {tariffSelect.hasSelection && (
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={tariffSelect.clearSelection}>Сбросить</Button>
                   )}
-                  <div className="ml-auto flex items-center gap-1">
-                    <SortPill label="Имя" sortKey="name" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
-                    <SortPill label="Статус" sortKey="is_active" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
-                  </div>
                 </div>
 
-                <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
-                  {sortedTariffs.map((tariff, idx) => (
-                    <div
-                      key={tariff.id}
-                      ref={(el) => tariffSelect.registerItemRef(tariff.id, el)}
-                      className={cn(
-                        "flex items-start gap-2 group cursor-pointer",
-                        tariffSelect.selectedIds.has(tariff.id) && "ring-2 ring-primary/30 rounded-xl"
-                      )}
-                      onClick={(e) => {
-                        if (e.shiftKey) { tariffSelect.handleRangeSelect(tariff.id, true); }
-                        else if (e.ctrlKey || e.metaKey) { tariffSelect.toggleSelection(tariff.id, true); }
-                        else { openTariffDialog(tariff); }
-                      }}
-                    >
-                      <div className="pt-4 pl-1 flex flex-col items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={tariffSelect.selectedIds.has(tariff.id)}
-                          onCheckedChange={() => tariffSelect.toggleSelection(tariff.id, true)}
-                        />
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          disabled={idx === 0 || swapTariffOrder.isPending}
-                          onClick={(e) => { e.stopPropagation(); const prev = sortedTariffs[idx - 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: prev.id, sort_order: (prev as any).sort_order ?? (idx - 1) } }); }}
-                        >
-                          <ArrowUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          disabled={idx === sortedTariffs.length - 1 || swapTariffOrder.isPending}
-                          onClick={(e) => { e.stopPropagation(); const next = sortedTariffs[idx + 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: next.id, sort_order: (next as any).sort_order ?? (idx + 1) } }); }}
-                        >
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                      <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                        <TariffCardCompact
+                <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleTariffDragEnd}>
+                  <SortableContext items={sortedTariffs.map(t => t.id)} strategy={verticalListSortingStrategy}>
+                    <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
+                      {sortedTariffs.map((tariff) => (
+                        <SortableTariffItem
+                          key={tariff.id}
                           tariff={tariff}
                           offers={getOffersForTariff(tariff.id)}
                           productIsActive={(product as any)?.is_active ?? true}
+                          isSelected={tariffSelect.selectedIds.has(tariff.id)}
+                          isDragPending={reorderTariffs.isPending}
+                          onToggleSelect={() => tariffSelect.toggleSelection(tariff.id, true)}
                           onEdit={() => openTariffDialog(tariff)}
                           onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
+                          onClick={(e) => {
+                            if (e.shiftKey) { tariffSelect.handleRangeSelect(tariff.id, true); }
+                            else if (e.ctrlKey || e.metaKey) { tariffSelect.toggleSelection(tariff.id, true); }
+                            else { openTariffDialog(tariff); }
+                          }}
+                          registerRef={(el) => tariffSelect.registerItemRef(tariff.id, el)}
                         />
-                      </div>
+                      ))}
+
+                      {/* Selection box overlay */}
+                      {tariffSelect.isDragging && tariffSelect.selectionBox && (
+                        <SelectionBox
+                          startX={tariffSelect.selectionBox.startX}
+                          startY={tariffSelect.selectionBox.startY}
+                          endX={tariffSelect.selectionBox.endX}
+                          endY={tariffSelect.selectionBox.endY}
+                        />
+                      )}
                     </div>
-                  ))}
-
-
-                  {/* Selection box overlay */}
-                  {tariffSelect.isDragging && tariffSelect.selectionBox && (
-                    <SelectionBox
-                      startX={tariffSelect.selectionBox.startX}
-                      startY={tariffSelect.selectionBox.startY}
-                      endX={tariffSelect.selectionBox.endX}
-                      endY={tariffSelect.selectionBox.endY}
-                    />
-                  )}
-                </div>
+                  </SortableContext>
+                </DndContext>
 
                 {/* Bulk Actions Bar */}
                 {tariffSelect.hasSelection && (
