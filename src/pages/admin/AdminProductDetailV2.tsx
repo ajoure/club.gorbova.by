@@ -747,7 +747,7 @@ export default function AdminProductDetailV2() {
                 </div>
 
                 <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
-                  {sortedTariffs.map((tariff) => (
+                  {sortedTariffs.map((tariff, idx) => (
                     <div
                       key={tariff.id}
                       ref={(el) => tariffSelect.registerItemRef(tariff.id, el)}
@@ -761,11 +761,27 @@ export default function AdminProductDetailV2() {
                         else { openTariffDialog(tariff); }
                       }}
                     >
-                      <div className="pt-4 pl-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="pt-4 pl-1 flex flex-col items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           checked={tariffSelect.selectedIds.has(tariff.id)}
                           onCheckedChange={() => tariffSelect.toggleSelection(tariff.id, true)}
                         />
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          disabled={idx === 0 || swapTariffOrder.isPending}
+                          onClick={(e) => { e.stopPropagation(); const prev = sortedTariffs[idx - 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: prev.id, sort_order: (prev as any).sort_order ?? (idx - 1) } }); }}
+                        >
+                          <ArrowUp className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          disabled={idx === sortedTariffs.length - 1 || swapTariffOrder.isPending}
+                          onClick={(e) => { e.stopPropagation(); const next = sortedTariffs[idx + 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: next.id, sort_order: (next as any).sort_order ?? (idx + 1) } }); }}
+                        >
+                          <ArrowDown className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
                       <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
                         <TariffCardCompact
@@ -778,6 +794,7 @@ export default function AdminProductDetailV2() {
                       </div>
                     </div>
                   ))}
+
 
                   {/* Selection box overlay */}
                   {tariffSelect.isDragging && tariffSelect.selectionBox && (
