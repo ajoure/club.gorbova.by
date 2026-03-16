@@ -993,7 +993,7 @@ export default function TelegramClubMembers() {
                 В клубе
                 <Badge variant="secondary" className="h-5 px-1.5 text-xs">
                   {counts.in_club_admins > 0 
-                    ? `${counts.in_club_regular} (+${counts.in_club_admins} адм. в клубе) = ${counts.in_club}`
+                    ? `${counts.in_club_regular} + ${counts.in_club_admins} = ${counts.in_club}`
                     : counts.in_club}
                 </Badge>
               </TabsTrigger>

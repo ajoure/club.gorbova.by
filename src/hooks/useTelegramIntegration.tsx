@@ -640,6 +640,21 @@ export interface ClubMemberSummary {
   outside_system_count: number | null;
   total_synced: number;
   orphaned: number;
+  // --- PATCH-STAT-4: UI metrics ---
+  admins_in_club?: number;
+  admins_not_in_club?: number;
+  bot_admins_not_in_members?: number;
+  removed_non_admin?: number;
+  removed_admin?: number;
+  not_joined_any?: number;
+  // --- PATCH-STAT-4: Diagnostic metrics (resource detail) ---
+  in_chat_count?: number;
+  in_channel_count?: number;
+  in_both_count?: number;
+  chat_only_count?: number;
+  channel_only_count?: number;
+  not_joined_chat?: number | null;
+  not_joined_channel?: number | null;
 }
 
 export function useClubMemberSummary(clubId: string | null) {
