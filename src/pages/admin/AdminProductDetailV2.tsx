@@ -787,19 +787,19 @@ export default function AdminProductDetailV2() {
                           registerRef={(el) => tariffSelect.registerItemRef(tariff.id, el)}
                         />
                       ))}
-                  ))}
 
-
-                  {/* Selection box overlay */}
-                  {tariffSelect.isDragging && tariffSelect.selectionBox && (
-                    <SelectionBox
-                      startX={tariffSelect.selectionBox.startX}
-                      startY={tariffSelect.selectionBox.startY}
-                      endX={tariffSelect.selectionBox.endX}
-                      endY={tariffSelect.selectionBox.endY}
-                    />
-                  )}
-                </div>
+                      {/* Selection box overlay */}
+                      {tariffSelect.isDragging && tariffSelect.selectionBox && (
+                        <SelectionBox
+                          startX={tariffSelect.selectionBox.startX}
+                          startY={tariffSelect.selectionBox.startY}
+                          endX={tariffSelect.selectionBox.endX}
+                          endY={tariffSelect.selectionBox.endY}
+                        />
+                      )}
+                    </div>
+                  </SortableContext>
+                </DndContext>
 
                 {/* Bulk Actions Bar */}
                 {tariffSelect.hasSelection && (
