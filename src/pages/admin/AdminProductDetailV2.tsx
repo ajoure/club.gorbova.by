@@ -96,6 +96,7 @@ export default function AdminProductDetailV2() {
   const createTariff = useCreateTariff();
   const updateTariff = useUpdateTariff();
   const deleteTariff = useDeleteTariff();
+  const swapTariffOrder = useSwapTariffOrder();
   const createFlow = useCreateFlow();
   const updateFlow = useUpdateFlow();
   const deleteFlow = useDeleteFlow();
