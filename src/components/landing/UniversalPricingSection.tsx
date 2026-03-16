@@ -6,6 +6,7 @@ import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
 import type { PublicProduct, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
@@ -114,11 +115,7 @@ export function UniversalPricingSection({
             </AnimatedSection>
           )}
 
-          <div className={`grid grid-cols-1 gap-6 max-w-5xl mx-auto items-stretch ${
-            tariffs.length === 1 ? 'md:grid-cols-1 max-w-md' :
-            tariffs.length === 2 ? 'md:grid-cols-2 max-w-3xl' :
-            'md:grid-cols-3'
-          }`}>
+          <TariffCarouselGrid count={tariffs.length}>
             {tariffs.map((tariff, index) => (
               <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100}>
                 <TariffCard
@@ -129,7 +126,7 @@ export function UniversalPricingSection({
                 />
               </AnimatedSection>
             ))}
-          </div>
+          </TariffCarouselGrid>
 
           {disclaimerText && (
             <AnimatedSection animation="fade-up" delay={400}>
