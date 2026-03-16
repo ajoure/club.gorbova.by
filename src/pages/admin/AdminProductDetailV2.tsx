@@ -163,8 +163,8 @@ export default function AdminProductDetailV2() {
     });
   }, []);
 
-  // Sorted arrays
-  const sortedTariffs = useMemo(() => clientSort(tariffs || [], tariffSort.sortKey, tariffSort.sortDirection), [tariffs, tariffSort.sortKey, tariffSort.sortDirection, clientSort]);
+  // Sorted arrays — tariffs use sort_order only (no client sort)
+  const sortedTariffs = useMemo(() => tariffs || [], [tariffs]);
   const sortedFlows = useMemo(() => clientSort(flows || [], flowSort.sortKey, flowSort.sortDirection), [flows, flowSort.sortKey, flowSort.sortDirection, clientSort]);
   // allOffers flat for selection/bulk (sorted offers used inside groups for UI)
   const allOffers = useMemo(() => offers ?? [], [offers]);
