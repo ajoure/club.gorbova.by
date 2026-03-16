@@ -48,7 +48,7 @@ import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
-  useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useSwapTariffOrder,
+  useTariffs, useCreateTariff, useUpdateTariff, useDeleteTariff, useReorderTariffs,
   useFlows, useCreateFlow, useUpdateFlow, useDeleteFlow,
 } from "@/hooks/useProductsV2";
 import {
