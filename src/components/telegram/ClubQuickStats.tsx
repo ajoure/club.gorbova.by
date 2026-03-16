@@ -346,7 +346,90 @@ export function ClubQuickStats({
         )}
       </div>
 
-      {/* ---- РЯД 2: Динамика ---- */}
+      {/* ---- РЯД 2: Присутствие (resource-mode-aware) ---- */}
+      {summary && (
+        <div className="relative mb-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/30 mb-2 px-0.5">
+            Присутствие
+          </p>
+
+          {(() => {
+            const mode = summary.resource_mode;
+            const hasChat = mode !== 'channel_only';
+            const hasChannel = mode !== 'chat_only';
+            const isFull = hasChat && hasChannel;
+
+            const inClubSub = (summary.in_club_admins ?? 0) > 0
+              ? `${summary.in_club_regular} участн. + ${summary.in_club_admins} адм.`
+              : "участников";
+
+            const notJoinedSub = mode === 'chat_only'
+              ? "имеют доступ, нет в чате"
+              : mode === 'channel_only'
+                ? "имеют доступ, нет в канале"
+                : "имеют доступ, нет в чате/канале";
+
+            return (
+              <div className={cn(
+                "grid gap-3",
+                isFull ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2"
+              )}>
+                {/* В клубе */}
+                <GlassStatCard
+                  title="В клубе"
+                  value={isError ? "—" : fmt(summary.in_club_total)}
+                  subtitle={inClubSub}
+                  icon={<Users className="h-4 w-4 text-white/80" />}
+                  variant="default"
+                  tooltip={`Физически в ресурсах клуба: ${summary.in_club_regular} обычных + ${summary.in_club_admins} админов`}
+                  onClick={() => onTabChange?.("in_club")}
+                  isLoading={isLoading}
+                />
+
+                {/* В чате — только для chat+channel */}
+                {isFull && (
+                  <GlassStatCard
+                    title="В чате"
+                    value={isError ? "—" : fmt(summary.in_chat_count)}
+                    subtitle={`из них ${summary.chat_only_count ?? 0} только в чате`}
+                    icon={<MessageCircle className="h-4 w-4 text-sky-300" />}
+                    variant="info"
+                    tooltip={`Всего в чате: ${fmt(summary.in_chat_count)}. Только в чате (без канала): ${fmt(summary.chat_only_count)}`}
+                    isLoading={isLoading}
+                  />
+                )}
+
+                {/* В канале — только для chat+channel */}
+                {isFull && (
+                  <GlassStatCard
+                    title="В канале"
+                    value={isError ? "—" : fmt(summary.in_channel_count)}
+                    subtitle={`из них ${summary.channel_only_count ?? 0} только в канале`}
+                    icon={<Radio className="h-4 w-4 text-teal-300" />}
+                    variant="teal"
+                    tooltip={`Всего в канале: ${fmt(summary.in_channel_count)}. Только в канале (без чата): ${fmt(summary.channel_only_count)}`}
+                    isLoading={isLoading}
+                  />
+                )}
+
+                {/* Не вошли */}
+                <GlassStatCard
+                  title="Не вошли"
+                  value={isError ? "—" : fmt(summary.bought_not_joined_count)}
+                  subtitle={notJoinedSub}
+                  icon={<UserX className="h-4 w-4 text-amber-300" />}
+                  variant="warning"
+                  tooltip="Имеют действующий доступ, но физически отсутствуют в ресурсах клуба"
+                  onClick={() => onTabChange?.("bought_not_joined")}
+                  isLoading={isLoading}
+                />
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* ---- РЯД 3: Динамика ---- */}
       <div className="relative">
         <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/30 mb-2 px-0.5">
           Динамика · {period} дней
