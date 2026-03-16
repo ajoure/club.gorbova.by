@@ -120,6 +120,7 @@ interface GlassStatCardProps {
   tooltip?: string;
   onClick?: () => void;
   isLoading?: boolean;
+  disabled?: boolean;
 }
 
 function GlassStatCard({
@@ -131,38 +132,46 @@ function GlassStatCard({
   tooltip,
   onClick,
   isLoading,
+  disabled = false,
 }: GlassStatCardProps) {
   const s = variantStyles[variant];
 
   const inner = (
     <div
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       className={cn(
         "relative overflow-hidden rounded-[18px] px-3 py-2.5 h-[80px]",
         "flex flex-col justify-between",
-        "bg-white/[0.07] border",
-        s.border,
-        "shadow-[0_12px_40px_rgba(0,0,0,0.25),inset_0_0_0_1px_rgba(255,255,255,0.06)]",
+        "border",
         "transition-all duration-200",
-        onClick &&
+        disabled
+          ? "bg-white/[0.03] border-dashed border-white/[0.12] opacity-40"
+          : cn(
+              "bg-white/[0.07]",
+              s.border,
+              "shadow-[0_12px_40px_rgba(0,0,0,0.25),inset_0_0_0_1px_rgba(255,255,255,0.06)]",
+            ),
+        !disabled && onClick &&
           "cursor-pointer hover:bg-white/[0.12] hover:scale-[1.02] hover:shadow-[0_16px_48px_rgba(0,0,0,0.30)]"
       )}
       style={{
-        backdropFilter: "blur(20px) saturate(160%)",
-        WebkitBackdropFilter: "blur(20px) saturate(160%)",
+        backdropFilter: disabled ? undefined : "blur(20px) saturate(160%)",
+        WebkitBackdropFilter: disabled ? undefined : "blur(20px) saturate(160%)",
       }}
     >
-      {/* Блик */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-10 left-[-20%] h-28 w-[140%] rotate-[-10deg] bg-gradient-to-b from-white/20 via-white/6 to-transparent" />
-      </div>
+      {/* Блик — скрыт для disabled */}
+      {!disabled && (
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -top-10 left-[-20%] h-28 w-[140%] rotate-[-10deg] bg-gradient-to-b from-white/20 via-white/6 to-transparent" />
+        </div>
+      )}
 
       {/* Верхняя строка: заголовок + иконка */}
       <div className="relative z-10 flex items-start justify-between gap-1">
         <p className="text-[9px] font-semibold uppercase tracking-widest text-white/50 leading-tight">
           {title}
         </p>
-        <div className={cn("shrink-0 p-1 rounded-lg", s.iconBg)}>
+        <div className={cn("shrink-0 p-1 rounded-lg", disabled ? "bg-white/5" : s.iconBg)}>
           {icon}
         </div>
       </div>
@@ -175,10 +184,10 @@ function GlassStatCard({
           <p
             className={cn(
               "text-xl font-bold tabular-nums tracking-tight leading-none",
-              s.text
+              disabled ? "text-white/30" : s.text
             )}
           >
-            {value}
+            {disabled ? "—" : value}
           </p>
         )}
         {subtitle && (
