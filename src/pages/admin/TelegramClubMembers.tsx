@@ -1384,8 +1384,11 @@ export default function TelegramClubMembers() {
                     </TableRow>
                     );
                   })}
-                  {activeTab === 'admins' && adminsNotInMembers.map((admin) => (
+                  {activeTab === 'admins' && adminsNotInMembers.map((admin, index) => (
                     <TableRow key={`admin-extra-${admin.telegram_user_id}`} className="bg-muted/30">
+                      <TableCell className="text-center text-xs text-muted-foreground tabular-nums">
+                        {filteredMembers.length + index + 1}
+                      </TableCell>
                       <TableCell />
                       <TableCell>
                         <div className="flex items-center gap-2">
