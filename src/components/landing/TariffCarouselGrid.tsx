@@ -1,29 +1,21 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Carousel,
   CarouselContent,
   CarouselItem,
-  CarouselPrevious,
-  CarouselNext,
+  type CarouselApi,
 } from "@/components/ui/carousel";
+import { Button } from "@/components/ui/button";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 
 interface TariffCarouselGridProps {
-  /** Total number of items (determines grid vs carousel) */
   count: number;
   children: React.ReactNode;
   className?: string;
-  /** Force mobile single-column mode (for admin preview) */
   forceMobile?: boolean;
 }
 
-/**
- * Shared layout wrapper for tariff cards.
- * - count <= 3: CSS grid (1/2/3 cols responsive)
- * - count >= 4: Embla horizontal carousel with responsive slides
- *
- * No pricing/business logic — pure layout.
- */
 export function TariffCarouselGrid({
   count,
   children,
@@ -58,26 +50,74 @@ export function TariffCarouselGrid({
 
   // ── Carousel mode (4+ tariffs) ──
   return (
-    <div className={cn("max-w-5xl mx-auto relative", className)}>
+    <CarouselView items={items} forceMobile={forceMobile} className={className} />
+  );
+}
+
+/* ─── Carousel sub-component with Embla API binding ─── */
+
+function CarouselView({
+  items,
+  forceMobile,
+  className,
+}: {
+  items: React.ReactNode[];
+  forceMobile: boolean;
+  className?: string;
+}) {
+  const [api, setApi] = useState<CarouselApi>();
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(false);
+  const [scrollSnaps, setScrollSnaps] = useState<number[]>([]);
+
+  const onSelect = useCallback(() => {
+    if (!api) return;
+    setSelectedIndex(api.selectedScrollSnap());
+    setCanScrollPrev(api.canScrollPrev());
+    setCanScrollNext(api.canScrollNext());
+  }, [api]);
+
+  useEffect(() => {
+    if (!api) return;
+
+    setScrollSnaps(api.scrollSnapList());
+    onSelect();
+
+    api.on("select", onSelect);
+    api.on("reInit", () => {
+      setScrollSnaps(api.scrollSnapList());
+      onSelect();
+    });
+
+    return () => {
+      api.off("select", onSelect);
+      api.off("reInit", onSelect);
+    };
+  }, [api, onSelect]);
+
+  return (
+    <div className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-0", className)}>
       <Carousel
+        setApi={setApi}
         opts={{
           align: "start",
           loop: false,
           slidesToScroll: 1,
+          containScroll: "trimSnaps",
         }}
         className="w-full"
       >
-        <CarouselContent className="-ml-4">
+        {/* Track */}
+        <CarouselContent className="-ml-4 md:-ml-5">
           {items.map((child, i) => (
             <CarouselItem
               key={i}
               className={cn(
-                "pl-4",
+                "pl-4 md:pl-5 flex",
                 forceMobile
-                  ? "basis-full"
-                  : "basis-full md:basis-1/2 lg:basis-1/3",
-                // Equal-height guard: stretch card inside
-                "flex",
+                  ? "basis-[85%]"
+                  : "basis-[85%] md:basis-[48%] lg:basis-[34%]",
               )}
             >
               <div className="w-full flex flex-col h-full [&>*]:h-full [&>*]:flex [&>*]:flex-col">
@@ -87,26 +127,63 @@ export function TariffCarouselGrid({
           ))}
         </CarouselContent>
 
-        {/* Arrows: visible on md+, hidden on mobile (swipe instead) */}
+        {/* Arrows — desktop/tablet only */}
         {!forceMobile && (
           <>
-            <CarouselPrevious
-              className="hidden md:flex -left-4 lg:-left-5"
-            />
-            <CarouselNext
-              className="hidden md:flex -right-4 lg:-right-5"
-            />
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => api?.scrollPrev()}
+              disabled={!canScrollPrev}
+              className={cn(
+                "absolute top-1/2 -translate-y-1/2 -left-3 lg:-left-5 z-10",
+                "hidden md:flex",
+                "h-10 w-10 rounded-full",
+                "bg-background/80 backdrop-blur-sm border-border/50 shadow-lg",
+                "hover:bg-background hover:shadow-xl transition-all",
+                "disabled:opacity-0 disabled:pointer-events-none",
+              )}
+            >
+              <ArrowLeft className="h-5 w-5 text-foreground" />
+              <span className="sr-only">Назад</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => api?.scrollNext()}
+              disabled={!canScrollNext}
+              className={cn(
+                "absolute top-1/2 -translate-y-1/2 -right-3 lg:-right-5 z-10",
+                "hidden md:flex",
+                "h-10 w-10 rounded-full",
+                "bg-background/80 backdrop-blur-sm border-border/50 shadow-lg",
+                "hover:bg-background hover:shadow-xl transition-all",
+                "disabled:opacity-0 disabled:pointer-events-none",
+              )}
+            >
+              <ArrowRight className="h-5 w-5 text-foreground" />
+              <span className="sr-only">Вперёд</span>
+            </Button>
           </>
         )}
       </Carousel>
 
-      {/* Dot indicators for mobile swipe affordance */}
-      {!forceMobile && (
-        <div className="flex justify-center gap-1.5 mt-4 md:hidden" aria-hidden>
-          {items.map((_, i) => (
-            <span
+      {/* Dot indicators — all viewports */}
+      {scrollSnaps.length > 1 && (
+        <div className="flex justify-center gap-2 mt-5" role="tablist" aria-label="Навигация по тарифам">
+          {scrollSnaps.map((_, i) => (
+            <button
               key={i}
-              className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30"
+              role="tab"
+              aria-selected={i === selectedIndex}
+              aria-label={`Слайд ${i + 1}`}
+              onClick={() => api?.scrollTo(i)}
+              className={cn(
+                "rounded-full transition-all duration-300",
+                i === selectedIndex
+                  ? "w-6 h-2 bg-primary"
+                  : "w-2 h-2 bg-muted-foreground/30 hover:bg-muted-foreground/50",
+              )}
             />
           ))}
         </div>
