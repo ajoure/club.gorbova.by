@@ -38,6 +38,7 @@ interface ClubQuickStatsProps {
   violatorsCount?: number;
   outsideSystemCount?: number | null;
   withAccessTotal?: number | null;
+  summary?: ClubMemberSummary | null;
   // Управляемый период (из родителя)
   period: number;
   onPeriodChange: (v: number) => void;
