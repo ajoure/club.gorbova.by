@@ -99,7 +99,28 @@ export default function AdminProductDetailV2() {
   const createTariff = useCreateTariff();
   const updateTariff = useUpdateTariff();
   const deleteTariff = useDeleteTariff();
-  const swapTariffOrder = useSwapTariffOrder();
+  const reorderTariffs = useReorderTariffs();
+
+  // DnD sensors for tariff reorder
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const handleTariffDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !tariffs?.length) return;
+
+    const oldIndex = tariffs.findIndex(t => t.id === active.id);
+    const newIndex = tariffs.findIndex(t => t.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = [...tariffs];
+    const [moved] = reordered.splice(oldIndex, 1);
+    reordered.splice(newIndex, 0, moved);
+
+    const updates = reordered.map((t, i) => ({ id: t.id, sort_order: i }));
+    reorderTariffs.mutate(updates);
+  }, [tariffs, reorderTariffs]);
   const createFlow = useCreateFlow();
   const updateFlow = useUpdateFlow();
   const deleteFlow = useDeleteFlow();
