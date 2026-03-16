@@ -710,9 +710,25 @@ export default function TelegramClubMembers() {
     return selectedMembers.filter(m => m.in_any);
   }, [selectedMembers]);
 
-  // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
+   // PATCH TG-REVOKE-FALSE-REGRANT: Backend truth wins for access badges
+  // PATCH-B: removed + has_access shows dual badge (removed + access marker)
   const getAccessStatusBadge = (status: string, linkStatus?: string, hasActiveAccess?: boolean) => {
     // has_active_access from backend is the SOLE source of truth
+    // PATCH-B: Special case: removed but still has active business access
+    if (hasActiveAccess === true && status === 'removed') {
+      return (
+        <div className="flex flex-col gap-1">
+          <Badge variant="secondary" className="gap-1">
+            <Trash2 className="h-3 w-3" />
+            Удалён
+          </Badge>
+          <Badge variant="outline" className="bg-amber-500/10 text-amber-600 gap-1 text-[10px]">
+            <CheckCircle className="h-3 w-3" />
+            Доступ активен
+          </Badge>
+        </div>
+      );
+    }
     if (hasActiveAccess === true) {
       return (
         <Badge variant="outline" className="bg-green-500/10 text-green-600 gap-1">

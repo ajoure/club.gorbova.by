@@ -327,59 +327,99 @@ Deno.serve(async (req) => {
     // Action: CHECK_STATUS - Check actual Telegram membership via getChatMember
     // ==========================================
     if (action === 'check_status') {
-      const targetMembers = member_ids?.length > 0
-        ? await supabase.from('telegram_club_members').select('*').eq('club_id', club_id).in('id', member_ids)
-        : await supabase.from('telegram_club_members').select('*').eq('club_id', club_id).limit(50);
+      // PATCH-A: Full-sync mode with deterministic pagination
+      // If member_ids provided → targeted check; otherwise → full paginated scan
+      let members: any[] = [];
+      if (member_ids?.length > 0) {
+        const { data } = await supabase.from('telegram_club_members').select('*').eq('club_id', club_id).in('id', member_ids);
+        members = data || [];
+      } else {
+        // Full paginated fetch with deterministic order
+        const FETCH_BATCH = 200;
+        let offset = 0;
+        while (true) {
+          const { data: batch } = await supabase
+            .from('telegram_club_members')
+            .select('*')
+            .eq('club_id', club_id)
+            .order('id')
+            .range(offset, offset + FETCH_BATCH - 1);
+          if (!batch || batch.length === 0) break;
+          members = members.concat(batch);
+          offset += FETCH_BATCH;
+          if (batch.length < FETCH_BATCH) break;
+        }
+        console.log(`[check_status] Full scan: fetched ${members.length} members for club ${club_id}`);
+      }
 
-      const members = targetMembers.data || [];
+      const totalExpected = members.length;
       const results: any[] = [];
       let checkedCount = 0;
+      let adminsForced = 0;
+      let restoredFromRemoved = 0;
 
-      for (const member of members) {
-        let chatResult: { isMember: boolean; status: string; error?: string } | null = null;
-        let channelResult: { isMember: boolean; status: string; error?: string } | null = null;
+      // Process in batches of 50 for Telegram API rate limiting
+      const API_BATCH = 50;
+      for (let batchStart = 0; batchStart < members.length; batchStart += API_BATCH) {
+        const batch = members.slice(batchStart, batchStart + API_BATCH);
+        
+        for (const member of batch) {
+          let chatResult: { isMember: boolean; status: string; error?: string } | null = null;
+          let channelResult: { isMember: boolean; status: string; error?: string } | null = null;
 
-        if (club.chat_id) {
-          chatResult = await checkMembership(botToken, club.chat_id, member.telegram_user_id);
+          if (club.chat_id) {
+            chatResult = await checkMembership(botToken, club.chat_id, member.telegram_user_id);
+          }
+          if (club.channel_id) {
+            channelResult = await checkMembership(botToken, club.channel_id, member.telegram_user_id);
+          }
+
+          // ADMIN INVARIANT: if chat_status is administrator/creator, force in_chat=true
+          const chatIsAdmin = chatResult?.status === 'administrator' || chatResult?.status === 'creator';
+          const channelIsAdmin = channelResult?.status === 'administrator' || channelResult?.status === 'creator';
+          const inChat = chatIsAdmin ? true : (chatResult?.isMember ?? null);
+          const inChannel = channelIsAdmin ? true : (channelResult?.isMember ?? null);
+          const isAdminOrCreator = chatIsAdmin || channelIsAdmin;
+
+          // Track admin guard activations
+          if (isAdminOrCreator) {
+            if ((chatIsAdmin && !chatResult?.isMember) || (channelIsAdmin && !channelResult?.isMember)) {
+              adminsForced++;
+              console.warn(`ADMIN_GUARD: user ${member.telegram_user_id} status=${chatResult?.status || channelResult?.status} forced in_chat/in_channel=true`);
+            }
+          }
+
+          const wasRemoved = isAdminOrCreator && member.access_status === 'removed';
+          if (wasRemoved) {
+            restoredFromRemoved++;
+            console.log(`ADMIN_GUARD: user ${member.telegram_user_id} restored from removed→ok`);
+          }
+
+          // Update member record
+          await supabase.from('telegram_club_members').update({
+            in_chat: inChat,
+            in_channel: inChannel,
+            last_telegram_check_at: new Date().toISOString(),
+            last_telegram_check_result: { chat: chatResult, channel: channelResult },
+            // ADMIN GUARD: restore access_status if admin was incorrectly marked as removed
+            ...(wasRemoved ? { access_status: 'ok' } : {}),
+            updated_at: new Date().toISOString(),
+          }).eq('id', member.id);
+
+          checkedCount++;
+          results.push({
+            telegram_user_id: member.telegram_user_id,
+            in_chat: inChat,
+            in_channel: inChannel,
+            chat_status: chatResult?.status,
+            channel_status: channelResult?.status,
+          });
         }
-        if (club.channel_id) {
-          channelResult = await checkMembership(botToken, club.channel_id, member.telegram_user_id);
+
+        // Log progress every batch
+        if (members.length > API_BATCH) {
+          console.log(`[check_status] Progress: ${Math.min(batchStart + API_BATCH, members.length)}/${members.length} processed`);
         }
-
-        // ADMIN INVARIANT: if chat_status is administrator/creator, force in_chat=true
-        const chatIsAdmin = chatResult?.status === 'administrator' || chatResult?.status === 'creator';
-        const channelIsAdmin = channelResult?.status === 'administrator' || channelResult?.status === 'creator';
-        const inChat = chatIsAdmin ? true : (chatResult?.isMember ?? null);
-        const inChannel = channelIsAdmin ? true : (channelResult?.isMember ?? null);
-        const isAdminOrCreator = chatIsAdmin || channelIsAdmin;
-
-        // Anomaly logging
-        if (chatIsAdmin && chatResult && !chatResult.isMember) {
-          console.warn(`ANOMALY: user ${member.telegram_user_id} chat_status=${chatResult.status} but isMember=false`);
-        }
-        if (channelIsAdmin && channelResult && !channelResult.isMember) {
-          console.warn(`ANOMALY: user ${member.telegram_user_id} channel_status=${channelResult.status} but isMember=false`);
-        }
-
-        // Update member record
-        await supabase.from('telegram_club_members').update({
-          in_chat: inChat,
-          in_channel: inChannel,
-          last_telegram_check_at: new Date().toISOString(),
-          last_telegram_check_result: { chat: chatResult, channel: channelResult },
-          // ADMIN GUARD: restore access_status if admin was incorrectly marked as removed
-          ...(isAdminOrCreator && member.access_status === 'removed' ? { access_status: 'ok' } : {}),
-          updated_at: new Date().toISOString(),
-        }).eq('id', member.id);
-
-        checkedCount++;
-        results.push({
-          telegram_user_id: member.telegram_user_id,
-          in_chat: inChat,
-          in_channel: inChannel,
-          chat_status: chatResult?.status,
-          channel_status: channelResult?.status,
-        });
       }
 
       // Update club last check time
@@ -387,19 +427,24 @@ Deno.serve(async (req) => {
         last_status_check_at: new Date().toISOString(),
       }).eq('id', club_id);
 
-      // Log audit in telegram_access_audit
+      // Audit log with full-sync metrics
+      const inChatCount = results.filter((r: any) => r.in_chat === true).length;
+      const notInChatCount = results.filter((r: any) => r.in_chat === false).length;
+
       await logAudit(supabase, {
         club_id,
         event_type: 'STATUS_CHECK',
         actor_type: 'admin',
         actor_id: requesterId,
-        meta: { checked_count: checkedCount },
+        meta: { 
+          checked_count: checkedCount, 
+          total_expected: totalExpected,
+          full_scan: !member_ids?.length,
+          admins_forced_in_chat: adminsForced,
+          restored_from_removed: restoredFromRemoved,
+        },
       });
 
-      // SYSTEM ACTOR audit for batch status checks (PATCH 8)
-      const inChatCount = results.filter((r: any) => r.in_chat === true).length;
-      const notInChatCount = results.filter((r: any) => r.in_chat === false).length;
-      
       await supabase.from('audit_logs').insert({
         action: 'telegram.status_check_completed',
         actor_type: 'system',
@@ -408,16 +453,29 @@ Deno.serve(async (req) => {
         meta: {
           club_id,
           checked_count: checkedCount,
+          total_expected: totalExpected,
+          full_scan: !member_ids?.length,
           in_chat_count: inChatCount,
           not_in_chat_count: notInChatCount,
+          admins_forced_in_chat: adminsForced,
+          restored_from_removed: restoredFromRemoved,
           sample_ids: results.slice(0, 10).map((r: any) => r.telegram_user_id),
           requester: requesterId || 'internal',
         },
       });
 
+      // STOP-GUARD: log warning if not all processed
+      if (checkedCount < totalExpected) {
+        console.error(`[check_status] STOP-GUARD VIOLATION: processed ${checkedCount}/${totalExpected}`);
+      }
+
       return new Response(JSON.stringify({
         success: true,
         checked_count: checkedCount,
+        total_expected: totalExpected,
+        full_scan: !member_ids?.length,
+        admins_forced_in_chat: adminsForced,
+        restored_from_removed: restoredFromRemoved,
         results,
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
