@@ -366,7 +366,6 @@ export function ClubQuickStats({
             const mode = summary.resource_mode;
             const hasChat = mode !== 'channel_only';
             const hasChannel = mode !== 'chat_only';
-            const isFull = hasChat && hasChannel;
 
             const inClubSub = (summary.in_club_admins ?? 0) > 0
               ? `${summary.in_club_regular} участн. + ${summary.in_club_admins} адм.`
@@ -379,11 +378,8 @@ export function ClubQuickStats({
                 : "имеют доступ, нет в чате/канале";
 
             return (
-              <div className={cn(
-                "grid gap-3",
-                isFull ? "grid-cols-2 md:grid-cols-4" : "grid-cols-2"
-              )}>
-                {/* В клубе */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {/* В клубе — всегда active */}
                 <GlassStatCard
                   title="В клубе"
                   value={isError ? "—" : fmt(summary.in_club_total)}
@@ -395,33 +391,43 @@ export function ClubQuickStats({
                   isLoading={isLoading}
                 />
 
-                {/* В чате — только для chat+channel */}
-                {isFull && (
-                  <GlassStatCard
-                    title="В чате"
-                    value={isError ? "—" : fmt(summary.in_chat_count)}
-                    subtitle={`из них ${summary.chat_only_count ?? 0} только в чате`}
-                    icon={<MessageCircle className="h-4 w-4 text-sky-300" />}
-                    variant="info"
-                    tooltip={`Всего в чате: ${fmt(summary.in_chat_count)}. Только в чате (без канала): ${fmt(summary.chat_only_count)}`}
-                    isLoading={isLoading}
-                  />
-                )}
+                {/* В чате — active если hasChat, disabled если нет */}
+                <GlassStatCard
+                  title="В чате"
+                  value={isError ? "—" : fmt(summary.in_chat_count)}
+                  subtitle={hasChat
+                    ? `из них ${summary.chat_only_count ?? 0} только в чате`
+                    : "чат не подключён"
+                  }
+                  icon={<MessageCircle className="h-4 w-4 text-sky-300" />}
+                  variant="info"
+                  tooltip={hasChat
+                    ? `Всего в чате: ${fmt(summary.in_chat_count)}. Только в чате (без канала): ${fmt(summary.chat_only_count)}`
+                    : "Чат не подключён к этому клубу"
+                  }
+                  isLoading={isLoading}
+                  disabled={!hasChat}
+                />
 
-                {/* В канале — только для chat+channel */}
-                {isFull && (
-                  <GlassStatCard
-                    title="В канале"
-                    value={isError ? "—" : fmt(summary.in_channel_count)}
-                    subtitle={`из них ${summary.channel_only_count ?? 0} только в канале`}
-                    icon={<Radio className="h-4 w-4 text-teal-300" />}
-                    variant="teal"
-                    tooltip={`Всего в канале: ${fmt(summary.in_channel_count)}. Только в канале (без чата): ${fmt(summary.channel_only_count)}`}
-                    isLoading={isLoading}
-                  />
-                )}
+                {/* В канале — active если hasChannel, disabled если нет */}
+                <GlassStatCard
+                  title="В канале"
+                  value={isError ? "—" : fmt(summary.in_channel_count)}
+                  subtitle={hasChannel
+                    ? `из них ${summary.channel_only_count ?? 0} только в канале`
+                    : "канал не подключён"
+                  }
+                  icon={<Radio className="h-4 w-4 text-teal-300" />}
+                  variant="teal"
+                  tooltip={hasChannel
+                    ? `Всего в канале: ${fmt(summary.in_channel_count)}. Только в канале (без чата): ${fmt(summary.channel_only_count)}`
+                    : "Канал не подключён к этому клубу"
+                  }
+                  isLoading={isLoading}
+                  disabled={!hasChannel}
+                />
 
-                {/* Не вошли */}
+                {/* Не вошли — всегда active */}
                 <GlassStatCard
                   title="Не вошли"
                   value={isError ? "—" : fmt(summary.bought_not_joined_count)}
