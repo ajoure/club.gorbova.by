@@ -1219,7 +1219,7 @@ export default function TelegramClubMembers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredMembers.map((member) => {
+                  {filteredMembers.map((member, index) => {
                     // Use has_active_access as source of truth for violator detection
                     const isViolator = !member.has_active_access && member.in_any;
                     const effectiveNoAccess = !member.has_active_access && (member.access_status === 'no_access' || member.access_status === 'removed');
@@ -1239,6 +1239,9 @@ export default function TelegramClubMembers() {
                         }
                       `}
                     >
+                      <TableCell className="text-center text-xs text-muted-foreground tabular-nums">
+                        {index + 1}
+                      </TableCell>
                       <TableCell>
                         <Checkbox 
                           checked={selectedIds.has(member.id)}
