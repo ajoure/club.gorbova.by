@@ -104,7 +104,8 @@ export function useConsent() {
     !!user && 
     !!currentPolicy && 
     profileConsent !== undefined &&
-    profileConsent?.consent_version !== currentPolicy.version;
+    profileConsent !== null &&
+    profileConsent.consent_version !== currentPolicy.version;
 
   // Grant consent mutation
   const grantConsent = useMutation({
