@@ -1380,27 +1380,33 @@ export default function TelegramClubMembers() {
                     </TableRow>
                     );
                   })}
-                  {activeTab === 'admins' && botAdminsNotInMembers.map((bot) => (
-                    <TableRow key={`bot-${bot.telegram_user_id}`} className="bg-muted/30">
+                  {activeTab === 'admins' && adminsNotInMembers.map((admin) => (
+                    <TableRow key={`admin-extra-${admin.telegram_user_id}`} className="bg-muted/30">
                       <TableCell />
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Bot className="h-4 w-4 text-muted-foreground" />
+                          {admin.is_bot ? (
+                            <Bot className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                          )}
                           <div>
-                            <div className="font-medium">{bot.full_name || bot.telegram_username || `Bot ${bot.telegram_user_id}`}</div>
+                            <div className="font-medium">{admin.full_name || admin.telegram_username || `${admin.is_bot ? 'Bot' : 'Admin'} ${admin.telegram_user_id}`}</div>
                             <div className="text-sm text-muted-foreground">
-                              {bot.telegram_username ? `@${bot.telegram_username}` : `ID: ${bot.telegram_user_id}`}
+                              {admin.telegram_username ? `@${admin.telegram_username}` : `ID: ${admin.telegram_user_id}`}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-muted-foreground">Бот</Badge>
+                        <Badge variant="outline" className="text-muted-foreground">
+                          {admin.is_bot ? 'Бот' : 'Не в списке'}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary">
                           <ShieldCheck className="h-3 w-3 mr-1" />
-                          {bot.role === 'creator' ? 'Создатель' : 'Администратор'}
+                          {admin.role === 'creator' ? 'Создатель' : 'Администратор'}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">—</TableCell>
