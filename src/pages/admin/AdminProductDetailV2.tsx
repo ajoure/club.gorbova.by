@@ -35,7 +35,7 @@ import { TariffCard } from "@/components/landing/TariffCard";
 import { TariffCarouselGrid } from "@/components/landing/TariffCarouselGrid";
 import { buildTariffCardViewModel, type CardConfig } from "@/lib/tariffCardViewModel";
 import { SelectionBox } from "@/components/admin/SelectionBox";
-import { SortPill } from "@/components/admin/SortPill";
+
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useTableSort } from "@/hooks/useTableSort";
 import { useDragSelect } from "@/hooks/useDragSelect";
