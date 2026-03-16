@@ -234,16 +234,24 @@ export default function TelegramClubMembers() {
   // Set of admin telegram_user_ids for filtering
   const adminTelegramIds = useMemo(() => new Set(adminsList.map(a => a.telegram_user_id)), [adminsList]);
 
-  // Bot admins not present in members table (e.g. the club bot itself)
-  const botAdminsNotInMembers = useMemo(() => {
-    if (!members) return adminsList.filter(a => a.is_bot);
+  // All admins (human + bot) from useClubAdmins that are NOT in members list
+  // This is the unified SoT for the admin tab "extra rows" section
+  const adminsNotInMembers = useMemo(() => {
+    if (!members) return adminsList;
     const memberTgIds = new Set(members.map(m => m.telegram_user_id));
-    return adminsList.filter(a => a.is_bot && !memberTgIds.has(a.telegram_user_id));
+    return adminsList.filter(a => !memberTgIds.has(a.telegram_user_id));
   }, [adminsList, members]);
 
-  // Phase 8: Use backend summary counts instead of client-side .filter()
+  // Backward-compat alias for bot-only rows (used in admin tab rendering)
+  const botAdminsNotInMembers = useMemo(
+    () => adminsNotInMembers.filter(a => a.is_bot),
+    [adminsNotInMembers]
+  );
+
+  // Phase 8: Use backend summary counts; admin badge = adminsList.length (single SoT)
+  // adminsList comes from useClubAdmins which is the same source as adminTelegramIds and admin tab rendering
   const counts = useMemo(() => {
-    if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
+    if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
     
     return {
       in_club: summary.in_club_total,
@@ -253,9 +261,11 @@ export default function TelegramClubMembers() {
       bought_not_joined: summary.bought_not_joined_count,
       violators: summary.violators_count,
       removed: summary.removed_count,
-      admins: summary.admins_total ?? (summary.in_club_admins + botAdminsNotInMembers.length),
+      // PATCH-STAT-6: Badge Админы = adminsList.length (single SoT with admin tab rendering)
+      // adminsList = human admins from telegram_club_members + bot admin from telegram_clubs
+      admins: adminsList.length,
     };
-  }, [summary, botAdminsNotInMembers]);
+  }, [summary, adminsList.length]);
 
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
@@ -1370,27 +1380,33 @@ export default function TelegramClubMembers() {
                     </TableRow>
                     );
                   })}
-                  {activeTab === 'admins' && botAdminsNotInMembers.map((bot) => (
-                    <TableRow key={`bot-${bot.telegram_user_id}`} className="bg-muted/30">
+                  {activeTab === 'admins' && adminsNotInMembers.map((admin) => (
+                    <TableRow key={`admin-extra-${admin.telegram_user_id}`} className="bg-muted/30">
                       <TableCell />
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Bot className="h-4 w-4 text-muted-foreground" />
+                          {admin.is_bot ? (
+                            <Bot className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                          )}
                           <div>
-                            <div className="font-medium">{bot.full_name || bot.telegram_username || `Bot ${bot.telegram_user_id}`}</div>
+                            <div className="font-medium">{admin.full_name || admin.telegram_username || `${admin.is_bot ? 'Bot' : 'Admin'} ${admin.telegram_user_id}`}</div>
                             <div className="text-sm text-muted-foreground">
-                              {bot.telegram_username ? `@${bot.telegram_username}` : `ID: ${bot.telegram_user_id}`}
+                              {admin.telegram_username ? `@${admin.telegram_username}` : `ID: ${admin.telegram_user_id}`}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className="text-muted-foreground">Бот</Badge>
+                        <Badge variant="outline" className="text-muted-foreground">
+                          {admin.is_bot ? 'Бот' : 'Не в списке'}
+                        </Badge>
                       </TableCell>
                       <TableCell>
                         <Badge variant="secondary">
                           <ShieldCheck className="h-3 w-3 mr-1" />
-                          {bot.role === 'creator' ? 'Создатель' : 'Администратор'}
+                          {admin.role === 'creator' ? 'Создатель' : 'Администратор'}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">—</TableCell>
