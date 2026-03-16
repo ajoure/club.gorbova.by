@@ -234,16 +234,24 @@ export default function TelegramClubMembers() {
   // Set of admin telegram_user_ids for filtering
   const adminTelegramIds = useMemo(() => new Set(adminsList.map(a => a.telegram_user_id)), [adminsList]);
 
-  // Bot admins not present in members table (e.g. the club bot itself)
-  const botAdminsNotInMembers = useMemo(() => {
-    if (!members) return adminsList.filter(a => a.is_bot);
+  // All admins (human + bot) from useClubAdmins that are NOT in members list
+  // This is the unified SoT for the admin tab "extra rows" section
+  const adminsNotInMembers = useMemo(() => {
+    if (!members) return adminsList;
     const memberTgIds = new Set(members.map(m => m.telegram_user_id));
-    return adminsList.filter(a => a.is_bot && !memberTgIds.has(a.telegram_user_id));
+    return adminsList.filter(a => !memberTgIds.has(a.telegram_user_id));
   }, [adminsList, members]);
 
-  // Phase 8: Use backend summary counts instead of client-side .filter()
+  // Backward-compat alias for bot-only rows (used in admin tab rendering)
+  const botAdminsNotInMembers = useMemo(
+    () => adminsNotInMembers.filter(a => a.is_bot),
+    [adminsNotInMembers]
+  );
+
+  // Phase 8: Use backend summary counts; admin badge = adminsList.length (single SoT)
+  // adminsList comes from useClubAdmins which is the same source as adminTelegramIds and admin tab rendering
   const counts = useMemo(() => {
-    if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: 0 };
+    if (!summary) return { in_club: 0, in_club_regular: 0, in_club_admins: 0, with_access: 0, bought_not_joined: 0, violators: 0, removed: 0, admins: adminsList.length };
     
     return {
       in_club: summary.in_club_total,
@@ -253,9 +261,11 @@ export default function TelegramClubMembers() {
       bought_not_joined: summary.bought_not_joined_count,
       violators: summary.violators_count,
       removed: summary.removed_count,
-      admins: summary.admins_total ?? (summary.in_club_admins + botAdminsNotInMembers.length),
+      // PATCH-STAT-6: Badge Админы = adminsList.length (single SoT with admin tab rendering)
+      // adminsList = human admins from telegram_club_members + bot admin from telegram_clubs
+      admins: adminsList.length,
     };
-  }, [summary, botAdminsNotInMembers]);
+  }, [summary, adminsList.length]);
 
   // Filter members by active tab
   const filteredMembers = useMemo(() => {
