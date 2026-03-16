@@ -1140,11 +1140,11 @@ export default function AdminProductDetailV2() {
                           </p>
                         </div>
 
-                        <div className={cn(
-                          "grid gap-6",
-                          sectionPreviewMode === "mobile" ? "grid-cols-1" : "grid-cols-1 md:grid-cols-3"
-                        )}>
-                          {tariffs?.filter(t => t.is_active).map((tariff: any) => {
+                        <TariffCarouselGrid
+                          count={tariffs?.filter((t: any) => t.is_active).length || 0}
+                          forceMobile={sectionPreviewMode === "mobile"}
+                        >
+                          {tariffs?.filter((t: any) => t.is_active).map((tariff: any) => {
                             const vm = buildTariffCardViewModel(tariff, (product as any)?.landing_config?.price_suffix);
                             return (
                               <TariffCard
@@ -1157,7 +1157,7 @@ export default function AdminProductDetailV2() {
                               />
                             );
                           })}
-                        </div>
+                        </TariffCarouselGrid>
 
                         {(product as any).payment_disclaimer_text && (
                           <p className="text-center text-sm text-muted-foreground mt-8">
