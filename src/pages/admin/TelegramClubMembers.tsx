@@ -993,9 +993,7 @@ export default function TelegramClubMembers() {
                 <span className="hidden sm:inline"><Users className="h-4 w-4" /></span>
                 В клубе
                 <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                  {counts.in_club_admins > 0 
-                    ? `${counts.in_club_regular} + ${counts.in_club_admins} = ${counts.in_club}`
-                    : counts.in_club}
+                  {counts.in_club}
                 </Badge>
               </TabsTrigger>
               <TabsTrigger value="with_access" className="gap-1 px-2 sm:px-3 whitespace-nowrap">
