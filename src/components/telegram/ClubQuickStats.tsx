@@ -19,6 +19,7 @@ import {
   TelegramClub,
   EnrichedClubMember,
   ClubBusinessStats,
+  ClubMemberSummary,
 } from "@/hooks/useTelegramIntegration";
 
 
