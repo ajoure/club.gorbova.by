@@ -54,7 +54,7 @@ export function TariffCarouselGrid({
   );
 }
 
-/* ─── Carousel sub-component with Embla API binding ─── */
+/* ─── Carousel sub-component with coverflow-like effect ─── */
 
 function CarouselView({
   items,
@@ -78,6 +78,12 @@ function CarouselView({
     setCanScrollNext(api.canScrollNext());
   }, [api]);
 
+  const onReInit = useCallback(() => {
+    if (!api) return;
+    setScrollSnaps(api.scrollSnapList());
+    onSelect();
+  }, [api, onSelect]);
+
   useEffect(() => {
     if (!api) return;
 
@@ -85,46 +91,58 @@ function CarouselView({
     onSelect();
 
     api.on("select", onSelect);
-    api.on("reInit", () => {
-      setScrollSnaps(api.scrollSnapList());
-      onSelect();
-    });
+    api.on("reInit", onReInit);
 
     return () => {
       api.off("select", onSelect);
-      api.off("reInit", onSelect);
+      api.off("reInit", onReInit);
     };
-  }, [api, onSelect]);
+  }, [api, onSelect, onReInit]);
 
   return (
-    <div className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-0", className)}>
+    <div className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-8", className)}>
       <Carousel
         setApi={setApi}
         opts={{
-          align: "start",
+          align: "center",
           loop: false,
           slidesToScroll: 1,
           containScroll: "trimSnaps",
         }}
         className="w-full"
       >
-        {/* Track */}
-        <CarouselContent className="-ml-4 md:-ml-5">
-          {items.map((child, i) => (
-            <CarouselItem
-              key={i}
-              className={cn(
-                "pl-4 md:pl-5 flex",
-                forceMobile
-                  ? "basis-[85%]"
-                  : "basis-[85%] md:basis-[48%] lg:basis-[34%]",
-              )}
-            >
-              <div className="w-full flex flex-col h-full [&>*]:h-full [&>*]:flex [&>*]:flex-col">
-                {child}
-              </div>
-            </CarouselItem>
-          ))}
+        {/* Track — py for shadow/badge breathing room */}
+        <CarouselContent className="-ml-3 md:-ml-4 items-stretch py-4">
+          {items.map((child, i) => {
+            const isActive = i === selectedIndex;
+            const isAdjacent =
+              i === selectedIndex - 1 || i === selectedIndex + 1;
+
+            return (
+              <CarouselItem
+                key={i}
+                className={cn(
+                  "pl-3 md:pl-4 flex",
+                  forceMobile
+                    ? "basis-[88%]"
+                    : "basis-[88%] md:basis-[52%] lg:basis-[36%]",
+                )}
+              >
+                <div
+                  className={cn(
+                    "w-full flex flex-col transition-all duration-300 ease-out",
+                    isActive
+                      ? "scale-100 opacity-100"
+                      : isAdjacent
+                        ? "scale-[0.96] opacity-75"
+                        : "scale-[0.92] opacity-55",
+                  )}
+                >
+                  {child}
+                </div>
+              </CarouselItem>
+            );
+          })}
         </CarouselContent>
 
         {/* Arrows — desktop/tablet only */}
@@ -136,7 +154,7 @@ function CarouselView({
               onClick={() => api?.scrollPrev()}
               disabled={!canScrollPrev}
               className={cn(
-                "absolute top-1/2 -translate-y-1/2 -left-3 lg:-left-5 z-10",
+                "absolute top-1/2 -translate-y-1/2 -left-1 lg:-left-4 z-10",
                 "hidden md:flex",
                 "h-10 w-10 rounded-full",
                 "bg-background/80 backdrop-blur-sm border-border/50 shadow-lg",
@@ -153,7 +171,7 @@ function CarouselView({
               onClick={() => api?.scrollNext()}
               disabled={!canScrollNext}
               className={cn(
-                "absolute top-1/2 -translate-y-1/2 -right-3 lg:-right-5 z-10",
+                "absolute top-1/2 -translate-y-1/2 -right-1 lg:-right-4 z-10",
                 "hidden md:flex",
                 "h-10 w-10 rounded-full",
                 "bg-background/80 backdrop-blur-sm border-border/50 shadow-lg",
@@ -168,9 +186,9 @@ function CarouselView({
         )}
       </Carousel>
 
-      {/* Dot indicators — all viewports */}
+      {/* Dot indicators */}
       {scrollSnaps.length > 1 && (
-        <div className="flex justify-center gap-2 mt-5" role="tablist" aria-label="Навигация по тарифам">
+        <div className="flex justify-center gap-2 mt-6" role="tablist" aria-label="Навигация по тарифам">
           {scrollSnaps.map((_, i) => (
             <button
               key={i}
@@ -181,8 +199,8 @@ function CarouselView({
               className={cn(
                 "rounded-full transition-all duration-300",
                 i === selectedIndex
-                  ? "w-6 h-2 bg-primary"
-                  : "w-2 h-2 bg-muted-foreground/30 hover:bg-muted-foreground/50",
+                  ? "w-7 h-2.5 bg-primary"
+                  : "w-2.5 h-2.5 bg-muted-foreground/30 hover:bg-muted-foreground/50",
               )}
             />
           ))}
