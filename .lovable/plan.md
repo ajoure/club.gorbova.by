@@ -772,3 +772,50 @@ STOP-guard: без approval ничего не execute.
 - Основную логику подписок/оплат
 - Telegram Bot API интеграцию
 - Структуру таблиц (только view + trigger + новая SQL-функция)
+
+---
+
+# ПЛАН: Закрытие рассинхрона метрик и единая верификация клубной статистики
+
+**Статус**: EXECUTE завершён, ожидает финальную UI-приёмку
+
+## Цель
+
+Устранить все расхождения между SQL, RPC, UI и Telegram для метрик «В клубе», «Админы», «С доступом», «Не вошли», «Удалённые», «Нарушители». Подтвердить parity для БкБ и GC.
+
+## 1. Root Cause
+
+Edge functions `telegram-cron-sync` и `telegram-revoke-access` ставили `in_chat=false` и `access_status=removed` администраторам/создателям, которых Telegram не позволяет удалить. Guard-логика внедрена в 7 write-paths, данные пересинхронизированы.
+
+## 2. Инвариант (DoD)
+
+- Если `chat_status IN ('administrator','creator')` → `in_chat` обязан быть `true`
+- Если `channel_status IN ('administrator','creator')` → `in_channel` обязан быть `true`
+- `access_status='removed'` для такой записи недопустим
+- Нарушение логируется как аномалия
+
+## 3. Что исправлено в коде
+
+Guard в 5 edge functions: telegram-cron-sync, telegram-revoke-access, telegram-club-members (check_status/kick/kick_present), telegram-kick-violators, telegram-check-expired.
+
+## 4. Что исправлено в данных (2026-03-16 12:17 UTC)
+
+**БкБ** (2 записи): Катерина (99340019) и Сергей (66086524) — `in_chat: false→true`, `access_status: removed→ok`
+**GC** (3 записи): Катерина (99340019), Ирина (2087326316), Алима (6338908257) — `in_chat: false→true`, `access_status: removed→ok`
+
+## 5. SQL Snapshot (post-sync)
+
+**БкБ**: in_club_total 31→33, in_club_admins 1→3, removed 4→2
+**GC**: in_club_total 155→158, in_club_admins 1→4, removed 42→39
+
+## 6. Поимённый proof: все 9 админов
+
+Все 7 админов в members + 2 бота (один бот на оба клуба) подтверждены: `in_chat=true`, `access_status=ok`, chat_status=administrator/creator.
+
+## 7. Что остаётся
+
+- UI parity-проверка (cards, badges, rendered lists)
+- RPC summary parity (требует auth)
+- getChatMembersCount грубая сверка
+- SQL-миграция не планируется, но может потребоваться
+- PATCH-4 заблокирован
