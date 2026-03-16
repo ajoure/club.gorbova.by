@@ -367,8 +367,9 @@ export function ClubQuickStats({
             const hasChat = mode !== 'channel_only';
             const hasChannel = mode !== 'chat_only';
 
-            const inClubSub = (summary.in_club_admins ?? 0) > 0
-              ? `${summary.in_club_regular} участн. + ${summary.in_club_admins} адм.`
+            const adminsInClub = summary.in_club_admins ?? 0;
+            const inClubSub = adminsInClub > 0
+              ? `${summary.in_club_regular} участн. + ${adminsInClub} адм. (физич.)`
               : "участников";
 
             const notJoinedSub = mode === 'chat_only'
