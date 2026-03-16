@@ -526,13 +526,43 @@ Deno.serve(async (req) => {
       }).eq('user_id', profileUserId).eq('club_id', club_id).eq('status', 'active');
     }
 
-    // Update member record
-    await supabase.from('telegram_club_members').update({
-      in_chat: chatRevoked ? false : undefined,
-      in_channel: channelRevoked ? false : undefined,
-      access_status: 'removed',
-      updated_at: new Date().toISOString(),
-    }).eq('telegram_user_id', telegramUserId).eq('club_id', club_id);
+    // ADMIN GUARD: Check if user is administrator/creator before marking as removed
+    // Admins cannot be banned by Telegram, so we must not falsify their in_chat/in_channel state
+    const { data: memberRecord } = await supabase
+      .from('telegram_club_members')
+      .select('last_telegram_check_result')
+      .eq('telegram_user_id', telegramUserId)
+      .eq('club_id', club_id)
+      .maybeSingle();
+
+    const memberChatStatus = (memberRecord?.last_telegram_check_result as any)?.chat?.status;
+    const memberChannelStatus = (memberRecord?.last_telegram_check_result as any)?.channel?.status;
+    const isMemberAdmin = ['administrator', 'creator'].includes(memberChatStatus) || ['administrator', 'creator'].includes(memberChannelStatus);
+
+    if (isMemberAdmin) {
+      console.log(`ADMIN_PROTECTED: user ${telegramUserId} is ${memberChatStatus || memberChannelStatus} — skipping in_chat/access_status update`);
+      await supabase.from('audit_logs').insert({
+        action: 'telegram.revoke.admin_protected',
+        actor_type: is_manual ? 'admin' : 'system',
+        actor_user_id: admin_id || null,
+        actor_label: 'telegram-revoke-access',
+        meta: {
+          tg_user_id: telegramUserId,
+          club_id,
+          chat_status: memberChatStatus,
+          channel_status: memberChannelStatus,
+          reason: 'cannot_remove_admin',
+        },
+      });
+    } else {
+      // Update member record — only for non-admin users
+      await supabase.from('telegram_club_members').update({
+        in_chat: chatRevoked ? false : undefined,
+        in_channel: channelRevoked ? false : undefined,
+        access_status: 'removed',
+        updated_at: new Date().toISOString(),
+      }).eq('telegram_user_id', telegramUserId).eq('club_id', club_id);
+    }
 
     // Mark user as former club member for reentry pricing
     if (profileUserId) {

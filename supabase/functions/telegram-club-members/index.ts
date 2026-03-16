@@ -346,8 +346,20 @@ Deno.serve(async (req) => {
           channelResult = await checkMembership(botToken, club.channel_id, member.telegram_user_id);
         }
 
-        const inChat = chatResult?.isMember ?? null;
-        const inChannel = channelResult?.isMember ?? null;
+        // ADMIN INVARIANT: if chat_status is administrator/creator, force in_chat=true
+        const chatIsAdmin = chatResult?.status === 'administrator' || chatResult?.status === 'creator';
+        const channelIsAdmin = channelResult?.status === 'administrator' || channelResult?.status === 'creator';
+        const inChat = chatIsAdmin ? true : (chatResult?.isMember ?? null);
+        const inChannel = channelIsAdmin ? true : (channelResult?.isMember ?? null);
+        const isAdminOrCreator = chatIsAdmin || channelIsAdmin;
+
+        // Anomaly logging
+        if (chatIsAdmin && chatResult && !chatResult.isMember) {
+          console.warn(`ANOMALY: user ${member.telegram_user_id} chat_status=${chatResult.status} but isMember=false`);
+        }
+        if (channelIsAdmin && channelResult && !channelResult.isMember) {
+          console.warn(`ANOMALY: user ${member.telegram_user_id} channel_status=${channelResult.status} but isMember=false`);
+        }
 
         // Update member record
         await supabase.from('telegram_club_members').update({
@@ -355,6 +367,8 @@ Deno.serve(async (req) => {
           in_channel: inChannel,
           last_telegram_check_at: new Date().toISOString(),
           last_telegram_check_result: { chat: chatResult, channel: channelResult },
+          // ADMIN GUARD: restore access_status if admin was incorrectly marked as removed
+          ...(isAdminOrCreator && member.access_status === 'removed' ? { access_status: 'ok' } : {}),
           updated_at: new Date().toISOString(),
         }).eq('id', member.id);
 

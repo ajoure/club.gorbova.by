@@ -153,8 +153,31 @@ Deno.serve(async (req) => {
               await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            const inChat = chatResult?.isMember ?? null;
+            const chatStatus = chatResult?.status;
+            const isAdminOrCreator = chatStatus === 'administrator' || chatStatus === 'creator';
+
+            // ADMIN INVARIANT: if Telegram says administrator/creator, in_chat MUST be true
+            // This prevents the contradiction where chat_status=administrator but in_chat=false
+            const inChat = isAdminOrCreator ? true : (chatResult?.isMember ?? null);
             const inChannel = inChat;
+
+            // Anomaly detection: log if admin status contradicts isMember
+            if (isAdminOrCreator && chatResult && !chatResult.isMember) {
+              console.warn(`ANOMALY: user ${member.telegram_user_id} has chat_status=${chatStatus} but isMember=false — forcing in_chat=true`);
+              await supabase.from('audit_logs').insert({
+                action: 'telegram.admin_invariant.anomaly',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'telegram-cron-sync',
+                meta: {
+                  tg_user_id: member.telegram_user_id,
+                  club_id: club.id,
+                  chat_status: chatStatus,
+                  is_member: chatResult.isMember,
+                  forced_in_chat: true,
+                },
+              });
+            }
 
             // Update member record
             await supabase.from('telegram_club_members').update({
@@ -162,10 +185,31 @@ Deno.serve(async (req) => {
               in_channel: inChannel,
               last_telegram_check_at: new Date().toISOString(),
               last_telegram_check_result: { chat: chatResult, channel: 'derived_from_chat' },
+              // ADMIN GUARD: if admin/creator, never set access_status to 'removed'
+              ...(isAdminOrCreator && member.access_status === 'removed' ? { access_status: 'ok' } : {}),
               updated_at: new Date().toISOString(),
             }).eq('id', member.id);
 
             checkedCount++;
+
+            // ADMIN GUARD: skip autokick for administrator/creator — Telegram won't allow ban anyway
+            if (isAdminOrCreator) {
+              console.log(`ADMIN_PROTECTED: user ${member.telegram_user_id} is ${chatStatus} — skipping autokick`);
+              guardSkipCount++;
+
+              await supabase.from('audit_logs').insert({
+                action: 'telegram.autokick.admin_protected',
+                actor_type: 'system',
+                actor_user_id: null,
+                actor_label: 'telegram-cron-sync',
+                meta: {
+                  tg_user_id: member.telegram_user_id,
+                  club_id: club.id,
+                  chat_status: chatStatus,
+                },
+              });
+              continue;
+            }
 
             // PATCH 1: Use shared hasValidAccessBatch result instead of local function
             const userId = member.profiles?.user_id;
@@ -178,7 +222,6 @@ Deno.serve(async (req) => {
                 console.log(`GUARD_SKIP: user ${member.telegram_user_id} - access check returned undefined, skipping kick`);
                 guardSkipCount++;
 
-                // Audit log for guard skip
                 await supabase.from('audit_logs').insert({
                   action: 'telegram.autokick.guard_skip',
                   actor_type: 'system',
@@ -195,7 +238,6 @@ Deno.serve(async (req) => {
 
               console.log(`Autokicking user ${member.telegram_user_id} - no valid access (source check complete)`);
 
-              // Audit log for kick attempt
               await supabase.from('audit_logs').insert({
                 action: 'telegram.autokick.attempt',
                 actor_type: 'system',
@@ -227,7 +269,6 @@ Deno.serve(async (req) => {
                 updated_at: new Date().toISOString(),
               }).eq('id', member.id);
 
-              // Log audit
               await logAudit(supabase, {
                 club_id: club.id,
                 user_id: userId,

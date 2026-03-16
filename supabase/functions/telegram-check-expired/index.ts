@@ -247,6 +247,29 @@ Deno.serve(async (req) => {
       }
 
       for (const violator of violators) {
+        // ADMIN GUARD: check last_telegram_check_result for admin/creator status
+        const checkResult = violator.last_telegram_check_result as Record<string, any> | null;
+        const vChatStatus = checkResult?.chat?.status;
+        const vChannelStatus = checkResult?.channel?.status;
+        const isViolatorAdmin = ['administrator', 'creator'].includes(vChatStatus) || ['administrator', 'creator'].includes(vChannelStatus);
+
+        if (isViolatorAdmin) {
+          console.log(`ADMIN_PROTECTED: violator ${violator.telegram_user_id} is ${vChatStatus || vChannelStatus} — skipping kick`);
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.autokick.admin_protected',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'telegram-check-expired',
+            meta: {
+              tg_user_id: violator.telegram_user_id,
+              club_id: club.id,
+              chat_status: vChatStatus,
+              channel_status: vChannelStatus,
+            },
+          });
+          continue;
+        }
+
         const userId = violator.profile_id ? profileUserMap.get(violator.profile_id) : null;
         const hasValidAccessResult = userId ? (accessValidMap.get(userId) ?? false) : false;
 
@@ -259,7 +282,6 @@ Deno.serve(async (req) => {
             .update({ access_status: 'ok', updated_at: now })
             .eq('id', violator.id);
 
-          // Audit log
           await supabase.from('audit_logs').insert({
             action: 'telegram.autokick.guard_skip',
             actor_type: 'system',
