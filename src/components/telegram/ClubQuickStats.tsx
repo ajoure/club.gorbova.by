@@ -274,6 +274,7 @@ export function ClubQuickStats({
   violatorsCount,
   outsideSystemCount,
   withAccessTotal,
+  summary,
   period,
   onPeriodChange,
 }: ClubQuickStatsProps) {
