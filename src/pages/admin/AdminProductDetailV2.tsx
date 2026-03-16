@@ -137,7 +137,6 @@ export default function AdminProductDetailV2() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{ type: "tariff" | "offer" | "flow"; ids: string[] } | null>(null);
 
   // === Sorting (client-side, in-memory) ===
-  const tariffSort = useTableSort<any>({ data: tariffs || [] });
   const offerSort = useTableSort<any>({ data: offers || [] });
   const flowSort = useTableSort<any>({ data: flows || [] });
 
