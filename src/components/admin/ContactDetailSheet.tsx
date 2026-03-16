@@ -171,7 +171,7 @@ interface ContactDetailSheetProps {
 export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: ContactDetailSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasPermission, isSuperAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
