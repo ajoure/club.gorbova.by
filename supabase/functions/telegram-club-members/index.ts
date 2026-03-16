@@ -346,8 +346,20 @@ Deno.serve(async (req) => {
           channelResult = await checkMembership(botToken, club.channel_id, member.telegram_user_id);
         }
 
-        const inChat = chatResult?.isMember ?? null;
-        const inChannel = channelResult?.isMember ?? null;
+        // ADMIN INVARIANT: if chat_status is administrator/creator, force in_chat=true
+        const chatIsAdmin = chatResult?.status === 'administrator' || chatResult?.status === 'creator';
+        const channelIsAdmin = channelResult?.status === 'administrator' || channelResult?.status === 'creator';
+        const inChat = chatIsAdmin ? true : (chatResult?.isMember ?? null);
+        const inChannel = channelIsAdmin ? true : (channelResult?.isMember ?? null);
+        const isAdminOrCreator = chatIsAdmin || channelIsAdmin;
+
+        // Anomaly logging
+        if (chatIsAdmin && chatResult && !chatResult.isMember) {
+          console.warn(`ANOMALY: user ${member.telegram_user_id} chat_status=${chatResult.status} but isMember=false`);
+        }
+        if (channelIsAdmin && channelResult && !channelResult.isMember) {
+          console.warn(`ANOMALY: user ${member.telegram_user_id} channel_status=${channelResult.status} but isMember=false`);
+        }
 
         // Update member record
         await supabase.from('telegram_club_members').update({
@@ -355,6 +367,8 @@ Deno.serve(async (req) => {
           in_channel: inChannel,
           last_telegram_check_at: new Date().toISOString(),
           last_telegram_check_result: { chat: chatResult, channel: channelResult },
+          // ADMIN GUARD: restore access_status if admin was incorrectly marked as removed
+          ...(isAdminOrCreator && member.access_status === 'removed' ? { access_status: 'ok' } : {}),
           updated_at: new Date().toISOString(),
         }).eq('id', member.id);
 
@@ -652,6 +666,25 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ADMIN GUARD: skip kick for administrator/creator
+        const kickCheckResult = member.last_telegram_check_result as Record<string, any> | null;
+        const kChatStatus = kickCheckResult?.chat?.status;
+        const kChannelStatus = kickCheckResult?.channel?.status;
+        const isKickAdmin = ['administrator', 'creator'].includes(kChatStatus) || ['administrator', 'creator'].includes(kChannelStatus);
+
+        if (isKickAdmin) {
+          console.log(`ADMIN_PROTECTED: member ${member.telegram_user_id} is ${kChatStatus || kChannelStatus} — skipping kick`);
+          skippedCount++;
+          await logAudit(supabase, {
+            club_id, user_id: member.profile_id, telegram_user_id: member.telegram_user_id,
+            event_type: 'KICK_SKIP_ADMIN_PROTECTED',
+            actor_type: 'admin', actor_id: requesterId,
+            meta: { chat_status: kChatStatus, channel_status: kChannelStatus },
+          });
+          results.push({ telegram_user_id: member.telegram_user_id, success: false, skipped: true });
+          continue;
+        }
+
         let chatKicked = false, channelKicked = false, lastError: string | undefined;
 
         if (member.in_chat && club.chat_id) {
@@ -724,7 +757,19 @@ Deno.serve(async (req) => {
         const userId = profileToUserId.get(member.profile_id);
         const accessResult = userId ? accessValidation.get(userId) : null;
 
-        if (accessResult?.valid) {
+        // ADMIN GUARD: skip kick for administrator/creator
+        const kpCheckResult = member.last_telegram_check_result as Record<string, any> | null;
+        const kpChatStatus = kpCheckResult?.chat?.status;
+        const kpChannelStatus = kpCheckResult?.channel?.status;
+        const isKpAdmin = ['administrator', 'creator'].includes(kpChatStatus) || ['administrator', 'creator'].includes(kpChannelStatus);
+
+        if (isKpAdmin) {
+          skippedHasAccess.push({
+            telegram_user_id: member.telegram_user_id,
+            telegram_username: member.telegram_username,
+            access_source: 'admin_protected',
+          });
+        } else if (accessResult?.valid) {
           // AUTO_GUARD_SKIP: активный доступ → пропускаем
           skippedHasAccess.push({
             telegram_user_id: member.telegram_user_id,

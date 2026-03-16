@@ -309,6 +309,25 @@ Deno.serve(async (req) => {
           continue; // Skip to next member
         }
 
+        // ADMIN GUARD: check last_telegram_check_result for admin/creator status
+        const memberCheckResult = member.last_telegram_check_result as Record<string, any> | null;
+        const mChatStatus = memberCheckResult?.chat?.status;
+        const mChannelStatus = memberCheckResult?.channel?.status;
+        const isMemberAdmin = ['administrator', 'creator'].includes(mChatStatus) || ['administrator', 'creator'].includes(mChannelStatus);
+
+        if (isMemberAdmin) {
+          console.log(`ADMIN_PROTECTED: member ${member.telegram_user_id} is ${mChatStatus || mChannelStatus} — skipping kick`);
+          skippedWithAccess++;
+          await logAudit(supabase, {
+            club_id: club.id,
+            event_type: 'KICK_SKIP_ADMIN_PROTECTED',
+            actor_type: 'cron',
+            telegram_user_id: member.telegram_user_id,
+            meta: { chat_status: mChatStatus, channel_status: mChannelStatus },
+          });
+          continue;
+        }
+
         // No valid access confirmed — proceed to kick even if access_status was 'ok'
         if (member.access_status === 'ok') {
           console.log(`PATCH C: user ${member.telegram_user_id} had access_status='ok' but hasValidAccessBatch returned invalid — proceeding to kick`);
