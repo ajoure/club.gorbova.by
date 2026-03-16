@@ -666,6 +666,25 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ADMIN GUARD: skip kick for administrator/creator
+        const kickCheckResult = member.last_telegram_check_result as Record<string, any> | null;
+        const kChatStatus = kickCheckResult?.chat?.status;
+        const kChannelStatus = kickCheckResult?.channel?.status;
+        const isKickAdmin = ['administrator', 'creator'].includes(kChatStatus) || ['administrator', 'creator'].includes(kChannelStatus);
+
+        if (isKickAdmin) {
+          console.log(`ADMIN_PROTECTED: member ${member.telegram_user_id} is ${kChatStatus || kChannelStatus} — skipping kick`);
+          skippedCount++;
+          await logAudit(supabase, {
+            club_id, user_id: member.profile_id, telegram_user_id: member.telegram_user_id,
+            event_type: 'KICK_SKIP_ADMIN_PROTECTED',
+            actor_type: 'admin', actor_id: requesterId,
+            meta: { chat_status: kChatStatus, channel_status: kChannelStatus },
+          });
+          results.push({ telegram_user_id: member.telegram_user_id, success: false, skipped: true });
+          continue;
+        }
+
         let chatKicked = false, channelKicked = false, lastError: string | undefined;
 
         if (member.in_chat && club.chat_id) {
