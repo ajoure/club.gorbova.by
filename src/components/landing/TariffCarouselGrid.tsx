@@ -112,7 +112,7 @@ function CarouselView({
         className="w-full"
       >
         {/* Track — py for shadow/badge breathing room */}
-        <CarouselContent className="-ml-3 md:-ml-4 items-stretch py-4">
+        <CarouselContent className="-ml-4 md:-ml-5 items-stretch py-6">
           {items.map((child, i) => {
             const isActive = i === selectedIndex;
             const isAdjacent =
@@ -122,7 +122,7 @@ function CarouselView({
               <CarouselItem
                 key={i}
                 className={cn(
-                  "pl-3 md:pl-4 flex",
+                  "pl-4 md:pl-5 flex",
                   forceMobile
                     ? "basis-[88%]"
                     : "basis-[88%] md:basis-[52%] lg:basis-[36%]",
@@ -134,8 +134,8 @@ function CarouselView({
                     isActive
                       ? "scale-100 opacity-100"
                       : isAdjacent
-                        ? "scale-[0.96] opacity-75"
-                        : "scale-[0.92] opacity-55",
+                        ? "scale-[0.97] opacity-80"
+                        : "scale-[0.95] opacity-60",
                   )}
                 >
                   {child}
