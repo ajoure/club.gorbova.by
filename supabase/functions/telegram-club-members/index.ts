@@ -757,7 +757,19 @@ Deno.serve(async (req) => {
         const userId = profileToUserId.get(member.profile_id);
         const accessResult = userId ? accessValidation.get(userId) : null;
 
-        if (accessResult?.valid) {
+        // ADMIN GUARD: skip kick for administrator/creator
+        const kpCheckResult = member.last_telegram_check_result as Record<string, any> | null;
+        const kpChatStatus = kpCheckResult?.chat?.status;
+        const kpChannelStatus = kpCheckResult?.channel?.status;
+        const isKpAdmin = ['administrator', 'creator'].includes(kpChatStatus) || ['administrator', 'creator'].includes(kpChannelStatus);
+
+        if (isKpAdmin) {
+          skippedHasAccess.push({
+            telegram_user_id: member.telegram_user_id,
+            telegram_username: member.telegram_username,
+            access_source: 'admin_protected',
+          });
+        } else if (accessResult?.valid) {
           // AUTO_GUARD_SKIP: активный доступ → пропускаем
           skippedHasAccess.push({
             telegram_user_id: member.telegram_user_id,

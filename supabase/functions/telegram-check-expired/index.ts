@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
       // Find violators - people in chat/channel without valid access
       const { data: violators } = await supabase
         .from('telegram_club_members')
-        .select('id, telegram_user_id, in_chat, in_channel, access_status, profile_id')
+        .select('id, telegram_user_id, in_chat, in_channel, access_status, profile_id, last_telegram_check_result')
         .eq('club_id', club.id)
         .neq('access_status', 'ok')
         .neq('access_status', 'removed')
