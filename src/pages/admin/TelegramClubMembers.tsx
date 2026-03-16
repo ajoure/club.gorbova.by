@@ -1191,6 +1191,7 @@ export default function TelegramClubMembers() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8 text-center text-muted-foreground">#</TableHead>
                     <TableHead className="w-10">
                       <Checkbox 
                         checked={selectedIds.size > 0 && selectedIds.size === filteredMembers.length}
@@ -1218,7 +1219,7 @@ export default function TelegramClubMembers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredMembers.map((member) => {
+                  {filteredMembers.map((member, index) => {
                     // Use has_active_access as source of truth for violator detection
                     const isViolator = !member.has_active_access && member.in_any;
                     const effectiveNoAccess = !member.has_active_access && (member.access_status === 'no_access' || member.access_status === 'removed');
@@ -1238,6 +1239,9 @@ export default function TelegramClubMembers() {
                         }
                       `}
                     >
+                      <TableCell className="text-center text-xs text-muted-foreground tabular-nums">
+                        {index + 1}
+                      </TableCell>
                       <TableCell>
                         <Checkbox 
                           checked={selectedIds.has(member.id)}
@@ -1380,8 +1384,11 @@ export default function TelegramClubMembers() {
                     </TableRow>
                     );
                   })}
-                  {activeTab === 'admins' && adminsNotInMembers.map((admin) => (
+                  {activeTab === 'admins' && adminsNotInMembers.map((admin, index) => (
                     <TableRow key={`admin-extra-${admin.telegram_user_id}`} className="bg-muted/30">
+                      <TableCell className="text-center text-xs text-muted-foreground tabular-nums">
+                        {filteredMembers.length + index + 1}
+                      </TableCell>
                       <TableCell />
                       <TableCell>
                         <div className="flex items-center gap-2">
