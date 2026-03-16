@@ -763,59 +763,30 @@ export default function AdminProductDetailV2() {
                   {tariffSelect.hasSelection && (
                     <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={tariffSelect.clearSelection}>Сбросить</Button>
                   )}
-                  <div className="ml-auto flex items-center gap-1">
-                    <SortPill label="Имя" sortKey="name" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
-                    <SortPill label="Статус" sortKey="is_active" currentSortKey={tariffSort.sortKey} currentSortDirection={tariffSort.sortDirection} onSort={tariffSort.handleSort} />
-                  </div>
                 </div>
 
-                <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
-                  {sortedTariffs.map((tariff, idx) => (
-                    <div
-                      key={tariff.id}
-                      ref={(el) => tariffSelect.registerItemRef(tariff.id, el)}
-                      className={cn(
-                        "flex items-start gap-2 group cursor-pointer",
-                        tariffSelect.selectedIds.has(tariff.id) && "ring-2 ring-primary/30 rounded-xl"
-                      )}
-                      onClick={(e) => {
-                        if (e.shiftKey) { tariffSelect.handleRangeSelect(tariff.id, true); }
-                        else if (e.ctrlKey || e.metaKey) { tariffSelect.toggleSelection(tariff.id, true); }
-                        else { openTariffDialog(tariff); }
-                      }}
-                    >
-                      <div className="pt-4 pl-1 flex flex-col items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={tariffSelect.selectedIds.has(tariff.id)}
-                          onCheckedChange={() => tariffSelect.toggleSelection(tariff.id, true)}
-                        />
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          disabled={idx === 0 || swapTariffOrder.isPending}
-                          onClick={(e) => { e.stopPropagation(); const prev = sortedTariffs[idx - 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: prev.id, sort_order: (prev as any).sort_order ?? (idx - 1) } }); }}
-                        >
-                          <ArrowUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          disabled={idx === sortedTariffs.length - 1 || swapTariffOrder.isPending}
-                          onClick={(e) => { e.stopPropagation(); const next = sortedTariffs[idx + 1]; swapTariffOrder.mutate({ tariffA: { id: tariff.id, sort_order: (tariff as any).sort_order ?? idx }, tariffB: { id: next.id, sort_order: (next as any).sort_order ?? (idx + 1) } }); }}
-                        >
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                      <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-                        <TariffCardCompact
+                <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleTariffDragEnd}>
+                  <SortableContext items={sortedTariffs.map(t => t.id)} strategy={verticalListSortingStrategy}>
+                    <div className="relative space-y-3" onMouseDown={tariffSelect.handleMouseDown}>
+                      {sortedTariffs.map((tariff) => (
+                        <SortableTariffItem
+                          key={tariff.id}
                           tariff={tariff}
                           offers={getOffersForTariff(tariff.id)}
                           productIsActive={(product as any)?.is_active ?? true}
+                          isSelected={tariffSelect.selectedIds.has(tariff.id)}
+                          isDragPending={reorderTariffs.isPending}
+                          onToggleSelect={() => tariffSelect.toggleSelection(tariff.id, true)}
                           onEdit={() => openTariffDialog(tariff)}
                           onDelete={() => setDeleteConfirm({ type: "tariff", id: tariff.id })}
+                          onClick={(e) => {
+                            if (e.shiftKey) { tariffSelect.handleRangeSelect(tariff.id, true); }
+                            else if (e.ctrlKey || e.metaKey) { tariffSelect.toggleSelection(tariff.id, true); }
+                            else { openTariffDialog(tariff); }
+                          }}
+                          registerRef={(el) => tariffSelect.registerItemRef(tariff.id, el)}
                         />
-                      </div>
-                    </div>
+                      ))}
                   ))}
 
 

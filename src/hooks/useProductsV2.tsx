@@ -123,17 +123,25 @@ export function useTariffs(productId?: string) {
   });
 }
 
-export function useSwapTariffOrder() {
+export function useReorderTariffs() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ tariffA, tariffB }: { tariffA: { id: string; sort_order: number }; tariffB: { id: string; sort_order: number } }) => {
-      const { error: e1 } = await supabase.from("tariffs").update({ sort_order: tariffB.sort_order }).eq("id", tariffA.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase.from("tariffs").update({ sort_order: tariffA.sort_order }).eq("id", tariffB.id);
-      if (e2) throw e2;
+    mutationFn: async (updates: { id: string; sort_order: number }[]) => {
+      // Batch update all tariffs with new sort_order
+      for (const { id, sort_order } of updates) {
+        const { error } = await supabase
+          .from("tariffs")
+          .update({ sort_order })
+          .eq("id", id);
+        if (error) throw error;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tariffs"] });
+      toast.success("Порядок сохранён");
+    },
+    onError: (error) => {
+      toast.error(`Ошибка сортировки: ${error.message}`);
     },
   });
 }
