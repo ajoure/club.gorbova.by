@@ -476,14 +476,14 @@ export function ClubQuickStats({
               isLoading={isLoading}
             />
 
-            {/* Вне системы */}
+            {/* Вне системы — информационная метрика, без onClick */}
             <GlassStatCard
               title="Вне системы"
               value={outsideSystemCount !== null && outsideSystemCount !== undefined ? outsideSystemCount : "—"}
               subtitle="не привязали Telegram"
               icon={<Ghost className="h-4 w-4 text-violet-300" />}
               variant="ghost"
-              tooltip="Физически в чате/канале, но не привязали Telegram к нашей системе — бот не может их удалить"
+              tooltip="Информационная метрика. Физически в чате/канале, но не привязали Telegram к нашей системе. Не является фильтром по вкладке."
             />
 
             {/* Нарушители */}
