@@ -171,7 +171,7 @@ interface ContactDetailSheetProps {
 export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: ContactDetailSheetProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { hasPermission, isSuperAdmin } = usePermissions();
+  const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
@@ -1764,9 +1764,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         <p className="text-sm">Нет привязанных карт</p>
                       </div>
                     )}
-                    {/* Charge & Payment link buttons for super admin — always visible */}
-                    {isSuperAdmin() && (
-                      <div className="flex gap-2 mt-2">
+                    {/* Charge button — super_admin only; Payment link — any admin */}
+                    <div className="flex gap-2 mt-2">
+                      {isSuperAdmin() && (
                         <Button
                           variant="outline"
                           className="flex-1 gap-2"
@@ -1775,6 +1775,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           <CreditCard className="w-4 h-4" />
                           Списать деньги
                         </Button>
+                      )}
+                      {isAdmin() && (
                         <Button
                           variant="outline"
                           className="flex-1 gap-2"
@@ -1783,8 +1785,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           <Link2 className="w-4 h-4" />
                           Ссылка на оплату
                         </Button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               )}

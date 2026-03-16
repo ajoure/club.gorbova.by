@@ -347,30 +347,24 @@ export function AdminPaymentLinkDialog({
                   onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
                   className="space-y-2"
                 >
-                  <div
-                    className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30"
-                    onClick={() => setPaymentType("one_time")}
-                  >
+                  <Label htmlFor="pt-one-time" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
                     <RadioGroupItem value="one_time" id="pt-one-time" />
-                    <Label htmlFor="pt-one-time" className="cursor-pointer">
+                    <div>
                       <p className="font-medium">Разовая оплата</p>
                       <p className="text-xs text-muted-foreground">
                         Одноразовое списание. Клиент может привязать карту.
                       </p>
-                    </Label>
-                  </div>
-                  <div
-                    className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30"
-                    onClick={() => setPaymentType("subscription")}
-                  >
+                    </div>
+                  </Label>
+                  <Label htmlFor="pt-subscription" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
                     <RadioGroupItem value="subscription" id="pt-subscription" />
-                    <Label htmlFor="pt-subscription" className="cursor-pointer">
+                    <div>
                       <p className="font-medium">Подписка bePaid</p>
                       <p className="text-xs text-muted-foreground">
                         Ежемесячное автосписание. Управляется через bePaid.
                       </p>
-                    </Label>
-                  </div>
+                    </div>
+                  </Label>
                 </RadioGroup>
               </div>
             )}
