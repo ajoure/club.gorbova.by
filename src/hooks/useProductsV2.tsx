@@ -112,13 +112,28 @@ export function useTariffs(productId?: string) {
       let query = supabase
         .from("tariffs")
         .select("*")
-        .order("display_order", { ascending: true });
+        .order("sort_order", { ascending: true });
       if (productId) {
         query = query.eq("product_id", productId);
       }
       const { data, error } = await query;
       if (error) throw error;
       return data;
+    },
+  });
+}
+
+export function useSwapTariffOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ tariffA, tariffB }: { tariffA: { id: string; sort_order: number }; tariffB: { id: string; sort_order: number } }) => {
+      const { error: e1 } = await supabase.from("tariffs").update({ sort_order: tariffB.sort_order }).eq("id", tariffA.id);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from("tariffs").update({ sort_order: tariffA.sort_order }).eq("id", tariffB.id);
+      if (e2) throw e2;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tariffs"] });
     },
   });
 }
