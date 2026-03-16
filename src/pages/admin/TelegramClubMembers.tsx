@@ -279,7 +279,8 @@ export default function TelegramClubMembers() {
         case 'in_club':
           return member.in_any;
         case 'with_access':
-          return member.has_active_access;
+          // PATCH-B: exclude removed users from "with access" tab — they appear in "removed" tab instead
+          return member.has_active_access && member.access_status !== 'removed';
         case 'bought_not_joined':
           return member.is_bought_not_joined;
         case 'violators':
