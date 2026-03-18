@@ -98,6 +98,7 @@ export class SitePageService {
     if (input.title !== undefined) updateData.title = input.title;
     if (input.slug !== undefined) updateData.slug = input.slug;
     if (input.product_id !== undefined) updateData.product_id = input.product_id;
+    if (input.folder_id !== undefined) updateData.folder_id = input.folder_id;
     if (input.blocks !== undefined) updateData.blocks = input.blocks;
     if (input.seo_settings !== undefined) updateData.seo_settings = input.seo_settings;
     if (input.theme_settings !== undefined) updateData.theme_settings = input.theme_settings;
