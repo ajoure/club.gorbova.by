@@ -923,9 +923,10 @@ export function DiagnosticTableBlock({
       )}
       
       {content.instruction && (
-        <div
+        <SafeHtml
+          html={content.instruction}
+          as="div"
           className="text-sm text-muted-foreground prose prose-sm max-w-none"
-          dangerouslySetInnerHTML={{ __html: content.instruction }}
         />
       )}
 

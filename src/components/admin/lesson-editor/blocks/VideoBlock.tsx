@@ -213,7 +213,7 @@ export function VideoBlock({
     return (
       <div className="space-y-2">
         {content.title && (
-          <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+          <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
         )}
         <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
           <iframe

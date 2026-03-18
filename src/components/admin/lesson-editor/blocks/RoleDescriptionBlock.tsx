@@ -173,9 +173,10 @@ export function RoleDescriptionBlock({
         }}
       >
         <div className="p-6">
-          <div 
+          <SafeHtml 
+            html={roleContent}
+            as="div"
             className="prose prose-sm max-w-none dark:prose-invert"
-            dangerouslySetInnerHTML={{ __html: roleContent }}
           />
         </div>
       </div>
