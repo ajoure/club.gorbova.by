@@ -260,7 +260,7 @@ export function QuizHotspotBlock({
                 >
                   {area.label && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs bg-background px-2 py-0.5 rounded border">
-                      <span dangerouslySetInnerHTML={{ __html: area.label! }} />
+                      <SafeHtml html={area.label!} />
                     </div>
                   )}
                 </div>
