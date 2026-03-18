@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
