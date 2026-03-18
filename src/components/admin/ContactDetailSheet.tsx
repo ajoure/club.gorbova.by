@@ -792,12 +792,10 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   // PATCH 7: Auto-sync bePaid subscriptions (max 3, dedup by provider_subscription_id)
   const autoSyncCountRef = useRef(0);
   const autoSyncedIdsRef = useRef(new Set<string>());
-  const autoSyncRunRef = useRef(false);
 
   useEffect(() => {
     if (!contactProviderSubscriptions || contactProviderSubscriptions.length === 0) return;
-    if (autoSyncRunRef.current) return;
-    autoSyncRunRef.current = true;
+    if (syncBepaidSubMutation.isPending) return;
 
     const subsToSync = contactProviderSubscriptions.filter((sub: any) => {
       if (sub.provider !== 'bepaid') return false;
@@ -818,7 +816,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       autoSyncedIdsRef.current.add(sub.provider_subscription_id);
       syncBepaidSubMutation.mutate(sub.provider_subscription_id);
     }
-  }, [contactProviderSubscriptions]);
+  }, [contactProviderSubscriptions, syncBepaidSubMutation.isPending]);
   const createProviderSubAdminMutation = useMutation({
     mutationFn: async (subscriptionV2Id: string) => {
       const { data, error } = await supabase.functions.invoke('bepaid-admin-create-subscription-link', {
