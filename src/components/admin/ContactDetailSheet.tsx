@@ -104,6 +104,8 @@ import {
   Link2,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
+import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
