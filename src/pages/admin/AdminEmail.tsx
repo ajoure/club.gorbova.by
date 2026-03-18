@@ -571,9 +571,10 @@ export default function AdminEmail() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() =>
-                      setAccountDialog({ open: true, account: { ...account } })
-                    }
+                    onClick={() => {
+                      setNewSmtpPassword("");
+                      setAccountDialog({ open: true, account: { ...account } });
+                    }}
                   >
                     <Edit2 className="w-4 h-4" />
                   </Button>
