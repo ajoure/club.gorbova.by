@@ -6,48 +6,38 @@ import type { SitePage } from "./types";
  * No business logic — pure read operations for rendering.
  */
 export class SiteRenderService {
-  /**
-   * Resolve a published page by hostname.
-   * Used by DomainRouter to check if a domain has a site builder page.
-   */
   static async resolveByDomain(hostname: string): Promise<SitePage | null> {
-    const { data: binding, error: bindError } = await supabase
-      .from("site_domain_bindings")
+    const { data: binding, error: bindError } = await (supabase
+      .from("site_domain_bindings") as any)
       .select("site_page_id")
       .eq("domain", hostname)
       .maybeSingle();
 
     if (bindError || !binding) return null;
 
-    const { data: page, error: pageError } = await supabase
-      .from("site_pages")
+    const { data: page, error: pageError } = await (supabase
+      .from("site_pages") as any)
       .select("*")
       .eq("id", binding.site_page_id)
       .eq("status", "published")
       .maybeSingle();
 
     if (pageError || !page) return null;
-    return page as unknown as SitePage;
+    return page as SitePage;
   }
 
-  /**
-   * Resolve a published page by slug.
-   */
   static async resolveBySlug(slug: string): Promise<SitePage | null> {
-    const { data, error } = await supabase
-      .from("site_pages")
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
       .select("*")
       .eq("slug", slug)
       .eq("status", "published")
       .maybeSingle();
 
     if (error || !data) return null;
-    return data as unknown as SitePage;
+    return data as SitePage;
   }
 
-  /**
-   * Fetch tariffs for a product (service boundary for pricing block).
-   */
   static async getTariffsForProduct(productId: string) {
     const { data, error } = await supabase
       .from("tariffs")

@@ -30,8 +30,8 @@ export class SiteEventService {
     entityId: string,
     payload: Record<string, unknown>
   ): Promise<string> {
-    const { data, error } = await supabase
-      .from("domain_events")
+    const { data, error } = await (supabase
+      .from("domain_events") as any)
       .insert({
         event_type: eventType,
         source,
@@ -51,8 +51,8 @@ export class SiteEventService {
     status: "pending" | "success" | "failed",
     error?: string
   ): Promise<string> {
-    const { data, error: dbError } = await supabase
-      .from("domain_executions")
+    const { data, error: dbError } = await (supabase
+      .from("domain_executions") as any)
       .insert({
         event_id: eventId,
         step,
@@ -72,8 +72,8 @@ export class SiteEventService {
     status: "success" | "failed" | "retrying",
     error?: string
   ): Promise<void> {
-    const { error: dbError } = await supabase
-      .from("domain_executions")
+    const { error: dbError } = await (supabase
+      .from("domain_executions") as any)
       .update({ status, error: error || null })
       .eq("id", executionId);
 

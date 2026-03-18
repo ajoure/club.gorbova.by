@@ -20,7 +20,7 @@ async function getCurrentUserId(): Promise<string> {
 }
 
 async function writeAudit(action: string, userId: string, meta: Record<string, unknown>) {
-  await supabase.from("audit_logs").insert({
+  await (supabase.from("audit_logs") as any).insert({
     action,
     actor_type: "user",
     actor_user_id: userId,
@@ -35,24 +35,24 @@ async function writeAudit(action: string, userId: string, meta: Record<string, u
  */
 export class SitePageService {
   static async listPages(): Promise<SitePage[]> {
-    const { data, error } = await supabase
-      .from("site_pages")
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
       .select("*")
       .order("created_at", { ascending: false });
 
     if (error) throw new Error(`Failed to list pages: ${error.message}`);
-    return (data || []) as unknown as SitePage[];
+    return (data || []) as SitePage[];
   }
 
   static async getPage(id: string): Promise<SitePage> {
-    const { data, error } = await supabase
-      .from("site_pages")
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
       .select("*")
       .eq("id", id)
       .single();
 
     if (error) throw new Error(`Failed to get page: ${error.message}`);
-    return data as unknown as SitePage;
+    return data as SitePage;
   }
 
   static async createPage(input: CreateSitePageData): Promise<SitePage> {
@@ -60,13 +60,13 @@ export class SitePageService {
     const blocks = input.blocks || [];
     if (blocks.length > 0) validateBlocks(blocks);
 
-    const { data, error } = await supabase
-      .from("site_pages")
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
       .insert({
         title: input.title,
         slug: input.slug,
         product_id: input.product_id || null,
-        blocks: blocks as unknown as Record<string, unknown>[],
+        blocks: blocks,
         seo_settings: input.seo_settings || {},
         theme_settings: input.theme_settings || {},
         created_by: userId,
@@ -76,7 +76,7 @@ export class SitePageService {
 
     if (error) throw new Error(`Failed to create page: ${error.message}`);
 
-    const page = data as unknown as SitePage;
+    const page = data as SitePage;
 
     // Event + audit
     const eventId = await SiteEventService.emitEvent(
@@ -97,12 +97,12 @@ export class SitePageService {
     if (input.title !== undefined) updateData.title = input.title;
     if (input.slug !== undefined) updateData.slug = input.slug;
     if (input.product_id !== undefined) updateData.product_id = input.product_id;
-    if (input.blocks !== undefined) updateData.blocks = input.blocks as unknown as Record<string, unknown>[];
+    if (input.blocks !== undefined) updateData.blocks = input.blocks;
     if (input.seo_settings !== undefined) updateData.seo_settings = input.seo_settings;
     if (input.theme_settings !== undefined) updateData.theme_settings = input.theme_settings;
 
-    const { data, error } = await supabase
-      .from("site_pages")
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
       .update(updateData)
       .eq("id", id)
       .select("*")
@@ -110,7 +110,7 @@ export class SitePageService {
 
     if (error) throw new Error(`Failed to update page: ${error.message}`);
 
-    const page = data as unknown as SitePage;
+    const page = data as SitePage;
 
     const eventId = await SiteEventService.emitEvent(
       "site.page.updated", SOURCE, page.id,
@@ -130,8 +130,8 @@ export class SitePageService {
       { actor_user_id: userId, actor_type: "user" }
     );
 
-    const { error } = await supabase
-      .from("site_pages")
+    const { error } = await (supabase
+      .from("site_pages") as any)
       .delete()
       .eq("id", id);
 
