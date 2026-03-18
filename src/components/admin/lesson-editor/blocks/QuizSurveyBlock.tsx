@@ -499,9 +499,10 @@ export function QuizSurveyBlock({
       {/* Instruction */}
       {content.instruction && (
         <GlassCard className="p-4 bg-primary/5 border-primary/20">
-          <div
+          <SafeHtml
+            html={content.instruction}
+            as="div"
             className="text-sm text-muted-foreground prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: content.instruction }}
           />
         </GlassCard>
       )}
