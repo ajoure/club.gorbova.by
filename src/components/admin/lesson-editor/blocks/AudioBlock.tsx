@@ -120,7 +120,7 @@ export function AudioBlock({ content, onChange, isEditing = true, lessonId }: Au
     return (
       <div className="space-y-2">
         {content.title && (
-          <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+          <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
         )}
         {isGD ? (
           // Google Drive не отдаёт прямой аудио-поток — показываем предупреждение вместо плеера
