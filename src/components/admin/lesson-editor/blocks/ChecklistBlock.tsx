@@ -243,7 +243,7 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
             <div key={group.id} className="space-y-2">
               <div className="border-l-2 border-primary/30 pl-3">
                 <h4 className="font-medium text-xs text-muted-foreground uppercase tracking-wide">
-                  <span dangerouslySetInnerHTML={{ __html: group.title }} />
+                  <SafeHtml html={group.title} />
                 </h4>
               </div>
               <div className="space-y-1">
