@@ -240,17 +240,23 @@ export default function AdminEmail() {
 
   const saveAccountMutation = useMutation({
     mutationFn: async (account: Partial<EmailAccount>) => {
-      if (account.id) {
+      const isUpdate = !!account.id;
+      if (isUpdate) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, created_at, ...updateData } = account;
+        const { id, created_at, has_password, ...updateData } = account;
+        const payload: Record<string, unknown> = { ...updateData };
+        // Only send password if explicitly changed
+        if (newSmtpPassword) {
+          payload.smtp_password = newSmtpPassword;
+        }
         const { error } = await supabase
           .from("email_accounts")
-          .update(updateData as Record<string, unknown>)
+          .update(payload)
           .eq("id", account.id);
         if (error) throw error;
       } else {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _id, created_at: _createdAt, ...insertData } = account;
+        const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
         if (!insertData.email) throw new Error("Email обязателен");
         const smtpSettings = getSmtpSettings(insertData.email);
         const provider = getProviderName(insertData.email);
@@ -262,7 +268,7 @@ export default function AdminEmail() {
           smtp_port: insertData.smtp_port || smtpSettings?.port || 465,
           smtp_encryption: insertData.smtp_encryption || smtpSettings?.encryption || "SSL",
           smtp_username: insertData.smtp_username || insertData.email,
-          smtp_password: insertData.smtp_password || null,
+          smtp_password: newSmtpPassword || null,
           from_name: insertData.from_name || null,
           from_email: insertData.from_email || insertData.email,
           reply_to: insertData.reply_to || null,
@@ -271,6 +277,17 @@ export default function AdminEmail() {
         };
         const { error } = await supabase.from("email_accounts").insert([insertPayload]);
         if (error) throw error;
+      }
+      // Audit logging
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("audit_logs").insert({
+          action: isUpdate ? "email.account.updated" : "email.account.created",
+          actor_type: "user",
+          actor_user_id: user.id,
+          actor_label: user.email || user.id,
+          meta: { email: account.email, account_id: account.id || null },
+        });
       }
     },
     onSuccess: () => {
