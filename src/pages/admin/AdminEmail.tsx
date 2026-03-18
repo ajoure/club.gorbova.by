@@ -813,13 +813,9 @@ export default function AdminEmail() {
                       <Label>SMTP Password</Label>
                       <Input
                         type="password"
-                        value={accountDialog.account.smtp_password || ""}
-                        onChange={(e) =>
-                          setAccountDialog((prev) => ({
-                            ...prev,
-                            account: { ...prev.account, smtp_password: e.target.value },
-                          }))
-                        }
+                        placeholder={accountDialog.account.has_password ? "••••••••  (не изменен)" : "Введите пароль"}
+                        value={newSmtpPassword}
+                        onChange={(e) => setNewSmtpPassword(e.target.value)}
                       />
                     </div>
                   </div>
