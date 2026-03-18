@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Card, CardContent } from "@/components/ui/card";
 import { PenLine, Check, Loader2 } from "lucide-react";
 
