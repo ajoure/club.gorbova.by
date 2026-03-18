@@ -1,7 +1,23 @@
-import DOMPurify from "dompurify";
+import { sanitizeHtml } from "@/services/sitePages/adapters/SanitizationAdapter";
 import type { SiteBlock } from "@/services/sitePages/types";
+import type { PublicProduct, PublicTariff } from "@/hooks/usePublicProduct";
 
-// ─── Block Renderers ───
+// Block renderers
+import { BlockWrapper } from "./blocks/BlockWrapper";
+import { VideoSection } from "./blocks/VideoSection";
+import { ButtonSection } from "./blocks/ButtonSection";
+import { ColumnsSection } from "./blocks/ColumnsSection";
+import { TimerSection } from "./blocks/TimerSection";
+import { HtmlSection } from "./blocks/HtmlSection";
+import { GallerySection } from "./blocks/GallerySection";
+import { TestimonialsSection } from "./blocks/TestimonialsSection";
+import { PricingSection } from "./blocks/PricingSection";
+import { SocialSection } from "./blocks/SocialSection";
+import { LogosSection } from "./blocks/LogosSection";
+import { SpacerSection } from "./blocks/SpacerSection";
+import { FormSection } from "./blocks/FormSection";
+
+// ─── Original Block Renderers (kept inline) ───
 
 function HeroSection({ content }: { content: Record<string, unknown> }) {
   const alignment = (content.alignment as string) || "center";
@@ -42,7 +58,7 @@ function HeroSection({ content }: { content: Record<string, unknown> }) {
 }
 
 function TextSection({ content }: { content: Record<string, unknown> }) {
-  const html = DOMPurify.sanitize((content.html as string) || "");
+  const html = sanitizeHtml((content.html as string) || "");
   return (
     <section className="py-8 px-6">
       <div className="max-w-3xl mx-auto prose prose-sm dark:prose-invert" dangerouslySetInnerHTML={{ __html: html }} />
@@ -161,32 +177,62 @@ function DividerSection({ content }: { content: Record<string, unknown> }) {
 
 // ─── Main Renderer ───
 
+export interface PricingDataMap {
+  [productId: string]: {
+    product: PublicProduct;
+    tariffs: PublicTariff[];
+  };
+}
+
 interface SitePageRendererProps {
   blocks: SiteBlock[];
   themeSettings?: Record<string, unknown>;
+  pricingData?: PricingDataMap;
 }
 
-export function SitePageRenderer({ blocks, themeSettings }: SitePageRendererProps) {
+export function SitePageRenderer({ blocks, themeSettings, pricingData }: SitePageRendererProps) {
   const style: React.CSSProperties = {};
   if (themeSettings?.font_family) {
     style.fontFamily = themeSettings.font_family as string;
   }
 
+  const renderBlock = (block: SiteBlock) => {
+    switch (block.type) {
+      case "hero": return <HeroSection content={block.content} />;
+      case "text": return <TextSection content={block.content} />;
+      case "heading": return <HeadingSection content={block.content} />;
+      case "image": return <ImageSection content={block.content} />;
+      case "features": return <FeaturesSection content={block.content} />;
+      case "cta": return <CtaSection content={block.content} />;
+      case "faq": return <FaqSection content={block.content} />;
+      case "divider": return <DividerSection content={block.content} />;
+      case "video": return <VideoSection content={block.content} />;
+      case "button": return <ButtonSection content={block.content} />;
+      case "columns": return <ColumnsSection content={block.content} />;
+      case "timer": return <TimerSection content={block.content} />;
+      case "html": return <HtmlSection content={block.content} />;
+      case "gallery": return <GallerySection content={block.content} />;
+      case "testimonials": return <TestimonialsSection content={block.content} />;
+      case "pricing": {
+        const productId = (block.content.product_id as string) || "";
+        const data = pricingData?.[productId];
+        return <PricingSection content={block.content} product={data?.product} tariffs={data?.tariffs} />;
+      }
+      case "social": return <SocialSection content={block.content} />;
+      case "logos": return <LogosSection content={block.content} />;
+      case "spacer": return <SpacerSection content={block.content} />;
+      case "form": return <FormSection content={block.content} />;
+      default: return null;
+    }
+  };
+
   return (
     <div style={style}>
-      {blocks.map((block) => {
-        switch (block.type) {
-          case "hero": return <HeroSection key={block.id} content={block.content} />;
-          case "text": return <TextSection key={block.id} content={block.content} />;
-          case "heading": return <HeadingSection key={block.id} content={block.content} />;
-          case "image": return <ImageSection key={block.id} content={block.content} />;
-          case "features": return <FeaturesSection key={block.id} content={block.content} />;
-          case "cta": return <CtaSection key={block.id} content={block.content} />;
-          case "faq": return <FaqSection key={block.id} content={block.content} />;
-          case "divider": return <DividerSection key={block.id} content={block.content} />;
-          default: return null;
-        }
-      })}
+      {blocks.map((block) => (
+        <BlockWrapper key={block.id} settings={block.settings}>
+          {renderBlock(block)}
+        </BlockWrapper>
+      ))}
     </div>
   );
 }

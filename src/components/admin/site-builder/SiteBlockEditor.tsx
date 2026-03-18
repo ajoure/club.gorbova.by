@@ -5,8 +5,13 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { GripVertical, Plus, Trash2, Type, Image, Layout, AlignLeft, MessageSquare, HelpCircle, Minus, Megaphone } from "lucide-react";
+import {
+  GripVertical, Plus, Trash2, Type, Image, Layout, AlignLeft, MessageSquare, HelpCircle, Minus, Megaphone,
+  Video, MousePointerClick, Columns, Timer, Code, GalleryHorizontal, Quote, CreditCard, Share2, Grip, Space, FileText,
+  Settings2,
+} from "lucide-react";
 import type { SiteBlock, BlockType } from "@/services/sitePages/types";
+import { blockSettingsSchema, type BlockSettings } from "@/services/sitePages/types";
 
 // Block editors
 import { HeroBlockEditor } from "./blocks/HeroBlockEditor";
@@ -17,6 +22,21 @@ import { FeaturesBlockEditor } from "./blocks/FeaturesBlockEditor";
 import { CtaBlockEditor } from "./blocks/CtaBlockEditor";
 import { FaqBlockEditor } from "./blocks/FaqBlockEditor";
 import { DividerBlockEditor } from "./blocks/DividerBlockEditor";
+import { VideoBlockEditor } from "./blocks/VideoBlockEditor";
+import { ButtonBlockEditor } from "./blocks/ButtonBlockEditor";
+import { ColumnsBlockEditor } from "./blocks/ColumnsBlockEditor";
+import { TimerBlockEditor } from "./blocks/TimerBlockEditor";
+import { HtmlBlockEditor } from "./blocks/HtmlBlockEditor";
+import { GalleryBlockEditor } from "./blocks/GalleryBlockEditor";
+import { TestimonialsBlockEditor } from "./blocks/TestimonialsBlockEditor";
+import { PricingBlockEditor } from "./blocks/PricingBlockEditor";
+import { SocialBlockEditor } from "./blocks/SocialBlockEditor";
+import { LogosBlockEditor } from "./blocks/LogosBlockEditor";
+import { SpacerBlockEditor } from "./blocks/SpacerBlockEditor";
+import { FormBlockEditor } from "./blocks/FormBlockEditor";
+import { BlockSettingsEditor } from "./blocks/BlockSettingsEditor";
+import { useState } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] = [
   { type: "hero", label: "Hero секция", icon: <Layout className="h-4 w-4" /> },
@@ -27,6 +47,18 @@ const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] =
   { type: "cta", label: "CTA", icon: <Megaphone className="h-4 w-4" /> },
   { type: "faq", label: "FAQ", icon: <HelpCircle className="h-4 w-4" /> },
   { type: "divider", label: "Разделитель", icon: <Minus className="h-4 w-4" /> },
+  { type: "video", label: "Видео", icon: <Video className="h-4 w-4" /> },
+  { type: "button", label: "Кнопка", icon: <MousePointerClick className="h-4 w-4" /> },
+  { type: "columns", label: "Колонки", icon: <Columns className="h-4 w-4" /> },
+  { type: "timer", label: "Таймер", icon: <Timer className="h-4 w-4" /> },
+  { type: "html", label: "HTML", icon: <Code className="h-4 w-4" /> },
+  { type: "gallery", label: "Галерея", icon: <GalleryHorizontal className="h-4 w-4" /> },
+  { type: "testimonials", label: "Отзывы", icon: <Quote className="h-4 w-4" /> },
+  { type: "pricing", label: "Тарифы", icon: <CreditCard className="h-4 w-4" /> },
+  { type: "social", label: "Соцсети", icon: <Share2 className="h-4 w-4" /> },
+  { type: "logos", label: "Логотипы", icon: <Grip className="h-4 w-4" /> },
+  { type: "spacer", label: "Отступ", icon: <Space className="h-4 w-4" /> },
+  { type: "form", label: "Форма", icon: <FileText className="h-4 w-4" /> },
 ];
 
 function getDefaultContent(type: BlockType): Record<string, unknown> {
@@ -39,6 +71,18 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "cta": return { title: "", subtitle: "", buttonText: "", buttonLink: "", backgroundColor: "" };
     case "faq": return { items: [] };
     case "divider": return { style: "line", height: 1 };
+    case "video": return { url: "", autoplay: false, aspectRatio: "16:9" };
+    case "button": return { text: "", link: "", variant: "primary", size: "md", alignment: "center" };
+    case "columns": return { items: [{ html: "" }, { html: "" }], columns: 2, gap: 24 };
+    case "timer": return { targetDate: "", title: "", expiredMessage: "Время вышло" };
+    case "html": return { code: "" };
+    case "gallery": return { items: [], columns: 3, gap: 16 };
+    case "testimonials": return { items: [], columns: 2 };
+    case "pricing": return { product_id: "", title: "", subtitle: "" };
+    case "social": return { items: [], alignment: "center" };
+    case "logos": return { items: [], logoHeight: 48, grayscale: false };
+    case "spacer": return { height: 40 };
+    case "form": return { title: "", subtitle: "", buttonText: "Отправить", fields: [], placeholderMessage: "Форма будет подключена позже" };
     default: return {};
   }
 }
@@ -53,16 +97,30 @@ function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange:
     case "cta": return <CtaBlockEditor content={block.content} onChange={onChange} />;
     case "faq": return <FaqBlockEditor content={block.content} onChange={onChange} />;
     case "divider": return <DividerBlockEditor content={block.content} onChange={onChange} />;
+    case "video": return <VideoBlockEditor content={block.content} onChange={onChange} />;
+    case "button": return <ButtonBlockEditor content={block.content} onChange={onChange} />;
+    case "columns": return <ColumnsBlockEditor content={block.content} onChange={onChange} />;
+    case "timer": return <TimerBlockEditor content={block.content} onChange={onChange} />;
+    case "html": return <HtmlBlockEditor content={block.content} onChange={onChange} />;
+    case "gallery": return <GalleryBlockEditor content={block.content} onChange={onChange} />;
+    case "testimonials": return <TestimonialsBlockEditor content={block.content} onChange={onChange} />;
+    case "pricing": return <PricingBlockEditor content={block.content} onChange={onChange} />;
+    case "social": return <SocialBlockEditor content={block.content} onChange={onChange} />;
+    case "logos": return <LogosBlockEditor content={block.content} onChange={onChange} />;
+    case "spacer": return <SpacerBlockEditor content={block.content} onChange={onChange} />;
+    case "form": return <FormBlockEditor content={block.content} onChange={onChange} />;
     default: return <p className="text-sm text-muted-foreground">Неизвестный тип блока: {block.type}</p>;
   }
 }
 
-function SortableBlock({ block, onUpdate, onDelete }: {
+function SortableBlock({ block, onUpdate, onUpdateSettings, onDelete }: {
   block: SiteBlock;
   onUpdate: (content: Record<string, unknown>) => void;
+  onUpdateSettings: (settings: BlockSettings) => void;
   onDelete: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.id });
+  const [showSettings, setShowSettings] = useState(false);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -71,6 +129,7 @@ function SortableBlock({ block, onUpdate, onDelete }: {
   };
 
   const blockType = BLOCK_TYPES.find((b) => b.type === block.type);
+  const parsedSettings = blockSettingsSchema.parse(block.settings) as BlockSettings;
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -83,12 +142,18 @@ function SortableBlock({ block, onUpdate, onDelete }: {
             {blockType?.icon}
             <span>{blockType?.label || block.type}</span>
           </div>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowSettings(!showSettings)}>
+            <Settings2 className="h-3.5 w-3.5" />
+          </Button>
           <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
         <CardContent className="p-4">
           <BlockEditorComponent block={block} onChange={onUpdate} />
+          {showSettings && (
+            <BlockSettingsEditor settings={parsedSettings} onChange={onUpdateSettings} />
+          )}
         </CardContent>
       </Card>
     </div>
@@ -122,6 +187,10 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
     onChange(blocks.map((b) => (b.id === id ? { ...b, content } : b)));
   }, [blocks, onChange]);
 
+  const updateBlockSettings = useCallback((id: string, settings: BlockSettings) => {
+    onChange(blocks.map((b) => (b.id === id ? { ...b, settings } : b)));
+  }, [blocks, onChange]);
+
   const deleteBlock = useCallback((id: string) => {
     onChange(blocks.filter((b) => b.id !== id));
   }, [blocks, onChange]);
@@ -149,6 +218,7 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
               key={block.id}
               block={block}
               onUpdate={(content) => updateBlock(block.id, content)}
+              onUpdateSettings={(settings) => updateBlockSettings(block.id, settings)}
               onDelete={() => deleteBlock(block.id)}
             />
           ))}
@@ -169,7 +239,7 @@ export function SiteBlockEditor({ blocks, onChange }: SiteBlockEditorProps) {
               Добавить блок
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="center" className="w-48">
+          <DropdownMenuContent align="center" className="w-48 max-h-80 overflow-y-auto">
             {BLOCK_TYPES.map((bt) => (
               <DropdownMenuItem key={bt.type} onClick={() => addBlock(bt.type)}>
                 <span className="mr-2">{bt.icon}</span>

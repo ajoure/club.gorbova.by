@@ -6,8 +6,10 @@ export type {
   SitePage,
   SiteBlock,
   BlockType,
+  BlockSettings,
   CreateSitePageData,
   UpdateSitePageData,
   SiteDomainBinding,
+  SocialPlatform,
 } from "./types";
-export { siteBlockSchema, blockContentSchemas } from "./types";
+export { siteBlockSchema, blockContentSchemas, blockSettingsSchema, SOCIAL_PLATFORMS } from "./types";
