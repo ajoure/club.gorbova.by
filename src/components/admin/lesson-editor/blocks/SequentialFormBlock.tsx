@@ -374,7 +374,7 @@ export function SequentialFormBlock({
       {content.title && (
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <div className="w-full min-w-0" dangerouslySetInnerHTML={{ __html: content.title! }} />
+            <SafeHtml html={content.title!} as="div" className="w-full min-w-0" />
             <Badge variant="outline" className="shrink-0 ml-2">
               Шаг {currentStepIndex + 1} из {totalSteps}
             </Badge>
