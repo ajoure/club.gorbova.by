@@ -8,6 +8,7 @@ import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
