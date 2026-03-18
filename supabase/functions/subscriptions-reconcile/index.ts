@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
           .eq('id', sub.id);
 
         // PATCH 11B: Check if user has other valid access before revoking
-        const accessCheck = await hasValidAccess(sub.user_id);
+        const accessCheck = await hasValidAccess(supabase, sub.user_id);
         if (accessCheck.valid) {
           console.log(`Skip revoke for ${sub.user_id}: has ${accessCheck.source} until ${accessCheck.endAt}`);
         } else {
