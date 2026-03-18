@@ -159,6 +159,12 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     action: 'Проверить provider_subscriptions.state/charge dates и корректность reconciliation',
     urlPath: '/admin/subscriptions-v2',
   },
+  'INV-SITE-1': {
+    title: 'Невалидные опубликованные страницы',
+    explain: 'Опубликованные страницы с пустыми или невалидными блоками (без id/type/version)',
+    action: 'Снять с публикации или исправить блоки',
+    urlPath: '/admin/sites',
+  },
 };
 
 // PATCH-6: Форматирование примеров для Telegram
