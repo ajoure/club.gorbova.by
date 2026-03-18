@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -482,6 +483,20 @@ async function markAsExpiredReentry(
   subId: string,
   subMeta: Record<string, any>
 ): Promise<void> {
+  // PATCH 5D: Guard — check shared hasValidAccess before marking was_club_member
+  const accessResult = await hasValidAccess(supabase, userId);
+  if (accessResult.valid) {
+    console.log(`[GUARD] Skip markAsExpiredReentry for ${userId}: has ${accessResult.source} until ${accessResult.endAt}`);
+    await supabase.from('audit_logs').insert({
+      action: 'subscription.grace_expired_skipped',
+      actor_type: 'system',
+      actor_label: 'subscription-charge',
+      target_user_id: userId,
+      meta: { subscription_id: subId, access_source: accessResult.source, access_end_at: accessResult.endAt },
+    });
+    return;
+  }
+
   const now = new Date().toISOString();
 
   // 1. Update subscription

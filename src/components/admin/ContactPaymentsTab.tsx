@@ -78,7 +78,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           card_last4, card_brand, order_id
         `)
         .eq('profile_id', contactId)
-        .in('status', ['succeeded', 'refunded'])
+        .in('status', ['succeeded', 'refunded', 'failed'])
         .order('paid_at', { ascending: false })
         .limit(100);
 
@@ -118,7 +118,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                 card_last4, card_brand, order_id
               `)
               .eq('card_last4', card.card_last4)
-              .in('status', ['succeeded', 'refunded'])
+              .in('status', ['succeeded', 'refunded', 'failed'])
               .or(orIlike)
               .order('paid_at', { ascending: false })
               .limit(50);
@@ -134,7 +134,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                     card_last4, card_brand, order_id
                   `)
                   .eq('card_last4', card.card_last4)
-                  .in('status', ['succeeded', 'refunded'])
+                  .in('status', ['succeeded', 'refunded', 'failed'])
                   .is('card_brand', null)
                   .order('paid_at', { ascending: false })
                   .limit(50),
@@ -145,7 +145,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                     card_last4, card_brand, order_id
                   `)
                   .eq('card_last4', card.card_last4)
-                  .in('status', ['succeeded', 'refunded'])
+                  .in('status', ['succeeded', 'refunded', 'failed'])
                   .eq('card_brand', '')
                   .order('paid_at', { ascending: false })
                   .limit(50),
@@ -166,7 +166,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
               card_last4, card_brand, order_id
             `)
             .eq('card_last4', card.card_last4)
-            .in('status', ['succeeded', 'refunded'])
+            .in('status', ['succeeded', 'refunded', 'failed'])
             .order('paid_at', { ascending: false })
             .limit(50);
           if (!byLast4AnyBrandError) cardPaymentsV2.push(...(byLast4AnyBrand || []));
@@ -270,6 +270,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         return <Badge variant="default" className="text-xs">Успешно</Badge>;
       case 'refunded':
         return <Badge variant="secondary" className="text-xs">Возврат</Badge>;
+      case 'failed':
+        return <Badge variant="destructive" className="text-xs">Ошибка оплаты</Badge>;
       default:
         return <Badge variant="outline" className="text-xs">{status}</Badge>;
     }

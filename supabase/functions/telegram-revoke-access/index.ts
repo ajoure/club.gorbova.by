@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { hasValidAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -242,43 +243,12 @@ Deno.serve(async (req) => {
     // PATCH: пропускаем при isAdminAction (is_manual || admin_id) или forceRevoke
     // =================================================================
     if (user_id && !forceRevoke && !isAdminAction) {
-      const now = new Date().toISOString();
+      // PATCH 5B: Use shared hasValidAccess with grace 72h + billing-day protection
+      const accessResult = await hasValidAccess(supabase, user_id, club_id || undefined);
       
-      // 1. Check active subscription
-      const { data: activeSub } = await supabase
-        .from('subscriptions_v2')
-        .select('id, status, access_end_at')
-        .eq('user_id', user_id)
-        .in('status', ['active', 'trial', 'past_due'])
-        .gt('access_end_at', now)
-        .limit(1)
-        .maybeSingle();
-
-      // 2. Check active entitlement
-      const { data: activeEntitlement } = await supabase
-        .from('entitlements')
-        .select('id, product_code, expires_at')
-        .eq('user_id', user_id)
-        .eq('status', 'active')
-        .or(`expires_at.is.null,expires_at.gt.${now}`)
-        .limit(1)
-        .maybeSingle();
-
-      // 3. Check manual access
-      const { data: manualAccess } = await supabase
-        .from('telegram_manual_access')
-        .select('id, valid_until')
-        .eq('user_id', user_id)
-        .eq('is_active', true)
-        .or(`valid_until.is.null,valid_until.gt.${now}`)
-        .limit(1)
-        .maybeSingle();
-
-      const hasValidAccess = activeSub || activeEntitlement || manualAccess;
-      
-      if (hasValidAccess) {
-        const accessSource = activeSub ? 'subscription' : (activeEntitlement ? 'entitlement' : 'manual_access');
-        const accessEndAt = activeSub?.access_end_at || activeEntitlement?.expires_at || manualAccess?.valid_until;
+      if (accessResult.valid) {
+        const accessSource = accessResult.source || 'unknown';
+        const accessEndAt = accessResult.endAt;
         
         console.log(`[BLOCKED REVOKE] User ${user_id} has valid ${accessSource} until ${accessEndAt}`);
         
@@ -292,9 +262,9 @@ Deno.serve(async (req) => {
           meta: {
             reason: 'access_still_valid',
             access_source: accessSource,
-            subscription_id: activeSub?.id || null,
-            entitlement_id: activeEntitlement?.id || null,
-            manual_access_id: manualAccess?.id || null,
+            subscription_id: accessResult.subscriptionId || null,
+            entitlement_id: accessResult.entitlementId || null,
+            manual_access_id: accessResult.manualAccessId || null,
             access_end_at: accessEndAt,
             original_revoke_reason: reason,
           }
