@@ -64,6 +64,7 @@ interface BepaidSub {
     email?: string;
   };
   cancellation_capability?: string;
+  tracking_id?: string;
 }
 
 async function fetchSubscriptionById(
@@ -152,6 +153,41 @@ function buildProviderSubRecord(sub: BepaidSub) {
       backfilled: true,
     },
   };
+}
+
+/**
+ * PATCH-4: Resolve user_id for a bePaid subscription
+ * Chain: tracking_id parse → subscription_v2_id → orders_v2
+ */
+async function resolveUserIdForSub(
+  supabase: any,
+  sub: BepaidSub
+): Promise<string | null> {
+  // 1. Try tracking_id parse: format "subv2:{sub_v2_id}:order:{order_id}"
+  const trackingId = sub.tracking_id || (sub as any).tracking_id;
+  if (trackingId && typeof trackingId === "string") {
+    const orderMatch = trackingId.match(/order:([0-9a-f-]{36})/i);
+    if (orderMatch) {
+      const { data: order } = await supabase
+        .from("orders_v2")
+        .select("user_id")
+        .eq("id", orderMatch[1])
+        .maybeSingle();
+      if (order?.user_id) return order.user_id;
+    }
+    const subV2Match = trackingId.match(/subv2:([0-9a-f-]{36})/i);
+    if (subV2Match) {
+      const { data: sv2 } = await supabase
+        .from("subscriptions_v2")
+        .select("user_id")
+        .eq("id", subV2Match[1])
+        .maybeSingle();
+      if (sv2?.user_id) return sv2.user_id;
+    }
+  }
+
+  // 2. No tracking_id — can't resolve without subscription_v2_id link (set after insert via linkage)
+  return null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -308,10 +344,17 @@ Deno.serve(async (req: Request) => {
       return json(result);
     }
 
-    // Execute: INSERT missing
+    // Execute: INSERT missing (with user_id resolution)
     for (const sub of toInsert) {
       try {
         const record = buildProviderSubRecord(sub);
+
+        // PATCH-4: Resolve user_id from subscription_v2_id or tracking_id
+        const resolvedUserId = await resolveUserIdForSub(serviceClient, sub);
+        if (resolvedUserId) {
+          (record as any).user_id = resolvedUserId;
+        }
+
         const { error: insertErr } = await serviceClient
           .from("provider_subscriptions")
           .insert(record);
@@ -338,9 +381,11 @@ Deno.serve(async (req: Request) => {
           cancellation_capability: sub.cancellation_capability,
         };
 
-        const { error: updateErr } = await serviceClient
-          .from("provider_subscriptions")
-          .update({
+        // PATCH-4: Resolve user_id if missing on existing record
+        const existingRecord = existingMap.get(sub.id);
+        const resolvedUserId = await resolveUserIdForSub(serviceClient, sub);
+
+        const updatePayload: Record<string, unknown> = {
             state,
             next_charge_at: sub.next_billing_at || null,
             card_last4: sub.credit_card?.last_4 || null,
@@ -354,7 +399,24 @@ Deno.serve(async (req: Request) => {
               cancellation_capability: sub.cancellation_capability,
               backfilled: true,
             },
-          })
+        };
+
+        // Only set user_id if we resolved one and existing is missing
+        if (resolvedUserId) {
+          // Check if existing record has user_id
+          const { data: currentRow } = await serviceClient
+            .from("provider_subscriptions")
+            .select("user_id")
+            .eq("provider_subscription_id", sub.id)
+            .maybeSingle();
+          if (!currentRow?.user_id) {
+            updatePayload.user_id = resolvedUserId;
+          }
+        }
+
+        const { error: updateErr } = await serviceClient
+          .from("provider_subscriptions")
+          .update(updatePayload)
           .eq("provider_subscription_id", sub.id);
 
         if (updateErr) {

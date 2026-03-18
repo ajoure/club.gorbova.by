@@ -196,7 +196,9 @@ async function fetchListAllPages(authString: string, maxPages: number = 6): Prom
           attempts.push({ host, path: `${basePath}?page=${page}`, status: response.status, items_count: 0 });
           
           if (response.ok) {
-            const data = await response.json();
+            const rawText = await response.text();
+            let data: any;
+            try { data = JSON.parse(rawText); } catch { data = {}; }
             const subs = data.subscriptions || data.data || [];
             
             if (Array.isArray(subs) && subs.length > 0) {
@@ -215,9 +217,15 @@ async function fetchListAllPages(authString: string, maxPages: number = 6): Prom
                 foundItems = false;
               }
             } else {
+              // PATCH: Log empty response for diagnostics (no PII)
+              const keys = typeof data === 'object' && data ? Object.keys(data).join(',') : 'non-object';
+              console.warn(`[bepaid-list-subs] API returned 0 items. host=${host}, path=${basePath}, page=${page}, status=${response.status}, response_keys=${keys}, body_len=${rawText.length}, preview=${rawText.slice(0, 200)}`);
               foundItems = false;
             }
           } else {
+            // PATCH: Log non-OK response
+            const errText = await response.text().catch(() => '');
+            console.warn(`[bepaid-list-subs] API non-OK. host=${host}, path=${basePath}, page=${page}, status=${response.status}, body=${errText.slice(0, 200)}`);
             foundItems = false;
           }
         } catch (e) {
