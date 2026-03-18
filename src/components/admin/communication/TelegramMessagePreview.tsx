@@ -46,9 +46,10 @@ export function TelegramMessagePreview({ text }: TelegramMessagePreviewProps) {
   }
 
   return (
-    <div 
+    <SafeHtml 
+      html={formattedHtml}
+      as="div"
       className="prose prose-sm dark:prose-invert max-w-none"
-      dangerouslySetInnerHTML={{ __html: formattedHtml }}
     />
   );
 }

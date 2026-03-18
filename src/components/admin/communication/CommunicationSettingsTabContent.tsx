@@ -629,7 +629,7 @@ export function CommunicationSettingsTabContent() {
           </DialogHeader>
           <div
             className="border rounded-lg p-4 bg-background"
-            dangerouslySetInnerHTML={{ __html: previewDialog.html }}
+            <SafeHtml html={previewDialog.html} as="div" className="border rounded-lg p-4 bg-background" />
           />
         </DialogContent>
       </Dialog>

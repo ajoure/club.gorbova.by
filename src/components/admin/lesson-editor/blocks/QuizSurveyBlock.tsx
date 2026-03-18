@@ -650,8 +650,8 @@ export function QuizSurveyBlock({
                     />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-lg" dangerouslySetInnerHTML={{ __html: resultToShow.title }} />
-                    <p className="text-muted-foreground/90 mt-1" dangerouslySetInnerHTML={{ __html: resultToShow.description }} />
+                    <SafeHtml html={resultToShow.title} as="h4" className="font-semibold text-lg" />
+                    <SafeHtml html={resultToShow.description} as="p" className="text-muted-foreground/90 mt-1" />
                   </div>
                 </div>
               </div>

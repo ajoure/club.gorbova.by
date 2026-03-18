@@ -410,7 +410,7 @@ export function SequentialFormBlock({
           <div className="flex items-start gap-3">
             <Badge className="shrink-0 mt-0.5">{currentStepIndex + 1}</Badge>
             <div>
-              <h4 className="font-semibold" dangerouslySetInnerHTML={{ __html: currentStep.title }} />
+              <SafeHtml html={currentStep.title} as="h4" className="font-semibold" />
               <p className="text-muted-foreground mt-1">{currentStep.description}</p>
             </div>
           </div>

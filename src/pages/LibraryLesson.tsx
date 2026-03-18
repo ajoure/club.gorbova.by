@@ -439,9 +439,10 @@ export default function LibraryLesson() {
                 {currentLesson.content && (
                   <Card className="mb-6">
                     <CardContent className="py-6">
-                      <div
+                      <SafeHtml
+                        html={currentLesson.content}
+                        as="div"
                         className="prose prose-sm max-w-none dark:prose-invert"
-                        dangerouslySetInnerHTML={{ __html: currentLesson.content }}
                       />
                     </CardContent>
                   </Card>
