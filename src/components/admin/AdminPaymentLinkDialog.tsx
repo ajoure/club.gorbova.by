@@ -527,7 +527,7 @@ export function AdminPaymentLinkDialog({
                   <div className="text-xs text-muted-foreground space-y-0.5">
                     <p>ID: {duplicateSubscription.provider_subscription_id} · Статус: {duplicateSubscription.state}</p>
                     {duplicateSubscription.next_charge_at && (
-                      <p>Следующее списание: {formatPaymentTimeIANA(duplicateSubscription.next_charge_at, 'Europe/Minsk')}</p>
+                      <p><p>Следующее списание: {formatPaymentTimeIANA(duplicateSubscription.next_charge_at, 'Europe/Warsaw')}</p></p>
                     )}
                     {duplicateSubscription.card_last4 && (
                       <p>Карта: {duplicateSubscription.card_brand?.toUpperCase()} •••• {duplicateSubscription.card_last4}</p>
