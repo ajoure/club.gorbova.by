@@ -730,16 +730,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const { data, error } = await supabase
         .from("provider_subscriptions")
         .select(`
-          *,
-          subscriptions_v2!inner (
-            id, 
-            product_id, 
-            access_end_at,
-            products_v2 (name)
+          id, provider, state, provider_subscription_id,
+          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at,
+          subscription_v2_id,
+          subscriptions_v2 (
+            id, status, billing_type, tariff_id, access_end_at, next_charge_at,
+            products_v2 ( id, name ),
+            tariffs ( id, name, product_id )
           )
         `)
         .eq("user_id", contact.user_id)
-        .in("state", ["active", "trial", "pending", "canceled"])
+        .in("state", ["active", "pending"])
         .order("created_at", { ascending: false });
       
       if (error) throw error;
