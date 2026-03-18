@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSitePages, useSiteFolders } from "@/hooks/useSitePages";
+import { useSiteTags } from "@/hooks/useSiteTags";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,24 +10,128 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, FileText, Globe, Loader2, Trash2, FolderPlus, Folder, FolderOpen, ChevronRight } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, FileText, Globe, Loader2, Trash2, FolderPlus, Folder, FolderOpen, ChevronRight, MoreVertical, Copy, FolderInput, Tag, X } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import type { SitePageFolder } from "@/services/sitePages/types";
+import type { SitePageFolder, SitePageTag } from "@/services/sitePages/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { SiteTagService } from "@/services/sitePages/SiteTagService";
+
+function PageTagBadges({ pageId, allTags }: { pageId: string; allTags: SitePageTag[] }) {
+  const { data: pageTags } = useQuery({
+    queryKey: ["site-page-tags", pageId],
+    queryFn: () => SiteTagService.getPageTags(pageId),
+    enabled: !!pageId,
+  });
+
+  if (!pageTags || pageTags.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1 mt-2">
+      {pageTags.map((tag) => (
+        <Badge key={tag.id} variant="outline" className="text-xs">
+          {tag.name}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
+function TagAssignPopover({
+  pageId,
+  allTags,
+  onAddTag,
+  onRemoveTag,
+  onCreateTag,
+  isCreating,
+}: {
+  pageId: string;
+  allTags: SitePageTag[];
+  onAddTag: (args: { pageId: string; tagId: string }) => void;
+  onRemoveTag: (args: { pageId: string; tagId: string }) => void;
+  onCreateTag: (name: string) => void;
+  isCreating: boolean;
+}) {
+  const [newTagName, setNewTagName] = useState("");
+  const { data: pageTags } = useQuery({
+    queryKey: ["site-page-tags", pageId],
+    queryFn: () => SiteTagService.getPageTags(pageId),
+    enabled: !!pageId,
+  });
+
+  const pageTagIds = new Set((pageTags || []).map((t) => t.id));
+
+  return (
+    <PopoverContent className="w-56 p-3" align="end">
+      <div className="space-y-2">
+        <p className="text-sm font-medium">Теги</p>
+        {allTags.map((tag) => (
+          <label key={tag.id} className="flex items-center gap-2 text-sm cursor-pointer">
+            <Checkbox
+              checked={pageTagIds.has(tag.id)}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  onAddTag({ pageId, tagId: tag.id });
+                } else {
+                  onRemoveTag({ pageId, tagId: tag.id });
+                }
+              }}
+            />
+            {tag.name}
+          </label>
+        ))}
+        <div className="flex gap-1 pt-1 border-t">
+          <Input
+            value={newTagName}
+            onChange={(e) => setNewTagName(e.target.value)}
+            placeholder="Новый тег"
+            className="h-7 text-xs"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newTagName.trim()) {
+                onCreateTag(newTagName.trim());
+                setNewTagName("");
+              }
+            }}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2"
+            disabled={!newTagName.trim() || isCreating}
+            onClick={() => {
+              onCreateTag(newTagName.trim());
+              setNewTagName("");
+            }}
+          >
+            <Plus className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+    </PopoverContent>
+  );
+}
 
 export default function AdminSiteBuilder() {
   const navigate = useNavigate();
-  const { pages, isLoading, createPage, deletePage, isCreating } = useSitePages();
+  const { pages, isLoading, createPage, deletePage, copyPage, movePage, isCreating, isCopying } = useSitePages();
   const { folders, isLoading: foldersLoading, createFolder, deleteFolder, isCreating: isCreatingFolder } = useSiteFolders();
-  
+  const { tags, createTag, deleteTag, addTagToPage, removeTagFromPage, isCreating: isCreatingTag } = useSiteTags();
+
   const [createOpen, setCreateOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [movePageId, setMovePageId] = useState<string | null>(null);
+  const [moveFolderId, setMoveFolderId] = useState<string>("");
   const [newTitle, setNewTitle] = useState("");
   const [newSlug, setNewSlug] = useState("");
   const [newFolderId, setNewFolderId] = useState<string>("");
   const [newFolderName, setNewFolderName] = useState("");
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
   const handleCreate = () => {
     if (!newTitle.trim() || !newSlug.trim()) return;
@@ -65,8 +170,28 @@ export default function AdminSiteBuilder() {
     setNewSlug(value.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/--+/g, "-"));
   };
 
+  const handleMove = () => {
+    if (!movePageId) return;
+    movePage(
+      { id: movePageId, folderId: moveFolderId && moveFolderId !== "__none__" ? moveFolderId : null },
+      {
+        onSuccess: () => {
+          setMoveDialogOpen(false);
+          setMovePageId(null);
+          setMoveFolderId("");
+        },
+      } as any
+    );
+  };
+
+  const toggleTagFilter = (tagId: string) => {
+    setSelectedTagIds((prev) =>
+      prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]
+    );
+  };
+
   // Pages filtered by active folder
-  const filteredPages = activeFolderId
+  let filteredPages = activeFolderId
     ? pages.filter((p) => p.folder_id === activeFolderId)
     : pages.filter((p) => !p.folder_id);
 
@@ -242,6 +367,38 @@ export default function AdminSiteBuilder() {
           </div>
         )}
 
+        {/* Tag Filter */}
+        {tags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Tag className="h-4 w-4 text-muted-foreground" />
+            {tags.map((tag) => {
+              const isActive = selectedTagIds.includes(tag.id);
+              return (
+                <Button
+                  key={tag.id}
+                  variant={isActive ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => toggleTagFilter(tag.id)}
+                >
+                  {tag.name}
+                  {isActive && <X className="h-3 w-3 ml-1" />}
+                </Button>
+              );
+            })}
+            {selectedTagIds.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setSelectedTagIds([])}
+              >
+                Сбросить
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* Breadcrumb */}
         {activeFolderId && (
           <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -294,34 +451,93 @@ export default function AdminSiteBuilder() {
                       {(page.blocks as unknown[])?.length || 0} блоков
                     </span>
                   </div>
+
+                  <PageTagBadges pageId={page.id} allTags={tags} />
+
                   <div className="mt-3 flex justify-end" onClick={(e) => e.stopPropagation()}>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive">
-                          <Trash2 className="h-4 w-4" />
+                    {/* Tag Assign Popover */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Tag className="h-4 w-4" />
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Удалить страницу?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Страница «{page.title}» будет удалена безвозвратно.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Отмена</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => deletePage(page.id)}>
-                            Удалить
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      </PopoverTrigger>
+                      <TagAssignPopover
+                        pageId={page.id}
+                        allTags={tags}
+                        onAddTag={addTagToPage}
+                        onRemoveTag={removeTagFromPage}
+                        onCreateTag={createTag}
+                        isCreating={isCreatingTag}
+                      />
+                    </Popover>
+
+                    {/* Actions Dropdown */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setMovePageId(page.id);
+                            setMoveFolderId(page.folder_id || "__none__");
+                            setMoveDialogOpen(true);
+                          }}
+                        >
+                          <FolderInput className="h-4 w-4 mr-2" />
+                          Переместить
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => copyPage(page.id)}>
+                          <Copy className="h-4 w-4 mr-2" />
+                          Копировать
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => deletePage(page.id)}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Удалить
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
         )}
+
+        {/* Move Page Dialog */}
+        <Dialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Переместить страницу</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label>Папка</Label>
+                <Select value={moveFolderId} onValueChange={setMoveFolderId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Без папки" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Без папки</SelectItem>
+                    {folders.map((f) => (
+                      <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={handleMove} className="w-full">
+                Переместить
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </AdminLayout>
   );
