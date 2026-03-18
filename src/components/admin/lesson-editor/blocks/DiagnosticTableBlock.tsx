@@ -745,7 +745,7 @@ export function DiagnosticTableBlock({
     return (
       <div className="space-y-4">
         {content.title && (
-          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="div" className="w-full" />
         )}
 
         {/* Summary analytics card */}
