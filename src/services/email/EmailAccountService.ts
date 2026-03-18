@@ -63,73 +63,60 @@ export class EmailAccountService {
   ): Promise<void> {
     const user = await this.getCurrentUser();
     const isUpdate = !!account.id;
+    const entityId = isUpdate ? account.id! : crypto.randomUUID();
     const eventType = isUpdate ? "email.account.updated" : "email.account.created";
-    const entityId = account.id || "new";
 
-    // 1. Emit domain event
+    // 1. DB operation FIRST — entity must exist before event is emitted
+    if (isUpdate) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id, created_at, has_password, ...updateData } = account;
+      const payload: Record<string, unknown> = { ...updateData };
+      if (newSmtpPassword) {
+        payload.smtp_password = newSmtpPassword;
+      }
+      const { error } = await supabase
+        .from("email_accounts")
+        .update(payload)
+        .eq("id", account.id);
+      if (error) throw error;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
+      if (!insertData.email) throw new Error("Email обязателен");
+
+      const insertPayload = {
+        id: entityId,
+        email: insertData.email,
+        display_name: insertData.display_name || null,
+        provider: insertData.provider || "smtp",
+        smtp_host: insertData.smtp_host || null,
+        smtp_port: insertData.smtp_port || 465,
+        smtp_encryption: insertData.smtp_encryption || "SSL",
+        smtp_username: insertData.smtp_username || insertData.email,
+        smtp_password: newSmtpPassword || null,
+        from_name: insertData.from_name || null,
+        from_email: insertData.from_email || insertData.email,
+        reply_to: insertData.reply_to || null,
+        is_default: insertData.is_default ?? false,
+        is_active: insertData.is_active ?? true,
+      };
+      const { error } = await supabase.from("email_accounts").insert([insertPayload]);
+      if (error) throw error;
+    }
+
+    // 2. Emit domain event as FACT (entity guaranteed to exist)
     const eventId = await DomainEventService.emitEvent(
       eventType,
       "email-admin",
       entityId,
-      { email: account.email, account_id: account.id || null }
+      { email: account.email, account_id: entityId }
     );
 
-    let executionStatus: "success" | "failed" = "success";
-    let executionError: string | undefined;
+    // 3. Record execution
+    await DomainEventService.recordExecution(eventId, "save_account", "success");
 
-    try {
-      // 2. DB operation
-      if (isUpdate) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, created_at, has_password, ...updateData } = account;
-        const payload: Record<string, unknown> = { ...updateData };
-        if (newSmtpPassword) {
-          payload.smtp_password = newSmtpPassword;
-        }
-        const { error } = await supabase
-          .from("email_accounts")
-          .update(payload)
-          .eq("id", account.id);
-        if (error) throw error;
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
-        if (!insertData.email) throw new Error("Email обязателен");
-
-        const insertPayload = {
-          email: insertData.email,
-          display_name: insertData.display_name || null,
-          provider: insertData.provider || "smtp",
-          smtp_host: insertData.smtp_host || null,
-          smtp_port: insertData.smtp_port || 465,
-          smtp_encryption: insertData.smtp_encryption || "SSL",
-          smtp_username: insertData.smtp_username || insertData.email,
-          smtp_password: newSmtpPassword || null,
-          from_name: insertData.from_name || null,
-          from_email: insertData.from_email || insertData.email,
-          reply_to: insertData.reply_to || null,
-          is_default: insertData.is_default ?? false,
-          is_active: insertData.is_active ?? true,
-        };
-        const { error } = await supabase.from("email_accounts").insert([insertPayload]);
-        if (error) throw error;
-      }
-    } catch (err) {
-      executionStatus = "failed";
-      executionError = (err as Error).message;
-      throw err;
-    } finally {
-      // 3. Record execution
-      await DomainEventService.recordExecution(eventId, "save_account", executionStatus, executionError);
-
-      // 4. Write audit log
-      await this.writeAudit(
-        eventType,
-        user.id,
-        user.email,
-        { email: account.email, account_id: account.id || null }
-      );
-    }
+    // 4. Write audit log
+    await this.writeAudit(eventType, user.id, user.email, { account_id: entityId });
   }
 
   // ── Remove ──────────────────────────────────────────────
