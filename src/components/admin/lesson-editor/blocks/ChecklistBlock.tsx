@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
