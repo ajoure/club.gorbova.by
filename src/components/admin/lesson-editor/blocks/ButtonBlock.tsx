@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ButtonContent } from "@/hooks/useLessonBlocks";
 import { Plus, Trash2, ExternalLink, GripVertical } from "lucide-react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface ButtonBlockProps {
   content: ButtonContent;
