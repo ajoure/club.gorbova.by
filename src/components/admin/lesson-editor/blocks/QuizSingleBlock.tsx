@@ -110,7 +110,7 @@ export function QuizSingleBlock({
               )}
             >
               <RadioGroupItem value={option.id} />
-              <span className="flex-1" dangerouslySetInnerHTML={{ __html: option.text }} />
+              <SafeHtml html={option.text} className="flex-1" />
               {isSubmitted && option.isCorrect && (
                 <Check className="h-5 w-5 text-green-500" />
               )}
