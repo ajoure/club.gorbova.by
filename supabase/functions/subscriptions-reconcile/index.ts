@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { hasValidAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,55 +19,6 @@ Deno.serve(async (req) => {
 
     console.log('Starting subscription reconciliation...');
     const now = new Date();
-
-    // Helper function to check if user has any valid access (subscription, entitlement, or manual)
-    async function hasValidAccess(userId: string): Promise<{ valid: boolean; source?: string; endAt?: string }> {
-      const nowStr = now.toISOString();
-      
-      // 1. Check active subscription
-      const { data: activeSub } = await supabase
-        .from('subscriptions_v2')
-        .select('id, access_end_at')
-        .eq('user_id', userId)
-        .in('status', ['active', 'trial', 'past_due'])
-        .gt('access_end_at', nowStr)
-        .limit(1)
-        .maybeSingle();
-      
-      if (activeSub) {
-        return { valid: true, source: 'subscription', endAt: activeSub.access_end_at };
-      }
-      
-      // 2. Check active entitlement
-      const { data: activeEntitlement } = await supabase
-        .from('entitlements')
-        .select('id, expires_at')
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .or(`expires_at.is.null,expires_at.gt.${nowStr}`)
-        .limit(1)
-        .maybeSingle();
-      
-      if (activeEntitlement) {
-        return { valid: true, source: 'entitlement', endAt: activeEntitlement.expires_at };
-      }
-      
-      // 3. Check manual access
-      const { data: manualAccess } = await supabase
-        .from('telegram_manual_access')
-        .select('id, valid_until')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .or(`valid_until.is.null,valid_until.gt.${nowStr}`)
-        .limit(1)
-        .maybeSingle();
-      
-      if (manualAccess) {
-        return { valid: true, source: 'manual_access', endAt: manualAccess.valid_until };
-      }
-      
-      return { valid: false };
-    }
 
     // Helper function to get club_id for a subscription
     async function getClubIdForSubscription(userId: string, productId: string): Promise<string | null> {
