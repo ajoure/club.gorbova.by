@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { SiteEventService } from "./SiteEventService";
+import { SiteTagService } from "./SiteTagService";
 import { siteBlockSchema, type SitePage, type CreateSitePageData, type UpdateSitePageData, type SiteBlock } from "./types";
 
 const SOURCE = "site-builder";
