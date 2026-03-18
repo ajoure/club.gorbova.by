@@ -1,4 +1,5 @@
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { TextContent } from "@/hooks/useLessonBlocks";
 
 interface TextBlockProps {
