@@ -178,7 +178,7 @@ export function VideoBlock({
       return (
         <div className="space-y-2">
           {content.title && (
-            <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+            <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
           )}
           {/* Outer wrapper controls geometry (aspect-ratio) */}
           <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
