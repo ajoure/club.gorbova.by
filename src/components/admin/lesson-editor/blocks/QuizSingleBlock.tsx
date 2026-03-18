@@ -151,7 +151,7 @@ export function QuizSingleBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 
