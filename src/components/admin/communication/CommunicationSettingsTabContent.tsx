@@ -95,12 +95,12 @@ export function CommunicationSettingsTabContent() {
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ["email-accounts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("email_accounts")
+      const { data, error } = await (supabase
+        .from("email_accounts_safe" as any))
         .select("id, email, display_name, provider, is_default, is_active, imap_enabled")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as EmailAccount[];
+      return (data as unknown as EmailAccount[]);
     },
   });
 

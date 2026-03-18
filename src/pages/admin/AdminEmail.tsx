@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { EmailAccountService } from "@/services/email/EmailAccountService";
+import type { EmailAccount } from "@/services/email/types";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,29 +76,7 @@ import { SafeHtml } from "@/components/ui/SafeHtml";
 
 // Interfaces and helper functions
 
-interface EmailAccount {
-  id: string;
-  email: string;
-  display_name: string | null;
-  provider: string;
-  smtp_host: string | null;
-  smtp_port: number | null;
-  smtp_encryption: string | null;
-  smtp_username: string | null;
-  has_password: boolean;
-  from_name: string | null;
-  from_email: string | null;
-  reply_to: string | null;
-  is_default: boolean;
-  is_active: boolean;
-  use_for: string[];
-  created_at: string;
-  imap_host: string | null;
-  imap_port: number | null;
-  imap_encryption: string | null;
-  imap_enabled: boolean;
-  last_fetched_at: string | null;
-}
+// EmailAccount type imported from @/services/email/types
 
 interface EmailTemplate {
   id: string;
@@ -211,18 +191,7 @@ export default function AdminEmail() {
   // Fetch email accounts
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
     queryKey: ["email-accounts"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("email_accounts_safe" as any)
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data as any[]).map((acc: any) => ({
-        ...acc,
-        has_password: acc.has_password ?? false,
-        use_for: Array.isArray(acc.use_for) ? acc.use_for : [],
-      })) as EmailAccount[];
-    },
+    queryFn: () => EmailAccountService.list(),
   });
 
   // Fetch email templates
@@ -240,55 +209,21 @@ export default function AdminEmail() {
 
   const saveAccountMutation = useMutation({
     mutationFn: async (account: Partial<EmailAccount>) => {
-      const isUpdate = !!account.id;
-      if (isUpdate) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, created_at, has_password, ...updateData } = account;
-        const payload: Record<string, unknown> = { ...updateData };
-        // Only send password if explicitly changed
-        if (newSmtpPassword) {
-          payload.smtp_password = newSmtpPassword;
-        }
-        const { error } = await supabase
-          .from("email_accounts")
-          .update(payload)
-          .eq("id", account.id);
-        if (error) throw error;
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
-        if (!insertData.email) throw new Error("Email обязателен");
-        const smtpSettings = getSmtpSettings(insertData.email);
-        const provider = getProviderName(insertData.email);
-        const insertPayload = {
-          email: insertData.email,
-          display_name: insertData.display_name || null,
-          provider: provider,
-          smtp_host: insertData.smtp_host || smtpSettings?.host || null,
-          smtp_port: insertData.smtp_port || smtpSettings?.port || 465,
-          smtp_encryption: insertData.smtp_encryption || smtpSettings?.encryption || "SSL",
-          smtp_username: insertData.smtp_username || insertData.email,
-          smtp_password: newSmtpPassword || null,
-          from_name: insertData.from_name || null,
-          from_email: insertData.from_email || insertData.email,
-          reply_to: insertData.reply_to || null,
-          is_default: insertData.is_default ?? false,
-          is_active: insertData.is_active ?? true,
+      // Apply auto-detected SMTP/provider settings for new accounts
+      if (!account.id && account.email) {
+        const smtpSettings = getSmtpSettings(account.email);
+        const provider = getProviderName(account.email);
+        account = {
+          ...account,
+          provider: account.provider || provider,
+          smtp_host: account.smtp_host || smtpSettings?.host || null,
+          smtp_port: account.smtp_port || smtpSettings?.port || 465,
+          smtp_encryption: account.smtp_encryption || smtpSettings?.encryption || "SSL",
+          smtp_username: account.smtp_username || account.email,
+          from_email: account.from_email || account.email,
         };
-        const { error } = await supabase.from("email_accounts").insert([insertPayload]);
-        if (error) throw error;
       }
-      // Audit logging
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from("audit_logs").insert({
-          action: isUpdate ? "email.account.updated" : "email.account.created",
-          actor_type: "user",
-          actor_user_id: user.id,
-          actor_label: user.email || user.id,
-          meta: { email: account.email, account_id: account.id || null },
-        });
-      }
+      await EmailAccountService.save(account, newSmtpPassword || undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
@@ -302,10 +237,7 @@ export default function AdminEmail() {
   });
 
   const deleteAccountMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("email_accounts").delete().eq("id", id);
-      if (error) throw error;
-    },
+    mutationFn: (id: string) => EmailAccountService.remove(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
       toast.success("Почтовый ящик удален");
