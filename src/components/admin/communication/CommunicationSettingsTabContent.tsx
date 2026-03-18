@@ -627,10 +627,7 @@ export function CommunicationSettingsTabContent() {
           <DialogHeader>
             <DialogTitle>Превью: {previewDialog.subject}</DialogTitle>
           </DialogHeader>
-          <div
-            className="border rounded-lg p-4 bg-background"
-            <SafeHtml html={previewDialog.html} as="div" className="border rounded-lg p-4 bg-background" />
-          />
+          <SafeHtml html={previewDialog.html} as="div" className="border rounded-lg p-4 bg-background" />
         </DialogContent>
       </Dialog>
     </ScrollArea>
