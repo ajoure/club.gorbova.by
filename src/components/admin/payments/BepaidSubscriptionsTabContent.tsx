@@ -208,6 +208,7 @@ const STATUS_LABELS: Record<string, string> = {
   legacy: 'Устаревшая',
   redirecting: 'Ожидает оплаты',
   failed: 'Ошибка',
+  failed_attempt: 'Ошибка оплаты',
   expired: 'Истекла',
   suspended: 'Заблокирована',
 };
