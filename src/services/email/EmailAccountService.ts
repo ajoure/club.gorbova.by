@@ -8,7 +8,7 @@ import type { EmailAccount, EmailAccountSaveInput } from "./types";
  * SECURITY INVARIANT: list() reads exclusively from email_accounts_safe view.
  * smtp_password NEVER reaches the browser.
  *
- * All mutations follow: emitEvent() → DB operation → recordExecution() → writeAudit()
+ * All mutations follow: DB operation → emitEvent() → recordExecution() → writeAudit()
  */
 export class EmailAccountService {
   // ── Helpers ──────────────────────────────────────────────
