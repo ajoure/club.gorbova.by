@@ -1,4 +1,5 @@
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Quote } from "lucide-react";
 
 export interface QuoteContent {
