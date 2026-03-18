@@ -6,6 +6,7 @@ import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Switch } from "@/components/ui/switch";
 import { ImageIcon, Plus, Trash2, Check, X, RotateCcw, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface HotspotArea {
   id: string;
