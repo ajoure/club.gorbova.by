@@ -104,6 +104,8 @@ import {
   Link2,
 } from "lucide-react";
 import { copyToClipboard, getContactUrl } from "@/utils/clipboardUtils";
+import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
@@ -728,16 +730,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const { data, error } = await supabase
         .from("provider_subscriptions")
         .select(`
-          *,
-          subscriptions_v2!inner (
-            id, 
-            product_id, 
-            access_end_at,
-            products_v2 (name)
+          id, provider, state, provider_subscription_id,
+          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at,
+          subscription_v2_id,
+          subscriptions_v2 (
+            id, status, billing_type, tariff_id, access_end_at, next_charge_at,
+            products_v2 ( id, name ),
+            tariffs ( id, name, product_id )
           )
         `)
         .eq("user_id", contact.user_id)
-        .in("state", ["active", "trial", "pending", "canceled"])
+        .in("state", ["active", "pending"])
         .order("created_at", { ascending: false });
       
       if (error) throw error;
@@ -1797,13 +1800,24 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
                       <RefreshCw className="w-4 h-4" />
-                      Подписки bePaid
+                      Подписки
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    <TooltipProvider>
                     {contactProviderSubscriptions.map((sub: any) => {
                       const productName = sub.subscriptions_v2?.products_v2?.name || 'Подписка';
-                      const isActive = sub.state === 'active' || sub.state === 'trial';
+                      const tariffName = sub.subscriptions_v2?.tariffs?.name;
+                      const displayName = tariffName ? `${productName} — ${tariffName}` : productName;
+                      const isActive = sub.state === 'active' || sub.state === 'pending';
+                      const isBepaid = sub.provider === 'bepaid';
+                      const providerLabel = sub.provider === 'bepaid' ? 'bePaid' : (sub.provider || '').toUpperCase();
+
+                      const nextCharge = sub.next_charge_at ?? sub.subscriptions_v2?.next_charge_at ?? null;
+                      const hasAmount = sub.amount_cents != null && sub.currency;
+                      const amountStr = hasAmount ? `${(sub.amount_cents / 100).toFixed(2)} ${sub.currency}` : null;
+
+                      const accessEnd = sub.subscriptions_v2?.access_end_at;
                       
                       return (
                         <div 
@@ -1816,17 +1830,28 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         >
                           <div className="flex justify-between items-start gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium truncate">{productName}</p>
-                              <a
-                                href={`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  navigate(`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`);
-                                }}
-                                className="text-xs text-primary hover:underline cursor-pointer break-all"
-                              >
-                                ID: {sub.provider_subscription_id}
-                              </a>
+                              <p className="text-sm font-medium truncate">{displayName}</p>
+                              {isBepaid ? (
+                                <a
+                                  href={`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    navigate(`/admin/payments/bepaid-subscriptions?search=${sub.provider_subscription_id}`);
+                                  }}
+                                  className="text-xs text-primary hover:underline cursor-pointer break-all"
+                                >
+                                  ID: {sub.provider_subscription_id}
+                                </a>
+                              ) : (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="text-xs text-muted-foreground cursor-not-allowed break-all">
+                                      ID: {sub.provider_subscription_id}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Переход доступен только для bePaid</TooltipContent>
+                                </Tooltip>
+                              )}
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <Badge 
                                   variant={isActive ? 'default' : 'secondary'}
@@ -1834,35 +1859,65 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 >
                                   {sub.state}
                                 </Badge>
-                                <span className="text-xs text-muted-foreground">
-                                  {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
-                                </span>
+                                <Badge variant="outline" className="text-[10px]">
+                                  {providerLabel}
+                                </Badge>
+                                {sub.card_last4 && (
+                                  <span className="text-xs text-muted-foreground">
+                                    {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
+                                  </span>
+                                )}
                               </div>
-                              {sub.next_charge_at && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Следующее: {format(new Date(sub.next_charge_at), "dd.MM.yy HH:mm", { locale: ru })} — {((sub.amount_cents || 0) / 100).toFixed(2)} {sub.currency}
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {nextCharge 
+                                  ? `Следующее: ${formatPaymentTimeIANA(nextCharge, 'Europe/Minsk')}${amountStr ? ` — ${amountStr}` : ''}`
+                                  : 'Следующее списание: неизвестно (не синхронизировано)'
+                                }
+                              </p>
+                              {accessEnd && (
+                                <p className="text-xs text-muted-foreground">
+                                  Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Minsk')}
                                 </p>
                               )}
                             </div>
                             {isActive && (
-                              <Button 
-                                variant="destructive" 
-                                size="sm"
-                                className="h-7 px-2 text-xs rounded-full"
-                                onClick={() => cancelProviderSubAdminMutation.mutate(sub.provider_subscription_id)}
-                                disabled={cancelProviderSubAdminMutation.isPending}
-                              >
-                                {cancelProviderSubAdminMutation.isPending ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                  'Отменить'
-                                )}
-                              </Button>
+                              isBepaid ? (
+                                <Button 
+                                  variant="destructive" 
+                                  size="sm"
+                                  className="h-7 px-2 text-xs rounded-full"
+                                  onClick={() => cancelProviderSubAdminMutation.mutate(sub.provider_subscription_id)}
+                                  disabled={cancelProviderSubAdminMutation.isPending}
+                                >
+                                  {cancelProviderSubAdminMutation.isPending ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    'Отменить'
+                                  )}
+                                </Button>
+                              ) : (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span>
+                                      <Button 
+                                        variant="destructive" 
+                                        size="sm"
+                                        className="h-7 px-2 text-xs rounded-full"
+                                        disabled
+                                      >
+                                        Отменить
+                                      </Button>
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Отмена доступна только для bePaid</TooltipContent>
+                                </Tooltip>
+                              )
                             )}
                           </div>
                         </div>
                       );
                     })}
+                    </TooltipProvider>
                   </CardContent>
                 </Card>
               )}
