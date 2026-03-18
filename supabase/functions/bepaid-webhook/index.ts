@@ -1495,9 +1495,27 @@ Deno.serve(async (req) => {
         }
         
         // 2. Update subscription_v2 status to active
+        // PATCH 3: Truth dates from bePaid instead of hardcoded +accessDays
         const accessDays = subV2.tariffs?.access_days || subV2.access_days || 30;
-        const accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
-        const renewAt = body.renew_at ? new Date(body.renew_at) : accessEndAt;
+        const bepaidActiveTo = body.active_to || body.subscription?.active_to;
+        const bepaidRenewAt = body.renew_at || body.subscription?.renew_at;
+        
+        let accessEndAt: Date;
+        if (bepaidActiveTo) {
+          accessEndAt = new Date(endOfDayWarsaw(bepaidActiveTo));
+        } else {
+          // Fallback: +accessDays (with mandatory audit)
+          accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+          console.warn('[WEBHOOK-SUBSCRIPTION] FALLBACK: no active_to from bePaid, using +accessDays');
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.webhook.fallback_access_days_used',
+            actor_type: 'system',
+            actor_label: 'bepaid-webhook',
+            target_user_id: subV2.user_id,
+            meta: { subscription_id: subscriptionId, access_days: accessDays, reason: 'no_active_to_field' },
+          });
+        }
+        const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
         
         await supabase
           .from('subscriptions_v2')
