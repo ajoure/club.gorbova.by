@@ -35,7 +35,7 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
               ) : (
                 <Eye className="h-4 w-4 text-muted-foreground" />
               )}
-              <span dangerouslySetInnerHTML={{ __html: content.buttonText || "Показать ответ" }} />
+              <SafeHtml html={content.buttonText || "Показать ответ"} />
             </span>
             <ChevronDown className={cn(
               "h-4 w-4 text-muted-foreground transition-transform duration-200",
