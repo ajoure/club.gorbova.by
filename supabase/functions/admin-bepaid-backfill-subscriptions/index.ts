@@ -64,6 +64,7 @@ interface BepaidSub {
     email?: string;
   };
   cancellation_capability?: string;
+  tracking_id?: string;
 }
 
 async function fetchSubscriptionById(
