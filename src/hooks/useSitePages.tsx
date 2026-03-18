@@ -49,6 +49,25 @@ export function useSitePages() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const copyMutation = useMutation({
+    mutationFn: (id: string) => SitePageService.copyPage(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site-pages"] });
+      toast.success("Страница скопирована");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const moveMutation = useMutation({
+    mutationFn: ({ id, folderId }: { id: string; folderId: string | null }) =>
+      SitePageService.movePage(id, folderId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site-pages"] });
+      toast.success("Страница перемещена");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const publishMutation = useMutation({
     mutationFn: (id: string) => SitePublicationService.publish(id),
     onSuccess: (page) => {
