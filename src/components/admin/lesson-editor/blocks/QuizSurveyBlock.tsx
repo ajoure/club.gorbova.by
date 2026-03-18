@@ -527,11 +527,10 @@ export function QuizSurveyBlock({
                 : "0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.15)"
             }}
           >
-            <div
+            <SafeHtml
+              html={q.question.replace(/\n/g, "<br />")}
+              as="div"
               className="font-medium mb-4 whitespace-pre-line"
-              dangerouslySetInnerHTML={{
-                __html: q.question.replace(/\n/g, "<br />"),
-              }}
             />
 
             <RadioGroup
