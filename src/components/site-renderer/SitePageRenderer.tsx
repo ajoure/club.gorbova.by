@@ -1,4 +1,4 @@
-import { sanitizeHtml } from "@/services/sitePages/adapters/SanitizationAdapter";
+import { sanitizeHtml } from "@/lib/sanitization";
 import type { SiteBlock } from "@/services/sitePages/types";
 import type { PublicProduct, PublicTariff } from "@/hooks/usePublicProduct";
 
