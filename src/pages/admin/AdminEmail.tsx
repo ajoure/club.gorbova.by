@@ -237,10 +237,7 @@ export default function AdminEmail() {
   });
 
   const deleteAccountMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("email_accounts").delete().eq("id", id);
-      if (error) throw error;
-    },
+    mutationFn: (id: string) => EmailAccountService.remove(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
       toast.success("Почтовый ящик удален");
