@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { AudioContent } from "@/hooks/useLessonBlocks";
 import { Music, ExternalLink, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { CustomAudioPlayer } from "@/components/ui/CustomAudioPlayer";
