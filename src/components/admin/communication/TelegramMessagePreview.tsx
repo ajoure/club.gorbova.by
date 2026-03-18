@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface TelegramMessagePreviewProps {
   text: string;
