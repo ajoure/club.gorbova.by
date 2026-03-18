@@ -65,15 +65,16 @@ export function TabsBlock({ content, onChange, isEditing = true }: TabsBlockProp
               value={tab.id}
               className="rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm"
             >
-              <span dangerouslySetInnerHTML={{ __html: tab.title }} />
+              <SafeHtml html={tab.title} />
             </TabsTrigger>
           ))}
         </TabsList>
         {tabs.map((tab) => (
           <TabsContent key={tab.id} value={tab.id} className="mt-4">
-            <div 
+            <SafeHtml 
+              html={tab.content}
+              as="div"
               className="prose prose-sm max-w-none dark:prose-invert p-4 rounded-xl bg-card/30 backdrop-blur-sm"
-              dangerouslySetInnerHTML={{ __html: tab.content }}
             />
           </TabsContent>
         ))}

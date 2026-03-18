@@ -58,12 +58,13 @@ export function AccordionBlock({ content, onChange, isEditing = true }: Accordio
         {items.map((item, index) => (
           <AccordionItem key={item.id} value={item.id} className="border rounded-lg mb-2 px-4 bg-card/50 backdrop-blur-sm">
             <AccordionTrigger className="hover:no-underline text-left">
-              <span className="font-medium" dangerouslySetInnerHTML={{ __html: item.title || `Секция ${index + 1}` }} />
+              <SafeHtml html={item.title || `Секция ${index + 1}`} className="font-medium" />
             </AccordionTrigger>
             <AccordionContent>
-              <div 
+              <SafeHtml 
+                html={item.content}
+                as="div"
                 className="prose prose-sm max-w-none dark:prose-invert pb-2"
-                dangerouslySetInnerHTML={{ __html: item.content }}
               />
             </AccordionContent>
           </AccordionItem>

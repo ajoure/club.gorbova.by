@@ -44,9 +44,10 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-          <div 
+          <SafeHtml 
+            html={content.content}
+            as="div"
             className="prose prose-sm max-w-none dark:prose-invert p-4 mt-2 rounded-xl bg-card/30 backdrop-blur-sm border border-dashed"
-            dangerouslySetInnerHTML={{ __html: content.content }}
           />
         </CollapsibleContent>
       </Collapsible>

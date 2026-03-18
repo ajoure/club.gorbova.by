@@ -260,14 +260,15 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
                         className="mt-0.5 h-5 w-5"
                       />
                       <div className={`flex-1 min-w-0 transition-opacity duration-200 ${isChecked ? 'opacity-60' : ''}`}>
-                        <span
+                        <SafeHtml
+                          html={item.label}
                           className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}
-                          dangerouslySetInnerHTML={{ __html: item.label }}
                         />
                         {item.description && (
-                          <div
+                          <SafeHtml
+                            html={item.description}
+                            as="div"
                             className="text-xs text-muted-foreground mt-0.5"
-                            dangerouslySetInnerHTML={{ __html: item.description }}
                           />
                         )}
                       </div>
