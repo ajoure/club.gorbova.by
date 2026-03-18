@@ -1,9 +1,24 @@
 import { z } from "zod";
 
-// ─── Block Schema ───
+// ─── Universal Block Settings ───
 
-export const blockSettingsSchema = z.record(z.unknown()).default({});
+export const blockSettingsSchema = z.object({
+  paddingTop: z.number().default(0),
+  paddingBottom: z.number().default(0),
+  backgroundColor: z.string().default(""),
+  backgroundImage: z.string().default(""),
+  textColor: z.string().default(""),
+  fullWidth: z.boolean().default(false),
+  maxWidth: z.enum(["sm", "md", "lg", "xl", "full"]).default("lg"),
+  hideOnMobile: z.boolean().default(false),
+  hideOnDesktop: z.boolean().default(false),
+}).default({});
+
+export type BlockSettings = z.infer<typeof blockSettingsSchema>;
+
 export const blockMetadataSchema = z.record(z.unknown()).default({});
+
+// ─── Existing Block Content Schemas ───
 
 export const heroContentSchema = z.object({
   title: z.string().default(""),
@@ -59,6 +74,108 @@ export const dividerContentSchema = z.object({
   height: z.number().default(1),
 });
 
+// ─── New Block Content Schemas (12) ───
+
+export const videoContentSchema = z.object({
+  url: z.string().default(""),
+  autoplay: z.boolean().default(false),
+  aspectRatio: z.enum(["16:9", "4:3", "1:1"]).default("16:9"),
+});
+
+export const buttonContentSchema = z.object({
+  text: z.string().default(""),
+  link: z.string().default(""),
+  variant: z.enum(["primary", "secondary", "outline"]).default("primary"),
+  size: z.enum(["sm", "md", "lg"]).default("md"),
+  alignment: z.enum(["left", "center", "right"]).default("center"),
+});
+
+export const columnsContentSchema = z.object({
+  items: z.array(z.object({
+    html: z.string().default(""),
+  })).default([{ html: "" }, { html: "" }]),
+  columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(2),
+  gap: z.number().default(24),
+});
+
+export const timerContentSchema = z.object({
+  targetDate: z.string().default(""),
+  title: z.string().default(""),
+  expiredMessage: z.string().default("Время вышло"),
+});
+
+export const htmlContentSchema = z.object({
+  code: z.string().default(""),
+});
+
+export const galleryContentSchema = z.object({
+  items: z.array(z.object({
+    url: z.string().default(""),
+    alt: z.string().default(""),
+    caption: z.string().default(""),
+  })).default([]),
+  columns: z.union([z.literal(2), z.literal(3), z.literal(4)]).default(3),
+  gap: z.number().default(16),
+});
+
+export const testimonialsContentSchema = z.object({
+  items: z.array(z.object({
+    name: z.string().default(""),
+    text: z.string().default(""),
+    avatar: z.string().default(""),
+    role: z.string().default(""),
+  })).default([]),
+  columns: z.union([z.literal(1), z.literal(2), z.literal(3)]).default(2),
+});
+
+export const pricingContentSchema = z.object({
+  product_id: z.string().default(""),
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+});
+
+export const SOCIAL_PLATFORMS = [
+  "telegram", "instagram", "vk", "youtube", "tiktok", "facebook", "whatsapp", "x",
+] as const;
+export type SocialPlatform = typeof SOCIAL_PLATFORMS[number];
+
+export const socialContentSchema = z.object({
+  items: z.array(z.object({
+    platform: z.enum(SOCIAL_PLATFORMS).default("telegram"),
+    url: z.string().default(""),
+    label: z.string().default(""),
+  })).default([]),
+  alignment: z.enum(["left", "center", "right"]).default("center"),
+});
+
+export const logosContentSchema = z.object({
+  items: z.array(z.object({
+    url: z.string().default(""),
+    alt: z.string().default(""),
+    linkUrl: z.string().default(""),
+  })).default([]),
+  logoHeight: z.number().default(48),
+  grayscale: z.boolean().default(false),
+});
+
+export const spacerContentSchema = z.object({
+  height: z.number().default(40),
+});
+
+export const formContentSchema = z.object({
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+  buttonText: z.string().default("Отправить"),
+  fields: z.array(z.object({
+    label: z.string().default(""),
+    type: z.enum(["text", "email", "phone", "textarea"]).default("text"),
+    required: z.boolean().default(false),
+  })).default([]),
+  placeholderMessage: z.string().default("Форма будет подключена позже"),
+});
+
+// ─── Block Content Schemas Map ───
+
 export const blockContentSchemas = {
   hero: heroContentSchema,
   text: textContentSchema,
@@ -68,6 +185,18 @@ export const blockContentSchemas = {
   cta: ctaContentSchema,
   faq: faqContentSchema,
   divider: dividerContentSchema,
+  video: videoContentSchema,
+  button: buttonContentSchema,
+  columns: columnsContentSchema,
+  timer: timerContentSchema,
+  html: htmlContentSchema,
+  gallery: galleryContentSchema,
+  testimonials: testimonialsContentSchema,
+  pricing: pricingContentSchema,
+  social: socialContentSchema,
+  logos: logosContentSchema,
+  spacer: spacerContentSchema,
+  form: formContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;
