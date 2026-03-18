@@ -100,7 +100,7 @@ export function CommunicationSettingsTabContent() {
         .select("id, email, display_name, provider, is_default, is_active, imap_enabled")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as EmailAccount[];
+      return (data as unknown as EmailAccount[]);
     },
   });
 
