@@ -154,6 +154,41 @@ function buildProviderSubRecord(sub: BepaidSub) {
   };
 }
 
+/**
+ * PATCH-4: Resolve user_id for a bePaid subscription
+ * Chain: tracking_id parse → subscription_v2_id → orders_v2
+ */
+async function resolveUserIdForSub(
+  supabase: any,
+  sub: BepaidSub
+): Promise<string | null> {
+  // 1. Try tracking_id parse: format "subv2:{sub_v2_id}:order:{order_id}"
+  const trackingId = sub.tracking_id || (sub as any).tracking_id;
+  if (trackingId && typeof trackingId === "string") {
+    const orderMatch = trackingId.match(/order:([0-9a-f-]{36})/i);
+    if (orderMatch) {
+      const { data: order } = await supabase
+        .from("orders_v2")
+        .select("user_id")
+        .eq("id", orderMatch[1])
+        .maybeSingle();
+      if (order?.user_id) return order.user_id;
+    }
+    const subV2Match = trackingId.match(/subv2:([0-9a-f-]{36})/i);
+    if (subV2Match) {
+      const { data: sv2 } = await supabase
+        .from("subscriptions_v2")
+        .select("user_id")
+        .eq("id", subV2Match[1])
+        .maybeSingle();
+      if (sv2?.user_id) return sv2.user_id;
+    }
+  }
+
+  // 2. No tracking_id — can't resolve without subscription_v2_id link (set after insert via linkage)
+  return null;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
