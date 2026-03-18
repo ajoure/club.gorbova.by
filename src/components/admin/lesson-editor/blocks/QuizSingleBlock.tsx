@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Plus, Trash2, Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -90,7 +91,7 @@ export function QuizSingleBlock({
 
     return (
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Вопрос не задан" }} />
+        <SafeHtml html={content.question || "Вопрос не задан"} as="div" className="font-medium text-lg" />
         
         <RadioGroup 
           value={selectedAnswer} 
@@ -109,7 +110,7 @@ export function QuizSingleBlock({
               )}
             >
               <RadioGroupItem value={option.id} />
-              <span className="flex-1" dangerouslySetInnerHTML={{ __html: option.text }} />
+              <SafeHtml html={option.text} className="flex-1" />
               {isSubmitted && option.isCorrect && (
                 <Check className="h-5 w-5 text-green-500" />
               )}
@@ -150,7 +151,7 @@ export function QuizSingleBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

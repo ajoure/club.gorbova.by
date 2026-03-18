@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -235,7 +236,7 @@ export function QuizFillBlankBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

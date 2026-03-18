@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -373,7 +374,7 @@ export function SequentialFormBlock({
       {content.title && (
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <div className="w-full min-w-0" dangerouslySetInnerHTML={{ __html: content.title! }} />
+            <SafeHtml html={content.title!} as="div" className="w-full min-w-0" />
             <Badge variant="outline" className="shrink-0 ml-2">
               Шаг {currentStepIndex + 1} из {totalSteps}
             </Badge>
@@ -409,7 +410,7 @@ export function SequentialFormBlock({
           <div className="flex items-start gap-3">
             <Badge className="shrink-0 mt-0.5">{currentStepIndex + 1}</Badge>
             <div>
-              <h4 className="font-semibold" dangerouslySetInnerHTML={{ __html: currentStep.title }} />
+              <SafeHtml html={currentStep.title} as="h4" className="font-semibold" />
               <p className="text-muted-foreground mt-1">{currentStep.description}</p>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
@@ -214,9 +215,9 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
           <div className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-primary shrink-0" />
             <div>
-              <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Чек-лист" }} />
+              <SafeHtml html={content.title || "Чек-лист"} as="p" className="font-medium" />
               {content.description && (
-                <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.description }} />
+                <SafeHtml html={content.description} as="p" className="text-sm text-muted-foreground" />
               )}
             </div>
           </div>
@@ -242,7 +243,7 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
             <div key={group.id} className="space-y-2">
               <div className="border-l-2 border-primary/30 pl-3">
                 <h4 className="font-medium text-xs text-muted-foreground uppercase tracking-wide">
-                  <span dangerouslySetInnerHTML={{ __html: group.title }} />
+                  <SafeHtml html={group.title} />
                 </h4>
               </div>
               <div className="space-y-1">
@@ -259,14 +260,15 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
                         className="mt-0.5 h-5 w-5"
                       />
                       <div className={`flex-1 min-w-0 transition-opacity duration-200 ${isChecked ? 'opacity-60' : ''}`}>
-                        <span
+                        <SafeHtml
+                          html={item.label}
                           className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}
-                          dangerouslySetInnerHTML={{ __html: item.label }}
                         />
                         {item.description && (
-                          <div
+                          <SafeHtml
+                            html={item.description}
+                            as="div"
                             className="text-xs text-muted-foreground mt-0.5"
-                            dangerouslySetInnerHTML={{ __html: item.description }}
                           />
                         )}
                       </div>

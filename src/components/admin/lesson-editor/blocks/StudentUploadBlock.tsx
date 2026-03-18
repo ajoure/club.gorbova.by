@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Upload, Trash2, Loader2, Plus, MessageSquare } from "lucide-react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { getFileTypeIcon } from "./fileTypeIcons";
 import { toast } from "sonner";
 import { uploadToTrainingAssets, deleteTrainingAssets, formatFileSize } from "./uploadToTrainingAssets";
@@ -403,9 +404,9 @@ function StudentUploadStudentView({
         <div className="flex items-center gap-2">
           <Upload className="h-5 w-5 text-primary shrink-0" />
           <div>
-            <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Загрузите файл" }} />
+            <SafeHtml html={content.title || "Загрузите файл"} as="p" className="font-medium" />
             {content.instructions && (
-              <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.instructions }} />
+              <SafeHtml html={content.instructions} as="p" className="text-sm text-muted-foreground" />
             )}
           </div>
         </div>

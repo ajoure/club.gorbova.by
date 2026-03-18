@@ -7,7 +7,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select";
-import { 
+import {
   AlertCircle, 
   CheckCircle2, 
   Info, 
@@ -17,6 +17,7 @@ import {
   FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export type CalloutType = 'info' | 'success' | 'warning' | 'error' | 'tip' | 'quote' | 'summary';
 
@@ -96,11 +97,12 @@ export function CalloutBlock({ content, onChange, isEditing = true }: CalloutBlo
         <Icon className={cn("h-5 w-5 mt-0.5 flex-shrink-0", config.iconClass)} />
         <div className="flex-1 min-w-0">
           {content.title && (
-            <div className="font-semibold mb-1" dangerouslySetInnerHTML={{ __html: content.title }} />
+            <SafeHtml html={content.title} as="div" className="font-semibold mb-1" />
           )}
-          <div 
+          <SafeHtml 
+            html={content.content}
+            as="div"
             className="prose prose-sm max-w-none dark:prose-invert"
-            dangerouslySetInnerHTML={{ __html: content.content }}
           />
         </div>
       </div>

@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -61,7 +62,7 @@ export function QuizTrueFalseBlock({
 
     return (
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Вопрос не задан" }} />
+        <SafeHtml html={content.question || "Вопрос не задан"} as="div" className="font-medium text-lg" />
         
         <div className="grid grid-cols-2 gap-3">
           <button
@@ -120,7 +121,7 @@ export function QuizTrueFalseBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import {
   Dialog,
   DialogContent,
@@ -626,10 +627,7 @@ export function CommunicationSettingsTabContent() {
           <DialogHeader>
             <DialogTitle>Превью: {previewDialog.subject}</DialogTitle>
           </DialogHeader>
-          <div
-            className="border rounded-lg p-4 bg-background"
-            dangerouslySetInnerHTML={{ __html: previewDialog.html }}
-          />
+          <SafeHtml html={previewDialog.html} as="div" className="border rounded-lg p-4 bg-background" />
         </DialogContent>
       </Dialog>
     </ScrollArea>

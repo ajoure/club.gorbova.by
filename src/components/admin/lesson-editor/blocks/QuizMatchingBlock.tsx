@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { 
   DndContext, 
   closestCenter, 
@@ -372,7 +373,7 @@ export function QuizMatchingBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

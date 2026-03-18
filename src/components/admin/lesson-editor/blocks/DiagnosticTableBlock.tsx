@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -744,7 +745,7 @@ export function DiagnosticTableBlock({
     return (
       <div className="space-y-4">
         {content.title && (
-          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="div" className="w-full" />
         )}
 
         {/* Summary analytics card */}
@@ -905,7 +906,7 @@ export function DiagnosticTableBlock({
     <div className="space-y-4">
       {content.title && (
         <div className="space-y-1">
-          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="div" className="w-full" />
           {/* Save status indicator */}
           {saveStatus !== 'idle' && (
             <span className={`text-xs flex items-center gap-1 ${
@@ -922,9 +923,10 @@ export function DiagnosticTableBlock({
       )}
       
       {content.instruction && (
-        <div
+        <SafeHtml
+          html={content.instruction}
+          as="div"
           className="text-sm text-muted-foreground prose prose-sm max-w-none"
-          dangerouslySetInnerHTML={{ __html: content.instruction }}
         />
       )}
 

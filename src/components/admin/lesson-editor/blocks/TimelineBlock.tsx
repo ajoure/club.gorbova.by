@@ -1,4 +1,5 @@
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -65,13 +66,14 @@ export function TimelineBlock({ content, onChange, isEditing = true }: TimelineB
               
               <div className="bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/50">
                 {item.date && (
-                  <div className="text-xs text-muted-foreground mb-1 font-medium" dangerouslySetInnerHTML={{ __html: item.date }} />
+                  <SafeHtml html={item.date} as="div" className="text-xs text-muted-foreground mb-1 font-medium" />
                 )}
-                <div className="font-semibold text-foreground" dangerouslySetInnerHTML={{ __html: item.title || `Шаг ${index + 1}` }} />
+                <SafeHtml html={item.title || `Шаг ${index + 1}`} as="div" className="font-semibold text-foreground" />
                 {item.description && (
-                  <div 
+                  <SafeHtml 
+                    html={item.description}
+                    as="div"
                     className="prose prose-sm max-w-none dark:prose-invert mt-2 text-muted-foreground"
-                    dangerouslySetInnerHTML={{ __html: item.description }}
                   />
                 )}
               </div>

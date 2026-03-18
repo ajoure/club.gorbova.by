@@ -6,6 +6,7 @@ import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Switch } from "@/components/ui/switch";
 import { ImageIcon, Plus, Trash2, Check, X, RotateCcw, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface HotspotArea {
   id: string;
@@ -192,7 +193,7 @@ export function QuizHotspotBlock({
 
     return (
       <div data-testid="quiz-hotspot" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Нажмите на правильную область" }} />
+        <SafeHtml html={content.question || "Нажмите на правильную область"} as="div" className="font-medium text-lg" />
 
         {content.imageUrl && !imageError ? (
           <div 
@@ -259,7 +260,7 @@ export function QuizHotspotBlock({
                 >
                   {area.label && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs bg-background px-2 py-0.5 rounded border">
-                      <span dangerouslySetInnerHTML={{ __html: area.label! }} />
+                      <SafeHtml html={area.label!} />
                     </div>
                   )}
                 </div>
@@ -312,7 +313,7 @@ export function QuizHotspotBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

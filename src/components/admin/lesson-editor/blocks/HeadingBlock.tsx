@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HeadingContent } from "@/hooks/useLessonBlocks";
 
@@ -23,9 +24,10 @@ export function HeadingBlock({ content, onChange, isEditing = true }: HeadingBlo
       4: "text-lg font-medium",
     };
     return (
-      <Tag 
+      <SafeHtml 
+        html={content.text || "Заголовок"}
+        as={Tag as any}
         className={sizeClasses[content.level || 2]}
-        dangerouslySetInnerHTML={{ __html: content.text || "Заголовок" }}
       />
     );
   }

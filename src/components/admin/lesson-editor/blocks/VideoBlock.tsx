@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { VideoContent } from "@/hooks/useLessonBlocks";
 import { Video, ExternalLink, Play } from "lucide-react";
 import { useKinescopePlayer, extractKinescopeVideoId } from "@/hooks/useKinescopePlayer";
@@ -177,7 +178,7 @@ export function VideoBlock({
       return (
         <div className="space-y-2">
           {content.title && (
-            <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+            <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
           )}
           {/* Outer wrapper controls geometry (aspect-ratio) */}
           <div className="relative w-full aspect-video rounded-lg overflow-hidden bg-black">
@@ -212,7 +213,7 @@ export function VideoBlock({
     return (
       <div className="space-y-2">
         {content.title && (
-          <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+          <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
         )}
         <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
           <iframe

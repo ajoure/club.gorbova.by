@@ -1,4 +1,5 @@
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Quote } from "lucide-react";
 
 export interface QuoteContent {
@@ -20,12 +21,12 @@ export function QuoteBlock({ content, onChange, isEditing = true }: QuoteBlockPr
         <Quote className="absolute -left-3 -top-3 h-6 w-6 text-primary/30 rotate-180" />
         <div className="prose prose-sm max-w-none dark:prose-invert">
           <div className="text-lg leading-relaxed mb-2">
-            "<span dangerouslySetInnerHTML={{ __html: content.text }} />"
+            "<SafeHtml html={content.text} />"
           </div>
           {(content.author || content.source) && (
             <footer className="text-sm text-muted-foreground not-italic mt-3">
-              {content.author && <span className="font-medium">— <span dangerouslySetInnerHTML={{ __html: content.author }} /></span>}
-              {content.source && <span className="ml-1">(<span dangerouslySetInnerHTML={{ __html: content.source }} />)</span>}
+              {content.author && <span className="font-medium">— <SafeHtml html={content.author} /></span>}
+              {content.source && <span className="ml-1">(<SafeHtml html={content.source} />)</span>}
             </footer>
           )}
         </div>

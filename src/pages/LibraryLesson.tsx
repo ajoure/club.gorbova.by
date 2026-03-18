@@ -8,6 +8,7 @@ import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useLessonBlocks } from "@/hooks/useLessonBlocks";
 import { useLessonQuestions, formatTimecode } from "@/hooks/useKbQuestions";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { usePermissions } from "@/hooks/usePermissions";
 import { LessonBlockRenderer } from "@/components/lesson/LessonBlockRenderer";
 import { getFileTypeIcon, pickIconHint } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
@@ -438,9 +439,10 @@ export default function LibraryLesson() {
                 {currentLesson.content && (
                   <Card className="mb-6">
                     <CardContent className="py-6">
-                      <div
+                      <SafeHtml
+                        html={currentLesson.content}
+                        as="div"
                         className="prose prose-sm max-w-none dark:prose-invert"
-                        dangerouslySetInnerHTML={{ __html: currentLesson.content }}
                       />
                     </CardContent>
                   </Card>

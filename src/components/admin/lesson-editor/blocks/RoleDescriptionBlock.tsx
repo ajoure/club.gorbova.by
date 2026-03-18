@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -172,9 +173,10 @@ export function RoleDescriptionBlock({
         }}
       >
         <div className="p-6">
-          <div 
+          <SafeHtml 
+            html={roleContent}
+            as="div"
             className="prose prose-sm max-w-none dark:prose-invert"
-            dangerouslySetInnerHTML={{ __html: roleContent }}
           />
         </div>
       </div>

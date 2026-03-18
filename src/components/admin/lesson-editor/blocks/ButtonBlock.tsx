@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ButtonContent } from "@/hooks/useLessonBlocks";
 import { Plus, Trash2, ExternalLink, GripVertical } from "lucide-react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface ButtonBlockProps {
   content: ButtonContent;
@@ -45,7 +46,7 @@ export function ButtonBlock({ content, onChange, isEditing = true }: ButtonBlock
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
-            <span dangerouslySetInnerHTML={{ __html: btn.label || "Ссылка" }} />
+            <SafeHtml html={btn.label || "Ссылка"} />
             <ExternalLink className="h-4 w-4" />
           </a>
         ))}

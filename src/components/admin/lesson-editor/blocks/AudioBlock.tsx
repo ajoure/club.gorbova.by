@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { AudioContent } from "@/hooks/useLessonBlocks";
 import { Music, ExternalLink, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { CustomAudioPlayer } from "@/components/ui/CustomAudioPlayer";
@@ -119,7 +120,7 @@ export function AudioBlock({ content, onChange, isEditing = true, lessonId }: Au
     return (
       <div className="space-y-2">
         {content.title && (
-          <p className="text-sm font-medium text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.title }} />
+          <SafeHtml html={content.title} as="p" className="text-sm font-medium text-muted-foreground" />
         )}
         {isGD ? (
           // Google Drive не отдаёт прямой аудио-поток — показываем предупреждение вместо плеера

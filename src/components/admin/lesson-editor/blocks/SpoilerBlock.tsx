@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface SpoilerContent {
   buttonText: string;
@@ -34,7 +35,7 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
               ) : (
                 <Eye className="h-4 w-4 text-muted-foreground" />
               )}
-              <span dangerouslySetInnerHTML={{ __html: content.buttonText || "Показать ответ" }} />
+              <SafeHtml html={content.buttonText || "Показать ответ"} />
             </span>
             <ChevronDown className={cn(
               "h-4 w-4 text-muted-foreground transition-transform duration-200",
@@ -43,9 +44,10 @@ export function SpoilerBlock({ content, onChange, isEditing = true }: SpoilerBlo
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-          <div 
+          <SafeHtml 
+            html={content.content}
+            as="div"
             className="prose prose-sm max-w-none dark:prose-invert p-4 mt-2 rounded-xl bg-card/30 backdrop-blur-sm border border-dashed"
-            dangerouslySetInnerHTML={{ __html: content.content }}
           />
         </CollapsibleContent>
       </Collapsible>

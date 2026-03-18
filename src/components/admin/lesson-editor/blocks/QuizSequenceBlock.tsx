@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { 
   DndContext, 
   closestCenter, 
@@ -264,7 +265,7 @@ export function QuizSequenceBlock({
 
     return (
       <div data-testid="quiz-sequence" className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Расставьте в правильном порядке" }} />
+        <SafeHtml html={content.question || "Расставьте в правильном порядке"} as="div" className="font-medium text-lg" />
 
         <DndContext
           sensors={sensors}
@@ -314,7 +315,7 @@ export function QuizSequenceBlock({
             {content.explanation && (
               <div className="p-3 rounded-lg bg-muted/50 text-sm">
                 <span className="font-medium">Пояснение: </span>
-                <span dangerouslySetInnerHTML={{ __html: content.explanation }} />
+                <SafeHtml html={content.explanation} />
               </div>
             )}
 

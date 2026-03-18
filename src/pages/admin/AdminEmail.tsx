@@ -70,6 +70,7 @@ import {
 import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 // Interfaces and helper functions
 
@@ -82,7 +83,7 @@ interface EmailAccount {
   smtp_port: number | null;
   smtp_encryption: string | null;
   smtp_username: string | null;
-  smtp_password: string | null;
+  has_password: boolean;
   from_name: string | null;
   from_email: string | null;
   reply_to: string | null;
@@ -192,6 +193,7 @@ export default function AdminEmail() {
   const [templateValidationError, setTemplateValidationError] = useState<string | null>(null);
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
   const [previewProductId, setPreviewProductId] = useState<string>("");
+  const [newSmtpPassword, setNewSmtpPassword] = useState<string>("");
 
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
@@ -211,11 +213,15 @@ export default function AdminEmail() {
     queryKey: ["email-accounts"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("email_accounts")
+        .from("email_accounts_safe" as any)
         .select("*")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as EmailAccount[];
+      return (data as any[]).map((acc: any) => ({
+        ...acc,
+        has_password: acc.has_password ?? false,
+        use_for: Array.isArray(acc.use_for) ? acc.use_for : [],
+      })) as EmailAccount[];
     },
   });
 
@@ -234,17 +240,23 @@ export default function AdminEmail() {
 
   const saveAccountMutation = useMutation({
     mutationFn: async (account: Partial<EmailAccount>) => {
-      if (account.id) {
+      const isUpdate = !!account.id;
+      if (isUpdate) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, created_at, ...updateData } = account;
+        const { id, created_at, has_password, ...updateData } = account;
+        const payload: Record<string, unknown> = { ...updateData };
+        // Only send password if explicitly changed
+        if (newSmtpPassword) {
+          payload.smtp_password = newSmtpPassword;
+        }
         const { error } = await supabase
           .from("email_accounts")
-          .update(updateData as Record<string, unknown>)
+          .update(payload)
           .eq("id", account.id);
         if (error) throw error;
       } else {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _id, created_at: _createdAt, ...insertData } = account;
+        const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
         if (!insertData.email) throw new Error("Email обязателен");
         const smtpSettings = getSmtpSettings(insertData.email);
         const provider = getProviderName(insertData.email);
@@ -256,7 +268,7 @@ export default function AdminEmail() {
           smtp_port: insertData.smtp_port || smtpSettings?.port || 465,
           smtp_encryption: insertData.smtp_encryption || smtpSettings?.encryption || "SSL",
           smtp_username: insertData.smtp_username || insertData.email,
-          smtp_password: insertData.smtp_password || null,
+          smtp_password: newSmtpPassword || null,
           from_name: insertData.from_name || null,
           from_email: insertData.from_email || insertData.email,
           reply_to: insertData.reply_to || null,
@@ -266,10 +278,22 @@ export default function AdminEmail() {
         const { error } = await supabase.from("email_accounts").insert([insertPayload]);
         if (error) throw error;
       }
+      // Audit logging
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from("audit_logs").insert({
+          action: isUpdate ? "email.account.updated" : "email.account.created",
+          actor_type: "user",
+          actor_user_id: user.id,
+          actor_label: user.email || user.id,
+          meta: { email: account.email, account_id: account.id || null },
+        });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
       setAccountDialog({ open: false, account: null });
+      setNewSmtpPassword("");
       toast.success("Почтовый ящик сохранен");
     },
     onError: (error: Error) => {
@@ -547,9 +571,10 @@ export default function AdminEmail() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() =>
-                      setAccountDialog({ open: true, account: { ...account } })
-                    }
+                    onClick={() => {
+                      setNewSmtpPassword("");
+                      setAccountDialog({ open: true, account: { ...account } });
+                    }}
                   >
                     <Edit2 className="w-4 h-4" />
                   </Button>
@@ -789,13 +814,9 @@ export default function AdminEmail() {
                       <Label>SMTP Password</Label>
                       <Input
                         type="password"
-                        value={accountDialog.account.smtp_password || ""}
-                        onChange={(e) =>
-                          setAccountDialog((prev) => ({
-                            ...prev,
-                            account: { ...prev.account, smtp_password: e.target.value },
-                          }))
-                        }
+                        placeholder={accountDialog.account.has_password ? "••••••••  (не изменен)" : "Введите пароль"}
+                        value={newSmtpPassword}
+                        onChange={(e) => setNewSmtpPassword(e.target.value)}
                       />
                     </div>
                   </div>
@@ -1062,7 +1083,7 @@ export default function AdminEmail() {
               <p className="font-medium">{previewDialog.subject}</p>
             </div>
             <div className="border rounded-lg p-4 bg-background text-foreground max-h-[400px] overflow-y-auto">
-              <div dangerouslySetInnerHTML={{ __html: previewDialog.html }} />
+              <SafeHtml html={previewDialog.html} as="div" />
             </div>
           </div>
         </DialogContent>

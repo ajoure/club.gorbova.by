@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Plus, Trash2, RotateCcw, ClipboardList, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface SurveyOption {
   id: string;
@@ -491,16 +492,17 @@ export function QuizSurveyBlock({
       {content.title && (
         <div className="flex items-center gap-3 mb-2">
           <ClipboardList className="h-6 w-6 text-primary" />
-          <h2 className="text-xl font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="h2" className="text-xl font-semibold" />
         </div>
       )}
 
       {/* Instruction */}
       {content.instruction && (
         <GlassCard className="p-4 bg-primary/5 border-primary/20">
-          <div
+          <SafeHtml
+            html={content.instruction}
+            as="div"
             className="text-sm text-muted-foreground prose prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: content.instruction }}
           />
         </GlassCard>
       )}
@@ -525,11 +527,10 @@ export function QuizSurveyBlock({
                 : "0 8px 32px rgba(0, 0, 0, 0.06), inset 0 1px 0 hsl(0 0% 100% / 0.15)"
             }}
           >
-            <div
+            <SafeHtml
+              html={q.question.replace(/\n/g, "<br />")}
+              as="div"
               className="font-medium mb-4 whitespace-pre-line"
-              dangerouslySetInnerHTML={{
-                __html: q.question.replace(/\n/g, "<br />"),
-              }}
             />
 
             <RadioGroup
@@ -649,8 +650,8 @@ export function QuizSurveyBlock({
                     />
                   </div>
                   <div>
-                    <h4 className="font-semibold text-lg" dangerouslySetInnerHTML={{ __html: resultToShow.title }} />
-                    <p className="text-muted-foreground/90 mt-1" dangerouslySetInnerHTML={{ __html: resultToShow.description }} />
+                    <SafeHtml html={resultToShow.title} as="h4" className="font-semibold text-lg" />
+                    <SafeHtml html={resultToShow.description} as="p" className="text-muted-foreground/90 mt-1" />
                   </div>
                 </div>
               </div>
