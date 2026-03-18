@@ -3,6 +3,7 @@ import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Trash2 } from "lucide-react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface TabItem {
   id: string;
