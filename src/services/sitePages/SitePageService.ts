@@ -66,6 +66,7 @@ export class SitePageService {
         title: input.title,
         slug: input.slug,
         product_id: input.product_id || null,
+        folder_id: input.folder_id || null,
         blocks: blocks,
         seo_settings: input.seo_settings || {},
         theme_settings: input.theme_settings || {},
