@@ -221,6 +221,7 @@ export interface SitePage {
   title: string;
   slug: string;
   product_id: string | null;
+  folder_id: string | null;
   blocks: SiteBlock[];
   seo_settings: Record<string, unknown>;
   theme_settings: Record<string, unknown>;
@@ -237,6 +238,7 @@ export interface CreateSitePageData {
   title: string;
   slug: string;
   product_id?: string | null;
+  folder_id?: string | null;
   blocks?: SiteBlock[];
   seo_settings?: Record<string, unknown>;
   theme_settings?: Record<string, unknown>;
@@ -246,9 +248,34 @@ export interface UpdateSitePageData {
   title?: string;
   slug?: string;
   product_id?: string | null;
+  folder_id?: string | null;
   blocks?: SiteBlock[];
   seo_settings?: Record<string, unknown>;
   theme_settings?: Record<string, unknown>;
+}
+
+// ─── Folder Types ───
+
+export interface SitePageFolder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  workspace_id: string;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSiteFolderData {
+  name: string;
+  parent_id?: string | null;
+}
+
+export interface UpdateSiteFolderData {
+  name?: string;
+  parent_id?: string | null;
+  sort_order?: number;
 }
 
 // ─── Domain Binding Types ───

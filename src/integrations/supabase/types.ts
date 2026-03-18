@@ -6915,11 +6915,53 @@ export type Database = {
           },
         ]
       }
+      site_page_folders: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          name: string
+          parent_id: string | null
+          sort_order: number
+          updated_at: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name: string
+          parent_id?: string | null
+          sort_order?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          name?: string
+          parent_id?: string | null
+          sort_order?: number
+          updated_at?: string
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_page_folders_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "site_page_folders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_pages: {
         Row: {
           blocks: Json
           created_at: string
           created_by: string
+          folder_id: string | null
           id: string
           metadata: Json
           product_id: string | null
@@ -6938,6 +6980,7 @@ export type Database = {
           blocks?: Json
           created_at?: string
           created_by: string
+          folder_id?: string | null
           id?: string
           metadata?: Json
           product_id?: string | null
@@ -6956,6 +6999,7 @@ export type Database = {
           blocks?: Json
           created_at?: string
           created_by?: string
+          folder_id?: string | null
           id?: string
           metadata?: Json
           product_id?: string | null
@@ -6971,6 +7015,13 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "site_pages_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "site_page_folders"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "site_pages_product_id_fkey"
             columns: ["product_id"]
