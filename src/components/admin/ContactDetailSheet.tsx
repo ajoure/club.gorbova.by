@@ -767,7 +767,56 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
   });
 
-  // PATCH-B: Admin create provider subscription mutation using dedicated admin function
+  // PATCH 7: Sync bePaid subscription mutation
+  const syncBepaidSubMutation = useMutation({
+    mutationFn: async (providerSubId: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-get-subscription-details', {
+        body: { subscription_id: providerSubId }
+      });
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact?.user_id] });
+      queryClient.invalidateQueries({ queryKey: ['contact-payments', contact?.id] });
+      queryClient.invalidateQueries({ queryKey: ['contact-deals'] });
+      toast.success('Подписка синхронизирована');
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка синхронизации: ' + error.message);
+    },
+  });
+
+  // PATCH 7: Auto-sync bePaid subscriptions (max 3, dedup by provider_subscription_id)
+  const autoSyncCountRef = useRef(0);
+  const autoSyncedIdsRef = useRef(new Set<string>());
+  const autoSyncRunRef = useRef(false);
+
+  useEffect(() => {
+    if (!contactProviderSubscriptions || contactProviderSubscriptions.length === 0) return;
+    if (autoSyncRunRef.current) return;
+    autoSyncRunRef.current = true;
+
+    const subsToSync = contactProviderSubscriptions.filter((sub: any) => {
+      if (sub.provider !== 'bepaid') return false;
+      if (autoSyncedIdsRef.current.has(sub.provider_subscription_id)) return false;
+      
+      const snapshotAt = (sub as any)?.meta?.snapshot_at;
+      const isStale = !snapshotAt || (Date.now() - new Date(snapshotAt).getTime() > 10 * 60 * 1000);
+      const needsSync = !sub.next_charge_at || 
+        ['failed_attempt', 'past_due', 'failed'].includes(sub.state) ||
+        isStale;
+      
+      return needsSync;
+    });
+
+    for (const sub of subsToSync) {
+      if (autoSyncCountRef.current >= 3) break;
+      autoSyncCountRef.current++;
+      autoSyncedIdsRef.current.add(sub.provider_subscription_id);
+      syncBepaidSubMutation.mutate(sub.provider_subscription_id);
+    }
+  }, [contactProviderSubscriptions]);
   const createProviderSubAdminMutation = useMutation({
     mutationFn: async (subscriptionV2Id: string) => {
       const { data, error } = await supabase.functions.invoke('bepaid-admin-create-subscription-link', {
