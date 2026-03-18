@@ -492,7 +492,7 @@ export function QuizSurveyBlock({
       {content.title && (
         <div className="flex items-center gap-3 mb-2">
           <ClipboardList className="h-6 w-6 text-primary" />
-          <h2 className="text-xl font-semibold" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="h2" className="text-xl font-semibold" />
         </div>
       )}
 
