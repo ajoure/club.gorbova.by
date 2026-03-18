@@ -1980,6 +1980,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 </Tooltip>
                               )
                             )}
+                            </div>
                           </div>
                         </div>
                       );
