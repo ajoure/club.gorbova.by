@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RichTextarea } from "@/components/ui/RichTextarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Plus, Trash2, Check, X, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
