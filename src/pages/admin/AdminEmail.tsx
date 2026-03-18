@@ -1067,7 +1067,7 @@ export default function AdminEmail() {
               <p className="font-medium">{previewDialog.subject}</p>
             </div>
             <div className="border rounded-lg p-4 bg-background text-foreground max-h-[400px] overflow-y-auto">
-              <div dangerouslySetInnerHTML={{ __html: previewDialog.html }} />
+              <SafeHtml html={previewDialog.html} as="div" />
             </div>
           </div>
         </DialogContent>
