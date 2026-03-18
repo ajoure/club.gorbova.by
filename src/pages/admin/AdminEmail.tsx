@@ -209,55 +209,21 @@ export default function AdminEmail() {
 
   const saveAccountMutation = useMutation({
     mutationFn: async (account: Partial<EmailAccount>) => {
-      const isUpdate = !!account.id;
-      if (isUpdate) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id, created_at, has_password, ...updateData } = account;
-        const payload: Record<string, unknown> = { ...updateData };
-        // Only send password if explicitly changed
-        if (newSmtpPassword) {
-          payload.smtp_password = newSmtpPassword;
-        }
-        const { error } = await supabase
-          .from("email_accounts")
-          .update(payload)
-          .eq("id", account.id);
-        if (error) throw error;
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { id: _id, created_at: _createdAt, has_password: _hp, ...insertData } = account;
-        if (!insertData.email) throw new Error("Email обязателен");
-        const smtpSettings = getSmtpSettings(insertData.email);
-        const provider = getProviderName(insertData.email);
-        const insertPayload = {
-          email: insertData.email,
-          display_name: insertData.display_name || null,
-          provider: provider,
-          smtp_host: insertData.smtp_host || smtpSettings?.host || null,
-          smtp_port: insertData.smtp_port || smtpSettings?.port || 465,
-          smtp_encryption: insertData.smtp_encryption || smtpSettings?.encryption || "SSL",
-          smtp_username: insertData.smtp_username || insertData.email,
-          smtp_password: newSmtpPassword || null,
-          from_name: insertData.from_name || null,
-          from_email: insertData.from_email || insertData.email,
-          reply_to: insertData.reply_to || null,
-          is_default: insertData.is_default ?? false,
-          is_active: insertData.is_active ?? true,
+      // Apply auto-detected SMTP/provider settings for new accounts
+      if (!account.id && account.email) {
+        const smtpSettings = getSmtpSettings(account.email);
+        const provider = getProviderName(account.email);
+        account = {
+          ...account,
+          provider: account.provider || provider,
+          smtp_host: account.smtp_host || smtpSettings?.host || null,
+          smtp_port: account.smtp_port || smtpSettings?.port || 465,
+          smtp_encryption: account.smtp_encryption || smtpSettings?.encryption || "SSL",
+          smtp_username: account.smtp_username || account.email,
+          from_email: account.from_email || account.email,
         };
-        const { error } = await supabase.from("email_accounts").insert([insertPayload]);
-        if (error) throw error;
       }
-      // Audit logging
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from("audit_logs").insert({
-          action: isUpdate ? "email.account.updated" : "email.account.created",
-          actor_type: "user",
-          actor_user_id: user.id,
-          actor_label: user.email || user.id,
-          meta: { email: account.email, account_id: account.id || null },
-        });
-      }
+      await EmailAccountService.save(account, newSmtpPassword || undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
