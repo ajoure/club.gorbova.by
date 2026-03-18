@@ -215,9 +215,9 @@ function ChecklistStudentView({ content, savedResponse, onSave }: {
           <div className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-primary shrink-0" />
             <div>
-              <p className="font-medium" dangerouslySetInnerHTML={{ __html: content.title || "Чек-лист" }} />
+              <SafeHtml html={content.title || "Чек-лист"} as="p" className="font-medium" />
               {content.description && (
-                <p className="text-sm text-muted-foreground" dangerouslySetInnerHTML={{ __html: content.description }} />
+                <SafeHtml html={content.description} as="p" className="text-sm text-muted-foreground" />
               )}
             </div>
           </div>
