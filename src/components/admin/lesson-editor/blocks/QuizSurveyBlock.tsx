@@ -7,6 +7,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Plus, Trash2, RotateCcw, ClipboardList, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 interface SurveyOption {
   id: string;
