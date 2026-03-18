@@ -265,7 +265,7 @@ Deno.serve(async (req) => {
     } else if (telegramAccess && telegramAccess.length > 0) {
       for (const access of telegramAccess) {
         // PATCH 11B: Use comprehensive access check instead of just subscriptions
-        const accessCheck = await hasValidAccess(access.user_id);
+        const accessCheck = await hasValidAccess(supabase, access.user_id);
 
         if (!accessCheck.valid) {
           // No valid access, check if active_until is also expired
