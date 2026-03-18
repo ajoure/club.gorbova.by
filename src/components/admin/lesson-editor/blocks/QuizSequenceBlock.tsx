@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { 
   DndContext, 
   closestCenter, 
