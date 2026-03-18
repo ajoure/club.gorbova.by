@@ -166,7 +166,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
               card_last4, card_brand, order_id
             `)
             .eq('card_last4', card.card_last4)
-            .in('status', ['succeeded', 'refunded'])
+            .in('status', ['succeeded', 'refunded', 'failed'])
             .order('paid_at', { ascending: false })
             .limit(50);
           if (!byLast4AnyBrandError) cardPaymentsV2.push(...(byLast4AnyBrand || []));

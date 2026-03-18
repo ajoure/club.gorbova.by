@@ -152,3 +152,16 @@ function getUtcOffsetMs(tz: string, utcMs: number): number {
   // Offset = local - UTC
   return localAsUtcMs - utcMs;
 }
+
+/**
+ * PATCH 1: endOfDayWarsaw — returns 23:59:59 Warsaw time for a given ISO date.
+ * Used for normalizing access_end_at from bePaid truth fields.
+ */
+export function endOfDayWarsaw(isoDate: string): string {
+  const WARSAW_TZ = 'Europe/Warsaw';
+  const dateKey = toTzDateKey(isoDate, WARSAW_TZ);
+  const nextDateKey = addDaysToDateKey(dateKey, 1);
+  const { start: nextMidnightUtc } = dayWindowUtc(WARSAW_TZ, nextDateKey);
+  // 23:59:59 Warsaw = next midnight UTC - 1 second
+  return new Date(new Date(nextMidnightUtc).getTime() - 1000).toISOString();
+}
