@@ -1702,6 +1702,71 @@ export type Database = {
         }
         Relationships: []
       }
+      domain_events: {
+        Row: {
+          created_at: string
+          entity_id: string
+          event_type: string
+          id: string
+          payload: Json
+          source: string
+        }
+        Insert: {
+          created_at?: string
+          entity_id: string
+          event_type: string
+          id?: string
+          payload?: Json
+          source: string
+        }
+        Update: {
+          created_at?: string
+          entity_id?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          source?: string
+        }
+        Relationships: []
+      }
+      domain_executions: {
+        Row: {
+          attempt: number
+          created_at: string
+          error: string | null
+          event_id: string
+          id: string
+          status: string
+          step: string
+        }
+        Insert: {
+          attempt?: number
+          created_at?: string
+          error?: string | null
+          event_id: string
+          id?: string
+          status?: string
+          step: string
+        }
+        Update: {
+          attempt?: number
+          created_at?: string
+          error?: string | null
+          event_id?: string
+          id?: string
+          status?: string
+          step?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "domain_executions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "domain_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       duplicate_cases: {
         Row: {
           created_at: string | null
@@ -6799,6 +6864,121 @@ export type Database = {
           triggered_by?: string | null
         }
         Relationships: []
+      }
+      site_domain_bindings: {
+        Row: {
+          created_at: string
+          created_by: string
+          domain: string
+          id: string
+          is_primary: boolean
+          metadata: Json
+          public_id: string
+          site_page_id: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          domain: string
+          id?: string
+          is_primary?: boolean
+          metadata?: Json
+          public_id?: string
+          site_page_id: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          domain?: string
+          id?: string
+          is_primary?: boolean
+          metadata?: Json
+          public_id?: string
+          site_page_id?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_domain_bindings_site_page_id_fkey"
+            columns: ["site_page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_pages: {
+        Row: {
+          blocks: Json
+          created_at: string
+          created_by: string
+          id: string
+          metadata: Json
+          product_id: string | null
+          public_id: string
+          published_at: string | null
+          seo_settings: Json
+          slug: string
+          status: string
+          theme_settings: Json
+          title: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          blocks?: Json
+          created_at?: string
+          created_by: string
+          id?: string
+          metadata?: Json
+          product_id?: string | null
+          public_id?: string
+          published_at?: string | null
+          seo_settings?: Json
+          slug: string
+          status?: string
+          theme_settings?: Json
+          title: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Update: {
+          blocks?: Json
+          created_at?: string
+          created_by?: string
+          id?: string
+          metadata?: Json
+          product_id?: string | null
+          public_id?: string
+          published_at?: string | null
+          seo_settings?: Json
+          slug?: string
+          status?: string
+          theme_settings?: Json
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_pages_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       sphere_goals: {
         Row: {

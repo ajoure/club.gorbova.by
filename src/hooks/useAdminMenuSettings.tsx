@@ -30,6 +30,7 @@ import {
   Target,
   BarChart3,
   Upload,
+  PanelTop,
   LucideIcon,
 } from "lucide-react";
 
@@ -82,6 +83,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Target,
   BarChart3,
   Upload,
+  PanelTop,
 };
 
 // Default menu configuration - Reorganized structure
@@ -113,6 +115,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "roles", label: "Сотрудники и роли", path: "/admin/roles", icon: "Shield", order: 4, permission: "roles.view" },
       { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 5, permission: "content.view" },
       { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
+      { id: "sites", label: "Конструктор", path: "/admin/sites", icon: "PanelTop", order: 7, permission: "content.edit" },
       { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 8, permission: "roles.view" },
       { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 9, permission: "roles.view" },
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 10 },
