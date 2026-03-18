@@ -706,6 +706,9 @@ export function BepaidSubscriptionsTabContent() {
         return <Badge className="bg-purple-500/10 text-purple-600 border-purple-500/20 text-xs">{label}</Badge>;
       case "past_due":
         return <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-xs">{label}</Badge>;
+      case "failed":
+      case "failed_attempt":
+        return <Badge className="bg-destructive/10 text-destructive border-destructive/20 text-xs">{label}</Badge>;
       case "canceled":
       case "terminated":
         return <Badge variant="secondary" className="text-xs">{label}</Badge>;
