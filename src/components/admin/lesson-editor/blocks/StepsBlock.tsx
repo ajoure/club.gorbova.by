@@ -97,11 +97,12 @@ export function StepsBlock({ content, onChange, isEditing = true }: StepsBlockPr
             </div>
             <div className="flex-1 pb-6">
               <div className="bg-card/30 backdrop-blur-sm rounded-xl p-4 border border-border/50">
-                <div className="font-semibold text-foreground" dangerouslySetInnerHTML={{ __html: step.title || `Шаг ${index + 1}` }} />
+                <SafeHtml html={step.title || `Шаг ${index + 1}`} as="div" className="font-semibold text-foreground" />
                 {step.description && (
-                  <div 
+                  <SafeHtml 
+                    html={step.description}
+                    as="div"
                     className="prose prose-sm max-w-none dark:prose-invert mt-2 text-muted-foreground"
-                    dangerouslySetInnerHTML={{ __html: step.description }}
                   />
                 )}
               </div>
