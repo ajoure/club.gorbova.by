@@ -212,11 +212,15 @@ export default function AdminEmail() {
     queryKey: ["email-accounts"],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("email_accounts")
+        .from("email_accounts_safe" as any)
         .select("*")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as EmailAccount[];
+      return (data as any[]).map((acc: any) => ({
+        ...acc,
+        has_password: acc.has_password ?? false,
+        use_for: Array.isArray(acc.use_for) ? acc.use_for : [],
+      })) as EmailAccount[];
     },
   });
 
