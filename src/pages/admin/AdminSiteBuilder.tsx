@@ -34,7 +34,7 @@ export default function AdminSiteBuilder() {
       {
         title: newTitle.trim(),
         slug: newSlug.trim().toLowerCase(),
-        folder_id: newFolderId || null,
+        folder_id: newFolderId && newFolderId !== "__none__" ? newFolderId : null,
       },
       {
         onSuccess: (page) => {
