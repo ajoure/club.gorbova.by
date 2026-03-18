@@ -70,6 +70,7 @@ import {
 import { resolveTokens } from "@/lib/token-resolver";
 import { ProductEmailMappings } from "@/components/admin/ProductEmailMappings";
 import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 // Interfaces and helper functions
 
