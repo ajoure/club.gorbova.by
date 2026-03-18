@@ -6956,6 +6956,75 @@ export type Database = {
           },
         ]
       }
+      site_page_tag_links: {
+        Row: {
+          created_at: string
+          page_id: string
+          tag_id: string
+        }
+        Insert: {
+          created_at?: string
+          page_id: string
+          tag_id: string
+        }
+        Update: {
+          created_at?: string
+          page_id?: string
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_page_tag_links_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_page_tag_links_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "site_page_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      site_page_tags: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          metadata: Json
+          name: string
+          public_id: string
+          updated_at: string
+          updated_by: string
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          metadata?: Json
+          name: string
+          public_id?: string
+          updated_at?: string
+          updated_by: string
+          workspace_id?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          metadata?: Json
+          name?: string
+          public_id?: string
+          updated_at?: string
+          updated_by?: string
+          workspace_id?: string
+        }
+        Relationships: []
+      }
       site_pages: {
         Row: {
           blocks: Json
