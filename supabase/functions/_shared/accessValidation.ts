@@ -1,15 +1,24 @@
 /**
- * PATCH 3 + P0.9.5 + PATCH-STAT-1: Centralized Access Validation
+ * PATCH 3 + P0.9.5 + PATCH-STAT-1 + PATCH 4: Centralized Access Validation
  * 
  * ЕДИНСТВЕННАЯ реализация hasValidAccess() для всего проекта.
  * Все edge functions должны импортировать из этого файла.
  * 
  * PATCH-STAT-1: When clubId is provided, subscriptions and entitlements
  * are scoped via product_club_mappings to prevent cross-club access leak.
- * Policy: entitlement without product_id does NOT grant club access.
+ * 
+ * PATCH 4: Grace 72h for subscriptions + billing-day protection for provider_managed SBS.
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { toTzDateKey, dayWindowUtc } from './timezone.ts';
+
+/** Grace period: 72 hours after access_end_at, subscription still counts as valid */
+const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
+
+/** Billing-day protection: if next_charge_at is today (Warsaw) and now < next_charge_at + N hours, access is valid */
+const BILLING_DAY_PROTECTION_HOURS = 12;
+const WARSAW_TZ = 'Europe/Warsaw';
 
 export interface AccessCheckResult {
   valid: boolean;
@@ -42,16 +51,82 @@ async function getClubProductIds(
 }
 
 /**
+ * PATCH 4: Billing-day protection secondary check.
+ * Returns valid if user has a provider_managed subscription with next_charge_at = today (Warsaw)
+ * and now < next_charge_at + BILLING_DAY_PROTECTION_HOURS.
+ * 
+ * Writes audit_log when protection fires.
+ */
+async function checkBillingDayProtection(
+  supabase: SupabaseClient,
+  userId: string,
+  now: Date,
+  clubProductIds: string[] | null
+): Promise<AccessCheckResult> {
+  const nowStr = now.toISOString();
+  const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
+  const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+
+  const q = supabase
+    .from('subscriptions_v2')
+    .select('id, next_charge_at, access_end_at')
+    .eq('user_id', userId)
+    .eq('billing_type', 'provider_managed')
+    .neq('status', 'canceled')
+    .gte('next_charge_at', todayStart)
+    .lt('next_charge_at', todayEnd)
+    .limit(1);
+
+  if (clubProductIds !== null && clubProductIds.length > 0) {
+    q.in('product_id', clubProductIds);
+  } else if (clubProductIds !== null && clubProductIds.length === 0) {
+    return { valid: false };
+  }
+
+  const { data: billingDaySub } = await q.maybeSingle();
+
+  if (billingDaySub?.next_charge_at) {
+    const chargeTime = new Date(billingDaySub.next_charge_at).getTime();
+    const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
+    if (now.getTime() < protectionEnd) {
+      // Audit log — fire-and-forget
+      supabase.from('audit_logs').insert({
+        action: 'access.validation.billing_day_protected',
+        actor_type: 'system',
+        actor_label: 'accessValidation',
+        target_user_id: userId,
+        meta: {
+          subscription_id: billingDaySub.id,
+          next_charge_at: billingDaySub.next_charge_at,
+          now: nowStr,
+          window_hours: BILLING_DAY_PROTECTION_HOURS,
+        },
+      }).then(() => {});
+
+      return {
+        valid: true,
+        source: 'subscription',
+        endAt: billingDaySub.access_end_at,
+        subscriptionId: billingDaySub.id,
+      };
+    }
+  }
+
+  return { valid: false };
+}
+
+/**
  * ЕДИНСТВЕННАЯ реализация проверки доступа.
  * 
  * Проверяет 5 источников в порядке приоритета:
- * 1. subscriptions_v2 (status IN ['active', 'trial', 'past_due'] AND access_end_at > now)
+ * 1. subscriptions_v2 (status IN ['active', 'trial', 'past_due'] AND access_end_at > now - 72h grace)
  *    — when clubId provided: scoped via product_club_mappings
  * 2. entitlements (status = 'active' AND (expires_at IS NULL OR expires_at > now))
  *    — when clubId provided: scoped via product_club_mappings (product_id IS NULL = no access)
  * 3. telegram_manual_access (is_active = true AND (valid_until IS NULL OR valid_until > now))
  * 4. telegram_access (active_until IS NULL OR active_until > now)
  * 5. telegram_access_grants (status = 'active' AND (end_at IS NULL OR end_at > now))
+ * 6. PATCH 4: Billing-day protection for provider_managed SBS (secondary check)
  */
 export async function hasValidAccess(
   supabase: SupabaseClient,
@@ -59,18 +134,21 @@ export async function hasValidAccess(
   clubId?: string,
   now?: Date
 ): Promise<AccessCheckResult> {
-  const nowStr = (now || new Date()).toISOString();
+  const effectiveNow = now || new Date();
+  const nowStr = effectiveNow.toISOString();
+  // PATCH 4: Grace period — subscription access_end_at is checked against now - 72h
+  const subGraceNowStr = new Date(effectiveNow.getTime() - GRACE_PERIOD_MS).toISOString();
 
   // PATCH-STAT-1: Get club-scoped product IDs when clubId is provided
   const clubProductIds = await getClubProductIds(supabase, clubId);
 
-  // 1. Check active subscription
+  // 1. Check active subscription (with 72h grace on access_end_at)
   const subQuery = supabase
     .from('subscriptions_v2')
     .select('id, access_end_at')
     .eq('user_id', userId)
     .in('status', ['active', 'trial', 'past_due'])
-    .or(`access_end_at.is.null,access_end_at.gt.${nowStr}`)
+    .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`)
     .limit(1);
 
   // PATCH-STAT-1: scope by club products when clubId provided
@@ -95,8 +173,7 @@ export async function hasValidAccess(
     };
   }
 
-  // 2. Check active entitlement
-  // PATCH-STAT-1: scope by club products; entitlements with NULL product_id = no club access
+  // 2. Check active entitlement (NO grace — entitlements use strict dates)
   if (clubProductIds !== null && clubProductIds.length === 0) {
     // No products mapped — skip entitlement check
   } else {
@@ -197,6 +274,12 @@ export async function hasValidAccess(
     };
   }
 
+  // 6. PATCH 4: Billing-day protection for provider_managed SBS
+  const billingDayResult = await checkBillingDayProtection(supabase, userId, effectiveNow, clubProductIds);
+  if (billingDayResult.valid) {
+    return billingDayResult;
+  }
+
   return { valid: false };
 }
 
@@ -206,6 +289,7 @@ export async function hasValidAccess(
  * 
  * PATCH-STAT-1: When clubId is provided, subscriptions and entitlements
  * are scoped via product_club_mappings.
+ * PATCH 4: Grace 72h for subscriptions + billing-day protection for provider_managed.
  */
 export async function hasValidAccessBatch(
   supabase: SupabaseClient,
@@ -213,7 +297,10 @@ export async function hasValidAccessBatch(
   clubId?: string,
   now?: Date
 ): Promise<Map<string, AccessCheckResult>> {
-  const nowStr = (now || new Date()).toISOString();
+  const effectiveNow = now || new Date();
+  const nowStr = effectiveNow.toISOString();
+  // PATCH 4: Grace period for subscriptions
+  const subGraceNowStr = new Date(effectiveNow.getTime() - GRACE_PERIOD_MS).toISOString();
   const results = new Map<string, AccessCheckResult>();
 
   // Initialize all as invalid
@@ -226,14 +313,14 @@ export async function hasValidAccessBatch(
   // PATCH-STAT-1: Get club-scoped product IDs when clubId is provided
   const clubProductIds = await getClubProductIds(supabase, clubId);
 
-  // 1. Batch check subscriptions
+  // 1. Batch check subscriptions (with 72h grace)
   if (clubProductIds === null || clubProductIds.length > 0) {
     const subQuery = supabase
       .from('subscriptions_v2')
       .select('id, user_id, access_end_at')
       .in('user_id', userIds)
       .in('status', ['active', 'trial', 'past_due'])
-      .or(`access_end_at.is.null,access_end_at.gt.${nowStr}`);
+      .or(`access_end_at.is.null,access_end_at.gt.${subGraceNowStr}`);
 
     if (clubProductIds !== null) {
       subQuery.in('product_id', clubProductIds);
@@ -253,7 +340,7 @@ export async function hasValidAccessBatch(
     }
   }
 
-  // 2. Batch check entitlements (only for users without subscription)
+  // 2. Batch check entitlements (only for users without subscription, NO grace)
   const usersWithoutAccess = userIds.filter((uid) => !results.get(uid)?.valid);
   if (usersWithoutAccess.length > 0 && (clubProductIds === null || clubProductIds.length > 0)) {
     const entQuery = supabase
@@ -363,6 +450,56 @@ export async function hasValidAccessBatch(
           endAt: g.end_at,
           telegramGrantId: g.id,
         });
+      }
+    }
+  }
+
+  // 6. PATCH 4: Batch billing-day protection for remaining users
+  const stillWithoutAccess4 = userIds.filter((uid) => !results.get(uid)?.valid);
+  if (stillWithoutAccess4.length > 0) {
+    const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
+    const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+
+    const bdQuery = supabase
+      .from('subscriptions_v2')
+      .select('id, user_id, next_charge_at, access_end_at')
+      .in('user_id', stillWithoutAccess4)
+      .eq('billing_type', 'provider_managed')
+      .neq('status', 'canceled')
+      .gte('next_charge_at', todayStart)
+      .lt('next_charge_at', todayEnd);
+
+    if (clubProductIds !== null && clubProductIds.length > 0) {
+      bdQuery.in('product_id', clubProductIds);
+    }
+
+    const { data: billingDaySubs } = await bdQuery;
+
+    for (const sub of billingDaySubs || []) {
+      if (!results.get(sub.user_id)?.valid && sub.next_charge_at) {
+        const chargeTime = new Date(sub.next_charge_at).getTime();
+        const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
+        if (effectiveNow.getTime() < protectionEnd) {
+          results.set(sub.user_id, {
+            valid: true,
+            source: 'subscription',
+            endAt: sub.access_end_at,
+            subscriptionId: sub.id,
+          });
+          // Fire-and-forget audit
+          supabase.from('audit_logs').insert({
+            action: 'access.validation.billing_day_protected',
+            actor_type: 'system',
+            actor_label: 'accessValidation.batch',
+            target_user_id: sub.user_id,
+            meta: {
+              subscription_id: sub.id,
+              next_charge_at: sub.next_charge_at,
+              now: nowStr,
+              window_hours: BILLING_DAY_PROTECTION_HOURS,
+            },
+          }).then(() => {});
+        }
       }
     }
   }
