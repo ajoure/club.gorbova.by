@@ -124,7 +124,11 @@ export class EmailAccountService {
   static async remove(id: string): Promise<void> {
     const user = await this.getCurrentUser();
 
-    // 1. Emit domain event
+    // 1. DB operation FIRST
+    const { error } = await supabase.from("email_accounts").delete().eq("id", id);
+    if (error) throw error;
+
+    // 2. Emit domain event as FACT
     const eventId = await DomainEventService.emitEvent(
       "email.account.deleted",
       "email-admin",
@@ -132,28 +136,10 @@ export class EmailAccountService {
       { account_id: id }
     );
 
-    let executionStatus: "success" | "failed" = "success";
-    let executionError: string | undefined;
+    // 3. Record execution
+    await DomainEventService.recordExecution(eventId, "delete_account", "success");
 
-    try {
-      // 2. DB operation
-      const { error } = await supabase.from("email_accounts").delete().eq("id", id);
-      if (error) throw error;
-    } catch (err) {
-      executionStatus = "failed";
-      executionError = (err as Error).message;
-      throw err;
-    } finally {
-      // 3. Record execution
-      await DomainEventService.recordExecution(eventId, "delete_account", executionStatus, executionError);
-
-      // 4. Write audit log
-      await this.writeAudit(
-        "email.account.deleted",
-        user.id,
-        user.email,
-        { account_id: id }
-      );
-    }
+    // 4. Write audit log
+    await this.writeAudit("email.account.deleted", user.id, user.email, { account_id: id });
   }
 }
