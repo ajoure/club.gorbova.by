@@ -1876,7 +1876,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               </p>
                               {accessEnd && (
                                 <p className="text-xs text-muted-foreground">
-                                  Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Minsk')}
+                                  Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}
                                 </p>
                               )}
                             </div>
