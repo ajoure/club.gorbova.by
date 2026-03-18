@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { RichTextarea } from "@/components/ui/RichTextarea";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { HeadingContent } from "@/hooks/useLessonBlocks";
 
