@@ -11,9 +11,10 @@ interface TextBlockProps {
 export function TextBlock({ content, onChange, isEditing = true }: TextBlockProps) {
   if (!isEditing) {
     return (
-      <div 
+      <SafeHtml 
+        html={content.html || ""}
+        as="div"
         className="prose prose-sm max-w-none dark:prose-invert"
-        dangerouslySetInnerHTML={{ __html: content.html || "" }}
       />
     );
   }

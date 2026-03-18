@@ -46,7 +46,7 @@ export function ButtonBlock({ content, onChange, isEditing = true }: ButtonBlock
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
-            <span dangerouslySetInnerHTML={{ __html: btn.label || "Ссылка" }} />
+            <SafeHtml html={btn.label || "Ссылка"} />
             <ExternalLink className="h-4 w-4" />
           </a>
         ))}
