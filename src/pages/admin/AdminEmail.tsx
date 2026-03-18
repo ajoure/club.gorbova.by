@@ -293,6 +293,7 @@ export default function AdminEmail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
       setAccountDialog({ open: false, account: null });
+      setNewSmtpPassword("");
       toast.success("Почтовый ящик сохранен");
     },
     onError: (error: Error) => {
