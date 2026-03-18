@@ -62,7 +62,7 @@ export function QuizTrueFalseBlock({
 
     return (
       <div className="space-y-4 p-4 rounded-xl bg-card/30 backdrop-blur-sm border">
-        <div className="font-medium text-lg" dangerouslySetInnerHTML={{ __html: content.question || "Вопрос не задан" }} />
+        <SafeHtml html={content.question || "Вопрос не задан"} as="div" className="font-medium text-lg" />
         
         <div className="grid grid-cols-2 gap-3">
           <button
