@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import {
@@ -10,12 +11,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -23,9 +35,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Link2, Copy, ExternalLink, Loader2, Package, Tag, CheckCircle, Send } from "lucide-react";
+import { Link2, Copy, ExternalLink, Loader2, Package, Tag, CheckCircle, Send, AlertTriangle } from "lucide-react";
 import { useProductsV2, useTariffs } from "@/hooks/useProductsV2";
 import { copyToClipboard } from "@/utils/clipboardUtils";
+import { formatPaymentTimeIANA } from "@/lib/formatPaymentTime";
 
 interface AdminPaymentLinkDialogProps {
   open: boolean;
@@ -44,12 +57,16 @@ export function AdminPaymentLinkDialog({
   userEmail,
   telegramUserId,
 }: AdminPaymentLinkDialogProps) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [selectedTariffId, setSelectedTariffId] = useState<string>("");
   const [customAmount, setCustomAmount] = useState<string>("");
   const [description, setDescription] = useState("");
   const [paymentType, setPaymentType] = useState<"one_time" | "subscription">("one_time");
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [duplicateSubToCancel, setDuplicateSubToCancel] = useState<string | null>(null);
 
   // Fetch products
   const { data: products, isLoading: productsLoading } = useProductsV2();
@@ -73,6 +90,113 @@ export function AdminPaymentLinkDialog({
       return data?.[0] || null;
     },
     enabled: !!selectedTariffId,
+  });
+
+  // === PATCH B2: Duplicate bePaid subscription check ===
+  const { data: duplicateSubscription, isLoading: duplicateCheckLoading } = useQuery({
+    queryKey: ["duplicate-bepaid-sub-check", userId, selectedProductId, paymentType],
+    queryFn: async () => {
+      if (!userId || !selectedProductId || paymentType !== 'subscription') return null;
+
+      // Fetch active/pending bePaid provider subscriptions for this user
+      const { data: provSubs, error } = await supabase
+        .from("provider_subscriptions")
+        .select("id, provider_subscription_id, subscription_v2_id, state, next_charge_at, amount_cents, currency, card_brand, card_last4, meta")
+        .eq("user_id", userId)
+        .eq("provider", "bepaid")
+        .in("state", ["active", "pending"]);
+
+      if (error || !provSubs?.length) return null;
+
+      // Resolve product_id for each
+      const orderIds: string[] = [];
+      const subV2Ids: string[] = [];
+      for (const ps of provSubs) {
+        const metaObj = (ps.meta || {}) as Record<string, any>;
+        if (metaObj.order_id) orderIds.push(metaObj.order_id);
+        if (ps.subscription_v2_id) subV2Ids.push(ps.subscription_v2_id);
+      }
+
+      const orderProductMap: Record<string, string> = {};
+      const tariffProductMap: Record<string, string> = {};
+
+      const [ordersResult, subsV2Result] = await Promise.all([
+        orderIds.length > 0
+          ? supabase.from("orders_v2").select("id, product_id").in("id", orderIds)
+          : Promise.resolve({ data: [] as any[] }),
+        subV2Ids.length > 0
+          ? supabase.from("subscriptions_v2").select("id, tariff_id").in("id", subV2Ids)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      for (const o of ordersResult.data || []) {
+        if (o.product_id) orderProductMap[o.id] = o.product_id;
+      }
+
+      const tariffIds = (subsV2Result.data || []).map((s: any) => s.tariff_id).filter(Boolean);
+      if (tariffIds.length > 0) {
+        const { data: tariffsData } = await supabase
+          .from("tariffs")
+          .select("id, product_id")
+          .in("id", tariffIds);
+        for (const t of tariffsData || []) {
+          if (t.product_id) tariffProductMap[t.id] = t.product_id;
+        }
+      }
+
+      const subV2TariffMap: Record<string, string> = {};
+      for (const s of subsV2Result.data || []) {
+        if (s.tariff_id) subV2TariffMap[s.id] = s.tariff_id;
+      }
+
+      // Find match
+      for (const ps of provSubs) {
+        const metaObj = (ps.meta || {}) as Record<string, any>;
+        let resolvedProductId: string | null = null;
+
+        if (metaObj.order_id && orderProductMap[metaObj.order_id]) {
+          resolvedProductId = orderProductMap[metaObj.order_id];
+        }
+        if (!resolvedProductId && ps.subscription_v2_id) {
+          const tid = subV2TariffMap[ps.subscription_v2_id];
+          if (tid && tariffProductMap[tid]) {
+            resolvedProductId = tariffProductMap[tid];
+          }
+        }
+
+        if (resolvedProductId === selectedProductId) {
+          return ps;
+        }
+      }
+
+      return null;
+    },
+    enabled: !!userId && !!selectedProductId && paymentType === 'subscription' && open,
+  });
+
+  const hasDuplicate = !!duplicateSubscription;
+
+  // Cancel existing subscription mutation
+  const cancelDuplicateMutation = useMutation({
+    mutationFn: async (providerSubId: string) => {
+      const { data, error } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
+        body: { subscription_ids: [providerSubId], source: 'admin_cancel' }
+      });
+      if (error) throw error;
+      if (data?.failed?.length > 0) {
+        throw new Error(data.failed[0]?.error || 'Ошибка отмены подписки');
+      }
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['duplicate-bepaid-sub-check'] });
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      toast.success('Подписка отменена. Теперь можно создать новую.');
+      setDuplicateSubToCancel(null);
+    },
+    onError: (error: Error) => {
+      toast.error('Ошибка отмены: ' + error.message);
+    },
   });
 
   // Reset tariff when product changes
@@ -99,6 +223,8 @@ export function AdminPaymentLinkDialog({
       setDescription("");
       setPaymentType("one_time");
       setGeneratedUrl(null);
+      setShowCancelConfirm(false);
+      setDuplicateSubToCancel(null);
     }
   }, [open]);
 
@@ -181,250 +307,332 @@ export function AdminPaymentLinkDialog({
     createLinkMutation.mutate();
   };
 
+  const handleCancelAndCreate = () => {
+    if (duplicateSubscription) {
+      setDuplicateSubToCancel(duplicateSubscription.provider_subscription_id);
+      setShowCancelConfirm(true);
+    }
+  };
+
+  const confirmCancelDuplicate = () => {
+    if (duplicateSubToCancel) {
+      cancelDuplicateMutation.mutate(duplicateSubToCancel);
+    }
+    setShowCancelConfirm(false);
+  };
+
   const activeProducts = products?.filter(p => p.is_active) || [];
 
+  const isCreateDisabled =
+    createLinkMutation.isPending ||
+    !selectedProductId ||
+    !selectedTariffId ||
+    amount <= 0 ||
+    hasDuplicate;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Link2 className="h-5 w-5" />
-            Ссылка на оплату
-          </DialogTitle>
-          <DialogDescription>
-            Создайте ссылку для самостоятельной оплаты клиентом
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5" />
+              Ссылка на оплату
+            </DialogTitle>
+            <DialogDescription>
+              Создайте ссылку для самостоятельной оплаты клиентом
+            </DialogDescription>
+          </DialogHeader>
 
-        {generatedUrl ? (
-          // Show generated URL
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
-              <div className="flex items-center gap-2 mb-3">
-                <CheckCircle className="h-5 w-5 text-primary" />
-                <p className="font-medium">Ссылка создана</p>
+          {generatedUrl ? (
+            // Show generated URL
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle className="h-5 w-5 text-primary" />
+                  <p className="font-medium">Ссылка создана</p>
+                </div>
+                <p className="text-sm text-muted-foreground mb-2">
+                  {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
+                  {paymentType === "subscription" ? " (подписка)" : " (разовая)"}
+                </p>
+                <Input
+                  readOnly
+                  value={generatedUrl}
+                  className="font-mono text-xs"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
               </div>
-              <p className="text-sm text-muted-foreground mb-2">
-                {selectedProduct?.name} — {selectedTariff?.name} · {amount} BYN
-                {paymentType === "subscription" ? " (подписка)" : " (разовая)"}
-              </p>
-              <Input
-                readOnly
-                value={generatedUrl}
-                className="font-mono text-xs"
-                onClick={(e) => (e.target as HTMLInputElement).select()}
-              />
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1 gap-2"
-                onClick={() => copyToClipboard(generatedUrl)}
-              >
-                <Copy className="h-4 w-4" />
-                Копировать
-              </Button>
-              <Button
-                className="flex-1 gap-2"
-                onClick={() => window.open(generatedUrl, '_blank')}
-              >
-                <ExternalLink className="h-4 w-4" />
-                Открыть
-              </Button>
-            </div>
-            {telegramUserId && (
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                disabled={sendToTelegramMutation.isPending}
-                onClick={() => sendToTelegramMutation.mutate()}
-              >
-                {sendToTelegramMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-                Отправить клиенту в Telegram
-              </Button>
-            )}
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={() => setGeneratedUrl(null)}
-            >
-              Создать ещё одну ссылку
-            </Button>
-          </div>
-        ) : (
-          // Show form
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* User info */}
-            <div className="p-3 rounded-lg bg-muted/50">
-              <p className="font-medium">{userName || "—"}</p>
-              <p className="text-sm text-muted-foreground">{userEmail}</p>
-            </div>
-
-            {/* Product selection */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <Package className="h-4 w-4" />
-                Продукт
-              </Label>
-              {productsLoading ? (
-                <Skeleton className="h-10 w-full" />
-              ) : (
-                <Select value={selectedProductId} onValueChange={setSelectedProductId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите продукт" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeProducts.map((product) => (
-                      <SelectItem key={product.id} value={product.id}>
-                        {product.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-2"
+                  onClick={() => copyToClipboard(generatedUrl)}
+                >
+                  <Copy className="h-4 w-4" />
+                  Копировать
+                </Button>
+                <Button
+                  className="flex-1 gap-2"
+                  onClick={() => window.open(generatedUrl, '_blank')}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Открыть
+                </Button>
+              </div>
+              {telegramUserId && (
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  disabled={sendToTelegramMutation.isPending}
+                  onClick={() => sendToTelegramMutation.mutate()}
+                >
+                  {sendToTelegramMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  Отправить клиенту в Telegram
+                </Button>
               )}
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => setGeneratedUrl(null)}
+              >
+                Создать ещё одну ссылку
+              </Button>
             </div>
+          ) : (
+            // Show form
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* User info */}
+              <div className="p-3 rounded-lg bg-muted/50">
+                <p className="font-medium">{userName || "—"}</p>
+                <p className="text-sm text-muted-foreground">{userEmail}</p>
+              </div>
 
-            {/* Tariff selection */}
-            {selectedProductId && (
+              {/* Product selection */}
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
-                  <Tag className="h-4 w-4" />
-                  Тариф
+                  <Package className="h-4 w-4" />
+                  Продукт
                 </Label>
-                {tariffsLoading ? (
+                {productsLoading ? (
                   <Skeleton className="h-10 w-full" />
-                ) : tariffs && tariffs.length > 0 ? (
-                  <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                ) : (
+                  <Select value={selectedProductId} onValueChange={setSelectedProductId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Выберите тариф" />
+                      <SelectValue placeholder="Выберите продукт" />
                     </SelectTrigger>
                     <SelectContent>
-                      {tariffs.filter(t => t.is_active).map((tariff) => (
-                        <SelectItem key={tariff.id} value={tariff.id}>
-                          {tariff.name}
+                      {activeProducts.map((product) => (
+                        <SelectItem key={product.id} value={product.id}>
+                          {product.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                ) : (
-                  <p className="text-sm text-muted-foreground">Нет доступных тарифов</p>
                 )}
               </div>
-            )}
 
-            {/* Amount */}
-            {selectedTariffId && (
-              <div className="space-y-2">
-                <Label htmlFor="link-amount">Сумма (BYN)</Label>
-                <Input
-                  id="link-amount"
-                  type="number"
-                  step="0.01"
-                  min="1"
-                  placeholder="0.00"
-                  value={customAmount}
-                  onChange={(e) => setCustomAmount(e.target.value)}
-                  required
-                />
-                {tariffPrices?.price && (
-                  <p className="text-xs text-muted-foreground">
-                    Цена тарифа: {tariffPrices.price} BYN
+              {/* Tariff selection */}
+              {selectedProductId && (
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    Тариф
+                  </Label>
+                  {tariffsLoading ? (
+                    <Skeleton className="h-10 w-full" />
+                  ) : tariffs && tariffs.length > 0 ? (
+                    <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите тариф" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {tariffs.filter(t => t.is_active).map((tariff) => (
+                          <SelectItem key={tariff.id} value={tariff.id}>
+                            {tariff.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Нет доступных тарифов</p>
+                  )}
+                </div>
+              )}
+
+              {/* Amount */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label htmlFor="link-amount">Сумма (BYN)</Label>
+                  <Input
+                    id="link-amount"
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    placeholder="0.00"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    required
+                  />
+                  {tariffPrices?.price && (
+                    <p className="text-xs text-muted-foreground">
+                      Цена тарифа: {tariffPrices.price} BYN
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Payment type */}
+              {selectedTariffId && amount > 0 && (
+                <div className="space-y-2">
+                  <Label>Тип оплаты</Label>
+                  <RadioGroup
+                    value={paymentType}
+                    onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
+                    className="space-y-2"
+                  >
+                    <Label htmlFor="pt-one-time" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
+                      <RadioGroupItem value="one_time" id="pt-one-time" />
+                      <div>
+                        <p className="font-medium">Разовая оплата</p>
+                        <p className="text-xs text-muted-foreground">
+                          Одноразовое списание. Клиент может привязать карту.
+                        </p>
+                      </div>
+                    </Label>
+                    <Label htmlFor="pt-subscription" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
+                      <RadioGroupItem value="subscription" id="pt-subscription" />
+                      <div>
+                        <p className="font-medium">Подписка bePaid</p>
+                        <p className="text-xs text-muted-foreground">
+                          Ежемесячное автосписание. Управляется через bePaid.
+                        </p>
+                      </div>
+                    </Label>
+                  </RadioGroup>
+                </div>
+              )}
+
+              {/* PATCH B2: Duplicate subscription warning */}
+              {paymentType === 'subscription' && selectedProductId && !duplicateCheckLoading && hasDuplicate && duplicateSubscription && (
+                <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <p className="text-sm font-medium">Активная подписка bePaid уже существует</p>
+                  </div>
+                  <div className="text-xs text-muted-foreground space-y-0.5">
+                    <p>ID: {duplicateSubscription.provider_subscription_id} · Статус: {duplicateSubscription.state}</p>
+                    {duplicateSubscription.next_charge_at && (
+                      <p>Следующее списание: {formatPaymentTimeIANA(duplicateSubscription.next_charge_at, 'Europe/Minsk')}</p>
+                    )}
+                    {duplicateSubscription.card_last4 && (
+                      <p>Карта: {duplicateSubscription.card_brand?.toUpperCase()} •••• {duplicateSubscription.card_last4}</p>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 mt-2">
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs justify-start text-primary"
+                      onClick={() => {
+                        navigate(`/admin/payments/bepaid-subscriptions?search=${duplicateSubscription.provider_subscription_id}`);
+                        onOpenChange(false);
+                      }}
+                    >
+                      Перейти к подписке →
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="text-xs"
+                      disabled={cancelDuplicateMutation.isPending}
+                      onClick={handleCancelAndCreate}
+                    >
+                      {cancelDuplicateMutation.isPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : null}
+                      Отменить текущую и создать новую
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Description */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label htmlFor="link-description">Комментарий (опционально)</Label>
+                  <Textarea
+                    id="link-description"
+                    placeholder="Описание для клиента..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+              )}
+
+              {/* Summary */}
+              {selectedProduct && selectedTariff && amount > 0 && (
+                <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-1">
+                  <p className="font-medium">Ссылка на оплату:</p>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedProduct.name} — {selectedTariff.name}
                   </p>
-                )}
-              </div>
-            )}
+                  <p className="text-lg font-bold">{amount} BYN</p>
+                  <p className="text-xs text-muted-foreground">
+                    {paymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
+                  </p>
+                </div>
+              )}
 
-            {/* Payment type */}
-            {selectedTariffId && amount > 0 && (
-              <div className="space-y-2">
-                <Label>Тип оплаты</Label>
-                <RadioGroup
-                  value={paymentType}
-                  onValueChange={(v) => setPaymentType(v as "one_time" | "subscription")}
-                  className="space-y-2"
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
                 >
-                  <Label htmlFor="pt-one-time" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                    <RadioGroupItem value="one_time" id="pt-one-time" />
-                    <div>
-                      <p className="font-medium">Разовая оплата</p>
-                      <p className="text-xs text-muted-foreground">
-                        Одноразовое списание. Клиент может привязать карту.
-                      </p>
-                    </div>
-                  </Label>
-                  <Label htmlFor="pt-subscription" className="flex items-center space-x-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30">
-                    <RadioGroupItem value="subscription" id="pt-subscription" />
-                    <div>
-                      <p className="font-medium">Подписка bePaid</p>
-                      <p className="text-xs text-muted-foreground">
-                        Ежемесячное автосписание. Управляется через bePaid.
-                      </p>
-                    </div>
-                  </Label>
-                </RadioGroup>
-              </div>
-            )}
+                  Отмена
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isCreateDisabled}
+                >
+                  {createLinkMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Link2 className="h-4 w-4 mr-2" />
+                  )}
+                  Создать ссылку
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
-            {/* Description */}
-            {selectedTariffId && (
-              <div className="space-y-2">
-                <Label htmlFor="link-description">Комментарий (опционально)</Label>
-                <Textarea
-                  id="link-description"
-                  placeholder="Описание для клиента..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={2}
-                />
-              </div>
-            )}
-
-            {/* Summary */}
-            {selectedProduct && selectedTariff && amount > 0 && (
-              <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-1">
-                <p className="font-medium">Ссылка на оплату:</p>
-                <p className="text-sm text-muted-foreground">
-                  {selectedProduct.name} — {selectedTariff.name}
-                </p>
-                <p className="text-lg font-bold">{amount} BYN</p>
-                <p className="text-xs text-muted-foreground">
-                  {paymentType === "subscription" ? "Подписка (ежемесячно)" : "Разовая оплата"}
-                </p>
-              </div>
-            )}
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-              >
-                Отмена
-              </Button>
-              <Button
-                type="submit"
-                disabled={
-                  createLinkMutation.isPending ||
-                  !selectedProductId ||
-                  !selectedTariffId ||
-                  amount <= 0
-                }
-              >
-                {createLinkMutation.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Link2 className="h-4 w-4 mr-2" />
-                )}
-                Создать ссылку
-              </Button>
-            </DialogFooter>
-          </form>
-        )}
-      </DialogContent>
-    </Dialog>
+      {/* Cancel confirmation dialog */}
+      <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Отменить подписку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Отменить текущую подписку? Автосписания будут остановлены.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Нет</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCancelDuplicate}>
+              Да, отменить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
