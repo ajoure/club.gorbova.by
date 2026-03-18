@@ -83,6 +83,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Target,
   BarChart3,
   Upload,
+  PanelTop,
 };
 
 // Default menu configuration - Reorganized structure
