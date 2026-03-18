@@ -380,9 +380,11 @@ Deno.serve(async (req: Request) => {
           cancellation_capability: sub.cancellation_capability,
         };
 
-        const { error: updateErr } = await serviceClient
-          .from("provider_subscriptions")
-          .update({
+        // PATCH-4: Resolve user_id if missing on existing record
+        const existingRecord = existingMap.get(sub.id);
+        const resolvedUserId = await resolveUserIdForSub(serviceClient, sub);
+
+        const updatePayload: Record<string, unknown> = {
             state,
             next_charge_at: sub.next_billing_at || null,
             card_last4: sub.credit_card?.last_4 || null,
@@ -396,7 +398,24 @@ Deno.serve(async (req: Request) => {
               cancellation_capability: sub.cancellation_capability,
               backfilled: true,
             },
-          })
+        };
+
+        // Only set user_id if we resolved one and existing is missing
+        if (resolvedUserId) {
+          // Check if existing record has user_id
+          const { data: currentRow } = await serviceClient
+            .from("provider_subscriptions")
+            .select("user_id")
+            .eq("provider_subscription_id", sub.id)
+            .maybeSingle();
+          if (!currentRow?.user_id) {
+            updatePayload.user_id = resolvedUserId;
+          }
+        }
+
+        const { error: updateErr } = await serviceClient
+          .from("provider_subscriptions")
+          .update(updatePayload)
           .eq("provider_subscription_id", sub.id);
 
         if (updateErr) {
