@@ -28,5 +28,5 @@ const SANITIZE_CONFIG = {
 };
 
 export function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(html, SANITIZE_CONFIG);
+  return DOMPurify.sanitize(html, SANITIZE_CONFIG) as string;
 }
