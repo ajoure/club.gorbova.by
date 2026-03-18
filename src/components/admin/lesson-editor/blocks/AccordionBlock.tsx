@@ -8,6 +8,7 @@ import {
   AccordionTrigger 
 } from "@/components/ui/accordion";
 import { Plus, Trash2, GripVertical } from "lucide-react";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface AccordionItem {
   id: string;
