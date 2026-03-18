@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-import { SafeHtml } from "@/components/ui/SafeHtml";
   Dialog,
   DialogContent,
   DialogHeader,
