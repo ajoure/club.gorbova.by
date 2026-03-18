@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { endOfDayWarsaw } from '../_shared/timezone.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -8,20 +9,12 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-interface CredentialsResult {
-  shopId: string;
-  secretKey: string;
-}
-
 // PATCH-H: Centralized status normalization
 function normalizeStatus(status: string | undefined): string {
   if (!status) return 'unknown';
-  // cancelled → canceled
   if (status === 'cancelled') return 'canceled';
   return status;
 }
-
-// PATCH-P0.9.1: Removed custom getBepaidCredentials in favor of getBepaidCredsStrict
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -97,6 +90,13 @@ Deno.serve(async (req) => {
     if (!response.ok) {
       const text = await response.text();
       console.error(`[bepaid-get-subscription-details] bePaid error: ${response.status} ${text}`);
+      // PATCH 2: Audit log on API failure
+      await supabase.from('audit_logs').insert({
+        action: 'bepaid.sync_failed',
+        actor_type: 'system',
+        actor_label: 'bepaid-get-subscription-details',
+        meta: { subscription_id, status: response.status, error: text.substring(0, 500) },
+      });
       return new Response(JSON.stringify({ 
         error: 'Failed to fetch subscription from bePaid',
         status: response.status,
@@ -113,16 +113,22 @@ Deno.serve(async (req) => {
     // PATCH-C/H: Normalize state
     const normalizedState = normalizeStatus(sub.state || sub.status);
 
+    // PATCH 2.A: Truth field map
+    const truthNextCharge = sub.renew_at || sub.next_billing_at || null;
+    const truthAccessEnd = sub.active_to || sub.valid_till || null;
+
     // Build snapshot
     const snapshot = {
       id: sub.id,
-      state: normalizedState,  // Normalized
-      raw_state: sub.state || sub.status,  // Original for debugging
+      state: normalizedState,
+      raw_state: sub.state || sub.status,
       next_billing_at: sub.next_billing_at,
+      renew_at: sub.renew_at,          // PATCH 2.B: add truth fields
+      active_to: sub.active_to,        // PATCH 2.B: add truth fields
+      valid_till: sub.valid_till,       // PATCH 2.B: add truth fields
       last_payment_at: sub.last_payment_at,
       last_payment_status: sub.last_transaction?.status,
       last_payment_error: sub.last_transaction?.message,
-      // PATCH-C: For canceled/terminated - is_cancelable = false (already done)
       is_cancelable: normalizedState !== 'canceled' && normalizedState !== 'terminated',
       plan: sub.plan,
       customer: sub.customer,
@@ -132,22 +138,17 @@ Deno.serve(async (req) => {
     };
 
     // PATCH-C: Determine cancellation_capability correctly
-    // - For canceled/terminated: not_applicable (already canceled)
-    // - For active/trial: can_cancel_now
-    // - For past_due or unknown: unknown (we don't assume cannot_cancel_until_paid without API evidence)
     let cancellation_capability: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown' | 'not_applicable' = 'unknown';
-
     if (normalizedState === 'canceled' || normalizedState === 'terminated') {
-      cancellation_capability = 'not_applicable';  // Already canceled
+      cancellation_capability = 'not_applicable';
     } else if (normalizedState === 'active' || normalizedState === 'trial') {
       cancellation_capability = 'can_cancel_now';
     }
-    // For past_due, unknown, etc. - we keep 'unknown' and do NOT assume 'cannot_cancel_until_paid'
 
     // PATCH-C: Atomic meta update using read-modify-write
     const { data: existingPs } = await supabase
       .from('provider_subscriptions')
-      .select('meta')
+      .select('meta, subscription_v2_id, user_id')
       .eq('provider', 'bepaid')
       .eq('provider_subscription_id', subscription_id)
       .maybeSingle();
@@ -162,12 +163,12 @@ Deno.serve(async (req) => {
         cancellation_capability,
       };
 
-      // Single update with merged meta
+      // PATCH 2.C: Update provider_subscriptions with truth next_charge_at
       const { error: updateError } = await supabase
         .from('provider_subscriptions')
         .update({ 
-          state: normalizedState,  // Use normalized state
-          next_charge_at: snapshot.next_billing_at,
+          state: normalizedState,
+          next_charge_at: truthNextCharge,  // PATCH 2: use truth field
           meta: newMeta,
         })
         .eq('provider', 'bepaid')
@@ -175,6 +176,171 @@ Deno.serve(async (req) => {
 
       if (updateError) {
         console.error(`[bepaid-get-subscription-details] Update error:`, updateError);
+      }
+
+      // PATCH 2.D: Propagate truth dates to subscriptions_v2
+      if (existingPs.subscription_v2_id) {
+        const subV2Updates: Record<string, any> = { updated_at: new Date().toISOString() };
+        
+        if (truthNextCharge) {
+          subV2Updates.next_charge_at = truthNextCharge;
+        }
+        if (truthAccessEnd) {
+          subV2Updates.access_end_at = endOfDayWarsaw(truthAccessEnd);
+        }
+
+        if (truthNextCharge || truthAccessEnd) {
+          // Read old values for audit
+          const { data: oldSubV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('next_charge_at, access_end_at')
+            .eq('id', existingPs.subscription_v2_id)
+            .maybeSingle();
+
+          await supabase
+            .from('subscriptions_v2')
+            .update(subV2Updates)
+            .eq('id', existingPs.subscription_v2_id);
+
+          // Audit log
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.subscription.sync_dates',
+            actor_type: 'system',
+            actor_label: 'bepaid-get-subscription-details',
+            target_user_id: existingPs.user_id || null,
+            meta: {
+              subscription_v2_id: existingPs.subscription_v2_id,
+              provider_subscription_id: subscription_id,
+              old: { next_charge_at: oldSubV2?.next_charge_at, access_end_at: oldSubV2?.access_end_at },
+              new: { next_charge_at: subV2Updates.next_charge_at || null, access_end_at: subV2Updates.access_end_at || null },
+              truth: { renew_at: sub.renew_at, next_billing_at: sub.next_billing_at, active_to: sub.active_to, valid_till: sub.valid_till },
+            },
+          });
+
+          console.log(`[bepaid-get-subscription-details] Synced dates to subscriptions_v2 ${existingPs.subscription_v2_id}`);
+        } else {
+          console.warn(`[bepaid-get-subscription-details] No truth fields from bePaid for ${subscription_id}`);
+        }
+      }
+
+      // PATCH 2.E: Upsert last_transaction into payments_v2
+      const lastTx = sub.last_transaction;
+      if (lastTx?.uid) {
+        const txStatus = lastTx.status === 'successful' ? 'succeeded' : 'failed';
+        
+        // Resolve user_id and profile_id
+        let resolvedUserId = existingPs.user_id;
+        let resolvedProfileId: string | null = null;
+
+        if (resolvedUserId) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('user_id', resolvedUserId)
+            .maybeSingle();
+          resolvedProfileId = profile?.id || null;
+        }
+
+        if (!resolvedUserId && existingPs.subscription_v2_id) {
+          const { data: subV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('user_id')
+            .eq('id', existingPs.subscription_v2_id)
+            .maybeSingle();
+          resolvedUserId = subV2?.user_id || null;
+          if (resolvedUserId) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('user_id', resolvedUserId)
+              .maybeSingle();
+            resolvedProfileId = profile?.id || null;
+          }
+        }
+
+        if (!resolvedUserId) {
+          // STOP-guard: no user_id resolved
+          console.warn(`[bepaid-get-subscription-details] Cannot upsert payment: no user_id for tx ${lastTx.uid}`);
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.payment.upsert_skipped_no_user',
+            actor_type: 'system',
+            actor_label: 'bepaid-get-subscription-details',
+            meta: { provider_payment_id: lastTx.uid, provider_subscription_id: subscription_id },
+          });
+        } else {
+          // Check if payment already exists
+          const { data: existingPayment } = await supabase
+            .from('payments_v2')
+            .select('id')
+            .eq('provider_payment_id', lastTx.uid)
+            .maybeSingle();
+
+          const paymentData: Record<string, any> = {
+            provider_payment_id: lastTx.uid,
+            provider: 'bepaid',
+            user_id: resolvedUserId,
+            profile_id: resolvedProfileId,
+            status: txStatus,
+            amount: lastTx.amount ? lastTx.amount / 100 : null,
+            currency: lastTx.currency || 'BYN',
+            paid_at: lastTx.created_at || lastTx.paid_at || new Date().toISOString(),
+            card_last4: lastTx.credit_card?.last_4 || sub.credit_card?.last_4 || null,
+            card_brand: lastTx.credit_card?.brand || sub.credit_card?.brand || null,
+            is_recurring: true,
+            meta: {
+              bepaid_subscription_id: subscription_id,
+              synced_from: 'bepaid-get-subscription-details',
+              last_transaction_status: lastTx.status,
+              last_transaction_message: lastTx.message || null,
+            },
+          };
+
+          // Add order_id from provider_subscriptions meta if available
+          const psMetaOrderId = (existingPs.meta as any)?.order_id;
+          if (psMetaOrderId) {
+            paymentData.order_id = psMetaOrderId;
+          }
+
+          if (existingPayment) {
+            await supabase
+              .from('payments_v2')
+              .update(paymentData)
+              .eq('id', existingPayment.id);
+            console.log(`[bepaid-get-subscription-details] Updated payment ${existingPayment.id} from last_transaction`);
+          } else {
+            const { data: newPayment } = await supabase
+              .from('payments_v2')
+              .insert(paymentData)
+              .select('id')
+              .maybeSingle();
+            console.log(`[bepaid-get-subscription-details] Inserted payment ${newPayment?.id} from last_transaction`);
+
+            // Detect missed webhook
+            if (txStatus === 'succeeded') {
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.payment.missed_webhook_detected',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                target_user_id: resolvedUserId,
+                meta: { provider_payment_id: lastTx.uid, provider_subscription_id: subscription_id },
+              });
+            }
+          }
+
+          // Audit
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.payment.upsert_from_last_transaction',
+            actor_type: 'system',
+            actor_label: 'bepaid-get-subscription-details',
+            target_user_id: resolvedUserId,
+            meta: { 
+              provider_payment_id: lastTx.uid, 
+              status: txStatus, 
+              provider_subscription_id: subscription_id,
+              is_new: !existingPayment,
+            },
+          });
+        }
       }
     }
 
