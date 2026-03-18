@@ -193,6 +193,7 @@ export default function AdminEmail() {
   const [templateValidationError, setTemplateValidationError] = useState<string | null>(null);
   const [fetchingEmail, setFetchingEmail] = useState<string | null>(null);
   const [previewProductId, setPreviewProductId] = useState<string>("");
+  const [newSmtpPassword, setNewSmtpPassword] = useState<string>("");
 
   // Fetch products for preview context
   const { data: productsForPreview = [] } = useQuery({
