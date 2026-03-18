@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export interface SpoilerContent {
   buttonText: string;
