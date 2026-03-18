@@ -78,7 +78,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           card_last4, card_brand, order_id
         `)
         .eq('profile_id', contactId)
-        .in('status', ['succeeded', 'refunded'])
+        .in('status', ['succeeded', 'refunded', 'failed'])
         .order('paid_at', { ascending: false })
         .limit(100);
 
