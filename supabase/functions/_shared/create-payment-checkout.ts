@@ -325,6 +325,100 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   } else if (payment_type === 'subscription') {
     // === SUBSCRIPTION ===
 
+    // === DUPLICATE ACTIVE SUBSCRIPTION GUARD (bePaid only) ===
+    try {
+      const { data: existingProvSubs } = await supabase
+        .from('provider_subscriptions')
+        .select('id, provider_subscription_id, subscription_v2_id, meta')
+        .eq('user_id', user_id)
+        .eq('provider', 'bepaid')
+        .in('state', ['active', 'pending']);
+
+      if (existingProvSubs && existingProvSubs.length > 0) {
+        // Collect order_ids and subscription_v2_ids for batched resolution
+        const orderIds: string[] = [];
+        const subV2Ids: string[] = [];
+        for (const ps of existingProvSubs) {
+          const metaObj = (ps.meta || {}) as Record<string, any>;
+          if (metaObj.order_id) orderIds.push(metaObj.order_id);
+          if (ps.subscription_v2_id) subV2Ids.push(ps.subscription_v2_id);
+        }
+
+        // Batched queries to resolve product_id
+        const orderProductMap: Record<string, string> = {};
+        const tariffProductMap: Record<string, string> = {};
+
+        const [ordersResult, subsV2Result] = await Promise.all([
+          orderIds.length > 0
+            ? supabase.from('orders_v2').select('id, product_id').in('id', orderIds)
+            : Promise.resolve({ data: [] }),
+          subV2Ids.length > 0
+            ? supabase.from('subscriptions_v2').select('id, tariff_id').in('id', subV2Ids)
+            : Promise.resolve({ data: [] }),
+        ]);
+
+        for (const o of ordersResult.data || []) {
+          if (o.product_id) orderProductMap[o.id] = o.product_id;
+        }
+
+        // Resolve tariff_ids → product_ids
+        const tariffIds = (subsV2Result.data || []).map((s: any) => s.tariff_id).filter(Boolean);
+        if (tariffIds.length > 0) {
+          const { data: tariffsData } = await supabase
+            .from('tariffs')
+            .select('id, product_id')
+            .in('id', tariffIds);
+          for (const t of tariffsData || []) {
+            if (t.product_id) tariffProductMap[t.id] = t.product_id;
+          }
+        }
+
+        // Build sub_v2_id → tariff_id map
+        const subV2TariffMap: Record<string, string> = {};
+        for (const s of subsV2Result.data || []) {
+          if (s.tariff_id) subV2TariffMap[s.id] = s.tariff_id;
+        }
+
+        // Check each existing provider subscription for product_id match
+        for (const ps of existingProvSubs) {
+          const metaObj = (ps.meta || {}) as Record<string, any>;
+          let resolvedProductId: string | null = null;
+
+          // Primary: via order_id
+          if (metaObj.order_id && orderProductMap[metaObj.order_id]) {
+            resolvedProductId = orderProductMap[metaObj.order_id];
+          }
+          // Fallback: via subscription_v2_id → tariff_id → product_id
+          if (!resolvedProductId && ps.subscription_v2_id) {
+            const tid = subV2TariffMap[ps.subscription_v2_id];
+            if (tid && tariffProductMap[tid]) {
+              resolvedProductId = tariffProductMap[tid];
+            }
+          }
+
+          if (!resolvedProductId) {
+            console.warn('[create-payment-checkout] Could not resolve product_id for provider_subscription:', ps.id);
+            continue; // fail-open
+          }
+
+          if (resolvedProductId === product_id) {
+            console.log('[create-payment-checkout] DUPLICATE GUARD: active bePaid subscription found for same product', {
+              existing_provider_sub_id: ps.provider_subscription_id,
+              product_id,
+              user_id,
+            });
+            return {
+              success: false,
+              error: 'У клиента уже есть активная подписка bePaid на этот продукт. Сначала отмените текущую.',
+            };
+          }
+        }
+      }
+    } catch (guardErr) {
+      // Fail-open: log warning but don't block checkout
+      console.warn('[create-payment-checkout] Duplicate guard error (fail-open):', guardErr);
+    }
+
     // PATCH F3: Dedup subscription — strict key: user/product/tariff/amount/flow/currency/3d
     const { data: existingSubOrder } = await supabase
       .from('orders_v2')
