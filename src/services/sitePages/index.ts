@@ -3,6 +3,7 @@ export { SiteFolderService } from "./SiteFolderService";
 export { SitePublicationService } from "./SitePublicationService";
 export { SiteRenderService } from "./SiteRenderService";
 export { SiteEventService } from "./SiteEventService";
+export type { DomainEvent, DomainExecution } from "./SiteEventService";
 export { SiteTagService } from "./SiteTagService";
 export type {
   SitePage,
