@@ -1929,21 +1929,39 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 </p>
                               )}
                             </div>
-                            {isActive && (
-                              isBepaid ? (
-                                <Button 
-                                  variant="destructive" 
+                            <div className="flex gap-1 items-center">
+                              {/* PATCH 7: Sync button */}
+                              {isBepaid && sub.provider_subscription_id && (
+                                <Button
+                                  variant="outline"
                                   size="sm"
-                                  className="h-7 px-2 text-xs rounded-full"
-                                  onClick={() => cancelProviderSubAdminMutation.mutate(sub.provider_subscription_id)}
-                                  disabled={cancelProviderSubAdminMutation.isPending}
+                                  className="h-7 w-7 p-0 rounded-full"
+                                  onClick={() => syncBepaidSubMutation.mutate(sub.provider_subscription_id)}
+                                  disabled={syncBepaidSubMutation.isPending}
+                                  title="Синхронизировать с bePaid"
                                 >
-                                  {cancelProviderSubAdminMutation.isPending ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  {syncBepaidSubMutation.isPending ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
                                   ) : (
-                                    'Отменить'
+                                    <RefreshCw className="w-3 h-3" />
                                   )}
                                 </Button>
+                              )}
+                              {isActive && (
+                                isBepaid ? (
+                                  <Button 
+                                    variant="destructive" 
+                                    size="sm"
+                                    className="h-7 px-2 text-xs rounded-full"
+                                    onClick={() => cancelProviderSubAdminMutation.mutate(sub.provider_subscription_id)}
+                                    disabled={cancelProviderSubAdminMutation.isPending}
+                                  >
+                                    {cancelProviderSubAdminMutation.isPending ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      'Отменить'
+                                    )}
+                                  </Button>
                               ) : (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
