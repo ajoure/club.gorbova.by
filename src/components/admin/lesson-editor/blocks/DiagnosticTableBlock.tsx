@@ -906,7 +906,7 @@ export function DiagnosticTableBlock({
     <div className="space-y-4">
       {content.title && (
         <div className="space-y-1">
-          <div className="w-full" dangerouslySetInnerHTML={{ __html: content.title! }} />
+          <SafeHtml html={content.title!} as="div" className="w-full" />
           {/* Save status indicator */}
           {saveStatus !== 'idle' && (
             <span className={`text-xs flex items-center gap-1 ${
