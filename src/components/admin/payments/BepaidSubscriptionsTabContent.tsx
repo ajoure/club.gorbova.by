@@ -1281,7 +1281,11 @@ export function BepaidSubscriptionsTabContent() {
           <Input
             placeholder="Поиск..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSearchQuery(v);
+              if (v.trim() && statusFilter !== "all") setStatusFilter("all");
+            }}
             className="w-40 h-8 bg-background/50"
           />
         </div>
