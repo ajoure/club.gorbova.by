@@ -270,6 +270,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         return <Badge variant="default" className="text-xs">Успешно</Badge>;
       case 'refunded':
         return <Badge variant="secondary" className="text-xs">Возврат</Badge>;
+      case 'failed':
+        return <Badge variant="destructive" className="text-xs">Ошибка оплаты</Badge>;
       default:
         return <Badge variant="outline" className="text-xs">{status}</Badge>;
     }
