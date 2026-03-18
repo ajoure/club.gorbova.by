@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
@@ -5,6 +6,9 @@ import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter"
 import Landing from "@/pages/Landing";
 import CourseAccountant from "@/pages/CourseAccountant";
 import Consultation from "@/pages/Consultation";
+import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
+import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
+import type { SitePage } from "@/services/sitePages/types";
 import { Loader2 } from "lucide-react";
 
 export function DomainHomePage() {
@@ -24,23 +28,66 @@ export function DomainHomePage() {
   
   // Check for consultation domain
   const isConsultationDomain = hostname === "consultation.gorbova.by" || hostname === "cons.gorbova.by";
-  
-  // Course domain → show course landing
+
+  // ─── Site Builder Resolution (compatibility layer) ───
+  // Prepended before legacy checks for non-main, non-hardcoded domains.
+  // Existing production logic is NOT modified.
+  const [siteBuilderPage, setSiteBuilderPage] = useState<SitePage | null>(null);
+  const [siteBuilderChecked, setSiteBuilderChecked] = useState(false);
+
+  const shouldCheckSiteBuilder = !isMainDomain && !isCourseDomain && !isConsultationDomain;
+
+  useEffect(() => {
+    if (!shouldCheckSiteBuilder) {
+      setSiteBuilderChecked(true);
+      return;
+    }
+    
+    SiteRenderService.resolveByDomain(hostname)
+      .then((page) => {
+        setSiteBuilderPage(page);
+        setSiteBuilderChecked(true);
+      })
+      .catch(() => {
+        setSiteBuilderChecked(true);
+      });
+  }, [hostname, shouldCheckSiteBuilder]);
+
+  // Course domain → show course landing (legacy, unchanged)
   if (isCourseDomain) {
     return <CourseAccountant />;
   }
   
-  // Consultation domain → show consultation landing
+  // Consultation domain → show consultation landing (legacy, unchanged)
   if (isConsultationDomain) {
     return <Consultation />;
   }
   
-  // Main domain: show landing for ALL users (guests and authenticated)
-  // Authenticated users see "Open Dashboard" button in header
+  // Main domain: show landing (legacy, unchanged)
   if (isMainDomain) {
     return <Landing />;
   }
 
+  // Wait for site builder check
+  if (!siteBuilderChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // Site builder page found → render it
+  if (siteBuilderPage) {
+    return (
+      <SitePageRenderer
+        blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
+        themeSettings={siteBuilderPage.theme_settings || {}}
+      />
+    );
+  }
+
+  // ─── Legacy: Product domain resolution ───
   // Fetch product data for the current domain (only for product subdomains)
   const { data: productData, isLoading, error } = usePublicProduct(domain);
 
