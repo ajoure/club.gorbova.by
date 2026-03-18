@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { SiteEventService } from "./SiteEventService";
+import { SiteTagService } from "./SiteTagService";
 import { siteBlockSchema, type SitePage, type CreateSitePageData, type UpdateSitePageData, type SiteBlock } from "./types";
 
 const SOURCE = "site-builder";
@@ -144,5 +145,98 @@ export class SitePageService {
 
     await SiteEventService.recordExecution(eventId, "delete_page", "success");
     await writeAudit("site.page.deleted", userId, { page_id: id });
+  }
+
+  static async generateUniqueSlug(baseSlug: string): Promise<string> {
+    const candidates = [
+      `${baseSlug}-copy`,
+      ...Array.from({ length: 9 }, (_, i) => `${baseSlug}-copy-${i + 2}`),
+    ];
+    for (const candidate of candidates) {
+      const { data } = await (supabase
+        .from("site_pages") as any)
+        .select("id")
+        .eq("slug", candidate)
+        .maybeSingle();
+      if (!data) return candidate;
+    }
+    return `${baseSlug}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+
+  static async copyPage(id: string): Promise<SitePage> {
+    const userId = await getCurrentUserId();
+    const source = await SitePageService.getPage(id);
+    const newSlug = await SitePageService.generateUniqueSlug(source.slug);
+
+    const eventId = await SiteEventService.emitEvent(
+      "site.page.copied", SOURCE, id,
+      { actor_user_id: userId, actor_type: "user", source_page_id: id, new_slug: newSlug }
+    );
+
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
+      .insert({
+        title: `${source.title} (копия)`,
+        slug: newSlug,
+        product_id: source.product_id,
+        folder_id: source.folder_id,
+        blocks: source.blocks,
+        seo_settings: source.seo_settings,
+        theme_settings: source.theme_settings,
+        created_by: userId,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      await SiteEventService.recordExecution(eventId, "copy_page", "failed", error.message);
+      throw new Error(`Failed to copy page: ${error.message}`);
+    }
+
+    const newPage = data as SitePage;
+
+    // Copy tag links
+    const tagLinks = await SiteTagService.getPageTagLinks(id);
+    if (tagLinks.length > 0) {
+      await (supabase.from("site_page_tag_links") as any)
+        .insert(tagLinks.map((link) => ({ page_id: newPage.id, tag_id: link.tag_id })));
+    }
+
+    await SiteEventService.recordExecution(eventId, "copy_page", "success");
+    await writeAudit("site.page.copied", userId, {
+      source_page_id: id,
+      new_page_id: newPage.id,
+      new_slug: newSlug,
+      tags_copied: tagLinks.length,
+    });
+
+    return newPage;
+  }
+
+  static async movePage(id: string, folderId: string | null): Promise<SitePage> {
+    const userId = await getCurrentUserId();
+
+    const eventId = await SiteEventService.emitEvent(
+      "site.page.moved", SOURCE, id,
+      { actor_user_id: userId, actor_type: "user", folder_id: folderId }
+    );
+
+    const { data, error } = await (supabase
+      .from("site_pages") as any)
+      .update({ folder_id: folderId, updated_by: userId })
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    if (error) {
+      await SiteEventService.recordExecution(eventId, "move_page", "failed", error.message);
+      throw new Error(`Failed to move page: ${error.message}`);
+    }
+
+    const page = data as SitePage;
+    await SiteEventService.recordExecution(eventId, "move_page", "success");
+    await writeAudit("site.page.moved", userId, { page_id: id, folder_id: folderId });
+
+    return page;
   }
 }

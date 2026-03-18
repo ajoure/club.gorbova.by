@@ -293,3 +293,28 @@ export interface SiteDomainBinding {
   created_at: string;
   updated_at: string;
 }
+
+// ─── Tag Types ───
+
+export interface SitePageTag {
+  id: string;
+  public_id: string;
+  workspace_id: string;
+  name: string;
+  created_by: string;
+  updated_by: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Link-table exception to global entity structure.
+ * No public_id, metadata, created_by/updated_by — pure junction storing (page_id, tag_id).
+ * Business events written by SiteTagService.
+ */
+export interface SitePageTagLink {
+  page_id: string;
+  tag_id: string;
+  created_at: string;
+}
