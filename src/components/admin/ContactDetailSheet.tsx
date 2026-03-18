@@ -759,7 +759,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      if (contact?.user_id) {
+        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
+      }
       toast.success('Подписка bePaid отменена');
     },
     onError: (error: Error) => {
