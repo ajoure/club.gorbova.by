@@ -829,7 +829,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       if (data?.redirect_url) {
         setBepaidLinkUrl(data.redirect_url);
         setBepaidLinkModalOpen(true);
-        queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+        if (contact?.user_id) {
+          queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', contact.user_id] });
+        }
       } else {
         toast.error('Не удалось получить ссылку');
       }
