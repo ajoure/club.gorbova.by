@@ -308,10 +308,17 @@ Deno.serve(async (req: Request) => {
       return json(result);
     }
 
-    // Execute: INSERT missing
+    // Execute: INSERT missing (with user_id resolution)
     for (const sub of toInsert) {
       try {
         const record = buildProviderSubRecord(sub);
+
+        // PATCH-4: Resolve user_id from subscription_v2_id or tracking_id
+        const resolvedUserId = await resolveUserIdForSub(serviceClient, sub);
+        if (resolvedUserId) {
+          (record as any).user_id = resolvedUserId;
+        }
+
         const { error: insertErr } = await serviceClient
           .from("provider_subscriptions")
           .insert(record);

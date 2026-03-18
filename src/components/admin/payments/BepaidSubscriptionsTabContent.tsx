@@ -1530,6 +1530,8 @@ export function BepaidSubscriptionsTabContent() {
                     toast.error(`Ошибка: ${data.errors[0].reason}`);
                   } else {
                     toast.success(`Готово: добавлено ${data.inserted}, обновлено ${data.updated}`);
+                    setSearchQuery(fetchByIdValue.trim());
+                    if (statusFilter !== "all") setStatusFilter("all");
                     refetch();
                   }
                   setFetchByIdValue("");
