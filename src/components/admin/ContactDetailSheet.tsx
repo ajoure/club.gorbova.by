@@ -1870,7 +1870,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               </div>
                               <p className="text-xs text-muted-foreground mt-1">
                                 {nextCharge 
-                                  ? `Следующее: ${formatPaymentTimeIANA(nextCharge, 'Europe/Minsk')}${amountStr ? ` — ${amountStr}` : ''}`
+                                  ? `Следующее: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
                                   : 'Следующее списание: неизвестно (не синхронизировано)'
                                 }
                               </p>
