@@ -95,11 +95,15 @@ export function useSitePages() {
     createPage: createMutation.mutate,
     updatePage: updateMutation.mutate,
     deletePage: deleteMutation.mutate,
+    copyPage: copyMutation.mutate,
+    movePage: moveMutation.mutate,
     publishPage: publishMutation.mutate,
     unpublishPage: unpublishMutation.mutate,
     isCreating: createMutation.isPending,
     isUpdating: updateMutation.isPending,
     isDeleting: deleteMutation.isPending,
+    isCopying: copyMutation.isPending,
+    isMoving: moveMutation.isPending,
     isPublishing: publishMutation.isPending,
   };
 }
