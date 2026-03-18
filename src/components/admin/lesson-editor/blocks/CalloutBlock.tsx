@@ -17,6 +17,7 @@ import {
   FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SafeHtml } from "@/components/ui/SafeHtml";
 
 export type CalloutType = 'info' | 'success' | 'warning' | 'error' | 'tip' | 'quote' | 'summary';
 
