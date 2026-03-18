@@ -30,6 +30,7 @@ import {
   Target,
   BarChart3,
   Upload,
+  PanelTop,
   LucideIcon,
 } from "lucide-react";
 
