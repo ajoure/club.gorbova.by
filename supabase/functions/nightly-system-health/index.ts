@@ -159,6 +159,12 @@ const INVARIANT_TRANSLATIONS: Record<string, {
     action: 'Проверить provider_subscriptions.state/charge dates и корректность reconciliation',
     urlPath: '/admin/subscriptions-v2',
   },
+  'INV-SITE-1': {
+    title: 'Невалидные опубликованные страницы',
+    explain: 'Опубликованные страницы с пустыми или невалидными блоками (без id/type/version)',
+    action: 'Снять с публикации или исправить блоки',
+    urlPath: '/admin/sites',
+  },
 };
 
 // PATCH-6: Форматирование примеров для Telegram
@@ -317,6 +323,49 @@ serve(async (req) => {
       summary: { total_checks: 0, passed: 0, failed: 0 }
     };
 
+    // === INV-SITE-1: Published pages with empty or malformed blocks ===
+    const { data: publishedPages, error: siteCheckError } = await supabase
+      .from('site_pages')
+      .select('id, title, public_id, blocks')
+      .eq('status', 'published');
+
+    let siteCheck: HealthCheckResult;
+
+    if (siteCheckError) {
+      siteCheck = {
+        name: 'INV-SITE-1: Invalid published pages',
+        passed: false,
+        count: 0,
+        samples: [],
+        description: `Check failed: unable to query site_pages — ${siteCheckError.message}`,
+      };
+    } else {
+      const siteViolations = (publishedPages || []).filter((page: any) => {
+        const blocks = page.blocks;
+        if (blocks === null || blocks === undefined) return true;
+        if (!Array.isArray(blocks)) return true;
+        if (blocks.length === 0) return true;
+        return blocks.some((b: any) => !b.id || !b.type || b.version === undefined);
+      }).map((p: any) => ({ id: p.id, title: p.title, public_id: p.public_id }));
+
+      siteCheck = {
+        name: 'INV-SITE-1: Invalid published pages',
+        passed: siteViolations.length === 0,
+        count: siteViolations.length,
+        samples: siteViolations.slice(0, 10),
+        description: 'Published site_pages with empty or malformed blocks (missing id/type/version)',
+      };
+    }
+
+    invariantsResult.invariants.push(siteCheck);
+    invariantsResult.summary.total_checks += 1;
+    if (siteCheck.passed) {
+      invariantsResult.summary.passed += 1;
+    } else {
+      invariantsResult.summary.failed += 1;
+    }
+    // === END INV-SITE-1 ===
+
     // === PATCH P0.9.3: Load ignored checks and filter notifications ===
     const { data: ignoredChecksData, error: ignoredErr } = await supabase
       .from('system_health_ignored_checks')
@@ -343,14 +392,20 @@ serve(async (req) => {
     console.log(`[NIGHTLY] ${failedChecks.length} failed (${ignoredFailedCount} ignored by user)`);
     // === END PATCH P0.9.3 ===
 
+    // Stable category map for checks (map-first, text-fallback for legacy)
+    const CHECK_KEY_CATEGORY: Record<string, string> = {
+      'INV-SITE-1': 'content',
+    };
+
     // Save checks to system_health_checks
     for (const inv of invariantsResult.invariants || []) {
       const checkKey = inv.name.split(':')[0].trim();
-      const category = inv.name.toLowerCase().includes('payment') ? 'payments' : 
-                       inv.name.toLowerCase().includes('telegram') ? 'telegram' : 
-                       inv.name.toLowerCase().includes('access') ? 'access' :
-                       inv.name.toLowerCase().includes('entitlement') ? 'access' :
-                       inv.name.toLowerCase().includes('subscription') ? 'access' : 'system';
+      const category = CHECK_KEY_CATEGORY[checkKey] ??
+                       (inv.name.toLowerCase().includes('payment') ? 'payments' : 
+                        inv.name.toLowerCase().includes('telegram') ? 'telegram' : 
+                        inv.name.toLowerCase().includes('access') ? 'access' :
+                        inv.name.toLowerCase().includes('entitlement') ? 'access' :
+                        inv.name.toLowerCase().includes('subscription') ? 'access' : 'system');
 
       await supabase.from('system_health_checks').insert({
         run_id: runId,
