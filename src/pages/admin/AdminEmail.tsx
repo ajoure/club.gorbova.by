@@ -83,7 +83,7 @@ interface EmailAccount {
   smtp_port: number | null;
   smtp_encryption: string | null;
   smtp_username: string | null;
-  smtp_password: string | null;
+  has_password: boolean;
   from_name: string | null;
   from_email: string | null;
   reply_to: string | null;
