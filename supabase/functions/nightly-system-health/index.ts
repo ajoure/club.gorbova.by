@@ -392,14 +392,20 @@ serve(async (req) => {
     console.log(`[NIGHTLY] ${failedChecks.length} failed (${ignoredFailedCount} ignored by user)`);
     // === END PATCH P0.9.3 ===
 
+    // Stable category map for checks (map-first, text-fallback for legacy)
+    const CHECK_KEY_CATEGORY: Record<string, string> = {
+      'INV-SITE-1': 'content',
+    };
+
     // Save checks to system_health_checks
     for (const inv of invariantsResult.invariants || []) {
       const checkKey = inv.name.split(':')[0].trim();
-      const category = inv.name.toLowerCase().includes('payment') ? 'payments' : 
-                       inv.name.toLowerCase().includes('telegram') ? 'telegram' : 
-                       inv.name.toLowerCase().includes('access') ? 'access' :
-                       inv.name.toLowerCase().includes('entitlement') ? 'access' :
-                       inv.name.toLowerCase().includes('subscription') ? 'access' : 'system';
+      const category = CHECK_KEY_CATEGORY[checkKey] ??
+                       (inv.name.toLowerCase().includes('payment') ? 'payments' : 
+                        inv.name.toLowerCase().includes('telegram') ? 'telegram' : 
+                        inv.name.toLowerCase().includes('access') ? 'access' :
+                        inv.name.toLowerCase().includes('entitlement') ? 'access' :
+                        inv.name.toLowerCase().includes('subscription') ? 'access' : 'system');
 
       await supabase.from('system_health_checks').insert({
         run_id: runId,
