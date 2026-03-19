@@ -1,66 +1,18 @@
-# да, согласен, с учетом правок:
 
-&nbsp;
 
-1. Принцип add-only нарушен в одном месте (Plan vs. реализация):  
-В PATCH 1 (autolink) нужно не “добавить новую Priority 4b”, а расширить текущую Priority 4 так, чтобы:  
-
-  - сначала user_id + product_id (если есть product_id),
-  - если product_id нет → fallback user_id only (single active sub).  
-  И обязательно STOP при 0 или >1 кандидатов.
-2. &nbsp;
-3. effectiveSubV2Id — обязательно фиксировать не только в propagation, но и везде ниже по функции.  
-В плане перечислены строки, но формально добавь правило: любой доступ к existingPs.subscription_v2_id после autolink запрещён — только effectiveSubV2Id. Иначе снова будет “линкнули в БД, но код продолжил жить со старым NULL”.
-4. Autolink ошибки нужно логировать во всех приоритетах, не только Priority 4.  
-Сейчас в правках описан error logging для Priority 4. Добавь: P2/P3 запросы (order_id/additional_data.order_id) тоже должны брать {data,error} и писать:  
-
-  - console.error
-  - audit_logs: bepaid.sync.autolink_query_error { priority: 2|3 }  
-  Иначе снова “тихие” провалы.
-5. &nbsp;
-6. UI fallback “Доступ до” требует правки select (meta) — включить в план как обязательный блокер.  
-Ты уже это добавил — важно пометить как BLOCKER для кейса Платоновой/Мялик, потому что без meta ты не покажешь provider_snapshot.active_to.
-7. Notifications fix (hasActiveSBS fallback) — надо чётко запретить payment-link при fallback.  
-В план добавь явное правило: если fallback нашёл активный provider_subscriptions, то:  
-
-  - тип уведомления = “спишем по подписке”,
-  - запрещено генерировать payment-link и отправлять “как без подписки”.  
-  (И audit [reminders.sbs](http://reminders.sbs)_fallback_hit обязателен.)
-8. &nbsp;
-9. Нужно закрыть кейс “подписка есть, доступ есть, но идут уведомления про окончание доступа” не только по productId.  
-Сейчас hasActiveSBS(supabase, userId, productId) может получить productId неверно/NULL.  
-Добавь: если productId не определён — fallback проверка по provider_subscriptions.user_id должна всё равно сработать (как минимум “не слать payment-link”), с audit [reminders.sbs](http://reminders.sbs)_fallback_hit_no_product.
-10. DoD расширить на “ложные уведомления” (Платонова) как отдельный пункт.  
-Помимо SQL/аудитов, добавить обязательный пруф: после фикса, для пользователя с активной SBS:  
-
-  - не создаются новые payment links,
-  - отправляется только “спишем” (или ничего),  
-  и в audit есть [reminders.sbs](http://reminders.sbs)_fallback_hit либо уже проходит через нормальный linked-путь.
-11. &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-Остальное в плане корректно: pending-фикс, error destructuring, user-only autolink fallback, queryKey fix в AdminPaymentLinkDialog, и meta-select для UI.
-
-&nbsp;
-
-План: Fix Autolink + Truth Dates + Access Chain + Notifications + UI
+# План: Fix Autolink + Truth Dates + Access Chain + Notifications + UI
 
 ## Статус целей
 
-
-| Цель                             | Статус | Причина                                               |
-| -------------------------------- | ------ | ----------------------------------------------------- |
-| 1. Truth dates (не +30)          | ❌      | `subscription_v2_id=NULL` → некуда писать             |
-| 2. Не закрывать доступ утром     | ✅      | grace 72h + billing-day protection                    |
-| 3. failed_attempt → дата         | ⚠️     | В `provider_subscriptions` есть, дальше не propagates |
-| 4. Успешное списание → продление | ❌      | Без линка access chain не выполняется                 |
-| 5. Платежи в карточке            | ✅      | Фильтры корректны                                     |
-| 6. Grace 72h                     | ✅      | `hasValidAccess` + guards                             |
-| 7. Sync кнопка + авто            | ⚠️     | Работает, но autolink внутри fails silently           |
-
+| Цель | Статус | Причина |
+|------|--------|---------|
+| 1. Truth dates (не +30) | ❌ | `subscription_v2_id=NULL` → некуда писать |
+| 2. Не закрывать доступ утром | ✅ | grace 72h + billing-day protection |
+| 3. failed_attempt → дата | ⚠️ | В `provider_subscriptions` есть, дальше не propagates |
+| 4. Успешное списание → продление | ❌ | Без линка access chain не выполняется |
+| 5. Платежи в карточке | ✅ | Фильтры корректны |
+| 6. Grace 72h | ✅ | `hasValidAccess` + guards |
+| 7. Sync кнопка + авто | ⚠️ | Работает, но autolink внутри fails silently |
 
 **Root cause всех ❌/⚠️: строка 277 — `'pending'` в enum filter.**
 
@@ -151,7 +103,6 @@ effectiveSubV2Id = linkedSubV2Id;
 **Файл:** тот же
 
 Строка 422:
-
 ```
 БЫЛО:  if (existingPs.subscription_v2_id && (truthNextCharge || truthAccessEnd))
 СТАЛО: if (effectiveSubV2Id && (truthNextCharge || truthAccessEnd))
@@ -160,7 +111,6 @@ effectiveSubV2Id = linkedSubV2Id;
 Все `.eq('id', existingPs.subscription_v2_id)` внутри PATCH-B5/C/D → `.eq('id', effectiveSubV2Id)`.
 
 Если `effectiveSubV2Id` is null после autolink:
-
 ```typescript
 await supabase.from('audit_logs').insert({
   action: 'bepaid.sync.skip_propagation_no_subv2',
@@ -272,14 +222,12 @@ const accessEndSource = sub.subscriptions_v2?.access_end_at ? 'db' : 'provider';
 
 ## Сводка файлов
 
-
-| Файл                                                          | Патчи | Тип  |
-| ------------------------------------------------------------- | ----- | ---- |
-| `supabase/functions/bepaid-get-subscription-details/index.ts` | 1, 2  | Edge |
-| `src/components/admin/AdminPaymentLinkDialog.tsx`             | 3     | UI   |
-| `supabase/functions/subscription-renewal-reminders/index.ts`  | 4     | Edge |
-| `src/components/admin/ContactDetailSheet.tsx`                 | 5     | UI   |
-
+| Файл | Патчи | Тип |
+|------|-------|-----|
+| `supabase/functions/bepaid-get-subscription-details/index.ts` | 1, 2 | Edge |
+| `src/components/admin/AdminPaymentLinkDialog.tsx` | 3 | UI |
+| `supabase/functions/subscription-renewal-reminders/index.ts` | 4 | Edge |
+| `src/components/admin/ContactDetailSheet.tsx` | 5 | UI |
 
 Все изменения **add-only**. Единственное удаление — слово `'pending'` из массива enum values.
 
@@ -294,3 +242,4 @@ const accessEndSource = sub.subscriptions_v2?.access_end_at ? 'db' : 'provider';
 5. Audit logs: `autolinked_subscription_v2`, `sync_dates`, `access_chain_applied`
 6. UI: "Доступ до" виден (с бейджем `provider` если orphan, `db` если linked)
 7. AdminPaymentLinkDialog → cancel → список обновляется без F5
+
