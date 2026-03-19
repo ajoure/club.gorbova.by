@@ -617,6 +617,14 @@ Deno.serve(async (req) => {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+      // Auth guard: require CRON_SECRET (or DEBUG_SECRET) header
+      const debugSecret = req.headers.get('x-debug-secret') || req.headers.get('x-cron-secret');
+      const expectedSecret = Deno.env.get('CRON_SECRET') || Deno.env.get('DEBUG_SECRET');
+      if (!expectedSecret || debugSecret !== expectedSecret) {
+        return new Response(JSON.stringify({ error: 'unauthorized: invalid or missing debug secret' }), {
+          status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       if (!debugUserId) {
         return new Response(JSON.stringify({ error: 'debug_user_id required (UUID string)' }), {
           status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -641,6 +649,8 @@ Deno.serve(async (req) => {
         days_left: debugDaysLeft,
         execution_id: executionId,
         source,
+        debug: true,
+        ttl_hint: 'debug',
       };
 
       // Audit: started
