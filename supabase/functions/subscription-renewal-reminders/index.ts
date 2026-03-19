@@ -741,6 +741,27 @@ Deno.serve(async (req) => {
           });
           oneTimeUrl = ctas.oneTimeUrl;
           subscriptionUrl = ctas.subscriptionUrl;
+
+          // PATCH C1: audit paylink CTA generated
+          if (oneTimeUrl || subscriptionUrl) {
+            await supabase.from('audit_logs').insert({
+              action: 'reminders.paylink_cta_generated',
+              actor_type: 'system',
+              actor_label: 'subscription-renewal-reminders',
+              meta: {
+                user_id: userId, product_id: productId, subscription_id: sub.id,
+                days_left: daysLeft, has_one_time: !!oneTimeUrl, has_subscription: !!subscriptionUrl,
+              },
+            });
+          }
+        } else if (userHasSBS) {
+          // PATCH C2: audit paylink CTA suppressed by SBS
+          await supabase.from('audit_logs').insert({
+            action: 'reminders.paylink_cta_suppressed_sbs',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: { user_id: userId, product_id: productId, subscription_id: sub.id },
+          });
         }
 
         const result: ReminderResult = {
