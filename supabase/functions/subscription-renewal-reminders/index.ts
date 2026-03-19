@@ -863,6 +863,13 @@ Deno.serve(async (req) => {
       const userHasSBS = await hasActiveSBS(supabase, userId, productId);
       if (userHasSBS) {
         console.log(`User ${userId} has active SBS, skipping expiring-without-SBS warning`);
+        // PATCH C2b: audit paylink CTA suppressed by SBS (second block)
+        await supabase.from('audit_logs').insert({
+          action: 'reminders.paylink_cta_suppressed_sbs',
+          actor_type: 'system',
+          actor_label: 'subscription-renewal-reminders',
+          meta: { user_id: userId, product_id: productId, subscription_id: sub.id },
+        });
         continue;
       }
 
