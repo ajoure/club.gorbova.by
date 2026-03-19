@@ -642,6 +642,16 @@ Deno.serve(async (req) => {
         });
       }
 
+      // --- Console log for Lovable Cloud Logs visibility (Block A proof) ---
+      console.log('[DEBUG-DOD] Invoke accepted:', JSON.stringify({
+        execution_id: executionId,
+        source,
+        debug_user_id: debugUserId,
+        debug_subscription_id: debugSubscriptionId,
+        debug_dry_run: debugDryRun,
+        timestamp: new Date().toISOString(),
+      }));
+
       const baseMeta = {
         user_id: debugUserId,
         product_id: debugProductId,
