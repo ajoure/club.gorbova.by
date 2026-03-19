@@ -602,6 +602,129 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const source = body.source || 'manual';
 
+    // === DEBUG MODE: orphan DoD single-user test ===
+    if (body.debug_mode === true) {
+      const debugUserId = String(body.debug_user_id || '').trim();
+      const debugDryRun = body.debug_dry_run;
+      const debugDaysLeft = body.debug_days_left ?? 3;
+      const debugProductId = body.debug_product_id ?? null;
+      const debugSubscriptionId = body.debug_subscription_id ?? null;
+      const executionId = req.headers.get('x-deno-execution-id') || crypto.randomUUID();
+
+      // STOP-guards
+      if (source !== 'manual_orphan_dod') {
+        return new Response(JSON.stringify({ error: 'debug_mode requires source="manual_orphan_dod"' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!debugUserId) {
+        return new Response(JSON.stringify({ error: 'debug_user_id required (UUID string)' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(debugUserId)) {
+        return new Response(JSON.stringify({ error: 'debug_user_id must be valid UUID' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (debugDryRun !== true) {
+        return new Response(JSON.stringify({ error: 'debug_dry_run must be true for DoD' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const baseMeta = {
+        user_id: debugUserId,
+        product_id: debugProductId,
+        provider_subscription_id: debugSubscriptionId,
+        days_left: debugDaysLeft,
+        execution_id: executionId,
+        source,
+      };
+
+      // Audit: started
+      await supabase.from('audit_logs').insert({
+        action: 'reminders.orphan_dod_started',
+        actor_type: 'system',
+        actor_label: 'subscription-renewal-reminders',
+        meta: baseMeta,
+      });
+
+      // Diagnostic: count orphan provider_subscriptions for this user
+      const oneDayAgoDebug = new Date();
+      oneDayAgoDebug.setDate(oneDayAgoDebug.getDate() - 1);
+      const { data: orphanPS } = await supabase
+        .from('provider_subscriptions')
+        .select('id, state, subscription_v2_id, next_charge_at')
+        .eq('user_id', debugUserId)
+        .in('state', ['active', 'past_due', 'failed_attempt'])
+        .is('subscription_v2_id', null)
+        .not('next_charge_at', 'is', null)
+        .gte('next_charge_at', oneDayAgoDebug.toISOString())
+        .limit(10);
+      const orphanPsCount = orphanPS?.length ?? 0;
+
+      // Core test
+      const userHasSBS = await hasActiveSBS(supabase, debugUserId, debugProductId);
+
+      // Determine "via" — re-check to see which path triggered
+      let via = 'unknown';
+      if (userHasSBS) {
+        // Check if product-scoped join found it
+        if (debugProductId) {
+          const { data: joinCheck } = await supabase
+            .from('provider_subscriptions')
+            .select('id, subscriptions_v2!inner ( tariffs!inner ( product_id ) )')
+            .eq('user_id', debugUserId)
+            .eq('state', 'active')
+            .limit(5);
+          const joinHit = joinCheck?.some((ps: any) => ps.subscriptions_v2?.tariffs?.product_id === debugProductId);
+          via = joinHit ? 'join' : 'fallback';
+        } else {
+          via = orphanPsCount > 0 ? 'fallback' : 'fallback_linked';
+        }
+
+        await supabase.from('audit_logs').insert({
+          action: 'reminders.orphan_dod_has_sbs_true',
+          actor_type: 'system',
+          actor_label: 'subscription-renewal-reminders',
+          meta: { ...baseMeta, via, orphan_ps_count: orphanPsCount },
+        });
+
+        // Debug-only suppression (NOT production action)
+        await supabase.from('audit_logs').insert({
+          action: 'reminders.orphan_dod_suppressed_sbs',
+          actor_type: 'system',
+          actor_label: 'subscription-renewal-reminders',
+          meta: { ...baseMeta, via, orphan_ps_count: orphanPsCount },
+        });
+      } else {
+        // FAIL signal
+        await supabase.from('audit_logs').insert({
+          action: 'reminders.orphan_dod_has_sbs_false',
+          actor_type: 'system',
+          actor_label: 'subscription-renewal-reminders',
+          meta: { ...baseMeta, orphan_ps_count: orphanPsCount },
+        });
+      }
+
+      // Audit: completed
+      await supabase.from('audit_logs').insert({
+        action: 'reminders.orphan_dod_completed',
+        actor_type: 'system',
+        actor_label: 'subscription-renewal-reminders',
+        meta: { ...baseMeta, has_sbs: userHasSBS, via, dry_run: true, orphan_ps_count: orphanPsCount },
+      });
+
+      return new Response(JSON.stringify({
+        ok: true, mode: 'debug', userHasSBS, via, dryRun: true, orphanPsCount: orphanPsCount, executionId,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // === END DEBUG MODE ===
+
     console.log(`Starting subscription renewal reminders job... Source: ${source}`);
 
     const now = new Date();
