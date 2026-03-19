@@ -642,6 +642,16 @@ Deno.serve(async (req) => {
         });
       }
 
+      // --- Console log for Lovable Cloud Logs visibility (Block A proof) ---
+      console.log('[DEBUG-DOD] Invoke accepted:', JSON.stringify({
+        execution_id: executionId,
+        source,
+        debug_user_id: debugUserId,
+        debug_subscription_id: debugSubscriptionId,
+        debug_dry_run: debugDryRun,
+        timestamp: new Date().toISOString(),
+      }));
+
       const baseMeta = {
         user_id: debugUserId,
         product_id: debugProductId,
@@ -726,6 +736,15 @@ Deno.serve(async (req) => {
         actor_label: 'subscription-renewal-reminders',
         meta: { ...baseMeta, has_sbs: userHasSBS, via, dry_run: true, orphan_ps_count: orphanPsCount },
       });
+
+      // --- Console log for Lovable Cloud Logs visibility (Block A proof) ---
+      console.log('[DEBUG-DOD] Completed:', JSON.stringify({
+        execution_id: executionId,
+        has_sbs: userHasSBS,
+        via,
+        orphan_ps_count: orphanPsCount,
+        timestamp: new Date().toISOString(),
+      }));
 
       return new Response(JSON.stringify({
         ok: true, mode: 'debug', userHasSBS, via, dryRun: true, orphanPsCount: orphanPsCount, executionId,
