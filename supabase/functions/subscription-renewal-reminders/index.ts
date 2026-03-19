@@ -47,49 +47,71 @@ function escapeMd(text: string): string {
  * Check if user has an active provider-managed (SBS) subscription for a given product.
  */
 async function hasActiveSBS(supabase: any, userId: string, productId: string | null): Promise<boolean> {
-  if (!productId) return false;
-  
-  // Product-scoped SBS check via provider_subscriptions → subscriptions_v2 → tariffs
-  const { data, error } = await supabase
-    .from('provider_subscriptions')
-    .select(`
-      id, state, subscription_v2_id,
-      subscriptions_v2!inner (
-        id, tariff_id,
-        tariffs!inner ( product_id )
-      )
-    `)
-    .eq('user_id', userId)
-    .eq('state', 'active')
-    .limit(50);
-  
-  if (error) {
-    console.error('[reminders] hasActiveSBS query error:', error);
-    // Don't return false immediately — try fallback below
+  let found = false;
+
+  // Product-scoped SBS check — ТОЛЬКО если productId есть
+  if (productId) {
+    const { data, error } = await supabase
+      .from('provider_subscriptions')
+      .select(`
+        id, state, subscription_v2_id,
+        subscriptions_v2!inner (
+          id, tariff_id,
+          tariffs!inner ( product_id )
+        )
+      `)
+      .eq('user_id', userId)
+      .eq('state', 'active')
+      .limit(50);
+
+    if (error) {
+      console.error('[reminders] hasActiveSBS query error:', error);
+    }
+
+    found = data && data.length > 0 && data.some((ps: any) => {
+      const tariffs = ps.subscriptions_v2?.tariffs;
+      return tariffs?.product_id === productId;
+    });
   }
-  
-  // Check via inner join (works when subscription_v2_id is linked)
-  const found = data && data.length > 0 && data.some((ps: any) => {
-    const tariffs = ps.subscriptions_v2?.tariffs;
-    return tariffs?.product_id === productId;
-  });
 
   if (found) return true;
 
-  // PATCH 4: Defense-in-depth fallback — check provider_subscriptions directly
-  // Covers unlinked subs (subscription_v2_id=NULL) where inner join fails
-  const { data: directPS } = await supabase
+  // Fallback — БЕЗУСЛОВНЫЙ (работает и при productId=null)
+  // При productId=null — целевое поведение: broad check, не слать paylink
+  // При productId!=null — defense-in-depth для unlinked subs
+  // Guard: next_charge_at >= now() - 1 day, чтобы не блокировать по мусорным записям
+  const oneDayAgo = new Date();
+  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+  const { data: directPS, error: fallbackError } = await supabase
     .from('provider_subscriptions')
     .select('id, state, next_charge_at')
     .eq('user_id', userId)
     .in('state', ['active', 'past_due', 'failed_attempt'])
     .not('next_charge_at', 'is', null)
+    .gte('next_charge_at', oneDayAgo.toISOString())
     .limit(5);
 
-  if (directPS && directPS.length > 0) {
-    console.warn(`[reminders] hasActiveSBS fallback hit: user ${userId} has ${directPS.length} active unlinked provider_subscriptions`);
+  // STOP-guard: при ошибке fallback query — return true (не слать paylink)
+  // Последствие: пользователь НЕ получает напоминание в этом cron-цикле
+  if (fallbackError) {
+    console.error('[reminders] hasActiveSBS fallback query error:', fallbackError);
     await supabase.from('audit_logs').insert({
-      action: 'reminders.sbs_fallback_hit',
+      action: 'reminders.sbs_fallback_query_error',
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      meta: { user_id: userId, product_id: productId, error: fallbackError.message },
+    });
+    return true;
+  }
+
+  if (directPS && directPS.length > 0) {
+    const auditAction = productId
+      ? 'reminders.sbs_fallback_hit'
+      : 'reminders.sbs_fallback_hit_no_product';
+    console.warn(`[reminders] hasActiveSBS fallback: user ${userId}, action=${auditAction}`);
+    await supabase.from('audit_logs').insert({
+      action: auditAction,
       actor_type: 'system',
       actor_label: 'subscription-renewal-reminders',
       meta: { user_id: userId, product_id: productId, ps_count: directPS.length },
