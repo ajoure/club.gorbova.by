@@ -737,6 +737,15 @@ Deno.serve(async (req) => {
         meta: { ...baseMeta, has_sbs: userHasSBS, via, dry_run: true, orphan_ps_count: orphanPsCount },
       });
 
+      // --- Console log for Lovable Cloud Logs visibility (Block A proof) ---
+      console.log('[DEBUG-DOD] Completed:', JSON.stringify({
+        execution_id: executionId,
+        has_sbs: userHasSBS,
+        via,
+        orphan_ps_count: orphanPsCount,
+        timestamp: new Date().toISOString(),
+      }));
+
       return new Response(JSON.stringify({
         ok: true, mode: 'debug', userHasSBS, via, dryRun: true, orphanPsCount: orphanPsCount, executionId,
       }), {
