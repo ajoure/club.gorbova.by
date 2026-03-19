@@ -176,6 +176,8 @@ Deno.serve(async (req) => {
 
     if (existingPs) {
       // ===== PATCH-A: AUTOLINK subscription_v2_id =====
+      // PATCH 1d: Use effectiveSubV2Id instead of mutating existingPs
+      let effectiveSubV2Id = existingPs.subscription_v2_id;
       let linkedSubV2Id = existingPs.subscription_v2_id;
 
       if (!linkedSubV2Id) {
@@ -192,12 +194,20 @@ Deno.serve(async (req) => {
         if (trackingId) {
           const subv2Match = SUBV2_RE.exec(trackingId);
           if (subv2Match) {
-            // Direct subv2 link — verify it exists
-            const { data: directSub } = await supabase
+            const { data: directSub, error: directSubError } = await supabase
               .from('subscriptions_v2')
               .select('id')
               .eq('id', subv2Match[1])
               .maybeSingle();
+            if (directSubError) {
+              console.error(`[autolink] Priority 1 query error:`, directSubError.message);
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.sync.autolink_query_error',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                meta: { subscription_id, priority: 1, error: directSubError.message },
+              });
+            }
             if (directSub) {
               linkedSubV2Id = directSub.id;
               autolinkSource = 'tracking_id_subv2';
@@ -209,12 +219,20 @@ Deno.serve(async (req) => {
             const parts = trackingId.split('_');
             if (parts.length >= 1 && UUID_RE.test(parts[0])) {
               const parsedOrderId = parts[0];
-              const { data: orderSubs } = await supabase
+              const { data: orderSubs, error: orderSubsError } = await supabase
                 .from('subscriptions_v2')
                 .select('id')
                 .eq('order_id', parsedOrderId)
                 .limit(2);
-              if (orderSubs && orderSubs.length === 1) {
+              if (orderSubsError) {
+                console.error(`[autolink] Priority 2 query error:`, orderSubsError.message);
+                await supabase.from('audit_logs').insert({
+                  action: 'bepaid.sync.autolink_query_error',
+                  actor_type: 'system',
+                  actor_label: 'bepaid-get-subscription-details',
+                  meta: { subscription_id, priority: 2, error: orderSubsError.message },
+                });
+              } else if (orderSubs && orderSubs.length === 1) {
                 linkedSubV2Id = orderSubs[0].id;
                 autolinkSource = 'tracking_id_order';
               } else if (orderSubs && orderSubs.length > 1) {
@@ -236,12 +254,20 @@ Deno.serve(async (req) => {
             rawData.additional_data?.order_id, (existingPs.meta as any)?.order_id
           );
           if (additionalOrderId && UUID_RE.test(additionalOrderId)) {
-            const { data: orderSubs } = await supabase
+            const { data: orderSubs, error: orderSubsError } = await supabase
               .from('subscriptions_v2')
               .select('id')
               .eq('order_id', additionalOrderId)
               .limit(2);
-            if (orderSubs && orderSubs.length === 1) {
+            if (orderSubsError) {
+              console.error(`[autolink] Priority 3 query error:`, orderSubsError.message);
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.sync.autolink_query_error',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                meta: { subscription_id, priority: 3, error: orderSubsError.message },
+              });
+            } else if (orderSubs && orderSubs.length === 1) {
               linkedSubV2Id = orderSubs[0].id;
               autolinkSource = 'additional_data_order_id';
             } else if (orderSubs && orderSubs.length > 1) {
@@ -255,7 +281,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Priority 4: user_id + product_id fallback (STOP-guard: product_id required)
+        // Priority 4: user_id + product_id fallback (PATCH 1a: removed 'pending' from enum)
         if (!linkedSubV2Id && existingPs.user_id) {
           const productId = pickFirst(
             sub.additional_data?.product_id, sub.subscription?.additional_data?.product_id,
@@ -268,16 +294,56 @@ Deno.serve(async (req) => {
               actor_label: 'bepaid-get-subscription-details',
               meta: { subscription_id, user_id: existingPs.user_id },
             });
+
+            // Priority 4b: user_id only — single active subscription
+            const { data: userSubs, error: userSubsError } = await supabase
+              .from('subscriptions_v2')
+              .select('id')
+              .eq('user_id', existingPs.user_id)
+              .in('status', ['active', 'trial', 'past_due'])
+              .order('created_at', { ascending: false })
+              .limit(2);
+
+            if (userSubsError) {
+              console.error(`[autolink] Priority 4b query error:`, userSubsError.message);
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.sync.autolink_query_error',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                meta: { subscription_id, priority: '4b', error: userSubsError.message },
+              });
+            } else if (userSubs && userSubs.length === 1) {
+              linkedSubV2Id = userSubs[0].id;
+              autolinkSource = 'user_only_single_sub';
+            } else if (userSubs && userSubs.length !== 1) {
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.sync.autolink_ambiguous_or_none',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                meta: { subscription_id, user_id: existingPs.user_id, candidates: userSubs?.length ?? 0 },
+              });
+            }
           } else {
-            const { data: candidates } = await supabase
+            // PATCH 1a: removed 'pending' — invalid enum value
+            const { data: candidates, error: candidatesError } = await supabase
               .from('subscriptions_v2')
               .select('id')
               .eq('user_id', existingPs.user_id)
               .eq('product_id', productId)
-              .in('status', ['active', 'trial', 'past_due', 'pending'])
+              .in('status', ['active', 'trial', 'past_due'])
               .order('created_at', { ascending: false })
               .limit(2);
-            if (candidates && candidates.length === 1) {
+
+            // PATCH 1b: mandatory error logging
+            if (candidatesError) {
+              console.error(`[autolink] Priority 4 query error:`, candidatesError.message);
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.sync.autolink_query_error',
+                actor_type: 'system',
+                actor_label: 'bepaid-get-subscription-details',
+                meta: { subscription_id, priority: 4, error: candidatesError.message, user_id: existingPs.user_id, product_id: productId },
+              });
+            } else if (candidates && candidates.length === 1) {
               linkedSubV2Id = candidates[0].id;
               autolinkSource = 'user_product_fallback';
             } else if (candidates && candidates.length === 0) {
@@ -340,8 +406,8 @@ Deno.serve(async (req) => {
           });
 
           console.log(`[autolink] Linked ${subscription_id} → ${linkedSubV2Id} via ${autolinkSource}`);
-          // Update local ref so rest of function can use it
-          existingPs.subscription_v2_id = linkedSubV2Id;
+          // PATCH 1d: Update effectiveSubV2Id (not existingPs)
+          effectiveSubV2Id = linkedSubV2Id;
         } else if (!linkedSubV2Id) {
           await supabase.from('audit_logs').insert({
             action: 'bepaid.sync.autolink_failed',
