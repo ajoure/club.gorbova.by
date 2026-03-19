@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
                 action: 'bepaid.sync.autolink_query_error',
                 actor_type: 'system',
                 actor_label: 'bepaid-get-subscription-details',
-                meta: { subscription_id, priority: '4b', error: userSubsError.message },
+                meta: { subscription_id, priority: 5, autolink_source: 'user_only_single_sub', error: userSubsError.message },
               });
             } else if (userSubs && userSubs.length === 1) {
               linkedSubV2Id = userSubs[0].id;
