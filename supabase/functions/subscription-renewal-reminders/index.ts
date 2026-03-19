@@ -900,6 +900,20 @@ Deno.serve(async (req) => {
         });
         ncOneTimeUrl = ctas.oneTimeUrl;
         ncSubscriptionUrl = ctas.subscriptionUrl;
+
+        // PATCH C1b: audit paylink CTA generated (second block)
+        if (ncOneTimeUrl || ncSubscriptionUrl) {
+          await supabase.from('audit_logs').insert({
+            action: 'reminders.paylink_cta_generated',
+            actor_type: 'system',
+            actor_label: 'subscription-renewal-reminders',
+            meta: {
+              user_id: userId, product_id: productId, subscription_id: sub.id,
+              days_left: daysLeft, has_one_time: !!ncOneTimeUrl, has_subscription: !!ncSubscriptionUrl,
+              source_block: 'expiring_without_sbs',
+            },
+          });
+        }
       }
 
       // Send via the unified sendTelegramReminder (with hasSBS=false)
