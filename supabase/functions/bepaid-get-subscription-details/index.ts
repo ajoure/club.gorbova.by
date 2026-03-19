@@ -703,11 +703,11 @@ Deno.serve(async (req) => {
           resolvedProfileId = profile?.id || null;
         }
 
-        if (!resolvedUserId && existingPs.subscription_v2_id) {
+        if (!resolvedUserId && effectiveSubV2Id) {
           const { data: subV2 } = await supabase
             .from('subscriptions_v2')
             .select('user_id')
-            .eq('id', existingPs.subscription_v2_id)
+            .eq('id', effectiveSubV2Id)
             .maybeSingle();
           resolvedUserId = subV2?.user_id || null;
           if (resolvedUserId) {

@@ -190,7 +190,7 @@ export function AdminPaymentLinkDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['duplicate-bepaid-sub-check'] });
-      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions'] });
+      queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', userId] });
       toast.success('Подписка отменена. Теперь можно создать новую.');
       setDuplicateSubToCancel(null);
     },
