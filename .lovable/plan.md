@@ -2,153 +2,184 @@
 
 &nbsp;
 
-1. Убрать фразу “Утвердите план” / любые просьбы подтвердить  
-План должен быть самодостаточный (без запроса подтверждения в конце).
-2. Заменить “deploy-пруф через audit_logs deploy%” на корректный пруф деплоя  
-audit_logs не является надежным источником факта деплоя. В план добавить один из обязательных вариантов пруфа (любой 1+):
+1. Не использовать supabase до его создания.  
+В плане debug-блок вставляется “после парсинга body”, но в вашем описании “до cron loop” — проверьте реальную структуру файла: debug-блок должен стоять после создания supabase client (service role) и corsHeaders, иначе await supabase.from('audit_logs')... упадёт.  
+Фикс: вставить debug-блок сразу после строки, где создаётся supabase = createClient(...) (и после source), но до любых загрузок “link bot”/cron loop.
+2. Сделать debug полностью “не-шумным”: не писать production action reminders.paylink_cta_suppressed_sbs.  
+Сейчас вы предлагаете писать reminders.paylink_cta_suppressed_sbs в debug. Это загрязнит прод-аналитику и будет выглядеть как реально подавленный paylink в прод-цикле.  
+Фикс: в debug писать отдельное действие:  
+
+  - reminders.orphan_dod_suppressed_sbs (вместо reminders.paylink_cta_suppressed_sbs)  
+  и оставить production action только для реальных прогонов.
+3. &nbsp;
+4. Добавить STOP-guard от случайного “боевого” запуска debug.  
+Сейчас есть только debug_dry_run === true. Этого мало, т.к. кто-то может случайно слать debug body в прод.  
+Фикс: требовать source === "manual_orphan_dod" (строгое значение). Иначе 400.
+5. Добавить audit-мету с provider_subscription_id (строка debug_subscription_id) и execution_id.  
+Для склейки DoD:  
+
+  - в meta писать provider_subscription_id: debugSubscriptionId
+  - и execution_id (если есть заголовок X-Deno-Execution-Id, прокинуть в meta/response).
+6. &nbsp;
+7. UUID regex: ок, но добавить трим.  
+Фикс: const debugUserId = String(body.debug_user_id || '').trim(); чтобы не упасть на пробелах.
+8. DoD SQL обновить под новые debug actions.  
+Раз вы отделяете debug от production (п.2), то DoD-2 должен проверять:  
+
+  - reminders.orphan_dod_suppressed_sbs (а не reminders.paylink_cta_suppressed_sbs)  
+  Остальные (started/completed/has_sbs_false) — ок.
+9. &nbsp;
+10. Результат debug должен возвращать hasActiveSBS и “почему”.  
+hasActiveSBS сейчас возвращает boolean. Для реального разбирательства orphan лучше в debug дописать диагностический audit:  
+
+  - reminders.orphan_dod_has_sbs_true с meta { via: "fallback|join|error_guard" }  
+  (Если не хотите менять hasActiveSBS сигнатуру — хотя бы в debug дополнительно проверить orphan-факт: provider_subscriptions where user_id and subscription_v2_id is null and next_charge_at not null и записать orphan_ps_count.)
+11. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
-
-- Supabase Dashboard → Edge Functions → Deployments/Logs: скрин с временем деплоя + версией/хешем.
-- CLI лог: вывод supabase functions deploy <name> (и/или supabase functions list) со временем.
-- Add-only version stamp в коде: const DEPLOY_TAG = '2026-03-19T...' + лог/ответ функции, где этот tag виден.
+Если эти правки внести — план можно исполнять без рисков загрязнить прод-события и без падений из-за порядка инициализации supabase.
 
 &nbsp;
 
-&nbsp;
+Plan: Debug-invoke mode for orphan DoD in subscription-renewal-reminders
 
-&nbsp;
+## What
 
-3. Разделить “нет логов” на 2 разные причины (deploy vs invoke)  
-В отчет и план добавить явную проверку:
+Add a debug mode to `subscription-renewal-reminders` that tests `hasActiveSBS` for a single user without triggering Telegram/email sends or the normal cron loop. This provides provable DoD for orphan suppression.
 
-&nbsp;
+## Where
 
-&nbsp;
+**File:** `supabase/functions/subscription-renewal-reminders/index.ts`
 
-&nbsp;
+**Insertion point:** Lines 602-606, right after `body` is parsed and `source` is extracted (line 603-604). The debug block runs and returns early, before the link bot load (line 611) and cron loop (line 646).
 
-- (A) функция задеплоена (пруф из п.2)
-- (B) функция реально запускалась после деплоя (пруф: логи запуска/либо запись subscription.reminders_cron_completed/добавленные audit-события reminders.* с created_at >= DEPLOY_TIME)
+## Changes (add-only, no existing logic modified)
 
-&nbsp;
+### 1. Debug mode handler (insert after line 605, before line 607)
 
-&nbsp;
+```typescript
+// === DEBUG MODE: orphan DoD single-user test ===
+if (body.debug_mode === true) {
+  const debugUserId = body.debug_user_id;
+  const debugDryRun = body.debug_dry_run;
+  const debugDaysLeft = body.debug_days_left ?? 3;
+  const debugProductId = body.debug_product_id ?? null;
+  const debugSubscriptionId = body.debug_subscription_id ?? null;
 
-&nbsp;
+  // STOP-guards
+  if (!debugUserId || typeof debugUserId !== 'string') {
+    return new Response(JSON.stringify({ error: 'debug_user_id required (UUID string)' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(debugUserId)) {
+    return new Response(JSON.stringify({ error: 'debug_user_id must be valid UUID' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  if (debugDryRun !== true) {
+    return new Response(JSON.stringify({ error: 'debug_dry_run must be true for DoD' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
-4. DoD-2/3/4 формализовать через новые audit events (которые вы уже добавили)  
-В план включить точные запросы:
+  // Audit: started
+  await supabase.from('audit_logs').insert({
+    action: 'reminders.orphan_dod_started',
+    actor_type: 'system',
+    actor_label: 'subscription-renewal-reminders',
+    meta: { user_id: debugUserId, product_id: debugProductId, days_left: debugDaysLeft, source },
+  });
 
-&nbsp;
+  // Core test
+  const userHasSBS = await hasActiveSBS(supabase, debugUserId, debugProductId);
 
-&nbsp;
+  if (userHasSBS) {
+    // Suppression audit (same action as production code)
+    await supabase.from('audit_logs').insert({
+      action: 'reminders.paylink_cta_suppressed_sbs',
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      meta: {
+        user_id: debugUserId, product_id: debugProductId,
+        subscription_id: debugSubscriptionId, days_left: debugDaysLeft, source: 'debug',
+      },
+    });
+  } else {
+    // FAIL signal
+    await supabase.from('audit_logs').insert({
+      action: 'reminders.orphan_dod_has_sbs_false',
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      meta: { user_id: debugUserId, product_id: debugProductId, source: 'debug' },
+    });
+  }
 
-&nbsp;
+  // Audit: completed
+  await supabase.from('audit_logs').insert({
+    action: 'reminders.orphan_dod_completed',
+    actor_type: 'system',
+    actor_label: 'subscription-renewal-reminders',
+    meta: {
+      user_id: debugUserId, product_id: debugProductId,
+      has_sbs: userHasSBS, dry_run: true, days_left: debugDaysLeft, source,
+    },
+  });
 
-- [reminders.sbs](http://reminders.sbs)_fallback_hit(_no_product)
-- reminders.paylink_cta_suppressed_sbs
-- reminders.paylink_cta_generated  
-с фильтром created_at >= DEPLOY_TIME_UTC.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-5. Пруф “paylink НЕ генерировался” сделать корректным  
-Ожидание не “0 строк вообще”, а:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- для orphan users из DoD-1 нет reminders.paylink_cta_generated после DEPLOY_TIME,
-- и есть reminders.paylink_cta_suppressed_sbs / [reminders.sbs](http://reminders.sbs)_fallback_hit* для тех же user_id.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-6. В план добавить минимальный “manual invoke” сценарий (без предположений про cron)  
-Чтобы закрыть DoD сразу: ручной запуск функции + затем SQL-пруфы с временным окном.
-7. В отчет добавить явный timestamp DEPLOY_TIME (UTC) как единый якорь  
-Без него все “0 записей” неинтерпретируемо (возможно, просто окно не то).
-
-&nbsp;
-
-&nbsp;
-
-Статус-отчет: PATCH A/B/C — факты и блокеры
-
-## 1. Код-изменения в репозитории — ПОДТВЕРЖДЕНЫ ✅
-
-
-| Патч                                                                       | Файл                                                                                   | Статус                                                   | Пруф                                                                                                                                |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **A** (hasActiveSBS: убран early return, безусловный fallback, STOP-guard) | `subscription-renewal-reminders/index.ts` строки 49-122                                | ✅ Код корректен                                          | `let found = false;` + `if (productId) { ... }` + fallback `.gte('next_charge_at', oneDayAgo...)` + `return true` при fallbackError |
-| **B** (priority '4b' → 5)                                                  | `bepaid-get-subscription-details/index.ts` строка 313                                  | ✅ `priority: 5, autolink_source: 'user_only_single_sub'` | ripgrep `'4b'` по `supabase/functions/` → 0 совпадений                                                                              |
-| **C** (audit paylink_cta_generated / suppressed)                           | `subscription-renewal-reminders/index.ts` строки 746-757 + 758-770 + 905-918 + 866-876 | ✅ 2 места generated + 2 места suppressed                 | search подтвердил 4 вхождения                                                                                                       |
-
-
-## 2. Деплой — НЕ ПОДТВЕРЖДЁН ❌
-
-Edge function logs для `subscription-renewal-reminders` возвращают **пусто** — ни одного лога (ни boot, ни runtime). Это означает одно из:
-
-- Функция НЕ была задеплоена после последних правок
-- Функция не вызывалась cron'ом/вручную после деплоя
-- Логи за этот период недоступны
-
-**Без подтверждения деплоя DoD-пруфы невозможны.**
-
-Для `bepaid-get-subscription-details` — логи тоже пусто в текущем окне, но она вызывается только при sync (не cron). Audit logs `bepaid.sync.access_chain_applied` присутствуют (последний: `2026-03-19 07:37:45 UTC`), что косвенно подтверждает деплой этой функции.
-
-## 3. DoD-пруфы (SQL) — ЧАСТИЧНО
-
-### DoD-1: Orphan provider_subscriptions ✅
-
+  return new Response(JSON.stringify({
+    ok: true, mode: 'debug', userHasSBS, dryRun: true,
+  }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+// === END DEBUG MODE ===
 ```
-sbs_c8aa1cf60778cdf6 | user 523168b2... | active | next_charge: 2026-04-17
-sbs_2ba8ec82d7d5c39b | user 252e4b5c... | active | next_charge: 2026-03-22
+
+### 2. No other files changed
+
+No migrations, no new tables, no changes to existing cron logic. The debug block is a self-contained early-return before line 607.
+
+## STOP-guards summary
+
+
+| Guard            | Condition              | Response |
+| ---------------- | ---------------------- | -------- |
+| No user_id       | `!debugUserId`         | 400      |
+| Invalid UUID     | regex fail             | 400      |
+| dry_run not true | `debugDryRun !== true` | 400      |
+
+
+## Post-deploy: invoke + DoD SQL
+
+**Invoke body:**
+
+```json
+{
+  "source": "manual_orphan_dod",
+  "debug_mode": true,
+  "debug_dry_run": true,
+  "debug_user_id": "252e4b5c-8784-4876-a4ce-412444753b3a",
+  "debug_days_left": 3,
+  "debug_product_id": null,
+  "debug_subscription_id": "sbs_2ba8ec82d7d5c39b"
+}
 ```
 
-2 orphan записи найдены — тестовая база для проверки есть.
+**DoD-1** (started + completed): query `audit_logs` for `reminders.orphan_dod_started` / `reminders.orphan_dod_completed` with user_id filter.
 
-### DoD-2: Fallback hit / suppressed / generated — **0 записей** ❌
+**DoD-2** (suppression): query `reminders.paylink_cta_suppressed_sbs` with user_id filter. Expect ≥1 row.
 
-```sql
-audit_logs WHERE action IN ('reminders.sbs_fallback_hit', ..., 'reminders.paylink_cta_generated', ...) → []
-```
+**DoD-3** (no generated): query `reminders.paylink_cta_generated` with user_id filter + `created_at >= DEPLOY_TIME`. Expect 0 rows.
 
-Ни одного события. Это значит:
+**DoD-4** (no fail): query `reminders.orphan_dod_has_sbs_false` with user_id filter. Expect 0 rows.
 
-- `subscription-renewal-reminders` **НЕ запускалась** после деплоя PATCH A/C, ИЛИ
-- деплой не произошёл
+## Files
 
-### DoD-3/4: Невозможны без DoD-2
 
-## 4. Блокер
-
-**Для закрытия DoD необходимо:**
-
-1. **Задеплоить** обе edge functions (я могу сделать это в режиме выполнения)
-2. **Вызвать** `subscription-renewal-reminders` (ручной invoke или дождаться cron)
-3. **Повторить SQL-пруфы** DoD-2/3/4 с фильтром `created_at >= deploy_timestamp`
-
-## 5. Предлагаемый план действий
-
-1. Задеплоить `subscription-renewal-reminders` и `bepaid-get-subscription-details`
-2. Вызвать `subscription-renewal-reminders` через curl (dry-run или полный запуск)
-3. Выполнить SQL DoD-1..4
-4. Сформировать финальный отчёт с фактами
-
-Утвердите план для выполнения.
+| File                                                         | Change                                         |
+| ------------------------------------------------------------ | ---------------------------------------------- |
+| `supabase/functions/subscription-renewal-reminders/index.ts` | Add debug_mode block after line 605 (add-only) |
