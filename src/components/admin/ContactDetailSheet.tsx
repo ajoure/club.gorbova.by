@@ -732,7 +732,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .select(`
           id, provider, state, provider_subscription_id,
           next_charge_at, amount_cents, currency, card_brand, card_last4, created_at,
-          subscription_v2_id,
+          subscription_v2_id, meta,
           subscriptions_v2 (
             id, status, billing_type, tariff_id, access_end_at, next_charge_at,
             products_v2 ( id, name ),
@@ -1868,7 +1868,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       const hasAmount = sub.amount_cents != null && sub.currency;
                       const amountStr = hasAmount ? `${(sub.amount_cents / 100).toFixed(2)} ${sub.currency}` : null;
 
-                      const accessEnd = sub.subscriptions_v2?.access_end_at;
+                      // PATCH 5b: accessEnd fallback from provider_snapshot
+                      const metaObj = ((sub as any).meta || {}) as Record<string, any>;
+                      const accessEnd = sub.subscriptions_v2?.access_end_at
+                        || metaObj?.provider_snapshot?.active_to
+                        || null;
+                      const accessEndSource = sub.subscriptions_v2?.access_end_at ? 'db' : 'provider';
                       
                       return (
                         <div 
@@ -1928,6 +1933,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               {accessEnd && (
                                 <p className="text-xs text-muted-foreground">
                                   Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}
+                                  {accessEndSource === 'provider' && (
+                                    <Badge variant="outline" className="ml-1 text-[9px]">provider</Badge>
+                                  )}
                                 </p>
                               )}
                             </div>

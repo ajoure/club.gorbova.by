@@ -65,16 +65,39 @@ async function hasActiveSBS(supabase: any, userId: string, productId: string | n
   
   if (error) {
     console.error('[reminders] hasActiveSBS query error:', error);
-    return false; // safe fallback: will send payment link
+    // Don't return false immediately — try fallback below
   }
   
-  if (!data || data.length === 0) return false;
-  
-  // Filter by product_id in JS (PostgREST nested .eq on deep joins is fragile)
-  return data.some((ps: any) => {
+  // Check via inner join (works when subscription_v2_id is linked)
+  const found = data && data.length > 0 && data.some((ps: any) => {
     const tariffs = ps.subscriptions_v2?.tariffs;
     return tariffs?.product_id === productId;
   });
+
+  if (found) return true;
+
+  // PATCH 4: Defense-in-depth fallback — check provider_subscriptions directly
+  // Covers unlinked subs (subscription_v2_id=NULL) where inner join fails
+  const { data: directPS } = await supabase
+    .from('provider_subscriptions')
+    .select('id, state, next_charge_at')
+    .eq('user_id', userId)
+    .in('state', ['active', 'past_due', 'failed_attempt'])
+    .not('next_charge_at', 'is', null)
+    .limit(5);
+
+  if (directPS && directPS.length > 0) {
+    console.warn(`[reminders] hasActiveSBS fallback hit: user ${userId} has ${directPS.length} active unlinked provider_subscriptions`);
+    await supabase.from('audit_logs').insert({
+      action: 'reminders.sbs_fallback_hit',
+      actor_type: 'system',
+      actor_label: 'subscription-renewal-reminders',
+      meta: { user_id: userId, product_id: productId, ps_count: directPS.length },
+    });
+    return true;
+  }
+
+  return false;
 }
 
 /**
