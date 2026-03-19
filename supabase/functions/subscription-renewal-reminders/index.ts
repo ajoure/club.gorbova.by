@@ -649,6 +649,8 @@ Deno.serve(async (req) => {
         days_left: debugDaysLeft,
         execution_id: executionId,
         source,
+        debug: true,
+        ttl_hint: 'debug',
       };
 
       // Audit: started
