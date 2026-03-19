@@ -484,8 +484,8 @@ Deno.serve(async (req) => {
         console.warn(`[truth] All truth fields null for ${subscription_id}, skipping date propagation`);
       }
 
-      // PATCH 2.D: Propagate truth dates to subscriptions_v2
-      if (existingPs.subscription_v2_id && (truthNextCharge || truthAccessEnd)) {
+      // PATCH 2: Propagate truth dates to subscriptions_v2 (uses effectiveSubV2Id)
+      if (effectiveSubV2Id && (truthNextCharge || truthAccessEnd)) {
         const subV2Updates: Record<string, any> = { updated_at: new Date().toISOString() };
         
         if (truthNextCharge) {
@@ -499,13 +499,13 @@ Deno.serve(async (req) => {
         const { data: oldSubV2 } = await supabase
           .from('subscriptions_v2')
           .select('next_charge_at, access_end_at')
-          .eq('id', existingPs.subscription_v2_id)
+          .eq('id', effectiveSubV2Id)
           .maybeSingle();
 
         await supabase
           .from('subscriptions_v2')
           .update(subV2Updates)
-          .eq('id', existingPs.subscription_v2_id);
+          .eq('id', effectiveSubV2Id);
 
         // Audit log
         await supabase.from('audit_logs').insert({
@@ -514,7 +514,7 @@ Deno.serve(async (req) => {
           actor_label: 'bepaid-get-subscription-details',
           target_user_id: existingPs.user_id || null,
           meta: {
-            subscription_v2_id: existingPs.subscription_v2_id,
+            subscription_v2_id: effectiveSubV2Id,
             provider_subscription_id: subscription_id,
             old: { next_charge_at: oldSubV2?.next_charge_at, access_end_at: oldSubV2?.access_end_at },
             new: { next_charge_at: subV2Updates.next_charge_at || null, access_end_at: subV2Updates.access_end_at || null },
@@ -523,7 +523,7 @@ Deno.serve(async (req) => {
           },
         });
 
-        console.log(`[bepaid-get-subscription-details] Synced dates to subscriptions_v2 ${existingPs.subscription_v2_id}`);
+        console.log(`[bepaid-get-subscription-details] Synced dates to subscriptions_v2 ${effectiveSubV2Id}`);
 
         // ===== PATCH-C: APPLY ACCESS CHAIN =====
         if (truthAccessEnd) {
@@ -533,7 +533,7 @@ Deno.serve(async (req) => {
           const { data: subV2Full } = await supabase
             .from('subscriptions_v2')
             .select('user_id, product_id, products_v2(id, code)')
-            .eq('id', existingPs.subscription_v2_id)
+            .eq('id', effectiveSubV2Id)
             .maybeSingle();
 
           const productId = subV2Full?.product_id;
@@ -545,7 +545,7 @@ Deno.serve(async (req) => {
               action: 'bepaid.sync.access_chain_skipped',
               actor_type: 'system',
               actor_label: 'bepaid-get-subscription-details',
-              meta: { subscription_id, subscription_v2_id: existingPs.subscription_v2_id, reason: !productId ? 'no_product_id' : 'no_user_id' },
+              meta: { subscription_id, subscription_v2_id: effectiveSubV2Id, reason: !productId ? 'no_product_id' : 'no_user_id' },
             });
           } else if (!productCode) {
             // STOP: product_code required for entitlement insert
@@ -662,7 +662,7 @@ Deno.serve(async (req) => {
                 target_user_id: chainUserId,
                 meta: {
                   subscription_id,
-                  subscription_v2_id: existingPs.subscription_v2_id,
+                  subscription_v2_id: effectiveSubV2Id,
                   access_end_at: accessEndAt,
                   clubs: clubMappings.map(m => m.club_id),
                 },
@@ -671,7 +671,16 @@ Deno.serve(async (req) => {
           }
         }
         // ===== END PATCH-C =====
-      } else if (existingPs.subscription_v2_id && !truthNextCharge && !truthAccessEnd) {
+      } else if (!effectiveSubV2Id && (truthNextCharge || truthAccessEnd)) {
+        // PATCH 2: Log skip when no sub_v2 is linked
+        await supabase.from('audit_logs').insert({
+          action: 'bepaid.sync.skip_propagation_no_subv2',
+          actor_type: 'system',
+          actor_label: 'bepaid-get-subscription-details',
+          meta: { provider_subscription_id: subscription_id, user_id: existingPs.user_id },
+        });
+        console.warn(`[bepaid-get-subscription-details] No sub_v2 linked, skipping propagation for ${subscription_id}`);
+      } else if (effectiveSubV2Id && !truthNextCharge && !truthAccessEnd) {
         // Already logged missing_truth_fields above
         console.warn(`[bepaid-get-subscription-details] No truth fields from bePaid for ${subscription_id}`);
       }
