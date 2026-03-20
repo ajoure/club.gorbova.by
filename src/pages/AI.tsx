@@ -240,7 +240,7 @@ const AI = () => {
         </div>
 
           {/* Chat Tab */}
-          <TabsContent value="chat" className="mt-6">
+          {activeTab === "chat" && (
             <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(100vh - 280px)", minHeight: "500px" }}>
               {/* Messages Area */}
               <ScrollArea className="flex-1 p-4">
