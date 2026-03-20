@@ -229,7 +229,11 @@ export default function AdminExecutors() {
         onSuccess: (result) => {
           if (result.found && result.data) {
             const autofill = grpDataToAutofillFields(result.data);
-            const currentValues = { name: formData.full_name, short_name: formData.short_name };
+            const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
+              name: formData.full_name,
+              short_name: formData.short_name,
+              address: formatFullAddress(address),
+            };
             const diff = buildGrpDiff(currentValues, autofill);
             if (diff.length > 0) {
               setGrpResult(autofill);
