@@ -26,6 +26,7 @@ import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpA
 import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
 import { formatFullAddress } from "@/lib/address/utils";
+import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
