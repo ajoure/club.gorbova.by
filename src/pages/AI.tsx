@@ -311,8 +311,7 @@ const AI = () => {
             </GlassCard>
           )}
 
-          {/* Tutorials Tab */}
-          <TabsContent value="tutorials" className="mt-6">
+          {activeTab === "tutorials" && (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {tutorials.map((tutorial) => (
                 <GlassCard key={tutorial.id} hover className="flex flex-col">
@@ -341,60 +340,60 @@ const AI = () => {
                 </GlassCard>
               ))}
             </div>
-          </TabsContent>
+          )}
 
-          {/* Prompts Tab */}
-          <TabsContent value="prompts" className="mt-6">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {prompts.map((prompt) => (
-                <GlassCard key={prompt.id} className="flex flex-col">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                        {prompt.icon}
+          {activeTab === "prompts" && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {prompts.map((prompt) => (
+                  <GlassCard key={prompt.id} className="flex flex-col">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                          {prompt.icon}
+                        </div>
+                        <Badge variant="outline">{prompt.category}</Badge>
                       </div>
-                      <Badge variant="outline">{prompt.category}</Badge>
                     </div>
+                    <h3 className="font-semibold mb-2">{prompt.title}</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {prompt.description}
+                    </p>
+                    <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
+                      <p className="text-xs font-mono text-muted-foreground line-clamp-4">
+                        {prompt.promptText}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Копировать
+                    </Button>
+                  </GlassCard>
+                ))}
+              </div>
+              
+              {/* Hint */}
+              <GlassCard className="mt-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+                    <Zap className="h-6 w-6 text-primary" />
                   </div>
-                  <h3 className="font-semibold mb-2">{prompt.title}</h3>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {prompt.description}
-                  </p>
-                  <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
-                    <p className="text-xs font-mono text-muted-foreground line-clamp-4">
-                      {prompt.promptText}
+                  <div>
+                    <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
+                      Замени текст в [квадратных скобках] на свои данные. 
+                      Чем точнее ты опишешь контекст, тем лучше будет результат!
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
-                  >
-                    <Copy className="h-4 w-4 mr-2" />
-                    Копировать
-                  </Button>
-                </GlassCard>
-              ))}
-            </div>
-            
-            {/* Hint */}
-            <GlassCard className="mt-6">
-              <div className="flex items-start gap-4">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Zap className="h-6 w-6 text-primary" />
                 </div>
-                <div>
-                  <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
-                    Замени текст в [квадратных скобках] на свои данные. 
-                    Чем точнее ты опишешь контекст, тем лучше будет результат!
-                  </p>
-                </div>
-              </div>
-            </GlassCard>
-          </TabsContent>
-        </Tabs>
+              </GlassCard>
+            </>
+          )}
       </div>
     </DashboardLayout>
   );
