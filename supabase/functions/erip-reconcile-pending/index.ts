@@ -68,14 +68,16 @@ serve(async (req) => {
     let query = supabase
       .from('payments_v2')
       .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status')
-      .eq('status', 'processing')
       .eq('provider', 'bepaid');
 
     if (singlePaymentId) {
-      // Single payment mode (manual reconcile)
-      query = query.eq('provider_payment_id', singlePaymentId);
+      // Single payment mode (manual reconcile) — search both processing AND failed (legacy ERIP stuck)
+      query = query
+        .in('status', ['processing', 'failed'])
+        .eq('provider_payment_id', singlePaymentId);
     } else {
-      // Batch mode: min_age and max_age filters
+      // Batch mode: only processing (new ERIP pending flow)
+      query = query.eq('status', 'processing');
       const minAgeDate = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000).toISOString();
       const maxAgeDate = new Date(Date.now() - MAX_AGE_HOURS * 60 * 60 * 1000).toISOString();
       query = query.lt('created_at', minAgeDate).gt('created_at', maxAgeDate);
