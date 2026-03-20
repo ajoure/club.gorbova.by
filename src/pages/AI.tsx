@@ -18,7 +18,11 @@ import {
   FileText,
   MessageSquare,
   Lightbulb,
-  Zap
+  Zap,
+  Calculator,
+  Briefcase,
+  ShieldCheck,
+  FileStack
 } from "lucide-react";
 
 interface ChatMessage {
@@ -143,12 +147,107 @@ const prompts: Prompt[] = [
   },
 ];
 
+/* ─── Конфигурация секций и подменю ─── */
+
+type Section = "ai" | "documents";
+type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates";
+
+const SECTIONS = [
+  { id: "ai" as const, label: "Gorbov AI", icon: Bot },
+  { id: "documents" as const, label: "Документы", icon: FileText },
+];
+
+interface SubMenuItem {
+  id: SubTab;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  gradient: string;
+  activeGradient: string;
+  borderColor: string;
+  iconColor: string;
+}
+
+const AI_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "chat",
+    label: "Чат",
+    icon: MessageSquare,
+    gradient: "from-blue-500/10 to-indigo-500/8",
+    activeGradient: "from-blue-500/20 to-indigo-500/15",
+    borderColor: "border-blue-400/20",
+    iconColor: "text-blue-500",
+  },
+  {
+    id: "tutorials",
+    label: "Туториалы",
+    icon: PlayCircle,
+    gradient: "from-purple-500/10 to-violet-500/8",
+    activeGradient: "from-purple-500/20 to-violet-500/15",
+    borderColor: "border-purple-400/20",
+    iconColor: "text-purple-500",
+  },
+  {
+    id: "prompts",
+    label: "Промпты",
+    icon: Copy,
+    gradient: "from-amber-500/10 to-orange-500/8",
+    activeGradient: "from-amber-500/20 to-orange-500/15",
+    borderColor: "border-amber-400/20",
+    iconColor: "text-amber-600",
+  },
+];
+
+const DOC_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "accountant",
+    label: "Для бухгалтера",
+    icon: Calculator,
+    gradient: "from-emerald-500/10 to-teal-500/8",
+    activeGradient: "from-emerald-500/20 to-teal-500/15",
+    borderColor: "border-emerald-400/20",
+    iconColor: "text-emerald-500",
+  },
+  {
+    id: "manager",
+    label: "Для руководителя",
+    icon: Briefcase,
+    gradient: "from-rose-500/10 to-pink-500/8",
+    activeGradient: "from-rose-500/20 to-pink-500/15",
+    borderColor: "border-rose-400/20",
+    iconColor: "text-rose-500",
+  },
+  {
+    id: "audit",
+    label: "При проверке",
+    icon: ShieldCheck,
+    gradient: "from-sky-500/10 to-cyan-500/8",
+    activeGradient: "from-sky-500/20 to-cyan-500/15",
+    borderColor: "border-sky-400/20",
+    iconColor: "text-sky-500",
+  },
+  {
+    id: "templates",
+    label: "Шаблоны",
+    icon: FileStack,
+    gradient: "from-slate-500/10 to-gray-500/8",
+    activeGradient: "from-slate-500/20 to-gray-500/15",
+    borderColor: "border-slate-400/20",
+    iconColor: "text-slate-500",
+  },
+];
+
+const DEFAULT_SUB: Record<Section, SubTab> = {
+  ai: "chat",
+  documents: "accountant",
+};
+
 const AI = () => {
   const { toast } = useToast();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "tutorials" | "prompts">("chat");
+  const [activeSection, setActiveSection] = useState<Section>("ai");
+  const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -164,7 +263,6 @@ const AI = () => {
     setInputValue("");
     setIsLoading(true);
 
-    // Simulate AI response (later will connect to real AI)
     setTimeout(() => {
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -192,13 +290,15 @@ const AI = () => {
     }
   };
 
-  const AI_TABS = [
-    { id: "chat" as const, label: "gorbova AI", mobileLabel: "AI", icon: Bot },
-    { id: "tutorials" as const, label: "Туториалы", mobileLabel: "Видео", icon: PlayCircle },
-    { id: "prompts" as const, label: "Промпты", icon: Copy },
-  ];
+  const handleSectionChange = (section: Section) => {
+    setActiveSection(section);
+    setActiveSubTab(DEFAULT_SUB[section]);
+  };
 
-  const tabClass = (active: boolean) =>
+  const subTabs = activeSection === "ai" ? AI_SUB_TABS : DOC_SUB_TABS;
+
+  /* ─── Главный таб (pill-bar) ─── */
+  const sectionTabClass = (active: boolean) =>
     `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
       active
         ? "bg-background text-foreground shadow-sm"
@@ -207,191 +307,242 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4">
+      <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]">
 
-        {/* Pill-style Tabs */}
+        {/* ── Главные табы (Gorbov AI / Документы) ── */}
         <div className="px-1 py-0.5 shrink-0">
           <div
             role="tablist"
             aria-label="AI разделы"
             className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none"
           >
-            {AI_TABS.map((tab) => {
-              const isActive = activeTab === tab.id;
-              const Icon = tab.icon;
+            {SECTIONS.map((sec) => {
+              const isActive = activeSection === sec.id;
+              const Icon = sec.icon;
               return (
                 <button
                   type="button"
-                  key={tab.id}
+                  key={sec.id}
                   role="tab"
                   aria-selected={isActive}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={tabClass(isActive)}
+                  onClick={() => handleSectionChange(sec.id)}
+                  className={sectionTabClass(isActive)}
                 >
                   <Icon className="h-4 w-4 mr-0.5" />
-                  <span className="hidden sm:inline">{tab.label}</span>
-                  <span className="sm:hidden">{tab.mobileLabel ?? tab.label}</span>
+                  <span>{sec.label}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
-          {/* Chat Tab — flex-1 растягивает до низа страницы */}
-          {activeTab === "chat" && (
-            <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
-              {/* Messages Area */}
-              <ScrollArea className="flex-1 min-h-0 p-4">
-                <div className="space-y-4">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-3 ${
-                          message.role === "user"
-                            ? "bg-primary text-primary-foreground rounded-br-md"
-                            : "bg-muted rounded-bl-md"
-                        }`}
-                      >
-                        {message.role === "assistant" && (
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className="p-1 rounded-full bg-primary/10">
-                              <Bot className="h-4 w-4 text-primary" />
-                            </div>
-                            <span className="text-xs font-medium text-primary">gorbova AI</span>
-                          </div>
-                        )}
-                        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                      </div>
-                    </div>
-                  ))}
-                  {isLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="p-1 rounded-full bg-primary/10">
-                            <Bot className="h-4 w-4 text-primary animate-pulse" />
-                          </div>
-                          <span className="text-sm text-muted-foreground">Думаю...</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
+        {/* ── Подменю (цветные glass pills) ── */}
+        <div className="px-1 shrink-0">
+          <div className="flex flex-wrap gap-1.5">
+            {subTabs.map((tab) => {
+              const isActive = activeSubTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  type="button"
+                  key={tab.id}
+                  onClick={() => setActiveSubTab(tab.id)}
+                  className={`
+                    flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium
+                    transition-all duration-200 whitespace-nowrap
+                    backdrop-blur-sm border
+                    bg-gradient-to-r
+                    ${isActive ? tab.activeGradient : tab.gradient}
+                    ${isActive ? tab.borderColor : "border-white/15"}
+                    ${isActive ? "shadow-sm shadow-white/10" : "hover:shadow-sm"}
+                    ${isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"}
+                    active:scale-[0.97]
+                  `}
+                >
+                  <Icon className={`h-3.5 w-3.5 ${isActive ? tab.iconColor : ""}`} />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-              {/* Input Area */}
-              <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
-                <div className="flex gap-2">
-                  <Textarea
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyPress}
-                    placeholder="Напиши свой вопрос..."
-                    className="min-h-[44px] max-h-[120px] resize-none"
-                    disabled={isLoading}
-                  />
-                  <Button
-                    onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isLoading}
-                    size="icon"
-                    className="h-[44px] w-[44px] shrink-0"
+        {/* ── Контент ── */}
+
+        {/* Chat */}
+        {activeSubTab === "chat" && (
+          <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
+            <ScrollArea className="flex-1 min-h-0 p-4">
+              <div className="space-y-4">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2 text-center">
-                  Нажми Enter для отправки, Shift+Enter для новой строки
-                </p>
+                    <div
+                      className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-3 ${
+                        message.role === "user"
+                          ? "bg-primary text-primary-foreground rounded-br-md"
+                          : "bg-muted rounded-bl-md"
+                      }`}
+                    >
+                      {message.role === "assistant" && (
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1 rounded-full bg-primary/10">
+                            <Bot className="h-4 w-4 text-primary" />
+                          </div>
+                          <span className="text-xs font-medium text-primary">gorbova AI</span>
+                        </div>
+                      )}
+                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1 rounded-full bg-primary/10">
+                          <Bot className="h-4 w-4 text-primary animate-pulse" />
+                        </div>
+                        <span className="text-sm text-muted-foreground">Думаю...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </GlassCard>
-          )}
+            </ScrollArea>
 
-          {activeTab === "tutorials" && (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {tutorials.map((tutorial) => (
-                <GlassCard key={tutorial.id} hover className="flex flex-col">
+            <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
+              <div className="flex gap-2">
+                <Textarea
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                  placeholder="Напиши свой вопрос..."
+                  className="min-h-[44px] max-h-[120px] resize-none"
+                  disabled={isLoading}
+                />
+                <Button
+                  onClick={handleSendMessage}
+                  disabled={!inputValue.trim() || isLoading}
+                  size="icon"
+                  className="h-[44px] w-[44px] shrink-0"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2 text-center">
+                Нажми Enter для отправки, Shift+Enter для новой строки
+              </p>
+            </div>
+          </GlassCard>
+        )}
+
+        {/* Tutorials */}
+        {activeSubTab === "tutorials" && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {tutorials.map((tutorial) => (
+              <GlassCard key={tutorial.id} hover className="flex flex-col">
+                <div className="flex items-center justify-between mb-3">
+                  <Badge variant="secondary">{tutorial.category}</Badge>
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    {tutorial.duration}
+                  </div>
+                </div>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                    <PlayCircle className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold leading-tight">{tutorial.title}</h3>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4 flex-1">
+                  {tutorial.description}
+                </p>
+                <Button variant="outline" className="w-full">
+                  <PlayCircle className="h-4 w-4 mr-2" />
+                  Смотреть
+                </Button>
+              </GlassCard>
+            ))}
+          </div>
+        )}
+
+        {/* Prompts */}
+        {activeSubTab === "prompts" && (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {prompts.map((prompt) => (
+                <GlassCard key={prompt.id} className="flex flex-col">
                   <div className="flex items-center justify-between mb-3">
-                    <Badge variant="secondary">{tutorial.category}</Badge>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {tutorial.duration}
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                        {prompt.icon}
+                      </div>
+                      <Badge variant="outline">{prompt.category}</Badge>
                     </div>
                   </div>
-                  <div className="flex items-start gap-3 mb-3">
-                    <div className="p-2 rounded-lg bg-primary/10 shrink-0">
-                      <PlayCircle className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold leading-tight">{tutorial.title}</h3>
-                    </div>
-                  </div>
-                  <p className="text-sm text-muted-foreground mb-4 flex-1">
-                    {tutorial.description}
+                  <h3 className="font-semibold mb-2">{prompt.title}</h3>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {prompt.description}
                   </p>
-                  <Button variant="outline" className="w-full">
-                    <PlayCircle className="h-4 w-4 mr-2" />
-                    Смотреть
+                  <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
+                    <p className="text-xs font-mono text-muted-foreground line-clamp-4">
+                      {prompt.promptText}
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Копировать
                   </Button>
                 </GlassCard>
               ))}
             </div>
-          )}
-
-          {activeTab === "prompts" && (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {prompts.map((prompt) => (
-                  <GlassCard key={prompt.id} className="flex flex-col">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                          {prompt.icon}
-                        </div>
-                        <Badge variant="outline">{prompt.category}</Badge>
-                      </div>
-                    </div>
-                    <h3 className="font-semibold mb-2">{prompt.title}</h3>
-                    <p className="text-sm text-muted-foreground mb-3">
-                      {prompt.description}
-                    </p>
-                    <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
-                      <p className="text-xs font-mono text-muted-foreground line-clamp-4">
-                        {prompt.promptText}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      className="w-full"
-                      onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
-                    >
-                      <Copy className="h-4 w-4 mr-2" />
-                      Копировать
-                    </Button>
-                  </GlassCard>
-                ))}
-              </div>
-              
-              {/* Hint */}
-              <GlassCard className="mt-6">
-                <div className="flex items-start gap-4">
-                  <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                    <Zap className="h-6 w-6 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
-                      Замени текст в [квадратных скобках] на свои данные. 
-                      Чем точнее ты опишешь контекст, тем лучше будет результат!
-                    </p>
-                  </div>
+            
+            <GlassCard className="mt-6">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+                  <Zap className="h-6 w-6 text-primary" />
                 </div>
-              </GlassCard>
-            </>
-          )}
+                <div>
+                  <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
+                    Замени текст в [квадратных скобках] на свои данные. 
+                    Чем точнее ты опишешь контекст, тем лучше будет результат!
+                  </p>
+                </div>
+              </div>
+            </GlassCard>
+          </>
+        )}
+
+        {/* Document stubs */}
+        {(activeSubTab === "accountant" || activeSubTab === "manager" || activeSubTab === "audit" || activeSubTab === "templates") && (
+          <div className="flex flex-1 items-center justify-center min-h-[200px]">
+            <GlassCard className="max-w-md w-full text-center py-12">
+              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
+                {activeSubTab === "accountant" && <Calculator className="h-8 w-8 text-emerald-500" />}
+                {activeSubTab === "manager" && <Briefcase className="h-8 w-8 text-rose-500" />}
+                {activeSubTab === "audit" && <ShieldCheck className="h-8 w-8 text-sky-500" />}
+                {activeSubTab === "templates" && <FileStack className="h-8 w-8 text-slate-500" />}
+              </div>
+              <h3 className="text-lg font-semibold mb-2">
+                {subTabs.find(t => t.id === activeSubTab)?.label}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Раздел в разработке. Скоро здесь появятся полезные документы и шаблоны.
+              </p>
+            </GlassCard>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
