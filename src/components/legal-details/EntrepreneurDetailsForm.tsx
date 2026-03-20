@@ -281,6 +281,9 @@ export function EntrepreneurDetailsForm({
               {autofilledFields.has("address") && (
                 <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
               )}
+              {isEnrichingAddress && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
             </h4>
             <StructuredAddressBlock
               value={address}
