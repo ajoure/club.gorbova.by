@@ -68,7 +68,7 @@ serve(async (req) => {
     // Find stuck ERIP payments
     let query = supabase
       .from('payments_v2')
-      .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status')
+      .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status, error_message')
       .eq('provider', 'bepaid');
 
     if (singlePaymentId) {
