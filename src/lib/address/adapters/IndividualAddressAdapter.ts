@@ -45,7 +45,8 @@ export class IndividualAddressAdapter {
   /**
    * Write: StructuredAddress → legacy fields + JSONB payload.
    */
-  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual'): IndividualLegacyFields {
+  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual') {
+    const payload = AddressNormalizationService.normalize(addr, source);
     return {
       ind_address_index: addr.postal_code || null,
       ind_address_region: addr.region || null,
@@ -54,7 +55,7 @@ export class IndividualAddressAdapter {
       ind_address_street: addr.street || null,
       ind_address_house: addr.house || null,
       ind_address_apartment: addr.apartment || null,
-      ind_address_structured: AddressNormalizationService.normalize(addr, source) as unknown as CanonicalAddressPayload,
+      ind_address_structured: JSON.parse(JSON.stringify(payload)),
     };
   }
 }

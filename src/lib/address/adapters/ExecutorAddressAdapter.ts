@@ -20,10 +20,11 @@ export class ExecutorAddressAdapter {
     return emptyAddress();
   }
 
-  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual'): ExecutorLegacyFields {
+  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual') {
+    const payload = AddressNormalizationService.normalize(addr, source);
     return {
       legal_address: formatFullAddress(addr) || null,
-      legal_address_structured: AddressNormalizationService.normalize(addr, source) as unknown as CanonicalAddressPayload,
+      legal_address_structured: JSON.parse(JSON.stringify(payload)),
     };
   }
 }

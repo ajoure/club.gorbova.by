@@ -20,10 +20,11 @@ export class EntrepreneurAddressAdapter {
     return emptyAddress();
   }
 
-  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual'): EntrepreneurLegacyFields {
+  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual') {
+    const payload = AddressNormalizationService.normalize(addr, source);
     return {
       ent_address: formatFullAddress(addr) || null,
-      ent_address_structured: AddressNormalizationService.normalize(addr, source) as unknown as CanonicalAddressPayload,
+      ent_address_structured: JSON.parse(JSON.stringify(payload)),
     };
   }
 }

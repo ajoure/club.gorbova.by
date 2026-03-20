@@ -21,10 +21,11 @@ export class LegalEntityAddressAdapter {
     return emptyAddress();
   }
 
-  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual'): LegalEntityLegacyFields {
+  static toLegacyFields(addr: StructuredAddress, source: 'manual' | 'google' | 'grp' = 'manual') {
+    const payload = AddressNormalizationService.normalize(addr, source);
     return {
       leg_address: formatFullAddress(addr) || null,
-      leg_address_structured: AddressNormalizationService.normalize(addr, source) as unknown as CanonicalAddressPayload,
+      leg_address_structured: JSON.parse(JSON.stringify(payload)),
     };
   }
 }
