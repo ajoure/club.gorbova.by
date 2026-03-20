@@ -1201,6 +1201,7 @@ export type Database = {
           email: string | null
           ent_acts_on_basis: string | null
           ent_address: string | null
+          ent_address_structured: Json | null
           ent_name: string | null
           ent_unp: string | null
           id: string
@@ -1211,6 +1212,7 @@ export type Database = {
           ind_address_index: string | null
           ind_address_region: string | null
           ind_address_street: string | null
+          ind_address_structured: Json | null
           ind_birth_date: string | null
           ind_full_name: string | null
           ind_passport_issued_by: string | null
@@ -1222,6 +1224,7 @@ export type Database = {
           is_default: boolean
           leg_acts_on_basis: string | null
           leg_address: string | null
+          leg_address_structured: Json | null
           leg_director_name: string | null
           leg_director_position: string | null
           leg_name: string | null
@@ -1243,6 +1246,7 @@ export type Database = {
           email?: string | null
           ent_acts_on_basis?: string | null
           ent_address?: string | null
+          ent_address_structured?: Json | null
           ent_name?: string | null
           ent_unp?: string | null
           id?: string
@@ -1253,6 +1257,7 @@ export type Database = {
           ind_address_index?: string | null
           ind_address_region?: string | null
           ind_address_street?: string | null
+          ind_address_structured?: Json | null
           ind_birth_date?: string | null
           ind_full_name?: string | null
           ind_passport_issued_by?: string | null
@@ -1264,6 +1269,7 @@ export type Database = {
           is_default?: boolean
           leg_acts_on_basis?: string | null
           leg_address?: string | null
+          leg_address_structured?: Json | null
           leg_director_name?: string | null
           leg_director_position?: string | null
           leg_name?: string | null
@@ -1285,6 +1291,7 @@ export type Database = {
           email?: string | null
           ent_acts_on_basis?: string | null
           ent_address?: string | null
+          ent_address_structured?: Json | null
           ent_name?: string | null
           ent_unp?: string | null
           id?: string
@@ -1295,6 +1302,7 @@ export type Database = {
           ind_address_index?: string | null
           ind_address_region?: string | null
           ind_address_street?: string | null
+          ind_address_structured?: Json | null
           ind_birth_date?: string | null
           ind_full_name?: string | null
           ind_passport_issued_by?: string | null
@@ -1306,6 +1314,7 @@ export type Database = {
           is_default?: boolean
           leg_acts_on_basis?: string | null
           leg_address?: string | null
+          leg_address_structured?: Json | null
           leg_director_name?: string | null
           leg_director_position?: string | null
           leg_name?: string | null
@@ -2363,6 +2372,7 @@ export type Database = {
           is_active: boolean
           is_default: boolean
           legal_address: string
+          legal_address_structured: Json | null
           phone: string | null
           short_name: string | null
           signature_url: string | null
@@ -2384,6 +2394,7 @@ export type Database = {
           is_active?: boolean
           is_default?: boolean
           legal_address: string
+          legal_address_structured?: Json | null
           phone?: string | null
           short_name?: string | null
           signature_url?: string | null
@@ -2405,6 +2416,7 @@ export type Database = {
           is_active?: boolean
           is_default?: boolean
           legal_address?: string
+          legal_address_structured?: Json | null
           phone?: string | null
           short_name?: string | null
           signature_url?: string | null
