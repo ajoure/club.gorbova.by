@@ -207,11 +207,11 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-4">
+      <div className="space-y-2">
         
 
         {/* Pill-style Tabs */}
-        <div className="px-1 pt-1 pb-1.5 shrink-0">
+        <div className="px-1 pt-0.5 pb-0.5 shrink-0">
           <div
             role="tablist"
             aria-label="AI разделы"
@@ -240,7 +240,7 @@ const AI = () => {
 
           {/* Chat Tab — height: header + tabs + paddings ≈ 280px */}
           {activeTab === "chat" && (
-            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(var(--app-height) - 280px)", minHeight: "500px" }}>
+            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(var(--app-height) - 240px)", minHeight: "500px" }}>
               {/* Messages Area */}
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4">
