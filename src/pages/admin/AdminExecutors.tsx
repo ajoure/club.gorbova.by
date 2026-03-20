@@ -221,8 +221,43 @@ export default function AdminExecutors() {
     });
   };
 
+  // GRP auto-lookup when UNP reaches 9 digits
+  useEffect(() => {
+    if (isValidUnp(formData.unp) && isDialogOpen) {
+      grpLookup.mutate(formData.unp, {
+        onSuccess: (result) => {
+          if (result.found && result.data) {
+            const autofill = grpDataToAutofillFields(result.data);
+            const currentValues = { name: formData.full_name, short_name: formData.short_name };
+            const diff = buildGrpDiff(currentValues, autofill);
+            if (diff.length > 0) {
+              setGrpResult(autofill);
+              setGrpDiff(diff);
+              setGrpDialogOpen(true);
+            }
+          }
+        },
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.unp]);
+
+  const handleGrpConfirm = useCallback(() => {
+    if (!grpResult) return;
+    const filled = new Set<string>();
+    if (grpResult.name) { setFormData(prev => ({ ...prev, full_name: grpResult.name! })); filled.add("full_name"); }
+    if (grpResult.short_name) { setFormData(prev => ({ ...prev, short_name: grpResult.short_name! })); filled.add("short_name"); }
+    setAutofilledFields(filled);
+    setGrpDialogOpen(false);
+  }, [grpResult]);
+
+  const handleAddressChange = useCallback((val: StructuredAddress) => {
+    setAddress(val);
+    setAddressSource(val.google_place_id ? 'google' : 'manual');
+  }, []);
+
   const handleSubmit = async () => {
-    if (!formData.full_name || !formData.unp || !formData.legal_address || !formData.bank_name || !formData.bank_code || !formData.bank_account) {
+    if (!formData.full_name || !formData.unp || !formData.bank_name || !formData.bank_code || !formData.bank_account) {
       toast.error("Заполните обязательные поля");
       return;
     }
@@ -234,18 +269,21 @@ export default function AdminExecutors() {
       formData.acts_on_basis_details
     );
 
+    const addressFields = ExecutorAddressAdapter.toLegacyFields(address, addressSource);
+
     try {
       const payload = {
         full_name: formData.full_name,
         short_name: formData.short_name,
         unp: formData.unp,
-        legal_address: formData.legal_address,
+        legal_address: addressFields.legal_address || formData.legal_address,
+        ...addressFields,
         bank_name: formData.bank_name,
         bank_code: formData.bank_code,
         bank_account: formData.bank_account,
         director_position: formData.director_position,
         director_full_name: formData.director_full_name,
-        director_short_name: directorShortName, // Автогенерируется
+        director_short_name: directorShortName,
         acts_on_basis: actsOnBasis,
         phone: formData.phone,
         email: formData.email,
