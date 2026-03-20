@@ -237,9 +237,9 @@ const AI = () => {
           </div>
         </div>
 
-          {/* Chat Tab — height: header(2.75rem) + tabs + paddings ≈ 200px */}
+          {/* Chat Tab — flex-1 растягивает до низа страницы */}
           {activeTab === "chat" && (
-            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(var(--app-height, 100vh) - 200px)" }}>
+            <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
               {/* Messages Area */}
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4">

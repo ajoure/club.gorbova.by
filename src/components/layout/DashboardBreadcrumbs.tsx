@@ -149,7 +149,7 @@ export function DashboardBreadcrumbs() {
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
             <Link to="/dashboard" className="flex items-center gap-1">
-              <Home className="h-4 w-4" />
+              <Home className="h-3.5 w-3.5" />
               <span className="sr-only">Главная</span>
             </Link>
           </BreadcrumbLink>

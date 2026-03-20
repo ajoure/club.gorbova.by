@@ -52,13 +52,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
           <header 
-            className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-3 md:px-4"
+            className="sticky top-0 z-40 border-b border-border/50 bg-background/80 backdrop-blur-xl flex items-center px-2 md:px-3"
             style={{ 
               paddingTop: 'env(safe-area-inset-top, 0px)',
-              minHeight: 'calc(2.75rem + env(safe-area-inset-top, 0px))'
+              minHeight: 'calc(2.5rem + env(safe-area-inset-top, 0px))'
             }}
           >
-            <SidebarTrigger className="mr-3 md:mr-4 h-9 w-9" />
+            <SidebarTrigger className="mr-2 md:mr-3 h-8 w-8" />
             {!hideGlobalBreadcrumbs && <DashboardBreadcrumbs />}
             <div className="flex-1" />
           </header>
