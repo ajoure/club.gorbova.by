@@ -211,7 +211,7 @@ const AI = () => {
         
 
         {/* Pill-style Tabs */}
-        <div className="px-1 pt-1 pb-1.5 shrink-0">
+        <div className="px-1 pt-0.5 pb-0.5 shrink-0">
           <div
             role="tablist"
             aria-label="AI разделы"
