@@ -8,6 +8,9 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
+    /* Dynamic viewport height — stable on iOS with keyboard */
+    --app-height: 100dvh;
+
     /* iOS-like glass blue theme */
     --background: 220 60% 97%;
     --foreground: 222 47% 11%;
