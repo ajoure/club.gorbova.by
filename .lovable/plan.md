@@ -1,179 +1,212 @@
-# да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
-1. **Legal form хранить только в полном canonical-виде.**  
-В плане сейчас есть ошибка:  
-`handleGrpConfirm → leg_org_form (через маппинг полная→короткая)`  
-Это противоречит выбранному правилу. Нужно наоборот:
-  - в БД хранить: `Закрытое акционерное общество`
-  - сокращение `ЗАО` получать только через display/helper
-  - selector/option list в форме либо перевести на полные значения, либо ввести mapping `full <-> short`, где source of truth = full form
-2. **Название компании сохранять отдельно от формы и без кавычек.**  
-Зафиксируй явно:
-  - `parseOrgFormAndName()` возвращает:
-    - `orgFormFull`
-    - `orgFormShort`
-    - `cleanName`
-  - в save-path:
-    - `leg_org_form = orgFormFull`
-    - `leg_name = cleanName`
-  - `short_name` использовать отдельно, но не как fallback для основного названия, если уже удалось распарсить `cleanName`
-3. **Не сохранять** `registration_date`**,** `tax_office_code`**,** `tax_office_name` **“в side-state через onSubmit”, пока не подтверждено место хранения.**  
-Здесь план пока сырой. Нельзя тихо протащить новые данные без подтвержденной persistence-модели. По правилам сначала diagnose, потом execute.  
-Выбираю такой вариант:
-  - в PATCH 3.1 эти поля показываем в diff-dialog
-  - применяем в UI только если уже есть подтвержденные поля хранения
-  - если подтвержденных полей нет — не сохраняем их в БД в этом патче, не придумываем временный side-state как будто это persistence
-4. **Адрес МНС нужно разбирать в отдельном adapter/service слое, а не просто “внутри сервиса как regex helper”.**  
-Лучше так:
-  - `GrpAutofillService` — orchestration/build diff
-  - `GrpAddressAdapter` или `GrpAddressParser` — flat address → `StructuredAddress`  
-  Это соответствует правилу: бизнес-логика в сервисах, интеграции через adapters, внутренняя модель не зависит от внешнего формата.
-5. **PATCH должен покрывать не 3, а все фактически затронутые места apply.**  
-В плане перечислены:
-  - `LegalEntityDetailsForm`
-  - `EntrepreneurDetailsForm`
-  - `AdminExecutors`  
-  Это правильно для GRP apply.  
-  Но отдельно зафиксируй, что:
-  - `IndividualDetailsForm` в этот PATCH не входит по GRP,
-  - там только address rollout уже сделан и этот PATCH его не трогает, кроме если потребуется bugfix по legacy/canonical consistency.
-6. **Для** `GrpConfirmDialog` **зафиксируй не только ширину, но и структуру контента.**  
-Добавь:
-  - label отдельной строкой
-  - старое значение отдельной строкой
-  - новое значение отдельной строкой
-  - длинные значения с `break-words`
-  - список diff со scroll внутри
-  - модалка не должна схлопывать длинный адрес или длинное название  
-  По скринам это как раз текущая проблема.
-7. **Apply после confirm должен реально заполнять structured address, а не только flat поля.**  
-Явно пропиши:
-  - `setAddress(parsedStructuredAddress)`
-  - `setAddressSource('grp')`
-  - при submit:
-    - canonical JSONB = parsed structured address
-    - legacy string = `formatFullAddress(canonical)`  
-    Это должно работать одинаково для `LegalEntity`, `Entrepreneur`, `Executors`.
-8. **Нужен explicit DRY RUN перед EXECUTE.**  
-Сейчас в плане сразу действия. Добавь отдельный блок:
-  - какие поля реально применяются в каждой форме
-  - какие поля только показываются в diff, но не сохраняются
-  - какие existing components/services переиспользуются
-  - что не создаются новые таблицы/миграции  
-  Safe workflow обязателен: `DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY`.
-9. **Добавь duplication prevention.**  
-Перед новым кодом нужно явно переиспользовать уже созданные элементы:
-  - `StructuredAddressBlock`
-  - `useGrpLookup`
-  - Phase 2 address adapters
-  - existing canonical payload helpers  
-  Это обязательное правило против дублирования.
-10. **Добавь VERIFY/DoD по факту хранения, а не только по UI.**  
-Нужны пруфы:
+1. Добавь **RBAC и ownership-check** в явном виде.  
+Недостаточно просто safe access token. Нужно отдельно зафиксировать:
+  - кто именно может читать store config;
+  - кто может менять;
+  - кто может только видеть diagnostics;
+  - обязательная проверка привязки `integration_instance` к текущему amo install/context.
+2. Добавь правило **secret never returns to client**.  
+В `get`/status surface нельзя возвращать:
+  - raw secret;
+  - masked secret, если это не нужно для UX;
+  - любые данные, по которым можно восстановить secret.  
+  Только backend state:
+  - `secret_present: true/false`
+  - `last_test_at`
+  - `connection_status`
+  - `payments_unlocked`
+3. Зафиксируй **patch semantics** для save/update.  
+Нужно явно прописать:
+  - partial update;
+  - пустые поля не стирают сохранённые значения;
+  - изменение `shop_id` / `publishable_key` / `secret_key` не должно случайно обнулять соседние поля;
+  - save должен быть идемпотентным.
+4. Добавь **audit_logs** как обязательный DoD.  
+Для всех действий:
+  - save config
+  - replace secret
+  - delete secret
+  - test connection
+  - unlock payments  
+  Должны быть реальные записи в `audit_logs` с actor, integration_instance, amo_account_id, outcome.
+5. Нужен **single backend status contract** для settings UI.  
+Не разрозненные проверки в нескольких местах, а один агрегированный backend response:
+  - `config_exists`
+  - `shop_id_present`
+  - `publishable_key_present`
+  - `secret_present`
+  - `connection_status`
+  - `last_test_at`
+  - `last_test_error`
+  - `payments_unlocked`
+  - `locked_reason`
+6. Добавь **anti-race / double-submit protection**.  
+Нужно явно предусмотреть:
+  - повторный click по Save/Test не создает параллельные операции;
+  - `test` не стартует до завершения `save`;
+  - stale response не должен перетирать более новое состояние.
+7. Зафиксируй **backend-first unlock logic**.  
+`advancedSettings` должен разблокироваться только по backend state, а не по локальному состоянию формы/клиента. После reload состояние должно восстанавливаться из backend без расхождений.
+8. Добавь **diagnostics proof**, что test использует backend secret.  
+Не просто декларацию, а проверяемый DoD:
+  - test без сохраненного secret → predictable fail/locked;
+  - test после сохранения → использует backend binding;
+  - client-side введённый, но не сохранённый secret не должен влиять на результат test.
+9. Ограничь scope этого спринта еще жестче.  
+Явно написать:
+  - без расширения iframe бизнес-функций;
+  - без новой платежной логики;
+  - без новых source-of-truth таблиц;
+  - только store connection setup + locked/unlocked flow + diagnostics.
+10. Добавь verify по кешу amoCRM как обязательный пакет доказательств.  
+Не только version bump, а еще:
 
-- до confirm
-- после confirm
-- после save
-- после reopen  
-И отдельно подтвердить:
-- `leg_org_form` хранится в полном виде
-- `leg_name` хранится без формы и без кавычек
-- адрес из МНС разложен по ячейкам
-- legacy string согласована с canonical JSONB
-- `AdminExecutors` не ломает текущий save flow
+- новый ZIP реально загружен;
+- runtime fingerprint совпадает;
+- old cached artifact не исполняется;
+- Source-of-Truth Diff = PASS приложен в отчете.
 
-11. **Audit logging добавить хотя бы для apply из МНС.**  
-Это критическая операция автозаполнения и по правилам должна логироваться в `audit_logs`.  
-Минимум:
+В остальном направление правильное.  
+Ключевая фиксация:
 
-- apply from GRP confirm
-- actor_type system/user по вашей текущей схеме
-- какие поля были изменены
-
-Итоговый ключевой выбор для вставки в план:
-
-- `leg_org_form` хранить **в полном виде**, не в сокращении
-- `leg_name` хранить **без формы и без кавычек**
-- `registration_date / tax_office_*` **не сохранять в БД в этом PATCH**, пока не подтверждено место хранения
-- flat address МНС разбирать через **отдельный adapter/parser** в `StructuredAddress`
-- PATCH 3.1 закрывает: dialog UI + full apply + canonical name/form normalization + structured address apply + verify/save/reopen proof
+- безопасность не через `amo_account_id`;
+- source of truth остается в existing integration storage;
+- новый EF только wrapper/aggregator;
+- locked/unlocked flow backend-driven;
+- этот спринт закрывает только подключение магазина и разблокировку раздела платежей.
 - &nbsp;
-- План: Phase 3.1 — PATCH-пакет: GRP autofill + StructuredAddress
+- План: Phase 3.2 — Address enrichment + Org form dictionary + Apartment field
 
-## Проблемы (DIAGNOSE)
+## DIAGNOSE
 
-1. **GrpConfirmDialog**: `truncate` и `max-w-[140px]` обрезают текст; модалка `max-w-lg` слишком узкая
-2. **handleGrpConfirm** во всех 3 формах применяет только `name`/`short_name`, игнорируя address, registration_date, tax_office_*, status_*
-3. **Нет парсинга org form** из `full_name` МНС (например `Закрытое акционерное общество "АЖУР инкам"` → form + name)
-4. **Нет парсинга адреса МНС** в structured-поля — адрес остается flat-строкой
-5. `orgForms` в форме — короткие аббревиатуры (`ООО`, `ЗАО`), нет маппинга из полных форм МНС
+### Проблема 1: Compact layout не содержит поле `apartment`
+
+`COMPACT_LAYOUT` в `StructuredAddressBlock.tsx` (строки 48-56) не включает `{ key: 'apartment' }`. Поэтому `оф. 49л` из МНС парсится в `addr.apartment`, но не отображается в форме ЮЛ/ИП (они используют `compact` layout).
+
+### Проблема 2: Адрес из МНС не обогащается через Google
+
+`GrpAddressParser` разбирает flat-строку в preliminary structured, но результат не прогоняется через Google для дозаполнения (house, postal_code, region, country, place_id, lat, lng).
+
+### Проблема 3: Org form — простой Select без поиска
+
+Текущий `ORG_FORM_OPTIONS` (8 значений) — статический select без searchable. Нет справочника по странам СНГ, нет алиасов, нет flow для «Другое» с двумя полями.
+
+## DRY RUN
+
+### Переиспользуемые компоненты
+
+- `StructuredAddressBlock` — добавить `apartment` в COMPACT_LAYOUT
+- `usePlaceAutocomplete` — использовать `fetchPredictions` + `fetchPlaceDetails` для enrichment
+- `GooglePlacesAdapter.parseComponents` — маппинг Google → StructuredAddress
+- `GrpAddressParser.parseGrpAddress` — уже парсит flat → preliminary structured
+- `GrpAutofillService` — orchestration, diff
+
+### Что применяется в каждой форме после confirm
+
+
+| Поле                      | LegalEntity                   | Entrepreneur          | Executors         |
+| ------------------------- | ----------------------------- | --------------------- | ----------------- |
+| org_form (full canonical) | да                            | нет                   | нет               |
+| clean_name                | да → `leg_name`               | нет (full_name as-is) | да → `full_name`  |
+| short_name                | нет                           | нет                   | да → `short_name` |
+| parsed+enriched address   | да                            | да                    | да                |
+| registration_date         | только в diff, не сохраняется | только в diff         | только в diff     |
+| tax_office_*              | только в diff, не сохраняется | только в diff         | только в diff     |
+
+
+### Что НЕ создаем
+
+- Новых таблиц / миграций
+- Новых edge functions
+- Side-state для registration_date / tax_office (нет подтвержденных полей в БД)
 
 ## Файлы и изменения
 
-### 1. `src/lib/legal-entities/GrpAutofillService.ts` — расширить service layer
+### PATCH-1: Поле помещения в compact layout
 
-**Добавить:**
+**Файл:** `src/components/shared/StructuredAddressBlock.tsx`
 
-- `parseOrgFormAndName(fullName)` — выделяет org form и чистое название:
-  - словарь полных форм → коротких (`Закрытое акционерное общество` → `ЗАО`, `Общество с ограниченной ответственностью` → `ООО`, и т.д.)
-  - убирает кавычки из названия
-  - возвращает `{ orgForm: string, cleanName: string }`
-- `parseGrpAddress(flatAddress)` — разбирает типичный формат МНС `г. Минск,ул. Панфилова, д.2, оф. 123` в `StructuredAddress`:
-  - regex для `г.`/`город` → city
-  - regex для `ул.`/`улица`/`пр.`/`проспект` → street
-  - regex для `д.`/`дом` → house
-  - regex для `корп.`/`к.` → building
-  - regex для `оф.`/`кв.` → apartment
-  - source = `'grp'`
-- Расширить `GrpAutofillFields` добавив `org_form`, `clean_name` (derived fields)
-- Обновить `grpDataToAutofillFields` — вызывать `parseOrgFormAndName` и `parseGrpAddress` внутри
+В `COMPACT_LAYOUT` (строка 48-56) добавить `apartment` после `building`:
 
-### 2. `src/components/legal-details/GrpConfirmDialog.tsx` — UI fix
+```
+{ key: 'apartment', label: 'Кв./Офис', placeholder: '' },
+```
 
-- `max-w-lg` → `max-w-2xl`
-- Убрать `truncate` и `max-w-[140px]` со старых значений
-- Убрать `truncate` с новых значений
-- Заменить `flex items-center` на `flex flex-col items-start` для diff-строк
-- `max-h-64` → `max-h-96`
-- Старое значение и новое — каждое на своей строке, с `break-words`
+### PATCH-2: GRP → Google address enrichment
 
-### 3. `src/components/legal-details/LegalEntityDetailsForm.tsx` — полный apply
+**Новый файл:** `src/lib/address/GrpAddressEnricher.ts`
 
-**handleGrpConfirm:**
+Сервис, который:
 
-- Применять `org_form` → `leg_org_form` (через маппинг полная→короткая)
-- Применять `clean_name` → `leg_name` (без кавычек, без формы)
-- Применять `short_name` → `leg_name` fallback
-- Применять parsed address → `setAddress(parsedStructured)` + `setAddressSource('grp')`
-- Применять `registration_date`, `tax_office_code`, `tax_office_name` — сохранять в отдельных полях (нужно добавить в form schema или в side-state)
+1. Принимает preliminary `StructuredAddress` из `GrpAddressParser`
+2. Формирует query из заполненных полей через `formatFullAddress()`
+3. Вызывает Google Places `AutocompleteSuggestion.fetch()` + `Place.fetchFields()`
+4. Мержит результат: Google-поля перезаписывают пустые поля preliminary, но `apartment` из МНС сохраняется (Google обычно не возвращает офис)
+5. Устанавливает `source = 'grp'`, `google_place_id`, `lat`, `lng`
 
-**Проблема:** registration_date, tax_office_code/name не имеют полей в текущей форме. Решение: сохранять их при submit через дополнительный state, но не показывать в форме (они пойдут в БД через onSubmit).
+**Изменения в формах** (`LegalEntityDetailsForm`, `EntrepreneurDetailsForm`, `AdminExecutors`):
 
-### 4. `src/components/legal-details/EntrepreneurDetailsForm.tsx` — полный apply
+В `handleGrpConfirm` после получения `parsed_address`:
 
-Аналогично: `handleGrpConfirm` должен применять name, address (parsed), registration_date и прочие поля через side-state.
+1. Вызвать `GrpAddressEnricher.enrich(parsedAddress)`
+2. Результат записать в `setAddress(enrichedAddress)`
+3. Enrichment асинхронный — показать spinner на адресном блоке
+4. Если Google не ответил — fallback на preliminary parsed address
 
-### 5. `src/pages/admin/AdminExecutors.tsx` — полный apply
+### PATCH-3: Справочник форм собственности СНГ
 
-`handleGrpConfirm` (строка 245): добавить apply для address (parsed → setAddress), и прочих полей.
+**Новый файл:** `src/lib/legal-entities/OrgFormDictionary.ts`
 
-### 6. Нет новых таблиц, нет миграций
+```text
+interface OrgFormEntry {
+  fullName: string;        // canonical, хранится в БД
+  shortName: string;       // для display
+  country: string;         // 'BY', 'RU', 'KZ'...
+  aliases: string[];       // для поиска: ['ООО', 'общество с огр']
+}
+```
 
-Все данные уже есть в существующих полях. `registration_date`, `tax_office_code`, `tax_office_name` для client_legal_details — нужно проверить, есть ли эти колонки в таблице.
+Справочник ~25-30 форм для BY (уже есть в `ORG_FORM_FULL_TO_SHORT`), плюс основные RU/KZ.
+
+**Новый компонент:** `src/components/legal-details/OrgFormCombobox.tsx`
+
+Searchable combobox (на базе `cmdk` / Popover+Command из shadcn):
+
+- Поиск по `fullName`, `shortName`, `aliases`
+- В dropdown показывает: `ЗАО — Закрытое акционерное общество`
+- Value = `fullName` (canonical)
+- Displayed selected = `shortName` (compact)
+- Последний пункт: «Другое»
+
+**При выборе «Другое»:** показать 2 дополнительных Input:
+
+- Полная форма (обязательное)
+- Краткая форма (обязательное)
+- Оба сохраняются: `leg_org_form = полная`, `leg_org_form_short = краткая` (или в одном поле через separator — зависит от наличия колонки)
+
+**Изменение:** `LegalEntityDetailsForm.tsx` — заменить `<Select>` на `<OrgFormCombobox>`
+
+### PATCH-4: Проверка колонки для краткой формы
+
+Нужно проверить, есть ли `leg_org_form_short` в `client_legal_details`. Если нет — либо добавить миграцию, либо хранить short form только как derived через dictionary lookup.
 
 ## Порядок выполнения
 
-1. Расширить `GrpAutofillService` (парсеры org form, name, address)
-2. Исправить `GrpConfirmDialog` UI
-3. Обновить `handleGrpConfirm` в 3 формах (LegalEntity, Entrepreneur, Executors)
-4. VERIFY: скрины до/после
+1. PATCH-1: Добавить `apartment` в `COMPACT_LAYOUT`
+2. PATCH-3: Создать `OrgFormDictionary` + `OrgFormCombobox`
+3. PATCH-2: Создать `GrpAddressEnricher`, интегрировать в 3 формы
+4. Обновить `LegalEntityDetailsForm` — заменить Select на OrgFormCombobox + flow для «Другое»
+5. VERIFY
 
 ## DoD
 
-- Текст в confirm-dialog читается полностью, без обрезания
-- Apply заполняет: org form, clean name, short name, parsed address, registration_date, tax_office
-- `leg_org_form` автоматически выбирается по данным МНС
-- `leg_name` хранится без формы и без кавычек
-- Адрес из МНС разложен по ячейкам в StructuredAddressBlock
+- Поле `Кв./Офис` видно в compact layout всех форм
+- После GRP confirm адрес обогащен через Google (house, postal_code, region, country, place_id, lat, lng заполнены)
+- Если Google не вернул apartment — сохраняется значение из МНС
+- Форма собственности выбирается через searchable combobox
+- Поиск работает по полному и краткому названию
+- Canonical = полная форма в БД
+- Для «Другое» — 2 ручных поля (full + short)
+- Пользователь может вручную исправить любой адресный сегмент после enrichment
 - Legacy string пересчитывается из canonical при save
-- Бизнес-логика (парсинг) в service layer, не в UI
