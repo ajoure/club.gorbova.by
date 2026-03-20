@@ -309,7 +309,7 @@ const AI = () => {
                 </p>
               </div>
             </GlassCard>
-          </TabsContent>
+          )}
 
           {/* Tutorials Tab */}
           <TabsContent value="tutorials" className="mt-6">
