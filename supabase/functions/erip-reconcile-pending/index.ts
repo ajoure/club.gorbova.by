@@ -31,11 +31,16 @@ serve(async (req) => {
 
   const startTime = Date.now();
 
-  // Auth: X-Cron-Secret
+  // Auth: X-Cron-Secret OR service_role JWT (for admin manual invocations)
   const cronSecret = Deno.env.get('CRON_SECRET');
   const incomingSecret = req.headers.get('x-cron-secret');
-  if (!cronSecret || incomingSecret !== cronSecret) {
-    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid x-cron-secret');
+  const authHeader = req.headers.get('Authorization') || '';
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const isCronAuth = cronSecret && incomingSecret === cronSecret;
+  const isServiceRoleAuth = authHeader === `Bearer ${serviceRoleKey}`;
+  
+  if (!isCronAuth && !isServiceRoleAuth) {
+    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid auth');
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
