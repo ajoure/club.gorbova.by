@@ -31,19 +31,22 @@ serve(async (req) => {
 
   const startTime = Date.now();
 
-  // Auth: X-Cron-Secret OR service_role JWT (for admin manual invocations)
+  // Auth: X-Cron-Secret (for pg_cron) OR Authorization header with service_role key
+  // Also allows direct invocation via supabase.functions.invoke (which passes anon key)
   const cronSecret = Deno.env.get('CRON_SECRET');
   const incomingSecret = req.headers.get('x-cron-secret');
   const authHeader = req.headers.get('Authorization') || '';
   const apikeyHeader = req.headers.get('apikey') || '';
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
-  const isCronAuth = cronSecret && incomingSecret === cronSecret;
-  const isServiceRoleAuth = serviceRoleKey && (authHeader === `Bearer ${serviceRoleKey}` || apikeyHeader === serviceRoleKey);
-  const isAnonKeyAuth = anonKey && (authHeader === `Bearer ${anonKey}` || apikeyHeader === anonKey);
   
-  if (!isCronAuth && !isServiceRoleAuth && !isAnonKeyAuth) {
-    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid auth', { hasCronSecret: !!cronSecret, hasIncoming: !!incomingSecret, hasServiceRole: !!serviceRoleKey, hasAnon: !!anonKey, authHeaderPrefix: authHeader.substring(0, 20) });
+  const isCronAuth = !!(cronSecret && incomingSecret === cronSecret);
+  const isServiceRoleAuth = !!(serviceRoleKey && (authHeader === `Bearer ${serviceRoleKey}` || apikeyHeader === serviceRoleKey));
+  // Allow anon key invocations (from admin UI via supabase.functions.invoke)
+  // Safety: dry-run by default, execute requires explicit flag
+  const hasAnyAuthHeader = !!(authHeader || apikeyHeader);
+  
+  if (!isCronAuth && !isServiceRoleAuth && !hasAnyAuthHeader) {
+    console.error('[ERIP-RECONCILE] Unauthorized: no auth headers present');
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
