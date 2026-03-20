@@ -44,6 +44,67 @@
 
 ---
 
+## VERIFY Phase 2
+
+### 1. Миграция: JSONB shadow-поля подтверждены
+
+SQL-запрос:
+```sql
+SELECT table_name, column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name IN ('client_legal_details', 'executors')
+  AND column_name IN ('ind_address_structured', 'ent_address_structured', 'leg_address_structured', 'legal_address_structured');
+```
+
+Результат: 4 поля существуют, тип `jsonb`, nullable `YES`.
+
+| table_name | column_name | data_type | is_nullable |
+|---|---|---|---|
+| client_legal_details | ent_address_structured | jsonb | YES |
+| client_legal_details | ind_address_structured | jsonb | YES |
+| client_legal_details | leg_address_structured | jsonb | YES |
+| executors | legal_address_structured | jsonb | YES |
+
+### 2. Edge function grp-lookup: 4 сценария
+
+| # | Сценарий | Результат | Статус |
+|---|---|---|---|
+| 1 | Без JWT (из браузера) | 401 Unauthorized (auth check в коде, строки 54-74) | ✅ |
+| 2 | С JWT + валидный УНП `192560618` | `{ found: true, data: { full_name: "Горбова Екатерина Сергеевна", ... } }` | ✅ |
+| 3 | С JWT + валидный УНП `100000001` (не найдено) | `{ found: false }` | ✅ |
+| 4 | С JWT + невалидный УНП `12345678` (8 цифр) | HTTP 400 `{ error: "УНП должен содержать ровно 9 цифр" }` | ✅ |
+
+### 3. Google Maps: автоподсказки
+
+- Кнопка «Лупа» удалена
+- Ввод >= 3 символов → `fetchPredictions` вызывается автоматически (debounce 300ms)
+- Выбор подсказки → парсинг через `GooglePlacesAdapter` → отображение результата
+
+### 4. UI: переименование МНС
+
+- Заголовок карточки: `Поиск по УНП (МНС)`
+- Описание: `Поиск юрлица по УНП через реестр МНС`
+- Badge: `Доступно`
+- Все error/status тексты на русском
+
+### 5. Architectural proof
+
+**Сервисный слой (бизнес-логика):**
+- `src/lib/address/AddressNormalizationService.ts` — нормализация, source of truth logic
+- `src/lib/address/adapters/GooglePlacesAdapter.ts` — маппинг Google → StructuredAddress
+- `src/lib/legal-entities/adapters/GrpLookupAdapter.ts` — маппинг GRP API → доменная модель
+
+**UI-карточки (только test/config surface):**
+- `GoogleMapsSettingsCard.tsx` — вызывает `usePlaceAutocomplete` + `GooglePlacesAdapter`, не содержит доменной логики
+- `GrpLookupSettingsCard.tsx` — вызывает `useGrpLookup` + `GrpLookupAdapter.resultToPreview()`, не содержит доменной логики
+
+**Edge function:** JWT обязателен (строки 54-74 `grp-lookup/index.ts` — проверка `Authorization` header + `supabase.auth.getUser()`)
+
+### Финальный статус: Phase 2 closed ✅
+
+---
+
 ## Canonical Address Payload
 
 ```typescript
