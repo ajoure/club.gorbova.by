@@ -489,43 +489,69 @@ export default function AdminExecutors() {
             <DialogTitle>{editingId ? "Редактировать исполнителя" : "Новый исполнитель"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* УНП FIRST */}
+            <div>
+              <Label className="flex items-center gap-2">
+                УНП *
+                {grpLookup.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </Label>
+              <Input
+                value={formData.unp}
+                onChange={(e) => setFormData({ ...formData, unp: e.target.value })}
+                placeholder="123456789"
+                maxLength={9}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Введите УНП — остальные данные заполнятся автоматически
+              </p>
+            </div>
+
             {/* Наименование */}
             <div>
-              <Label>Полное наименование *</Label>
+              <Label className="flex items-center gap-2">
+                Полное наименование *
+                {autofilledFields.has("full_name") && (
+                  <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                )}
+              </Label>
               <Input
                 value={formData.full_name}
-                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, full_name: e.target.value });
+                  setAutofilledFields(prev => { const n = new Set(prev); n.delete("full_name"); return n; });
+                }}
                 placeholder='Закрытое акционерное общество "АЖУР инкам"'
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <Label>Краткое наименование</Label>
-                <Input
-                  value={formData.short_name}
-                  onChange={(e) => setFormData({ ...formData, short_name: e.target.value })}
-                  placeholder='ЗАО "АЖУР инкам"'
-                />
-              </div>
-              <div>
-                <Label>УНП *</Label>
-                <Input
-                  value={formData.unp}
-                  onChange={(e) => setFormData({ ...formData, unp: e.target.value })}
-                  placeholder="123456789"
-                  maxLength={9}
-                />
-              </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                Краткое наименование
+                {autofilledFields.has("short_name") && (
+                  <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                )}
+              </Label>
+              <Input
+                value={formData.short_name}
+                onChange={(e) => {
+                  setFormData({ ...formData, short_name: e.target.value });
+                  setAutofilledFields(prev => { const n = new Set(prev); n.delete("short_name"); return n; });
+                }}
+                placeholder='ЗАО "АЖУР инкам"'
+              />
             </div>
 
+            {/* Structured Address */}
             <div>
               <Label>Юридический адрес *</Label>
-              <Input
-                value={formData.legal_address}
-                onChange={(e) => setFormData({ ...formData, legal_address: e.target.value })}
-                placeholder="220000, г. Минск, ул. Примерная, д. 1, офис 101"
-              />
+              <div className="mt-1.5">
+                <StructuredAddressBlock
+                  value={address}
+                  onChange={handleAddressChange}
+                  compact
+                  countries={['by']}
+                />
+              </div>
             </div>
 
             {/* Банковские реквизиты */}
