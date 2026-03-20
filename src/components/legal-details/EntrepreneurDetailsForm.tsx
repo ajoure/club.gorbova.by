@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useState, useCallback, useEffect } from "react";
 import {
   Form,
   FormControl,
@@ -17,11 +18,19 @@ import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_ENTREPRENEUR } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
+import type { StructuredAddress } from "@/lib/address/types";
+import { EntrepreneurAddressAdapter } from "@/lib/address/adapters/EntrepreneurAddressAdapter";
+import { useGrpLookup } from "@/hooks/useGrpLookup";
+import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
+import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import { GrpConfirmDialog } from "./GrpConfirmDialog";
+import { Badge } from "@/components/ui/badge";
 
 const schema = z.object({
   ent_name: z.string().min(5, "Введите полное наименование ИП"),
   ent_unp: z.string().length(9, "УНП должен содержать 9 цифр"),
-  ent_address: z.string().min(10, "Введите полный адрес"),
   ent_acts_on_basis: z.string().optional(),
   bank_account: z.string().min(28, "IBAN формат BY...").max(28).or(z.literal("")),
   bank_name: z.string().min(3, "Укажите банк").or(z.literal("")),
@@ -48,12 +57,25 @@ export function EntrepreneurDetailsForm({
   const hasRealData = !!initialData?.ent_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
+  const [address, setAddress] = useState<StructuredAddress>(() =>
+    EntrepreneurAddressAdapter.toStructuredAddress({
+      ent_address: initialData?.ent_address,
+      ent_address_structured: initialData?.ent_address_structured as any,
+    })
+  );
+  const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+
+  const grpLookup = useGrpLookup();
+  const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
+  const [grpDialogOpen, setGrpDialogOpen] = useState(false);
+  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
+
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
       return {
         ent_name: initialData?.ent_name || "",
         ent_unp: initialData?.ent_unp || "",
-        ent_address: initialData?.ent_address || "",
         ent_acts_on_basis: initialData?.ent_acts_on_basis || "свидетельства о государственной регистрации",
         bank_account: initialData?.bank_account || "",
         bank_name: initialData?.bank_name || "",
@@ -63,11 +85,9 @@ export function EntrepreneurDetailsForm({
       };
     }
     
-    // Пустая форма - демо-данные показываются как placeholder
     return {
       ent_name: "",
       ent_unp: "",
-      ent_address: "",
       ent_acts_on_basis: "свидетельства о государственной регистрации",
       bank_account: "",
       bank_name: "",
@@ -82,17 +102,55 @@ export function EntrepreneurDetailsForm({
     defaultValues: getDefaultValues(),
   });
 
+  const unpValue = form.watch("ent_unp");
+
+  useEffect(() => {
+    if (isValidUnp(unpValue) && unpValue !== initialData?.ent_unp) {
+      grpLookup.mutate(unpValue, {
+        onSuccess: (result) => {
+          if (result.found && result.data) {
+            const autofill = grpDataToAutofillFields(result.data);
+            const currentValues = { name: form.getValues("ent_name") };
+            const diff = buildGrpDiff(currentValues, autofill);
+            if (diff.length > 0) {
+              setGrpResult(autofill);
+              setGrpDiff(diff);
+              setGrpDialogOpen(true);
+            }
+          }
+        },
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unpValue]);
+
+  const handleGrpConfirm = useCallback(() => {
+    if (!grpResult) return;
+    const filled = new Set<string>();
+    if (grpResult.name) { form.setValue("ent_name", grpResult.name); filled.add("ent_name"); }
+    setAutofilledFields(filled);
+    setGrpDialogOpen(false);
+  }, [grpResult, form]);
+
+  const handleAddressChange = useCallback((val: StructuredAddress) => {
+    setAddress(val);
+    setAddressSource(val.google_place_id ? 'google' : 'manual');
+  }, []);
+
   const handleSubmit = async (data: FormData) => {
+    const addressFields = EntrepreneurAddressAdapter.toLegacyFields(address, addressSource);
     await onSubmit({
       ...data,
+      ...addressFields,
       client_type: "entrepreneur",
     });
   };
 
-  // Функция для получения placeholder - показываем демо если нет данных
   const getPlaceholder = (field: keyof typeof DEMO_ENTREPRENEUR, fallback: string) => {
     return showDemoPlaceholders ? (DEMO_ENTREPRENEUR[field] || fallback) : fallback;
   };
+
+  const isLookingUp = grpLookup.isPending;
 
   return (
     <Form {...form}>
@@ -111,16 +169,50 @@ export function EntrepreneurDetailsForm({
         <div className="space-y-4">
           <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Данные ИП</h3>
           
+          {/* УНП FIRST */}
+          <FormField
+            control={form.control}
+            name="ent_unp"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="flex items-center gap-2">
+                  УНП
+                  {isLookingUp && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                </FormLabel>
+                <FormControl>
+                  <Input 
+                    placeholder={getPlaceholder("ent_unp", "123456789")} 
+                    maxLength={9} 
+                    {...field} 
+                  />
+                </FormControl>
+                <FormDescription>
+                  Введите УНП — остальные данные заполнятся автоматически
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <FormField
             control={form.control}
             name="ent_name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Наименование ИП</FormLabel>
+                <FormLabel className="flex items-center gap-2">
+                  Наименование ИП
+                  {autofilledFields.has("ent_name") && (
+                    <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                  )}
+                </FormLabel>
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("ent_name", "ИП Федорчук Сергей Валерьевич")} 
                     {...field} 
+                    onChange={(e) => {
+                      field.onChange(e);
+                      setAutofilledFields(prev => { const n = new Set(prev); n.delete("ent_name"); return n; });
+                    }}
                   />
                 </FormControl>
                 <FormDescription>Полное наименование как в свидетельстве</FormDescription>
@@ -129,40 +221,17 @@ export function EntrepreneurDetailsForm({
             )}
           />
 
-          <FormField
-            control={form.control}
-            name="ent_unp"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>УНП</FormLabel>
-                <FormControl>
-                  <Input 
-                    placeholder={getPlaceholder("ent_unp", "123456789")} 
-                    maxLength={9} 
-                    {...field} 
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="ent_address"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Юридический адрес</FormLabel>
-                <FormControl>
-                  <Input 
-                    placeholder={getPlaceholder("ent_address", "220035, г. Минск, ул. Примерная, д. 1, оф. 10")} 
-                    {...field} 
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {/* Structured Address */}
+          <div>
+            <h4 className="text-sm font-medium mb-2">Юридический адрес</h4>
+            <StructuredAddressBlock
+              value={address}
+              onChange={handleAddressChange}
+              disabled={isSubmitting}
+              compact
+              countries={['by']}
+            />
+          </div>
 
           <FormField
             control={form.control}
@@ -293,6 +362,15 @@ export function EntrepreneurDetailsForm({
           Сохранить реквизиты
         </Button>
       </form>
+
+      <GrpConfirmDialog
+        open={grpDialogOpen}
+        onOpenChange={setGrpDialogOpen}
+        diff={grpDiff}
+        statusName={grpLookup.data?.data?.status_name}
+        liquidationDate={grpLookup.data?.data?.liquidation_date}
+        onConfirm={handleGrpConfirm}
+      />
     </Form>
   );
 }

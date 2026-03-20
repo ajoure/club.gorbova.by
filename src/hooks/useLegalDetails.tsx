@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { Json } from "@/integrations/supabase/types";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
@@ -27,11 +28,13 @@ export interface ClientLegalDetails {
   ind_address_street: string | null;
   ind_address_house: string | null;
   ind_address_apartment: string | null;
+  ind_address_structured: Json | null;
   
   // Entrepreneur fields
   ent_name: string | null;
   ent_unp: string | null;
   ent_address: string | null;
+  ent_address_structured: Json | null;
   ent_acts_on_basis: string | null;
   
   // Legal entity fields
@@ -39,6 +42,7 @@ export interface ClientLegalDetails {
   leg_name: string | null;
   leg_unp: string | null;
   leg_address: string | null;
+  leg_address_structured: Json | null;
   leg_director_position: string | null;
   leg_director_name: string | null;
   leg_acts_on_basis: string | null;

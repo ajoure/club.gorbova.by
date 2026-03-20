@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,12 +11,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Building2, Star, Copy, Upload, X, Image } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, Star, Copy, Upload, X, Image, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useExecutors, Executor } from "@/hooks/useLegalDetails";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { supabase } from "@/integrations/supabase/client";
 import { usePermissions } from "@/hooks/usePermissions";
+import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
+import type { StructuredAddress } from "@/lib/address/types";
+import { ExecutorAddressAdapter } from "@/lib/address/adapters/ExecutorAddressAdapter";
+import { useGrpLookup } from "@/hooks/useGrpLookup";
+import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
+import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -113,6 +121,19 @@ export default function AdminExecutors() {
   const [isUploadingSignature, setIsUploadingSignature] = useState(false);
   const signatureInputRef = useRef<HTMLInputElement>(null);
 
+  // Address state
+  const [address, setAddress] = useState<StructuredAddress>(() =>
+    ExecutorAddressAdapter.toStructuredAddress({})
+  );
+  const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+
+  // GRP lookup state
+  const grpLookup = useGrpLookup();
+  const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
+  const [grpDialogOpen, setGrpDialogOpen] = useState(false);
+  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
+
   // Автогенерация краткого ФИО
   const directorShortName = useMemo(() => {
     return generateShortName(formData.director_full_name);
@@ -160,10 +181,16 @@ export default function AdminExecutors() {
         email: executor.email || "",
         signature_url: executor.signature_url || "",
       });
+      setAddress(ExecutorAddressAdapter.toStructuredAddress({
+        legal_address: executor.legal_address,
+        legal_address_structured: (executor as any).legal_address_structured,
+      }));
     } else {
       setEditingId(null);
       setFormData(defaultFormData);
+      setAddress(ExecutorAddressAdapter.toStructuredAddress({}));
     }
+    setAutofilledFields(new Set());
     setIsDialogOpen(true);
   };
 
@@ -171,6 +198,8 @@ export default function AdminExecutors() {
     setIsDialogOpen(false);
     setEditingId(null);
     setFormData(defaultFormData);
+    setAddress(ExecutorAddressAdapter.toStructuredAddress({}));
+    setAutofilledFields(new Set());
   };
 
   const handlePositionTypeChange = (value: string) => {
@@ -192,8 +221,43 @@ export default function AdminExecutors() {
     });
   };
 
+  // GRP auto-lookup when UNP reaches 9 digits
+  useEffect(() => {
+    if (isValidUnp(formData.unp) && isDialogOpen) {
+      grpLookup.mutate(formData.unp, {
+        onSuccess: (result) => {
+          if (result.found && result.data) {
+            const autofill = grpDataToAutofillFields(result.data);
+            const currentValues = { name: formData.full_name, short_name: formData.short_name };
+            const diff = buildGrpDiff(currentValues, autofill);
+            if (diff.length > 0) {
+              setGrpResult(autofill);
+              setGrpDiff(diff);
+              setGrpDialogOpen(true);
+            }
+          }
+        },
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.unp]);
+
+  const handleGrpConfirm = useCallback(() => {
+    if (!grpResult) return;
+    const filled = new Set<string>();
+    if (grpResult.name) { setFormData(prev => ({ ...prev, full_name: grpResult.name! })); filled.add("full_name"); }
+    if (grpResult.short_name) { setFormData(prev => ({ ...prev, short_name: grpResult.short_name! })); filled.add("short_name"); }
+    setAutofilledFields(filled);
+    setGrpDialogOpen(false);
+  }, [grpResult]);
+
+  const handleAddressChange = useCallback((val: StructuredAddress) => {
+    setAddress(val);
+    setAddressSource(val.google_place_id ? 'google' : 'manual');
+  }, []);
+
   const handleSubmit = async () => {
-    if (!formData.full_name || !formData.unp || !formData.legal_address || !formData.bank_name || !formData.bank_code || !formData.bank_account) {
+    if (!formData.full_name || !formData.unp || !formData.bank_name || !formData.bank_code || !formData.bank_account) {
       toast.error("Заполните обязательные поля");
       return;
     }
@@ -205,18 +269,21 @@ export default function AdminExecutors() {
       formData.acts_on_basis_details
     );
 
+    const addressFields = ExecutorAddressAdapter.toLegacyFields(address, addressSource);
+
     try {
       const payload = {
         full_name: formData.full_name,
         short_name: formData.short_name,
         unp: formData.unp,
-        legal_address: formData.legal_address,
+        legal_address: addressFields.legal_address || formData.legal_address,
+        ...addressFields,
         bank_name: formData.bank_name,
         bank_code: formData.bank_code,
         bank_account: formData.bank_account,
         director_position: formData.director_position,
         director_full_name: formData.director_full_name,
-        director_short_name: directorShortName, // Автогенерируется
+        director_short_name: directorShortName,
         acts_on_basis: actsOnBasis,
         phone: formData.phone,
         email: formData.email,
@@ -422,43 +489,69 @@ export default function AdminExecutors() {
             <DialogTitle>{editingId ? "Редактировать исполнителя" : "Новый исполнитель"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* УНП FIRST */}
+            <div>
+              <Label className="flex items-center gap-2">
+                УНП *
+                {grpLookup.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </Label>
+              <Input
+                value={formData.unp}
+                onChange={(e) => setFormData({ ...formData, unp: e.target.value })}
+                placeholder="123456789"
+                maxLength={9}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Введите УНП — остальные данные заполнятся автоматически
+              </p>
+            </div>
+
             {/* Наименование */}
             <div>
-              <Label>Полное наименование *</Label>
+              <Label className="flex items-center gap-2">
+                Полное наименование *
+                {autofilledFields.has("full_name") && (
+                  <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                )}
+              </Label>
               <Input
                 value={formData.full_name}
-                onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, full_name: e.target.value });
+                  setAutofilledFields(prev => { const n = new Set(prev); n.delete("full_name"); return n; });
+                }}
                 placeholder='Закрытое акционерное общество "АЖУР инкам"'
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <Label>Краткое наименование</Label>
-                <Input
-                  value={formData.short_name}
-                  onChange={(e) => setFormData({ ...formData, short_name: e.target.value })}
-                  placeholder='ЗАО "АЖУР инкам"'
-                />
-              </div>
-              <div>
-                <Label>УНП *</Label>
-                <Input
-                  value={formData.unp}
-                  onChange={(e) => setFormData({ ...formData, unp: e.target.value })}
-                  placeholder="123456789"
-                  maxLength={9}
-                />
-              </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                Краткое наименование
+                {autofilledFields.has("short_name") && (
+                  <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                )}
+              </Label>
+              <Input
+                value={formData.short_name}
+                onChange={(e) => {
+                  setFormData({ ...formData, short_name: e.target.value });
+                  setAutofilledFields(prev => { const n = new Set(prev); n.delete("short_name"); return n; });
+                }}
+                placeholder='ЗАО "АЖУР инкам"'
+              />
             </div>
 
+            {/* Structured Address */}
             <div>
               <Label>Юридический адрес *</Label>
-              <Input
-                value={formData.legal_address}
-                onChange={(e) => setFormData({ ...formData, legal_address: e.target.value })}
-                placeholder="220000, г. Минск, ул. Примерная, д. 1, офис 101"
-              />
+              <div className="mt-1.5">
+                <StructuredAddressBlock
+                  value={address}
+                  onChange={handleAddressChange}
+                  compact
+                  countries={['by']}
+                />
+              </div>
             </div>
 
             {/* Банковские реквизиты */}
@@ -712,6 +805,15 @@ export default function AdminExecutors() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <GrpConfirmDialog
+        open={grpDialogOpen}
+        onOpenChange={setGrpDialogOpen}
+        diff={grpDiff}
+        statusName={grpLookup.data?.data?.status_name}
+        liquidationDate={grpLookup.data?.data?.liquidation_date}
+        onConfirm={handleGrpConfirm}
+      />
     </AdminLayout>
   );
 }
