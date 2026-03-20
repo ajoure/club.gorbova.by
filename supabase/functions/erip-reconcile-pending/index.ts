@@ -129,11 +129,28 @@ serve(async (req) => {
           tx = data?.transaction;
           bepaidStatus = tx?.status || 'unknown';
         } else {
-          // Strategy 2: ERIP transactions may 404 on bePaid API.
-          // Fallback: check our own audit_logs for evidence of a successful webhook delivery
-          // that was rejected by idempotency guard (already_processed).
-          console.warn(`[${BUILD_ID}] bePaid API 404 for ${uid}, checking local audit_logs`);
+          // bePaid API returned non-200 (ERIP transactions often 404)
           
+          if (!singlePaymentId) {
+            // BATCH/CRON MODE: audit_logs fallback ЗАПРЕЩЁН
+            // Оставляем payment как есть, пишем audit api_unavailable
+            console.warn(`[${BUILD_ID}] BATCH: bePaid API ${resp.status} for ${uid}, skipping (no audit fallback in batch mode)`);
+            
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system', actor_user_id: null, actor_label: BUILD_ID,
+              action: 'bepaid.erip.reconcile_api_unavailable',
+              meta: { payment_id: payment.id, uid, http_status: resp.status, mode: 'batch', source },
+            });
+            
+            results.push({ uid, action: 'api_unavailable_batch_skip', status: resp.status });
+            errors++;
+            continue;
+          }
+          
+          // SINGLE/MANUAL MODE: audit_logs fallback с двойной проверкой
+          console.warn(`[${BUILD_ID}] MANUAL: bePaid API ${resp.status} for ${uid}, checking audit_logs + webhook_events`);
+          
+          // Check 1: audit_logs — successful webhook was routed
           const { data: auditHit } = await supabase
             .from('audit_logs')
             .select('meta, created_at')
@@ -144,15 +161,25 @@ serve(async (req) => {
             .limit(1)
             .maybeSingle();
 
-          if (auditHit) {
+          // Check 2: webhook_events — successful webhook was rejected by idempotency guard
+          const { data: webhookEvidence } = await supabase
+            .from('webhook_events')
+            .select('id')
+            .eq('transaction_uid', uid)
+            .eq('outcome', 'already_processed')
+            .limit(1)
+            .maybeSingle();
+
+          if (auditHit && webhookEvidence) {
+            // BOTH conditions met — safe to use as evidence
             bepaidStatus = 'successful';
-            statusSource = 'audit_log_evidence';
+            statusSource = 'audit_log_evidence_strict';
             tx = { status: 'successful', paid_at: auditHit.created_at };
-            console.log(`[${BUILD_ID}] Found audit evidence of successful webhook for ${uid}`);
+            console.log(`[${BUILD_ID}] MANUAL: strict evidence confirmed for ${uid} (audit + webhook_events)`);
           } else {
-            // No evidence — report as api_error
-            console.error(`[${BUILD_ID}] No bePaid API data and no audit evidence for ${uid}`);
-            results.push({ uid, action: 'api_error_no_evidence', status: 404 });
+            // Insufficient evidence — STOP
+            console.error(`[${BUILD_ID}] MANUAL: insufficient evidence for ${uid} (audit=${!!auditHit}, webhook=${!!webhookEvidence})`);
+            results.push({ uid, action: 'insufficient_evidence', audit_found: !!auditHit, webhook_found: !!webhookEvidence });
             errors++;
             continue;
           }
@@ -171,6 +198,28 @@ serve(async (req) => {
         }
 
         if (bepaidStatus === 'successful') {
+          // STOP-GUARD: don't re-finalize already succeeded payments (race condition protection)
+          if (payment.status === 'succeeded') {
+            results.push({ uid, action: 'already_succeeded', skip: true });
+            continue;
+          }
+
+          // STOP-GUARD: check order status before finalization
+          // If order is already in terminal state (paid/refunded/canceled), don't finalize
+          if (payment.order_id) {
+            const { data: orderCheck } = await supabase
+              .from('orders_v2')
+              .select('status')
+              .eq('id', payment.order_id)
+              .maybeSingle();
+            
+            if (orderCheck && !['pending', 'failed'].includes(orderCheck.status)) {
+              console.warn(`[${BUILD_ID}] Order ${payment.order_id} already in terminal status '${orderCheck.status}', skipping finalization for ${uid}`);
+              results.push({ uid, action: 'order_terminal_status', order_status: orderCheck.status, skip: true });
+              continue;
+            }
+          }
+
           // UPGRADE: processing → succeeded
           const now = new Date().toISOString();
           
