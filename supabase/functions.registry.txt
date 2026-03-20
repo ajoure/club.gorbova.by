@@ -74,3 +74,4 @@ manage-news-schedule
 instagram-webhook
 instagram-admin-chat
 erip-reconcile-pending
+grp-lookup
