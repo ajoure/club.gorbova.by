@@ -2749,6 +2749,7 @@ Deno.serve(async (req) => {
           }),
           { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+        }
       }
 
       // 2. Find order in orders_v2
