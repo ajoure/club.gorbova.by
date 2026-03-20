@@ -77,8 +77,8 @@ serve(async (req) => {
         .in('status', ['processing', 'failed'])
         .eq('provider_payment_id', singlePaymentId);
     } else {
-      // Batch mode: only processing (new ERIP pending flow)
-      query = query.eq('status', 'processing');
+      // Batch mode: processing (FIX-A) + failed (legacy stuck ERIP). JS-filter below ensures ERIP-only.
+      query = query.in('status', ['processing', 'failed']);
       const minAgeDate = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000).toISOString();
       const maxAgeDate = new Date(Date.now() - MAX_AGE_HOURS * 60 * 60 * 1000).toISOString();
       query = query.lt('created_at', minAgeDate).gt('created_at', maxAgeDate);
