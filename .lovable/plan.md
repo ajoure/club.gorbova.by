@@ -1,63 +1,25 @@
-# План: Перенос Google Maps + МНС GRP Lookup — финальная версия
+# Отчет о выполненной работе: Phase 2 — VERIFY
 
-## Статус: Phase 2 — ВЫПОЛНЕНО ✅
-
-### Что сделано в Phase 2 (первый PR)
-
-**Foundation + add-only DB migration с canonical JSONB shadow-полями.**
-
-#### Созданные файлы:
-
-| Файл | Назначение |
-|---|---|
-| `src/lib/address/types.ts` | `StructuredAddress`, `CanonicalAddressPayload`, `AddressSource` |
-| `src/lib/address/utils.ts` | `emptyAddress`, `formatFullAddress`, `isAddressEmpty`, `buildAutocompleteQuery` |
-| `src/lib/address/AddressNormalizationService.ts` | Валидация, нормализация, source of truth logic |
-| `src/lib/address/adapters/GooglePlacesAdapter.ts` | Маппинг Google address_components → StructuredAddress |
-| `src/lib/legal-entities/types.ts` | `LegalEntityLookupResult`, `GrpMetaBranch`, `LegalEntityPreviewData` |
-| `src/lib/legal-entities/normalizeUnp.ts` | `normalizeUnp`, `isValidUnp`, `normalizeAndValidateUnp` |
-| `src/lib/legal-entities/adapters/GrpLookupAdapter.ts` | Маппинг GRP API → доменная модель |
-| `supabase/functions/grp-lookup/index.ts` | Edge function для запроса к МНС API (auth-required) |
-| `src/hooks/useGoogleMapsLoader.ts` | Singleton loader для Google Maps JS SDK |
-| `src/hooks/usePlaceAutocomplete.ts` | Хук автоподсказок через Places API |
-| `src/hooks/useGrpLookup.ts` | Хук для вызова grp-lookup через adapter |
-| `src/components/shared/StructuredAddressBlock.tsx` | Unified structured address input |
-| `src/components/integrations/google-maps/GoogleMapsSettingsCard.tsx` | Settings card: Google Maps |
-| `src/components/integrations/grp-lookup/GrpLookupSettingsCard.tsx` | Settings card: МНС GRP Lookup |
-
-#### Обновлённые файлы:
-
-| Файл | Изменение |
-|---|---|
-| `src/components/integrations/kinescope/OtherIntegrationsTab.tsx` | Добавлены GoogleMapsSettingsCard + GrpLookupSettingsCard |
-| `supabase/functions.registry.txt` | Добавлен `grp-lookup` |
-| `tsconfig.app.json` | Добавлен `"types": ["google.maps"]` |
-
-#### DB Migration:
-
-- `client_legal_details.ind_address_structured JSONB DEFAULT NULL`
-- `client_legal_details.ent_address_structured JSONB DEFAULT NULL`
-- `client_legal_details.leg_address_structured JSONB DEFAULT NULL`
-- `executors.legal_address_structured JSONB DEFAULT NULL`
-
-**Add-only. Без удаления/переименования старых полей. Без backfill.**
+**Статус: Phase 2 — VERIFY в процессе (этап НЕ закрыт)**
 
 ---
 
-## VERIFY Phase 2
+## 1. Миграция: JSONB shadow-поля — ПОДТВЕРЖДЕНО
 
-### 1. Миграция: JSONB shadow-поля подтверждены
+**Файл миграции:** `supabase/migrations/20260320171948_33e0efe2-7141-489a-8e0b-316222082f7a.sql`
 
-SQL-запрос:
+**SQL:**
 ```sql
-SELECT table_name, column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name IN ('client_legal_details', 'executors')
-  AND column_name IN ('ind_address_structured', 'ent_address_structured', 'leg_address_structured', 'legal_address_structured');
+ALTER TABLE public.client_legal_details
+  ADD COLUMN IF NOT EXISTS ind_address_structured JSONB DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS ent_address_structured JSONB DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS leg_address_structured JSONB DEFAULT NULL;
+
+ALTER TABLE public.executors
+  ADD COLUMN IF NOT EXISTS legal_address_structured JSONB DEFAULT NULL;
 ```
 
-Результат: 4 поля существуют, тип `jsonb`, nullable `YES`.
+**SQL-результат проверки:**
 
 | table_name | column_name | data_type | is_nullable |
 |---|---|---|---|
@@ -66,106 +28,139 @@ WHERE table_schema = 'public'
 | client_legal_details | leg_address_structured | jsonb | YES |
 | executors | legal_address_structured | jsonb | YES |
 
-### 2. Edge function grp-lookup: 4 сценария
-
-| # | Сценарий | Результат | Статус |
-|---|---|---|---|
-| 1 | Без JWT (из браузера) | 401 Unauthorized (auth check в коде, строки 54-74) | ✅ |
-| 2 | С JWT + валидный УНП `192560618` | `{ found: true, data: { full_name: "Горбова Екатерина Сергеевна", ... } }` | ✅ |
-| 3 | С JWT + валидный УНП `100000001` (не найдено) | `{ found: false }` | ✅ |
-| 4 | С JWT + невалидный УНП `12345678` (8 цифр) | HTTP 400 `{ error: "УНП должен содержать ровно 9 цифр" }` | ✅ |
-
-### 3. Google Maps: автоподсказки
-
-- Кнопка «Лупа» удалена
-- Ввод >= 3 символов → `fetchPredictions` вызывается автоматически (debounce 300ms)
-- Выбор подсказки → парсинг через `GooglePlacesAdapter` → отображение результата
-
-### 4. UI: переименование МНС
-
-- Заголовок карточки: `Поиск по УНП (МНС)`
-- Описание: `Поиск юрлица по УНП через реестр МНС`
-- Badge: `Доступно`
-- Все error/status тексты на русском
-
-### 5. Architectural proof
-
-**Сервисный слой (бизнес-логика):**
-- `src/lib/address/AddressNormalizationService.ts` — нормализация, source of truth logic
-- `src/lib/address/adapters/GooglePlacesAdapter.ts` — маппинг Google → StructuredAddress
-- `src/lib/legal-entities/adapters/GrpLookupAdapter.ts` — маппинг GRP API → доменная модель
-
-**UI-карточки (только test/config surface):**
-- `GoogleMapsSettingsCard.tsx` — вызывает `usePlaceAutocomplete` + `GooglePlacesAdapter`, не содержит доменной логики
-- `GrpLookupSettingsCard.tsx` — вызывает `useGrpLookup` + `GrpLookupAdapter.resultToPreview()`, не содержит доменной логики
-
-**Edge function:** JWT обязателен (строки 54-74 `grp-lookup/index.ts` — проверка `Authorization` header + `supabase.auth.getUser()`)
-
-### Финальный статус: Phase 2 closed ✅
+**Вывод:** add-only, без удаления/переименования старых полей, без backfill, без breaking changes.
 
 ---
 
-## Canonical Address Payload
+## 2. Edge Function `grp-lookup` — 4 сценария
+
+### Сценарий 1: Без JWT — OPEN ISSUE (code-proof only)
+
+Инструмент `curl_edge_functions` автоматически подмешивает Authorization header. Фактический вызов без auth через этот инструмент невозможен. Code review подтверждает логику (строки 54-60 `grp-lookup/index.ts`):
 
 ```typescript
-interface CanonicalAddressPayload {
-  country: string | null;
-  country_code: string | null;
-  postal_code: string | null;
-  region: string | null;
-  district: string | null;
-  city: string | null;
-  settlement: string | null;
-  street: string | null;
-  house: string | null;
-  building: string | null;
-  apartment: string | null;
-  raw_input: string | null;
-  formatted_address: string | null;
-  google_place_id: string | null;
-  lat: number | null;
-  lng: number | null;
-  source: 'manual' | 'google' | 'grp';
-  last_verified_at: string | null;
+const authHeader = req.headers.get("Authorization");
+if (!authHeader?.startsWith("Bearer ")) {
+  return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    status: 401, ...
+  });
 }
 ```
 
-## Правила чтения/записи
+**Статус:** code-proof only. Фактического вызова без auth нет.
 
-**Чтение:** source of truth = `*_address_structured`. Если пустой → fallback на legacy.
-**Запись:** новый код всегда пишет в `*_address_structured`. Legacy = производная через adapter.
+### Сценарий 2: С JWT + валидный УНП `192560618` (найдено) — ПОДТВЕРЖДЕНО
+
+**HTTP 200. Фактический ответ:**
+```json
+{
+  "found": true,
+  "data": {
+    "unp": "192560618",
+    "full_name": "Горбова Екатерина Сергеевна",
+    "short_name": "Горбова Екатерина Сергеевна",
+    "address": "",
+    "registration_date": "2015-11-09",
+    "tax_office_code": "617",
+    "tax_office_name": "Инспекция МНС по Пуховичскому району",
+    "status_code": "M",
+    "status_name": "В процессе ликвидации",
+    "liquidation_date": "2020-10-07",
+    "liquidation_reason": null
+  }
+}
+```
+
+### Сценарий 3: С JWT + валидный УНП `100000001` (не найдено) — ПОДТВЕРЖДЕНО
+
+**HTTP 200. Фактический ответ:**
+```json
+{ "found": false }
+```
+
+### Сценарий 4: С JWT + невалидный УНП `12345678` (8 цифр) — ПОДТВЕРЖДЕНО
+
+**HTTP 400. Фактический ответ:**
+```json
+{ "error": "УНП должен содержать ровно 9 цифр" }
+```
 
 ---
 
-## Следующие этапы (не в scope Phase 2)
+## 3. UI: Google Maps карточка — ПОДТВЕРЖДЕНО (скрин)
 
-### DRY RUN (перед Phase 3)
-- Какие формы читают structured first
-- Какие edge functions/PDF generators читают structured first
-- Где остаётся fallback на legacy
-- Какие старые адреса не могут быть нормализованы
+Скрин получен (вкладка «Разное», `/admin/integrations/other`):
 
-### Phase 3 — Compatibility Layer + Form Rollout
-- IndividualAddressAdapter: `ind_address_*` ↔ StructuredAddress
-- EntrepreneurAddressAdapter: `ent_address` + `ent_address_structured`
-- LegalEntityAddressAdapter: `leg_address` + `leg_address_structured` + GRP confirm-flow
-- ExecutorAddressAdapter: `legal_address` + `legal_address_structured`
-- GRP confirm-flow: preview → diff → подтверждение (silent overwrite запрещён)
-- Audit logging: actor_type='system' для автозаполнений
+- Заголовок: **Google Maps**
+- Badge: **Подключено** (зеленый)
+- Описание: «Автоподсказки адресов через Google Places API»
+- Input: «Начните вводить адрес...»
+- **Кнопка «Лупа» отсутствует** — только input field
 
-### Phase 4–6 (будущее)
-- Отдельная таблица `addresses`
-- Data backfill
-- Удаление legacy-полей
+Код (`GoogleMapsSettingsCard.tsx`, строки 18-25): поиск через `handleInputChange` -> `fetchPredictions(value)` при >= 3 символов. Динамические подсказки через debounce 300ms.
 
-## Hard Constraints
-- Settings cards — только test/config surface
-- Бизнес-логика в services/adapters
-- Canonical source of truth = structured JSONB
-- Legacy поля = compatibility layer
-- Silent overwrite запрещён
-- Add-only rollout обязателен
-- `grp-lookup` auth-required (JWT в коде)
+Скрин с выпадающими подсказками зависит от реального ввода адреса в sandbox — на текущем скрине карточка в состоянии покоя.
 
-## Требуется от пользователя
-- `VITE_GOOGLE_MAPS_API_KEY` для работы Google Maps autocomplete
+---
+
+## 4. UI: Поиск по УНП (МНС) — ПОДТВЕРЖДЕНО (скрин)
+
+Скрин получен (та же вкладка):
+
+- Заголовок: **Поиск по УНП (МНС)**
+- Badge: **Доступно** (зеленый)
+- Описание: «Поиск юрлица по УНП через реестр МНС»
+- Input: «Введите УНП (9 цифр)...»
+- Кнопка поиска присутствует (для UNP lookup по кнопке — корректно)
+
+### Проверка user-facing строк на отсутствие `GRP Lookup`:
+
+| Элемент | Значение |
+|---|---|
+| Заголовок | Поиск по УНП (МНС) |
+| Описание | Поиск юрлица по УНП через реестр МНС |
+| Badge | Доступно |
+| Placeholder | Введите УНП (9 цифр)... |
+| Error | Ошибка: ... (generic) |
+| Not found | Не найдено (generic) |
+
+Вхождений `GRP Lookup` в user-facing UI-текстах: **0**.
+
+---
+
+## 5. Architectural Proof
+
+**Service Layer = доменная логика:**
+- `src/lib/address/AddressNormalizationService.ts` — нормализация, source of truth logic, конвертация payload <-> structured. Содержит `normalize()`, `toCanonicalPayload()`, `fromCanonicalPayload()`.
+
+**Adapter Layer = анти-коррупционный слой внешних API:**
+- `src/lib/address/adapters/GooglePlacesAdapter.ts` — маппинг Google `address_components` -> `StructuredAddress`. Внутренняя модель не зависит от формата Google API.
+- `src/lib/legal-entities/adapters/GrpLookupAdapter.ts` — маппинг сырого ответа МНС -> `LegalEntityLookupResult`. Внутренняя модель не зависит от формата GRP API.
+
+**UI Cards = только test/config surface, без persistence и business rules:**
+- `GoogleMapsSettingsCard.tsx` — вызывает `usePlaceAutocomplete` + `GooglePlacesAdapter.parseComponents()` + `formatFullAddress()`. Не содержит нормализации, persistence, source of truth logic.
+- `GrpLookupSettingsCard.tsx` — вызывает `useGrpLookup` + `GrpLookupAdapter.resultToPreview()`. Не содержит маппинга, валидации УНП, persistence.
+
+**Edge function:** JWT обязателен в коде (строки 54-74 `grp-lookup/index.ts` — проверка `Authorization` header + `supabase.auth.getUser()`).
+
+**Вывод:** бизнес-логика в сервисах, интеграции через adapters, UI-карточки — только test/config surface без доменной логики и persistence. Соответствует архитектурному стандарту.
+
+---
+
+## 6. Финальный статус
+
+**Phase 2 — VERIFY в процессе. Этап НЕ закрыт.**
+
+### Подтвержденные пункты
+- Migration: 4 JSONB shadow-поля существуют (SQL-результат приложен)
+- GRP lookup: 3 из 4 сценариев подтверждены фактическими вызовами с сырыми ответами
+- Google Maps: кнопка удалена, автоподсказки через `handleInputChange` (скрин приложен)
+- МНС: все user-facing строки на русском (скрин приложен)
+- Архитектура: service / adapter / UI cards — разделение подтверждено
+
+### Open Issues
+1. **Без JWT = 401** — подтверждено только code review (строки 54-60). Инструмент тестирования автоматически добавляет auth, фактический вызов без Authorization невозможен через доступные средства.
+
+### Для закрытия Phase 2 нужно одно из:
+- Принять code-proof по сценарию «без JWT = 401» как достаточный (код однозначен)
+- Или провести ручной тест из браузера Network без Authorization header
