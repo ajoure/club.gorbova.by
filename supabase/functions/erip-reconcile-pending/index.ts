@@ -110,8 +110,8 @@ serve(async (req) => {
     for (const payment of eripPayments) {
       const uid = payment.provider_payment_id;
       try {
-        // Query bePaid API by transaction UID
-        const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${uid}`, {
+        // Query bePaid API by transaction UID (single transaction endpoint)
+        const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
           method: 'GET',
           headers: {
             'Authorization': bepaidAuth,
@@ -129,7 +129,7 @@ serve(async (req) => {
         }
 
         const data = await resp.json();
-        const tx = data?.transactions?.[0] || data?.transaction || data;
+        const tx = data?.transaction;
         const bepaidStatus = tx?.status || 'unknown';
 
         if (dryRun) {
