@@ -25,7 +25,7 @@ const routeLabels: Record<string, string> = {
   "/docs": "Документация",
   "/help": "Помощь",
   "/money": "Деньги",
-  "/ai": "AI",
+  "/ai": "AI-инструменты для твоего бизнеса",
   "/knowledge": "База знаний",
   "/learning": "Обучение",
   "/support": "Поддержка",
