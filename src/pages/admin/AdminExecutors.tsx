@@ -181,10 +181,16 @@ export default function AdminExecutors() {
         email: executor.email || "",
         signature_url: executor.signature_url || "",
       });
+      setAddress(ExecutorAddressAdapter.toStructuredAddress({
+        legal_address: executor.legal_address,
+        legal_address_structured: (executor as any).legal_address_structured,
+      }));
     } else {
       setEditingId(null);
       setFormData(defaultFormData);
+      setAddress(ExecutorAddressAdapter.toStructuredAddress({}));
     }
+    setAutofilledFields(new Set());
     setIsDialogOpen(true);
   };
 
@@ -192,6 +198,8 @@ export default function AdminExecutors() {
     setIsDialogOpen(false);
     setEditingId(null);
     setFormData(defaultFormData);
+    setAddress(ExecutorAddressAdapter.toStructuredAddress({}));
+    setAutofilledFields(new Set());
   };
 
   const handlePositionTypeChange = (value: string) => {
