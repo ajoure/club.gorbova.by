@@ -283,7 +283,7 @@ const AI = () => {
               </ScrollArea>
 
               {/* Input Area */}
-              <div className="border-t border-border/50 p-4 bg-background/50">
+              <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
                 <div className="flex gap-2">
                   <Textarea
                     value={inputValue}
