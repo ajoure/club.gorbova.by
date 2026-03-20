@@ -14,7 +14,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
@@ -33,29 +32,16 @@ import {
 } from "@/lib/legal-entities/GrpAutofillService";
 import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
+import { OrgFormCombobox } from "./OrgFormCombobox";
 import { Badge } from "@/components/ui/badge";
+import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
 
-/**
- * Org forms for select: store canonical full form as value,
- * display short abbreviation as label for compact UI.
- */
-const ORG_FORM_OPTIONS = [
-  { value: "Общество с ограниченной ответственностью", label: "ООО" },
-  { value: "Закрытое акционерное общество", label: "ЗАО" },
-  { value: "Открытое акционерное общество", label: "ОАО" },
-  { value: "Общество с дополнительной ответственностью", label: "ОДО" },
-  { value: "Унитарное предприятие", label: "УП" },
-  { value: "Коммунальное унитарное предприятие", label: "КУП" },
-  { value: "Частное унитарное предприятие", label: "ЧУП" },
-  { value: "Другое", label: "Другое" },
-];
+const OTHER_VALUE = '__OTHER__';
 
 /** Normalize legacy short values to full canonical on read */
 function normalizeOrgForm(val: string | null | undefined): string {
   if (!val) return "";
-  // If it's already a full form, return as-is
   if (ORG_FORM_FULL_TO_SHORT[val]) return val;
-  // If it's a short form, convert to full
   if (ORG_FORM_SHORT_TO_FULL[val]) return ORG_FORM_SHORT_TO_FULL[val];
   return val;
 }
@@ -100,6 +86,11 @@ export function LegalEntityDetailsForm({
     })
   );
   const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+  const [isEnrichingAddress, setIsEnrichingAddress] = useState(false);
+
+  // Custom org form fields (for "Другое")
+  const [customFullForm, setCustomFullForm] = useState('');
+  const [customShortForm, setCustomShortForm] = useState('');
 
   // GRP lookup
   const grpLookup = useGrpLookup();
@@ -173,7 +164,7 @@ export function LegalEntityDetailsForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unpValue]);
 
-  const handleGrpConfirm = useCallback(() => {
+  const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
     const filled = new Set<string>();
 
@@ -189,11 +180,22 @@ export function LegalEntityDetailsForm({
       filled.add("leg_name");
     }
 
-    // Apply parsed structured address
+    // Apply parsed structured address + enrich via Google
     if (grpResult.parsed_address) {
       setAddress(grpResult.parsed_address);
       setAddressSource('grp');
       filled.add("address");
+
+      // Async enrichment via Google
+      setIsEnrichingAddress(true);
+      try {
+        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        if (result.enriched) {
+          setAddress(result.address);
+        }
+      } finally {
+        setIsEnrichingAddress(false);
+      }
     }
 
     setAutofilledFields(filled);
@@ -210,9 +212,12 @@ export function LegalEntityDetailsForm({
   }, []);
 
   const handleSubmit = async (data: FormData) => {
+    // If "Другое" — use custom full form as canonical value
+    const orgForm = data.leg_org_form === OTHER_VALUE ? customFullForm : data.leg_org_form;
     const addressFields = LegalEntityAddressAdapter.toLegacyFields(address, addressSource);
     await onSubmit({
       ...data,
+      leg_org_form: orgForm,
       ...addressFields,
       client_type: "legal_entity",
     });
@@ -278,31 +283,20 @@ export function LegalEntityDetailsForm({
                       <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
                   </FormLabel>
-                  <Select
-                    onValueChange={(val) => {
-                      field.onChange(val);
-                      setAutofilledFields(prev => { const n = new Set(prev); n.delete("leg_org_form"); return n; });
-                    }}
-                    value={field.value}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder={getPlaceholder("leg_org_form", "ООО")}>
-                          {field.value
-                            ? (ORG_FORM_FULL_TO_SHORT[field.value] || field.value)
-                            : undefined
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {ORG_FORM_OPTIONS.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label} — {opt.value}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <OrgFormCombobox
+                      value={field.value}
+                      onChange={(val) => {
+                        field.onChange(val);
+                        setAutofilledFields(prev => { const n = new Set(prev); n.delete("leg_org_form"); return n; });
+                      }}
+                      customFullForm={customFullForm}
+                      customShortForm={customShortForm}
+                      onCustomFullFormChange={setCustomFullForm}
+                      onCustomShortFormChange={setCustomShortForm}
+                      disabled={isSubmitting}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -341,6 +335,9 @@ export function LegalEntityDetailsForm({
               Юридический адрес
               {autofilledFields.has("address") && (
                 <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
+              )}
+              {isEnrichingAddress && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               )}
             </h4>
             <StructuredAddressBlock

@@ -28,6 +28,9 @@ import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpA
 import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
+import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+
+
 
 const schema = z.object({
   ent_name: z.string().min(5, "Введите полное наименование ИП"),
@@ -65,7 +68,7 @@ export function EntrepreneurDetailsForm({
     })
   );
   const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
-
+  const [isEnrichingAddress, setIsEnrichingAddress] = useState(false);
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
@@ -128,7 +131,7 @@ export function EntrepreneurDetailsForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unpValue]);
 
-  const handleGrpConfirm = useCallback(() => {
+  const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
     const filled = new Set<string>();
 
@@ -138,11 +141,22 @@ export function EntrepreneurDetailsForm({
       filled.add("ent_name");
     }
 
-    // Apply parsed structured address
+    // Apply parsed structured address + enrich via Google
     if (grpResult.parsed_address) {
       setAddress(grpResult.parsed_address);
       setAddressSource('grp');
       filled.add("address");
+
+      // Async enrichment via Google
+      setIsEnrichingAddress(true);
+      try {
+        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        if (result.enriched) {
+          setAddress(result.address);
+        }
+      } finally {
+        setIsEnrichingAddress(false);
+      }
     }
 
     setAutofilledFields(filled);
@@ -244,6 +258,9 @@ export function EntrepreneurDetailsForm({
               Юридический адрес
               {autofilledFields.has("address") && (
                 <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
+              )}
+              {isEnrichingAddress && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               )}
             </h4>
             <StructuredAddressBlock

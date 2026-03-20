@@ -26,6 +26,7 @@ import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpA
 import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
 import { formatFullAddress } from "@/lib/address/utils";
+import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -127,6 +128,7 @@ export default function AdminExecutors() {
     ExecutorAddressAdapter.toStructuredAddress({})
   );
   const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+  const [isEnrichingAddress, setIsEnrichingAddress] = useState(false);
 
   // GRP lookup state
   const grpLookup = useGrpLookup();
@@ -247,17 +249,28 @@ export default function AdminExecutors() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.unp]);
 
-  const handleGrpConfirm = useCallback(() => {
+  const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
     const filled = new Set<string>();
     if (grpResult.name) { setFormData(prev => ({ ...prev, full_name: grpResult.name! })); filled.add("full_name"); }
     if (grpResult.short_name) { setFormData(prev => ({ ...prev, short_name: grpResult.short_name! })); filled.add("short_name"); }
 
-    // Apply parsed structured address
+    // Apply parsed structured address + enrich via Google
     if (grpResult.parsed_address) {
       setAddress(grpResult.parsed_address);
       setAddressSource('grp');
       filled.add("address");
+
+      // Async enrichment via Google
+      setIsEnrichingAddress(true);
+      try {
+        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        if (result.enriched) {
+          setAddress(result.address);
+        }
+      } finally {
+        setIsEnrichingAddress(false);
+      }
     }
 
     setAutofilledFields(filled);
@@ -556,7 +569,10 @@ export default function AdminExecutors() {
 
             {/* Structured Address */}
             <div>
-              <Label>Юридический адрес *</Label>
+              <Label className="flex items-center gap-2">
+                Юридический адрес *
+                {isEnrichingAddress && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </Label>
               <div className="mt-1.5">
                 <StructuredAddressBlock
                   value={address}
