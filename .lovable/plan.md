@@ -2,78 +2,145 @@
 
 &nbsp;
 
-1. **Не “убрать Radix Tabs”, а оставить Radix Tabs как state-модель, заменить только UI**
+1. **Пункт 3 — твой JSX снова невалидный (двойные {})**
   &nbsp;
-  - Запрещено ломать клавиатурную навигацию/ARIA.
-  - Вариант: оставить Tabs/TabsContent (Radix) как сейчас, но TabsList/TabsTrigger стилизовать под pill иконками (как в Deals).
-  - Если всё же делать useState + кнопки — обязателен DoD по accessibility (tab/arrow navigation, aria-selected, role=tablist/tab).
+  - В примере:
   &nbsp;
-2. **Breadcrumb label: не заменять на маркетинговую фразу**
+
+&nbsp;
+
+```
+{tab.mobileLabel 
+  ? {tab.mobileLabel}
+  : {tab.label}
+}
+```
+
+&nbsp;
+
+1. &nbsp;
+  - — фигурные скобки внутри тернарника создают объект, это сломает сборку.
+  - Правильно (строка/нода без дополнительных {}):
   &nbsp;
-  - В breadcrumbs лучше короткое: AI или Нейросеть.
-  - Фразу «AI-инструменты для твоего бизнеса» перенести в subheader/описание (но ты как раз удаляешь заголовок/подзаголовок).
-  - Лучший компромисс: breadcrumbs = AI, а над вкладками (или справа в хедере) — маленький muted description, если нужен текст.
+
+&nbsp;
+
+```
+{tab.mobileLabel ? tab.mobileLabel : tab.label}
+```
+
+&nbsp;
+
+1. &nbsp;
+  - &nbsp;
+  - И одновременно нужно **развести mobile/desktop** через классы, иначе на desktop будет показано и tab.label, и результат тернарника (дубли).
+  - Лучший вариант без дублей:
   &nbsp;
-3. **Pill-tabs: указать точные классы + active/hover + focus-ring**
+
+&nbsp;
+
+```
+<span className="hidden sm:inline">{tab.label}</span>
+<span className="sm:hidden">{tab.mobileLabel ?? tab.label}</span>
+```
+
+&nbsp;
+
+1. &nbsp;
+2. **Пункт 3 — “hidden sm:inline + безусловный span” действительно даёт дубли**
   &nbsp;
-  - Добавь обязательные классы для доступности/UX: focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 (как в остальных кнопках).
-  - Иконки: задать h-4 w-4 и mr-2.
+  - Фикс выше решает это строго.
   &nbsp;
-4. **Не “поднять контент” за счёт удаления базовых вертикальных отступов везде**
+3. **Пункт 5 — calc(var(--app-height) - 280px) ок только если --app-height гарантированно задан**
   &nbsp;
-  - Менять только верхний wrapper страницы /ai.
-  - DoD: контент ниже табов (вкладки) не схлопнулся и не “прилип” к хедеру.
+  - В плане по мобильной верстке --app-height задаётся в src/index.css. Если это ещё не вмержено/не подключено — добавь guard:
+    &nbsp;
+    - либо оставить fallback через @supports (как уже планировали),
+    - либо использовать minHeight/flex вместо hard-coded calc (лучше, но раз план уже про 5 ошибок — оставляем calc).
+    &nbsp;
+  - DoD: на desktop и mobile высота панели корректна, без “пустого” пространства и без обрезания инпута.
   &nbsp;
-5. **Источник стилей: не по “строкам 645–667”, а через переиспользуемый компонент**
+4. **Пункт 5 — не оставляй магическое -280px без комментария**
   &nbsp;
-  - Чтобы не копировать разметку: вынести pill-tab bar в маленький компонент (например, PillTabs), и использовать и в Deals, и в AI (add-only: сначала применить в AI без рефактора Deals, но структура должна позволять объединить позже).
-  - Если компонент не выносим сейчас — хотя бы оформить как локальную константу tabClass(active) без дублирования.
+  - Добавь короткий комментарий рядом, что это “header + tabs + paddings”, иначе потом никто не поймёт и сломает.
   &nbsp;
-6. **Список вкладок/лейблы: зафиксировать значения и ключи**
+5. **Пункт 1 — проверь, что key реально "/ai", а не "/ai/*" или route id**
   &nbsp;
-  - Ввести enum/union: 'gorbova' | 'tutorials' | 'prompts' (или текущие values Radix).
-  - DoD: при refresh сохраняется выбранная вкладка через query param ?tab= (как минимум add-only опция; если не делаем сейчас — явно написать “не входит в скоуп”).
+  - В некоторых роутерах label мапится по pathname/routeId. В плане добавить DoD:
+    &nbsp;
+    - breadcrumbs на /ai показывает именно «AI-инструменты для твоего бизнеса».
+    &nbsp;
   &nbsp;
-7. **DoD (обязательный)**
+6. **Добавь DoD на компиляцию**
   &nbsp;
-  - Визуально: header /ai совпадает по стилю с Deals (pill tabs, фон, border).
-  - Функционально: переключение вкладок без перерендера всей страницы, контент соответствует вкладке.
-  - Accessibility: tab navigation работает (Tab/Shift+Tab; если Radix оставляем — стрелки тоже).
-  - Нигде не осталось старого блока Sparkles/подзаголовка.
+  - После правок страница собирается без TS/JSX ошибок, таб-лейблы не дублируются (desktop и mobile).
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Если хочешь строго “как в Deals с activePreset” — тогда пункт (1) переключается на state-кнопки, но DoD по accessibility обязателен.
+---
 
 &nbsp;
 
-План: Редизайн страницы «Нейросеть» (/ai) в стиле страницы «Сделки»
+&nbsp;
 
-## Что меняется
+## **Исправленный блок пункта 3 (готовый для вставки)**
 
-Страница `/ai` (`src/pages/AI.tsx`) — переделать верхнюю часть:
+&nbsp;
 
-1. **Убрать** блок с иконкой Sparkles + заголовок «Нейросеть» + подзаголовок «AI-инструменты для твоего бизнеса» (строки 199-207)
-2. **Заменить хлебные крошки** — в `DashboardBreadcrumbs.tsx` для `/ai` сейчас показывается «Искусственный интеллект». Заменить на «AI-инструменты для твоего бизнеса» (строка в routeLabels)
-3. **Заменить TabsList (Radix)** на pill-style кнопки как в AdminDeals — `inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20`:
-  - «gorbova AI» (с иконкой Bot)
-  - «Туториалы» (с иконкой PlayCircle)
-  - «Промпты» (с иконкой Copy)
-   Активная вкладка: `bg-background text-foreground shadow-sm`. Неактивная: `text-muted-foreground hover:text-foreground`.
-4. **Поднять контент** — убрать `space-y-6` между заголовком и табами, табы идут сразу после хлебных крошек (как в сделках — `space-y-4` на корневом div).
+```
+<span className="hidden sm:inline">{tab.label}</span>
+<span className="sm:hidden">{tab.mobileLabel ?? tab.label}</span>
+```
+
+Остальные пункты плана (1,2,4,5) — ок с учётом правок выше.
+
+&nbsp;
+
+План: Исправление 5 ошибок на странице /ai
+
+## Изменения
+
+### 1. `src/components/layout/DashboardBreadcrumbs.tsx` (строка 28)
+
+Заменить `"/ai": "AI"` на `"/ai": "AI-инструменты для твоего бизнеса"`.
+
+### 2. `src/pages/AI.tsx` — удалить дублирующий subheader (строка 211)
+
+Удалить `<p className="text-sm text-muted-foreground">AI-инструменты для твоего бизнеса</p>` — текст теперь в breadcrumbs.
+
+### 3. `src/pages/AI.tsx` — исправить рендер label в табах (строки 232-234)
+
+Сейчас на desktop label показывается дважды (hidden sm:inline + безусловный span для !mobileLabel). Заменить на:
+
+```tsx
+<Icon className="h-4 w-4 mr-0.5" />
+<span className="hidden sm:inline">{tab.label}</span>
+{tab.mobileLabel 
+  ? <span className="sm:hidden">{tab.mobileLabel}</span>
+  : <span className="sm:hidden">{tab.label}</span>
+}
+```
+
+Это показывает `mobileLabel` на mobile (если есть) и полный `label` на desktop, без дублей.
+
+### 4. Кнопки табов — добавить `type="button"` (строка 224)
+
+Добавить `type="button"` к `<button>`, чтобы предотвратить случайный submit.
+
+### 5. Chat panel — заменить `100vh` на `var(--app-height)` (строка 243)
+
+`style={{ height: "calc(100vh - 280px)" }}` → `style={{ height: "calc(var(--app-height) - 280px)" }}` — согласованность с PATCH мобильной верстки.
 
 ## Файлы
 
 
-| Файл                                             | Изменение                                                                                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `src/pages/AI.tsx`                               | Убрать заголовок/иконку, заменить Radix Tabs на pill-style state-кнопки, уменьшить отступы |
-| `src/components/layout/DashboardBreadcrumbs.tsx` | `/ai`: «Искусственный интеллект» → «AI-инструменты для твоего бизнеса»                     |
-
-
-## Технические детали
-
-В `AI.tsx` вместо `<Tabs>/<TabsList>/<TabsTrigger>/<TabsContent>` использовать `useState` для активной вкладки и рендерить контент условно — точно как в AdminDeals с `activePreset`. Стили кнопок копируются 1:1 из AdminDeals (строки 645-667).
+| Файл                       | Строки  | Что                                         |
+| -------------------------- | ------- | ------------------------------------------- |
+| `DashboardBreadcrumbs.tsx` | 28      | label → «AI-инструменты для твоего бизнеса» |
+| `AI.tsx`                   | 211     | удалить subheader                           |
+| `AI.tsx`                   | 224     | `type="button"`                             |
+| `AI.tsx`                   | 232-234 | fix mobile/desktop label rendering          |
+| `AI.tsx`                   | 243     | `var(--app-height)` вместо `100vh`          |
