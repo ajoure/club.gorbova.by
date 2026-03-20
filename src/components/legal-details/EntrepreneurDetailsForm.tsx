@@ -153,7 +153,7 @@ export function EntrepreneurDetailsForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unpValue]);
 
-  const handleGrpConfirm = useCallback(() => {
+  const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
     const filled = new Set<string>();
 
@@ -163,11 +163,22 @@ export function EntrepreneurDetailsForm({
       filled.add("ent_name");
     }
 
-    // Apply parsed structured address
+    // Apply parsed structured address + enrich via Google
     if (grpResult.parsed_address) {
       setAddress(grpResult.parsed_address);
       setAddressSource('grp');
       filled.add("address");
+
+      // Async enrichment via Google
+      setIsEnrichingAddress(true);
+      try {
+        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        if (result.enriched) {
+          setAddress(result.address);
+        }
+      } finally {
+        setIsEnrichingAddress(false);
+      }
     }
 
     setAutofilledFields(filled);
