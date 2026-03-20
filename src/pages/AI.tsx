@@ -153,7 +153,7 @@ type Section = "ai" | "documents";
 type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates";
 
 const SECTIONS = [
-  { id: "ai" as const, label: "Gorbov AI", icon: Bot },
+  { id: "ai" as const, label: "Gorbova AI", icon: Bot },
   { id: "documents" as const, label: "Документы", icon: FileText },
 ];
 
