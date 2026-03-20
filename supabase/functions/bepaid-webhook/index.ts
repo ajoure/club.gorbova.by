@@ -2638,7 +2638,7 @@ Deno.serve(async (req) => {
       // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingLinkPayment } = await supabase
         .from('payments_v2')
-        .select('id, order_id, origin')
+        .select('id, order_id, origin, status')
         .eq('provider_payment_id', transactionUid)
         .eq('provider', 'bepaid')
         .maybeSingle();
@@ -2646,38 +2646,53 @@ Deno.serve(async (req) => {
       if (existingLinkPayment) {
         // True idempotency only if same order
         if (existingLinkPayment.order_id === parsedOrderId) {
-          console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
-
-          // Best-effort: mark queue materialized
-          try {
-            await supabase
-              .from('payment_reconcile_queue')
-              .update({
-                status: 'materialized',
-                processed_at: new Date().toISOString(),
-                last_error: null,
-              })
-              .eq('bepaid_uid', transactionUid);
-          } catch (_) {}
-
-          await recordWebhookEvent(supabase, {
-            provider: 'bepaid',
-            event_type: 'payment_link',
-            transaction_uid: transactionUid,
-            tracking_id: rawTrackingId,
-            parsed_kind: effectiveKind,
-            parsed_order_id: parsedOrderId,
-            outcome: 'already_processed',
-            http_status: 200,
-            processing_ms: Date.now() - startTime,
-          });
-
-          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-
+          // FIX-B: Idempotency upgrade — allow failed/processing → succeeded
+          const existingStatus = (existingLinkPayment as any).status as string | null;
+          
+          // DO-NOT-DOWNGRADE: if already succeeded, always return already_processed
+          if (existingStatus === 'succeeded') {
+            console.log('[WEBHOOK-LINK] Already succeeded (DO-NOT-DOWNGRADE):', transactionUid);
+            try {
+              await supabase.from('payment_reconcile_queue')
+                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
+                .eq('bepaid_uid', transactionUid);
+            } catch (_) {}
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: true, status: 'already_processed', reason: 'already_succeeded' }), {
+              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          
+          // UPGRADE PATH: existing is failed/processing and incoming is successful → allow through
+          if (['failed', 'processing'].includes(existingStatus || '') && isLinkSuccessful) {
+            console.log(`[WEBHOOK-LINK] UPGRADE ${existingStatus} → succeeded for:`, transactionUid);
+            // Fall through to success path — do NOT return
+          } else if (['failed', 'processing'].includes(existingStatus || '') && !isLinkSuccessful) {
+            // Allow update of failed/processing with new non-successful status (e.g. processing→failed)
+            console.log(`[WEBHOOK-LINK] UPDATE ${existingStatus} with incoming ${transactionStatus}:`, transactionUid);
+            // Fall through to !isLinkSuccessful branch — do NOT return
+          } else {
+            // Default: already_processed (e.g. processing→pending duplicate)
+            console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
+            try {
+              await supabase.from('payment_reconcile_queue')
+                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
+                .eq('bepaid_uid', transactionUid);
+            } catch (_) {}
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        } else {
         // CONFLICT: provider_payment_id exists but linked to different order_id
         console.warn('[WEBHOOK-LINK] CONFLICT provider_payment_id linked to other order:', {
           transactionUid,
@@ -2734,6 +2749,7 @@ Deno.serve(async (req) => {
           }),
           { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+        }
       }
 
       // 2. Find order in orders_v2
@@ -2783,6 +2799,73 @@ Deno.serve(async (req) => {
       // Handle non-successful statuses
       if (!isLinkSuccessful) {
         console.log('[WEBHOOK-LINK] Non-successful status:', transactionStatus);
+
+        // FIX-A: ERIP pending → processing (NOT failed)
+        // STOP-GUARD: only for ERIP, never for card/other methods
+        const isErip = paymentMethod === 'erip' || !!transaction?.erip;
+        if (isErip && transactionStatus === 'pending') {
+          console.log('[WEBHOOK-LINK] ERIP pending detected — storing as processing:', transactionUid);
+          const eripPendingAmount = transaction?.amount ? transaction.amount / 100 : 0;
+          const eripPendingCurrency = transaction?.currency || 'BYN';
+          const eripCustomerEmail = transaction?.customer?.email || linkOrderV2?.customer_email || null;
+          const eripCustomerPhone = transaction?.customer?.phone || linkOrderV2?.customer_phone || null;
+
+          const eripPendingRow = {
+            order_id: linkOrderV2.id,
+            user_id: linkOrderV2.user_id || null,
+            profile_id: linkOrderV2.profile_id || null,
+            amount: eripPendingAmount,
+            currency: eripPendingCurrency,
+            status: 'processing',  // NOT failed — ERIP pending is normal intermediate state
+            provider: 'bepaid',
+            provider_payment_id: transactionUid,
+            error_message: null,  // NOT an error
+            origin: 'bepaid',
+            meta: {
+              bepaid_status: transactionStatus,
+              last_bepaid_status: transactionStatus,
+              last_webhook_at: new Date().toISOString(),
+              tracking_id: rawTrackingId,
+              payment_method: 'erip',
+              erip_pending: true,
+              customer_email: eripCustomerEmail,
+              customer_phone: eripCustomerPhone,
+            },
+          };
+
+          if (transactionUid) {
+            const eripResult = await upsertPaymentV2(supabase, eripPendingRow, '[WEBHOOK-LINK-ERIP-PENDING]');
+            if (eripResult.action === 'error') {
+              console.error('[WEBHOOK-LINK] ERIP pending write error (non-fatal):', eripResult.error);
+            }
+          }
+
+          // Audit log: ERIP pending stored (SYSTEM ACTOR)
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+            action: 'bepaid.erip.pending_stored',
+            created_at: new Date().toISOString(),
+            meta: {
+              order_id: linkOrderV2.id,
+              transaction_uid: transactionUid,
+              bepaid_status: transactionStatus,
+              payment_method: 'erip',
+            },
+          });
+
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+            tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+            outcome: 'erip_pending_stored', http_status: 200,
+            processing_ms: Date.now() - startTime,
+          });
+          // STRICT: do NOT create deal, do NOT update order, do NOT grant access
+          return new Response(JSON.stringify({ ok: true, status: 'erip_pending_stored' }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Non-ERIP or non-pending: existing behavior (status='failed')
         // STOP-GUARD: don't overwrite paid/refunded/canceled orders with 'failed'
         if ((transactionStatus === 'failed' || transactionStatus === 'expired') &&
             !['paid', 'refunded', 'canceled'].includes(linkOrderV2.status)) {
@@ -2818,6 +2901,8 @@ Deno.serve(async (req) => {
             customer_email: failedCustomerEmail,
             customer_phone: failedCustomerPhone,
             bepaid_status: transactionStatus,
+            last_bepaid_status: transactionStatus,
+            last_webhook_at: new Date().toISOString(),
             tracking_id: rawTrackingId,
           },
         };
@@ -2954,7 +3039,7 @@ Deno.serve(async (req) => {
         is_recurring: false,
         origin: 'payment_link',
         provider_response: { transaction_uid: transactionUid, status: transactionStatus, amount: transaction?.amount, currency: transaction?.currency, paid_at: transaction?.paid_at },
-        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId, bepaid_description: extractBepaidDescription(body) },
+        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId, bepaid_description: extractBepaidDescription(body), last_bepaid_status: transactionStatus, last_webhook_at: new Date().toISOString(), payment_method: paymentMethod },
         receipt_url: transaction?.receipt_url || null,
       };
 
