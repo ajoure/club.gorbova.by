@@ -101,7 +101,7 @@ serve(async (req) => {
         const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
           method: 'GET',
           headers: {
-            'Authorization': `Basic ${bepaidAuth}`,
+            'Authorization': bepaidAuth,
             'Accept': 'application/json',
             'X-Api-Version': '3',
           },
