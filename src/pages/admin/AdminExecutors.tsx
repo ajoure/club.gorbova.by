@@ -252,6 +252,14 @@ export default function AdminExecutors() {
     const filled = new Set<string>();
     if (grpResult.name) { setFormData(prev => ({ ...prev, full_name: grpResult.name! })); filled.add("full_name"); }
     if (grpResult.short_name) { setFormData(prev => ({ ...prev, short_name: grpResult.short_name! })); filled.add("short_name"); }
+
+    // Apply parsed structured address
+    if (grpResult.parsed_address) {
+      setAddress(grpResult.parsed_address);
+      setAddressSource('grp');
+      filled.add("address");
+    }
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
   }, [grpResult]);
