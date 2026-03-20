@@ -222,6 +222,7 @@ const AI = () => {
               const Icon = tab.icon;
               return (
                 <button
+                  type="button"
                   key={tab.id}
                   role="tab"
                   aria-selected={isActive}
@@ -230,8 +231,7 @@ const AI = () => {
                 >
                   <Icon className="h-4 w-4 mr-0.5" />
                   <span className="hidden sm:inline">{tab.label}</span>
-                  {tab.mobileLabel && <span className="sm:hidden">{tab.mobileLabel}</span>}
-                  {!tab.mobileLabel && <span>{tab.label}</span>}
+                  <span className="sm:hidden">{tab.mobileLabel ?? tab.label}</span>
                 </button>
               );
             })}
