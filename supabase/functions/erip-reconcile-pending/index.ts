@@ -31,18 +31,19 @@ serve(async (req) => {
 
   const startTime = Date.now();
 
-  // Auth: X-Cron-Secret (for pg_cron), service_role key, or any Authorization header
-  // Safety: function is dry-run by default — execute requires explicit flag
+  // Auth: STRICTLY x-cron-secret only. No service_role, no anon, no Authorization alternatives.
   const cronSecret = Deno.env.get('CRON_SECRET');
   const incomingSecret = req.headers.get('x-cron-secret');
-  const authHeader = req.headers.get('Authorization') || '';
-  const apikeyHeader = req.headers.get('apikey') || '';
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-  
   const isCronAuth = !!(cronSecret && incomingSecret === cronSecret);
-  const isServiceRoleAuth = !!(serviceRoleKey && (authHeader.includes(serviceRoleKey) || apikeyHeader === serviceRoleKey));
-  const authSource = isCronAuth ? 'cron_secret' : isServiceRoleAuth ? 'service_role' : 'relay';
-  console.log(`[ERIP-RECONCILE] Auth: ${authSource}`);
+
+  if (!isCronAuth) {
+    console.error('[ERIP-RECONCILE] REJECTED: missing or invalid x-cron-secret');
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  console.log('[ERIP-RECONCILE] Auth: cron_secret OK');
 
   const sbUrl = Deno.env.get('SUPABASE_URL')!;
   const sbKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -67,7 +68,7 @@ serve(async (req) => {
     // Find stuck ERIP payments
     let query = supabase
       .from('payments_v2')
-      .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status')
+      .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status, error_message')
       .eq('provider', 'bepaid');
 
     if (singlePaymentId) {
@@ -76,8 +77,8 @@ serve(async (req) => {
         .in('status', ['processing', 'failed'])
         .eq('provider_payment_id', singlePaymentId);
     } else {
-      // Batch mode: only processing (new ERIP pending flow)
-      query = query.eq('status', 'processing');
+      // Batch mode: processing (FIX-A) + failed (legacy stuck ERIP). JS-filter below ensures ERIP-only.
+      query = query.in('status', ['processing', 'failed']);
       const minAgeDate = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000).toISOString();
       const maxAgeDate = new Date(Date.now() - MAX_AGE_HOURS * 60 * 60 * 1000).toISOString();
       query = query.lt('created_at', minAgeDate).gt('created_at', maxAgeDate);
@@ -89,16 +90,32 @@ serve(async (req) => {
       throw new Error(`DB fetch error: ${fetchError.message}`);
     }
 
-    console.log(`[${BUILD_ID}] Found ${payments?.length || 0} processing payments`);
+    console.log(`[${BUILD_ID}] Found ${payments?.length || 0} candidate payments (before ERIP filter)`);
+
+    // JS-filter: only ERIP payments. Strict detection to avoid touching non-ERIP failed.
+    const eripPayments = (payments || []).filter(p => {
+      const meta = typeof p.meta === 'object' && p.meta ? p.meta as Record<string, unknown> : {};
+      // FIX-A records: webhook stored payment_method='erip' or erip_pending=true
+      if (meta.payment_method === 'erip' || meta.erip_pending === true) return true;
+      // Legacy stuck ERIP (pre-FIX-A): error_message contains ERIP-specific text
+      if (p.status === 'failed' && typeof p.error_message === 'string' && p.error_message.includes('Требование')) return true;
+      return false;
+    });
+
+    console.log(`[${BUILD_ID}] After ERIP filter: ${eripPayments.length} payments`);
 
     const results: any[] = [];
     let upgraded = 0, markedFailed = 0, stillPending = 0, errors = 0;
 
-    for (const payment of payments || []) {
+    for (const payment of eripPayments) {
       const uid = payment.provider_payment_id;
       try {
-        // Query bePaid API by transaction UID
-        const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${uid}`, {
+        let bepaidStatus = 'unknown';
+        let tx: any = null;
+        let statusSource = 'bepaid_api';
+
+        // Strategy 1: Query bePaid API by transaction UID
+        const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
           method: 'GET',
           headers: {
             'Authorization': bepaidAuth,
@@ -107,23 +124,46 @@ serve(async (req) => {
           },
         });
 
-        if (!resp.ok) {
-          const errText = await resp.text().catch(() => 'unknown');
-          console.error(`[${BUILD_ID}] bePaid API error for ${uid}: ${resp.status} ${errText}`);
-          results.push({ uid, action: 'api_error', status: resp.status });
-          errors++;
-          continue;
-        }
+        if (resp.ok) {
+          const data = await resp.json();
+          tx = data?.transaction;
+          bepaidStatus = tx?.status || 'unknown';
+        } else {
+          // Strategy 2: ERIP transactions may 404 on bePaid API.
+          // Fallback: check our own audit_logs for evidence of a successful webhook delivery
+          // that was rejected by idempotency guard (already_processed).
+          console.warn(`[${BUILD_ID}] bePaid API 404 for ${uid}, checking local audit_logs`);
+          
+          const { data: auditHit } = await supabase
+            .from('audit_logs')
+            .select('meta, created_at')
+            .eq('action', 'bepaid.webhook.one_time_link_order_routed')
+            .eq('meta->>transaction_uid', uid)
+            .eq('meta->>bepaid_status', 'successful')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-        const data = await resp.json();
-        const tx = data?.transactions?.[0] || data?.transaction || data;
-        const bepaidStatus = tx?.status || 'unknown';
+          if (auditHit) {
+            bepaidStatus = 'successful';
+            statusSource = 'audit_log_evidence';
+            tx = { status: 'successful', paid_at: auditHit.created_at };
+            console.log(`[${BUILD_ID}] Found audit evidence of successful webhook for ${uid}`);
+          } else {
+            // No evidence — report as api_error
+            console.error(`[${BUILD_ID}] No bePaid API data and no audit evidence for ${uid}`);
+            results.push({ uid, action: 'api_error_no_evidence', status: 404 });
+            errors++;
+            continue;
+          }
+        }
 
         if (dryRun) {
           results.push({
             uid,
             current_status: payment.status,
             bepaid_status: bepaidStatus,
+            status_source: statusSource,
             action: `dry_run:${bepaidStatus === 'successful' ? 'would_upgrade_to_succeeded' : bepaidStatus === 'pending' ? 'still_pending' : 'would_mark_' + bepaidStatus}`,
             order_id: payment.order_id,
           });
@@ -180,7 +220,7 @@ serve(async (req) => {
           await supabase.from('audit_logs').insert({
             actor_type: 'system', actor_user_id: null, actor_label: BUILD_ID,
             action: 'bepaid.erip.reconcile_succeeded',
-            meta: { payment_id: payment.id, uid, order_id: payment.order_id, source },
+            meta: { payment_id: payment.id, uid, order_id: payment.order_id, source, status_source: statusSource },
           });
 
           upgraded++;
