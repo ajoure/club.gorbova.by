@@ -29,30 +29,8 @@ import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAu
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-  FormDescription,
-} from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { DEMO_ENTREPRENEUR } from "@/constants/demoLegalDetails";
-import { Loader2, Save, Info } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
-import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
-import type { StructuredAddress } from "@/lib/address/types";
-import { EntrepreneurAddressAdapter } from "@/lib/address/adapters/EntrepreneurAddressAdapter";
-import { formatFullAddress } from "@/lib/address/utils";
-import { useGrpLookup } from "@/hooks/useGrpLookup";
-import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
-import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
-import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
-import { GrpConfirmDialog } from "./GrpConfirmDialog";
-import { Badge } from "@/components/ui/badge";
+
+
 
 const schema = z.object({
   ent_name: z.string().min(5, "Введите полное наименование ИП"),
