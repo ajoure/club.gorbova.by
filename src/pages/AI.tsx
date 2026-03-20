@@ -207,11 +207,10 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-1">
-        
+      <div className="flex flex-col flex-1 min-h-0 gap-1">
 
         {/* Pill-style Tabs */}
-        <div className="px-1 pt-0 pb-0 shrink-0">
+        <div className="px-1 py-1 shrink-0">
           <div
             role="tablist"
             aria-label="AI разделы"
@@ -238,11 +237,11 @@ const AI = () => {
           </div>
         </div>
 
-          {/* Chat Tab — height: header(2.75rem) + tabs + paddings ≈ 200px */}
+          {/* Chat Tab — flex-1 растягивает до низа страницы */}
           {activeTab === "chat" && (
-            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(var(--app-height, 100vh) - 200px)" }}>
+            <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
               {/* Messages Area */}
-              <ScrollArea className="flex-1 p-4">
+              <ScrollArea className="flex-1 min-h-0 p-4">
                 <div className="space-y-4">
                   {messages.map((message) => (
                     <div
@@ -284,7 +283,7 @@ const AI = () => {
               </ScrollArea>
 
               {/* Input Area */}
-              <div className="border-t border-border/50 p-4 bg-background/50">
+              <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
                 <div className="flex gap-2">
                   <Textarea
                     value={inputValue}
