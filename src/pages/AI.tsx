@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +11,6 @@ import {
   PlayCircle, 
   Copy, 
   Send, 
-  Sparkles,
   Clock,
   Target,
   TrendingUp,
@@ -150,6 +148,7 @@ const AI = () => {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chat" | "tutorials" | "prompts">("chat");
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -193,39 +192,54 @@ const AI = () => {
     }
   };
 
+  const AI_TABS = [
+    { id: "chat" as const, label: "gorbova AI", mobileLabel: "AI", icon: Bot },
+    { id: "tutorials" as const, label: "Туториалы", mobileLabel: "Видео", icon: PlayCircle },
+    { id: "prompts" as const, label: "Промпты", icon: Copy },
+  ];
+
+  const tabClass = (active: boolean) =>
+    `relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+      active
+        ? "bg-background text-foreground shadow-sm"
+        : "text-muted-foreground hover:text-foreground"
+    }`;
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-primary/10">
-            <Sparkles className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Нейросеть</h1>
-            <p className="text-muted-foreground">AI-инструменты для твоего бизнеса</p>
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">AI-инструменты для твоего бизнеса</p>
+
+        {/* Pill-style Tabs */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div
+            role="tablist"
+            aria-label="AI разделы"
+            className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none"
+          >
+            {AI_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={tabClass(isActive)}
+                >
+                  <Icon className="h-4 w-4 mr-0.5" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.mobileLabel && <span className="sm:hidden">{tab.mobileLabel}</span>}
+                  {!tab.mobileLabel && <span>{tab.label}</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <Tabs defaultValue="chat" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-flex">
-            <TabsTrigger value="chat" className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              <span className="hidden sm:inline">gorbova AI</span>
-              <span className="sm:hidden">AI</span>
-            </TabsTrigger>
-            <TabsTrigger value="tutorials" className="flex items-center gap-2">
-              <PlayCircle className="h-4 w-4" />
-              <span className="hidden sm:inline">Туториалы</span>
-              <span className="sm:hidden">Видео</span>
-            </TabsTrigger>
-            <TabsTrigger value="prompts" className="flex items-center gap-2">
-              <Copy className="h-4 w-4" />
-              <span>Промпты</span>
-            </TabsTrigger>
-          </TabsList>
-
           {/* Chat Tab */}
-          <TabsContent value="chat" className="mt-6">
+          {activeTab === "chat" && (
             <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(100vh - 280px)", minHeight: "500px" }}>
               {/* Messages Area */}
               <ScrollArea className="flex-1 p-4">
@@ -294,10 +308,9 @@ const AI = () => {
                 </p>
               </div>
             </GlassCard>
-          </TabsContent>
+          )}
 
-          {/* Tutorials Tab */}
-          <TabsContent value="tutorials" className="mt-6">
+          {activeTab === "tutorials" && (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {tutorials.map((tutorial) => (
                 <GlassCard key={tutorial.id} hover className="flex flex-col">
@@ -326,60 +339,60 @@ const AI = () => {
                 </GlassCard>
               ))}
             </div>
-          </TabsContent>
+          )}
 
-          {/* Prompts Tab */}
-          <TabsContent value="prompts" className="mt-6">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {prompts.map((prompt) => (
-                <GlassCard key={prompt.id} className="flex flex-col">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                        {prompt.icon}
+          {activeTab === "prompts" && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {prompts.map((prompt) => (
+                  <GlassCard key={prompt.id} className="flex flex-col">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                          {prompt.icon}
+                        </div>
+                        <Badge variant="outline">{prompt.category}</Badge>
                       </div>
-                      <Badge variant="outline">{prompt.category}</Badge>
                     </div>
+                    <h3 className="font-semibold mb-2">{prompt.title}</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {prompt.description}
+                    </p>
+                    <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
+                      <p className="text-xs font-mono text-muted-foreground line-clamp-4">
+                        {prompt.promptText}
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Копировать
+                    </Button>
+                  </GlassCard>
+                ))}
+              </div>
+              
+              {/* Hint */}
+              <GlassCard className="mt-6">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 rounded-xl bg-primary/10 shrink-0">
+                    <Zap className="h-6 w-6 text-primary" />
                   </div>
-                  <h3 className="font-semibold mb-2">{prompt.title}</h3>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {prompt.description}
-                  </p>
-                  <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
-                    <p className="text-xs font-mono text-muted-foreground line-clamp-4">
-                      {prompt.promptText}
+                  <div>
+                    <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
+                      Замени текст в [квадратных скобках] на свои данные. 
+                      Чем точнее ты опишешь контекст, тем лучше будет результат!
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
-                  >
-                    <Copy className="h-4 w-4 mr-2" />
-                    Копировать
-                  </Button>
-                </GlassCard>
-              ))}
-            </div>
-            
-            {/* Hint */}
-            <GlassCard className="mt-6">
-              <div className="flex items-start gap-4">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Zap className="h-6 w-6 text-primary" />
                 </div>
-                <div>
-                  <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
-                    Замени текст в [квадратных скобках] на свои данные. 
-                    Чем точнее ты опишешь контекст, тем лучше будет результат!
-                  </p>
-                </div>
-              </div>
-            </GlassCard>
-          </TabsContent>
-        </Tabs>
+              </GlassCard>
+            </>
+          )}
       </div>
     </DashboardLayout>
   );
