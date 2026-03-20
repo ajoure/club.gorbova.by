@@ -2646,37 +2646,52 @@ Deno.serve(async (req) => {
       if (existingLinkPayment) {
         // True idempotency only if same order
         if (existingLinkPayment.order_id === parsedOrderId) {
-          console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
-
-          // Best-effort: mark queue materialized
-          try {
-            await supabase
-              .from('payment_reconcile_queue')
-              .update({
-                status: 'materialized',
-                processed_at: new Date().toISOString(),
-                last_error: null,
-              })
-              .eq('bepaid_uid', transactionUid);
-          } catch (_) {}
-
-          await recordWebhookEvent(supabase, {
-            provider: 'bepaid',
-            event_type: 'payment_link',
-            transaction_uid: transactionUid,
-            tracking_id: rawTrackingId,
-            parsed_kind: effectiveKind,
-            parsed_order_id: parsedOrderId,
-            outcome: 'already_processed',
-            http_status: 200,
-            processing_ms: Date.now() - startTime,
-          });
-
-          return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+          // FIX-B: Idempotency upgrade — allow failed/processing → succeeded
+          const existingStatus = (existingLinkPayment as any).status as string | null;
+          
+          // DO-NOT-DOWNGRADE: if already succeeded, always return already_processed
+          if (existingStatus === 'succeeded') {
+            console.log('[WEBHOOK-LINK] Already succeeded (DO-NOT-DOWNGRADE):', transactionUid);
+            try {
+              await supabase.from('payment_reconcile_queue')
+                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
+                .eq('bepaid_uid', transactionUid);
+            } catch (_) {}
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: true, status: 'already_processed', reason: 'already_succeeded' }), {
+              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          
+          // UPGRADE PATH: existing is failed/processing and incoming is successful → allow through
+          if (['failed', 'processing'].includes(existingStatus || '') && isLinkSuccessful) {
+            console.log(`[WEBHOOK-LINK] UPGRADE ${existingStatus} → succeeded for:`, transactionUid);
+            // Fall through to success path — do NOT return
+          } else if (['failed', 'processing'].includes(existingStatus || '') && !isLinkSuccessful) {
+            // Allow update of failed/processing with new non-successful status (e.g. processing→failed)
+            console.log(`[WEBHOOK-LINK] UPDATE ${existingStatus} with incoming ${transactionStatus}:`, transactionUid);
+            // Fall through to !isLinkSuccessful branch — do NOT return
+          } else {
+            // Default: already_processed (e.g. processing→pending duplicate)
+            console.log('[WEBHOOK-LINK] Already processed (idempotency):', transactionUid);
+            try {
+              await supabase.from('payment_reconcile_queue')
+                .update({ status: 'materialized', processed_at: new Date().toISOString(), last_error: null })
+                .eq('bepaid_uid', transactionUid);
+            } catch (_) {}
+            await recordWebhookEvent(supabase, {
+              provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+              tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+              outcome: 'already_processed', http_status: 200, processing_ms: Date.now() - startTime,
+            });
+            return new Response(JSON.stringify({ ok: true, status: 'already_processed' }), {
+              status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
 
         // CONFLICT: provider_payment_id exists but linked to different order_id
         console.warn('[WEBHOOK-LINK] CONFLICT provider_payment_id linked to other order:', {
