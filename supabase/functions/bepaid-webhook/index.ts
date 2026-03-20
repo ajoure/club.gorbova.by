@@ -2798,6 +2798,73 @@ Deno.serve(async (req) => {
       // Handle non-successful statuses
       if (!isLinkSuccessful) {
         console.log('[WEBHOOK-LINK] Non-successful status:', transactionStatus);
+
+        // FIX-A: ERIP pending → processing (NOT failed)
+        // STOP-GUARD: only for ERIP, never for card/other methods
+        const isErip = paymentMethod === 'erip' || !!transaction?.erip;
+        if (isErip && transactionStatus === 'pending') {
+          console.log('[WEBHOOK-LINK] ERIP pending detected — storing as processing:', transactionUid);
+          const eripPendingAmount = transaction?.amount ? transaction.amount / 100 : 0;
+          const eripPendingCurrency = transaction?.currency || 'BYN';
+          const eripCustomerEmail = transaction?.customer?.email || linkOrderV2?.customer_email || null;
+          const eripCustomerPhone = transaction?.customer?.phone || linkOrderV2?.customer_phone || null;
+
+          const eripPendingRow = {
+            order_id: linkOrderV2.id,
+            user_id: linkOrderV2.user_id || null,
+            profile_id: linkOrderV2.profile_id || null,
+            amount: eripPendingAmount,
+            currency: eripPendingCurrency,
+            status: 'processing',  // NOT failed — ERIP pending is normal intermediate state
+            provider: 'bepaid',
+            provider_payment_id: transactionUid,
+            error_message: null,  // NOT an error
+            origin: 'bepaid',
+            meta: {
+              bepaid_status: transactionStatus,
+              last_bepaid_status: transactionStatus,
+              last_webhook_at: new Date().toISOString(),
+              tracking_id: rawTrackingId,
+              payment_method: 'erip',
+              erip_pending: true,
+              customer_email: eripCustomerEmail,
+              customer_phone: eripCustomerPhone,
+            },
+          };
+
+          if (transactionUid) {
+            const eripResult = await upsertPaymentV2(supabase, eripPendingRow, '[WEBHOOK-LINK-ERIP-PENDING]');
+            if (eripResult.action === 'error') {
+              console.error('[WEBHOOK-LINK] ERIP pending write error (non-fatal):', eripResult.error);
+            }
+          }
+
+          // Audit log: ERIP pending stored (SYSTEM ACTOR)
+          await supabase.from('audit_logs').insert({
+            actor_type: 'system', actor_user_id: null, actor_label: 'bepaid-webhook',
+            action: 'bepaid.erip.pending_stored',
+            created_at: new Date().toISOString(),
+            meta: {
+              order_id: linkOrderV2.id,
+              transaction_uid: transactionUid,
+              bepaid_status: transactionStatus,
+              payment_method: 'erip',
+            },
+          });
+
+          await recordWebhookEvent(supabase, {
+            provider: 'bepaid', event_type: 'payment_link', transaction_uid: transactionUid,
+            tracking_id: rawTrackingId, parsed_kind: effectiveKind, parsed_order_id: parsedOrderId,
+            outcome: 'erip_pending_stored', http_status: 200,
+            processing_ms: Date.now() - startTime,
+          });
+          // STRICT: do NOT create deal, do NOT update order, do NOT grant access
+          return new Response(JSON.stringify({ ok: true, status: 'erip_pending_stored' }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // Non-ERIP or non-pending: existing behavior (status='failed')
         // STOP-GUARD: don't overwrite paid/refunded/canceled orders with 'failed'
         if ((transactionStatus === 'failed' || transactionStatus === 'expired') &&
             !['paid', 'refunded', 'canceled'].includes(linkOrderV2.status)) {
@@ -2833,6 +2900,8 @@ Deno.serve(async (req) => {
             customer_email: failedCustomerEmail,
             customer_phone: failedCustomerPhone,
             bepaid_status: transactionStatus,
+            last_bepaid_status: transactionStatus,
+            last_webhook_at: new Date().toISOString(),
             tracking_id: rawTrackingId,
           },
         };
