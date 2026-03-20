@@ -97,8 +97,8 @@ serve(async (req) => {
     for (const payment of payments || []) {
       const uid = payment.provider_payment_id;
       try {
-        // Query bePaid API
-        const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
+        // Query bePaid API by transaction UID
+        const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${uid}`, {
           method: 'GET',
           headers: {
             'Authorization': bepaidAuth,
