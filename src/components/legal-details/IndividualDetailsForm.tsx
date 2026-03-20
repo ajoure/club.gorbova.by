@@ -1,6 +1,7 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useState, useCallback } from "react";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Form,
@@ -17,6 +18,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_INDIVIDUAL } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
+import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
+import type { StructuredAddress } from "@/lib/address/types";
+import { IndividualAddressAdapter } from "@/lib/address/adapters/IndividualAddressAdapter";
 
 const schema = z.object({
   // Required fields
@@ -31,13 +35,6 @@ const schema = z.object({
   ind_passport_issued_by: z.string().optional(),
   ind_passport_issued_date: z.string().optional(),
   ind_passport_valid_until: z.string().optional(),
-  ind_address_index: z.string().optional(),
-  ind_address_region: z.string().optional(),
-  ind_address_district: z.string().optional(),
-  ind_address_city: z.string().optional(),
-  ind_address_street: z.string().optional(),
-  ind_address_house: z.string().optional(),
-  ind_address_apartment: z.string().optional(),
   bank_account: z.string().optional(),
   bank_name: z.string().optional(),
   bank_code: z.string().optional(),
@@ -60,6 +57,20 @@ export function IndividualDetailsForm({
 }: IndividualDetailsFormProps) {
   const hasRealData = !!initialData?.ind_full_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
+
+  const [address, setAddress] = useState<StructuredAddress>(() =>
+    IndividualAddressAdapter.toStructuredAddress({
+      ind_address_index: initialData?.ind_address_index,
+      ind_address_region: initialData?.ind_address_region,
+      ind_address_district: initialData?.ind_address_district,
+      ind_address_city: initialData?.ind_address_city,
+      ind_address_street: initialData?.ind_address_street,
+      ind_address_house: initialData?.ind_address_house,
+      ind_address_apartment: initialData?.ind_address_apartment,
+      ind_address_structured: initialData?.ind_address_structured as any,
+    })
+  );
+  const [addressSource, setAddressSource] = useState<'manual' | 'google'>('manual');
   
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
@@ -72,13 +83,6 @@ export function IndividualDetailsForm({
         ind_passport_issued_date: initialData?.ind_passport_issued_date || "",
         ind_passport_valid_until: initialData?.ind_passport_valid_until || "",
         ind_personal_number: initialData?.ind_personal_number || "",
-        ind_address_index: initialData?.ind_address_index || "",
-        ind_address_region: initialData?.ind_address_region || "",
-        ind_address_district: initialData?.ind_address_district || "",
-        ind_address_city: initialData?.ind_address_city || "",
-        ind_address_street: initialData?.ind_address_street || "",
-        ind_address_house: initialData?.ind_address_house || "",
-        ind_address_apartment: initialData?.ind_address_apartment || "",
         bank_account: initialData?.bank_account || "",
         bank_name: initialData?.bank_name || "",
         bank_code: initialData?.bank_code || "",
@@ -87,7 +91,6 @@ export function IndividualDetailsForm({
       };
     }
     
-    // Пустая форма - демо-данные показываются как placeholder
     return {
       ind_full_name: "",
       ind_birth_date: "",
@@ -97,13 +100,6 @@ export function IndividualDetailsForm({
       ind_passport_issued_date: "",
       ind_passport_valid_until: "",
       ind_personal_number: "",
-      ind_address_index: "",
-      ind_address_region: "",
-      ind_address_district: "",
-      ind_address_city: "",
-      ind_address_street: "",
-      ind_address_house: "",
-      ind_address_apartment: "",
       bank_account: "",
       bank_name: "",
       bank_code: "",
@@ -117,14 +113,20 @@ export function IndividualDetailsForm({
     defaultValues: getDefaultValues(),
   });
 
+  const handleAddressChange = useCallback((val: StructuredAddress) => {
+    setAddress(val);
+    setAddressSource(val.google_place_id ? 'google' : 'manual');
+  }, []);
+
   const handleSubmit = async (data: FormData) => {
+    const addressFields = IndividualAddressAdapter.toLegacyFields(address, addressSource);
     await onSubmit({
       ...data,
+      ...addressFields,
       client_type: "individual",
     });
   };
 
-  // Функция для получения placeholder - показываем демо если нет данных
   const getPlaceholder = (field: keyof typeof DEMO_INDIVIDUAL, fallback: string) => {
     return showDemoPlaceholders ? (DEMO_INDIVIDUAL[field] || fallback) : fallback;
   };
@@ -350,7 +352,7 @@ export function IndividualDetailsForm({
           />
         </div>
 
-        {/* Address - Optional */}
+        {/* Address - StructuredAddressBlock */}
         <div className="rounded-xl border bg-muted/30 p-5 sm:p-6 space-y-5">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="h-2 w-2 rounded-full bg-muted-foreground/40" />
@@ -360,135 +362,13 @@ export function IndividualDetailsForm({
             <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">опционально</span>
           </div>
           
-          <div className="grid grid-cols-3 gap-4">
-            <FormField
-              control={form.control}
-              name="ind_address_index"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Индекс</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder={getPlaceholder("ind_address_index", "222840")} 
-                      autoComplete="off" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="ind_address_region"
-              render={({ field }) => (
-                <FormItem className="col-span-2">
-                  <FormLabel>Область</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder={getPlaceholder("ind_address_region", "Минская область")} 
-                      autoComplete="off" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField
-              control={form.control}
-              name="ind_address_district"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Район (если есть)</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder={getPlaceholder("ind_address_district", "Пуховичский район")} 
-                      autoComplete="off" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="ind_address_city"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Населённый пункт</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder={getPlaceholder("ind_address_city", "г. Минск")} 
-                      autoComplete="off" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-4">
-            <FormField
-              control={form.control}
-              name="ind_address_street"
-              render={({ field }) => (
-                <FormItem className="col-span-2">
-                  <FormLabel>Улица</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder={getPlaceholder("ind_address_street", "ул. Блашко")} 
-                      autoComplete="off" 
-                      {...field} 
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <FormField
-                control={form.control}
-                name="ind_address_house"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Дом</FormLabel>
-                    <FormControl>
-                      <Input 
-                        placeholder={getPlaceholder("ind_address_house", "25")} 
-                        autoComplete="off" 
-                        {...field} 
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="ind_address_apartment"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Кв.</FormLabel>
-                    <FormControl>
-                      <Input 
-                        placeholder={getPlaceholder("ind_address_apartment", "1")} 
-                        autoComplete="off" 
-                        {...field} 
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-          </div>
+          <StructuredAddressBlock
+            value={address}
+            onChange={handleAddressChange}
+            disabled={isSubmitting}
+            compact
+            countries={['by']}
+          />
         </div>
 
         {/* Bank - Optional */}
