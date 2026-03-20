@@ -110,7 +110,11 @@ serve(async (req) => {
     for (const payment of eripPayments) {
       const uid = payment.provider_payment_id;
       try {
-        // Query bePaid API by transaction UID (single transaction endpoint)
+        let bepaidStatus = 'unknown';
+        let tx: any = null;
+        let statusSource = 'bepaid_api';
+
+        // Strategy 1: Query bePaid API by transaction UID
         const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
           method: 'GET',
           headers: {
@@ -120,17 +124,39 @@ serve(async (req) => {
           },
         });
 
-        if (!resp.ok) {
-          const errText = await resp.text().catch(() => 'unknown');
-          console.error(`[${BUILD_ID}] bePaid API error for ${uid}: ${resp.status} ${errText}`);
-          results.push({ uid, action: 'api_error', status: resp.status });
-          errors++;
-          continue;
-        }
+        if (resp.ok) {
+          const data = await resp.json();
+          tx = data?.transaction;
+          bepaidStatus = tx?.status || 'unknown';
+        } else {
+          // Strategy 2: ERIP transactions may 404 on bePaid API.
+          // Fallback: check our own audit_logs for evidence of a successful webhook delivery
+          // that was rejected by idempotency guard (already_processed).
+          console.warn(`[${BUILD_ID}] bePaid API 404 for ${uid}, checking local audit_logs`);
+          
+          const { data: auditHit } = await supabase
+            .from('audit_logs')
+            .select('meta, created_at')
+            .eq('action', 'bepaid.webhook.one_time_link_order_routed')
+            .eq('meta->>transaction_uid', uid)
+            .eq('meta->>bepaid_status', 'successful')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-        const data = await resp.json();
-        const tx = data?.transaction;
-        const bepaidStatus = tx?.status || 'unknown';
+          if (auditHit) {
+            bepaidStatus = 'successful';
+            statusSource = 'audit_log_evidence';
+            tx = { status: 'successful', paid_at: auditHit.created_at };
+            console.log(`[${BUILD_ID}] Found audit evidence of successful webhook for ${uid}`);
+          } else {
+            // No evidence — report as api_error
+            console.error(`[${BUILD_ID}] No bePaid API data and no audit evidence for ${uid}`);
+            results.push({ uid, action: 'api_error_no_evidence', status: 404 });
+            errors++;
+            continue;
+          }
+        }
 
         if (dryRun) {
           results.push({
