@@ -67,19 +67,22 @@ export async function enrichAddressViaGoogle(
     // Merge: Google fills gaps, GRP apartment is preserved
     const grpApartment = preliminary.apartment;
     
+    // Safe merge: GRP-распознанные поля имеют приоритет.
+    // Google дозаполняет ТОЛЬКО пустые поля.
     const merged: StructuredAddress = {
-      country_code: googleParsed.country_code || preliminary.country_code || 'BY',
-      country_name: googleParsed.country_name || preliminary.country_name || 'Беларусь',
-      region: googleParsed.region || preliminary.region,
-      district: googleParsed.district || preliminary.district,
-      city: googleParsed.city || preliminary.city,
-      settlement: googleParsed.settlement || preliminary.settlement,
-      street: googleParsed.street || preliminary.street,
-      house: googleParsed.house || preliminary.house,
-      building: googleParsed.building || preliminary.building,
-      // Preserve apartment from GRP (Google rarely returns office/apartment info)
+      // GRP-приоритетные поля — не перезаписываются Google
+      street: preliminary.street || googleParsed.street,
+      house: preliminary.house || googleParsed.house,
+      city: preliminary.city || googleParsed.city,
+      building: preliminary.building || googleParsed.building,
+      settlement: preliminary.settlement || googleParsed.settlement,
       apartment: grpApartment || googleParsed.apartment || '',
-      postal_code: googleParsed.postal_code || preliminary.postal_code,
+      // Google дозаполняет только пустые мета-поля
+      district: preliminary.district || googleParsed.district,
+      region: preliminary.region || googleParsed.region,
+      postal_code: preliminary.postal_code || googleParsed.postal_code,
+      country_code: preliminary.country_code || googleParsed.country_code || 'BY',
+      country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
       address_line_2: preliminary.address_line_2 || '',
       google_place_id: place.id || null,
       lat: place.location?.lat() ?? null,

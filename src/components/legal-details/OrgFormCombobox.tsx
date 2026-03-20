@@ -147,23 +147,23 @@ export function OrgFormCombobox({
 
       {/* Custom fields for "Другое" */}
       {isOther && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-3 pt-1">
           <div>
-            <Label className="text-xs text-muted-foreground">Полная форма *</Label>
+            <Label className="text-sm text-muted-foreground mb-1 block">Полная форма *</Label>
             <Input
               value={customFullForm}
               onChange={(e) => onCustomFullFormChange?.(e.target.value)}
-              placeholder="Полное наименование формы"
-              className="h-8 text-sm"
+              placeholder="Например: Частное предприятие"
+              className="w-full"
             />
           </div>
           <div>
-            <Label className="text-xs text-muted-foreground">Краткая форма *</Label>
+            <Label className="text-sm text-muted-foreground mb-1 block">Краткая форма *</Label>
             <Input
               value={customShortForm}
               onChange={(e) => onCustomShortFormChange?.(e.target.value)}
-              placeholder="Сокращение"
-              className="h-8 text-sm"
+              placeholder="Например: ЧП"
+              className="w-full max-w-[240px]"
             />
           </div>
         </div>
