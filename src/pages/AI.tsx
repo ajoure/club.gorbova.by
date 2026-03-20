@@ -192,36 +192,51 @@ const AI = () => {
     }
   };
 
+  const AI_TABS = [
+    { id: "chat" as const, label: "gorbova AI", mobileLabel: "AI", icon: Bot },
+    { id: "tutorials" as const, label: "Туториалы", mobileLabel: "Видео", icon: PlayCircle },
+    { id: "prompts" as const, label: "Промпты", icon: Copy },
+  ];
+
+  const tabClass = (active: boolean) =>
+    `relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+      active
+        ? "bg-background text-foreground shadow-sm"
+        : "text-muted-foreground hover:text-foreground"
+    }`;
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-primary/10">
-            <Sparkles className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Нейросеть</h1>
-            <p className="text-muted-foreground">AI-инструменты для твоего бизнеса</p>
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">AI-инструменты для твоего бизнеса</p>
+
+        {/* Pill-style Tabs */}
+        <div className="px-1 pt-1 pb-1.5 shrink-0">
+          <div
+            role="tablist"
+            aria-label="AI разделы"
+            className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none"
+          >
+            {AI_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={tabClass(isActive)}
+                >
+                  <Icon className="h-4 w-4 mr-0.5" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.mobileLabel && <span className="sm:hidden">{tab.mobileLabel}</span>}
+                  {!tab.mobileLabel && <span>{tab.label}</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
-
-        <Tabs defaultValue="chat" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-flex">
-            <TabsTrigger value="chat" className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              <span className="hidden sm:inline">gorbova AI</span>
-              <span className="sm:hidden">AI</span>
-            </TabsTrigger>
-            <TabsTrigger value="tutorials" className="flex items-center gap-2">
-              <PlayCircle className="h-4 w-4" />
-              <span className="hidden sm:inline">Туториалы</span>
-              <span className="sm:hidden">Видео</span>
-            </TabsTrigger>
-            <TabsTrigger value="prompts" className="flex items-center gap-2">
-              <Copy className="h-4 w-4" />
-              <span>Промпты</span>
-            </TabsTrigger>
-          </TabsList>
 
           {/* Chat Tab */}
           <TabsContent value="chat" className="mt-6">
