@@ -1,212 +1,154 @@
 # Да, согласен, с учетом правок:
 
-1. Добавь **RBAC и ownership-check** в явном виде.  
-Недостаточно просто safe access token. Нужно отдельно зафиксировать:
-  - кто именно может читать store config;
-  - кто может менять;
-  - кто может только видеть diagnostics;
-  - обязательная проверка привязки `integration_instance` к текущему amo install/context.
-2. Добавь правило **secret never returns to client**.  
-В `get`/status surface нельзя возвращать:
-  - raw secret;
-  - masked secret, если это не нужно для UX;
-  - любые данные, по которым можно восстановить secret.  
-  Только backend state:
-  - `secret_present: true/false`
-  - `last_test_at`
-  - `connection_status`
-  - `payments_unlocked`
-3. Зафиксируй **patch semantics** для save/update.  
-Нужно явно прописать:
-  - partial update;
-  - пустые поля не стирают сохранённые значения;
-  - изменение `shop_id` / `publishable_key` / `secret_key` не должно случайно обнулять соседние поля;
-  - save должен быть идемпотентным.
-4. Добавь **audit_logs** как обязательный DoD.  
-Для всех действий:
-  - save config
-  - replace secret
-  - delete secret
-  - test connection
-  - unlock payments  
-  Должны быть реальные записи в `audit_logs` с actor, integration_instance, amo_account_id, outcome.
-5. Нужен **single backend status contract** для settings UI.  
-Не разрозненные проверки в нескольких местах, а один агрегированный backend response:
-  - `config_exists`
-  - `shop_id_present`
-  - `publishable_key_present`
-  - `secret_present`
-  - `connection_status`
-  - `last_test_at`
-  - `last_test_error`
-  - `payments_unlocked`
-  - `locked_reason`
-6. Добавь **anti-race / double-submit protection**.  
-Нужно явно предусмотреть:
-  - повторный click по Save/Test не создает параллельные операции;
-  - `test` не стартует до завершения `save`;
-  - stale response не должен перетирать более новое состояние.
-7. Зафиксируй **backend-first unlock logic**.  
-`advancedSettings` должен разблокироваться только по backend state, а не по локальному состоянию формы/клиента. После reload состояние должно восстанавливаться из backend без расхождений.
-8. Добавь **diagnostics proof**, что test использует backend secret.  
-Не просто декларацию, а проверяемый DoD:
-  - test без сохраненного secret → predictable fail/locked;
-  - test после сохранения → использует backend binding;
-  - client-side введённый, но не сохранённый secret не должен влиять на результат test.
-9. Ограничь scope этого спринта еще жестче.  
-Явно написать:
-  - без расширения iframe бизнес-функций;
-  - без новой платежной логики;
-  - без новых source-of-truth таблиц;
-  - только store connection setup + locked/unlocked flow + diagnostics.
-10. Добавь verify по кешу amoCRM как обязательный пакет доказательств.  
-Не только version bump, а еще:
+1. **План покрывает не всё ТЗ.**  
+Сейчас он закрывает только:
+  - safe enrichment адреса,
+  - ширину формы,
+  - UX для `Другое`.  
+  Но из ТЗ еще был запрос про **ИП flow**. Либо добавь это в план, либо явно пометь как **out of scope текущего PATCH**.
+2. **Добавь отдельный VERIFY по ИП.**  
+В ТЗ было важно, чтобы для ИП:
+  - имя не искажалось,
+  - не добавлялись кавычки,
+  - не пыталась выделяться оргформа там, где её нет,
+  - адрес работал по тем же safe-enrichment правилам.  
+  Сейчас в плане это только словесно упомянуто, но **нет в DoD**.
+3. **Для** `Другое` **недостаточно исправить только layout.**  
+Нужно явно добавить в DoD:
+  - `Полная форма` сохраняется;
+  - `Краткая форма` сохраняется;
+  - после `save + reopen` оба значения остаются;
+  - эти поля не схлопываются обратно и не теряются.  
+  Иначе из ТЗ будет закрыт только внешний вид, но не фактическое поведение.
+4. **Расширение формы лучше зафиксировать не только через** `max-w-4xl`**.**  
+Это может помочь, но может оказаться недостаточно.  
+Добавь формулировку:
+  - расширить **основной контейнер страницы и внутреннюю карточку реквизитов**;
+  - адресный блок и блок `Другое` должны использовать доступную ширину, а не оставаться визуально зажатыми.  
+  То есть не ограничивайся одним классом, а фиксируй **ожидаемый UI-результат**.
+5. **Safe enrichment опиши жестче.**  
+Сейчас идея правильная, но нужно явно зафиксировать:
+  - если GRP уже распознал `street / house / city / apartment / building`, Google **не имеет права** их перезаписать;
+  - Google только дозаполняет пустые поля;
+  - при конфликте значений Google-ответ автоматически не применяется.  
+  Это главный баг, и его нужно зафиксировать как правило, а не только как перестановку `||`.
+6. **Добавь proof после сохранения, а не только после apply.**  
+В DoD сейчас не хватает:
+  - after confirm,
+  - after save,
+  - after reopen.  
+  Нужно доказать:
+  - `Панфилова` не превращается в `Верхняя`;
+  - `дом 2` и `49л` не теряются;
+  - canonical и legacy согласованы после повторного открытия формы.
+7. **Отдельно зафиксируй, что новых сущностей не создаём.**  
+Напиши явно:
+  - без новых таблиц,
+  - без новых EF,
+  - без миграций,
+  - только bugfix текущего flow.  
+  Это соответствует add-only подходу и не даст разрастись патчу.
+8. **Если объединение/упрощение сценария ЮЛ/ИП не входит в этот PATCH — так и напиши.**  
+Иначе план выглядит как будто эта часть ТЗ забыта.  
+Нужна одна строка:
+  - `рефактор объединения сценариев ЮЛ/ИП в один flow в этот PATCH не входит; сейчас только bugfix и verify существующих flows`.
 
-- новый ZIP реально загружен;
-- runtime fingerprint совпадает;
-- old cached artifact не исполняется;
-- Source-of-Truth Diff = PASS приложен в отчете.
+Итог:  
+**План хороший, но не полностью покрывает ТЗ**, пока не добавлены:
 
-В остальном направление правильное.  
-Ключевая фиксация:
-
-- безопасность не через `amo_account_id`;
-- source of truth остается в existing integration storage;
-- новый EF только wrapper/aggregator;
-- locked/unlocked flow backend-driven;
-- этот спринт закрывает только подключение магазина и разблокировку раздела платежей.
+- явный VERIFY для ИП,
+- сохранение/reopen для `Другое`,
+- жёсткое правило safe enrichment,
+- фиксация scope по ЮЛ/ИП flow.
 - &nbsp;
-- План: Phase 3.2 — Address enrichment + Org form dictionary + Apartment field
+- План: Phase 3.2.1 — Safe enrichment + UI fixes
 
 ## DIAGNOSE
 
-### Проблема 1: Compact layout не содержит поле `apartment`
+### Баг 1: Google overwrite уже распознанных полей (КРИТИЧЕСКИЙ)
 
-`COMPACT_LAYOUT` в `StructuredAddressBlock.tsx` (строки 48-56) не включает `{ key: 'apartment' }`. Поэтому `оф. 49л` из МНС парсится в `addr.apartment`, но не отображается в форме ЮЛ/ИП (они используют `compact` layout).
+**Файл:** `src/lib/address/GrpAddressEnricher.ts`, строки 70-87
+**Причина:** Merge-логика `googleParsed.street || preliminary.street` отдает приоритет Google. Если Google вернул другую улицу, она перезаписывает GRP.
+**Факт:** «Панфилова» → «Верхняя» после enrichment.
 
-### Проблема 2: Адрес из МНС не обогащается через Google
+### Баг 2: ИП — форма не выставляется автоматически
 
-`GrpAddressParser` разбирает flat-строку в preliminary structured, но результат не прогоняется через Google для дозаполнения (house, postal_code, region, country, place_id, lat, lng).
+**Файл:** `src/components/legal-details/EntrepreneurDetailsForm.tsx`, строка 140
+**Причина:** Для ИП `handleGrpConfirm` применяет только `grpResult.name` (полное имя). Org form `Индивидуальный предприниматель` не устанавливается, потому что в форме ИП нет поля org_form. Но в `GrpAutofillService.parseOrgFormAndName` для ИП (например «Горбова Екатерина Сергеевна») `orgFormFull` возвращается пустым — это корректно, ИП не имеет отдельной org form в форме ИП.
 
-### Проблема 3: Org form — простой Select без поиска
+### Баг 3: «Другое» — поля слишком маленькие
 
-Текущий `ORG_FORM_OPTIONS` (8 значений) — статический select без searchable. Нет справочника по странам СНГ, нет алиасов, нет flow для «Другое» с двумя полями.
+**Файл:** `src/components/legal-details/OrgFormCombobox.tsx`, строки 149-169
+**Причина:** `grid grid-cols-2 gap-2` с `h-8 text-sm` — выглядит как pill, а не как полноценный Input.
+
+### Баг 4: Форма слишком узкая
+
+**Файл:** `src/pages/settings/LegalDetails.tsx`, строки 137, 186
+**Причина:** `max-w-2xl` (672px) — слишком сжато для адресного блока + реквизитов.
 
 ## DRY RUN
 
 ### Переиспользуемые компоненты
 
-- `StructuredAddressBlock` — добавить `apartment` в COMPACT_LAYOUT
-- `usePlaceAutocomplete` — использовать `fetchPredictions` + `fetchPlaceDetails` для enrichment
-- `GooglePlacesAdapter.parseComponents` — маппинг Google → StructuredAddress
-- `GrpAddressParser.parseGrpAddress` — уже парсит flat → preliminary structured
-- `GrpAutofillService` — orchestration, diff
+- `GrpAddressEnricher` — исправить merge-логику (не создавать новый файл)
+- `OrgFormCombobox` — исправить layout «Другое» (не создавать новый компонент)
+- `LegalDetails.tsx` — расширить контейнер
 
-### Что применяется в каждой форме после confirm
+### Что меняется
 
 
-| Поле                      | LegalEntity                   | Entrepreneur          | Executors         |
-| ------------------------- | ----------------------------- | --------------------- | ----------------- |
-| org_form (full canonical) | да                            | нет                   | нет               |
-| clean_name                | да → `leg_name`               | нет (full_name as-is) | да → `full_name`  |
-| short_name                | нет                           | нет                   | да → `short_name` |
-| parsed+enriched address   | да                            | да                    | да                |
-| registration_date         | только в diff, не сохраняется | только в diff         | только в diff     |
-| tax_office_*              | только в diff, не сохраняется | только в diff         | только в diff     |
+| Файл                                               | Изменение                                                           |
+| -------------------------------------------------- | ------------------------------------------------------------------- |
+| `src/lib/address/GrpAddressEnricher.ts`            | Merge: GRP-поля приоритетнее Google для street/house/city/apartment |
+| `src/components/legal-details/OrgFormCombobox.tsx` | Layout «Другое»: полноценные Input, full width                      |
+| `src/pages/settings/LegalDetails.tsx`              | `max-w-2xl` → `max-w-4xl`                                           |
 
 
-### Что НЕ создаем
+### Что НЕ меняем
 
-- Новых таблиц / миграций
-- Новых edge functions
-- Side-state для registration_date / tax_office (нет подтвержденных полей в БД)
+- Новых файлов нет
+- Миграций нет
+- Edge functions не трогаем
+- EntrepreneurDetailsForm — ИП не имеет org form, это корректное поведение
 
-## Файлы и изменения
+## EXECUTE — 3 файла
 
-### PATCH-1: Поле помещения в compact layout
+### PATCH 3.2.1 — Safe merge в GrpAddressEnricher
 
-**Файл:** `src/components/shared/StructuredAddressBlock.tsx`
-
-В `COMPACT_LAYOUT` (строка 48-56) добавить `apartment` после `building`:
+Изменить merge-логику (строки 70-87): GRP-значения имеют приоритет, Google дозаполняет только пустые поля.
 
 ```
-{ key: 'apartment', label: 'Кв./Офис', placeholder: '' },
+street: preliminary.street || googleParsed.street,
+house: preliminary.house || googleParsed.house,
+city: preliminary.city || googleParsed.city,
+apartment: grpApartment || googleParsed.apartment || '',
+building: preliminary.building || googleParsed.building,
+settlement: preliminary.settlement || googleParsed.settlement,
+district: preliminary.district || googleParsed.district,
+region: preliminary.region || googleParsed.region,
+postal_code: preliminary.postal_code || googleParsed.postal_code,
+country_code: preliminary.country_code || googleParsed.country_code || 'BY',
+country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
 ```
 
-### PATCH-2: GRP → Google address enrichment
+Google заполняет только: `postal_code`, `region`, `country`, `place_id`, `lat`, `lng` и прочие пустые сегменты. Уже распознанные street/house/city/apartment не перезаписываются.
 
-**Новый файл:** `src/lib/address/GrpAddressEnricher.ts`
+### PATCH 3.2.2 — Fix «Другое» layout
 
-Сервис, который:
+В `OrgFormCombobox.tsx` заменить `grid grid-cols-2 gap-2` на вертикальный layout:
 
-1. Принимает preliminary `StructuredAddress` из `GrpAddressParser`
-2. Формирует query из заполненных полей через `formatFullAddress()`
-3. Вызывает Google Places `AutocompleteSuggestion.fetch()` + `Place.fetchFields()`
-4. Мержит результат: Google-поля перезаписывают пустые поля preliminary, но `apartment` из МНС сохраняется (Google обычно не возвращает офис)
-5. Устанавливает `source = 'grp'`, `google_place_id`, `lat`, `lng`
+- Полная форма — `w-full`, нормальный `h-9`
+- Краткая форма — `w-full` или `max-w-[200px]`, нормальный `h-9`
+- Убрать `h-8 text-sm`, сделать стандартные Input-поля
 
-**Изменения в формах** (`LegalEntityDetailsForm`, `EntrepreneurDetailsForm`, `AdminExecutors`):
+### PATCH 3.2.3 — Widen layout
 
-В `handleGrpConfirm` после получения `parsed_address`:
-
-1. Вызвать `GrpAddressEnricher.enrich(parsedAddress)`
-2. Результат записать в `setAddress(enrichedAddress)`
-3. Enrichment асинхронный — показать spinner на адресном блоке
-4. Если Google не ответил — fallback на preliminary parsed address
-
-### PATCH-3: Справочник форм собственности СНГ
-
-**Новый файл:** `src/lib/legal-entities/OrgFormDictionary.ts`
-
-```text
-interface OrgFormEntry {
-  fullName: string;        // canonical, хранится в БД
-  shortName: string;       // для display
-  country: string;         // 'BY', 'RU', 'KZ'...
-  aliases: string[];       // для поиска: ['ООО', 'общество с огр']
-}
-```
-
-Справочник ~25-30 форм для BY (уже есть в `ORG_FORM_FULL_TO_SHORT`), плюс основные RU/KZ.
-
-**Новый компонент:** `src/components/legal-details/OrgFormCombobox.tsx`
-
-Searchable combobox (на базе `cmdk` / Popover+Command из shadcn):
-
-- Поиск по `fullName`, `shortName`, `aliases`
-- В dropdown показывает: `ЗАО — Закрытое акционерное общество`
-- Value = `fullName` (canonical)
-- Displayed selected = `shortName` (compact)
-- Последний пункт: «Другое»
-
-**При выборе «Другое»:** показать 2 дополнительных Input:
-
-- Полная форма (обязательное)
-- Краткая форма (обязательное)
-- Оба сохраняются: `leg_org_form = полная`, `leg_org_form_short = краткая` (или в одном поле через separator — зависит от наличия колонки)
-
-**Изменение:** `LegalEntityDetailsForm.tsx` — заменить `<Select>` на `<OrgFormCombobox>`
-
-### PATCH-4: Проверка колонки для краткой формы
-
-Нужно проверить, есть ли `leg_org_form_short` в `client_legal_details`. Если нет — либо добавить миграцию, либо хранить short form только как derived через dictionary lookup.
-
-## Порядок выполнения
-
-1. PATCH-1: Добавить `apartment` в `COMPACT_LAYOUT`
-2. PATCH-3: Создать `OrgFormDictionary` + `OrgFormCombobox`
-3. PATCH-2: Создать `GrpAddressEnricher`, интегрировать в 3 формы
-4. Обновить `LegalEntityDetailsForm` — заменить Select на OrgFormCombobox + flow для «Другое»
-5. VERIFY
+В `LegalDetails.tsx`: обе строки `max-w-2xl` → `max-w-4xl` (896px).
 
 ## DoD
 
-- Поле `Кв./Офис` видно в compact layout всех форм
-- После GRP confirm адрес обогащен через Google (house, postal_code, region, country, place_id, lat, lng заполнены)
-- Если Google не вернул apartment — сохраняется значение из МНС
-- Форма собственности выбирается через searchable combobox
-- Поиск работает по полному и краткому названию
-- Canonical = полная форма в БД
-- Для «Другое» — 2 ручных поля (full + short)
-- Пользователь может вручную исправить любой адресный сегмент после enrichment
-- Legacy string пересчитывается из canonical при save
+- «Панфилова» не заменяется на «Верхняя» после enrichment
+- `дом 2` и `офис 49л` сохраняются
+- Google дозаполняет только пустые поля (postal_code, region, country, place_id, lat, lng)
+- «Другое» full/short — полноценные поля ввода
+- Форма реквизитов визуально шире и не зажата
