@@ -36,8 +36,10 @@ serve(async (req) => {
   const incomingSecret = req.headers.get('x-cron-secret');
   const authHeader = req.headers.get('Authorization') || '';
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
   const isCronAuth = cronSecret && incomingSecret === cronSecret;
-  const isServiceRoleAuth = authHeader === `Bearer ${serviceRoleKey}`;
+  const isServiceRoleAuth = serviceRoleKey && authHeader === `Bearer ${serviceRoleKey}`;
+  const isAnonKeyAuth = anonKey && authHeader === `Bearer ${anonKey}`;
   
   if (!isCronAuth && !isServiceRoleAuth) {
     console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid auth');
