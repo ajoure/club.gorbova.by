@@ -15,9 +15,12 @@ export function GoogleMapsSettingsCard() {
   const [testQuery, setTestQuery] = useState("");
   const [testResult, setTestResult] = useState<string | null>(null);
 
-  const handleTest = () => {
-    if (testQuery.length >= 3) {
-      fetchPredictions(testQuery);
+  const handleInputChange = (value: string) => {
+    setTestQuery(value);
+    if (value.length >= 3) {
+      fetchPredictions(value);
+    } else {
+      clearPredictions();
     }
   };
 
