@@ -2692,7 +2692,7 @@ Deno.serve(async (req) => {
               status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }
-
+        } else {
         // CONFLICT: provider_payment_id exists but linked to different order_id
         console.warn('[WEBHOOK-LINK] CONFLICT provider_payment_id linked to other order:', {
           transactionUid,
