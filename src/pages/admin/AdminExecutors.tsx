@@ -23,8 +23,9 @@ import { ExecutorAddressAdapter } from "@/lib/address/adapters/ExecutorAddressAd
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
 import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
-import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
+import { formatFullAddress } from "@/lib/address/utils";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
@@ -131,7 +132,7 @@ export default function AdminExecutors() {
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
-  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   // Автогенерация краткого ФИО
@@ -228,7 +229,11 @@ export default function AdminExecutors() {
         onSuccess: (result) => {
           if (result.found && result.data) {
             const autofill = grpDataToAutofillFields(result.data);
-            const currentValues = { name: formData.full_name, short_name: formData.short_name };
+            const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
+              name: formData.full_name,
+              short_name: formData.short_name,
+              address: formatFullAddress(address),
+            };
             const diff = buildGrpDiff(currentValues, autofill);
             if (diff.length > 0) {
               setGrpResult(autofill);
@@ -247,6 +252,14 @@ export default function AdminExecutors() {
     const filled = new Set<string>();
     if (grpResult.name) { setFormData(prev => ({ ...prev, full_name: grpResult.name! })); filled.add("full_name"); }
     if (grpResult.short_name) { setFormData(prev => ({ ...prev, short_name: grpResult.short_name! })); filled.add("short_name"); }
+
+    // Apply parsed structured address
+    if (grpResult.parsed_address) {
+      setAddress(grpResult.parsed_address);
+      setAddressSource('grp');
+      filled.add("address");
+    }
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
   }, [grpResult]);

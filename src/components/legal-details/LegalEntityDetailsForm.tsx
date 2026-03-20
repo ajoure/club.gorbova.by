@@ -17,19 +17,48 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
-import { Loader2, Save, Info, Search } from "lucide-react";
+import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAddressAdapter";
+import { formatFullAddress } from "@/lib/address/utils";
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
-import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
-import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import {
+  grpDataToAutofillFields,
+  buildGrpDiff,
+  ORG_FORM_SHORT_TO_FULL,
+  ORG_FORM_FULL_TO_SHORT,
+} from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 
-const orgForms = ["ООО", "ЗАО", "ОАО", "ОДО", "УП", "КУП", "ЧУП", "Другое"];
+/**
+ * Org forms for select: store canonical full form as value,
+ * display short abbreviation as label for compact UI.
+ */
+const ORG_FORM_OPTIONS = [
+  { value: "Общество с ограниченной ответственностью", label: "ООО" },
+  { value: "Закрытое акционерное общество", label: "ЗАО" },
+  { value: "Открытое акционерное общество", label: "ОАО" },
+  { value: "Общество с дополнительной ответственностью", label: "ОДО" },
+  { value: "Унитарное предприятие", label: "УП" },
+  { value: "Коммунальное унитарное предприятие", label: "КУП" },
+  { value: "Частное унитарное предприятие", label: "ЧУП" },
+  { value: "Другое", label: "Другое" },
+];
+
+/** Normalize legacy short values to full canonical on read */
+function normalizeOrgForm(val: string | null | undefined): string {
+  if (!val) return "";
+  // If it's already a full form, return as-is
+  if (ORG_FORM_FULL_TO_SHORT[val]) return val;
+  // If it's a short form, convert to full
+  if (ORG_FORM_SHORT_TO_FULL[val]) return ORG_FORM_SHORT_TO_FULL[val];
+  return val;
+}
 
 const schema = z.object({
   leg_org_form: z.string().min(1, "Выберите организационную форму"),
@@ -76,13 +105,13 @@ export function LegalEntityDetailsForm({
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
-  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   const getDefaultValues = (): FormData => {
     if (hasRealData) {
       return {
-        leg_org_form: initialData?.leg_org_form || "",
+        leg_org_form: normalizeOrgForm(initialData?.leg_org_form),
         leg_name: initialData?.leg_name || "",
         leg_unp: initialData?.leg_unp || "",
         leg_director_position: initialData?.leg_director_position || "Директор",
@@ -125,10 +154,11 @@ export function LegalEntityDetailsForm({
         onSuccess: (result) => {
           if (result.found && result.data) {
             const autofill = grpDataToAutofillFields(result.data);
-            const currentValues = {
-              name: form.getValues("leg_name"),
+            const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
+              clean_name: form.getValues("leg_name"),
+              org_form_full: form.getValues("leg_org_form"),
               short_name: "",
-              address: "",
+              address: formatFullAddress(address),
             };
             const diff = buildGrpDiff(currentValues, autofill);
             if (diff.length > 0) {
@@ -146,9 +176,26 @@ export function LegalEntityDetailsForm({
   const handleGrpConfirm = useCallback(() => {
     if (!grpResult) return;
     const filled = new Set<string>();
-    if (grpResult.name) { form.setValue("leg_name", grpResult.name); filled.add("leg_name"); }
-    // Address from GRP is a flat string — we can't parse it to structured easily,
-    // but we store it as-is for now
+
+    // Apply org form (full canonical)
+    if (grpResult.org_form_full) {
+      form.setValue("leg_org_form", grpResult.org_form_full);
+      filled.add("leg_org_form");
+    }
+
+    // Apply clean name (without form, without quotes)
+    if (grpResult.clean_name) {
+      form.setValue("leg_name", grpResult.clean_name);
+      filled.add("leg_name");
+    }
+
+    // Apply parsed structured address
+    if (grpResult.parsed_address) {
+      setAddress(grpResult.parsed_address);
+      setAddressSource('grp');
+      filled.add("address");
+    }
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
   }, [grpResult, form]);
@@ -225,16 +272,34 @@ export function LegalEntityDetailsForm({
               name="leg_org_form"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Форма</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <FormLabel className="flex items-center gap-2">
+                    Форма
+                    {autofilledFields.has("leg_org_form") && (
+                      <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
+                    )}
+                  </FormLabel>
+                  <Select
+                    onValueChange={(val) => {
+                      field.onChange(val);
+                      setAutofilledFields(prev => { const n = new Set(prev); n.delete("leg_org_form"); return n; });
+                    }}
+                    value={field.value}
+                  >
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder={getPlaceholder("leg_org_form", "ООО")} />
+                        <SelectValue placeholder={getPlaceholder("leg_org_form", "ООО")}>
+                          {field.value
+                            ? (ORG_FORM_FULL_TO_SHORT[field.value] || field.value)
+                            : undefined
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {orgForms.map((orgForm) => (
-                        <SelectItem key={orgForm} value={orgForm}>{orgForm}</SelectItem>
+                      {ORG_FORM_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label} — {opt.value}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -250,12 +315,12 @@ export function LegalEntityDetailsForm({
                   <FormLabel className="flex items-center gap-2">
                     Название
                     {autofilledFields.has("leg_name") && (
-                      <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                      <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
                   </FormLabel>
                   <FormControl>
                     <Input 
-                      placeholder={getPlaceholder("leg_name", '"АЖУР инкам"')} 
+                      placeholder={getPlaceholder("leg_name", 'АЖУР инкам')} 
                       {...field} 
                       onChange={(e) => {
                         field.onChange(e);
@@ -263,6 +328,7 @@ export function LegalEntityDetailsForm({
                       }}
                     />
                   </FormControl>
+                  <FormDescription>Без формы и без кавычек</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -271,7 +337,12 @@ export function LegalEntityDetailsForm({
 
           {/* Structured Address */}
           <div>
-            <h4 className="text-sm font-medium mb-2">Юридический адрес</h4>
+            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+              Юридический адрес
+              {autofilledFields.has("address") && (
+                <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
+              )}
+            </h4>
             <StructuredAddressBlock
               value={address}
               onChange={handleAddressChange}

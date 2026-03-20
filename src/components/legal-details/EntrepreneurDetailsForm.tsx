@@ -21,10 +21,11 @@ import { Separator } from "@/components/ui/separator";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { EntrepreneurAddressAdapter } from "@/lib/address/adapters/EntrepreneurAddressAdapter";
+import { formatFullAddress } from "@/lib/address/utils";
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
 import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
-import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 
@@ -68,7 +69,7 @@ export function EntrepreneurDetailsForm({
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
-  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   const getDefaultValues = (): FormData => {
@@ -110,7 +111,10 @@ export function EntrepreneurDetailsForm({
         onSuccess: (result) => {
           if (result.found && result.data) {
             const autofill = grpDataToAutofillFields(result.data);
-            const currentValues = { name: form.getValues("ent_name") };
+            const currentValues: Partial<Record<keyof GrpAutofillFields, string>> = {
+              name: form.getValues("ent_name"),
+              address: formatFullAddress(address),
+            };
             const diff = buildGrpDiff(currentValues, autofill);
             if (diff.length > 0) {
               setGrpResult(autofill);
@@ -127,7 +131,20 @@ export function EntrepreneurDetailsForm({
   const handleGrpConfirm = useCallback(() => {
     if (!grpResult) return;
     const filled = new Set<string>();
-    if (grpResult.name) { form.setValue("ent_name", grpResult.name); filled.add("ent_name"); }
+
+    // For ИП: use full_name as-is (no org form separation needed)
+    if (grpResult.name) {
+      form.setValue("ent_name", grpResult.name);
+      filled.add("ent_name");
+    }
+
+    // Apply parsed structured address
+    if (grpResult.parsed_address) {
+      setAddress(grpResult.parsed_address);
+      setAddressSource('grp');
+      filled.add("address");
+    }
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
   }, [grpResult, form]);
@@ -202,7 +219,7 @@ export function EntrepreneurDetailsForm({
                 <FormLabel className="flex items-center gap-2">
                   Наименование ИП
                   {autofilledFields.has("ent_name") && (
-                    <Badge variant="outline" className="text-[10px] font-normal">автозаполнение</Badge>
+                    <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                   )}
                 </FormLabel>
                 <FormControl>
@@ -223,7 +240,12 @@ export function EntrepreneurDetailsForm({
 
           {/* Structured Address */}
           <div>
-            <h4 className="text-sm font-medium mb-2">Юридический адрес</h4>
+            <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+              Юридический адрес
+              {autofilledFields.has("address") && (
+                <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
+              )}
+            </h4>
             <StructuredAddressBlock
               value={address}
               onChange={handleAddressChange}
