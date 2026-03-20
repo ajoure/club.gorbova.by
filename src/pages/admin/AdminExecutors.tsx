@@ -132,7 +132,7 @@ export default function AdminExecutors() {
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
-  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   // Автогенерация краткого ФИО
