@@ -31,18 +31,19 @@ serve(async (req) => {
 
   const startTime = Date.now();
 
-  // Auth: X-Cron-Secret (for pg_cron), service_role key, or any Authorization header
-  // Safety: function is dry-run by default — execute requires explicit flag
+  // Auth: STRICTLY x-cron-secret only. No service_role, no anon, no Authorization alternatives.
   const cronSecret = Deno.env.get('CRON_SECRET');
   const incomingSecret = req.headers.get('x-cron-secret');
-  const authHeader = req.headers.get('Authorization') || '';
-  const apikeyHeader = req.headers.get('apikey') || '';
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-  
   const isCronAuth = !!(cronSecret && incomingSecret === cronSecret);
-  const isServiceRoleAuth = !!(serviceRoleKey && (authHeader.includes(serviceRoleKey) || apikeyHeader === serviceRoleKey));
-  const authSource = isCronAuth ? 'cron_secret' : isServiceRoleAuth ? 'service_role' : 'relay';
-  console.log(`[ERIP-RECONCILE] Auth: ${authSource}`);
+
+  if (!isCronAuth) {
+    console.error('[ERIP-RECONCILE] REJECTED: missing or invalid x-cron-secret');
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+  console.log('[ERIP-RECONCILE] Auth: cron_secret OK');
 
   const sbUrl = Deno.env.get('SUPABASE_URL')!;
   const sbKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
