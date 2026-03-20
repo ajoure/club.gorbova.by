@@ -16,7 +16,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { ArrowRight } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import type { GrpDiffEntry } from '@/lib/legal-entities/GrpAutofillService';
 
 interface GrpConfirmDialogProps {
@@ -40,7 +40,7 @@ export function GrpConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="max-w-lg">
+      <AlertDialogContent className="max-w-2xl">
         <AlertDialogHeader>
           <AlertDialogTitle>Найдено в реестре МНС</AlertDialogTitle>
           <AlertDialogDescription>
@@ -57,28 +57,31 @@ export function GrpConfirmDialog({
           </div>
         )}
 
-        <div className="space-y-2 max-h-64 overflow-y-auto">
+        <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
           {diff.map((entry) => (
             <div
               key={entry.field}
-              className="flex items-start gap-2 rounded-md border bg-muted/30 p-3 text-sm"
+              className="rounded-md border bg-muted/30 p-3 text-sm space-y-1.5"
             >
-              <span className="font-medium text-muted-foreground min-w-[120px] shrink-0">
+              <div className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
                 {entry.label}
-              </span>
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                {entry.oldValue ? (
-                  <>
-                    <span className="text-muted-foreground line-through truncate max-w-[140px]">
-                      {entry.oldValue}
-                    </span>
-                    <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                  </>
-                ) : (
-                  <Badge variant="outline" className="text-xs shrink-0">новое</Badge>
-                )}
-                <span className="font-medium truncate">{entry.newValue}</span>
               </div>
+              {entry.oldValue ? (
+                <div className="space-y-1">
+                  <div className="text-muted-foreground line-through break-words whitespace-pre-wrap">
+                    {entry.oldValue}
+                  </div>
+                  <ArrowDown className="h-3 w-3 text-muted-foreground" />
+                  <div className="font-medium break-words whitespace-pre-wrap">
+                    {entry.newValue}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <Badge variant="outline" className="text-xs shrink-0 mt-0.5">новое</Badge>
+                  <span className="font-medium break-words whitespace-pre-wrap">{entry.newValue}</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
