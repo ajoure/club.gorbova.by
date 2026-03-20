@@ -90,12 +90,24 @@ serve(async (req) => {
       throw new Error(`DB fetch error: ${fetchError.message}`);
     }
 
-    console.log(`[${BUILD_ID}] Found ${payments?.length || 0} processing payments`);
+    console.log(`[${BUILD_ID}] Found ${payments?.length || 0} candidate payments (before ERIP filter)`);
+
+    // JS-filter: only ERIP payments. Strict detection to avoid touching non-ERIP failed.
+    const eripPayments = (payments || []).filter(p => {
+      const meta = typeof p.meta === 'object' && p.meta ? p.meta as Record<string, unknown> : {};
+      // FIX-A records: webhook stored payment_method='erip' or erip_pending=true
+      if (meta.payment_method === 'erip' || meta.erip_pending === true) return true;
+      // Legacy stuck ERIP (pre-FIX-A): error_message contains ERIP-specific text
+      if (p.status === 'failed' && typeof p.error_message === 'string' && p.error_message.includes('Требование')) return true;
+      return false;
+    });
+
+    console.log(`[${BUILD_ID}] After ERIP filter: ${eripPayments.length} payments`);
 
     const results: any[] = [];
     let upgraded = 0, markedFailed = 0, stillPending = 0, errors = 0;
 
-    for (const payment of payments || []) {
+    for (const payment of eripPayments) {
       const uid = payment.provider_payment_id;
       try {
         // Query bePaid API by transaction UID
