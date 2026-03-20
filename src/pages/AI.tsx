@@ -207,7 +207,7 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-4">
+      <div className="space-y-2">
         
 
         {/* Pill-style Tabs */}
