@@ -2638,7 +2638,7 @@ Deno.serve(async (req) => {
       // 1) IDEMPOTENCY / CONFLICT: check payments_v2 by provider_payment_id
       const { data: existingLinkPayment } = await supabase
         .from('payments_v2')
-        .select('id, order_id, origin')
+        .select('id, order_id, origin, status')
         .eq('provider_payment_id', transactionUid)
         .eq('provider', 'bepaid')
         .maybeSingle();
