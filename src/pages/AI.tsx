@@ -241,7 +241,7 @@ const AI = () => {
           {activeTab === "chat" && (
             <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
               {/* Messages Area */}
-              <ScrollArea className="flex-1 p-4">
+              <ScrollArea className="flex-1 min-h-0 p-4">
                 <div className="space-y-4">
                   {messages.map((message) => (
                     <div
