@@ -199,7 +199,7 @@ const AI = () => {
   ];
 
   const tabClass = (active: boolean) =>
-    `relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+    `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
       active
         ? "bg-background text-foreground shadow-sm"
         : "text-muted-foreground hover:text-foreground"
@@ -207,10 +207,10 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-2">
+      <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4">
 
         {/* Pill-style Tabs */}
-        <div className="px-1 py-1 shrink-0">
+        <div className="px-1 py-0.5 shrink-0">
           <div
             role="tablist"
             aria-label="AI разделы"
