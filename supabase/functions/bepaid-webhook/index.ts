@@ -3038,7 +3038,7 @@ Deno.serve(async (req) => {
         is_recurring: false,
         origin: 'payment_link',
         provider_response: { transaction_uid: transactionUid, status: transactionStatus, amount: transaction?.amount, currency: transaction?.currency, paid_at: transaction?.paid_at },
-        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId, bepaid_description: extractBepaidDescription(body) },
+        meta: { source: 'link_payment_webhook', tracking_id: rawTrackingId, bepaid_description: extractBepaidDescription(body), last_bepaid_status: transactionStatus, last_webhook_at: new Date().toISOString(), payment_method: paymentMethod },
         receipt_url: transaction?.receipt_url || null,
       };
 
