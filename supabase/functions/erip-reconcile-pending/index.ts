@@ -220,7 +220,7 @@ serve(async (req) => {
           await supabase.from('audit_logs').insert({
             actor_type: 'system', actor_user_id: null, actor_label: BUILD_ID,
             action: 'bepaid.erip.reconcile_succeeded',
-            meta: { payment_id: payment.id, uid, order_id: payment.order_id, source },
+            meta: { payment_id: payment.id, uid, order_id: payment.order_id, source, status_source: statusSource },
           });
 
           upgraded++;
