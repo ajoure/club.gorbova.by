@@ -386,3 +386,6 @@ verify_jwt = false
 
 [functions.instagram-webhook-test]
 verify_jwt = false
+
+[functions.erip-reconcile-pending]
+verify_jwt = false
