@@ -805,6 +805,15 @@ export default function AdminExecutors() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <GrpConfirmDialog
+        open={grpDialogOpen}
+        onOpenChange={setGrpDialogOpen}
+        diff={grpDiff}
+        statusName={grpLookup.data?.data?.status_name}
+        liquidationDate={grpLookup.data?.data?.liquidation_date}
+        onConfirm={handleGrpConfirm}
+      />
     </AdminLayout>
   );
 }
