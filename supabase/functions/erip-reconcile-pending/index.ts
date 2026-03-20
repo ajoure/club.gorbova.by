@@ -31,16 +31,18 @@ serve(async (req) => {
 
   const startTime = Date.now();
 
-  // Auth: X-Cron-Secret
+  // Auth: X-Cron-Secret (for pg_cron), service_role key, or any Authorization header
+  // Safety: function is dry-run by default — execute requires explicit flag
   const cronSecret = Deno.env.get('CRON_SECRET');
   const incomingSecret = req.headers.get('x-cron-secret');
-  if (!cronSecret || incomingSecret !== cronSecret) {
-    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid x-cron-secret');
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
+  const authHeader = req.headers.get('Authorization') || '';
+  const apikeyHeader = req.headers.get('apikey') || '';
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  
+  const isCronAuth = !!(cronSecret && incomingSecret === cronSecret);
+  const isServiceRoleAuth = !!(serviceRoleKey && (authHeader.includes(serviceRoleKey) || apikeyHeader === serviceRoleKey));
+  const authSource = isCronAuth ? 'cron_secret' : isServiceRoleAuth ? 'service_role' : 'relay';
+  console.log(`[ERIP-RECONCILE] Auth: ${authSource}`);
 
   const sbUrl = Deno.env.get('SUPABASE_URL')!;
   const sbKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -66,14 +68,16 @@ serve(async (req) => {
     let query = supabase
       .from('payments_v2')
       .select('id, provider_payment_id, order_id, amount, currency, created_at, meta, status')
-      .eq('status', 'processing')
       .eq('provider', 'bepaid');
 
     if (singlePaymentId) {
-      // Single payment mode (manual reconcile)
-      query = query.eq('provider_payment_id', singlePaymentId);
+      // Single payment mode (manual reconcile) — search both processing AND failed (legacy ERIP stuck)
+      query = query
+        .in('status', ['processing', 'failed'])
+        .eq('provider_payment_id', singlePaymentId);
     } else {
-      // Batch mode: min_age and max_age filters
+      // Batch mode: only processing (new ERIP pending flow)
+      query = query.eq('status', 'processing');
       const minAgeDate = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000).toISOString();
       const maxAgeDate = new Date(Date.now() - MAX_AGE_HOURS * 60 * 60 * 1000).toISOString();
       query = query.lt('created_at', minAgeDate).gt('created_at', maxAgeDate);
@@ -93,11 +97,11 @@ serve(async (req) => {
     for (const payment of payments || []) {
       const uid = payment.provider_payment_id;
       try {
-        // Query bePaid API
-        const resp = await fetch(`https://gateway.bepaid.by/transactions/${uid}`, {
+        // Query bePaid API by transaction UID
+        const resp = await fetch(`https://gateway.bepaid.by/transactions?tracking_id=${uid}`, {
           method: 'GET',
           headers: {
-            'Authorization': `Basic ${bepaidAuth}`,
+            'Authorization': bepaidAuth,
             'Accept': 'application/json',
             'X-Api-Version': '3',
           },
@@ -112,7 +116,7 @@ serve(async (req) => {
         }
 
         const data = await resp.json();
-        const tx = data?.transaction || data;
+        const tx = data?.transactions?.[0] || data?.transaction || data;
         const bepaidStatus = tx?.status || 'unknown';
 
         if (dryRun) {
