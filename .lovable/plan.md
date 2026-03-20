@@ -1,174 +1,179 @@
 # да, согласен, с учетом правок:
 
-1. **Раздели Phase 3 на стадии** `DRY RUN → EXECUTE → VERIFY`**.**  
-Сейчас это только rollout-план. Нужно отдельно зафиксировать:
-  - какие формы и save-path будут затронуты,
-  - какие read-path перейдут на `structured first`,
-  - какие legacy-поля остаются fallback,
-  - какие риски обратной совместимости есть.  
-  Workflow `DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY` обязателен.
-2. **Не делай silent auto-apply по УНП.**  
-Допустимо:
-  - при 9 цифрах сделать lookup,
-  - показать preview/diff,  
-  но **запись в форму только после явного подтверждения**.  
-  Это особенно важно для `LegalEntity`, `Entrepreneur`, `Executors`.
-3. **Зафиксируй точный маппинг полей, которые разрешено заполнять из МНС.**  
-Сейчас написано слишком широко: “название, адрес, и т.д.”  
-Нужно отдельно перечислить:
-  - заполняем: `unp`, `name`, `address`, `status`, `registration_date`, `tax_office`
-  - не перетираем автоматически: вручную введённые поля без confirm
-  - не трогаем без отдельного решения: директор, основания действия, внутренние служебные поля
-4. **Вынеси rollout-логику из форм в service/adapters.**  
-Формы не должны содержать бизнес-логику; интеграции должны идти через adapters.  
-Добавь отдельные слои:
-  - `GrpAutofillService`
-  - compatibility adapters для каждой формы  
-  А `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`, `IndividualDetailsForm`, `AdminExecutors` должны только вызывать их.
-5. **Добавь read-path rollout, а не только form rollout.**  
-Сейчас план меняет только UI-формы, но этого мало.  
-Нужно явно включить:
-  - генерацию документов,
-  - preview/шаблоны,
-  - серверные функции, читающие адреса/реквизиты,  
-  по правилу: `*_address_structured` → fallback на legacy.  
-  Иначе формы будут писать по-новому, а чтение останется старым.
-6. **Для физлица зафиксируй compatibility mapping подробнее.**  
-Замена 7 полей на `StructuredAddressBlock` нормальная, но нужно явно описать:
-  - как `country / country_code / building / google_place_id / lat / lng / source` живут в `ind_address_structured`,
-  - как старые `ind_address_*` пересчитываются из canonical,
-  - какие legacy-поля останутся обязательными для старых шаблонов.
-7. **Добавь audit logging для критических автозаполнений.**  
-Автозаполнение из Google/MNS и compatibility-save — критические операции, они должны логироваться в `audit_logs` с системной маркировкой.  
-Особенно:
-  - apply из GRP confirm dialog,
-  - пересчёт legacy из canonical,
-  - массовые/автоматические переприсвоения адресов
-8. **Проверь, что** `AdminExecutors.tsx` **— действительно точка редактирования, а не только список.**  
-Если форма редактирования живёт в другом компоненте/dialog, в плане надо указать именно фактический файл формы, а не страницу-обертку.
-9. **Добавь DoD по каждой форме.**  
-Не общий DoD, а по форме:
-  - `LegalEntity`: lookup → diff → apply → save structured + legacy
-  - `Entrepreneur`: lookup → diff → apply → save structured + legacy
-  - `Individual`: Google autocomplete → save structured + recompute legacy
-  - `Executors`: lookup/apply/save без поломки текущей админ-логики
-10. **Явно зафиксируй scope: нет новых таблиц, только compatibility rollout поверх Phase 2.**  
-Это соответствует стратегии `legacy → compatibility layer → canonical architecture` без поломки production.  
-То есть:
+1. **Legal form хранить только в полном canonical-виде.**  
+В плане сейчас есть ошибка:  
+`handleGrpConfirm → leg_org_form (через маппинг полная→короткая)`  
+Это противоречит выбранному правилу. Нужно наоборот:
+  - в БД хранить: `Закрытое акционерное общество`
+  - сокращение `ЗАО` получать только через display/helper
+  - selector/option list в форме либо перевести на полные значения, либо ввести mapping `full <-> short`, где source of truth = full form
+2. **Название компании сохранять отдельно от формы и без кавычек.**  
+Зафиксируй явно:
+  - `parseOrgFormAndName()` возвращает:
+    - `orgFormFull`
+    - `orgFormShort`
+    - `cleanName`
+  - в save-path:
+    - `leg_org_form = orgFormFull`
+    - `leg_name = cleanName`
+  - `short_name` использовать отдельно, но не как fallback для основного названия, если уже удалось распарсить `cleanName`
+3. **Не сохранять** `registration_date`**,** `tax_office_code`**,** `tax_office_name` **“в side-state через onSubmit”, пока не подтверждено место хранения.**  
+Здесь план пока сырой. Нельзя тихо протащить новые данные без подтвержденной persistence-модели. По правилам сначала diagnose, потом execute.  
+Выбираю такой вариант:
+  - в PATCH 3.1 эти поля показываем в diff-dialog
+  - применяем в UI только если уже есть подтвержденные поля хранения
+  - если подтвержденных полей нет — не сохраняем их в БД в этом патче, не придумываем временный side-state как будто это persistence
+4. **Адрес МНС нужно разбирать в отдельном adapter/service слое, а не просто “внутри сервиса как regex helper”.**  
+Лучше так:
+  - `GrpAutofillService` — orchestration/build diff
+  - `GrpAddressAdapter` или `GrpAddressParser` — flat address → `StructuredAddress`  
+  Это соответствует правилу: бизнес-логика в сервисах, интеграции через adapters, внутренняя модель не зависит от внешнего формата.
+5. **PATCH должен покрывать не 3, а все фактически затронутые места apply.**  
+В плане перечислены:
+  - `LegalEntityDetailsForm`
+  - `EntrepreneurDetailsForm`
+  - `AdminExecutors`  
+  Это правильно для GRP apply.  
+  Но отдельно зафиксируй, что:
+  - `IndividualDetailsForm` в этот PATCH не входит по GRP,
+  - там только address rollout уже сделан и этот PATCH его не трогает, кроме если потребуется bugfix по legacy/canonical consistency.
+6. **Для** `GrpConfirmDialog` **зафиксируй не только ширину, но и структуру контента.**  
+Добавь:
+  - label отдельной строкой
+  - старое значение отдельной строкой
+  - новое значение отдельной строкой
+  - длинные значения с `break-words`
+  - список diff со scroll внутри
+  - модалка не должна схлопывать длинный адрес или длинное название  
+  По скринам это как раз текущая проблема.
+7. **Apply после confirm должен реально заполнять structured address, а не только flat поля.**  
+Явно пропиши:
+  - `setAddress(parsedStructuredAddress)`
+  - `setAddressSource('grp')`
+  - при submit:
+    - canonical JSONB = parsed structured address
+    - legacy string = `formatFullAddress(canonical)`  
+    Это должно работать одинаково для `LegalEntity`, `Entrepreneur`, `Executors`.
+8. **Нужен explicit DRY RUN перед EXECUTE.**  
+Сейчас в плане сразу действия. Добавь отдельный блок:
+  - какие поля реально применяются в каждой форме
+  - какие поля только показываются в diff, но не сохраняются
+  - какие existing components/services переиспользуются
+  - что не создаются новые таблицы/миграции  
+  Safe workflow обязателен: `DIAGNOSE → PLAN → DRY RUN → EXECUTE → VERIFY`.
+9. **Добавь duplication prevention.**  
+Перед новым кодом нужно явно переиспользовать уже созданные элементы:
+  - `StructuredAddressBlock`
+  - `useGrpLookup`
+  - Phase 2 address adapters
+  - existing canonical payload helpers  
+  Это обязательное правило против дублирования.
+10. **Добавь VERIFY/DoD по факту хранения, а не только по UI.**  
+Нужны пруфы:
 
-- без новой `addresses` table,
-- без backfill в этом этапе,
-- без удаления старых полей,
-- только rollout existing forms + read/write compatibility.
+- до confirm
+- после confirm
+- после save
+- после reopen  
+И отдельно подтвердить:
+- `leg_org_form` хранится в полном виде
+- `leg_name` хранится без формы и без кавычек
+- адрес из МНС разложен по ячейкам
+- legacy string согласована с canonical JSONB
+- `AdminExecutors` не ломает текущий save flow
 
-11. **Добавь проверку на дублирование перед реализацией.**  
-По правилам перед новым кодом надо проверить таблицы, RPC, edge functions и UI-компоненты и переиспользовать существующие решения.  
-Для этого в DRY RUN добавь отдельный блок:
+11. **Audit logging добавить хотя бы для apply из МНС.**  
+Это критическая операция автозаполнения и по правилам должна логироваться в `audit_logs`.  
+Минимум:
 
-- reuse existing `StructuredAddressBlock`
-- reuse existing `useGrpLookup`
-- reuse Phase 2 adapters/services
-- не создавать второй lookup/dialog/input, если уже есть подходящий компонент
+- apply from GRP confirm
+- actor_type system/user по вашей текущей схеме
+- какие поля были изменены
 
-В остальном направление правильное: сначала rollout в 4 формы, потом уже отдельным этапом read-path cleanup/backfill/удаление legacy.
+Итоговый ключевой выбор для вставки в план:
 
-&nbsp;
+- `leg_org_form` хранить **в полном виде**, не в сокращении
+- `leg_name` хранить **без формы и без кавычек**
+- `registration_date / tax_office_*` **не сохранять в БД в этом PATCH**, пока не подтверждено место хранения
+- flat address МНС разбирать через **отдельный adapter/parser** в `StructuredAddress`
+- PATCH 3.1 закрывает: dialog UI + full apply + canonical name/form normalization + structured address apply + verify/save/reopen proof
+- &nbsp;
+- План: Phase 3.1 — PATCH-пакет: GRP autofill + StructuredAddress
 
-План: Phase 3 — Rollout интеграций в существующие формы
+## Проблемы (DIAGNOSE)
 
-## Обзор
+1. **GrpConfirmDialog**: `truncate` и `max-w-[140px]` обрезают текст; модалка `max-w-lg` слишком узкая
+2. **handleGrpConfirm** во всех 3 формах применяет только `name`/`short_name`, игнорируя address, registration_date, tax_office_*, status_*
+3. **Нет парсинга org form** из `full_name` МНС (например `Закрытое акционерное общество "АЖУР инкам"` → form + name)
+4. **Нет парсинга адреса МНС** в structured-поля — адрес остается flat-строкой
+5. `orgForms` в форме — короткие аббревиатуры (`ООО`, `ЗАО`), нет маппинга из полных форм МНС
 
-Внедрить Google Maps автоподсказки и автозаполнение по УНП (МНС) во все 4 формы платформы, где вводятся адреса и/или УНП. УНП ставится первым полем для ЮЛ/ИП с пометкой, что остальные поля заполняются автоматически.
+## Файлы и изменения
 
-## Формы для изменения
+### 1. `src/lib/legal-entities/GrpAutofillService.ts` — расширить service layer
 
+**Добавить:**
 
-| #   | Форма       | Файл                          | УНП       | Адрес                     | Что делаем                                               |
-| --- | ----------- | ----------------------------- | --------- | ------------------------- | -------------------------------------------------------- |
-| 1   | Юрлицо      | `LegalEntityDetailsForm.tsx`  | `leg_unp` | `leg_address` (строка)    | УНП первым + GRP автозаполнение + StructuredAddressBlock |
-| 2   | ИП          | `EntrepreneurDetailsForm.tsx` | `ent_unp` | `ent_address` (строка)    | УНП первым + GRP автозаполнение + StructuredAddressBlock |
-| 3   | Физлицо     | `IndividualDetailsForm.tsx`   | нет       | `ind_address_*` (7 полей) | Заменить 7 полей на StructuredAddressBlock               |
-| 4   | Исполнитель | `AdminExecutors.tsx`          | `unp`     | `legal_address` (строка)  | УНП первым + GRP автозаполнение + StructuredAddressBlock |
+- `parseOrgFormAndName(fullName)` — выделяет org form и чистое название:
+  - словарь полных форм → коротких (`Закрытое акционерное общество` → `ЗАО`, `Общество с ограниченной ответственностью` → `ООО`, и т.д.)
+  - убирает кавычки из названия
+  - возвращает `{ orgForm: string, cleanName: string }`
+- `parseGrpAddress(flatAddress)` — разбирает типичный формат МНС `г. Минск,ул. Панфилова, д.2, оф. 123` в `StructuredAddress`:
+  - regex для `г.`/`город` → city
+  - regex для `ул.`/`улица`/`пр.`/`проспект` → street
+  - regex для `д.`/`дом` → house
+  - regex для `корп.`/`к.` → building
+  - regex для `оф.`/`кв.` → apartment
+  - source = `'grp'`
+- Расширить `GrpAutofillFields` добавив `org_form`, `clean_name` (derived fields)
+- Обновить `grpDataToAutofillFields` — вызывать `parseOrgFormAndName` и `parseGrpAddress` внутри
 
+### 2. `src/components/legal-details/GrpConfirmDialog.tsx` — UI fix
 
-## Что конкретно делаем
+- `max-w-lg` → `max-w-2xl`
+- Убрать `truncate` и `max-w-[140px]` со старых значений
+- Убрать `truncate` с новых значений
+- Заменить `flex items-center` на `flex flex-col items-start` для diff-строк
+- `max-h-64` → `max-h-96`
+- Старое значение и новое — каждое на своей строке, с `break-words`
 
-### 1. Юрлицо и ИП: УНП первым полем + GRP автозаполнение
+### 3. `src/components/legal-details/LegalEntityDetailsForm.tsx` — полный apply
 
-- Переместить поле УНП **в самый верх** секции (перед названием)
-- Добавить подпись: `УНП` с `FormDescription`: "Введите УНП — остальные данные заполнятся автоматически"
-- При вводе 9 цифр — автоматический вызов `useGrpLookup`
-- Показать **diff-preview**: какие поля будут заполнены (название, адрес, и т.д.)
-- Кнопка «Заполнить» — только после подтверждения пользователем
-- Без подтверждения данные в форму не вносятся (confirm-flow, silent overwrite запрещен)
-- Заполняемые поля помечаются тегом "(автозаполнение)" пока данные получены из GRP
+**handleGrpConfirm:**
 
-### 2. Адреса: замена Input на StructuredAddressBlock
+- Применять `org_form` → `leg_org_form` (через маппинг полная→короткая)
+- Применять `clean_name` → `leg_name` (без кавычек, без формы)
+- Применять `short_name` → `leg_name` fallback
+- Применять parsed address → `setAddress(parsedStructured)` + `setAddressSource('grp')`
+- Применять `registration_date`, `tax_office_code`, `tax_office_name` — сохранять в отдельных полях (нужно добавить в form schema или в side-state)
 
-- **Юрлицо/ИП/Исполнитель**: заменить одиночный `Input` адреса на `StructuredAddressBlock` (уже готовый компонент с Google autocomplete)
-- **Физлицо**: заменить 7 отдельных полей `ind_address_*` на `StructuredAddressBlock`
-- Google подсказки работают динамически при вводе >= 3 символов (без кнопки)
+**Проблема:** registration_date, tax_office_code/name не имеют полей в текущей форме. Решение: сохранять их при submit через дополнительный state, но не показывать в форме (они пойдут в БД через onSubmit).
 
-### 3. Сохранение: canonical JSONB + legacy compatibility
+### 4. `src/components/legal-details/EntrepreneurDetailsForm.tsx` — полный apply
 
-При сохранении формы:
+Аналогично: `handleGrpConfirm` должен применять name, address (parsed), registration_date и прочие поля через side-state.
 
-- Писать structured данные в JSONB shadow-поле (`*_address_structured`)
-- Одновременно пересчитывать legacy-строку: `formatFullAddress(structured) → legacy field`
-- Сохранять `google_place_id`, `lat`, `lng`, `source` в JSONB для будущего использования
+### 5. `src/pages/admin/AdminExecutors.tsx` — полный apply
 
-При загрузке формы:
+`handleGrpConfirm` (строка 245): добавить apply для address (parsed → setAddress), и прочих полей.
 
-- Если `*_address_structured` есть — читать из него
-- Если нет — fallback на legacy поля/строку
+### 6. Нет новых таблиц, нет миграций
 
-### 4. Создать GRP Confirm Dialog
+Все данные уже есть в существующих полях. `registration_date`, `tax_office_code`, `tax_office_name` для client_legal_details — нужно проверить, есть ли эти колонки в таблице.
 
-Новый компонент `GrpConfirmDialog` — показывает diff между текущими и найденными данными:
+## Порядок выполнения
 
-```text
-┌─────────────────────────────────────────┐
-│  Найдено в реестре МНС                  │
-│                                         │
-│  Название:  ООО "Тест" ← было пусто    │
-│  Адрес:     г. Минск, ... ← было пусто │
-│  Статус:    Действующий                 │
-│                                         │
-│  [Отмена]              [Заполнить]      │
-└─────────────────────────────────────────┘
-```
+1. Расширить `GrpAutofillService` (парсеры org form, name, address)
+2. Исправить `GrpConfirmDialog` UI
+3. Обновить `handleGrpConfirm` в 3 формах (LegalEntity, Entrepreneur, Executors)
+4. VERIFY: скрины до/после
 
-### 5. Создать адаптеры совместимости (Phase 3 adapters)
+## DoD
 
-
-| Адаптер                      | Маппинг                                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| `IndividualAddressAdapter`   | `ind_address_*` (7 полей) ↔ `StructuredAddress` ↔ `ind_address_structured` JSONB  |
-| `EntrepreneurAddressAdapter` | `ent_address` (строка) + `ent_address_structured` JSONB ↔ `StructuredAddress`     |
-| `LegalEntityAddressAdapter`  | `leg_address` (строка) + `leg_address_structured` JSONB ↔ `StructuredAddress`     |
-| `ExecutorAddressAdapter`     | `legal_address` (строка) + `legal_address_structured` JSONB ↔ `StructuredAddress` |
-
-
-## Файлы
-
-
-| Файл                                                       | Действие                                                |
-| ---------------------------------------------------------- | ------------------------------------------------------- |
-| `src/lib/address/adapters/IndividualAddressAdapter.ts`     | Создать                                                 |
-| `src/lib/address/adapters/EntrepreneurAddressAdapter.ts`   | Создать                                                 |
-| `src/lib/address/adapters/LegalEntityAddressAdapter.ts`    | Создать                                                 |
-| `src/lib/address/adapters/ExecutorAddressAdapter.ts`       | Создать                                                 |
-| `src/components/legal-details/GrpConfirmDialog.tsx`        | Создать                                                 |
-| `src/components/legal-details/LegalEntityDetailsForm.tsx`  | Переработать: УНП первым + GRP + StructuredAddressBlock |
-| `src/components/legal-details/EntrepreneurDetailsForm.tsx` | Переработать: УНП первым + GRP + StructuredAddressBlock |
-| `src/components/legal-details/IndividualDetailsForm.tsx`   | Переработать: StructuredAddressBlock вместо 7 полей     |
-| `src/pages/admin/AdminExecutors.tsx`                       | Переработать: УНП первым + GRP + StructuredAddressBlock |
-
-
-## Правила
-
-- Canonical source of truth = `*_address_structured` JSONB
-- Legacy поля пересчитываются из canonical через адаптер при каждом сохранении
-- Silent overwrite запрещен — всегда confirm-flow с diff-preview
-- `google_place_id` сохраняется в JSONB для будущего использования
-- При ручной правке после Google/GRP: `source → 'manual'`, `last_verified_at → null`
+- Текст в confirm-dialog читается полностью, без обрезания
+- Apply заполняет: org form, clean name, short name, parsed address, registration_date, tax_office
+- `leg_org_form` автоматически выбирается по данным МНС
+- `leg_name` хранится без формы и без кавычек
+- Адрес из МНС разложен по ячейкам в StructuredAddressBlock
+- Legacy string пересчитывается из canonical при save
+- Бизнес-логика (парсинг) в service layer, не в UI
