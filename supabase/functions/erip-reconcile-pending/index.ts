@@ -198,6 +198,28 @@ serve(async (req) => {
         }
 
         if (bepaidStatus === 'successful') {
+          // STOP-GUARD: don't re-finalize already succeeded payments (race condition protection)
+          if (payment.status === 'succeeded') {
+            results.push({ uid, action: 'already_succeeded', skip: true });
+            continue;
+          }
+
+          // STOP-GUARD: check order status before finalization
+          // If order is already in terminal state (paid/refunded/canceled), don't finalize
+          if (payment.order_id) {
+            const { data: orderCheck } = await supabase
+              .from('orders_v2')
+              .select('status')
+              .eq('id', payment.order_id)
+              .maybeSingle();
+            
+            if (orderCheck && !['pending', 'failed'].includes(orderCheck.status)) {
+              console.warn(`[${BUILD_ID}] Order ${payment.order_id} already in terminal status '${orderCheck.status}', skipping finalization for ${uid}`);
+              results.push({ uid, action: 'order_terminal_status', order_status: orderCheck.status, skip: true });
+              continue;
+            }
+          }
+
           // UPGRADE: processing → succeeded
           const now = new Date().toISOString();
           
