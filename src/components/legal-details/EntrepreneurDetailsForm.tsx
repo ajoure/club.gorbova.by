@@ -90,7 +90,7 @@ export function EntrepreneurDetailsForm({
     })
   );
   const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
-
+  const [isEnrichingAddress, setIsEnrichingAddress] = useState(false);
   const grpLookup = useGrpLookup();
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
