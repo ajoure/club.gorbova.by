@@ -28,7 +28,7 @@ export function GrpLookupSettingsCard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Building2 className="h-5 w-5 text-muted-foreground" />
-            <CardTitle className="text-base">МНС GRP Lookup</CardTitle>
+            <CardTitle className="text-base">Поиск по УНП (МНС)</CardTitle>
           </div>
           <Badge variant="outline" className="text-green-600 border-green-300">
             Доступно
