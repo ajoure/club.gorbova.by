@@ -923,7 +923,7 @@ const [includeButton, setIncludeButton] = useState(true);
                       Первые 50 из {audience?.totalCount || 0} получателей
                     </SheetDescription>
                   </SheetHeader>
-                  <ScrollArea className="h-[calc(100vh-150px)] mt-4">
+                  <ScrollArea className="h-[calc(var(--app-height)-150px)] mt-4">
                     <div className="space-y-2">
                       {audience?.users.map((user) => (
                         <div

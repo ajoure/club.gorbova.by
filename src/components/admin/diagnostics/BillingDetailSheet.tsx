@@ -131,7 +131,7 @@ export function BillingDetailSheet({ open, onOpenChange, item, date }: BillingDe
           </SheetTitle>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-120px)] mt-4 pr-4">
+        <ScrollArea className="h-[calc(var(--app-height)-120px)] mt-4 pr-4">
           <div className="space-y-6">
             {/* Contact Info */}
             <div className="space-y-2">

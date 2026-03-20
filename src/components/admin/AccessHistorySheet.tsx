@@ -135,7 +135,7 @@ export function AccessHistorySheet({ open, onOpenChange, userId }: AccessHistory
           </SheetTitle>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-120px)] mt-4">
+        <ScrollArea className="h-[calc(var(--app-height)-120px)] mt-4">
           {isLoading ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-24 w-full" />)}
