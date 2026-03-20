@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,12 +11,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Pencil, Trash2, Building2, Star, Copy, Upload, X, Image } from "lucide-react";
+import { Plus, Pencil, Trash2, Building2, Star, Copy, Upload, X, Image, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useExecutors, Executor } from "@/hooks/useLegalDetails";
 import { PhoneInput } from "@/components/ui/phone-input";
 import { supabase } from "@/integrations/supabase/client";
 import { usePermissions } from "@/hooks/usePermissions";
+import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
+import type { StructuredAddress } from "@/lib/address/types";
+import { ExecutorAddressAdapter } from "@/lib/address/adapters/ExecutorAddressAdapter";
+import { useGrpLookup } from "@/hooks/useGrpLookup";
+import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
+import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
