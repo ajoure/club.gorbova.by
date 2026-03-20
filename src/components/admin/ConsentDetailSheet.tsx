@@ -112,7 +112,7 @@ export function ConsentDetailSheet({ profile, open, onOpenChange }: ConsentDetai
           </div>
         </SheetHeader>
 
-        <ScrollArea className="h-[calc(100vh-140px)]">
+        <ScrollArea className="h-[calc(var(--app-height)-140px)]">
           <div className="space-y-4 pr-4">
             {/* Current status */}
             <Card>

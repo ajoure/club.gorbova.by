@@ -8,6 +8,9 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
+    /* Dynamic viewport height — stable on iOS with keyboard */
+    --app-height: 100dvh;
+
     /* iOS-like glass blue theme */
     --background: 220 60% 97%;
     --foreground: 222 47% 11%;
@@ -156,10 +159,17 @@ body.impersonation-active .impersonation-offset {
   }
 }
 
-/* iOS zoom prevention - only for inputs */
-@layer base {
+/* iOS zoom prevention - only for mobile inputs */
+@media (max-width: 767px) {
   input, textarea, select {
-    font-size: 16px;
+    font-size: 16px !important;
+  }
+}
+
+/* dvh fallback for older browsers */
+@supports not (height: 100dvh) {
+  :root {
+    --app-height: 100vh;
   }
 }
 
