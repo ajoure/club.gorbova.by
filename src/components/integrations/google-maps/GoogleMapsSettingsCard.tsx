@@ -72,17 +72,12 @@ export function GoogleMapsSettingsCard() {
 
         {isReady && (
           <div className="space-y-2">
-            <div className="flex gap-2">
               <Input
                 value={testQuery}
-                onChange={(e) => setTestQuery(e.target.value)}
-                placeholder="Тестовый поиск адреса…"
+                onChange={(e) => handleInputChange(e.target.value)}
+                placeholder="Начните вводить адрес…"
                 className="h-9 text-sm"
               />
-              <Button size="sm" variant="outline" onClick={handleTest} disabled={testQuery.length < 3}>
-                <Search className="h-4 w-4" />
-              </Button>
-            </div>
 
             {predictions.length > 0 && (
               <ul className="border rounded-md divide-y text-sm">
