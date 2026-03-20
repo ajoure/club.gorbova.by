@@ -11,7 +11,6 @@ import {
   PlayCircle, 
   Copy, 
   Send, 
-  Sparkles,
   Clock,
   Target,
   TrendingUp,
