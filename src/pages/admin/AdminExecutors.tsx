@@ -121,6 +121,19 @@ export default function AdminExecutors() {
   const [isUploadingSignature, setIsUploadingSignature] = useState(false);
   const signatureInputRef = useRef<HTMLInputElement>(null);
 
+  // Address state
+  const [address, setAddress] = useState<StructuredAddress>(() =>
+    ExecutorAddressAdapter.toStructuredAddress({})
+  );
+  const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+
+  // GRP lookup state
+  const grpLookup = useGrpLookup();
+  const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
+  const [grpDialogOpen, setGrpDialogOpen] = useState(false);
+  const [grpResult, setGrpResult] = useState<ReturnType<typeof grpDataToAutofillFields> | null>(null);
+  const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
+
   // Автогенерация краткого ФИО
   const directorShortName = useMemo(() => {
     return generateShortName(formData.director_full_name);
