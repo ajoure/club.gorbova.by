@@ -163,6 +163,7 @@ serve(async (req) => {
             uid,
             current_status: payment.status,
             bepaid_status: bepaidStatus,
+            status_source: statusSource,
             action: `dry_run:${bepaidStatus === 'successful' ? 'would_upgrade_to_succeeded' : bepaidStatus === 'pending' ? 'still_pending' : 'would_mark_' + bepaidStatus}`,
             order_id: payment.order_id,
           });
