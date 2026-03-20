@@ -569,7 +569,10 @@ export default function AdminExecutors() {
 
             {/* Structured Address */}
             <div>
-              <Label>Юридический адрес *</Label>
+              <Label className="flex items-center gap-2">
+                Юридический адрес *
+                {isEnrichingAddress && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              </Label>
               <div className="mt-1.5">
                 <StructuredAddressBlock
                   value={address}
