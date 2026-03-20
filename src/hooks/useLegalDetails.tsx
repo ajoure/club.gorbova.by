@@ -27,6 +27,7 @@ export interface ClientLegalDetails {
   ind_address_street: string | null;
   ind_address_house: string | null;
   ind_address_apartment: string | null;
+  ind_address_structured: Record<string, unknown> | null;
   
   // Entrepreneur fields
   ent_name: string | null;
