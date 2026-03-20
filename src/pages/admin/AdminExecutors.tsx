@@ -128,6 +128,7 @@ export default function AdminExecutors() {
     ExecutorAddressAdapter.toStructuredAddress({})
   );
   const [addressSource, setAddressSource] = useState<'manual' | 'google' | 'grp'>('manual');
+  const [isEnrichingAddress, setIsEnrichingAddress] = useState(false);
 
   // GRP lookup state
   const grpLookup = useGrpLookup();
