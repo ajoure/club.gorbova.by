@@ -208,7 +208,7 @@ const AI = () => {
   return (
     <DashboardLayout>
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">AI-инструменты для твоего бизнеса</p>
+        
 
         {/* Pill-style Tabs */}
         <div className="px-1 pt-1 pb-1.5 shrink-0">
@@ -222,6 +222,7 @@ const AI = () => {
               const Icon = tab.icon;
               return (
                 <button
+                  type="button"
                   key={tab.id}
                   role="tab"
                   aria-selected={isActive}
@@ -230,17 +231,16 @@ const AI = () => {
                 >
                   <Icon className="h-4 w-4 mr-0.5" />
                   <span className="hidden sm:inline">{tab.label}</span>
-                  {tab.mobileLabel && <span className="sm:hidden">{tab.mobileLabel}</span>}
-                  {!tab.mobileLabel && <span>{tab.label}</span>}
+                  <span className="sm:hidden">{tab.mobileLabel ?? tab.label}</span>
                 </button>
               );
             })}
           </div>
         </div>
 
-          {/* Chat Tab */}
+          {/* Chat Tab — height: header + tabs + paddings ≈ 280px */}
           {activeTab === "chat" && (
-            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(100vh - 280px)", minHeight: "500px" }}>
+            <GlassCard className="p-0 overflow-hidden flex flex-col" style={{ height: "calc(var(--app-height) - 280px)", minHeight: "500px" }}>
               {/* Messages Area */}
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-4">
