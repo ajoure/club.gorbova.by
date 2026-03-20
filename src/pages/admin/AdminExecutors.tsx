@@ -23,8 +23,9 @@ import { ExecutorAddressAdapter } from "@/lib/address/adapters/ExecutorAddressAd
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
 import { grpDataToAutofillFields, buildGrpDiff } from "@/lib/legal-entities/GrpAutofillService";
-import type { GrpDiffEntry } from "@/lib/legal-entities/GrpAutofillService";
+import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { GrpConfirmDialog } from "@/components/legal-details/GrpConfirmDialog";
+import { formatFullAddress } from "@/lib/address/utils";
 
 // Предустановленные должности руководителя
 const DIRECTOR_POSITIONS = [
