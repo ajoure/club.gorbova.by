@@ -149,6 +149,7 @@ const AI = () => {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<"chat" | "tutorials" | "prompts">("chat");
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
