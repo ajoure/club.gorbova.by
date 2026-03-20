@@ -1,9 +1,9 @@
 import {
-  deepEqual
-} from "./chunk-FX47Z3IB.js";
-import {
   clsx_default
 } from "./chunk-KDVGFZWC.js";
+import {
+  deepEqual
+} from "./chunk-FX47Z3IB.js";
 import {
   require_react_dom
 } from "./chunk-FKMA2RKD.js";
