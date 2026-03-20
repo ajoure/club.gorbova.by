@@ -42,7 +42,7 @@ serve(async (req) => {
   const isAnonKeyAuth = anonKey && authHeader === `Bearer ${anonKey}`;
   
   if (!isCronAuth && !isServiceRoleAuth && !isAnonKeyAuth) {
-    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid auth');
+    console.error('[ERIP-RECONCILE] Unauthorized: missing or invalid auth', { hasCronSecret: !!cronSecret, hasIncoming: !!incomingSecret, hasServiceRole: !!serviceRoleKey, hasAnon: !!anonKey, authHeaderPrefix: authHeader.substring(0, 20) });
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
