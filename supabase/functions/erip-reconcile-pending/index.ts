@@ -116,7 +116,7 @@ serve(async (req) => {
         }
 
         const data = await resp.json();
-        const tx = data?.transaction || data;
+        const tx = data?.transactions?.[0] || data?.transaction || data;
         const bepaidStatus = tx?.status || 'unknown';
 
         if (dryRun) {
