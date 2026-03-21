@@ -5,6 +5,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { useGoogleMapsLoader } from './useGoogleMapsLoader';
+import { GOOGLE_PLACE_DETAIL_FIELDS, mapGooglePlaceDetails } from '@/lib/address/googlePlaceDetails';
 
 export interface PlacePrediction {
   placeId: string;
@@ -20,7 +21,6 @@ export interface PlaceDetails {
   lat: number | null;
   lng: number | null;
   addressComponents: google.maps.places.AddressComponent[];
-  postalCode: string | null;
 }
 
 interface UsePlaceAutocompleteOptions {
@@ -119,16 +119,17 @@ export function usePlaceAutocomplete(options: UsePlaceAutocompleteOptions = {}) 
       try {
         const place = prediction.toPlace();
         await place.fetchFields({
-          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode', 'adrFormatAddress'],
+          fields: [...GOOGLE_PLACE_DETAIL_FIELDS],
         });
         resetSessionToken();
+
+        const details = mapGooglePlaceDetails(place, prediction.description);
         return {
-          formattedAddress: place.formattedAddress || prediction.description,
-          placeId: place.id || prediction.placeId,
-          lat: place.location?.lat() ?? null,
-          lng: place.location?.lng() ?? null,
-          addressComponents: (place.addressComponents || []) as google.maps.places.AddressComponent[],
-          postalCode: (place as any).postalCode || null,
+          formattedAddress: details.formattedAddress,
+          placeId: details.placeId || prediction.placeId,
+          lat: details.lat,
+          lng: details.lng,
+          addressComponents: details.addressComponents,
         };
       } catch (err) {
         console.error('[usePlaceAutocomplete] fetchFields error:', err);

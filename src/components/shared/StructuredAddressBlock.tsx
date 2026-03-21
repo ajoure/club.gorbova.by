@@ -178,10 +178,6 @@ export function StructuredAddressBlock({
 
       if (details) {
         const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
-        // If postal_code not found in addressComponents, use top-level postalCode
-        if (!parsed.postal_code && details.postalCode) {
-          parsed.postal_code = details.postalCode;
-        }
         const merged: StructuredAddress = {
           ...emptyAddress(),
           building: value.building,
