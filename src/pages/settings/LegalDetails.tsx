@@ -1,15 +1,13 @@
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useLegalDetails, ClientType, ClientLegalDetails } from "@/hooks/useLegalDetails";
-import { PayerTypeSelector } from "@/components/legal-details/PayerTypeSelector";
+import { PayerTypeSelector, type PayerUiType } from "@/components/legal-details/PayerTypeSelector";
 import { IndividualDetailsForm } from "@/components/legal-details/IndividualDetailsForm";
-import { EntrepreneurDetailsForm } from "@/components/legal-details/EntrepreneurDetailsForm";
-import { LegalEntityDetailsForm } from "@/components/legal-details/LegalEntityDetailsForm";
-import type { GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
+import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { 
   FileText, 
   Plus, 
@@ -17,7 +15,6 @@ import {
   Star, 
   ChevronLeft,
   User,
-  Briefcase,
   Building2,
   CheckCircle2,
   AlertCircle
@@ -33,6 +30,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+/** Map DB client_type to UI type */
+function clientTypeToUiType(ct: ClientType): PayerUiType {
+  return ct === "individual" ? "individual" : "organization";
+}
+
 export default function LegalDetailsSettings() {
   const {
     legalDetails,
@@ -47,18 +49,10 @@ export default function LegalDetailsSettings() {
   } = useLegalDetails();
 
   const [mode, setMode] = useState<"list" | "create" | "edit">("list");
-  const [selectedType, setSelectedType] = useState<ClientType>("individual");
+  const [selectedType, setSelectedType] = useState<PayerUiType>("individual");
   const [editingDetails, setEditingDetails] = useState<ClientLegalDetails | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [detailsToDelete, setDetailsToDelete] = useState<ClientLegalDetails | null>(null);
-  
-  // Handoff state for ЮЛ → ИП switch
-  const [pendingGrpPayload, setPendingGrpPayload] = useState<GrpAutofillFields | null>(null);
-
-  const handleSwitchToEntrepreneur = useCallback((payload: GrpAutofillFields) => {
-    setPendingGrpPayload(payload);
-    setSelectedType("entrepreneur");
-  }, []);
 
   const handleCreate = async (data: Partial<ClientLegalDetails>) => {
     await createDetails(data);
@@ -81,7 +75,7 @@ export default function LegalDetailsSettings() {
 
   const openEdit = (details: ClientLegalDetails) => {
     setEditingDetails(details);
-    setSelectedType(details.client_type as ClientType);
+    setSelectedType(clientTypeToUiType(details.client_type as ClientType));
     setMode("edit");
   };
 
@@ -91,11 +85,8 @@ export default function LegalDetailsSettings() {
   };
 
   const getTypeIcon = (type: ClientType) => {
-    switch (type) {
-      case "individual": return <User className="h-4 w-4" />;
-      case "entrepreneur": return <Briefcase className="h-4 w-4" />;
-      case "legal_entity": return <Building2 className="h-4 w-4" />;
-    }
+    if (type === "individual") return <User className="h-4 w-4" />;
+    return <Building2 className="h-4 w-4" />;
   };
 
   const getTypeLabel = (type: ClientType) => {
@@ -114,41 +105,24 @@ export default function LegalDetailsSettings() {
         return details.ent_name || "ИП";
       case "legal_entity":
         return details.leg_org_form && details.leg_name 
-          ? `${details.leg_org_form} "${details.leg_name}"`
+          ? `${details.leg_org_form} «${details.leg_name}»`
           : "Юрлицо";
     }
   };
 
   const renderForm = () => {
-    // Для редактирования: showDemoOnEmpty = false, так как редактируем реальные данные
-    // Для создания: showDemoOnEmpty = true, чтобы показать примеры заполнения
     const isEditMode = mode === "edit";
     const props = {
       initialData: editingDetails,
       onSubmit: isEditMode ? handleUpdate : handleCreate,
       isSubmitting: isCreating || isUpdating,
-      showDemoOnEmpty: !isEditMode, // Демо только при создании новых
+      showDemoOnEmpty: !isEditMode,
     };
 
-    switch (selectedType) {
-      case "individual":
-        return <IndividualDetailsForm {...props} />;
-      case "entrepreneur":
-        return (
-          <EntrepreneurDetailsForm 
-            {...props} 
-            pendingGrpPayload={pendingGrpPayload}
-            onPendingGrpPayloadConsumed={() => setPendingGrpPayload(null)}
-          />
-        );
-      case "legal_entity":
-        return (
-          <LegalEntityDetailsForm 
-            {...props}
-            onRequestSwitchToEntrepreneur={handleSwitchToEntrepreneur}
-          />
-        );
+    if (selectedType === "individual") {
+      return <IndividualDetailsForm {...props} />;
     }
+    return <OrganizationDetailsForm {...props} />;
   };
 
   if (mode === "create" || mode === "edit") {
@@ -346,7 +320,7 @@ export default function LegalDetailsSettings() {
             <AlertDialogDescription>
               {detailsToDelete && (
                 <>
-                  Реквизиты "{getDisplayName(detailsToDelete)}" будут удалены.
+                  Реквизиты «{getDisplayName(detailsToDelete)}» будут удалены.
                   Это действие нельзя отменить.
                 </>
               )}

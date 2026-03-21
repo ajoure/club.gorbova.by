@@ -1,14 +1,16 @@
 import { Button } from "@/components/ui/button";
-import { User, Briefcase, Building2 } from "lucide-react";
-import { ClientType } from "@/hooks/useLegalDetails";
+import { User, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+/** UI-level type discriminator: individual or organization (ЮЛ + ИП unified) */
+export type PayerUiType = "individual" | "organization";
+
 interface PayerTypeSelectorProps {
-  value: ClientType;
-  onChange: (type: ClientType) => void;
+  value: PayerUiType;
+  onChange: (type: PayerUiType) => void;
 }
 
-const types: { value: ClientType; label: string; icon: React.ReactNode; description: string }[] = [
+const types: { value: PayerUiType; label: string; icon: React.ReactNode; description: string }[] = [
   {
     value: "individual",
     label: "Физлицо",
@@ -16,22 +18,16 @@ const types: { value: ClientType; label: string; icon: React.ReactNode; descript
     description: "Паспортные данные",
   },
   {
-    value: "entrepreneur",
-    label: "ИП",
-    icon: <Briefcase className="h-5 w-5" />,
-    description: "Индивидуальный предприниматель",
-  },
-  {
-    value: "legal_entity",
-    label: "Юрлицо",
+    value: "organization",
+    label: "Организация / ИП",
     icon: <Building2 className="h-5 w-5" />,
-    description: "ООО, ЗАО и т.д.",
+    description: "УНП, реквизиты, адрес",
   },
 ];
 
 export function PayerTypeSelector({ value, onChange }: PayerTypeSelectorProps) {
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 gap-3">
       {types.map((type) => (
         <Button
           key={type.value}
