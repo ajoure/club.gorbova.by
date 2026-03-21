@@ -89,12 +89,17 @@ export async function enrichAddressViaGoogle(
 ): Promise<EnrichmentResult> {
   try {
     const gm = (window as any).google;
+    console.log('[GrpAddressEnricher] Starting enrichment. Google available:', !!gm?.maps?.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions);
+    console.log('[GrpAddressEnricher] Preliminary address:', JSON.stringify(preliminary));
+    
     if (!gm?.maps?.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+      console.warn('[GrpAddressEnricher] Google Maps API not available');
       return { address: preliminary, enriched: false, error: 'Google Maps API not available' };
     }
 
     // Build query from preliminary address
     const query = formatFullAddress(preliminary);
+    console.log('[GrpAddressEnricher] Query:', query);
     if (!query || query.length < 5) {
       return { address: preliminary, enriched: false, error: 'Query too short' };
     }
@@ -108,6 +113,7 @@ export async function enrichAddressViaGoogle(
         includedRegionCodes: ['by'],
       });
 
+    console.log('[GrpAddressEnricher] Got suggestions:', suggestions?.length || 0);
     if (!suggestions?.length) {
       return { address: preliminary, enriched: false, error: 'No suggestions found' };
     }
@@ -125,11 +131,18 @@ export async function enrichAddressViaGoogle(
         });
 
         const details = mapGooglePlaceDetails(place);
+        console.log(`[GrpAddressEnricher] Candidate ${i} details:`, {
+          placeId: details.placeId,
+          formattedAddress: details.formattedAddress,
+          componentsCount: details.addressComponents?.length,
+          structuredAddress: details.structuredAddress,
+        });
 
         // Parse Google components via the same adapter used by manual autocomplete
         const googleParsed = GooglePlacesAdapter.parseComponents(
           details.addressComponents as any[]
         );
+        console.log(`[GrpAddressEnricher] Candidate ${i} parsed:`, googleParsed);
 
         // ===== VALIDATED MATCH CHECK =====
         if (!isValidatedMatch(preliminary, googleParsed)) {
@@ -162,6 +175,7 @@ export async function enrichAddressViaGoogle(
           lng: details.lng,
         };
 
+        console.log('[GrpAddressEnricher] ✅ Merged result:', JSON.stringify(merged));
         return { address: merged, enriched: true };
       } catch (candidateErr) {
         console.warn(`[GrpAddressEnricher] Candidate ${i} fetch error:`, candidateErr);

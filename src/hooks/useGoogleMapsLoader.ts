@@ -124,18 +124,21 @@ if (import.meta.hot) {
 function loadScript() {
   if (globalState !== "idle") return;
   if (!GOOGLE_MAPS_API_KEY) {
+    console.error("[GoogleMapsLoader] VITE_GOOGLE_MAPS_API_KEY is not configured. Google address features disabled.");
     globalState = "error";
     globalError = "VITE_GOOGLE_MAPS_API_KEY is not configured";
     notify();
     return;
   }
 
+  console.log("[GoogleMapsLoader] Starting Google Maps load...");
   globalState = "loading";
   notify();
   injectBootstrapLoader(GOOGLE_MAPS_API_KEY);
   loadPlacesLibrary().then((ok) => {
     globalState = ok ? "ready" : "error";
     globalError = ok ? null : "Places library initialization failed";
+    console.log("[GoogleMapsLoader] Load complete. State:", globalState, "Error:", globalError);
     notify();
   });
 }
