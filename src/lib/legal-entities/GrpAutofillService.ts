@@ -140,6 +140,13 @@ export interface GrpAutofillFields {
   entity_kind: EntityKind;
 }
 
+export interface GrpDiffEntry {
+  label: string;
+  field: keyof GrpAutofillFields;
+  oldValue: string;
+  newValue: string;
+}
+
 
 /**
  * Map GRP lookup data to autofill fields.
