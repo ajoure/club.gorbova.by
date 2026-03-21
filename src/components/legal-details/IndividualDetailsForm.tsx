@@ -59,6 +59,24 @@ export function IndividualDetailsForm({
 }: IndividualDetailsFormProps) {
   const hasRealData = !!initialData?.ind_full_name;
   const { fieldsMap } = useLegalDetailsFields();
+
+  // Build address field IDs for StructuredAddressBlock CopyableIdChip
+  const addressFieldIds = useMemo(() => {
+    const addressKeyMap: Record<string, string> = {
+      street: "ind_address_street",
+      house: "ind_address_house",
+      apartment: "ind_address_apartment",
+      postal_code: "ind_address_index",
+      region: "ind_address_region",
+      city: "ind_address_city",
+    };
+    const map = new Map<string, import("@/hooks/useLegalDetailsFields").LegalDetailsFieldEntry>();
+    for (const [addrKey, colKey] of Object.entries(addressKeyMap)) {
+      const entry = fieldsMap.get(colKey);
+      if (entry) map.set(addrKey, entry);
+    }
+    return map;
+  }, [fieldsMap]);
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
   const [address, setAddress] = useState<StructuredAddress>(() =>

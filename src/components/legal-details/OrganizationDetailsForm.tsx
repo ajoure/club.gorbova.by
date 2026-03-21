@@ -504,6 +504,7 @@ export function OrganizationDetailsForm({
               disabled={isSubmitting}
               compact
               countries={['by']}
+              fieldIds={addressFieldIds}
             />
           </div>
         </div>
