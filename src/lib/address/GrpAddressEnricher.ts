@@ -120,14 +120,15 @@ export async function enrichAddressViaGoogle(
 
       try {
         const place = suggestion.placePrediction.toPlace();
-        // Use the SAME field set as manual autocomplete path
         await place.fetchFields({
-          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode', 'adrFormatAddress'],
+          fields: [...GOOGLE_PLACE_DETAIL_FIELDS],
         });
+
+        const details = mapGooglePlaceDetails(place);
 
         // Parse Google components via the same adapter used by manual autocomplete
         const googleParsed = GooglePlacesAdapter.parseComponents(
-          (place.addressComponents || []) as any[]
+          details.addressComponents as any[]
         );
 
         // ===== VALIDATED MATCH CHECK =====
