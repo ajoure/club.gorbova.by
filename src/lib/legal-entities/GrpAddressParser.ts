@@ -65,20 +65,21 @@ export function parseGrpAddress(flat: string | null | undefined): StructuredAddr
     }
 
     // Settlement (поселок, деревня, агрогородок)
-    if (/^(п\.\s*|пос\.\s*|д\.\s*|дер\.\s*|аг\.\s*|агрогородок\s+)/i.test(part)) {
+    // NB: "д." followed by a digit = house, NOT settlement
+    if (/^(п\.\s*|пос\.\s*|дер\.\s*|аг\.\s*|агрогородок\s+)/i.test(part) || /^д\.\s*[а-яёА-ЯЁ]/i.test(part)) {
       addr.settlement = part;
+      continue;
+    }
+
+    // House: д.2, д. 2, д 2, дом 2, дом2
+    if (/^(д\.?\s*\d|дом\s*\d)/i.test(part)) {
+      addr.house = part.replace(/^(д\.?\s*|дом\s*)/i, '').trim();
       continue;
     }
 
     // Street
     if (/^(ул\.\s*|улица\s+|пр\.\s*|пр-т\.\s*|проспект\s+|пер\.\s*|переулок\s+|б-р\.\s*|бульвар\s+|наб\.\s*|набережная\s+|ш\.\s*|шоссе\s+|пл\.\s*|площадь\s+)/i.test(part)) {
       addr.street = part;
-      continue;
-    }
-
-    // House
-    if (/^(д\.\s*|дом\s+)/i.test(part) && !(/^(д\.\s*|дер\.)/i.test(part) && /[а-яё]{2,}/i.test(part))) {
-      addr.house = part.replace(/^(д\.\s*|дом\s+)/i, '').trim();
       continue;
     }
 

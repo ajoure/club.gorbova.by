@@ -21,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAddressAdapter";
-import { formatFullAddress } from "@/lib/address/utils";
+import { emptyAddress, formatFullAddress } from "@/lib/address/utils";
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
 import {
@@ -35,6 +35,16 @@ import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { OrgFormCombobox } from "./OrgFormCombobox";
 import { Badge } from "@/components/ui/badge";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const OTHER_VALUE = '__OTHER__';
 
@@ -67,13 +77,15 @@ interface LegalEntityDetailsFormProps {
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
   showDemoOnEmpty?: boolean;
+  onRequestSwitchToEntrepreneur?: (payload: GrpAutofillFields) => void;
 }
 
 export function LegalEntityDetailsForm({ 
   initialData, 
   onSubmit, 
   isSubmitting,
-  showDemoOnEmpty = true 
+  showDemoOnEmpty = true,
+  onRequestSwitchToEntrepreneur,
 }: LegalEntityDetailsFormProps) {
   const hasRealData = !!initialData?.leg_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
@@ -97,6 +109,8 @@ export function LegalEntityDetailsForm({
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
   const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
+  const [ipSwitchDialogOpen, setIpSwitchDialogOpen] = useState(false);
+  const [pendingIpPayload, setPendingIpPayload] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   const getDefaultValues = (): FormData => {
@@ -166,6 +180,15 @@ export function LegalEntityDetailsForm({
 
   const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
+
+    // If lookup returned an entrepreneur, don't apply as legal entity
+    if (grpResult.entity_kind === 'entrepreneur') {
+      setGrpDialogOpen(false);
+      setPendingIpPayload(grpResult);
+      setIpSwitchDialogOpen(true);
+      return;
+    }
+
     const filled = new Set<string>();
 
     // Apply org form (full canonical)
@@ -180,16 +203,20 @@ export function LegalEntityDetailsForm({
       filled.add("leg_name");
     }
 
-    // Apply parsed structured address + enrich via Google
+    // Apply parsed structured address from clean state (emptyAddress + parsed)
     if (grpResult.parsed_address) {
-      setAddress(grpResult.parsed_address);
+      const freshAddress: StructuredAddress = {
+        ...emptyAddress(),
+        ...grpResult.parsed_address,
+      };
+      setAddress(freshAddress);
       setAddressSource('grp');
       filled.add("address");
 
       // Async enrichment via Google
       setIsEnrichingAddress(true);
       try {
-        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        const result = await enrichAddressViaGoogle(freshAddress);
         if (result.enriched) {
           setAddress(result.address);
         }
@@ -201,6 +228,24 @@ export function LegalEntityDetailsForm({
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
   }, [grpResult, form]);
+
+  const handleIpSwitchConfirm = useCallback(() => {
+    if (!pendingIpPayload || !onRequestSwitchToEntrepreneur) return;
+    // Clear LE form state
+    form.setValue("leg_org_form", "");
+    form.setValue("leg_name", "");
+    setAddress(emptyAddress());
+    setAutofilledFields(new Set());
+    // Hand off to page-level orchestration
+    onRequestSwitchToEntrepreneur(pendingIpPayload);
+    setIpSwitchDialogOpen(false);
+    setPendingIpPayload(null);
+  }, [pendingIpPayload, onRequestSwitchToEntrepreneur, form]);
+
+  const handleIpSwitchCancel = useCallback(() => {
+    setIpSwitchDialogOpen(false);
+    setPendingIpPayload(null);
+  }, []);
 
   const handleAddressChange = useCallback((val: StructuredAddress) => {
     setAddress(val);
@@ -529,6 +574,26 @@ export function LegalEntityDetailsForm({
         liquidationDate={grpLookup.data?.data?.liquidation_date}
         onConfirm={handleGrpConfirm}
       />
+
+      {/* IP Switch Confirmation Dialog */}
+      <AlertDialog open={ipSwitchDialogOpen} onOpenChange={setIpSwitchDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Найден индивидуальный предприниматель</AlertDialogTitle>
+            <AlertDialogDescription>
+              По введённому УНП в реестре найден ИП
+              {pendingIpPayload?.clean_name ? ` «${pendingIpPayload.clean_name}»` : ''}.
+              Переключить форму на ИП и применить данные?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleIpSwitchCancel}>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleIpSwitchConfirm}>
+              Переключить на ИП
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Form>
   );
 }

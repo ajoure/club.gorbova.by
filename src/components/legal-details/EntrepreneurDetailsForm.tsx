@@ -29,6 +29,7 @@ import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAu
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+import { emptyAddress } from "@/lib/address/utils";
 
 
 
@@ -50,13 +51,17 @@ interface EntrepreneurDetailsFormProps {
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
   showDemoOnEmpty?: boolean;
+  pendingGrpPayload?: GrpAutofillFields | null;
+  onPendingGrpPayloadConsumed?: () => void;
 }
 
 export function EntrepreneurDetailsForm({ 
   initialData, 
   onSubmit, 
   isSubmitting,
-  showDemoOnEmpty = true 
+  showDemoOnEmpty = true,
+  pendingGrpPayload,
+  onPendingGrpPayloadConsumed,
 }: EntrepreneurDetailsFormProps) {
   const hasRealData = !!initialData?.ent_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
@@ -131,27 +136,31 @@ export function EntrepreneurDetailsForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unpValue]);
 
-  const handleGrpConfirm = useCallback(async () => {
-    if (!grpResult) return;
+  // Apply GRP payload (either from local lookup or from ЮЛ→ИП switch handoff)
+  const applyGrpPayload = useCallback(async (payload: GrpAutofillFields) => {
     const filled = new Set<string>();
 
     // For ИП: use clean_name (without "Индивидуальный предприниматель" prefix)
-    const ipName = grpResult.clean_name || grpResult.name;
+    const ipName = payload.clean_name || payload.name;
     if (ipName) {
       form.setValue("ent_name", ipName);
       filled.add("ent_name");
     }
 
-    // Apply parsed structured address + enrich via Google
-    if (grpResult.parsed_address) {
-      setAddress(grpResult.parsed_address);
+    // Apply parsed structured address from clean state
+    if (payload.parsed_address) {
+      const freshAddress: StructuredAddress = {
+        ...emptyAddress(),
+        ...payload.parsed_address,
+      };
+      setAddress(freshAddress);
       setAddressSource('grp');
       filled.add("address");
 
       // Async enrichment via Google
       setIsEnrichingAddress(true);
       try {
-        const result = await enrichAddressViaGoogle(grpResult.parsed_address);
+        const result = await enrichAddressViaGoogle(freshAddress);
         if (result.enriched) {
           setAddress(result.address);
         }
@@ -161,8 +170,22 @@ export function EntrepreneurDetailsForm({
     }
 
     setAutofilledFields(filled);
+  }, [form]);
+
+  const handleGrpConfirm = useCallback(async () => {
+    if (!grpResult) return;
+    await applyGrpPayload(grpResult);
     setGrpDialogOpen(false);
-  }, [grpResult, form]);
+  }, [grpResult, applyGrpPayload]);
+
+  // Handle pending payload from ЮЛ→ИП switch
+  useEffect(() => {
+    if (pendingGrpPayload) {
+      applyGrpPayload(pendingGrpPayload);
+      onPendingGrpPayloadConsumed?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingGrpPayload]);
 
   const handleAddressChange = useCallback((val: StructuredAddress) => {
     setAddress(val);

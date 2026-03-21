@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { PayerTypeSelector } from "@/components/legal-details/PayerTypeSelector"
 import { IndividualDetailsForm } from "@/components/legal-details/IndividualDetailsForm";
 import { EntrepreneurDetailsForm } from "@/components/legal-details/EntrepreneurDetailsForm";
 import { LegalEntityDetailsForm } from "@/components/legal-details/LegalEntityDetailsForm";
+import type { GrpAutofillFields } from "@/lib/legal-entities/GrpAutofillService";
 import { 
   FileText, 
   Plus, 
@@ -50,6 +51,14 @@ export default function LegalDetailsSettings() {
   const [editingDetails, setEditingDetails] = useState<ClientLegalDetails | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [detailsToDelete, setDetailsToDelete] = useState<ClientLegalDetails | null>(null);
+  
+  // Handoff state for ЮЛ → ИП switch
+  const [pendingGrpPayload, setPendingGrpPayload] = useState<GrpAutofillFields | null>(null);
+
+  const handleSwitchToEntrepreneur = useCallback((payload: GrpAutofillFields) => {
+    setPendingGrpPayload(payload);
+    setSelectedType("entrepreneur");
+  }, []);
 
   const handleCreate = async (data: Partial<ClientLegalDetails>) => {
     await createDetails(data);
@@ -125,9 +134,20 @@ export default function LegalDetailsSettings() {
       case "individual":
         return <IndividualDetailsForm {...props} />;
       case "entrepreneur":
-        return <EntrepreneurDetailsForm {...props} />;
+        return (
+          <EntrepreneurDetailsForm 
+            {...props} 
+            pendingGrpPayload={pendingGrpPayload}
+            onPendingGrpPayloadConsumed={() => setPendingGrpPayload(null)}
+          />
+        );
       case "legal_entity":
-        return <LegalEntityDetailsForm {...props} />;
+        return (
+          <LegalEntityDetailsForm 
+            {...props}
+            onRequestSwitchToEntrepreneur={handleSwitchToEntrepreneur}
+          />
+        );
     }
   };
 
