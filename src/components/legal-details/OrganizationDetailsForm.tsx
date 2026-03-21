@@ -629,7 +629,7 @@ export function OrganizationDetailsForm({
               name="phone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Телефон</FormLabel>
+                  <FieldLabelWithId label="Телефон" fieldEntry={fieldsMap.get("phone")} />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("phone", "+375 17 3456789")} 
