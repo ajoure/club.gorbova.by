@@ -58,6 +58,7 @@ export function IndividualDetailsForm({
   showDemoOnEmpty = true 
 }: IndividualDetailsFormProps) {
   const hasRealData = !!initialData?.ind_full_name;
+  const { fieldsMap } = useLegalDetailsFields();
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
   const [address, setAddress] = useState<StructuredAddress>(() =>

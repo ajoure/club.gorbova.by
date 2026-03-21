@@ -94,7 +94,7 @@ export function OrganizationDetailsForm({
 }: OrganizationDetailsFormProps) {
   // Determine if editing existing entrepreneur or legal_entity
   const isEditingEntrepreneur = initialData?.client_type === 'entrepreneur';
-
+  const { fieldsMap } = useLegalDetailsFields();
   const hasRealData = isEditingEntrepreneur
     ? !!initialData?.ent_name
     : !!initialData?.leg_name;
