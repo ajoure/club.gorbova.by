@@ -288,8 +288,15 @@ export function StructuredAddressBlock({
             }}
             className={cn(field.colSpan || 'col-span-1')}
           >
-            <Label htmlFor={`addr-${field.key}`} className="text-xs text-muted-foreground mb-1 block">
-              {field.label}
+            <Label htmlFor={`addr-${field.key}`} className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+              <span>{field.label}</span>
+              {fieldIds?.get(field.key)?.publicId && (
+                <CopyableIdChip
+                  value={fieldIds.get(field.key)!.publicId}
+                  copyValue={fieldIds.get(field.key)!.tokenString}
+                  successMessage="Токен скопирован"
+                />
+              )}
             </Label>
             <Input
               id={`addr-${field.key}`}
