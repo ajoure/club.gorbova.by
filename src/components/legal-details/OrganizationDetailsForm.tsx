@@ -11,6 +11,8 @@
  */
 
 import { useForm } from "react-hook-form";
+import { useLegalDetailsFields } from "@/hooks/useLegalDetailsFields";
+import { FieldLabelWithId } from "./FieldLabelWithId";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState, useCallback, useEffect, useMemo } from "react";
