@@ -3,7 +3,7 @@ import { useLegalDetailsFields } from "@/hooks/useLegalDetailsFields";
 import { FieldLabelWithId } from "./FieldLabelWithId";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Form,
