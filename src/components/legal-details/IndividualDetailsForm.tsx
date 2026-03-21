@@ -161,7 +161,7 @@ export function IndividualDetailsForm({
             name="ind_full_name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>ФИО полностью *</FormLabel>
+                <FieldLabelWithId label="ФИО полностью" fieldEntry={fieldsMap.get("ind_full_name")} required />
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("ind_full_name", "Иванов Иван Иванович")} 
