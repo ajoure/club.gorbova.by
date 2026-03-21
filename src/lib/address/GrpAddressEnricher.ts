@@ -120,8 +120,9 @@ export async function enrichAddressViaGoogle(
 
       try {
         const place = suggestion.placePrediction.toPlace();
+        // Use the SAME field set as manual autocomplete path
         await place.fetchFields({
-          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
+          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode', 'adrFormatAddress'],
         });
 
         // Parse Google components via the same adapter used by manual autocomplete
