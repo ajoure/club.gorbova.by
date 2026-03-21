@@ -68,6 +68,7 @@ export function StructuredAddressBlock({
   disabled,
   compact,
   countries,
+  fieldIds,
 }: StructuredAddressBlockProps) {
   const layout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
 
