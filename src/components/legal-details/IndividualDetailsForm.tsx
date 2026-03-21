@@ -389,6 +389,7 @@ export function IndividualDetailsForm({
             disabled={isSubmitting}
             compact
             countries={['by']}
+            fieldIds={addressFieldIds}
           />
         </div>
 
