@@ -29,6 +29,7 @@ import type { GrpDiffEntry, GrpAutofillFields } from "@/lib/legal-entities/GrpAu
 import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { Badge } from "@/components/ui/badge";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+import { emptyAddress } from "@/lib/address/utils";
 
 
 
