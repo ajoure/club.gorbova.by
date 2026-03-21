@@ -1,289 +1,99 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. Убери из плана расплывчатость `если потребуется аналогично для city`.  
-Здесь нужен **жёсткий reset-rule**, а не условный.  
-Зафиксируй так:
-  - при начале нового поиска по `street` очищаются:
-    - `house`
-    - `building`
-    - `apartment`
-    - `postal_code`
-    - `google_place_id`
-    - `lat`
-    - `lng`
-  - при явном изменении `city` для нового адреса тоже очищаются stale meta и не подмешивается старый адресный хвост.
-2. Зафиксируй, что **manual и auto path используют один и тот же helper/contract**, а не просто “похожие ветки”.  
-Нужно явно написать:
-  - один shared helper для `Google place details -> StructuredAddress`;
-  - один `GooglePlacesAdapter.parseComponents(...)`;
-  - один набор place fields;
-  - одинаковое формирование canonical address.
-3. В пункте про validated candidate selection добавь явный **fail-safe**:
-  - если ни один Google candidate не проходит match,
-  - сохраняем `GRP parsed address` как canonical base,
-  - ничего из Google автоматически не применяем, включая `postal_code`, `place_id`, `lat/lng`.
-4. В VERIFY добавь отдельный пункт **after manual save + reopen** для второго адреса.  
-Сейчас есть проверка поиска второго адреса, но нужно еще доказать:
-  - второй адрес после сохранения и повторного открытия не смешивается с первым;
-  - stale context не возвращается.
-5. Для ИП в DoD зафиксируй итоговое состояние не только в VERIFY, но и как обязательный результат:
-  - `org_form = Индивидуальный предприниматель`
+1. Не фиксируй в плане формулировку `существующий адресный pipeline не регрессирует` как уже доказанный факт. Сейчас это можно писать только как **цель DoD**, а не как исходное допущение. Адресный pipeline по-прежнему должен быть закрыт **фактическими пруфами**:
+  - ЮЛ `193405000`: after lookup / after Google normalization / after save / after reopen
+  - ИП `192560618`: after lookup / after save / after reopen
+  - второй ручной адрес после первого: after select / after save / after reopen
+2. Не удаляй весь блок `validation_status`, если запрос был именно на удаление `Не проверено`. Исправь scope:
+  - скрыть/не показывать только neutral-state `Не проверено`
+  - `Проверено` и `Есть ошибки` оставить, если они реально используются
+  - если хочешь удалить весь validation badge block, это нужно отдельно согласовать как отдельный UI-патч
+3. Раздели PATCH 3.2.7 внутри плана на два подпатча:
+  - **PATCH 3.2.7A — navigation/UI cleanup**
+    - `Реквизиты` в сайдбар под `Профиль`
+    - удалить карточку-ссылку из `Profile.tsx`, чтобы не было дубля
+    - скрыть `Не проверено`
+  - **PATCH 3.2.7B — address pipeline cleanup**
+    - убрать диагностические `console.log`
+    - оставить только минимальные `warn/error`, если они реально нужны  
+    Это нужно, чтобы не смешивать косметический UI и незавершённый bugfix pipeline.
+4. Удаление диагностических логов делать **только после** живой проверки сценариев. Не убирать вслепую до verify. Иначе можно потерять последнюю диагностику, если pipeline ещё не закрыт.
+5. В DoD добавь отдельный пункт по меню:
+  - в сайдбаре под `Профиль` есть `Реквизиты`
+  - переход открывает `/settings/legal-details`
+  - старой дублирующей карточки в `Profile` больше нет
+6. В DoD по address pipeline добавь явно:
+  - для ИП после lookup форма = `Индивидуальный предприниматель`
   - руководитель скрыт
-  - `acts_on_basis = свидетельства о государственной регистрации`
+  - основание = `свидетельства о государственной регистрации`
   - `client_type = entrepreneur` после save
-  - after reopen читается из `ent_*`, без хвостов `leg_*`.
-6. Добавь строку `no regression` для manual flow `Другое`, раз он не в scope:
-  - `Другое` не трогаем, но не ломаем;
-  - existing save/reopen должен остаться рабочим.
+  - after reopen данные читаются из `ent_*`, без хвостов `leg_*`
+7. В DoD по ручному второму адресу добавь не только поиск, но и сохранение:
+  - выбрать первый адрес
+  - затем второй адрес
+  - save
+  - reopen
+  - доказать, что stale context не возвращается и второй адрес не смешивается с первым
+8. Для `Profile.tsx` и `AppSidebar.tsx` явно проверь отсутствие дублей навигации и конфликтов в мобильной/desktop версиях меню. Это небольшой, но обязательный UI-proof.
 
-В остальном план хороший и ТЗ покрывает.
+После этих правок план нормальный.
 
 &nbsp;
 
-PATCH 3.2.6 — Единый Google pipeline для индекса + жёсткий reset stale context
+PATCH 3.2.7 — Реквизиты в сайдбар + удаление статуса «Не проверено» + финальный багфикс адресного pipeline
 
-## DIAGNOSE
+## Scope
 
-По коду и по присланным скринам сейчас картина такая:
+Три группы изменений:
 
-1. Что уже реально работает:
+### 1. Реквизиты → в сайдбар под Профиль
 
-- unified-блок `Организация / ИП` есть;
-- `дом 2` для ЮЛ уже доезжает;
-- ИП-режим в текущем коде уже умеет становиться `ИП`, скрывать руководителя и ставить основание, если lookup классифицирован как `entrepreneur`.
+**Файл: `src/components/layout/AppSidebar.tsx**`
 
-2. Что реально не закрыто:
+- Добавить в `profileMenuItems` после `Профиль`:
+  ```
+  { title: "Реквизиты", url: "/settings/legal-details", icon: FileText }
+  ```
+- Импортировать `FileText` из lucide-react.
 
-- индекс не заполняется;
-- ручной и auto-flow работают через разные Google-path;
-- второй ручной адрес ищется с хвостами старого контекста.
+**Файл: `src/pages/settings/Profile.tsx**`
 
-3. Точный root cause по индексу:
+- Удалить блок `{/* Legal Details Card */}` (строки 605-624) — карточка-ссылка на реквизиты больше не нужна, раз есть прямой пункт в меню.
 
-- в `GrpAddressEnricher.ts` индекс пытаются брать из Google (`postal_code` / `postalCode`);
-- но ручной path в `usePlaceAutocomplete.fetchPlaceDetails()` запрашивает только:
-`addressComponents`, `formattedAddress`, `location`, `id`
-— без `postalCode`;
-- `StructuredAddressBlock.handleSelect()` потом мержит только то, что вернул `GooglePlacesAdapter.parseComponents(...)`;
-- значит ручной Google autocomplete физически не может стабильно дотащить индекс;
-- а по УНП для кейса `193405000` МНС в network logs возвращает адрес **без индекса**, значит индекс должен приходить именно из Google.
+### 2. Удалить статус «Не проверено»
 
-4. Вторая системная проблема:
+**Файл: `src/pages/settings/LegalDetails.tsx**`
 
-- GRP enrichment и ручной autocomplete сейчас используют похожие, но не одинаковые ветки получения place details;
-- из-за этого “ручной выбор из Google” и “автозаполнение после УНП” дают разный результат, что противоречит ТЗ.
+- Удалить блок `validation_status` (строки 235-248) — весь `<div>` с «Проверено / Есть ошибки / Не проверено».
+- Убрать неиспользуемые импорты `CheckCircle2`, `AlertCircle`.
 
-5. Stale context всё ещё недочищен:
+### 3. Багфикс адресного pipeline — финальная зачистка
 
-- `buildAutocompleteQuery()` для `street` всё ещё подмешивает `city/region/country`;
-- при старом адресе это даёт смешанный query;
-- для нового поиска по улице пользователь фактически начинает новый адрес, а не уточняет старый.
+Текущий код уже содержит:
 
-## DESIGN
+- validated match итерацию в `GrpAddressEnricher.ts`
+- hard reset stale context в `StructuredAddressBlock.tsx`
+- hierarchy-aware `buildAutocompleteQuery` в `utils.ts`
+- unified `GOOGLE_PLACE_DETAIL_FIELDS` в `googlePlaceDetails.ts`
+- ИП auto-form logic в `OrganizationDetailsForm.tsx`
 
-Нужен не новый flow, а выравнивание одного общего адресного pipeline:
+**Что нужно дочистить:**
 
-```text
-UNP lookup / manual typing
-        ↓
-shared Google place details pipeline
-        ↓
-GooglePlacesAdapter.parseComponents(...)
-        ↓
-canonical StructuredAddress
-        ↓
-save via existing adapters
-```
+**Файл: `src/lib/address/GrpAddressEnricher.ts**`
 
-Главный принцип:
+- Убрать избыточные `console.log` (оставить только 1-2 ключевых dev-only лога на уровне warn/error).
 
-- ручной ввод и УНП-обогащение должны использовать один и тот же Google result pipeline;
-- индекс, регион, страна, place_id, lat/lng должны извлекаться одинаково;
-- конфликтующий Google candidate не применяется;
-- если пользователь начинает новый адрес, старый контекст не должен влиять на поиск.
+**Файл: `src/hooks/useGoogleMapsLoader.ts**`
 
-## EXECUTE
+- Убрать диагностические `console.log`, добавленные в прошлом патче.
 
-### 1. Убрать расхождение между manual и auto Google paths
+**Файл: `src/components/legal-details/OrganizationDetailsForm.tsx**`
 
-Файлы:
-
-- `src/hooks/usePlaceAutocomplete.ts`
-- `src/components/shared/StructuredAddressBlock.tsx`
-- при необходимости `src/lib/address/adapters/GooglePlacesAdapter.ts`
-
-Что сделать:
-
-- расширить `fetchPlaceDetails()` так, чтобы он запрашивал тот же набор place fields, что нужен для enrichment, включая `postalCode`;
-- вернуть из него все данные, нужные для канонического адреса, а не только минимальный набор;
-- в `StructuredAddressBlock.handleSelect()` применять этот результат так, чтобы индекс тоже попадал в `StructuredAddress`;
-- не делать отдельный “обрезанный” manual-path без индекса.
-
-Ожидаемый результат:
-
-- ручной выбор из Google начинает заполнять индекс тем же путём, что и auto normalization.
-
-### 2. Сделать общий reusable Google normalization result
-
-Файлы:
-
-- `src/lib/address/GrpAddressEnricher.ts`
-- `src/hooks/usePlaceAutocomplete.ts`
-- возможно новый shared helper в address-layer
-
-Что сделать:
-
-- вынести общий helper/contract для Google place details → `StructuredAddress`;
-- использовать тот же `GooglePlacesAdapter.parseComponents(...)` и одинаковый набор полей и для manual select, и для GRP→Google enrichment;
-- сохранить fail-safe: если Google невалиден, остаётся GRP base address.
-
-Ожидаемый результат:
-
-- after-UNP normalization и manual Google selection дают одинаково качественный canonical result.
-
-### 3. Дожать validated candidate selection для УНП
-
-Файл:
-
-- `src/lib/address/GrpAddressEnricher.ts`
-
-Что сделать:
-
-- оставить перебор top candidates до первого валидного;
-- валидность: совпадают `street + city`, и `house` не конфликтует;
-- только от валидного кандидата брать:
-  - `postal_code`
-  - `region`
-  - `country`
-  - `place_id`
-  - `lat/lng`
-- `apartment/office` всегда оставлять из GRP parser поверх Google;
-- если ни один candidate не валиден — Google не применять вообще.
-
-Ожидаемый результат:
-
-- индекс не “угадывается” от чужого адреса;
-- `Панфилова / 2 / 49л` сохраняются, индекс приходит только от подтверждённого Google match.
-
-### 4. Жёстко исправить stale context при новом ручном адресе
-
-Файлы:
-
-- `src/lib/address/utils.ts`
-- `src/components/shared/StructuredAddressBlock.tsx`
-
-Что сделать:
-
-- для нового поиска по `street` строить safe-query как новый поиск:
-  - `activeValue`
-  - максимум `activeValue + country`
-  - без старых `house/building/apartment/postal_code`
-  - без заведомо stale `city/region`, если пользователь уже меняет улицу на новый адрес;
-- при ручном изменении `street` очищать stale address-tail:
-  - `house`
-  - `building`
-  - `apartment`
-  - `postal_code`
-  - `google_place_id`
-  - `lat`
-  - `lng`
-- при необходимости аналогично пересматривать очистку для `city`, если пользователь явно начинает новый адрес.
-
-Ожидаемый результат:
-
-- второй адрес ищется как новый, а не как смесь прошлого и текущего.
-
-### 5. Не сломать unified Organization/IP form
-
-Файл:
-
-- `src/components/legal-details/OrganizationDetailsForm.tsx`
-
-Что проверить при внедрении:
-
-- ИП autofill не регрессирует;
-- `org_form = Индивидуальный предприниматель` остаётся;
-- блок руководителя скрыт;
-- `acts_on_basis = свидетельства о государственной регистрации`;
-- save/load остаются по `client_type`, без хвостов из opposite namespace.
-
-## VERIFY
-
-Новый verify должен закрывать именно фактические баги.
-
-### A. ЮЛ по УНП
-
-Кейс: `193405000`
-
-Проверить:
-
-- after lookup
-- after Google normalization
-- after save
-- after reopen
-
-Доказать:
-
-- `ул. Панфилова`
-- `дом 2`
-- `49л`
-- индекс заполнен
-- регион/страна заполняются корректно
-- адрес не подменяется чужим candidate
-
-### B. ИП по УНП
-
-Кейс: `192560618`
-
-Проверить:
-
-- after lookup
-- after save
-- after reopen
-
-Доказать:
-
-- форма = `Индивидуальный предприниматель`
-- имя без префикса и без кавычек
-- руководитель скрыт
-- основание = `свидетельства о государственной регистрации`
-- reopen идёт как `entrepreneur`, без хвостов ЮЛ
-
-### C. Manual Google
-
-Проверить ручной выбор того же адреса через autocomplete.
-
-Доказать:
-
-- ручной Google теперь заполняет индекс;
-- canonical result не хуже auto-flow после УНП;
-- place_id / lat / lng / postal_code сохраняются одинаково качественно.
-
-### D. Второй адрес после первого
-
-Проверить:
-
-- сначала выбрать один адрес;
-- затем начать новый поиск по другой улице/другому адресу.
-
-Доказать:
-
-- autocomplete не тащит старый контекст;
-- второй адрес ищется и выбирается корректно;
-- старые `дом / индекс / квартира / place_id` не подмешиваются.
-
-## SCOPE
-
-- без новых таблиц;
-- без миграций;
-- без новых backend functions;
-- только bugfix существующего unified settings flow и выравнивание shared address pipeline.
+- Убрать диагностические `console.log` из `handleGrpConfirm`.
 
 ## DoD
 
-- ручной Google autocomplete заполняет индекс;
-- after-UNP normalization использует тот же Google pipeline, что и ручной выбор;
-- индекс для ЮЛ приходит от валидного Google candidate, а не от конфликтующего адреса;
-- `Панфилова / 2 / 49л` не теряются;
-- второй ручной адрес не наследует stale context первого;
-- unified ИП-flow не регрессирует и корректно сохраняется/reopen по `client_type`.
+- В сайдбаре под «Профиль» появляется «Реквизиты»
+- Из карточки реквизитов убран статус «Не проверено»
+- Диагностические логи убраны из production-кода
+- Существующий адресный pipeline не регрессирует
