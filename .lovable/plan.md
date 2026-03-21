@@ -1,60 +1,77 @@
-# PATCH 3.2.7C — Legal Details Field Registry ✅ DONE
+# PATCH 3.2.7D — Canonical Token Format + Address Sub-fields ✅ DONE
 
 ## Выполнено
 
-### 1. Миграция — 31 поле в fields_registry
-- `entity_type = 'legal_details'`, keys namespaced (`legal_details.leg_unp` и т.д.)
-- Idempotent: `ON CONFLICT (entity_type, key) DO NOTHING`
-- `public_id` auto-generated: FLD-000004 → FLD-000034
-- Новая sequence НЕ создавалась — используется существующий `next_public_id('field')`
+### 1. Канонический формат токенов — через public_id
 
-### 2. Shared field map — `src/lib/legal-details/fieldMap.ts`
-- `LEGAL_DETAILS_FIELD_MAP`: registry key → column whitelist (31 записей)
-- `COLUMN_TO_REGISTRY_KEY`: reverse lookup
-- Single source of truth для резолвера и UI
+Переведён весь стек legal_details с UUID-based на public_id-based:
 
-### 3. Token resolver — `src/lib/token-resolver.ts`
-- Добавлен `CF_LEGAL_TOKEN_REGEX` для `{{cf.legal_details.<UUID>}}`
-- Резолв: UUID → registry lookup → whitelist → `client_legal_details[column]`
-- `context.legalDetailsId` — entity ID в контексте
-- Без динамического доступа по key
+- **Канонический токен**: `{{cf.legal_details.FLD-000042}}`
+- **Compatibility layer**: UUID-токены `{{cf.legal_details.<UUID>}}` по-прежнему резолвятся (legacy)
+- **Product tokens**: остаются UUID-based (`{{cf.product.<UUID>}}`), не затронуты
 
-### 4. Token registry — `src/lib/tokens/tokenRegistry.ts`
-- `loadLegalDetailsFields()` + кэш `_legalDetailsFieldsCache`
-- Группа `"legal_details"` в `TokenDef.group`
-- `tokenStringToLabel()` ищет и в legal_details кэше
+Затронутые файлы:
+- `src/hooks/useLegalDetailsFields.ts` — `tokenString` через `f.public_id`
+- `src/lib/tokens/tokenRegistry.ts` — `tokenString` через `f.public_id`
+- `src/lib/token-resolver.ts` — regex принимает `FLD-\\d+` и UUID; lookup по `public_id` (canonical) или `id` (legacy)
 
-### 5. Shared hook — `src/hooks/useLegalDetailsFields.ts`
-- Загружает registry для `entity_type = 'legal_details'`
-- Map: `columnName → { publicId, fieldId, tokenString }`
-- Stale time 5 мин
+### 2. Миграция — 16 адресных суб-полей
 
-### 6. UI — CopyableIdChip в формах
-- `FieldLabelWithId` компонент: label + chip
-- `OrganizationDetailsForm.tsx`: chip на УНП, Форма, Название, Должность, ФИО руководителя, Основание, Банк, БИК, Счёт, Телефон, Email
-- `IndividualDetailsForm.tsx`: chip на ФИО, Дата рождения, Личный номер, Email, Телефон, Серия, Номер, Дата выдачи, Действ. до, Кем выдан, Счёт, Банк, БИК
-- Chip копирует канонический токен `{{cf.legal_details.<UUID>}}`
+Зарегистрированы в `fields_registry`:
+- 8 полей `leg_address_*` (ЮЛ): street, house, building, apartment, city, region, postal_code, country
+- 8 полей `ent_address_*` (ИП): аналогично
+- FLD-000035 → FLD-000050
+- Idempotent: `ON CONFLICT DO NOTHING`
+
+### 3. JSONB mapping в fieldMap.ts
+
+`LEGAL_DETAILS_FIELD_MAP` расширен двумя типами маппинга:
+- **Simple**: `"legal_details.leg_unp" → "leg_unp"` (прямая колонка)
+- **JSONB**: `"legal_details.leg_address_street" → { column: "leg_address_structured", jsonPath: "street" }`
+
+Единый shared source, без дублирования.
+
+### 4. Резолвер — JSONB sub-fields + dual-format
+
+Путь резолва:
+```
+token(FLD-XXXXXX или UUID)
+  → fields_registry lookup (public_id или id)
+  → key → LEGAL_DETAILS_FIELD_MAP
+  → simple column ИЛИ JSONB column[jsonPath]
+  → client_legal_details → value
+```
+
+### 5. UI — CopyableIdChip на адресных полях
+
+- `StructuredAddressBlock` получает опциональный `fieldIds` prop
+- `OrganizationDetailsForm` передаёт маппинг `leg_address_*` / `ent_address_*` в зависимости от `isEntrepreneur`
+- `IndividualDetailsForm` передаёт маппинг `ind_address_*`
+- Chip показывает `FLD-000042`, копирует `{{cf.legal_details.FLD-000042}}`
 
 ## Архитектура
 
 ```
-client_legal_details (structured columns) ← SoT
-        ↑ whitelist map
+client_legal_details (structured columns + JSONB) ← SoT
+        ↑ whitelist map (simple + JSONB)
 LEGAL_DETAILS_FIELD_MAP (fieldMap.ts) ← single source
         ↑
 fields_registry (entity_type='legal_details') ← metadata/tokens
         ↑
-token: {{cf.legal_details.<UUID>}}
-UI chip: FLD-000042 → copies token
+Canonical token: {{cf.legal_details.FLD-XXXXXX}}
+Legacy compat:   {{cf.legal_details.<UUID>}}
+UI chip: FLD-000042 → copies canonical token
 ```
 
 ## DoD ✅
 
-- [x] 31 запись в `fields_registry` с `entity_type='legal_details'`, keys namespaced
-- [x] Каждая имеет auto-generated `public_id` (`FLD-*`)
-- [x] UI показывает `public_id` через `CopyableIdChip`
-- [x] Клик копирует канонический токен `{{cf.legal_details.<UUID>}}`
-- [x] Token resolver резолвит через UUID → whitelist → column
-- [x] Повторный запуск миграции не создаёт дублей
+- [x] Канонический токен: `{{cf.legal_details.FLD-XXXXXX}}`
+- [x] CopyableIdChip копирует токен через public_id
+- [x] Резолвер: public_id → registry → whitelist → column/jsonPath → value
+- [x] Legacy UUID-токены поддерживаются (compatibility layer)
+- [x] 16 адресных суб-полей (FLD-000035..FLD-000050) зарегистрированы
+- [x] Адресные поля имеют CopyableIdChip в UI
+- [x] Повторный запуск миграции безопасен (ON CONFLICT DO NOTHING)
 - [x] Save/load flow реквизитов не изменён
 - [x] TypeScript build = clean
+- [x] Product tokens не затронуты
