@@ -56,7 +56,7 @@ export async function enrichAddressViaGoogle(
     // Get place details from first suggestion
     const place = suggestions[0].placePrediction.toPlace();
     await place.fetchFields({
-      fields: ['addressComponents', 'formattedAddress', 'location', 'id'],
+      fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
     });
 
     // Parse Google components
@@ -80,7 +80,7 @@ export async function enrichAddressViaGoogle(
       // Google дозаполняет только пустые мета-поля
       district: preliminary.district || googleParsed.district,
       region: preliminary.region || googleParsed.region,
-      postal_code: preliminary.postal_code || googleParsed.postal_code,
+      postal_code: preliminary.postal_code || googleParsed.postal_code || (place as any).postalCode || '',
       country_code: preliminary.country_code || googleParsed.country_code || 'BY',
       country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
       address_line_2: preliminary.address_line_2 || '',

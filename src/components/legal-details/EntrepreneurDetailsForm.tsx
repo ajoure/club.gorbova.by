@@ -135,9 +135,10 @@ export function EntrepreneurDetailsForm({
     if (!grpResult) return;
     const filled = new Set<string>();
 
-    // For ИП: use full_name as-is (no org form separation needed)
-    if (grpResult.name) {
-      form.setValue("ent_name", grpResult.name);
+    // For ИП: use clean_name (without "Индивидуальный предприниматель" prefix)
+    const ipName = grpResult.clean_name || grpResult.name;
+    if (ipName) {
+      form.setValue("ent_name", ipName);
       filled.add("ent_name");
     }
 

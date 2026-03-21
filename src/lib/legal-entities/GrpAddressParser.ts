@@ -26,11 +26,18 @@ export function parseGrpAddress(flat: string | null | undefined): StructuredAddr
   // Normalize: remove extra spaces, normalize commas
   let s = flat.trim().replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ');
 
-  // Extract postal code (6 digits at the start)
+  // Extract postal code (6 digits at the start or after comma)
   const postalMatch = s.match(/^(\d{6})\s*,?\s*/);
   if (postalMatch) {
     addr.postal_code = postalMatch[1];
     s = s.slice(postalMatch[0].length).trim();
+  } else {
+    // Try to find 6-digit postal code elsewhere in the string
+    const postalAnywhere = s.match(/(?:^|,\s*)(\d{6})(?:\s*,|$)/);
+    if (postalAnywhere) {
+      addr.postal_code = postalAnywhere[1];
+      s = s.replace(postalAnywhere[0], ',').replace(/,\s*,/g, ',').trim();
+    }
   }
 
   // Split into parts
