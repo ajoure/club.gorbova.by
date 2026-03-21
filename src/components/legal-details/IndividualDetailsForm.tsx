@@ -289,7 +289,7 @@ export function IndividualDetailsForm({
               name="ind_passport_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Номер</FormLabel>
+                  <FieldLabelWithId label="Номер" fieldEntry={fieldsMap.get("ind_passport_number")} />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("ind_passport_number", "1234567")} 
