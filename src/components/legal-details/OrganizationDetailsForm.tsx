@@ -96,6 +96,27 @@ export function OrganizationDetailsForm({
   // Determine if editing existing entrepreneur or legal_entity
   const isEditingEntrepreneur = initialData?.client_type === 'entrepreneur';
   const { fieldsMap } = useLegalDetailsFields();
+
+  // Build address field IDs for StructuredAddressBlock CopyableIdChip
+  const addressFieldIds = useMemo(() => {
+    const prefix = isEditingEntrepreneur ? "ent_address_" : "leg_address_";
+    const addressKeyMap: Record<string, string> = {
+      street: `${prefix}street`,
+      house: `${prefix}house`,
+      building: `${prefix}building`,
+      apartment: `${prefix}apartment`,
+      city: `${prefix}city`,
+      region: `${prefix}region`,
+      postal_code: `${prefix}postal_code`,
+      country_name: `${prefix}country`,
+    };
+    const map = new Map<string, import("@/hooks/useLegalDetailsFields").LegalDetailsFieldEntry>();
+    for (const [addrKey, colKey] of Object.entries(addressKeyMap)) {
+      const entry = fieldsMap.get(colKey);
+      if (entry) map.set(addrKey, entry);
+    }
+    return map;
+  }, [fieldsMap, isEditingEntrepreneur]);
   const hasRealData = isEditingEntrepreneur
     ? !!initialData?.ent_name
     : !!initialData?.leg_name;
@@ -483,6 +504,7 @@ export function OrganizationDetailsForm({
               disabled={isSubmitting}
               compact
               countries={['by']}
+              fieldIds={addressFieldIds}
             />
           </div>
         </div>

@@ -1,11 +1,13 @@
 /**
  * Shared hook for loading legal_details fields from fields_registry.
  * Single source of truth for both OrganizationDetailsForm and IndividualDetailsForm.
+ *
+ * Canonical token format: {{cf.legal_details.<public_id>}}
+ * e.g. {{cf.legal_details.FLD-000042}}
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { COLUMN_TO_REGISTRY_KEY } from "@/lib/legal-details/fieldMap";
 
 export interface LegalDetailsFieldEntry {
   fieldId: string;       // UUID from fields_registry.id
@@ -13,7 +15,7 @@ export interface LegalDetailsFieldEntry {
   registryKey: string;   // legal_details.leg_unp
   columnName: string;    // leg_unp
   label: string;
-  tokenString: string;   // {{cf.legal_details.<UUID>}}
+  tokenString: string;   // {{cf.legal_details.FLD-000042}} — canonical format
 }
 
 export function useLegalDetailsFields() {
@@ -39,7 +41,8 @@ export function useLegalDetailsFields() {
           registryKey: f.key,
           columnName,
           label: f.label,
-          tokenString: `{{cf.legal_details.${f.id}}}`,
+          // Canonical token: through public_id, not UUID
+          tokenString: f.public_id ? `{{cf.legal_details.${f.public_id}}}` : "",
         });
       }
       return map;

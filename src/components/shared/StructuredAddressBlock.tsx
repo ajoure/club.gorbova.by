@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { CopyableIdChip } from '@/components/ui/CopyableIdChip';
+import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
 import type { StructuredAddress } from '@/lib/address/types';
@@ -22,6 +24,8 @@ export interface StructuredAddressBlockProps {
   disabled?: boolean;
   compact?: boolean;
   countries?: string[];
+  /** Optional map: address field key (street, house, etc.) → registry entry for CopyableIdChip */
+  fieldIds?: Map<string, LegalDetailsFieldEntry>;
 }
 
 interface FieldConfig {
@@ -64,6 +68,7 @@ export function StructuredAddressBlock({
   disabled,
   compact,
   countries,
+  fieldIds,
 }: StructuredAddressBlockProps) {
   const layout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
 
@@ -283,8 +288,15 @@ export function StructuredAddressBlock({
             }}
             className={cn(field.colSpan || 'col-span-1')}
           >
-            <Label htmlFor={`addr-${field.key}`} className="text-xs text-muted-foreground mb-1 block">
-              {field.label}
+            <Label htmlFor={`addr-${field.key}`} className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+              <span>{field.label}</span>
+              {fieldIds?.get(field.key)?.publicId && (
+                <CopyableIdChip
+                  value={fieldIds.get(field.key)!.publicId}
+                  copyValue={fieldIds.get(field.key)!.tokenString}
+                  successMessage="Токен скопирован"
+                />
+              )}
             </Label>
             <Input
               id={`addr-${field.key}`}

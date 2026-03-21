@@ -4,10 +4,10 @@
  * Четыре группы:
  * 1. CONTACT_TOKENS — 1:1 с resolveContactTokens() в edge functions
  * 2. DATETIME_TOKENS — 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
- * 3. Product custom fields — динамически из fields_registry
- * 4. Legal details fields — динамически из fields_registry
+ * 3. Product custom fields — динамически из fields_registry (UUID-based legacy)
+ * 4. Legal details fields — динамически из fields_registry (public_id-based canonical)
  * 
- * SoT хранения: {{first_name}}, {{today}}, {{cf.product.<uuid>}}, {{cf.legal_details.<uuid>}}
+ * SoT хранения: {{first_name}}, {{today}}, {{cf.product.<uuid>}}, {{cf.legal_details.<FLD-XXXXXX>}}
  * UI показывает label, хранит tokenString.
  */
 
@@ -56,7 +56,7 @@ const DATA_TYPE_BADGES: Record<string, string> = {
   multiselect: "Мульти",
 };
 
-/** Load product custom fields from fields_registry (dynamic) */
+/** Load product custom fields from fields_registry (dynamic, UUID-based legacy) */
 export async function loadProductFields(): Promise<TokenDef[]> {
   const { data, error } = await supabase
     .from("fields_registry")
@@ -77,7 +77,7 @@ export async function loadProductFields(): Promise<TokenDef[]> {
   }));
 }
 
-/** Load legal_details fields from fields_registry (dynamic) */
+/** Load legal_details fields from fields_registry (dynamic, public_id-based canonical) */
 export async function loadLegalDetailsFields(): Promise<TokenDef[]> {
   const { data, error } = await supabase
     .from("fields_registry")
@@ -91,7 +91,8 @@ export async function loadLegalDetailsFields(): Promise<TokenDef[]> {
   return data.map((f) => ({
     key: f.id,
     label: f.label,
-    tokenString: `{{cf.legal_details.${f.id}}}`,
+    // Canonical token: through public_id, not UUID
+    tokenString: f.public_id ? `{{cf.legal_details.${f.public_id}}}` : `{{cf.legal_details.${f.id}}}`,
     group: "legal_details" as const,
     badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
     searchKeywords: `${f.label} ${f.key} реквизиты legal ${f.public_id || ""}`,
@@ -138,8 +139,13 @@ export function tokenStringToLabel(tokenString: string): string | null {
 /**
  * Extract short UUID from a custom field token for UNMAPPED display.
  * {{cf.product.abc123-def456}} → "abc123…"
+ * {{cf.legal_details.FLD-000042}} → "FLD-000042"
  */
 export function extractShortUuid(tokenString: string): string {
+  // Check for FLD-* pattern first
+  const fldMatch = tokenString.match(/\{\{cf\.\w+\.(FLD-\d+)\}\}/);
+  if (fldMatch) return fldMatch[1];
+
   const match = tokenString.match(/\{\{cf\.\w+\.([^}]+)\}\}/);
   if (match) {
     const uuid = match[1];
