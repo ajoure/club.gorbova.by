@@ -542,7 +542,7 @@ export function OrganizationDetailsForm({
             name="acts_on_basis"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Действует на основании</FormLabel>
+                <FieldLabelWithId label="Действует на основании" fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_acts_on_basis" : "leg_acts_on_basis")} />
                 <FormControl>
                   <Input 
                     placeholder={isEntrepreneur 
