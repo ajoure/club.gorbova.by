@@ -131,11 +131,18 @@ export async function enrichAddressViaGoogle(
         });
 
         const details = mapGooglePlaceDetails(place);
+        console.log(`[GrpAddressEnricher] Candidate ${i} details:`, {
+          placeId: details.placeId,
+          formattedAddress: details.formattedAddress,
+          componentsCount: details.addressComponents?.length,
+          structuredAddress: details.structuredAddress,
+        });
 
         // Parse Google components via the same adapter used by manual autocomplete
         const googleParsed = GooglePlacesAdapter.parseComponents(
           details.addressComponents as any[]
         );
+        console.log(`[GrpAddressEnricher] Candidate ${i} parsed:`, googleParsed);
 
         // ===== VALIDATED MATCH CHECK =====
         if (!isValidatedMatch(preliminary, googleParsed)) {
