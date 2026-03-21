@@ -341,7 +341,7 @@ export function IndividualDetailsForm({
             name="ind_passport_issued_by"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Кем выдан</FormLabel>
+                <FieldLabelWithId label="Кем выдан" fieldEntry={fieldsMap.get("ind_passport_issued_by")} />
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("ind_passport_issued_by", "Фрунзенским РУВД г. Минска")} 
