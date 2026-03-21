@@ -89,12 +89,17 @@ export async function enrichAddressViaGoogle(
 ): Promise<EnrichmentResult> {
   try {
     const gm = (window as any).google;
+    console.log('[GrpAddressEnricher] Starting enrichment. Google available:', !!gm?.maps?.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions);
+    console.log('[GrpAddressEnricher] Preliminary address:', JSON.stringify(preliminary));
+    
     if (!gm?.maps?.places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+      console.warn('[GrpAddressEnricher] Google Maps API not available');
       return { address: preliminary, enriched: false, error: 'Google Maps API not available' };
     }
 
     // Build query from preliminary address
     const query = formatFullAddress(preliminary);
+    console.log('[GrpAddressEnricher] Query:', query);
     if (!query || query.length < 5) {
       return { address: preliminary, enriched: false, error: 'Query too short' };
     }
