@@ -239,7 +239,7 @@ export function IndividualDetailsForm({
               name="phone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Телефон *</FormLabel>
+                  <FieldLabelWithId label="Телефон" fieldEntry={fieldsMap.get("phone")} required />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("phone", "+375 44 7500084")} 
