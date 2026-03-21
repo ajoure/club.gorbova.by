@@ -89,23 +89,49 @@ export function isAddressEmpty(addr: StructuredAddress): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Build autocomplete query from filled fields (context-aware)
+// Build autocomplete query from filled fields (hierarchy-aware)
 // ---------------------------------------------------------------------------
+
+/**
+ * Field hierarchy levels: lower index = more specific (child).
+ * When searching for a field, only include fields at HIGHER hierarchy (parent).
+ */
+const FIELD_HIERARCHY: Record<string, number> = {
+  street: 1,
+  house: 0,
+  settlement: 2,
+  city: 3,
+  district: 4,
+  region: 5,
+  postal_code: 0, // never include in query
+  country_name: 6,
+};
 
 export function buildAutocompleteQuery(
   addr: StructuredAddress,
   activeField: keyof StructuredAddress,
   activeValue: string
 ): string {
+  const activeLevel = FIELD_HIERARCHY[activeField as string] ?? -1;
   const contextParts: string[] = [];
-  const fieldOrder: (keyof StructuredAddress)[] = [
-    'street', 'house', 'settlement', 'city', 'district', 'region', 'postal_code', 'country_name',
+
+  // Always include the active value first
+  if (activeValue.trim()) {
+    contextParts.push(activeValue.trim());
+  }
+
+  // Only include fields that are HIGHER in hierarchy (parents/context)
+  const contextFields: (keyof StructuredAddress)[] = [
+    'city', 'region', 'country_name',
   ];
 
-  for (const field of fieldOrder) {
-    const val = field === activeField ? activeValue : (addr[field] as string ?? '');
-    if (val.trim()) {
-      contextParts.push(val.trim());
+  for (const field of contextFields) {
+    const fieldLevel = FIELD_HIERARCHY[field as string] ?? -1;
+    // Only include if field is strictly higher in hierarchy than active field
+    if (fieldLevel <= activeLevel) continue;
+    const val = (addr[field] as string ?? '').trim();
+    if (val) {
+      contextParts.push(val);
     }
   }
 

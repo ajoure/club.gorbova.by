@@ -173,9 +173,11 @@ export function grpDataToAutofillFields(data: LegalEntityLookupData): GrpAutofil
   const parsedAddress = parseGrpAddress(data.legal_address);
 
   // Classify entity kind
+  // Rule: entrepreneur if explicit ИП prefix OR (no org form AND no short_name AND name looks like FIO)
   const isEntrepreneur =
     parsed.orgFormFull === 'Индивидуальный предприниматель' ||
-    parsed.orgFormShort === 'ИП';
+    parsed.orgFormShort === 'ИП' ||
+    (!parsed.orgFormFull && (!data.short_name || data.short_name === data.full_name) && looksLikeFio(parsed.cleanName));
   const isLegalEntity = !!parsed.orgFormFull && !isEntrepreneur;
   const entity_kind: EntityKind = isEntrepreneur
     ? 'entrepreneur'
