@@ -77,13 +77,15 @@ interface LegalEntityDetailsFormProps {
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
   showDemoOnEmpty?: boolean;
+  onRequestSwitchToEntrepreneur?: (payload: GrpAutofillFields) => void;
 }
 
 export function LegalEntityDetailsForm({ 
   initialData, 
   onSubmit, 
   isSubmitting,
-  showDemoOnEmpty = true 
+  showDemoOnEmpty = true,
+  onRequestSwitchToEntrepreneur,
 }: LegalEntityDetailsFormProps) {
   const hasRealData = !!initialData?.leg_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
