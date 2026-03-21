@@ -423,7 +423,7 @@ export function IndividualDetailsForm({
               name="bank_code"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>БИК</FormLabel>
+                  <FieldLabelWithId label="БИК" fieldEntry={fieldsMap.get("bank_code")} />
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 
