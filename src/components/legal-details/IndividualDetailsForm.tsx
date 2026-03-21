@@ -410,7 +410,7 @@ export function IndividualDetailsForm({
               name="bank_name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Банк</FormLabel>
+                  <FieldLabelWithId label="Банк" fieldEntry={fieldsMap.get("bank_name")} />
                   <FormControl>
                     <Input placeholder='ЗАО "Альфа-Банк"' autoComplete="off" {...field} />
                   </FormControl>
