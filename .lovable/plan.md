@@ -1,238 +1,153 @@
-# Да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
-1. **План в целом уже соответствует новому ТЗ**, потому что:
-  - отдельная вкладка/форма ИП убирается;
-  - остается `Физлицо` и `Организация / ИП`;
-  - `ЮЛ → ИП switch-flow` удаляется;
-  - после УНП lookup форма не переключает страницу, а просто выбирает нужную canonical-форму внутри общего блока;
-  - адрес после МНС идет через Google normalization.
-2. **Нужно ужесточить правило Google validation.**  
-Сейчас в плане есть небольшая логическая вилка:
-  - в одном месте ты пишешь, что матч должен подтверждаться по `street + house + city`,
-  - ниже — что если `house` отличается, то просто сохраняем GRP house, а Google все равно можно применить.  
-  Для этого бага выбираю более безопасный вариант:
-  - если у GRP уже есть `street`, `house`, `city`,
-  - Google candidate можно применять **только если совпадают street + city и не конфликтует house**;
-  - если Google возвращает другой дом, такой candidate **не применять автоматически вообще**;
-  - `place_id / lat / lng / postal_code` тоже не брать от конфликтующего candidate.
-3. **Нужно явно зафиксировать, что unified form использует тот же Google-result pipeline, что и ручной autocomplete.**  
-Это важно, потому что твое ТЗ именно про это:  
-после УНП адрес должен нормализоваться **так же**, как если бы пользователь руками выбрал тот же адрес в Google Maps.  
-Поэтому в плане допиши:
-  - использовать тот же adapter/parser Google Places, что и в `StructuredAddressBlock`;
-  - не делать второй упрощенный путь нормализации.
-4. **Нужно добавить правило по сохранению opposite namespace.**  
-Так как в одной строке таблицы живут и `ent_*`, и `leg_*`, в плане надо явно написать:
-  - source of truth при reopen = `client_type`;
-  - если сохранено как `entrepreneur`, форма и read-path читают только `ent_*`;
-  - если сохранено как `legal_entity`, читают только `leg_*`;
-  - старые значения из другой ветки не должны визуально или логически подтягиваться обратно.  
-  Иначе можно получить старые хвосты вроде `ЗАО` после reopen.
-5. **Нужно сохранить existing flow** `Другое` **без регрессии.**  
-Сейчас план концентрируется на unified form, но обязательно допиши:
-  - `OrgFormCombobox` с `Другое` сохраняется;
-  - full/short manual form продолжает работать;
-  - after save + reopen эти поля не теряются.  
-  Даже если это не основной предмет патча, regress допускать нельзя.
-6. **Не просто “EntrepreneurDetailsForm kept in codebase”, а провести usage-check.**  
-В плане лучше написать:
-  - перед удалением рендера проверить, нет ли других активных поверхностей, где `EntrepreneurDetailsForm` еще используется;
-  - если есть — не ломать их в этом патче;
-  - если нет — оставить как deprecated, но без удаления логики в этом спринте.
-7. **Добавь отдельный DoD на unified flow.**  
-Помимо уже написанного, нужен отдельный verify-кейс:
-  - пользователь в блоке `Организация / ИП`,
-  - вводит УНП ИП,
-  - форма автоматически становится `Индивидуальный предприниматель`,
-  - имя без префикса и без кавычек,
-  - адрес нормализован через Google,
-  - after save + reopen остается `entrepreneur`,
-  - не появляется старое `ЗАО/ООО`.
-8. **Добавь отдельный DoD на manual Google compare.**  
+1. **ИП-эвристику нужно сделать строже, чем просто** `!orgFormFull && !short_name`**.**  
+Иначе можно ошибочно классифицировать редкие ЮЛ без краткого наименования как ИП.  
+Добавь правило:
+  - `entrepreneur`, если:
+    - `orgFormFull` пустой,
+    - `short_name` пустой или равен `full_name`,
+    - `full_name` похоже на ФИО физлица  
+    (2–4 слова, кириллица, слова с заглавной буквы, без кавычек и без признаков оргформы).
+  - иначе `unknown`.
+2. **Google enrichment должен использовать тот же pipeline, что и ручной autocomplete.**  
+Зафиксируй явно:
+  - те же place details,
+  - тот же `GooglePlacesAdapter`,
+  - тот же разбор `addressComponents`,
+  - не делать отдельный “упрощенный” путь для УНП-обогащения.
+3. **Итерация кандидатов — не просто “первые 3”, а “до первого валидного”.**  
+Лучше написать так:
+  - пройти по top candidates,
+  - для каждого сделать `fetchFields`,
+  - применить первый, который проходит validated match,
+  - если ни один не проходит — Google не применять.  
+  Не привязывайся жестко к числу 3, чтобы не создавать лишнее ограничение.
+4. **Проблему stale context нужно чинить жестче.**  
+Сейчас в плане недостаточно только сбросить `google_place_id/lat/lng`.  
+Добавь:
+  - при начале нового ручного поиска по `street` очищать stale-поля, которые тянут старый адрес:
+    - `house`
+    - `building`
+    - `apartment`
+    - `postal_code`
+    - `google_place_id`
+    - `lat/lng`
+  - query для `street` не должен автоматически подмешивать старый `city/region`, если адрес до этого был выбран из другого места и пользователь фактически начинает новый поиск.
+5. `buildAutocompleteQuery` **лучше описать как иерархический и safe-query builder.**  
+Для `street`:
+  - либо только `activeValue`,
+  - либо `activeValue + country`,
+  - но не старые `house/postal_code` и не заведомо stale `city`, если пользователь начинает новый адрес.  
+  Иначе снова будет смешение старого и нового адреса.
+6. **Добавь отдельный VERIFY-кейс на “второй адрес после первого”.**  
+Это было в ТЗ и сейчас это один из главных багов.  
 Нужно доказать:
-  - после УНП lookup + Google normalization результат не хуже ручного выбора того же адреса из Google autocomplete;
-  - `ул. Панфилова`, `дом 2`, `49л`, индекс не теряются;
-  - если Google candidate конфликтует, GRP-address остается как canonical base.
+  - сначала выбрать один адрес;
+  - потом начать новый поиск по другому адресу;
+  - autocomplete не тащит старый контекст;
+  - второй адрес заполняется корректно.
+7. **DoD нужно расширить.**  
+Сейчас не хватает post-save proof. Добавь:
+  - ИП: after lookup / after save / after reopen;
+  - ЮЛ: after lookup / after enrichment / after save / after reopen;
+  - второй ручной адрес: новый поиск после уже заполненного первого адреса.
+8. **Для ИП отдельно зафиксируй итог UI-состояние.**  
+Не просто “auto-selects ИП”, а:
+  - `org_form = Индивидуальный предприниматель`
+  - директор скрыт
+  - `acts_on_basis = свидетельства о государственной регистрации`
+  - имя без префикса и без кавычек
+  - after reopen всё это сохраняется.
+9. **Оставь явную формулировку fail-safe.**  
+Если Google не дал валидного кандидата:
+  - берём GRP-parsed address как canonical base;
+  - не применяем конфликтующий candidate;
+  - не подменяем адрес автоматически.
 
-Итог:  
-**План хороший и почти готов к отправке**, но я бы добавил эти правки обязательно:
+Итог: план **хороший**, но чтобы он полностью покрывал ТЗ, нужно добавить:
 
-- жесткое правило match по `house`,
-- reuse того же Google pipeline, что и у ручного autocomplete,
-- правило чтения по `client_type`,
-- no-regression для `Другое`,
-- verify unified ИП-flow after save/reopen.
+- более надежную эвристику ИП,
+- жесткий reset stale context,
+- verify на второй адрес,
+- post-save / reopen proof по обеим веткам.
 - &nbsp;
-- &nbsp;
-- Plan: PATCH 3.2.4 — Unified Организация/ИП form
+- Plan: PATCH 3.2.5 — ИП auto-form + Google candidate iteration + stale context reset
 
 ## DIAGNOSE
 
-### Current state
+### Bug 1: ИП not auto-selected after lookup
 
-- `PayerTypeSelector` shows 3 tabs: Физлицо, ИП, Юрлицо
-- `LegalEntityDetailsForm` saves `client_type: "legal_entity"`, uses `leg_*` fields
-- `EntrepreneurDetailsForm` saves `client_type: "entrepreneur"`, uses `ent_*` fields
-- Switch-flow ЮЛ→ИП exists via `pendingGrpPayload` / `onRequestSwitchToEntrepreneur`
-- DB: `client_legal_details` has both `ent_*` and `leg_*` columns in same row, `client_type` string discriminator
-
-### What needs to change
-
-1. **PayerTypeSelector**: 3 tabs → 2 tabs (Физлицо, Организация/ИП)
-2. **Unified form** replaces both `LegalEntityDetailsForm` and `EntrepreneurDetailsForm` for the "Организация/ИП" case
-3. **entity_kind from lookup** determines org form (ИП → `Индивидуальный предприниматель`), no page switch
-4. **client_type derivation**: if org form = `Индивидуальный предприниматель` → save as `entrepreneur` with `ent_*` fields; otherwise → save as `legal_entity` with `leg_*` fields
-5. **Remove**: switch-flow, `pendingGrpPayload`, `onRequestSwitchToEntrepreneur`, IP switch dialog
-6. **Google normalization**: validated match — Google applied only if street+house+city confirm same address
-
-## DRY RUN
-
-### DB impact
-
-- No new tables, migrations, or EF
-- Same `client_legal_details` table, same columns
-- `client_type` derived from selected org form at save time
-
-### Fields mapping in unified form
-
-
-| Form field             | ИП save path                    | ЮЛ save path        |
-| ---------------------- | ------------------------------- | ------------------- |
-| УНП                    | `ent_unp`                       | `leg_unp`           |
-| Форма                  | `leg_org_form` (canonical full) | `leg_org_form`      |
-| Название               | `ent_name`                      | `leg_name`          |
-| Адрес                  | `ent_address*`                  | `leg_address*`      |
-| Руководитель           | hidden for ИП                   | `leg_director_*`    |
-| Действует на основании | `ent_acts_on_basis`             | `leg_acts_on_basis` |
-| client_type            | `entrepreneur`                  | `legal_entity`      |
-
-
-### Reused components
-
-- `OrgFormCombobox` — already includes ИП in dictionary
-- `StructuredAddressBlock` — unchanged
-- `GrpAddressEnricher` — safe merge already done
-- `GrpAddressParser`, `GrpAutofillService` — entity_kind already exists
-
-### What's removed
-
-- `EntrepreneurDetailsForm.tsx` — no longer rendered from `LegalDetails.tsx` (keep file for now, just unused)
-- `pendingGrpPayload` state in `LegalDetails.tsx`
-- `handleSwitchToEntrepreneur` callback
-- `onRequestSwitchToEntrepreneur` prop
-- IP switch AlertDialog in `LegalEntityDetailsForm`
-
-## EXECUTE — files and changes
-
-### 1. `PayerTypeSelector.tsx` — 2 types instead of 3
-
-Replace 3-button grid with 2 options:
-
-- `individual` → Физлицо (паспортные данные)
-- `organization` → Организация / ИП (УНП, реквизиты)
-
-Note: internally we still use `ClientType` for DB save, but the selector now maps to a UI-level discriminator. The actual `client_type` (`legal_entity` | `entrepreneur`) is derived at save time from the selected org form.
-
-### 2. `LegalDetails.tsx` — simplified orchestration
-
-- Remove `pendingGrpPayload`, `handleSwitchToEntrepreneur`
-- `selectedType` becomes `"individual" | "organization"` for UI
-- When `selectedType === "organization"` → render unified `OrganizationDetailsForm`
-- When editing existing record: if `client_type` is `entrepreneur` or `legal_entity` → open as `organization`
-- Remove `EntrepreneurDetailsForm` import/render
-- `getTypeLabel`: `entrepreneur` and `legal_entity` both show as "Организация/ИП"
-
-### 3. New: `OrganizationDetailsForm.tsx` — unified ЮЛ/ИП form
-
-Based on current `LegalEntityDetailsForm` but unified:
-
-**Form schema:**
-
-- `unp` (9 digits, required)
-- `org_form` (required, from OrgFormCombobox — includes ИП)
-- `name` (required, min 3)
-- `director_position` (conditional: hidden if ИП)
-- `director_name` (conditional: hidden if ИП)
-- `acts_on_basis` (different defaults: "Устава" for ЮЛ, "свидетельства о гос. регистрации" for ИП)
-- `bank_*`, `phone`, `email`
-
-**Key behaviors:**
-
-- `isEntrepreneur` derived from `org_form === 'Индивидуальный предприниматель'`
-- Director fields hidden when `isEntrepreneur`
-- Acts on basis default changes based on form
-
-**GRP lookup handler:**
-
-- If `entity_kind === 'entrepreneur'`: set `org_form = 'Индивидуальный предприниматель'`, `name = clean_name || name`
-- If `entity_kind === 'legal_entity'`: set `org_form = org_form_full`, `name = clean_name`
-- No switch dialog, no page navigation
-- Address: `emptyAddress() + parsed_address` → enrichment with validated Google match
-
-**Save handler:**
+**Root cause** in `GrpAutofillService.ts` lines 161-169:
 
 ```
-if isEntrepreneur:
-  client_type = 'entrepreneur'
-  ent_unp, ent_name, ent_address*, ent_acts_on_basis
-else:
-  client_type = 'legal_entity'  
-  leg_unp, leg_name, leg_org_form, leg_address*, leg_director_*, leg_acts_on_basis
+const isEntrepreneur =
+  parsed.orgFormFull === 'Индивидуальный предприниматель' ||
+  parsed.orgFormShort === 'ИП';
 ```
 
-**Load handler (editing):**
+MNS returns ИП names as plain "Горбова Екатерина Сергеевна" — no org form prefix. `parseOrgFormAndName` returns `orgFormFull: ''`, so `entity_kind = 'unknown'`.
 
-- If `initialData.client_type === 'entrepreneur'`: populate from `ent_*` fields, set org_form to ИП
-- If `initialData.client_type === 'legal_entity'`: populate from `leg_*` fields
+In `OrganizationDetailsForm.tsx` line 231, `handleGrpConfirm` only sets IP_FORM when `entity_kind === 'entrepreneur'`. For `'unknown'`, neither org_form nor acts_on_basis get set.
 
-**Google validated normalization:**
+**Fix**: Improve ИП detection heuristic in `grpDataToAutofillFields`. MNS ИП entries have distinctive traits:
 
-- After GRP parse, build query → call Google
-- Before applying Google result, validate match:
-  - Compare normalized street, house, city
-  - If match confirmed: take Google's postal_code, region, country, place_id, lat, lng
-  - If mismatch: keep GRP-parsed address as-is
-- Apartment/office always from GRP parser (Google rarely returns it)
+- `short_name` is empty/null (ЮЛ always has a short_name like "ЗАО «АЖУР инкам»")
+- `full_name` has no org form prefix (already detected as `orgFormFull === ''`)
+- Name looks like a person name (Cyrillic words, typically 2-3 words starting with uppercase)
 
-### 4. `GrpAddressEnricher.ts` — add validated match check
+Rule: if `orgFormFull` is empty AND `short_name` is empty/null → classify as `entrepreneur`.
 
-Add match validation before merging:
+### Bug 2: Postal code not filling via Google enrichment
 
-- Extract street/house/city from both preliminary and Google result
-- Normalize for comparison (lowercase, trim prefixes like "ул.", "улица")
-- If street AND city match (fuzzy): apply Google enrichment
-- If mismatch: return preliminary as-is, `enriched: false`
-- House comparison: if Google house differs from GRP house, keep GRP house
+**Root cause** in `GrpAddressEnricher.ts` lines 111-119: Only takes the FIRST suggestion blindly. If Google's first suggestion is a street-level match (without postal code), enrichment misses it. Also, Google doesn't always include postal_code for Belarusian addresses in `addressComponents`.
 
-### 5. Cleanup in `LegalEntityDetailsForm.tsx`
+**Fix**: Iterate through up to 3 suggestions, pick the first one that passes `isValidatedMatch`. This increases chances of finding a candidate with complete data (including postal_code).
 
-Remove:
+### Bug 3: Stale context in autocomplete query
 
-- `onRequestSwitchToEntrepreneur` prop
-- `ipSwitchDialogOpen` / `pendingIpPayload` state
-- `handleIpSwitchConfirm` / `handleIpSwitchCancel`
-- IP switch AlertDialog JSX
+**Root cause** in `buildAutocompleteQuery` (`utils.ts` lines 95-113) and `handleFieldChange` (`StructuredAddressBlock.tsx` line 126): When user starts typing a new street, `buildAutocompleteQuery` assembles query from ALL current fields including old `house`, `city`, `region`, `postal_code`. Google searches for the concatenation of old context + new street, producing irrelevant results.
 
-This file may still be used by admin or other surfaces. If not, mark as deprecated.
+**Fix**: When user edits `street` or `city` (primary address fields), reset dependent stale fields before building query. Specifically:
+
+- Editing `street` → clear `google_place_id`, `lat`, `lng` from the address
+- `buildAutocompleteQuery` should only include fields that come BEFORE the active field in address hierarchy, not after. For `street`: include only `city`, `region`, `country_name` as context — not `house`, `postal_code`.
 
 ## Scope
 
-- No new tables or migrations
-- No new edge functions
-- No changes to `IndividualDetailsForm`
-- `EntrepreneurDetailsForm` kept in codebase but no longer rendered from settings
-- Refactoring is UI + form logic only; DB schema unchanged
+- No new tables / migrations / EF
+- No changes to DB schema
+- ЮЛ/ИП flow unification already done — only bugfix
+- "Другое" flow unchanged — out of scope
+
+## Files and changes
+
+### 1. `GrpAutofillService.ts` — ИП detection fix
+
+Lines 160-169: Add heuristic for `unknown` → `entrepreneur` when no org form found AND `short_name` is empty/null. Pass `short_name` into the classification logic (currently only `parsed` is used, but `data.short_name` is available).
+
+```
+const isEntrepreneur =
+  parsed.orgFormFull === 'Индивидуальный предприниматель' ||
+  parsed.orgFormShort === 'ИП' ||
+  (!parsed.orgFormFull && !data.short_name);
+```
+
+### 2. `GrpAddressEnricher.ts` — iterate candidates
+
+Lines 111-119: Instead of taking only `suggestions[0]`, iterate through up to 3 suggestions. For each, fetch place details, parse components, run `isValidatedMatch`. Use the first validated candidate. If none validates, return `enriched: false`.
+
+### 3. `src/lib/address/utils.ts` — smarter query building
+
+`buildAutocompleteQuery`: reorder logic so that when the active field is `street`, only higher-level context (`city`, `region`, `country_name`) is included. When active field is `city`, only `region`/`country_name`. This prevents old `house`/`postal_code` from polluting the query.
+
+### 4. `StructuredAddressBlock.tsx` — reset stale meta on edit
+
+In `handleFieldChange`: when user edits `street` or `city`, clear `google_place_id`, `lat`, `lng` from the address value to signal a fresh search context.
 
 ## DoD
 
-- PayerTypeSelector shows 2 options: Физлицо, Организация/ИП
-- UNP lookup for ЮЛ: org form auto-selected, name filled, address parsed + Google-validated
-- UNP lookup for ИП: org form = "Индивидуальный предприниматель", name = clean (no prefix, no quotes)
-- No switch dialog, no page-level handoff
-- Director fields hidden for ИП
-- Google normalization: validated match (street+city must confirm); mismatch → no auto-apply
-- Панфилова/дом 2/49л preserved after enrichment
-- Postal code filled from Google when match confirmed
-- After save: `client_type` = `entrepreneur` for ИП, `legal_entity` for others
-- After reopen: all fields correctly loaded from appropriate `ent_*` or `leg_*` columns
-- Canonical JSONB and legacy string consistent
+- ИП lookup auto-selects "Индивидуальный предприниматель", hides director, sets acts_on_basis
+- Google enrichment iterates candidates and picks validated match with best data
+- Manual address re-entry doesn't carry stale context from previous address
+- Existing ЮЛ flow (Панфилова, дом 2, 49л) continues working
+- After save + reopen: entrepreneur persists correctly
