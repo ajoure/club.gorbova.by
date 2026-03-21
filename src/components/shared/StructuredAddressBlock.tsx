@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { CopyableIdChip } from '@/components/ui/CopyableIdChip';
+import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
 import type { StructuredAddress } from '@/lib/address/types';
