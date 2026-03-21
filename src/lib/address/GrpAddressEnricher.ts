@@ -109,7 +109,6 @@ export async function enrichAddressViaGoogle(
         includedRegionCodes: ['by'],
       });
 
-    console.log('[GrpAddressEnricher] Got suggestions:', suggestions?.length || 0);
     if (!suggestions?.length) {
       return { address: preliminary, enriched: false, error: 'No suggestions found' };
     }
