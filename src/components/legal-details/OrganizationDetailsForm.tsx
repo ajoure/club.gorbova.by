@@ -569,7 +569,7 @@ export function OrganizationDetailsForm({
             name="bank_account"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Расчётный счёт (IBAN)</FormLabel>
+                <FieldLabelWithId label="Расчётный счёт (IBAN)" fieldEntry={fieldsMap.get("bank_account")} />
                 <FormControl>
                   <Input 
                     placeholder="BY00XXXX00000000000000000000" 
