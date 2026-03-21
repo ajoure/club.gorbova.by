@@ -264,12 +264,6 @@ export function OrganizationDetailsForm({
       setIsEnrichingAddress(true);
       try {
         const result = await enrichAddressViaGoogle(freshAddress);
-        console.log('[OrganizationDetailsForm] Enrichment result:', {
-          enriched: result.enriched,
-          error: result.error,
-          postal_code: result.address.postal_code,
-          google_place_id: result.address.google_place_id,
-        });
         if (result.enriched) {
           setAddress(result.address);
         }
