@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
-import { User, Mail, Phone, Save, X, FileText, ChevronRight, Key, Eye, EyeOff, Loader2, Camera, Upload } from "lucide-react";
+import { User, Mail, Phone, Save, X, Key, Eye, EyeOff, Loader2, Camera, Upload } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { MultiContactInput, ContactItem } from "@/components/ui/MultiContactInput";
 import { TelegramProfileWidget } from "@/components/profile/TelegramProfileWidget";
