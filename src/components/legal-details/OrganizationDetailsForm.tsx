@@ -377,6 +377,13 @@ export function OrganizationDetailsForm({
               <FormItem>
                 <FormLabel className="flex items-center gap-2">
                   УНП
+                  {fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId && (
+                    <CopyableIdChip
+                      value={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.publicId}
+                      copyValue={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.tokenString}
+                      successMessage="Токен скопирован"
+                    />
+                  )}
                   {isLookingUp && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                 </FormLabel>
                 <FormControl>
