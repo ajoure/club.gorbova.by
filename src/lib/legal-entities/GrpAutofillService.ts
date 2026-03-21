@@ -113,6 +113,12 @@ function stripQuotes(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Entity kind classification
+// ---------------------------------------------------------------------------
+
+export type EntityKind = 'legal_entity' | 'entrepreneur' | 'unknown';
+
+// ---------------------------------------------------------------------------
 // Autofill fields contract
 // ---------------------------------------------------------------------------
 
@@ -131,6 +137,7 @@ export interface GrpAutofillFields {
   org_form_short: string | null;
   clean_name: string | null;
   parsed_address: StructuredAddress | null;
+  entity_kind: EntityKind;
 }
 
 export interface GrpDiffEntry {
@@ -143,10 +150,22 @@ export interface GrpDiffEntry {
 /**
  * Map GRP lookup data to autofill fields.
  * Parses org form, clean name, and structured address.
+ * Classifies entity as legal_entity / entrepreneur / unknown.
  */
 export function grpDataToAutofillFields(data: LegalEntityLookupData): GrpAutofillFields {
   const parsed = parseOrgFormAndName(data.full_name);
   const parsedAddress = parseGrpAddress(data.legal_address);
+
+  // Classify entity kind
+  const isEntrepreneur =
+    parsed.orgFormFull === 'Индивидуальный предприниматель' ||
+    parsed.orgFormShort === 'ИП';
+  const isLegalEntity = !!parsed.orgFormFull && !isEntrepreneur;
+  const entity_kind: EntityKind = isEntrepreneur
+    ? 'entrepreneur'
+    : isLegalEntity
+      ? 'legal_entity'
+      : 'unknown';
 
   return {
     name: data.full_name || null,
@@ -161,6 +180,7 @@ export function grpDataToAutofillFields(data: LegalEntityLookupData): GrpAutofil
     org_form_short: parsed.orgFormShort || null,
     clean_name: parsed.cleanName || null,
     parsed_address: parsedAddress,
+    entity_kind,
   };
 }
 
