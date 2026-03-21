@@ -645,7 +645,7 @@ export function OrganizationDetailsForm({
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email</FormLabel>
+                  <FieldLabelWithId label="Email" fieldEntry={fieldsMap.get("email")} />
                   <FormControl>
                     <Input 
                       type="email" 
