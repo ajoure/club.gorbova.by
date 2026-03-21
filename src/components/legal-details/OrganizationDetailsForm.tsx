@@ -501,7 +501,7 @@ export function OrganizationDetailsForm({
                   name="director_position"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Должность</FormLabel>
+                      <FieldLabelWithId label="Должность" fieldEntry={fieldsMap.get("leg_director_position")} />
                       <FormControl>
                         <Input 
                           placeholder={getPlaceholder("leg_director_position", "Директор")} 
