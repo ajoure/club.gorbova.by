@@ -24,6 +24,8 @@ export interface StructuredAddressBlockProps {
   disabled?: boolean;
   compact?: boolean;
   countries?: string[];
+  /** Optional map: address field key (street, house, etc.) → registry entry for CopyableIdChip */
+  fieldIds?: Map<string, LegalDetailsFieldEntry>;
 }
 
 interface FieldConfig {
