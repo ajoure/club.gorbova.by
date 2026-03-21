@@ -602,7 +602,7 @@ export function OrganizationDetailsForm({
               name="bank_code"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>БИК/Код</FormLabel>
+                  <FieldLabelWithId label="БИК/Код" fieldEntry={fieldsMap.get("bank_code")} />
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 
