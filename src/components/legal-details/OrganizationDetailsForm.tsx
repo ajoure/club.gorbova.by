@@ -224,12 +224,6 @@ export function OrganizationDetailsForm({
 
   const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
-    console.log('[OrganizationDetailsForm] handleGrpConfirm called', {
-      entity_kind: grpResult.entity_kind,
-      org_form_full: grpResult.org_form_full,
-      clean_name: grpResult.clean_name,
-      parsed_address: grpResult.parsed_address,
-    });
 
     const filled = new Set<string>();
 
