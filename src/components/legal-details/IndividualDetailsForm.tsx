@@ -323,7 +323,7 @@ export function IndividualDetailsForm({
               name="ind_passport_valid_until"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Действ. до</FormLabel>
+                  <FieldLabelWithId label="Действ. до" fieldEntry={fieldsMap.get("ind_passport_valid_until")} />
                   <FormControl>
                     <DatePicker
                       value={field.value || ""}
