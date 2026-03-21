@@ -108,57 +108,67 @@ export async function enrichAddressViaGoogle(
         includedRegionCodes: ['by'],
       });
 
-    if (!suggestions?.length || !suggestions[0]?.placePrediction) {
+    if (!suggestions?.length) {
       return { address: preliminary, enriched: false, error: 'No suggestions found' };
     }
 
-    // Get place details from first suggestion
-    const place = suggestions[0].placePrediction.toPlace();
-    await place.fetchFields({
-      fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
-    });
+    // Iterate through candidates until a validated match is found
+    const maxCandidates = Math.min(suggestions.length, 5);
+    for (let i = 0; i < maxCandidates; i++) {
+      const suggestion = suggestions[i];
+      if (!suggestion?.placePrediction) continue;
 
-    // Parse Google components
-    const googleParsed = GooglePlacesAdapter.parseComponents(
-      (place.addressComponents || []) as any[]
-    );
+      try {
+        const place = suggestion.placePrediction.toPlace();
+        await place.fetchFields({
+          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
+        });
 
-    // ===== VALIDATED MATCH CHECK =====
-    // Google candidate applied ONLY if it confirms the same address.
-    // If street+city don't match, or house conflicts → reject entirely.
-    if (!isValidatedMatch(preliminary, googleParsed)) {
-      console.warn('[GrpAddressEnricher] Google candidate rejected: address mismatch', {
-        grp: { street: preliminary.street, house: preliminary.house, city: preliminary.city },
-        google: { street: googleParsed.street, house: googleParsed.house, city: googleParsed.city },
-      });
-      return { address: preliminary, enriched: false, error: 'Google candidate does not match GRP address' };
+        // Parse Google components via the same adapter used by manual autocomplete
+        const googleParsed = GooglePlacesAdapter.parseComponents(
+          (place.addressComponents || []) as any[]
+        );
+
+        // ===== VALIDATED MATCH CHECK =====
+        if (!isValidatedMatch(preliminary, googleParsed)) {
+          console.warn(`[GrpAddressEnricher] Candidate ${i} rejected: address mismatch`, {
+            grp: { street: preliminary.street, house: preliminary.house, city: preliminary.city },
+            google: { street: googleParsed.street, house: googleParsed.house, city: googleParsed.city },
+          });
+          continue; // Try next candidate
+        }
+
+        // ===== SAFE MERGE =====
+        // GRP fields have absolute priority. Google only fills empty gaps.
+        const merged: StructuredAddress = {
+          // GRP-priority fields — never overwritten by Google
+          street: preliminary.street || googleParsed.street || '',
+          house: preliminary.house || googleParsed.house || '',
+          city: preliminary.city || googleParsed.city || '',
+          building: preliminary.building || googleParsed.building || '',
+          settlement: preliminary.settlement || googleParsed.settlement || '',
+          apartment: preliminary.apartment || googleParsed.apartment || '',
+          // Google fills only empty meta-fields
+          district: preliminary.district || googleParsed.district || '',
+          region: preliminary.region || googleParsed.region || '',
+          postal_code: preliminary.postal_code || googleParsed.postal_code || (place as any).postalCode || '',
+          country_code: preliminary.country_code || googleParsed.country_code || 'BY',
+          country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
+          address_line_2: preliminary.address_line_2 || '',
+          google_place_id: place.id || null,
+          lat: place.location?.lat() ?? null,
+          lng: place.location?.lng() ?? null,
+        };
+
+        return { address: merged, enriched: true };
+      } catch (candidateErr) {
+        console.warn(`[GrpAddressEnricher] Candidate ${i} fetch error:`, candidateErr);
+        continue;
+      }
     }
 
-    // ===== SAFE MERGE =====
-    // GRP fields have absolute priority. Google only fills empty gaps.
-    const grpApartment = preliminary.apartment;
-    
-    const merged: StructuredAddress = {
-      // GRP-priority fields — never overwritten by Google
-      street: preliminary.street || googleParsed.street || '',
-      house: preliminary.house || googleParsed.house || '',
-      city: preliminary.city || googleParsed.city || '',
-      building: preliminary.building || googleParsed.building || '',
-      settlement: preliminary.settlement || googleParsed.settlement || '',
-      apartment: grpApartment || googleParsed.apartment || '',
-      // Google fills only empty meta-fields
-      district: preliminary.district || googleParsed.district || '',
-      region: preliminary.region || googleParsed.region || '',
-      postal_code: preliminary.postal_code || googleParsed.postal_code || (place as any).postalCode || '',
-      country_code: preliminary.country_code || googleParsed.country_code || 'BY',
-      country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
-      address_line_2: preliminary.address_line_2 || '',
-      google_place_id: place.id || null,
-      lat: place.location?.lat() ?? null,
-      lng: place.location?.lng() ?? null,
-    };
-
-    return { address: merged, enriched: true };
+    // No validated candidate found
+    return { address: preliminary, enriched: false, error: 'No validated Google candidate found' };
   } catch (err) {
     console.error('[GrpAddressEnricher] Error:', err);
     return {

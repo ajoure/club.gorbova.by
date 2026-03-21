@@ -118,6 +118,21 @@ function stripQuotes(s: string): string {
 
 export type EntityKind = 'legal_entity' | 'entrepreneur' | 'unknown';
 
+/**
+ * Heuristic: detect if a name looks like a person's FIO (2-4 Cyrillic words,
+ * each starting with uppercase, no quotes, no org-form markers).
+ */
+function looksLikeFio(name: string): boolean {
+  if (!name) return false;
+  const trimmed = name.trim();
+  // Must not contain quotes or typical org markers
+  if (/[«»""'']/.test(trimmed)) return false;
+  const words = trimmed.split(/\s+/);
+  if (words.length < 2 || words.length > 4) return false;
+  // Each word must start with uppercase Cyrillic letter
+  return words.every(w => /^[А-ЯЁ][а-яё]+$/.test(w));
+}
+
 // ---------------------------------------------------------------------------
 // Autofill fields contract
 // ---------------------------------------------------------------------------
@@ -158,9 +173,11 @@ export function grpDataToAutofillFields(data: LegalEntityLookupData): GrpAutofil
   const parsedAddress = parseGrpAddress(data.legal_address);
 
   // Classify entity kind
+  // Rule: entrepreneur if explicit ИП prefix OR (no org form AND no short_name AND name looks like FIO)
   const isEntrepreneur =
     parsed.orgFormFull === 'Индивидуальный предприниматель' ||
-    parsed.orgFormShort === 'ИП';
+    parsed.orgFormShort === 'ИП' ||
+    (!parsed.orgFormFull && (!data.short_name || data.short_name === data.full_name) && looksLikeFio(parsed.cleanName));
   const isLegalEntity = !!parsed.orgFormFull && !isEntrepreneur;
   const entity_kind: EntityKind = isEntrepreneur
     ? 'entrepreneur'
