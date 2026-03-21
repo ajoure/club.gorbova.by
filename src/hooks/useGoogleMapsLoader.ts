@@ -131,7 +131,6 @@ function loadScript() {
     return;
   }
 
-  console.log("[GoogleMapsLoader] Starting Google Maps load...");
   globalState = "loading";
   notify();
   injectBootstrapLoader(GOOGLE_MAPS_API_KEY);
