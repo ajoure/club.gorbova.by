@@ -407,12 +407,14 @@ export function OrganizationDetailsForm({
               name="org_form"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="flex items-center gap-2">
-                    Форма
+                  <FieldLabelWithId
+                    label="Форма"
+                    fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_name" : "leg_org_form")}
+                  >
                     {autofilledFields.has("org_form") && (
                       <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
-                  </FormLabel>
+                  </FieldLabelWithId>
                   <FormControl>
                     <OrgFormCombobox
                       value={field.value}
