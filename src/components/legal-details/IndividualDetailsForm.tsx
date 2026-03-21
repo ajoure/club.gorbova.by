@@ -198,7 +198,7 @@ export function IndividualDetailsForm({
               name="ind_personal_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Личный номер *</FormLabel>
+                  <FieldLabelWithId label="Личный номер" fieldEntry={fieldsMap.get("ind_personal_number")} required />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("ind_personal_number", "3140583A009PB1")} 
