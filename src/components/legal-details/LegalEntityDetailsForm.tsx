@@ -21,7 +21,7 @@ import { Separator } from "@/components/ui/separator";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAddressAdapter";
-import { formatFullAddress } from "@/lib/address/utils";
+import { emptyAddress, formatFullAddress } from "@/lib/address/utils";
 import { useGrpLookup } from "@/hooks/useGrpLookup";
 import { isValidUnp } from "@/lib/legal-entities/normalizeUnp";
 import {
@@ -35,6 +35,16 @@ import { GrpConfirmDialog } from "./GrpConfirmDialog";
 import { OrgFormCombobox } from "./OrgFormCombobox";
 import { Badge } from "@/components/ui/badge";
 import { enrichAddressViaGoogle } from "@/lib/address/GrpAddressEnricher";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const OTHER_VALUE = '__OTHER__';
 
