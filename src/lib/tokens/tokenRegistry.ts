@@ -1,12 +1,13 @@
 /**
  * Unified Token Registry — единый источник правды для UI-лейблов токенов.
  * 
- * Три группы:
+ * Четыре группы:
  * 1. CONTACT_TOKENS — 1:1 с resolveContactTokens() в edge functions
  * 2. DATETIME_TOKENS — 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
  * 3. Product custom fields — динамически из fields_registry
+ * 4. Legal details fields — динамически из fields_registry
  * 
- * SoT хранения: {{first_name}}, {{today}}, {{cf.product.<uuid>}}
+ * SoT хранения: {{first_name}}, {{today}}, {{cf.product.<uuid>}}, {{cf.legal_details.<uuid>}}
  * UI показывает label, хранит tokenString.
  */
 
@@ -16,7 +17,7 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product";
+  group: "contact" | "datetime" | "product" | "legal_details";
   badge: string;
   searchKeywords: string;
 }
@@ -76,11 +77,37 @@ export async function loadProductFields(): Promise<TokenDef[]> {
   }));
 }
 
+/** Load legal_details fields from fields_registry (dynamic) */
+export async function loadLegalDetailsFields(): Promise<TokenDef[]> {
+  const { data, error } = await supabase
+    .from("fields_registry")
+    .select("id, entity_type, key, label, data_type, public_id")
+    .eq("entity_type", "legal_details")
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return [];
+
+  return data.map((f) => ({
+    key: f.id,
+    label: f.label,
+    tokenString: `{{cf.legal_details.${f.id}}}`,
+    group: "legal_details" as const,
+    badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
+    searchKeywords: `${f.label} ${f.key} реквизиты legal ${f.public_id || ""}`,
+  }));
+}
+
 // Internal cache for product fields (populated by react-query in components)
 let _productFieldsCache: TokenDef[] = [];
+let _legalDetailsFieldsCache: TokenDef[] = [];
 
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
+}
+
+export function setLegalDetailsFieldsCache(fields: TokenDef[]) {
+  _legalDetailsFieldsCache = fields;
 }
 
 /**
@@ -100,6 +127,10 @@ export function tokenStringToLabel(tokenString: string): string | null {
   // Check product custom fields cache
   const product = _productFieldsCache.find((t) => t.tokenString === tokenString);
   if (product) return product.label;
+
+  // Check legal_details fields cache
+  const legal = _legalDetailsFieldsCache.find((t) => t.tokenString === tokenString);
+  if (legal) return legal.label;
 
   return null; // UNMAPPED
 }
