@@ -601,27 +601,6 @@ export default function ProfileSettings() {
 
         {/* Password Change Card */}
         <PasswordChangeCard />
-
-        {/* Legal Details Card */}
-        <Card 
-          className="cursor-pointer hover:bg-accent/5 transition-colors"
-          onClick={() => navigate("/settings/legal-details")}
-        >
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <FileText className="h-5 w-5 text-muted-foreground" />
-                <div>
-                  <CardTitle className="text-base">Реквизиты</CardTitle>
-                  <CardDescription>
-                    Данные для автоматического формирования документов
-                  </CardDescription>
-                </div>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground" />
-            </div>
-          </CardHeader>
-        </Card>
       </div>
     </DashboardLayout>
   );

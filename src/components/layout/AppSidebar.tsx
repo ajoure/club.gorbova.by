@@ -99,6 +99,7 @@ const profileMenuItems = [
   { title: "FAQ", url: "/docs", icon: BookOpen },
   { title: "Техподдержка", url: "/support", icon: LifeBuoy, showUnread: true },
   { title: "Профиль", url: "/settings/profile", icon: User },
+  { title: "Реквизиты", url: "/settings/legal-details", icon: FileText },
   { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
   { title: "Согласия", url: "/settings/consents", icon: Shield },
   { title: "Мои покупки", url: "/purchases", icon: Target },
