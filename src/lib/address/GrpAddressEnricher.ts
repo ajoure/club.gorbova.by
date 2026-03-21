@@ -56,7 +56,7 @@ export async function enrichAddressViaGoogle(
     // Get place details from first suggestion
     const place = suggestions[0].placePrediction.toPlace();
     await place.fetchFields({
-      fields: ['addressComponents', 'formattedAddress', 'location', 'id'],
+      fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
     });
 
     // Parse Google components
