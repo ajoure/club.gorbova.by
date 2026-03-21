@@ -1,99 +1,90 @@
-# да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
-1. Не фиксируй в плане формулировку `существующий адресный pipeline не регрессирует` как уже доказанный факт. Сейчас это можно писать только как **цель DoD**, а не как исходное допущение. Адресный pipeline по-прежнему должен быть закрыт **фактическими пруфами**:
-  - ЮЛ `193405000`: after lookup / after Google normalization / after save / after reopen
-  - ИП `192560618`: after lookup / after save / after reopen
-  - второй ручной адрес после первого: after select / after save / after reopen
-2. Не удаляй весь блок `validation_status`, если запрос был именно на удаление `Не проверено`. Исправь scope:
-  - скрыть/не показывать только neutral-state `Не проверено`
-  - `Проверено` и `Есть ошибки` оставить, если они реально используются
-  - если хочешь удалить весь validation badge block, это нужно отдельно согласовать как отдельный UI-патч
-3. Раздели PATCH 3.2.7 внутри плана на два подпатча:
-  - **PATCH 3.2.7A — navigation/UI cleanup**
-    - `Реквизиты` в сайдбар под `Профиль`
-    - удалить карточку-ссылку из `Profile.tsx`, чтобы не было дубля
-    - скрыть `Не проверено`
-  - **PATCH 3.2.7B — address pipeline cleanup**
-    - убрать диагностические `console.log`
-    - оставить только минимальные `warn/error`, если они реально нужны  
-    Это нужно, чтобы не смешивать косметический UI и незавершённый bugfix pipeline.
-4. Удаление диагностических логов делать **только после** живой проверки сценариев. Не убирать вслепую до verify. Иначе можно потерять последнюю диагностику, если pipeline ещё не закрыт.
-5. В DoD добавь отдельный пункт по меню:
-  - в сайдбаре под `Профиль` есть `Реквизиты`
-  - переход открывает `/settings/legal-details`
-  - старой дублирующей карточки в `Profile` больше нет
-6. В DoD по address pipeline добавь явно:
-  - для ИП после lookup форма = `Индивидуальный предприниматель`
-  - руководитель скрыт
-  - основание = `свидетельства о государственной регистрации`
-  - `client_type = entrepreneur` после save
-  - after reopen данные читаются из `ent_*`, без хвостов `leg_*`
-7. В DoD по ручному второму адресу добавь не только поиск, но и сохранение:
-  - выбрать первый адрес
-  - затем второй адрес
-  - save
-  - reopen
-  - доказать, что stale context не возвращается и второй адрес не смешивается с первым
-8. Для `Profile.tsx` и `AppSidebar.tsx` явно проверь отсутствие дублей навигации и конфликтов в мобильной/desktop версиях меню. Это небольшой, но обязательный UI-proof.
+1. Не пиши категорично `мёртвого кода не обнаружено`, пока нет фактического proof:
+  - `rg "console\.log|debugger"` по проекту или по затронутым папкам,
+  - TypeScript build,
+  - при наличии — lint / unused imports check.
+2. В cleanup лучше зафиксировать не только 3 файла, а правило:
+  - удалить **все временные debug** `console.log`, появившиеся в рамках address/google pipeline,
+  - но не трогать рабочие `warn/error` для реальных сбоев.
+3. В `DoD` добавь:
+  - build проходит;
+  - нет новых unused imports / unused vars после удаления логов;
+  - `rg "console\.log"` по затронутым файлам возвращает 0.
+4. Фразу `Address pipeline не затронут` лучше заменить на:
+  - `изменения только cleanup, без изменения бизнес-логики и save/apply flow`,  
+  потому что формально файлы pipeline всё же редактируются.
+5. После cleanup нужен короткий verify:
+  - `Профиль -> Реквизиты` открывается;
+  - ЮЛ/ИП форма открывается;
+  - один smoke-test адреса проходит без регрессии.
 
-После этих правок план нормальный.
+Итог: план нормальный.  
+Можно отправлять как cleanup-патч после verify.
 
-&nbsp;
+PATCH 3.2.7B — Cleanup после verify
 
-PATCH 3.2.7 — Реквизиты в сайдбар + удаление статуса «Не проверено» + финальный багфикс адресного pipeline
+## Что делаем
 
-## Scope
+Удаляем диагностические `console.log` из трёх файлов. Оставляем только `console.warn` и `console.error` для реальных сбоев.
 
-Три группы изменений:
+Мёртвого кода и неиспользуемых импортов в затронутых файлах не обнаружено — всё используется.
 
-### 1. Реквизиты → в сайдбар под Профиль
+## Файлы и изменения
 
-**Файл: `src/components/layout/AppSidebar.tsx**`
+### 1. `src/lib/address/GrpAddressEnricher.ts`
 
-- Добавить в `profileMenuItems` после `Профиль`:
-  ```
-  { title: "Реквизиты", url: "/settings/legal-details", icon: FileText }
-  ```
-- Импортировать `FileText` из lucide-react.
+**Удалить 7 строк `console.log`:**
 
-**Файл: `src/pages/settings/Profile.tsx**`
+- строка 92: `console.log('[GrpAddressEnricher] Starting enrichment...')`
+- строка 93: `console.log('[GrpAddressEnricher] Preliminary address:...')`
+- строка 102: `console.log('[GrpAddressEnricher] Query:...')`
+- строка 116: `console.log('[GrpAddressEnricher] Got suggestions:...')`
+- строки 134-138: `console.log(Candidate ${i} details:...)`
+- строка 145: `console.log(Candidate ${i} parsed:...)`
+- строка 178: `console.log('[GrpAddressEnricher] ✅ Merged result:...')`
 
-- Удалить блок `{/* Legal Details Card */}` (строки 605-624) — карточка-ссылка на реквизиты больше не нужна, раз есть прямой пункт в меню.
+**Оставить:**
 
-### 2. Удалить статус «Не проверено»
+- строка 96: `console.warn` — Google API not available
+- строка 149: `console.warn` — candidate rejected
+- строка 181: `console.warn` — candidate fetch error
+- строка 189: `console.error` — fatal error
 
-**Файл: `src/pages/settings/LegalDetails.tsx**`
+### 2. `src/hooks/useGoogleMapsLoader.ts`
 
-- Удалить блок `validation_status` (строки 235-248) — весь `<div>` с «Проверено / Есть ошибки / Не проверено».
-- Убрать неиспользуемые импорты `CheckCircle2`, `AlertCircle`.
+**Удалить 2 строки `console.log`:**
 
-### 3. Багфикс адресного pipeline — финальная зачистка
+- строка 134: `console.log("[GoogleMapsLoader] Starting Google Maps load...")`
+- строка 141: `console.log("[GoogleMapsLoader] Load complete...")`
 
-Текущий код уже содержит:
+**Оставить:**
 
-- validated match итерацию в `GrpAddressEnricher.ts`
-- hard reset stale context в `StructuredAddressBlock.tsx`
-- hierarchy-aware `buildAutocompleteQuery` в `utils.ts`
-- unified `GOOGLE_PLACE_DETAIL_FIELDS` в `googlePlaceDetails.ts`
-- ИП auto-form logic в `OrganizationDetailsForm.tsx`
+- строка 76: `console.error` — importLibrary failed
+- строка 81: `console.error` — API not found
+- строка 127: `console.error` — API key not configured
 
-**Что нужно дочистить:**
+### 3. `src/components/legal-details/OrganizationDetailsForm.tsx`
 
-**Файл: `src/lib/address/GrpAddressEnricher.ts**`
+**Удалить 3 блока `console.log`:**
 
-- Убрать избыточные `console.log` (оставить только 1-2 ключевых dev-only лога на уровне warn/error).
+- строки 227-232: `console.log('[OrganizationDetailsForm] handleGrpConfirm called...')`
+- строка 265: `console.log('[OrganizationDetailsForm] Fresh address before enrichment:...')`
+- строки 274-279: `console.log('[OrganizationDetailsForm] Enrichment result:...')`
 
-**Файл: `src/hooks/useGoogleMapsLoader.ts**`
+### 4. Не трогаем
 
-- Убрать диагностические `console.log`, добавленные в прошлом патче.
-
-**Файл: `src/components/legal-details/OrganizationDetailsForm.tsx**`
-
-- Убрать диагностические `console.log` из `handleGrpConfirm`.
+- `GooglePlacesAdapter` — используется
+- `googlePlaceDetails.ts` — используется
+- `GrpAddressEnricher` — используется
+- `OrgFormCombobox` — используется
+- `StructuredAddressBlock` — используется
+- `Profile.tsx` — уже чистый, карточка удалена ранее
+- `LegalDetails.tsx` — `CheckCircle2`/`AlertCircle` используются для `valid`/`invalid` статусов
 
 ## DoD
 
-- В сайдбаре под «Профиль» появляется «Реквизиты»
-- Из карточки реквизитов убран статус «Не проверено»
-- Диагностические логи убраны из production-кода
-- Существующий адресный pipeline не регрессирует
+- Ноль `console.log` в production-коде address pipeline
+- Только `console.warn` / `console.error` для реальных сбоев
+- Навигация `Профиль → Реквизиты` работает
+- Address pipeline не затронут (только удаление логов)
