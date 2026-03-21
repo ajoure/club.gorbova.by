@@ -51,13 +51,17 @@ interface EntrepreneurDetailsFormProps {
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   isSubmitting: boolean;
   showDemoOnEmpty?: boolean;
+  pendingGrpPayload?: GrpAutofillFields | null;
+  onPendingGrpPayloadConsumed?: () => void;
 }
 
 export function EntrepreneurDetailsForm({ 
   initialData, 
   onSubmit, 
   isSubmitting,
-  showDemoOnEmpty = true 
+  showDemoOnEmpty = true,
+  pendingGrpPayload,
+  onPendingGrpPayloadConsumed,
 }: EntrepreneurDetailsFormProps) {
   const hasRealData = !!initialData?.ent_name;
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
