@@ -224,12 +224,6 @@ export function OrganizationDetailsForm({
 
   const handleGrpConfirm = useCallback(async () => {
     if (!grpResult) return;
-    console.log('[OrganizationDetailsForm] handleGrpConfirm called', {
-      entity_kind: grpResult.entity_kind,
-      org_form_full: grpResult.org_form_full,
-      clean_name: grpResult.clean_name,
-      parsed_address: grpResult.parsed_address,
-    });
 
     const filled = new Set<string>();
 
@@ -262,7 +256,6 @@ export function OrganizationDetailsForm({
         ...emptyAddress(),
         ...grpResult.parsed_address,
       };
-      console.log('[OrganizationDetailsForm] Fresh address before enrichment:', JSON.stringify(freshAddress));
       setAddress(freshAddress);
       setAddressSource('grp');
       filled.add("address");
@@ -271,12 +264,6 @@ export function OrganizationDetailsForm({
       setIsEnrichingAddress(true);
       try {
         const result = await enrichAddressViaGoogle(freshAddress);
-        console.log('[OrganizationDetailsForm] Enrichment result:', {
-          enriched: result.enriched,
-          error: result.error,
-          postal_code: result.address.postal_code,
-          google_place_id: result.address.google_place_id,
-        });
         if (result.enriched) {
           setAddress(result.address);
         }
