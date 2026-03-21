@@ -221,7 +221,7 @@ export function IndividualDetailsForm({
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email *</FormLabel>
+                  <FieldLabelWithId label="Email" fieldEntry={fieldsMap.get("email")} required />
                   <FormControl>
                     <Input 
                       type="email" 
