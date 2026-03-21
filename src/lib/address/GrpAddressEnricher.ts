@@ -96,7 +96,6 @@ export async function enrichAddressViaGoogle(
 
     // Build query from preliminary address
     const query = formatFullAddress(preliminary);
-    console.log('[GrpAddressEnricher] Query:', query);
     if (!query || query.length < 5) {
       return { address: preliminary, enriched: false, error: 'Query too short' };
     }
