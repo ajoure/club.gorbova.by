@@ -180,7 +180,7 @@ export function IndividualDetailsForm({
               name="ind_birth_date"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Дата рождения *</FormLabel>
+                  <FieldLabelWithId label="Дата рождения" fieldEntry={fieldsMap.get("ind_birth_date")} required />
                   <FormControl>
                     <DatePicker
                       value={field.value}
