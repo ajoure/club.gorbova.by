@@ -5,6 +5,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { useGoogleMapsLoader } from './useGoogleMapsLoader';
+import { GOOGLE_PLACE_DETAIL_FIELDS, mapGooglePlaceDetails } from '@/lib/address/googlePlaceDetails';
 
 export interface PlacePrediction {
   placeId: string;

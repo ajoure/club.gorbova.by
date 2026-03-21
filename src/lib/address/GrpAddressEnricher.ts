@@ -14,7 +14,7 @@
 
 import type { StructuredAddress } from './types';
 import { GooglePlacesAdapter } from './adapters/GooglePlacesAdapter';
-import { formatFullAddress } from './utils';
+import { GOOGLE_PLACE_DETAIL_FIELDS, mapGooglePlaceDetails } from './googlePlaceDetails';
 
 export interface EnrichmentResult {
   address: StructuredAddress;
