@@ -21,7 +21,6 @@ export interface PlaceDetails {
   lat: number | null;
   lng: number | null;
   addressComponents: google.maps.places.AddressComponent[];
-  postalCode: string | null;
 }
 
 interface UsePlaceAutocompleteOptions {
