@@ -93,47 +93,57 @@ export function isAddressEmpty(addr: StructuredAddress): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Field hierarchy levels: lower index = more specific (child).
- * When searching for a field, only include fields at HIGHER hierarchy (parent).
+ * Build a safe autocomplete query from the active field value + minimal parent context.
+ *
+ * Rules:
+ * - For `street`: activeValue only (+ country_name if set). No stale city/region/house.
+ *   User is starting a new address; old context would pollute results.
+ * - For `city`: activeValue + country_name only.
+ * - For `settlement`: activeValue + city + country_name.
+ * - For `region`/`district`: activeValue + country_name.
+ * - For `house`: activeValue + street + city + country_name (refining existing address).
+ * - For `country_name`: activeValue only.
+ * - Never include postal_code, building, apartment in query.
  */
-const FIELD_HIERARCHY: Record<string, number> = {
-  street: 1,
-  house: 0,
-  settlement: 2,
-  city: 3,
-  district: 4,
-  region: 5,
-  postal_code: 0, // never include in query
-  country_name: 6,
-};
-
 export function buildAutocompleteQuery(
   addr: StructuredAddress,
   activeField: keyof StructuredAddress,
   activeValue: string
 ): string {
-  const activeLevel = FIELD_HIERARCHY[activeField as string] ?? -1;
-  const contextParts: string[] = [];
+  const parts: string[] = [];
+  const av = activeValue.trim();
+  if (av) parts.push(av);
 
-  // Always include the active value first
-  if (activeValue.trim()) {
-    contextParts.push(activeValue.trim());
+  const push = (field: keyof StructuredAddress) => {
+    const v = (addr[field] as string ?? '').trim();
+    if (v) parts.push(v);
+  };
+
+  switch (activeField) {
+    case 'street':
+      // Fresh search — only country as context to avoid stale city/region
+      push('country_name');
+      break;
+    case 'city':
+      push('country_name');
+      break;
+    case 'settlement':
+      push('city');
+      push('country_name');
+      break;
+    case 'house':
+      push('street');
+      push('city');
+      push('country_name');
+      break;
+    case 'region':
+    case 'district':
+      push('country_name');
+      break;
+    default:
+      // country_name, postal_code, etc. — just activeValue
+      break;
   }
 
-  // Only include fields that are HIGHER in hierarchy (parents/context)
-  const contextFields: (keyof StructuredAddress)[] = [
-    'city', 'region', 'country_name',
-  ];
-
-  for (const field of contextFields) {
-    const fieldLevel = FIELD_HIERARCHY[field as string] ?? -1;
-    // Only include if field is strictly higher in hierarchy than active field
-    if (fieldLevel <= activeLevel) continue;
-    const val = (addr[field] as string ?? '').trim();
-    if (val) {
-      contextParts.push(val);
-    }
-  }
-
-  return contextParts.join(', ');
+  return parts.join(', ');
 }
