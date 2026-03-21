@@ -1,154 +1,114 @@
 # Да, согласен, с учетом правок:
 
-1. **План покрывает не всё ТЗ.**  
-Сейчас он закрывает только:
-  - safe enrichment адреса,
-  - ширину формы,
-  - UX для `Другое`.  
-  Но из ТЗ еще был запрос про **ИП flow**. Либо добавь это в план, либо явно пометь как **out of scope текущего PATCH**.
-2. **Добавь отдельный VERIFY по ИП.**  
-В ТЗ было важно, чтобы для ИП:
-  - имя не искажалось,
-  - не добавлялись кавычки,
-  - не пыталась выделяться оргформа там, где её нет,
-  - адрес работал по тем же safe-enrichment правилам.  
-  Сейчас в плане это только словесно упомянуто, но **нет в DoD**.
-3. **Для** `Другое` **недостаточно исправить только layout.**  
-Нужно явно добавить в DoD:
-  - `Полная форма` сохраняется;
-  - `Краткая форма` сохраняется;
-  - после `save + reopen` оба значения остаются;
-  - эти поля не схлопываются обратно и не теряются.  
-  Иначе из ТЗ будет закрыт только внешний вид, но не фактическое поведение.
-4. **Расширение формы лучше зафиксировать не только через** `max-w-4xl`**.**  
-Это может помочь, но может оказаться недостаточно.  
-Добавь формулировку:
-  - расширить **основной контейнер страницы и внутреннюю карточку реквизитов**;
-  - адресный блок и блок `Другое` должны использовать доступную ширину, а не оставаться визуально зажатыми.  
-  То есть не ограничивайся одним классом, а фиксируй **ожидаемый UI-результат**.
-5. **Safe enrichment опиши жестче.**  
-Сейчас идея правильная, но нужно явно зафиксировать:
-  - если GRP уже распознал `street / house / city / apartment / building`, Google **не имеет права** их перезаписать;
-  - Google только дозаполняет пустые поля;
-  - при конфликте значений Google-ответ автоматически не применяется.  
-  Это главный баг, и его нужно зафиксировать как правило, а не только как перестановку `||`.
-6. **Добавь proof после сохранения, а не только после apply.**  
-В DoD сейчас не хватает:
-  - after confirm,
-  - after save,
+1. **План в целом правильный, но не полностью закрывает багфикс-пакет.**  
+Основное направление верное:
+  - ИП нужно переводить на `clean_name || name`;
+  - индекс нужно усиливать через парсер;
+  - scope как bugfix без новых таблиц/EF — нормальный.
+2. **Пункт про** `postalCode` **в** `fetchFields` **я бы не делал основной ставкой.**  
+Это слабое место плана.  
+Главный фикс должен быть такой:
+  - сначала улучшить `GrpAddressParser` для индекса;
+  - затем использовать то, что реально приходит от Google в `addressComponents`;
+  - если хочешь добавлять `postalCode` в `fetchFields`, делай это только после проверки, что текущий API это поле реально поддерживает и оно дает результат.  
+  Иначе получится “патч есть, эффекта нет”.
+3. `StructuredAddressBlock.tsx — нет изменений` **пока рано фиксировать как окончательное решение.**  
+Это допустимо только если ты добавишь явный VERIFY:
+  - direct Google select для BY-адреса;
+  - GRP → Google enrichment;
+  - save + reopen;
+  - проверка, что `дом`, `индекс`, `офис/кв.` не теряются.  
+  Если хотя бы один из этих кейсов падает, значит `StructuredAddressBlock` тоже входит в PATCH.
+4. **В DoD не хватает post-save proof.**  
+Добавь обязательно:
+  - after confirm;
+  - after save;
   - after reopen.  
   Нужно доказать:
-  - `Панфилова` не превращается в `Верхняя`;
+  - ИП сохраняется без префикса `Индивидуальный предприниматель`;
+  - индекс сохраняется, если пришел из GRP или Google;
   - `дом 2` и `49л` не теряются;
-  - canonical и legacy согласованы после повторного открытия формы.
-7. **Отдельно зафиксируй, что новых сущностей не создаём.**  
-Напиши явно:
-  - без новых таблиц,
-  - без новых EF,
-  - без миграций,
-  - только bugfix текущего flow.  
-  Это соответствует add-only подходу и не даст разрастись патчу.
-8. **Если объединение/упрощение сценария ЮЛ/ИП не входит в этот PATCH — так и напиши.**  
-Иначе план выглядит как будто эта часть ТЗ забыта.  
-Нужна одна строка:
-  - `рефактор объединения сценариев ЮЛ/ИП в один flow в этот PATCH не входит; сейчас только bugfix и verify существующих flows`.
+  - canonical и legacy согласованы.
+5. **Добавь отдельный DoD по ИП.**  
+Сейчас это только в тексте. Нужно явно зафиксировать:
+  - `ent_name = clean_name || name`;
+  - без кавычек;
+  - без искусственного выделения оргформы;
+  - адрес ИП проходит тот же safe-enrichment без поломки.
+6. **Сохрани правило safe enrichment как жесткое, а не косвенное.**  
+Прямо напиши:
+  - если GRP уже распознал `street / house / city / apartment / building`, Google не имеет права их автоматически перезаписать;
+  - Google только дозаполняет пустые поля;
+  - конфликтующие Google-значения автоматически не применяются.
+7. **Зафиксируй, что** `офис/кв.` **тоже входит в verify.**  
+Для твоего кейса это критично:
+  - `49л` не должен исчезать;
+  - если Google не возвращает office/apartment, берем из GRP и сохраняем.
+8. **Scope лучше дописать одной строкой:**
+  - `объединение сценариев ЮЛ/ИП и крупный рефактор форм — out of scope этого PATCH; здесь только bugfix текущих flows и verify`.
 
 Итог:  
-**План хороший, но не полностью покрывает ТЗ**, пока не добавлены:
+**План почти нормальный, но я бы не утверждал его без этих правок.**  
+Главное, что нужно добавить:
 
-- явный VERIFY для ИП,
-- сохранение/reopen для `Другое`,
-- жёсткое правило safe enrichment,
-- фиксация scope по ЮЛ/ИП flow.
+- не делать ставку только на `postalCode` field,
+- не закрывать `StructuredAddressBlock` без VERIFY,
+- добавить `after save + reopen` proof,
+- выделить явный DoD по ИП и по `49л`.
 - &nbsp;
-- План: Phase 3.2.1 — Safe enrichment + UI fixes
+- План: PATCH 3.2.2 — Bugfix: индекс, ИП apply, неполное заполнение адреса
 
 ## DIAGNOSE
 
-### Баг 1: Google overwrite уже распознанных полей (КРИТИЧЕСКИЙ)
+### Баг 1: ИП — apply использует `name` вместо `clean_name`
 
-**Файл:** `src/lib/address/GrpAddressEnricher.ts`, строки 70-87
-**Причина:** Merge-логика `googleParsed.street || preliminary.street` отдает приоритет Google. Если Google вернул другую улицу, она перезаписывает GRP.
-**Факт:** «Панфилова» → «Верхняя» после enrichment.
+**Файл:** `EntrepreneurDetailsForm.tsx`, строка 139-141
+**Причина:** `handleGrpConfirm` записывает `grpResult.name` (полное имя из МНС, может содержать "Индивидуальный предприниматель"). Нужно использовать `grpResult.clean_name || grpResult.name` — `parseOrgFormAndName` уже умеет отрезать префикс "ИП"/"Индивидуальный предприниматель".
 
-### Баг 2: ИП — форма не выставляется автоматически
+### Баг 2: Индекс не заполняется после GRP → Google enrichment
 
-**Файл:** `src/components/legal-details/EntrepreneurDetailsForm.tsx`, строка 140
-**Причина:** Для ИП `handleGrpConfirm` применяет только `grpResult.name` (полное имя). Org form `Индивидуальный предприниматель` не устанавливается, потому что в форме ИП нет поля org_form. Но в `GrpAutofillService.parseOrgFormAndName` для ИП (например «Горбова Екатерина Сергеевна») `orgFormFull` возвращается пустым — это корректно, ИП не имеет отдельной org form в форме ИП.
+**Файл:** `GrpAddressEnricher.ts`, строка 83
+**Причина:** Merge-логика `preliminary.postal_code || googleParsed.postal_code` — корректна. Но проблема в том, что Google Places API часто не возвращает `postal_code` для белорусских адресов. Если GRP-строка содержит индекс (напр. "220004, г.Минск..."), парсер его извлекает и он сохраняется. Если в GRP-строке индекса нет — Google часто тоже не дает его.
+**Решение:** Дополнительно запрашивать `postalCode` в `fetchFields`, чтобы увеличить шанс получения. Также в GrpAddressParser улучшить извлечение индекса.
 
-### Баг 3: «Другое» — поля слишком маленькие
+### Баг 3: Google autocomplete в StructuredAddressBlock не заполняет все поля
 
-**Файл:** `src/components/legal-details/OrgFormCombobox.tsx`, строки 149-169
-**Причина:** `grid grid-cols-2 gap-2` с `h-8 text-sm` — выглядит как pill, а не как полноценный Input.
+**Файл:** `StructuredAddressBlock.tsx`, строка 139-162
+**Причина:** `handleSelect` делает `...parsed` из GooglePlacesAdapter. Если Google не вернул `postal_code` или `house`, они останутся пустыми. Для Беларуси Google часто не возвращает `postal_code`. Это ограничение API, но можно улучшить запрос.
 
-### Баг 4: Форма слишком узкая
+## Scope
 
-**Файл:** `src/pages/settings/LegalDetails.tsx`, строки 137, 186
-**Причина:** `max-w-2xl` (672px) — слишком сжато для адресного блока + реквизитов.
+- Только bugfix существующих flows
+- Без новых таблиц / миграций / EF
+- Объединение сценариев ЮЛ/ИП — out of scope
 
-## DRY RUN
+## Файлы и изменения
 
-### Переиспользуемые компоненты
+### 1. `EntrepreneurDetailsForm.tsx` — ИП apply fix
 
-- `GrpAddressEnricher` — исправить merge-логику (не создавать новый файл)
-- `OrgFormCombobox` — исправить layout «Другое» (не создавать новый компонент)
-- `LegalDetails.tsx` — расширить контейнер
+Строка 139: заменить `grpResult.name` на `grpResult.clean_name || grpResult.name`
 
-### Что меняется
+### 2. `GrpAddressEnricher.ts` — расширить fetchFields
 
-
-| Файл                                               | Изменение                                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------- |
-| `src/lib/address/GrpAddressEnricher.ts`            | Merge: GRP-поля приоритетнее Google для street/house/city/apartment |
-| `src/components/legal-details/OrgFormCombobox.tsx` | Layout «Другое»: полноценные Input, full width                      |
-| `src/pages/settings/LegalDetails.tsx`              | `max-w-2xl` → `max-w-4xl`                                           |
-
-
-### Что НЕ меняем
-
-- Новых файлов нет
-- Миграций нет
-- Edge functions не трогаем
-- EntrepreneurDetailsForm — ИП не имеет org form, это корректное поведение
-
-## EXECUTE — 3 файла
-
-### PATCH 3.2.1 — Safe merge в GrpAddressEnricher
-
-Изменить merge-логику (строки 70-87): GRP-значения имеют приоритет, Google дозаполняет только пустые поля.
+Добавить `'postalCode'` в список запрашиваемых полей (строка 59):
 
 ```
-street: preliminary.street || googleParsed.street,
-house: preliminary.house || googleParsed.house,
-city: preliminary.city || googleParsed.city,
-apartment: grpApartment || googleParsed.apartment || '',
-building: preliminary.building || googleParsed.building,
-settlement: preliminary.settlement || googleParsed.settlement,
-district: preliminary.district || googleParsed.district,
-region: preliminary.region || googleParsed.region,
-postal_code: preliminary.postal_code || googleParsed.postal_code,
-country_code: preliminary.country_code || googleParsed.country_code || 'BY',
-country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
+fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode'],
 ```
 
-Google заполняет только: `postal_code`, `region`, `country`, `place_id`, `lat`, `lng` и прочие пустые сегменты. Уже распознанные street/house/city/apartment не перезаписываются.
+Если Google вернул `postalCode` напрямую и в merged его нет — дозаполнить.
 
-### PATCH 3.2.2 — Fix «Другое» layout
+### 3. `GrpAddressParser.ts` — улучшить парсинг индекса
 
-В `OrgFormCombobox.tsx` заменить `grid grid-cols-2 gap-2` на вертикальный layout:
+Сейчас ищет только `^(\d{6})` в начале строки. Добавить поиск 6-значного индекса и в других позициях строки (например, после запятой).
 
-- Полная форма — `w-full`, нормальный `h-9`
-- Краткая форма — `w-full` или `max-w-[200px]`, нормальный `h-9`
-- Убрать `h-8 text-sm`, сделать стандартные Input-поля
+### 4. `StructuredAddressBlock.tsx` — нет изменений
 
-### PATCH 3.2.3 — Widen layout
-
-В `LegalDetails.tsx`: обе строки `max-w-2xl` → `max-w-4xl` (896px).
+Google autocomplete работает корректно — `...parsed` включает все поля, которые Google вернул. Если postal_code отсутствует в ответе Google — это ограничение API, а не баг кода.
 
 ## DoD
 
-- «Панфилова» не заменяется на «Верхняя» после enrichment
-- `дом 2` и `офис 49л` сохраняются
-- Google дозаполняет только пустые поля (postal_code, region, country, place_id, lat, lng)
-- «Другое» full/short — полноценные поля ввода
-- Форма реквизитов визуально шире и не зажата
+- ИП: имя применяется без префикса "Индивидуальный предприниматель"
+- Индекс: если есть в GRP-строке — сохраняется; если Google вернул — дозаполняется
+- Адрес после GRP enrichment содержит все доступные поля
+- Существующие flows не ломаются
