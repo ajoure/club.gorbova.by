@@ -21,7 +21,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText } from "lucide-react";
 import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
@@ -99,6 +99,7 @@ const profileMenuItems = [
   { title: "FAQ", url: "/docs", icon: BookOpen },
   { title: "Техподдержка", url: "/support", icon: LifeBuoy, showUnread: true },
   { title: "Профиль", url: "/settings/profile", icon: User },
+  { title: "Реквизиты", url: "/settings/legal-details", icon: FileText },
   { title: "Оплата и карты", url: "/settings/payment-methods", icon: ShoppingBag },
   { title: "Согласия", url: "/settings/consents", icon: Shield },
   { title: "Мои покупки", url: "/purchases", icon: Target },

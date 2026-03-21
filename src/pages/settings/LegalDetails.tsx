@@ -243,9 +243,7 @@ export default function LegalDetailsSettings() {
                               <AlertCircle className="h-3 w-3" />
                               Есть ошибки
                             </span>
-                          ) : (
-                            <span>Не проверено</span>
-                          )}
+                          ) : null}
                           {details.bank_account && (
                             <span>• {details.bank_name}</span>
                           )}
