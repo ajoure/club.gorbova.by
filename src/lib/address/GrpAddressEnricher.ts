@@ -153,13 +153,13 @@ export async function enrichAddressViaGoogle(
           // Google fills only empty meta-fields
           district: preliminary.district || googleParsed.district || '',
           region: preliminary.region || googleParsed.region || '',
-          postal_code: preliminary.postal_code || googleParsed.postal_code || (place as any).postalCode || '',
+          postal_code: preliminary.postal_code || googleParsed.postal_code || '',
           country_code: preliminary.country_code || googleParsed.country_code || 'BY',
           country_name: preliminary.country_name || googleParsed.country_name || 'Беларусь',
           address_line_2: preliminary.address_line_2 || '',
-          google_place_id: place.id || null,
-          lat: place.location?.lat() ?? null,
-          lng: place.location?.lng() ?? null,
+          google_place_id: details.placeId || null,
+          lat: details.lat,
+          lng: details.lng,
         };
 
         return { address: merged, enriched: true };
