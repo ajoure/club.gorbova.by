@@ -438,12 +438,14 @@ export function OrganizationDetailsForm({
               name="name"
               render={({ field }) => (
                 <FormItem className="col-span-2">
-                  <FormLabel className="flex items-center gap-2">
-                    {isEntrepreneur ? 'ФИО' : 'Название'}
+                  <FieldLabelWithId
+                    label={isEntrepreneur ? 'ФИО' : 'Название'}
+                    fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_name" : "leg_name")}
+                  >
                     {autofilledFields.has("name") && (
                       <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
-                  </FormLabel>
+                  </FieldLabelWithId>
                   <FormControl>
                     <Input 
                       placeholder={isEntrepreneur ? "Горбова Екатерина Сергеевна" : getPlaceholder("leg_name", 'АЖУР инкам')} 
