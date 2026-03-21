@@ -121,28 +121,42 @@ export function StructuredAddressBlock({
     };
   }, [isOpen, clearPredictions]);
 
-  // Fields that should reset stale dependent data when manually edited
-  const PRIMARY_FIELDS: (keyof StructuredAddress)[] = ['street', 'city', 'settlement'];
-
   const handleFieldChange = useCallback(
     (field: keyof StructuredAddress, val: string) => {
       let updated = { ...value, [field]: val };
 
-      // When editing primary address fields, reset stale dependent data
-      if (PRIMARY_FIELDS.includes(field)) {
+      // Hard reset stale dependent data when editing primary address fields
+      if (field === 'street') {
+        updated = {
+          ...updated,
+          house: '',
+          building: '',
+          apartment: '',
+          postal_code: '',
+          google_place_id: null,
+          lat: null,
+          lng: null,
+        };
+      } else if (field === 'city') {
+        updated = {
+          ...updated,
+          house: '',
+          building: '',
+          apartment: '',
+          postal_code: '',
+          street: '',
+          settlement: '',
+          google_place_id: null,
+          lat: null,
+          lng: null,
+        };
+      } else if (field === 'settlement') {
         updated = {
           ...updated,
           google_place_id: null,
           lat: null,
           lng: null,
         };
-        // When editing street, also clear lower-hierarchy stale fields
-        if (field === 'street') {
-          updated.house = '';
-          updated.building = '';
-          updated.apartment = '';
-          updated.postal_code = '';
-        }
       }
 
       onChange(updated);
