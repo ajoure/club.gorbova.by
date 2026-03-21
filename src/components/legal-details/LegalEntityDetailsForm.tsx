@@ -574,6 +574,26 @@ export function LegalEntityDetailsForm({
         liquidationDate={grpLookup.data?.data?.liquidation_date}
         onConfirm={handleGrpConfirm}
       />
+
+      {/* IP Switch Confirmation Dialog */}
+      <AlertDialog open={ipSwitchDialogOpen} onOpenChange={setIpSwitchDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Найден индивидуальный предприниматель</AlertDialogTitle>
+            <AlertDialogDescription>
+              По введённому УНП в реестре найден ИП
+              {pendingIpPayload?.clean_name ? ` «${pendingIpPayload.clean_name}»` : ''}.
+              Переключить форму на ИП и применить данные?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleIpSwitchCancel}>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleIpSwitchConfirm}>
+              Переключить на ИП
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Form>
   );
 }

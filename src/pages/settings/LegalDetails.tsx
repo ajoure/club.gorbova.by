@@ -134,9 +134,20 @@ export default function LegalDetailsSettings() {
       case "individual":
         return <IndividualDetailsForm {...props} />;
       case "entrepreneur":
-        return <EntrepreneurDetailsForm {...props} />;
+        return (
+          <EntrepreneurDetailsForm 
+            {...props} 
+            pendingGrpPayload={pendingGrpPayload}
+            onPendingGrpPayloadConsumed={() => setPendingGrpPayload(null)}
+          />
+        );
       case "legal_entity":
-        return <LegalEntityDetailsForm {...props} />;
+        return (
+          <LegalEntityDetailsForm 
+            {...props}
+            onRequestSwitchToEntrepreneur={handleSwitchToEntrepreneur}
+          />
+        );
     }
   };
 
