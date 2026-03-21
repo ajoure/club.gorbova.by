@@ -1,4 +1,6 @@
 import { useForm } from "react-hook-form";
+import { useLegalDetailsFields } from "@/hooks/useLegalDetailsFields";
+import { FieldLabelWithId } from "./FieldLabelWithId";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState, useCallback } from "react";
@@ -56,6 +58,7 @@ export function IndividualDetailsForm({
   showDemoOnEmpty = true 
 }: IndividualDetailsFormProps) {
   const hasRealData = !!initialData?.ind_full_name;
+  const { fieldsMap } = useLegalDetailsFields();
   const showDemoPlaceholders = !hasRealData && showDemoOnEmpty;
 
   const [address, setAddress] = useState<StructuredAddress>(() =>
@@ -158,7 +161,7 @@ export function IndividualDetailsForm({
             name="ind_full_name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>ФИО полностью *</FormLabel>
+                <FieldLabelWithId label="ФИО полностью" fieldEntry={fieldsMap.get("ind_full_name")} required />
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("ind_full_name", "Иванов Иван Иванович")} 
@@ -177,7 +180,7 @@ export function IndividualDetailsForm({
               name="ind_birth_date"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Дата рождения *</FormLabel>
+                  <FieldLabelWithId label="Дата рождения" fieldEntry={fieldsMap.get("ind_birth_date")} required />
                   <FormControl>
                     <DatePicker
                       value={field.value}
@@ -195,7 +198,7 @@ export function IndividualDetailsForm({
               name="ind_personal_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Личный номер *</FormLabel>
+                  <FieldLabelWithId label="Личный номер" fieldEntry={fieldsMap.get("ind_personal_number")} required />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("ind_personal_number", "3140583A009PB1")} 
@@ -218,7 +221,7 @@ export function IndividualDetailsForm({
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email *</FormLabel>
+                  <FieldLabelWithId label="Email" fieldEntry={fieldsMap.get("email")} required />
                   <FormControl>
                     <Input 
                       type="email" 
@@ -236,7 +239,7 @@ export function IndividualDetailsForm({
               name="phone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Телефон *</FormLabel>
+                  <FieldLabelWithId label="Телефон" fieldEntry={fieldsMap.get("phone")} required />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("phone", "+375 44 7500084")} 
@@ -267,7 +270,7 @@ export function IndividualDetailsForm({
               name="ind_passport_series"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Серия</FormLabel>
+                  <FieldLabelWithId label="Серия" fieldEntry={fieldsMap.get("ind_passport_series")} />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("ind_passport_series", "MP")} 
@@ -286,7 +289,7 @@ export function IndividualDetailsForm({
               name="ind_passport_number"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Номер</FormLabel>
+                  <FieldLabelWithId label="Номер" fieldEntry={fieldsMap.get("ind_passport_number")} />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("ind_passport_number", "1234567")} 
@@ -304,7 +307,7 @@ export function IndividualDetailsForm({
               name="ind_passport_issued_date"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Дата выдачи</FormLabel>
+                  <FieldLabelWithId label="Дата выдачи" fieldEntry={fieldsMap.get("ind_passport_issued_date")} />
                   <FormControl>
                     <DatePicker
                       value={field.value || ""}
@@ -320,7 +323,7 @@ export function IndividualDetailsForm({
               name="ind_passport_valid_until"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Действ. до</FormLabel>
+                  <FieldLabelWithId label="Действ. до" fieldEntry={fieldsMap.get("ind_passport_valid_until")} />
                   <FormControl>
                     <DatePicker
                       value={field.value || ""}
@@ -338,7 +341,7 @@ export function IndividualDetailsForm({
             name="ind_passport_issued_by"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Кем выдан</FormLabel>
+                <FieldLabelWithId label="Кем выдан" fieldEntry={fieldsMap.get("ind_passport_issued_by")} />
                 <FormControl>
                   <Input 
                     placeholder={getPlaceholder("ind_passport_issued_by", "Фрунзенским РУВД г. Минска")} 
@@ -386,7 +389,7 @@ export function IndividualDetailsForm({
             name="bank_account"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Расчётный счёт (IBAN)</FormLabel>
+                <FieldLabelWithId label="Расчётный счёт (IBAN)" fieldEntry={fieldsMap.get("bank_account")} />
                 <FormControl>
                   <Input 
                     placeholder="BY00XXXX00000000000000000000"
@@ -407,7 +410,7 @@ export function IndividualDetailsForm({
               name="bank_name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Банк</FormLabel>
+                  <FieldLabelWithId label="Банк" fieldEntry={fieldsMap.get("bank_name")} />
                   <FormControl>
                     <Input placeholder='ЗАО "Альфа-Банк"' autoComplete="off" {...field} />
                   </FormControl>
@@ -420,7 +423,7 @@ export function IndividualDetailsForm({
               name="bank_code"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>БИК</FormLabel>
+                  <FieldLabelWithId label="БИК" fieldEntry={fieldsMap.get("bank_code")} />
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 

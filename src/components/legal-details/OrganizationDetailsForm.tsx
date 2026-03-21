@@ -11,6 +11,8 @@
  */
 
 import { useForm } from "react-hook-form";
+import { useLegalDetailsFields } from "@/hooks/useLegalDetailsFields";
+import { FieldLabelWithId } from "./FieldLabelWithId";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useState, useCallback, useEffect, useMemo } from "react";
@@ -30,6 +32,7 @@ import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAddressAdapter";
@@ -92,7 +95,7 @@ export function OrganizationDetailsForm({
 }: OrganizationDetailsFormProps) {
   // Determine if editing existing entrepreneur or legal_entity
   const isEditingEntrepreneur = initialData?.client_type === 'entrepreneur';
-
+  const { fieldsMap } = useLegalDetailsFields();
   const hasRealData = isEditingEntrepreneur
     ? !!initialData?.ent_name
     : !!initialData?.leg_name;
@@ -375,6 +378,13 @@ export function OrganizationDetailsForm({
               <FormItem>
                 <FormLabel className="flex items-center gap-2">
                   УНП
+                  {fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId && (
+                    <CopyableIdChip
+                      value={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.publicId}
+                      copyValue={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.tokenString}
+                      successMessage="Токен скопирован"
+                    />
+                  )}
                   {isLookingUp && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                 </FormLabel>
                 <FormControl>
@@ -398,12 +408,14 @@ export function OrganizationDetailsForm({
               name="org_form"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="flex items-center gap-2">
-                    Форма
+                  <FieldLabelWithId
+                    label="Форма"
+                    fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_name" : "leg_org_form")}
+                  >
                     {autofilledFields.has("org_form") && (
                       <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
-                  </FormLabel>
+                  </FieldLabelWithId>
                   <FormControl>
                     <OrgFormCombobox
                       value={field.value}
@@ -427,12 +439,14 @@ export function OrganizationDetailsForm({
               name="name"
               render={({ field }) => (
                 <FormItem className="col-span-2">
-                  <FormLabel className="flex items-center gap-2">
-                    {isEntrepreneur ? 'ФИО' : 'Название'}
+                  <FieldLabelWithId
+                    label={isEntrepreneur ? 'ФИО' : 'Название'}
+                    fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_name" : "leg_name")}
+                  >
                     {autofilledFields.has("name") && (
                       <Badge variant="outline" className="text-[10px] font-normal">авто</Badge>
                     )}
-                  </FormLabel>
+                  </FieldLabelWithId>
                   <FormControl>
                     <Input 
                       placeholder={isEntrepreneur ? "Горбова Екатерина Сергеевна" : getPlaceholder("leg_name", 'АЖУР инкам')} 
@@ -487,7 +501,7 @@ export function OrganizationDetailsForm({
                   name="director_position"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Должность</FormLabel>
+                      <FieldLabelWithId label="Должность" fieldEntry={fieldsMap.get("leg_director_position")} />
                       <FormControl>
                         <Input 
                           placeholder={getPlaceholder("leg_director_position", "Директор")} 
@@ -503,7 +517,7 @@ export function OrganizationDetailsForm({
                   name="director_name"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>ФИО</FormLabel>
+                      <FieldLabelWithId label="ФИО" fieldEntry={fieldsMap.get("leg_director_name")} />
                       <FormControl>
                         <Input 
                           placeholder={getPlaceholder("leg_director_name", "Иванов Иван Иванович")} 
@@ -528,7 +542,7 @@ export function OrganizationDetailsForm({
             name="acts_on_basis"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Действует на основании</FormLabel>
+                <FieldLabelWithId label="Действует на основании" fieldEntry={fieldsMap.get(isEntrepreneur ? "ent_acts_on_basis" : "leg_acts_on_basis")} />
                 <FormControl>
                   <Input 
                     placeholder={isEntrepreneur 
@@ -555,7 +569,7 @@ export function OrganizationDetailsForm({
             name="bank_account"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Расчётный счёт (IBAN)</FormLabel>
+                <FieldLabelWithId label="Расчётный счёт (IBAN)" fieldEntry={fieldsMap.get("bank_account")} />
                 <FormControl>
                   <Input 
                     placeholder="BY00XXXX00000000000000000000" 
@@ -575,7 +589,7 @@ export function OrganizationDetailsForm({
               name="bank_name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Банк</FormLabel>
+                  <FieldLabelWithId label="Банк" fieldEntry={fieldsMap.get("bank_name")} />
                   <FormControl>
                     <Input placeholder='ЗАО "Альфа-Банк"' {...field} />
                   </FormControl>
@@ -588,7 +602,7 @@ export function OrganizationDetailsForm({
               name="bank_code"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>БИК/Код</FormLabel>
+                  <FieldLabelWithId label="БИК/Код" fieldEntry={fieldsMap.get("bank_code")} />
                   <FormControl>
                     <Input 
                       placeholder="ALFABY2X" 
@@ -615,7 +629,7 @@ export function OrganizationDetailsForm({
               name="phone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Телефон</FormLabel>
+                  <FieldLabelWithId label="Телефон" fieldEntry={fieldsMap.get("phone")} />
                   <FormControl>
                     <Input 
                       placeholder={getPlaceholder("phone", "+375 17 3456789")} 
@@ -631,7 +645,7 @@ export function OrganizationDetailsForm({
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Email</FormLabel>
+                  <FieldLabelWithId label="Email" fieldEntry={fieldsMap.get("email")} />
                   <FormControl>
                     <Input 
                       type="email" 
