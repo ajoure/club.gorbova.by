@@ -88,15 +88,16 @@ export async function loadLegalDetailsFields(): Promise<TokenDef[]> {
 
   if (error || !data) return [];
 
-  return data.map((f) => ({
-    key: f.id,
-    label: f.label,
-    // Canonical token: through public_id, not UUID
-    tokenString: f.public_id ? `{{cf.legal_details.${f.public_id}}}` : `{{cf.legal_details.${f.id}}}`,
-    group: "legal_details" as const,
-    badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
-    searchKeywords: `${f.label} ${f.key} реквизиты legal ${f.public_id || ""}`,
-  }));
+  return data
+    .filter((f) => !!f.public_id)
+    .map((f) => ({
+      key: f.id,
+      label: f.label,
+      tokenString: `{{cf.legal_details.${f.public_id}}}`,
+      group: "legal_details" as const,
+      badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
+      searchKeywords: `${f.label} ${f.key} реквизиты legal ${f.public_id}`,
+    }));
 }
 
 // Internal cache for product fields (populated by react-query in components)
