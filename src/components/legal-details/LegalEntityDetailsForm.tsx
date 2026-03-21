@@ -109,6 +109,8 @@ export function LegalEntityDetailsForm({
   const [grpDiff, setGrpDiff] = useState<GrpDiffEntry[]>([]);
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
   const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
+  const [ipSwitchDialogOpen, setIpSwitchDialogOpen] = useState(false);
+  const [pendingIpPayload, setPendingIpPayload] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
 
   const getDefaultValues = (): FormData => {
