@@ -118,7 +118,7 @@ export function usePlaceAutocomplete(options: UsePlaceAutocompleteOptions = {}) 
       try {
         const place = prediction.toPlace();
         await place.fetchFields({
-          fields: ['addressComponents', 'formattedAddress', 'location', 'id'],
+          fields: ['addressComponents', 'formattedAddress', 'location', 'id', 'postalCode', 'adrFormatAddress'],
         });
         resetSessionToken();
         return {
@@ -127,6 +127,7 @@ export function usePlaceAutocomplete(options: UsePlaceAutocompleteOptions = {}) 
           lat: place.location?.lat() ?? null,
           lng: place.location?.lng() ?? null,
           addressComponents: (place.addressComponents || []) as google.maps.places.AddressComponent[],
+          postalCode: (place as any).postalCode || null,
         };
       } catch (err) {
         console.error('[usePlaceAutocomplete] fetchFields error:', err);
