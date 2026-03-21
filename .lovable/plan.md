@@ -1,153 +1,289 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
-1. **ИП-эвристику нужно сделать строже, чем просто** `!orgFormFull && !short_name`**.**  
-Иначе можно ошибочно классифицировать редкие ЮЛ без краткого наименования как ИП.  
-Добавь правило:
-  - `entrepreneur`, если:
-    - `orgFormFull` пустой,
-    - `short_name` пустой или равен `full_name`,
-    - `full_name` похоже на ФИО физлица  
-    (2–4 слова, кириллица, слова с заглавной буквы, без кавычек и без признаков оргформы).
-  - иначе `unknown`.
-2. **Google enrichment должен использовать тот же pipeline, что и ручной autocomplete.**  
-Зафиксируй явно:
-  - те же place details,
-  - тот же `GooglePlacesAdapter`,
-  - тот же разбор `addressComponents`,
-  - не делать отдельный “упрощенный” путь для УНП-обогащения.
-3. **Итерация кандидатов — не просто “первые 3”, а “до первого валидного”.**  
-Лучше написать так:
-  - пройти по top candidates,
-  - для каждого сделать `fetchFields`,
-  - применить первый, который проходит validated match,
-  - если ни один не проходит — Google не применять.  
-  Не привязывайся жестко к числу 3, чтобы не создавать лишнее ограничение.
-4. **Проблему stale context нужно чинить жестче.**  
-Сейчас в плане недостаточно только сбросить `google_place_id/lat/lng`.  
-Добавь:
-  - при начале нового ручного поиска по `street` очищать stale-поля, которые тянут старый адрес:
+1. Убери из плана расплывчатость `если потребуется аналогично для city`.  
+Здесь нужен **жёсткий reset-rule**, а не условный.  
+Зафиксируй так:
+  - при начале нового поиска по `street` очищаются:
     - `house`
     - `building`
     - `apartment`
     - `postal_code`
     - `google_place_id`
-    - `lat/lng`
-  - query для `street` не должен автоматически подмешивать старый `city/region`, если адрес до этого был выбран из другого места и пользователь фактически начинает новый поиск.
-5. `buildAutocompleteQuery` **лучше описать как иерархический и safe-query builder.**  
-Для `street`:
-  - либо только `activeValue`,
-  - либо `activeValue + country`,
-  - но не старые `house/postal_code` и не заведомо stale `city`, если пользователь начинает новый адрес.  
-  Иначе снова будет смешение старого и нового адреса.
-6. **Добавь отдельный VERIFY-кейс на “второй адрес после первого”.**  
-Это было в ТЗ и сейчас это один из главных багов.  
-Нужно доказать:
-  - сначала выбрать один адрес;
-  - потом начать новый поиск по другому адресу;
-  - autocomplete не тащит старый контекст;
-  - второй адрес заполняется корректно.
-7. **DoD нужно расширить.**  
-Сейчас не хватает post-save proof. Добавь:
-  - ИП: after lookup / after save / after reopen;
-  - ЮЛ: after lookup / after enrichment / after save / after reopen;
-  - второй ручной адрес: новый поиск после уже заполненного первого адреса.
-8. **Для ИП отдельно зафиксируй итог UI-состояние.**  
-Не просто “auto-selects ИП”, а:
+    - `lat`
+    - `lng`
+  - при явном изменении `city` для нового адреса тоже очищаются stale meta и не подмешивается старый адресный хвост.
+2. Зафиксируй, что **manual и auto path используют один и тот же helper/contract**, а не просто “похожие ветки”.  
+Нужно явно написать:
+  - один shared helper для `Google place details -> StructuredAddress`;
+  - один `GooglePlacesAdapter.parseComponents(...)`;
+  - один набор place fields;
+  - одинаковое формирование canonical address.
+3. В пункте про validated candidate selection добавь явный **fail-safe**:
+  - если ни один Google candidate не проходит match,
+  - сохраняем `GRP parsed address` как canonical base,
+  - ничего из Google автоматически не применяем, включая `postal_code`, `place_id`, `lat/lng`.
+4. В VERIFY добавь отдельный пункт **after manual save + reopen** для второго адреса.  
+Сейчас есть проверка поиска второго адреса, но нужно еще доказать:
+  - второй адрес после сохранения и повторного открытия не смешивается с первым;
+  - stale context не возвращается.
+5. Для ИП в DoD зафиксируй итоговое состояние не только в VERIFY, но и как обязательный результат:
   - `org_form = Индивидуальный предприниматель`
-  - директор скрыт
+  - руководитель скрыт
   - `acts_on_basis = свидетельства о государственной регистрации`
-  - имя без префикса и без кавычек
-  - after reopen всё это сохраняется.
-9. **Оставь явную формулировку fail-safe.**  
-Если Google не дал валидного кандидата:
-  - берём GRP-parsed address как canonical base;
-  - не применяем конфликтующий candidate;
-  - не подменяем адрес автоматически.
+  - `client_type = entrepreneur` после save
+  - after reopen читается из `ent_*`, без хвостов `leg_*`.
+6. Добавь строку `no regression` для manual flow `Другое`, раз он не в scope:
+  - `Другое` не трогаем, но не ломаем;
+  - existing save/reopen должен остаться рабочим.
 
-Итог: план **хороший**, но чтобы он полностью покрывал ТЗ, нужно добавить:
+В остальном план хороший и ТЗ покрывает.
 
-- более надежную эвристику ИП,
-- жесткий reset stale context,
-- verify на второй адрес,
-- post-save / reopen proof по обеим веткам.
-- &nbsp;
-- Plan: PATCH 3.2.5 — ИП auto-form + Google candidate iteration + stale context reset
+&nbsp;
+
+PATCH 3.2.6 — Единый Google pipeline для индекса + жёсткий reset stale context
 
 ## DIAGNOSE
 
-### Bug 1: ИП not auto-selected after lookup
+По коду и по присланным скринам сейчас картина такая:
 
-**Root cause** in `GrpAutofillService.ts` lines 161-169:
+1. Что уже реально работает:
 
-```
-const isEntrepreneur =
-  parsed.orgFormFull === 'Индивидуальный предприниматель' ||
-  parsed.orgFormShort === 'ИП';
-```
+- unified-блок `Организация / ИП` есть;
+- `дом 2` для ЮЛ уже доезжает;
+- ИП-режим в текущем коде уже умеет становиться `ИП`, скрывать руководителя и ставить основание, если lookup классифицирован как `entrepreneur`.
 
-MNS returns ИП names as plain "Горбова Екатерина Сергеевна" — no org form prefix. `parseOrgFormAndName` returns `orgFormFull: ''`, so `entity_kind = 'unknown'`.
+2. Что реально не закрыто:
 
-In `OrganizationDetailsForm.tsx` line 231, `handleGrpConfirm` only sets IP_FORM when `entity_kind === 'entrepreneur'`. For `'unknown'`, neither org_form nor acts_on_basis get set.
+- индекс не заполняется;
+- ручной и auto-flow работают через разные Google-path;
+- второй ручной адрес ищется с хвостами старого контекста.
 
-**Fix**: Improve ИП detection heuristic in `grpDataToAutofillFields`. MNS ИП entries have distinctive traits:
+3. Точный root cause по индексу:
 
-- `short_name` is empty/null (ЮЛ always has a short_name like "ЗАО «АЖУР инкам»")
-- `full_name` has no org form prefix (already detected as `orgFormFull === ''`)
-- Name looks like a person name (Cyrillic words, typically 2-3 words starting with uppercase)
+- в `GrpAddressEnricher.ts` индекс пытаются брать из Google (`postal_code` / `postalCode`);
+- но ручной path в `usePlaceAutocomplete.fetchPlaceDetails()` запрашивает только:
+`addressComponents`, `formattedAddress`, `location`, `id`
+— без `postalCode`;
+- `StructuredAddressBlock.handleSelect()` потом мержит только то, что вернул `GooglePlacesAdapter.parseComponents(...)`;
+- значит ручной Google autocomplete физически не может стабильно дотащить индекс;
+- а по УНП для кейса `193405000` МНС в network logs возвращает адрес **без индекса**, значит индекс должен приходить именно из Google.
 
-Rule: if `orgFormFull` is empty AND `short_name` is empty/null → classify as `entrepreneur`.
+4. Вторая системная проблема:
 
-### Bug 2: Postal code not filling via Google enrichment
+- GRP enrichment и ручной autocomplete сейчас используют похожие, но не одинаковые ветки получения place details;
+- из-за этого “ручной выбор из Google” и “автозаполнение после УНП” дают разный результат, что противоречит ТЗ.
 
-**Root cause** in `GrpAddressEnricher.ts` lines 111-119: Only takes the FIRST suggestion blindly. If Google's first suggestion is a street-level match (without postal code), enrichment misses it. Also, Google doesn't always include postal_code for Belarusian addresses in `addressComponents`.
+5. Stale context всё ещё недочищен:
 
-**Fix**: Iterate through up to 3 suggestions, pick the first one that passes `isValidatedMatch`. This increases chances of finding a candidate with complete data (including postal_code).
+- `buildAutocompleteQuery()` для `street` всё ещё подмешивает `city/region/country`;
+- при старом адресе это даёт смешанный query;
+- для нового поиска по улице пользователь фактически начинает новый адрес, а не уточняет старый.
 
-### Bug 3: Stale context in autocomplete query
+## DESIGN
 
-**Root cause** in `buildAutocompleteQuery` (`utils.ts` lines 95-113) and `handleFieldChange` (`StructuredAddressBlock.tsx` line 126): When user starts typing a new street, `buildAutocompleteQuery` assembles query from ALL current fields including old `house`, `city`, `region`, `postal_code`. Google searches for the concatenation of old context + new street, producing irrelevant results.
+Нужен не новый flow, а выравнивание одного общего адресного pipeline:
 
-**Fix**: When user edits `street` or `city` (primary address fields), reset dependent stale fields before building query. Specifically:
-
-- Editing `street` → clear `google_place_id`, `lat`, `lng` from the address
-- `buildAutocompleteQuery` should only include fields that come BEFORE the active field in address hierarchy, not after. For `street`: include only `city`, `region`, `country_name` as context — not `house`, `postal_code`.
-
-## Scope
-
-- No new tables / migrations / EF
-- No changes to DB schema
-- ЮЛ/ИП flow unification already done — only bugfix
-- "Другое" flow unchanged — out of scope
-
-## Files and changes
-
-### 1. `GrpAutofillService.ts` — ИП detection fix
-
-Lines 160-169: Add heuristic for `unknown` → `entrepreneur` when no org form found AND `short_name` is empty/null. Pass `short_name` into the classification logic (currently only `parsed` is used, but `data.short_name` is available).
-
-```
-const isEntrepreneur =
-  parsed.orgFormFull === 'Индивидуальный предприниматель' ||
-  parsed.orgFormShort === 'ИП' ||
-  (!parsed.orgFormFull && !data.short_name);
+```text
+UNP lookup / manual typing
+        ↓
+shared Google place details pipeline
+        ↓
+GooglePlacesAdapter.parseComponents(...)
+        ↓
+canonical StructuredAddress
+        ↓
+save via existing adapters
 ```
 
-### 2. `GrpAddressEnricher.ts` — iterate candidates
+Главный принцип:
 
-Lines 111-119: Instead of taking only `suggestions[0]`, iterate through up to 3 suggestions. For each, fetch place details, parse components, run `isValidatedMatch`. Use the first validated candidate. If none validates, return `enriched: false`.
+- ручной ввод и УНП-обогащение должны использовать один и тот же Google result pipeline;
+- индекс, регион, страна, place_id, lat/lng должны извлекаться одинаково;
+- конфликтующий Google candidate не применяется;
+- если пользователь начинает новый адрес, старый контекст не должен влиять на поиск.
 
-### 3. `src/lib/address/utils.ts` — smarter query building
+## EXECUTE
 
-`buildAutocompleteQuery`: reorder logic so that when the active field is `street`, only higher-level context (`city`, `region`, `country_name`) is included. When active field is `city`, only `region`/`country_name`. This prevents old `house`/`postal_code` from polluting the query.
+### 1. Убрать расхождение между manual и auto Google paths
 
-### 4. `StructuredAddressBlock.tsx` — reset stale meta on edit
+Файлы:
 
-In `handleFieldChange`: when user edits `street` or `city`, clear `google_place_id`, `lat`, `lng` from the address value to signal a fresh search context.
+- `src/hooks/usePlaceAutocomplete.ts`
+- `src/components/shared/StructuredAddressBlock.tsx`
+- при необходимости `src/lib/address/adapters/GooglePlacesAdapter.ts`
+
+Что сделать:
+
+- расширить `fetchPlaceDetails()` так, чтобы он запрашивал тот же набор place fields, что нужен для enrichment, включая `postalCode`;
+- вернуть из него все данные, нужные для канонического адреса, а не только минимальный набор;
+- в `StructuredAddressBlock.handleSelect()` применять этот результат так, чтобы индекс тоже попадал в `StructuredAddress`;
+- не делать отдельный “обрезанный” manual-path без индекса.
+
+Ожидаемый результат:
+
+- ручной выбор из Google начинает заполнять индекс тем же путём, что и auto normalization.
+
+### 2. Сделать общий reusable Google normalization result
+
+Файлы:
+
+- `src/lib/address/GrpAddressEnricher.ts`
+- `src/hooks/usePlaceAutocomplete.ts`
+- возможно новый shared helper в address-layer
+
+Что сделать:
+
+- вынести общий helper/contract для Google place details → `StructuredAddress`;
+- использовать тот же `GooglePlacesAdapter.parseComponents(...)` и одинаковый набор полей и для manual select, и для GRP→Google enrichment;
+- сохранить fail-safe: если Google невалиден, остаётся GRP base address.
+
+Ожидаемый результат:
+
+- after-UNP normalization и manual Google selection дают одинаково качественный canonical result.
+
+### 3. Дожать validated candidate selection для УНП
+
+Файл:
+
+- `src/lib/address/GrpAddressEnricher.ts`
+
+Что сделать:
+
+- оставить перебор top candidates до первого валидного;
+- валидность: совпадают `street + city`, и `house` не конфликтует;
+- только от валидного кандидата брать:
+  - `postal_code`
+  - `region`
+  - `country`
+  - `place_id`
+  - `lat/lng`
+- `apartment/office` всегда оставлять из GRP parser поверх Google;
+- если ни один candidate не валиден — Google не применять вообще.
+
+Ожидаемый результат:
+
+- индекс не “угадывается” от чужого адреса;
+- `Панфилова / 2 / 49л` сохраняются, индекс приходит только от подтверждённого Google match.
+
+### 4. Жёстко исправить stale context при новом ручном адресе
+
+Файлы:
+
+- `src/lib/address/utils.ts`
+- `src/components/shared/StructuredAddressBlock.tsx`
+
+Что сделать:
+
+- для нового поиска по `street` строить safe-query как новый поиск:
+  - `activeValue`
+  - максимум `activeValue + country`
+  - без старых `house/building/apartment/postal_code`
+  - без заведомо stale `city/region`, если пользователь уже меняет улицу на новый адрес;
+- при ручном изменении `street` очищать stale address-tail:
+  - `house`
+  - `building`
+  - `apartment`
+  - `postal_code`
+  - `google_place_id`
+  - `lat`
+  - `lng`
+- при необходимости аналогично пересматривать очистку для `city`, если пользователь явно начинает новый адрес.
+
+Ожидаемый результат:
+
+- второй адрес ищется как новый, а не как смесь прошлого и текущего.
+
+### 5. Не сломать unified Organization/IP form
+
+Файл:
+
+- `src/components/legal-details/OrganizationDetailsForm.tsx`
+
+Что проверить при внедрении:
+
+- ИП autofill не регрессирует;
+- `org_form = Индивидуальный предприниматель` остаётся;
+- блок руководителя скрыт;
+- `acts_on_basis = свидетельства о государственной регистрации`;
+- save/load остаются по `client_type`, без хвостов из opposite namespace.
+
+## VERIFY
+
+Новый verify должен закрывать именно фактические баги.
+
+### A. ЮЛ по УНП
+
+Кейс: `193405000`
+
+Проверить:
+
+- after lookup
+- after Google normalization
+- after save
+- after reopen
+
+Доказать:
+
+- `ул. Панфилова`
+- `дом 2`
+- `49л`
+- индекс заполнен
+- регион/страна заполняются корректно
+- адрес не подменяется чужим candidate
+
+### B. ИП по УНП
+
+Кейс: `192560618`
+
+Проверить:
+
+- after lookup
+- after save
+- after reopen
+
+Доказать:
+
+- форма = `Индивидуальный предприниматель`
+- имя без префикса и без кавычек
+- руководитель скрыт
+- основание = `свидетельства о государственной регистрации`
+- reopen идёт как `entrepreneur`, без хвостов ЮЛ
+
+### C. Manual Google
+
+Проверить ручной выбор того же адреса через autocomplete.
+
+Доказать:
+
+- ручной Google теперь заполняет индекс;
+- canonical result не хуже auto-flow после УНП;
+- place_id / lat / lng / postal_code сохраняются одинаково качественно.
+
+### D. Второй адрес после первого
+
+Проверить:
+
+- сначала выбрать один адрес;
+- затем начать новый поиск по другой улице/другому адресу.
+
+Доказать:
+
+- autocomplete не тащит старый контекст;
+- второй адрес ищется и выбирается корректно;
+- старые `дом / индекс / квартира / place_id` не подмешиваются.
+
+## SCOPE
+
+- без новых таблиц;
+- без миграций;
+- без новых backend functions;
+- только bugfix существующего unified settings flow и выравнивание shared address pipeline.
 
 ## DoD
 
-- ИП lookup auto-selects "Индивидуальный предприниматель", hides director, sets acts_on_basis
-- Google enrichment iterates candidates and picks validated match with best data
-- Manual address re-entry doesn't carry stale context from previous address
-- Existing ЮЛ flow (Панфилова, дом 2, 49л) continues working
-- After save + reopen: entrepreneur persists correctly
+- ручной Google autocomplete заполняет индекс;
+- after-UNP normalization использует тот же Google pipeline, что и ручной выбор;
+- индекс для ЮЛ приходит от валидного Google candidate, а не от конфликтующего адреса;
+- `Панфилова / 2 / 49л` не теряются;
+- второй ручной адрес не наследует stale context первого;
+- unified ИП-flow не регрессирует и корректно сохраняется/reopen по `client_type`.
