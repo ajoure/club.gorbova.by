@@ -1,164 +1,164 @@
-да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. В блоке **Branch B** явно зафиксировать приоритет:
-  - сначала **локальный фикс в AI-shell /** `EntityRecordSheet`,
-  - **глобально** `sheet.tsx` **не трогать**, пока не будет доказано, что локального guard недостаточно.
-2. В блоке **Диагностика** добавить обязательный trace не только событий address block, но и **sheet-level outside interaction**:
-  - `onPointerDownOutside`
-  - `onInteractOutside`
-  - `onFocusOutside`
-  - закрытие/перерисовка sheet body  
-  Иначе не будет окончательно доказано, что ломает именно shell.
-3. Временную инструментализацию зафиксировать как **DEV-only**:
-  - без постоянных `console.log`,
-  - после proof обязательно удалить,
-  - закрытие патча без cleanup instrumentation запрещено.
-4. В proof-пакете отдельно зафиксировать:
-  - `/settings` = **control case**,
-  - `/ai` = **broken/fixed case**,
-  - один и тот же адрес,
-  - один и тот же сценарий мышью,
-  - **одинаковый consumer form**, но разный shell.  
-  Это нужно оформить как отдельный deliverable, а не просто как часть описания.
-5. В блоке **Branch A** уточнить:
-  - shared `StructuredAddressBlock` правим **только если trace покажет**, что цепочка рвется **до** `handleAddressChange`,
-  - если `handleSelect` и `onChange` уже доходят до формы, shared block не трогаем.
-6. Для **highlight readability** зафиксировать как отдельный независимый mini-patch внутри hotfix:
-  - сначала audit shared usage,
-  - потом единый token-level fix,
-  - proof минимум на 3 компонентах:
-    - address dropdown,
-    - select,
-    - ещё один shared list/menu.
-7. В DoD добавить явный пункт:
-  - **в** `/ai` **mouse-path должен работать без каких-либо специальных workaround пользователя**,
-  - то есть без Enter, без повторного клика, без необходимости сначала наводить клавиатурой.
-8. В DoD добавить ещё один обязательный пункт:
-  - после фикса **не должно быть расхождения между** `/settings` **и** `/ai` **по заполнению адресных сегментов** на одном и том же адресе.
-9. В STOP GUARD дополнительно зафиксировать:
-  - не менять `OrganizationDetailsForm` бизнес-логику,
-  - не менять mapping legacy fields,
-  - не менять save contract, если trace не покажет проблему именно там.
-10. Финально добавить правило приемки:
+1. PATCH 6 не запускать в execute до формального закрытия незавершённого hotfix по address mouse-path в `/ai`. План PATCH 6 можно готовить, но implementation gate обязателен: сначала доказуемо закрыть общий address interaction bug в AI-shell, потом выполнять PATCH 6.
+2. В PATCH 6 для физлиц не использовать термин `archive`. Для `legal_details_persons` фиксируем только модель `is_active`:
+  - active / inactive
+  - `deactivatePerson` = `is_active=false`
+  - optional restore = `is_active=true`
+  - без архивных секций, без `status`, без смешения с логикой юрлиц.
+3. `PersonLinkedEntitiesBlock` делать строго tolerant/read-only:
+  - если связей ещё нет — показывать пустое состояние без ошибок
+  - если role join недоступен/нестабилен — сначала показывать только компанию + badge типа, а роль добавлять только при доказуемо корректном join
+  - никакого редактирования, никаких CTA на создание связи.
+4. В `PersonRecordSheet` shell делать 1:1 по уже принятому паттерну record sheet, но не копировать заново address-fix логику по месту. Все address interaction fixes должны оставаться в shared-layer. В sheet только минимально необходимый guard для portal dropdown, без новой отдельной ветки address behavior.
+5. `StructuredAddressBlock` параметризовать add-only:
+  - `apartmentLabel?: string`
+  - при необходимости отдельно `apartmentPrefix?: string`
+  - default для текущих consumers сохранить без изменений (`Помещение` / `пом.`)
+  - для физлиц передавать явно `Квартира` / `кв.`
+  - не менять существующий contract так, чтобы ломались текущие формы.
+6. `formatStructuredAddressForView` менять только add-only параметром prefix. Беларусь-правила Минска/области/района не пересматривать в PATCH 6 и не смешивать с person-логикой.
+7. `PersonFieldsForm` делать как новый самостоятельный form-component, а не как копию `IndividualDetailsForm`. Разрешён только controlled reuse мелких shared blocks/validators, но без перетаскивания billing-специфики и без скрытых зависимостей на `client_legal_details`.
+8. В `useAiPersons` state и мутации должны быть полностью отделены от entity module:
+  - отдельный query key
+  - отдельные toasts
+  - отдельные loading flags
+  - не использовать `useLegalDetails`
+  - не использовать `purpose/status`
+9. Поиск в `PersonsTableView` дополнить нормализацией:
+  - trim
+  - case-insensitive
+  - для телефона — поиск по цифрам без пробелов/символов
+  - для паспорта — по номеру и по серии+номеру.
+10. В anti-duplicate proof для edit mode обязательно отдельно показать, что текущая запись не ловится как дубль самой себя:
+  - `excludePersonId` реально передан
+  - edit save проходит без ложного exact/probable match.
+11. В view карточке физлица секции зафиксировать так:
+  - Основная информация
+  - Паспортные данные
+  - Адрес
+  - Контакты
+  - Служебная информация
+  - Связанные компании  
+  Никаких банковских реквизитов и никаких billing-блоков.
+12. В DoD добавить обязательный proof, что после save у физлица корректны обе вещи:
+  - `address_structured`
+  - человекочитаемый preview/view с `кв.`  
+  и отдельно proof, что юрлица в том же `/ai` продолжают показывать `пом.`.
+13. В DoD добавить regression-check по entity module:
+  - `EntityRecordSheet` не сломан
+  - `Persons` и `Entities` не мешают друг другу по state в `AI.tsx`
+  - переключение между подвкладками не сбрасывает данные некорректно.
+14. Финальный отчёт по PATCH 6 обязателен с proof не только по create/edit/view, но и по empty state, inactive state и linked entities read-only state.
+15. &nbsp;
+16. PATCH 6 — Физлица в AI-разделе «Реквизиты»
 
-- если подрядчик пишет “fixed”, но не даёт **runtime-proof именно mouse-path в** `/ai`, патч считается **не закрытым**.
-- &nbsp;
-- PATCH 5R++ HOTFIX — не “копировать функцию”, а локально починить AI-shell, потому что код формы уже один и тот же.
+### Scope summary
 
-1. FACT PROOF: в `/settings/legal-details` и в `/ai` уже используется один и тот же код
+Add full persons module to `/ai` → Реквизиты → Физлица: list, view, create, edit, anti-duplicate, address (with "Квартира/кв." for persons), read-only linked entities.
 
-- `OrganizationDetailsForm` импортируется и в settings, и в AI.
-- Внутри него в обоих путях используется один и тот же `StructuredAddressBlock`.
-- Значит переносить “рабочую функцию из настроек” некуда: shared address logic уже общая.
-- Разница не в функции, а в consumer-context:
-  - `/settings` = обычная страница
-  - `/ai` = тот же form внутри `EntityRecordSheet` → `SheetContent` (Dialog/portal/scroll shell)
+### Files to create
 
-2. Primary suspect #1
+**1. `src/hooks/useAiPersons.ts**`
 
-- Баг почти наверняка в AI-оболочке:
-  - `EntityRecordSheet`
-  - `Sheet` / Radix Dialog
-  - portal dropdown из `StructuredAddressBlock`
-  - outside pointer handling / focus trap / scrollable body
-- Shared address-flow не считаю тотально сломанным, потому что settings сейчас выглядит как control case.
+- Pattern: mirror `useAiEntities.ts` structure
+- `profileId` from `useAuth` → `profiles`
+- Query `legal_details_persons` where `profile_id = profileId`, order by `is_active desc, full_name asc`
+- Mutations: `createPerson`, `updatePerson`, `deactivatePerson` (set `is_active=false`)
+- Query key: `["ai-persons", profileId]`
+- Return: `{ profileId, allPersons, isLoading, createPerson, updatePerson, deactivatePerson, isCreating, isUpdating, isDeactivating }`
 
-3. Диагностика перед фиксом
+**2. `src/lib/persons/personDisplayUtils.ts**`
 
-Добавлю временный runtime trace только для hotfix:
+- `getPersonDisplayName(person)` → `full_name` or "Без имени"
+- `getPersonDocumentSummary(person)` → personal_number or passport series+number or "—"
+- `getPersonAddressLines(person)` → reuse `formatStructuredAddressForView` with new `apartmentPrefix: 'кв.'` param
 
-- `StructuredAddressBlock`
-- `OrganizationDetailsForm`
-- `EntityRecordSheet` / sheet interaction point
+**3. `src/components/ai-requisites/PersonsTableView.tsx**`
 
-Нужно снять порядок событий в `/ai` и сравнить с `/settings`:
+- Pattern: mirror `EntityTableView.tsx`
+- Columns: ФИО, Документ/личный номер, Телефон, Email, Статус, Действия
+- Filters: Все / Активные / Неактивные
+- Search: full_name, personal_number, passport_number, email, phone
+- Sort: active first, then alphabetical by full_name
+- Button: "Добавить"
+- Row click → open PersonRecordSheet in view mode
 
-- `pointerdown` on suggestion
-- `handleSelect START`
-- `fetchPlaceDetails done`
-- `onChange(merged)`
-- `handleAddressChange`
-- `document mousedown close`
-- `scroll close`
-- `sheet outside handler fired / not fired`
+**4. `src/components/ai-requisites/PersonFieldsForm.tsx**`
 
-Цель: доказать, где именно обрывается mouse-path в `/ai`.
+- Standalone form for person fields only (no billing, no leg_/ent_ fields)
+- Fields: full_name, birth_date, personal_number, passport_series, passport_number, passport_issued_by, passport_issued_date, passport_valid_until, phone, email, address (StructuredAddressBlock with `apartmentLabel="Квартира"`), notes, is_active
+- `onSubmit` callback, `initialData`, `isSubmitting` props
+- Address block uses new `apartmentLabel` prop
 
-4. Ветки исправления
+**5. `src/components/ai-requisites/PersonRecordSheet.tsx**`
 
-Branch B — приоритетная:
+- Pattern: mirror `EntityRecordSheet.tsx` shell exactly (same width, overlay, header layout, scrollable body, card blocks)
+- Modes: view | edit | create
+- Same `onPointerDownOutside`/`onInteractOutside` guards as EntityRecordSheet (for address dropdown)
+- Same `data-address-shell` + `data-address-portal-root` pattern
+- View mode sections: Основная информация, Паспортные данные, Адрес, Контакты, Служебная информация, Связанные компании (PersonLinkedEntitiesBlock)
+- Edit/create: renders PersonFieldsForm
+- Anti-duplicate: call `usePersonDuplicateCheck.checkDuplicate()` before submit, show `DuplicateWarningDialog` with `type="person"`
+- In edit mode: pass `excludePersonId` to avoid self-match
 
-- если trace покажет, что settings живой, а AI ломает outside/sheet-context,
-- делаю локальный guard именно в AI-shell:
-  - помечаю dropdown marker-атрибутом, например `data-address-dropdown`
-  - в AI sheet path игнорирую outside-interaction по этому marker
-  - не трогаю глобально весь `sheet.tsx`, пока локальный фикс не окажется недостаточным
+**6. `src/components/ai-requisites/PersonLinkedEntitiesBlock.tsx**`
 
-Branch A — только если trace покажет реальную проблему в shared block:
+- Query `legal_details_entity_person_links` where `person_id = personId`, join with `client_legal_details` (via `legal_details_id`) to get entity short name + type
+- Join with `legal_details_roles_catalog` (via `role_catalog_id`) to get role name
+- Display: list of cards/rows with entity short name, ЮЛ/ИП badge, role name
+- Strictly read-only, no add/edit/remove buttons
 
-- правка `StructuredAddressBlock` event-chain
-- только там, где selection реально теряется до `onChange`
+### Files to modify
 
-5. STOP GUARD
+**7. `src/components/shared/StructuredAddressBlock.tsx**`
 
-До закрытия hotfix не трогаю:
+- Add `apartmentLabel?: string` to `StructuredAddressBlockProps`
+- In `FULL_LAYOUT` usage, override apartment field label when `apartmentLabel` is provided
+- Default remains "Помещение" (no change to existing consumers)
 
-- formatter
-- Minsk rules
-- GRP parser/enricher
-- preview shell
-- PATCH 6
+**8. `src/lib/address/formatStructuredAddress.ts**`
 
-6. Highlight readability — отдельная независимая подзадача
+- Add optional `apartmentPrefix` param to `formatStructuredAddressForView` (default `'пом.'`)
+- Pass through to `formatBelarusAddress` and `formatGenericAddress`
+- Person consumers pass `'кв.'`
 
-- сначала audit всех shared usage `bg-accent` / `text-accent-foreground`
-- потом единый shared fix только если после аудита реально остаются unreadable места
-- proof минимум на:
-  - address dropdown
-  - select
-  - ещё один shared list/menu
+**9. `src/pages/AI.tsx**`
 
-7. Proof package
+- Import `PersonsTableView`, `PersonRecordSheet`, `useAiPersons`
+- Add state: `personSheetOpen`, `personSheetMode`, `personSheetPersonId`
+- Derive `personSheetPerson` via `useMemo` from `allPersons`
+- Add handlers: `handleOpenCreatePersonSheet`, `handleOpenViewPersonSheet`, `handleOpenExistingPerson`
+- Replace persons stub (lines 641-655) with `PersonsTableView` + `PersonRecordSheet`
 
-Сравнение на одном и том же адресе и одной и той же последовательности действий мышью:
+### What is NOT touched
 
-Control:
+- `/settings/legal-details`, `useLegalDetails`, billing flow
+- `client_legal_details` table/schema
+- Entity module (EntityRecordSheet, EntityTableView, useAiEntities)
+- Formatter Minsk/region/district rules
+- GRP lookup, document generation, executors
+- Link editing (read-only only in PATCH 6)
 
-- `/settings/legal-details`
-- ввод → dropdown → hover → click
-- фиксирую, какие поля обновились и какой handler был последним
+### Execution order
 
-Broken/fixed:
+1. Create `useAiPersons.ts` + `personDisplayUtils.ts` (data layer)
+2. Create `PersonFieldsForm.tsx` (form component)
+3. Modify `StructuredAddressBlock.tsx` — add `apartmentLabel` prop
+4. Modify `formatStructuredAddress.ts` — add `apartmentPrefix` param
+5. Create `PersonLinkedEntitiesBlock.tsx` (read-only linked entities)
+6. Create `PersonsTableView.tsx` (list view)
+7. Create `PersonRecordSheet.tsx` (unified shell)
+8. Modify `AI.tsx` — wire everything together
 
-- `/ai`
-- тот же сценарий
-- фиксирую, в какой точке раньше рвался chain и что именно устранил фикс
+### DoD
 
-Обязательно:
-
-- mouse select в `/ai`
-- keyboard select в `/ai`
-- no toast `ID скопирован`
-- после mouse select реально заполнены:
-  - street
-  - house
-  - building
-  - apartment
-  - city
-  - region
-  - postal_code
-  - country
-- save пишет корректные `address_structured` и legacy fields
-- instrumentation после proof удалена
-
-8. DoD
-
-- `/settings/legal-details`: mouse select ✅, keyboard select ✅
-- `/ai`: mouse select ✅, keyboard select ✅
-- trace показывает, что в `/ai` selection доходит до `handleSelect` и `onChange`
-- объяснено, почему settings работает, а AI нет: тот же address block, но другая UI-оболочка и event-chain
-- если добавлен локальный shell guard, доказано, что именно он устранил расхождение
-- `address_structured` и legacy fields корректны после save
-- highlight readable в shared dropdown/list patterns
-- formatter/view/lookup не регресснули
-- без runtime-proof именно для `/ai` mouse path патч не считается закрытым
+1. `/ai` → Физлица: list visible, search works, filters work, row click opens sheet
+2. Create: form opens, fields save, anti-duplicate exact blocks, probable warns, record appears in list
+3. Edit: view→edit in same shell, save updates, no second sheet
+4. Address: mouse + keyboard select work, saves to `address_structured`, view shows "кв." for persons
+5. ЮЛ/ИП address not regressed (still shows "пом.")
+6. Read-only linked entities block displays in person card
+7. `/settings/legal-details` not affected
+8. Entity module in `/ai` not broken
+9. PATCH 7 not started
