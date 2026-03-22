@@ -100,7 +100,7 @@ export function useLessonProgressState(lessonId?: string) {
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .upsert({
-          user_id: user.id,
+          user_id: uid,
           lesson_id: lessonId,
           state_json: newState as unknown as Record<string, unknown>,
           updated_at: new Date().toISOString(),
