@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityEditorSheet } from "@/components/ai-requisites/EntityEditorSheet";
+import { EntityViewSheet } from "@/components/ai-requisites/EntityViewSheet";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
