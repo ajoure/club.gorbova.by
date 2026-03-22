@@ -300,24 +300,9 @@ export function StructuredAddressBlock({
           >
             <Label
               htmlFor={`addr-${field.key}`}
-              className={cn(
-                "text-xs text-muted-foreground mb-1 flex items-center gap-1",
-                fieldIds?.get(field.key)?.publicId && "cursor-pointer hover:text-primary transition-colors"
-              )}
-              onClick={fieldIds?.get(field.key)?.publicId
-                ? () => {
-                    if (isSelectingRef.current) return;
-                    navigator.clipboard.writeText(fieldIds.get(field.key)!.publicId);
-                    toast.success("ID скопирован");
-                  }
-                : undefined
-              }
-              title={fieldIds?.get(field.key)?.publicId
-                ? `${fieldIds.get(field.key)!.publicId} — клик для копирования`
-                : undefined
-              }
+              className="text-xs text-muted-foreground mb-1"
             >
-              <span>{field.label}</span>
+              {field.label}
             </Label>
             <Input
               id={`addr-${field.key}`}
