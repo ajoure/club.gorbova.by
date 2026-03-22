@@ -1,12 +1,21 @@
 /**
  * usePersonDuplicateCheck — checks for existing person duplicates.
  *
- * Three-tier matching:
- * 1. Exact: personal_number
- * 2. Exact: passport_series + passport_number
- * 3. Probable: full_name + birth_date (ilike)
+ * Contract:
+ * - Only READS, never creates or updates persons
+ * - Orchestration (create/open) is handled by calling code
+ * - Returns ALL candidates, not just first
  *
- * Does NOT create records. Only returns match status and candidates.
+ * Three-tier matching:
+ * 1. Exact: personal_number (trimmed)
+ * 2. Exact: passport_series + passport_number (both trimmed)
+ * 3. Probable: normalized full_name (case-insensitive, trimmed) + exact birth_date
+ *
+ * Normalization rules:
+ * - full_name: trim, collapse whitespace, case-insensitive via ilike
+ * - personal_number: trim
+ * - passport_series/number: trim
+ * - birth_date: exact match (ISO format)
  */
 
 import { useCallback, useState } from 'react';
@@ -52,6 +61,11 @@ const INITIAL_STATE: PersonDuplicateResult = {
 
 const SELECT_FIELDS = 'id, profile_id, full_name, birth_date, personal_number, passport_series, passport_number, is_active, created_at';
 
+/** Normalize name: trim + collapse multiple spaces */
+function normalizeName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
+}
+
 export function usePersonDuplicateCheck() {
   const [result, setResult] = useState<PersonDuplicateResult>(INITIAL_STATE);
 
@@ -75,14 +89,16 @@ export function usePersonDuplicateCheck() {
           query.neq('id', excludePersonId);
         }
 
-        const { data, error } = await query.limit(5);
+        const { data, error } = await query;
         if (error) throw error;
 
         if (data && data.length > 0) {
           const r: PersonDuplicateResult = {
             matchType: 'exact',
             candidates: data as PersonMatchCandidate[],
-            matchReason: 'Совпадение по личному номеру',
+            matchReason: data.length > 1
+              ? `Найдено ${data.length} записей с таким же личным номером`
+              : 'Совпадение по личному номеру',
             isChecking: false,
             error: null,
           };
@@ -104,14 +120,16 @@ export function usePersonDuplicateCheck() {
           query.neq('id', excludePersonId);
         }
 
-        const { data, error } = await query.limit(5);
+        const { data, error } = await query;
         if (error) throw error;
 
         if (data && data.length > 0) {
           const r: PersonDuplicateResult = {
             matchType: 'exact',
             candidates: data as PersonMatchCandidate[],
-            matchReason: 'Совпадение по серии и номеру паспорта',
+            matchReason: data.length > 1
+              ? `Найдено ${data.length} записей с такими же паспортными данными`
+              : 'Совпадение по серии и номеру паспорта',
             isChecking: false,
             error: null,
           };
@@ -120,27 +138,31 @@ export function usePersonDuplicateCheck() {
         }
       }
 
-      // Tier 3: Probable match by full_name + birth_date
+      // Tier 3: Probable match by normalized full_name + exact birth_date
       if (input.full_name?.trim() && input.birth_date?.trim()) {
+        const normalizedName = normalizeName(input.full_name);
+
         const query = supabase
           .from('legal_details_persons')
           .select(SELECT_FIELDS)
           .eq('profile_id', profileId)
-          .ilike('full_name', input.full_name.trim())
+          .ilike('full_name', normalizedName)
           .eq('birth_date', input.birth_date.trim());
 
         if (excludePersonId) {
           query.neq('id', excludePersonId);
         }
 
-        const { data, error } = await query.limit(5);
+        const { data, error } = await query;
         if (error) throw error;
 
         if (data && data.length > 0) {
           const r: PersonDuplicateResult = {
             matchType: 'probable',
             candidates: data as PersonMatchCandidate[],
-            matchReason: 'Совпадение по ФИО и дате рождения',
+            matchReason: data.length > 1
+              ? `Найдено ${data.length} записей с похожими ФИО и датой рождения`
+              : 'Совпадение по ФИО и дате рождения',
             isChecking: false,
             error: null,
           };
