@@ -100,13 +100,18 @@ AND passport_series = :trimmed_passport_series
 AND passport_number = :trimmed_passport_number
 ```
 
-**Tier 3 — Probable по full_name + birth_date:**
+**Tier 3 — Probable по full_name + birth_date (Variant A — app-side normalization):**
 ```sql
+-- Запрос: только по birth_date
 SELECT ... FROM legal_details_persons
 WHERE profile_id = :profileId
-AND full_name ILIKE :normalized_full_name
 AND birth_date = :exact_birth_date
 ```
+```typescript
+// Фильтрация в коде: normalizeName(db.full_name).toLowerCase() === normalizeName(input).toLowerCase()
+```
+
+**Почему Variant A**: ILIKE нормализует только input, но не данные в БД. Если в БД двойные пробелы или trailing whitespace — ILIKE пропустит дубль. Variant A нормализует обе стороны в коде через `normalizeName()` + `toLowerCase()`.
 
 ### Normalization rules
 
@@ -115,7 +120,7 @@ AND birth_date = :exact_birth_date
 | `personal_number` | `trim()` |
 | `passport_series` | `trim()` |
 | `passport_number` | `trim()` |
-| `full_name` | `trim() → collapse multiple spaces → case-insensitive (ILIKE)` |
+| `full_name` | `trim() → collapse multiple spaces → toLowerCase()` — **обе стороны** (input + DB) нормализуются в коде |
 | `birth_date` | exact match (ISO format, no normalization) |
 
 ### Match priority rules
