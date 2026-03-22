@@ -1,10 +1,12 @@
 /**
- * FieldLabelWithId — FormLabel + CopyableIdChip for legal details fields.
- * Renders the label text and a small ID chip that copies the canonical token.
+ * FieldLabelWithId — FormLabel that copies field publicId (FLD-...) on click.
+ * Visual FLD-ID chip is hidden; the label itself is the click target.
+ * Scope: FLD-context only.
  */
 
 import { FormLabel } from "@/components/ui/form";
-import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import type { LegalDetailsFieldEntry } from "@/hooks/useLegalDetailsFields";
 
 interface FieldLabelWithIdProps {
@@ -15,16 +17,24 @@ interface FieldLabelWithIdProps {
 }
 
 export function FieldLabelWithId({ label, fieldEntry, required, children }: FieldLabelWithIdProps) {
+  const handleCopy = fieldEntry?.publicId
+    ? (e: React.MouseEvent) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(fieldEntry.publicId);
+        toast.success("ID скопирован");
+      }
+    : undefined;
+
   return (
-    <FormLabel className="flex items-center gap-1.5 flex-wrap">
-      <span>{label}{required ? " *" : ""}</span>
-      {fieldEntry?.publicId && (
-        <CopyableIdChip
-          value={fieldEntry.publicId}
-          copyValue={fieldEntry.tokenString}
-          successMessage="Токен скопирован"
-        />
+    <FormLabel
+      className={cn(
+        "flex items-center gap-1.5 flex-wrap",
+        handleCopy && "cursor-pointer hover:text-primary transition-colors"
       )}
+      onClick={handleCopy}
+      title={fieldEntry?.publicId ? `${fieldEntry.publicId} — клик для копирования` : undefined}
+    >
+      <span>{label}{required ? " *" : ""}</span>
       {children}
     </FormLabel>
   );

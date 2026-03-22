@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { CopyableIdChip } from '@/components/ui/CopyableIdChip';
 import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
@@ -17,6 +16,7 @@ import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 export interface StructuredAddressBlockProps {
   value: StructuredAddress;
@@ -288,15 +288,25 @@ export function StructuredAddressBlock({
             }}
             className={cn(field.colSpan || 'col-span-1')}
           >
-            <Label htmlFor={`addr-${field.key}`} className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-              <span>{field.label}</span>
-              {fieldIds?.get(field.key)?.publicId && (
-                <CopyableIdChip
-                  value={fieldIds.get(field.key)!.publicId}
-                  copyValue={fieldIds.get(field.key)!.tokenString}
-                  successMessage="Токен скопирован"
-                />
+            <Label
+              htmlFor={`addr-${field.key}`}
+              className={cn(
+                "text-xs text-muted-foreground mb-1 flex items-center gap-1",
+                fieldIds?.get(field.key)?.publicId && "cursor-pointer hover:text-primary transition-colors"
               )}
+              onClick={fieldIds?.get(field.key)?.publicId
+                ? () => {
+                    navigator.clipboard.writeText(fieldIds.get(field.key)!.publicId);
+                    toast.success("ID скопирован");
+                  }
+                : undefined
+              }
+              title={fieldIds?.get(field.key)?.publicId
+                ? `${fieldIds.get(field.key)!.publicId} — клик для копирования`
+                : undefined
+              }
+            >
+              <span>{field.label}</span>
             </Label>
             <Input
               id={`addr-${field.key}`}

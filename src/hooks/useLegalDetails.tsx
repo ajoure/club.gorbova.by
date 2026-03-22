@@ -59,6 +59,17 @@ export interface ClientLegalDetails {
   validation_errors: Record<string, string> | null;
   validated_at: string | null;
   
+  // GRP registry metadata
+  grp_registration_date: string | null;
+  grp_tax_office_code: string | null;
+  grp_tax_office_name: string | null;
+  grp_status_code: string | null;
+  grp_status_name: string | null;
+  grp_short_name: string | null;
+  grp_liquidation_date: string | null;
+  grp_liquidation_reason: string | null;
+  grp_last_fetched_at: string | null;
+  
   // Lifecycle
   purpose: string;
   status: string;

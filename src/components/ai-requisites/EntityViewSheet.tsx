@@ -2,7 +2,7 @@
  * EntityViewSheet — view-mode card for entity records.
  *
  * Shell layout 1:1 with ContactDetailSheet.
- * Sections: basic info, address, management, bank, system.
+ * Sections: basic info, registry data, address, management, bank, system.
  * Actions: edit, archive (document only).
  */
 
@@ -29,6 +29,7 @@ import {
   Briefcase,
   Info,
   Copy,
+  ClipboardList,
 } from "lucide-react";
 import {
   getEntityShortName,
@@ -36,6 +37,8 @@ import {
   getEntityUnp,
 } from "@/lib/legal-entities/entityDisplayUtils";
 import { toast } from "sonner";
+import { formatStructuredAddressForView } from "@/lib/address/formatStructuredAddress";
+import type { CanonicalAddressPayload } from "@/lib/address/types";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 /* ── helpers ── */
@@ -58,28 +61,37 @@ function InfoRow({
 }) {
   const display = value || "—";
   return (
-    <>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-muted-foreground shrink-0">{label}</span>
-        <div className="flex items-center gap-1 min-w-0">
-          <span
-            className={`text-sm text-right break-words ${mono ? "font-mono" : ""} ${!value ? "text-muted-foreground" : ""}`}
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-sm text-muted-foreground shrink-0">{label}</span>
+      <div className="flex items-center gap-1 min-w-0">
+        <span
+          className={`text-sm text-right break-words ${mono ? "font-mono" : ""} ${!value ? "text-muted-foreground" : ""}`}
+        >
+          {display}
+        </span>
+        {copyable && value && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 shrink-0"
+            onClick={() => copyToClipboard(value, label)}
           >
-            {display}
-          </span>
-          {copyable && value && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 shrink-0"
-              onClick={() => copyToClipboard(value, label)}
-            >
-              <Copy className="w-3 h-3" />
-            </Button>
-          )}
-        </div>
+            <Copy className="w-3 h-3" />
+          </Button>
+        )}
       </div>
-    </>
+    </div>
+  );
+}
+
+function AddressBlock({ lines }: { lines: string[] }) {
+  if (lines.length === 0) return <span className="text-sm text-muted-foreground">—</span>;
+  return (
+    <div className="text-sm text-right space-y-0.5">
+      {lines.map((line, i) => (
+        <div key={i}>{line}</div>
+      ))}
+    </div>
   );
 }
 
@@ -116,8 +128,12 @@ export function EntityViewSheet({
   const orgForm = isEntrepreneur ? "Индивидуальный предприниматель" : entity.leg_org_form;
   const subtitle = [orgForm, unp ? `УНП ${unp}` : null].filter(Boolean).join(" · ");
 
-  // Address
-  const address = isEntrepreneur ? entity.ent_address : entity.leg_address;
+  // Address — use structured data with fallback to flat string
+  const addressStructured = (isEntrepreneur
+    ? entity.ent_address_structured
+    : entity.leg_address_structured) as unknown as CanonicalAddressPayload | null;
+  const addressFallback = isEntrepreneur ? entity.ent_address : entity.leg_address;
+  const addressLines = formatStructuredAddressForView(addressStructured, addressFallback);
 
   // Bank
   const bankAccount = entity.bank_account;
@@ -131,6 +147,15 @@ export function EntityViewSheet({
 
   // Full name
   const fullName = isEntrepreneur ? entity.ent_name : entity.leg_name;
+
+  // GRP registry data
+  const hasGrpData = !!(
+    entity.grp_registration_date ||
+    entity.grp_status_name ||
+    entity.grp_tax_office_name ||
+    entity.grp_short_name ||
+    entity.grp_liquidation_date
+  );
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -245,8 +270,64 @@ export function EntityViewSheet({
               </CardContent>
             </Card>
 
-            {/* Section 2: Address */}
-            {address && (
+            {/* Section 2: Registry data (GRP) — read-only */}
+            {hasGrpData && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
+                    <ClipboardList className="w-4 h-4" />
+                    Данные реестра
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {entity.grp_registration_date && (
+                    <InfoRow label="Дата регистрации" value={entity.grp_registration_date} />
+                  )}
+                  {entity.grp_status_name && (
+                    <>
+                      {entity.grp_registration_date && <Separator />}
+                      <InfoRow label="Статус" value={entity.grp_status_name} />
+                    </>
+                  )}
+                  {entity.grp_tax_office_name && (
+                    <>
+                      <Separator />
+                      <InfoRow label="ИМНС" value={entity.grp_tax_office_name} />
+                    </>
+                  )}
+                  {entity.grp_short_name && (
+                    <>
+                      <Separator />
+                      <InfoRow label="Краткое название" value={entity.grp_short_name} />
+                    </>
+                  )}
+                  {entity.grp_liquidation_date && (
+                    <>
+                      <Separator />
+                      <InfoRow label="Дата ликвидации" value={entity.grp_liquidation_date} />
+                    </>
+                  )}
+                  {entity.grp_liquidation_reason && (
+                    <>
+                      <Separator />
+                      <InfoRow label="Причина ликвидации" value={entity.grp_liquidation_reason} />
+                    </>
+                  )}
+                  {entity.grp_last_fetched_at && (
+                    <>
+                      <Separator />
+                      <InfoRow
+                        label="Обновлено"
+                        value={format(new Date(entity.grp_last_fetched_at), "dd MMM yyyy HH:mm", { locale: ru })}
+                      />
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Section 3: Address */}
+            {addressLines.length > 0 && (
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -254,13 +335,16 @@ export function EntityViewSheet({
                     Адрес
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <InfoRow label="Юридический адрес" value={address} />
+                <CardContent>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">Юридический адрес</span>
+                    <AddressBlock lines={addressLines} />
+                  </div>
                 </CardContent>
               </Card>
             )}
 
-            {/* Section 3: Director (legal entity only) */}
+            {/* Section 4: Director (legal entity only) */}
             {!isEntrepreneur && (directorName || directorPosition) && (
               <Card>
                 <CardHeader className="pb-2">
@@ -281,7 +365,7 @@ export function EntityViewSheet({
               </Card>
             )}
 
-            {/* Section 4: Bank details */}
+            {/* Section 5: Bank details */}
             {(bankAccount || bankName || bankCode) && (
               <Card>
                 <CardHeader className="pb-2">
@@ -308,7 +392,7 @@ export function EntityViewSheet({
               </Card>
             )}
 
-            {/* Section 5: System info */}
+            {/* Section 6: System info */}
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">

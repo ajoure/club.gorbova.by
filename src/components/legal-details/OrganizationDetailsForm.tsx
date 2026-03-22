@@ -32,7 +32,8 @@ import { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DEMO_LEGAL_ENTITY } from "@/constants/demoLegalDetails";
 import { Loader2, Save, Info } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import { StructuredAddressBlock } from "@/components/shared/StructuredAddressBlock";
 import type { StructuredAddress } from "@/lib/address/types";
 import { LegalEntityAddressAdapter } from "@/lib/address/adapters/LegalEntityAddressAdapter";
@@ -148,6 +149,7 @@ export function OrganizationDetailsForm({
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
   const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
+  const [grpMeta, setGrpMeta] = useState<Record<string, string | null>>({});
 
   // Build default values from initialData, reading from correct namespace
   const getDefaultValues = (): FormData => {
@@ -296,9 +298,23 @@ export function OrganizationDetailsForm({
       }
     }
 
+    // Store GRP registry metadata for persistence
+    const rawData = grpLookup.data?.data;
+    setGrpMeta({
+      grp_registration_date: grpResult.registration_date || null,
+      grp_tax_office_code: grpResult.tax_office_code || null,
+      grp_tax_office_name: grpResult.tax_office_name || null,
+      grp_status_code: grpResult.status_code || null,
+      grp_status_name: grpResult.status_name || null,
+      grp_short_name: grpResult.short_name || null,
+      grp_liquidation_date: rawData?.liquidation_date || null,
+      grp_liquidation_reason: rawData?.liquidation_reason || null,
+      grp_last_fetched_at: new Date().toISOString(),
+    });
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
-  }, [grpResult, form]);
+  }, [grpResult, grpLookup.data, form]);
 
   const handleAddressChange = useCallback((val: StructuredAddress) => {
     setAddress(val);
@@ -328,6 +344,8 @@ export function OrganizationDetailsForm({
         bank_code: data.bank_code || null,
         phone: data.phone || null,
         email: data.email || null,
+        // GRP registry metadata
+        ...grpMeta,
         // Clear leg_* fields to avoid stale data on reopen
         leg_org_form: null,
         leg_name: null,
@@ -356,6 +374,8 @@ export function OrganizationDetailsForm({
         bank_code: data.bank_code || null,
         phone: data.phone || null,
         email: data.email || null,
+        // GRP registry metadata
+        ...grpMeta,
         // Clear ent_* fields to avoid stale data on reopen
         ent_unp: null,
         ent_name: null,
@@ -397,15 +417,25 @@ export function OrganizationDetailsForm({
             name="unp"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="flex items-center gap-2">
-                  УНП
-                  {fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId && (
-                    <CopyableIdChip
-                      value={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.publicId}
-                      copyValue={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.tokenString}
-                      successMessage="Токен скопирован"
-                    />
+                <FormLabel
+                  className={cn(
+                    "flex items-center gap-2",
+                    fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId && "cursor-pointer hover:text-primary transition-colors"
                   )}
+                  onClick={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId
+                    ? (e: React.MouseEvent) => {
+                        e.preventDefault();
+                        navigator.clipboard.writeText(fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.publicId);
+                        toast.success("ID скопирован");
+                      }
+                    : undefined
+                  }
+                  title={fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")?.publicId
+                    ? `${fieldsMap.get(isEntrepreneur ? "ent_unp" : "leg_unp")!.publicId} — клик для копирования`
+                    : undefined
+                  }
+                >
+                  УНП
                   {isLookingUp && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
                 </FormLabel>
                 <FormControl>
