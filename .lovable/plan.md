@@ -1,107 +1,37 @@
-## да, согласен, с учетом правок:
 
-&nbsp;
 
-1. В PATCH 1 проверь не только перечисленные файлы вручную, но и **полный repo-wide поиск** всех вхождений:
-  &nbsp;
-  - client_legal_details
-  - is_default
-  - client_details_id
-  - leg_unp
-  - ent_unp
-    Иначе можно пропустить скрытые зависимости вне основного списка файлов.
-  &nbsp;
-2. В аудит обязательно включи **точный источник RLS/policies**:
-  &nbsp;
-  - миграции, где создавались policy для client_legal_details
-  - текущий фактический SQL policy text
-  - кто имеет SELECT/INSERT/UPDATE/DELETE
-    Не ограничивайся только общим выводом “RLS есть”.
-  &nbsp;
-3. В результате PATCH 1 нужен не просто “DDL-решение обосновано”, а **таблица вариантов**:
-  &nbsp;
-  - вариант 1: одно поле
-  - вариант 2: два поля
-  - вариант 3: enum/иная схема
-    Для каждого:
-  - плюсы
-  - риски
-  - влияние на текущие queries
-  - почему подходит/не подходит.
-  &nbsp;
-4. Отдельно зафиксируй **все текущие места fallback-логики**:
-  &nbsp;
-  - когда берут явный client_details_id
-  - когда берут запись по is_default
-  - что происходит, если default отсутствует
-  - что происходит, если записей несколько
-    Это критично для будущего разграничения billing/document.
-  &nbsp;
-5. В PATCH 1 нужен отдельный блок **UX/flow impact**:
-  &nbsp;
-  - как текущее /settings/legal-details показывает записи
-  - есть ли там предположение, что все записи одинакового назначения
-  - что сломается визуально/логически, если появятся document-entities.
-  &nbsp;
-6. В deliverables добавь явный артефакт:
-  &nbsp;
-  - docs/PATCH_1_CLIENT_LEGAL_DETAILS_[AUDIT.md](http://AUDIT.md)
-    В нем должны быть:
-  - dependency map
-  - RLS section
-  - options comparison
-  - recommendation
-  - список мест, которые нельзя сломать.
-  &nbsp;
-7. В DoD добавь proof-пункт:
-  &nbsp;
-  - показать список всех найденных файлов/вхождений по repo-wide search
-  - показать итоговую рекомендованную модель разграничения
-  - подтвердить, что **код не менялся вообще**.
-  &nbsp;
+## PATCH 1 — 4 доправки в `docs/PATCH_1_CLIENT_LEGAL_DETAILS_AUDIT.md`
 
-&nbsp;
+Добавить 4 блока в существующий документ без изменения уже проверенного содержимого.
 
-&nbsp;
+### Правка 1: Guard для setDefault (после секции 7)
+Добавить явный acceptance-критерий для PATCH 5: после внедрения `purpose`/`status`, мутация `setDefault` обязана содержать `WHERE purpose = 'billing'`. Document-entity не может стать billing default. Это обязательный guard, а не опция.
 
-PATCH 1 — Диагностика `client_legal_details`: разграничение use-case
+### Правка 2: Статус рекомендации (в начало секции 7)
+Явно зафиксировать:
+- PATCH 1 **не внедряет** DDL
+- PATCH 1 только **рекомендует** Вариант 2
+- Финальное DDL применяется в PATCH 2 (миграция)
+- До PATCH 2 рекомендация = гипотеза, не решение
 
-### Scope
+### Правка 3: Query points to update later (новая секция 10)
+Перечень мест, требующих корректировки после внедрения `purpose`/`status`:
+- `/settings/legal-details` list query → добавить `WHERE purpose = 'billing'`
+- `useLegalDetails.tsx` setDefault → добавить `WHERE purpose = 'billing'`
+- Новый AI Requisites list query → фильтр по `purpose` + badge
+- Edge functions fallback → **не менять**, но только при условии из Правки 4
 
-Read-only аудит. Никакого DDL, никаких миграций, никаких изменений кода.
+### Правка 4: Условие безопасности fallback (дополнение к секции 3 и 7)
+Явно зафиксировать: вывод «edge functions можно не менять» верен **только если** document-entities **никогда не смогут получить `is_default = true`**. Это означает:
+- `setDefault` mutation обязана фильтровать по `purpose = 'billing'`
+- UI AI-раздела не должен вызывать `setDefault` для document-записей
+- Если это условие нарушено — fallback по `is_default` может вернуть document-entity вместо billing, что сломает генерацию счёт-актов
 
-### Что нужно проверить
-
-1. **Все SELECT по `is_default**` в hooks и edge functions — где и как определяется "основная" запись
-2. **Все INSERT/UPDATE** в `useLegalDetails` — как создаются/обновляются записи
-3. `**generate-from-template**` — как выбирает `client_details_id` (по параметру или по `is_default`)
-4. `**generate-document-pdf**`, `**generate-invoice-act**`, `**document-auto-generate**` — аналогичная проверка
-5. `**/settings/legal-details**` — фильтрует ли по каким-то признакам или показывает все записи `profile_id`
-6. **RLS policies** на `client_legal_details` — текущие правила доступа
-
-### Результат
-
-Таблица зависимостей + обоснованное DDL-решение:
-
-- Нужно ли одно поле `purpose` (`billing` / `document`)
-- Или два поля (`purpose` + `status`)
-- Или enum
-- Как это не ломает текущие запросы (все существующие записи получают default = текущее поведение)
-
-### Файлы для аудита
-
-- `src/hooks/useLegalDetails.tsx`
-- `supabase/functions/generate-from-template/index.ts`
-- `supabase/functions/generate-document-pdf/index.ts`
-- `supabase/functions/generate-invoice-act/index.ts`
-- `supabase/functions/document-auto-generate/index.ts`
-- `src/pages/settings/LegalDetails.tsx`
-- `src/lib/token-resolver.ts`
-- RLS policies через `supabase--read_query`
+### Файлы
+- `docs/PATCH_1_CLIENT_LEGAL_DETAILS_AUDIT.md` — 4 добавления, существующий текст не меняется
 
 ### DoD
+- Все 4 уточнения внесены
+- Документ остаётся read-only артефактом (никакого DDL/кода)
+- PATCH 1 закрыт, можно переходить к PATCH 2
 
-- Аудит всех зависимостей `is_default` и `client_details_id` завершён
-- Семантика разграничения зафиксирована
-- DDL-решение обосновано без регресса для billing
-- Код не менялся
