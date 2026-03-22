@@ -189,7 +189,7 @@ export function formatStructuredAddressForView(
     return lines;
   }
 
-  const result = formatGenericAddress(structured);
+  const result = formatGenericAddress(structured, apartmentPrefix);
   if (!result) {
     const fb = structured.formatted_address || structured.raw_input || fallback;
     return fb ? [fb] : [];

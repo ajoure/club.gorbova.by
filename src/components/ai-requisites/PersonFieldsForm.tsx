@@ -28,6 +28,7 @@ function parseAddress(structured: unknown): StructuredAddress {
   if (!structured) return emptyAddress();
   const s = structured as CanonicalAddressPayload;
   return {
+    country_code: (s as any).country_code || 'BY',
     street: s.street || '',
     house: s.house || '',
     building: s.building || '',

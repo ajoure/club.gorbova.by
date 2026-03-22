@@ -70,8 +70,12 @@ export function StructuredAddressBlock({
   compact,
   countries,
   fieldIds,
+  apartmentLabel,
 }: StructuredAddressBlockProps) {
-  const layout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
+  const baseLayout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
+  const layout = apartmentLabel
+    ? baseLayout.map(f => f.key === 'apartment' ? { ...f, label: apartmentLabel } : f)
+    : baseLayout;
 
   const {
     predictions,
