@@ -75,6 +75,7 @@ export function useLessonProgressState(lessonId?: string) {
     } catch (error) {
       console.error("Error fetching lesson progress state:", error);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
