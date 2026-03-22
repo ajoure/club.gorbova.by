@@ -42,45 +42,61 @@ function formatLocality(city: string | null | undefined): string {
   return `г. ${city}`;
 }
 
-/** Build single-line Belarus address */
-function formatBelarusAddress(structured: CanonicalAddressPayload): string {
-  const parts: string[] = [];
+/**
+ * Determine if a district is a city-internal district (e.g. "Фрунзенский район")
+ * vs an oblast-level district (e.g. "Лидский район").
+ * Conservative: only hide if district clearly derives from the city name.
+ */
+function isCityDistrict(district: string | null | undefined, city: string | null | undefined): boolean {
+  if (!district || !city) return false;
+  const normalizedCity = city.replace(/^(г\.|город|гор\.)\s*/i, '').trim();
+  if (!normalizedCity || normalizedCity.length < 3) return false;
+  // Build a root from city name (e.g. "Минск" → "Минс", "Брест" → "Брес")
+  const cityRoot = normalizedCity.slice(0, Math.max(3, normalizedCity.length - 1));
+  return new RegExp(cityRoot, 'i').test(district);
+}
+
+/** Build 2-line Belarus address: [street line, location line] */
+function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
   const minskAddr = isMinsk(structured.city);
 
-  // 1. Postal code
-  if (structured.postal_code) parts.push(structured.postal_code);
+  // Line 1: street, house, building, apartment
+  const line1Parts: string[] = [];
+  if (structured.street) line1Parts.push(structured.street);
+  if (structured.house) line1Parts.push(`д. ${structured.house}`);
+  if (structured.building) line1Parts.push(`корп. ${structured.building}`);
+  if (structured.apartment) line1Parts.push(`пом. ${structured.apartment}`);
 
-  // 2. Region (skip for Minsk)
-  if (!minskAddr && structured.region) {
-    const region = structured.region
-      .replace(/\s*область$/i, '')
-      .replace(/\s*обл\.?$/i, '');
-    parts.push(`${region} обл.`);
+  // Line 2: postal_code, [region, district], city/settlement
+  const line2Parts: string[] = [];
+  if (structured.postal_code) line2Parts.push(structured.postal_code);
+
+  if (!minskAddr) {
+    if (structured.region) {
+      const region = structured.region
+        .replace(/\s*область$/i, '')
+        .replace(/\s*обл\.?$/i, '');
+      line2Parts.push(`${region} обл.`);
+    }
+    if (structured.district && !isCityDistrict(structured.district, structured.city)) {
+      const district = structured.district
+        .replace(/\s*район$/i, '')
+        .replace(/\s*р-н\.?$/i, '');
+      line2Parts.push(`${district} р-н`);
+    }
   }
 
-  // 3. City
   if (structured.city) {
-    parts.push(formatLocality(structured.city));
+    line2Parts.push(formatLocality(structured.city));
   }
-
-  // 4. Settlement (if different from city)
   if (structured.settlement && structured.settlement !== structured.city) {
-    parts.push(structured.settlement);
+    line2Parts.push(structured.settlement);
   }
 
-  // 5. Street
-  if (structured.street) parts.push(structured.street);
+  const line1 = line1Parts.join(', ');
+  const line2 = line2Parts.join(', ');
 
-  // 6. House
-  if (structured.house) parts.push(`д. ${structured.house}`);
-
-  // 7. Building
-  if (structured.building) parts.push(`корп. ${structured.building}`);
-
-  // 8. Apartment
-  if (structured.apartment) parts.push(`пом. ${structured.apartment}`);
-
-  return parts.join(', ');
+  return [line1, line2].filter(Boolean);
 }
 
 /** Build single-line generic address */
@@ -104,8 +120,9 @@ function formatGenericAddress(structured: CanonicalAddressPayload): string {
 }
 
 /**
- * Format a structured address into a single display string.
- * Returns array with one element for backward compatibility.
+ * Format a structured address for display.
+ * Belarus: 2-line format [street line, location line].
+ * Generic: single-line format.
  */
 export function formatStructuredAddressForView(
   structured: CanonicalAddressPayload | null | undefined,
