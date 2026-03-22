@@ -1,51 +1,40 @@
 
 
-# PATCH 3.2.7D fix — Remove UUID fallback from UI token generation
+# PATCH — Разрешить пересмотр видео в завершённых уроках
 
-## Problem
+## Проблема клиента
 
-In `src/lib/tokens/tokenRegistry.ts` line 95, there's a UUID fallback:
-```typescript
-tokenString: f.public_id ? `{{cf.legal_details.${f.public_id}}}` : `{{cf.legal_details.${f.id}}}`
-```
+Пользователь завершил урок с видео, но не может пересмотреть видео — оно затемнено и не реагирует на клики.
 
-This violates the ID-driven standard: UI must never generate UUID-based tokens. The hook (`useLegalDetailsFields.ts` line 45) already handles this correctly — returns empty string when no `public_id`.
+## Причина (2 бага)
 
-## Changes
+1. **`VideoUnskippableBlock.tsx` строка 191**: в completed state iframe рендерится с `opacity-70` — видео выглядит неактивным
+2. **`KvestLessonView.tsx` строка 491**: завершённые блоки оборачиваются в `pointer-events-none` — iframe полностью заблокирован для взаимодействия
 
-### 1. `src/lib/tokens/tokenRegistry.ts` — line 95
+## Исправления
 
-Remove UUID fallback. If no `public_id`, skip the field entirely (filter it out):
+### 1. `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
 
-```typescript
-return data
-  .filter((f) => !!f.public_id)
-  .map((f) => ({
-    key: f.id,
-    label: f.label,
-    tokenString: `{{cf.legal_details.${f.public_id}}}`,
-    group: "legal_details" as const,
-    badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
-    searchKeywords: `${f.label} ${f.key} реквизиты legal ${f.public_id}`,
-  }));
-```
+В completed state (строка 191):
+- Убрать `opacity-70` с контейнера iframe — видео должно быть полностью интерактивным
+- Оставить плашку «Видео просмотрено» как индикатор, но не блокировать воспроизведение
 
-Fields without `public_id` won't appear in token picker at all — no disabled state needed since trigger always assigns `public_id` on INSERT.
+### 2. `src/components/lesson/KvestLessonView.tsx`
 
-### 2. Update `.lovable/plan.md`
+В case `video_unskippable` (строка 491):
+- Для видео-блоков **не** применять `pointer-events-none` даже когда `isReadOnly`
+- Оставить лёгкую визуальную индикацию (`opacity-80`) но без блокировки pointer-events
+- Другие блоки (quiz, role_description) остаются с `pointer-events-none` — это правильно
 
-Record this fix.
+## Не делаем
 
-## Not changing
-
-- `useLegalDetailsFields.ts` — already correct (empty string for missing `public_id`)
-- `token-resolver.ts` — UUID compatibility layer stays in resolver only
-- No other files affected
+- Не меняем логику завершения/прогресса
+- Не трогаем другие типы блоков
+- Не меняем save/load flow
 
 ## DoD
 
-- Zero UUID-based tokens generated in UI layer
-- UUID compatibility only in resolver (for legacy templates)
-- Token picker shows only `public_id`-based tokens
-- Build clean
+- Завершённое видео полностью воспроизводимо (не затемнено, кликабельно)
+- Плашка «Видео просмотрено» остаётся как индикатор
+- Незавершённые блоки работают как раньше
 
