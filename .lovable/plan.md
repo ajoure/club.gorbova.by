@@ -1,176 +1,124 @@
-## Now let me check the public checkout route situation:
+## да, согласен, с учетом правок:
 
-# План: UI PROOF + PATCH-PUBLIC-CHECKOUT-E2E
+1. **Обычные поля физлица — да, address block — пока нет.**  
+Для `PersonFieldsForm` можно и нужно добавить копирование FLD-ID у обычных полей (`ФИО`, `дата рождения`, `личный номер`, `паспорт`, и т.д.).  
+Но **не возвращать сейчас копирование label внутри** `StructuredAddressBlock`, потому что именно address block уже был источником interaction-багов в `/ai`. Иначе можно снова сломать выбор адреса мышью.
+2. **Значит scope этого фикса сузить так:**
+  - добавить copy-by-label только для **неадресных** person fields;
+  - `fieldIds` в `StructuredAddressBlock` можно пробросить только если они используются пассивно и не делают labels кликабельными;
+  - если внутри `StructuredAddressBlock` label снова становится clickable — это **не входит** в текущий фикс.
+3. **Не использовать** `FieldLabelWithId` **напрямую**, с этим согласен.  
+Он завязан на `react-hook-form`.  
+Для `PersonFieldsForm` сделать отдельный лёгкий компонент, например:
+  - `CopyablePlainLabel`
+  - без зависимости от RHF
+  - обычный `Label`
+  - `onClick` → copy `publicId`
+  - toast при копировании
+4. **Проверить ключи registry до реализации, ничего не угадывать.**  
+Особенно:
+  - `phone`
+  - `email`
+  - `ind_address_*`  
+  Внести в план явную проверку: если ключа нет в `fields_registry`, не выдумывать fallback и не хардкодить FLD-ID.
+5. **Address mapping зафиксировать только по реально существующим ключам.**  
+В плане написать:
+  - street → `ind_address_street`
+  - house → `ind_address_house`
+  - apartment → `ind_address_apartment`
+  - city → `ind_address_city`
+  - region → `ind_address_region`
+  - district → `ind_address_district`
+  - postal_code → проверить точный ключ в registry (`ind_address_index` или иной), не предполагать заранее
+6. **STOP GUARD:**  
+этим фиксом не трогать:
+  - `StructuredAddressBlock` interaction behavior
+  - mouse-path выбора адреса
+  - `FieldLabelWithId`
+  - settings forms  
+  Это должен быть локальный PATCH только для labels в `PersonFieldsForm`.
+7. **DoD уточнить:**
+  - клик по label обычного поля физлица в create/edit копирует FLD-ID;
+  - toast показывается;
+  - address selection не регресснул;
+  - settings forms не затронуты;
+  - никаких изменений в view-mode не требуется, потому что там уже есть copyable values, а не FLD-ID.
+8. **Итоговая формулировка фикса:**  
+Это не “добавить копирование FLD-ID в карточку физлица вообще”, а  
+**“добавить copy-by-label для обычных form-label полей в** `PersonFieldsForm`**, не вмешиваясь в address interaction layer”**.
+9. &nbsp;
+10. PATCH 6 FIX — добавить копирование FLD-ID в карточку физлица
 
-## Часть 1: UI proof вкладки «Платежи» на реальном платеже
+### Текущая ситуация
 
-Через browser tools (пользователь уже залогинен):
+В `fields_registry` уже зарегистрированы поля физлица с entity_type `legal_details` и ключами `ind_*`:
 
-1. Открыть `/payments`
 
-2. Убедиться что реальный платёж (7ca540ff, 1 BYN, visa *0000) виден в таблице
+| Ключ                       | FLD-ID        | Label           |
+| -------------------------- | ------------- | --------------- |
+| `ind_full_name`            | FLD-000020    | ФИО             |
+| `ind_birth_date`           | FLD-000021    | Дата рождения   |
+| `ind_personal_number`      | FLD-000027    | Личный номер    |
+| `ind_passport_series`      | FLD-000022    | Серия паспорта  |
+| `ind_passport_number`      | FLD-000023    | Номер паспорта  |
+| `ind_passport_issued_by`   | FLD-000024    | Кем выдан       |
+| `ind_passport_issued_date` | FLD-000025    | Дата выдачи     |
+| `ind_passport_valid_until` | FLD-000026    | Действителен до |
+| `ind_address_*`            | FLD-000028–34 | Адресные поля   |
 
-3. Кликнуть на строку — открыть detail dialog — скрин
 
-4. Проверить поиск по UID/amount
+`IndividualDetailsForm` в settings уже использует эти ID через `useLegalDetailsFields` + `FieldLabelWithId`. В `PersonFieldsForm` ничего подобного нет — labels обычные, без копирования.
 
-5. Проверить фильтр по статусу "Успешные"
+### Что делаем
 
-6. Проверить row actions (копировать UID, открыть в bePaid, чек)
+**Файл 1: `src/components/ai-requisites/PersonFieldsForm.tsx**`
 
-7. Дать proof-скрины
+1. Импортировать `useLegalDetailsFields` и `FieldLabelWithId`
+2. Загрузить `fieldsMap` из хука (те же `ind_*` записи, они уже в registry)
+3. Заменить обычные `<Label>` на `<FieldLabelWithId>` с соответствующим `fieldEntry`:
+  - `full_name` → `fieldsMap.get("ind_full_name")`
+  - `birth_date` → `fieldsMap.get("ind_birth_date")`
+  - `personal_number` → `fieldsMap.get("ind_personal_number")`
+  - `passport_series` → `fieldsMap.get("ind_passport_series")`
+  - `passport_number` → `fieldsMap.get("ind_passport_number")`
+  - `passport_issued_by` → `fieldsMap.get("ind_passport_issued_by")`
+  - `passport_issued_date` → `fieldsMap.get("ind_passport_issued_date")`
+  - `passport_valid_until` → `fieldsMap.get("ind_passport_valid_until")`
+  - `phone` → `fieldsMap.get("phone")` (if exists)
+  - `email` → `fieldsMap.get("email")` (if exists)
+4. Построить `addressFieldIds` map (аналогично `IndividualDetailsForm`):
+  ```
+   street → ind_address_street
+   house → ind_address_house
+   apartment → ind_address_apartment
+   city → ind_address_city
+   region → ind_address_region
+   district → ind_address_district
+   postal_code → ind_address_index
+  ```
+5. Передать `fieldIds={addressFieldIds}` в `StructuredAddressBlock`
 
-## Часть 2: PATCH-PUBLIC-CHECKOUT-E2E
+**Важно:** `FieldLabelWithId` использует `FormLabel` из react-hook-form. Но `PersonFieldsForm` не использует react-hook-form — у него обычные `useState`. Поэтому `FieldLabelWithId` напрямую не подойдёт (он рендерит `<FormLabel>`, который требует `<FormField>` контекста).
 
-### Что создаём
-
-Два новых публичных route без AuthGuard:
-
-#### 1. `/pay/:token` — PublicPayPage
-
-- Берёт `token` из URL params
-
-- Загружает `payment_link` по `url_token` (через edge function или напрямую — нужна публичная endpoint)
-
-- Показывает: название, сумма, кнопка «Оплатить»
-
-- По клику вызывает `create-bepaid-checkout` (без JWT — нужна публичная версия или proxy)
-
-- Получает `redirect_url` → `window.location.href = redirect_url`
-
-**Проблема:** `create-bepaid-checkout` требует JWT (admin). Для публичного flow нужен отдельный edge function `public-checkout` который:
-
-- Не требует JWT
-
-- Принимает `url_token` (не payment_link_id)
-
-- Валидирует payment_link (active, not expired, under max_uses)
-
-- Создаёт order и checkout так же как admin-версия
-
-- Инкрементирует `current_uses`
-
-#### 2. `/payment/result` — PaymentResultPage
-
-- Query params: `status`, `order_id`
-
-- Показывает результат: "Оплата успешна" / "Оплата отклонена" / "Ошибка"
-
-- Иконка + текст + кнопка "Закрыть" или "Повторить"
-
-- Без AuthGuard, публичная страница
+Решение: создать легковесный аналог `CopyableLabel` внутри `PersonFieldsForm` (или как shared) — обычный `<Label>` с `onClick` для копирования `publicId`. Без зависимости на react-hook-form.
 
 ### Файлы
 
-| Файл | Действие |
 
-|---|---|
+| Файл                   | Изменение                                                                |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `PersonFieldsForm.tsx` | Добавить `useLegalDetailsFields`, `addressFieldIds`, кликабельные labels |
 
-| `supabase/functions/public-checkout/index.ts` | **create** — публичный checkout по url_token |
 
-| `src/pages/PublicPayPage.tsx` | **create** — /pay/:token |
+### Не трогаем
 
-| `src/pages/PaymentResultPage.tsx` | **create** — /payment/result |
-
-| `src/App.tsx` | **update** — добавить 2 публичных route |
-
-### Edge function `public-checkout`
-
-```
-
-POST /public-checkout
-
-Body: { url_token: string }
-
-Response: { redirect_url, order_id }
-
-```
-
-- verify_jwt = false
-
-- Ищет payment_link по url_token
-
-- Проверяет: status=active, не expired, current_uses < max_uses (если max_uses задан)
-
-- Ищет default bepaid integration для tenant
-
-- Далее — тот же checkout flow что в create-bepaid-checkout
-
-- Инкрементирует current_uses после успеха
-
-- Не требует аутентификации
-
-### Redirect URLs
-
-Уже исправлен fallback `APP_BASE_URL → APP_ORIGIN`. Callback URLs формируются как:
-
-- `{APP_ORIGIN}/payment/result?status=success&order_id={id}`
-
-- `{APP_ORIGIN}/payment/result?status=declined&order_id={id}`
-
-- `{APP_ORIGIN}/payment/result?status=failed&order_id={id}`
-
-### Hard no-touch
-
-- Не трогать bePaid webhook ядро
-
-- Не трогать admin checkout flow
-
-- Не трогать AutoRenewals
-
-- Не трогать donor parity / ZIP / widget
+- `FieldLabelWithId` (он привязан к react-hook-form FormLabel)
+- `StructuredAddressBlock` (уже поддерживает `fieldIds`)
+- `PersonRecordSheet` — view mode `InfoRow` уже copyable для значений
+- Никаких миграций — поля уже в registry
 
 ### DoD
 
-1. `/pay/:token` показывает payment_link данные и запускает checkout
-
-2. `/payment/result` показывает результат оплаты
-
-3. `public-checkout` edge function работает без JWT
-
-4. E2E proof: payment_link → /pay/:token → bePaid → webhook → payments
-
-5. Существующий admin checkout flow не сломан
-
-&nbsp;
-
-PATCH 6 FIX — три конкретных бага + копирование ID полей
-
-### Что исправляем
-
-**1. Schema bug в PersonLinkedEntitiesBlock**
-Таблица `legal_details_roles_catalog` содержит поле `label`, а не `name`. В select-запросе на строке 39 написано `name` — это вернёт null или ошибку.
-
-- Файл: `src/components/ai-requisites/PersonLinkedEntitiesBlock.tsx`
-- Строка 39: `name` → `label`
-- Строка 56: `roleCatalog?.name` → `roleCatalog?.label`
-
-**2. Stale state в PersonFieldsForm**
-Форма использует `useState(initialData?.field)` без синхронизации при смене `initialData`. При переключении view→edit или между разными персонами форма покажет старые значения.
-
-- Файл: `src/components/ai-requisites/PersonRecordSheet.tsx`
-- Добавить `key={person?.id ?? 'create'}` на `PersonFieldsForm` в `renderFormContent()` (строка 253). Это принудительно ремонтирует форму при смене персоны или режима.
-
-**3. Нет копирования ID полей в карточке физлица**
-В `PersonFieldsForm` не передаётся `fieldIds` в `StructuredAddressBlock`. Для физлиц нет зарегистрированных полей в `fields_registry` с префиксом `person_address_*`, поэтому `fieldIds` для address block сейчас недоступен.
-
-Однако в карточке просмотра (view mode) в `PersonRecordSheet` у `InfoRow` уже есть `copyable` на ключевых полях (личный номер, паспорт, ID, телефон, email). Это покрывает копирование значений.
-
-Для полного копирования ID полей адреса физлица нужна регистрация полей `person_address_*` в `fields_registry` — это выходит за рамки текущего фикса и требует миграции. Сейчас копирование значений уже работает через `copyable` prop.
-
-### Файлы к изменению
-
-
-| Файл                            | Что меняем                                             |
-| ------------------------------- | ------------------------------------------------------ |
-| `PersonLinkedEntitiesBlock.tsx` | `name` → `label` в select и mapping                    |
-| `PersonRecordSheet.tsx`         | `key` на PersonFieldsForm для ремонта при смене данных |
-
-
-### Что НЕ трогаем
-
-- StructuredAddressBlock
-- EntityRecordSheet
-- formatStructuredAddress
-- AI.tsx
-- settings flow
+- Клик по label поля в форме edit/create физлица → копирует FLD-ID в буфер + toast
+- Address block labels кликабельны и копируют FLD-ID
+- Не ломает settings forms
