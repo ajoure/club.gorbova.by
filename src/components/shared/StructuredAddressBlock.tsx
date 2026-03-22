@@ -123,7 +123,14 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     if (!isOpen) return;
-    const close = () => { if (!isSelectingRef.current) clearPredictions(); };
+    const close = () => {
+      if (isSelectingRef.current) {
+        console.log('[ADDR] scroll/resize close BLOCKED by isSelecting');
+        return;
+      }
+      console.log('[ADDR] scroll/resize close — clearing predictions');
+      clearPredictions();
+    };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
     return () => {
