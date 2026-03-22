@@ -1,350 +1,232 @@
-выполни и подтверди скринами, да, согласен, с учетом правок:
-
-&nbsp;
+# ФИНАЛЬНЫЙ ЭТАЛОННЫЙ ПЛАН: модуль «Нейросеть → Реквизиты → AI-документы»
 
-1. Добавь в начало плана явный **add-only mapping**:
-  &nbsp;
-  - старый route PATCH -> остается
-  - старый ProtectedRoute PATCH -> остается
-  - новый tab-switch PATCH -> добавляется отдельно
-  - browser restore / bfcache PATCH -> отдельный
-  - запрет на удаление/замену старых фаз без явного mapping старый пункт -> новый пункт.
-  &nbsp;
-2. В ФАЗЕ 1A зафиксируй, что trace нужен **не только в консоль**, а в виде сохраняемого единого timeline-лога по одному сценарию, чтобы можно было приложить до/после и сопоставить timestamps.
-3. В ФАЗЕ 1B добавь обязательный proof **первого источника reset**:
-  &nbsp;
-  - первый код/компонент, после которого scrollY уходит вверх;
-  - это именно DOM collapse, scrollTo/scrollIntoView, step reset или remount;
-  - с указанием файла и строки.
-  &nbsp;
-4. В ФАЗЕ 1C отдельно потребуй доказать, есть ли **page-level skeleton collapse** именно в:
-  &nbsp;
-  - LibraryLesson.tsx
-  - useTrainingLessons.tsx
-  - useTrainingModules.tsx
-    и кто из них первым запускает схлопывание layout.
-  &nbsp;
-5. В ФАЗЕ 2 явно запиши правило:
-  &nbsp;
-  - **background refetch на том же lesson route не имеет права включать full-page skeleton и убирать уже отрисованный контент**;
-  - loader допустим только на cold start / first load / реальном route change.
-  &nbsp;
-6. В P0 fix добавь, что нужно проверить и закрыть **оба источника**:
-  &nbsp;
-  - route-level/page-level collapse;
-  - внутренний автоскролл/step sync внутри KvestLessonView.
-    Нельзя считать баг закрытым, если устранён только один из двух.
-  &nbsp;
-7. Для ScrollToTop и visibility backup добавь пометку:
-  &nbsp;
-  - это **backup-only layer**;
-  - старый scroll patch не удалять и не объявлять ошибочным без trace;
-  - новый fix не должен ломать ранее утверждённый PUSH/POP сценарий.
-  &nbsp;
-8. Добавь отдельный STOP-guard:
-  &nbsp;
-  - без trace запрещено писать формулировки root cause fixed, P0 applied, issue resolved;
-  - разрешены только статусы diagnostic, hypothesis, confirmed by trace, fixed with proof.
-  &nbsp;
-9. В Proof requirements добавь обязательный пункт:
-  &nbsp;
-  - **один и тот же маршрут, один и тот же аккаунт, одна и та же позиция скролла** для before/after;
-  - сравнение на одном dataset, без “после второго обновления стало нормально”.
-  &nbsp;
-10. В DoD добавь ещё 2 пункта:
+*Версия с учётом всех правок. Утверждён пользователем.*
 
-&nbsp;
+---
 
-&nbsp;
+## ADD-ONLY / NO-LOSS MAPPING
 
-&nbsp;
+| Утверждённое решение | Где в PATCH-плане | Статус |
+|---|---|---|
+| `client_legal_details` = source of truth | Все PATCH | Сохранено |
+| Модель A1: физлица и связи отдельно | PATCH 2 | Сохранено |
+| Единый `generate-from-template` | PATCH 11 (расширение, не замена) | Сохранено |
+| DOCX-only первый релиз | PATCH 10, 12 | Сохранено |
+| AI не переписывает шаблон | PATCH 8, 9 | Сохранено |
+| Связи только внутри карточки юрлица | PATCH 7 | Сохранено |
+| Вкладки: Gorbova AI / Документы / Реквизиты | PATCH 4 | Сохранено |
 
-- после tab return **не происходит remount page subtree**, если route не менялся;
-- после tab return **scrollY сохраняется без ручного повторного движения мышью/тачпадом**.
+**Не удаляется и не заменяется**: billing flow, MNS pipeline, `/settings/legal-details`, `executors`, `generate-from-template` (core), `generated_documents` (constraints — до PATCH 10.5).
 
-&nbsp;
+---
 
-&nbsp;
+## PATCH 0 — Архитектурный freeze + reuse map
 
-&nbsp;
+Только документация. Код не пишем.
 
-11. Добавь техническое правило исполнения:
+Deliverables: reuse matrix, список защищённых flows, mapping старое → новое, add-only scope.
 
-&nbsp;
+DoD: документированный freeze, явный список «не трогать», mapping на текущие компоненты и edge functions.
 
-&nbsp;
+---
 
-&nbsp;
+## PATCH 1 — Диагностика `client_legal_details`: разграничение use-case
 
-- если в trace подтвердится гипотеза LibraryLesson -> useTrainingLessons -> lessonsLoading -> full-page skeleton, fix должен быть **минимальным и локальным**;
-- без переписывания всего scroll subsystem, auth subsystem и router-level логики.
+Только read-only аудит. DDL не утверждается.
 
-&nbsp;
+Проверить все SELECT/INSERT/UPDATE по `is_default`, как `generate-from-template` выбирает `client_details_id`, как `/settings/legal-details` фильтрует записи. Определить, нужно ли одно поле `purpose`, два поля, enum, или иной вариант для разграничения billing / document / active / archive / default.
 
-&nbsp;
+DoD: аудит зависимостей завершён, семантика зафиксирована, DDL-решение обосновано.
 
-&nbsp;
+---
 
-12. В финале плана добавь обязательную формулировку:
+## PATCH 2 — Новые таблицы
 
-&nbsp;
+5 миграций: `legal_details_persons`, `legal_details_roles_catalog`, `legal_details_positions_catalog`, `legal_details_entity_person_links`, `ai_chat_messages`.
 
-&nbsp;
+**Уточнение unique constraint в `legal_details_entity_person_links`**:
 
-&nbsp;
+Простой `UNIQUE (legal_details_id, person_id, role_catalog_id)` слишком грубый — `role_catalog_id = position` один для всех должностей, а различие идёт через `position_catalog_id` / `custom_position_text`.
 
-- **этот новый P0 PATCH для tab-switch не отменяет и не заменяет ранее утвержденный PATCH для route-navigation; оба патча существуют параллельно до отдельного proof по каждому сценарию.**
+Решение — составной constraint с учётом подтипа:
 
-&nbsp;
+| role_type | Uniqueness rule |
+|---|---|
+| `founder` | UNIQUE (legal_details_id, person_id, role_catalog_id) — один founder-link на пару entity+person |
+| `position` + catalog | UNIQUE (legal_details_id, person_id, role_catalog_id, position_catalog_id) — одна конкретная должность на пару |
+| `position` + custom | UNIQUE (legal_details_id, person_id, role_catalog_id, custom_position_text) — одна custom-должность на пару |
+| `other` | UNIQUE (legal_details_id, person_id, role_catalog_id, custom_role_text) — одна custom-роль на пару |
 
-&nbsp;
+Реализация — partial unique indexes.
 
-ADD-ONLY / NO-LOSS RULE
+DoD: миграции проходят, RLS работает, seed данные на месте, uniqueness корректна для всех role_type.
 
-Новый P0 PATCH для tab-switch / focus-return добавляется к уже существующему PATCH по route-navigation и не отменяет его. Ничего из ранее утвержденных правок по `ScrollToTop`, `ProtectedRoute`, PUSH/POP DoD, proof-требований и scenario coverage не удаляется и не переписывается без явного mapping `старый пункт -> новый пункт`.
+---
 
-Дополнение плана: три отдельных бага скролла
+## PATCH 3 — Anti-duplicate + reuse GRP/Google flows
 
-## Статус по сценариям
+Последовательность для юрлиц/ИП: ввод УНП → `useGrpLookup` (reuse) → поиск existing у владельца → если найдена — открыть + предложить refresh через `GrpConfirmDialog` (reuse) → если нет — создать.
 
+Правила антидубля для физлиц:
+1. `personal_number` — если есть, матч по нему
+2. Иначе `passport_series + passport_number`
+3. Иначе soft warning по `full_name + birth_date`
+4. AI перед созданием физлица обязан пройти через этот matching flow
 
-| Сценарий                                          | PATCH                                                     | Proof   |
-| ------------------------------------------------- | --------------------------------------------------------- | ------- |
-| Route navigation (PUSH/POP)                       | implementation present (`ScrollToTop` + `ProtectedRoute`) | missing |
-| Tab switch (visibilitychange/focus, тот же route) | не закрыт                                                 | missing |
-| Browser restore / bfcache (`pageshow/pagehide`)   | diagnostic pending                                        | missing |
+DoD: повторный ввод УНП не создаёт дубль, используется существующий confirm/update сценарий.
 
+---
 
-Это три независимых сценария. Смешивать запрещено.
+## PATCH 4 — UI: вкладка «Реквизиты» в /ai
 
-## Add-only mapping
+Add-only: `type Section = "ai" | "documents" | "requisites"`, подвкладки «Юрлица / ИП» и «Физлица», контент — placeholder-компоненты.
 
+DoD: вкладка рендерится, старые разделы не сломаны.
 
-| Старый пункт                             | Новый статус                                               |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| Старый PATCH scroll restore (route)      | остается без изменений, покрывает только route-navigation  |
-| Старый PATCH ProtectedRoute optimization | остается без изменений, не объявляется решением tab-switch |
-| Новый PATCH tab-switch P0                | добавляется отдельно                                       |
-| Общий DoD                                | расширяется, не заменяется                                 |
+---
 
+## PATCH 5 — CRUD Юрлица/ИП
 
-## READ-ONLY code review — уже выполнен
+UX-логика: billing-записи видны с badge «Платёжные», **read-only в AI-разделе**, ссылка «Редактировать в настройках». Document-записи — полный CRUD.
 
-По коду найден более сильный кандидат на source of reset для tab-switch, чем прежняя гипотеза про `useLessonProgressState`.
+DoD: CRUD работает, billing settings не затронуты, нет дублей по УНП, billing-запись не редактируется из AI-раздела.
 
-### Наиболее вероятный виновник сейчас
+---
 
-`LibraryLesson.tsx` + `useTrainingLessons.tsx`
+## PATCH 6 — CRUD Физлица
 
-Связка по коду:
+Shared `PersonFieldsForm` (extracted из `IndividualDetailsForm`): full_name, birth_date, personal_number, passport_*, phone, email, address_*. Поля только в settings: bank_*, billing validation. Поля только в PersonForm: notes, is_active.
 
-1. `AuthContext.tsx` на auth-event делает `setUser(session?.user ?? null)` — объект `user` обновляется по ссылке.
-2. `useTrainingLessons.tsx` зависит от `[moduleId, user, isAdminUser]`.
-3. На каждом таком re-run `fetchLessons()` делает `setLoading(true)` до запроса.
-4. `LibraryLesson.tsx` при `lessonsLoading` возвращает full-page skeleton:
-  - `if (moduleLoading || lessonsLoading) return <DashboardLayout>...<Skeleton/>`
-5. Это размонтирует длинный lesson/kvest DOM, схлопывает высоту страницы и естественно уводит `scrollY` к верху.
-6. После загрузки `KvestLessonView` монтируется заново уже с новым layout.
+В карточке физлица: **read-only** список связанных компаний. Редактирование связей — только из карточки юрлица (PATCH 7).
 
-Это лучше объясняет реальный симптом, чем текущая версия про `useLessonProgressState`, потому что здесь есть именно page-level collapse, а не только внутренний refetch состояния квеста.
+DoD: CRUD работает, дубли предотвращаются, `IndividualDetailsForm` не сломан, связи read-only.
 
-### Почему предыдущие патчи не закрыли баг
+---
 
-- `ScrollToTop` работает по `pathname`; при tab switch route не меняется.
-- `ProtectedRoute` оптимизация помогает route-navigation, но сама по себе не устраняет page-level skeleton внутри `LibraryLesson`.
-- PATCH в `useLessonProgressState` мог убрать часть refetch/step-reset, но не перекрывает `useTrainingLessons -> lessonsLoading -> full-page skeleton`.
-- visibility restore без устранения collapse — только страховка, не root fix.
+## PATCH 7 — Связи внутри карточки юрлица/ИП
 
-## Рабочая гипотеза P0 (не root cause, пока без trace proof)
+`EntityPersonLinksBlock` внутри карточки. «Учредитель» = тип связи (founder), не должность. «Директор» = должность при role_type=position.
 
-При возврате во вкладку триггерится auth/session refresh или иной re-render цепочки, после чего:
+Явно зафиксировано: editing flow links — **только из карточки юрлица/ИП**. В карточке физлица — только read-only reference.
 
-- `useTrainingLessons` перезапускается из-за identity churn по `user`;
-- `setLoading(true)` включает page-level skeleton;
-- `LibraryLesson` временно убирает реальный контент;
-- DOM height падает;
-- скролл уходит вверх;
-- затем квест монтируется заново.
+DoD: один person привязан к нескольким юрлицам, share_percent только для founder, position_catalog_id только для position, один person_id связан с несколькими legal_details_id.
 
-Отдельно остаётся проверить, не добавляется ли после этого вторичный автоскролл внутри `KvestLessonView`.
+---
 
-## ФАЗА 1 — обязательная диагностика tab-switch
+## PATCH 8 — Реальный Gorbova AI chat
 
-### 1A. Единый event trace timeline с timestamp
+Edge function `gorbova-ai-chat` с SSE streaming (`google/gemini-3-flash-preview`), сохранение в `ai_chat_messages`, file upload через `fileExtractor.ts`. Никакого generic tool-calling. Text-in/text-out помощник.
 
-Для сценария:
-`открыть длинный квест -> прокрутить вниз -> уйти на другую вкладку на 5–10 сек -> вернуться`
+DoD: чат отвечает реально, история сохраняется, setTimeout удалён.
 
-Логировать в один timeline:
+---
 
-- `visibilitychange`
-- `focus` / `blur`
-- `pageshow` / `pagehide`
-- `event.persisted`
-- `performance.getEntriesByType('navigation')`
-- `onAuthStateChange` event type
-- `AuthContext` render
-- `ProtectedRoute` render / mount / unmount
-- `LibraryLesson` render
-- `KvestLessonView` render / mount / unmount
-- `useTrainingLessons.fetchLessons`
-- `useTrainingModules.fetchModules`
-- `useLessonProgressState.fetchState`
-- `loading=true/false` для page-level hooks
-- `currentStepIndex` before/after
-- `window.scrollY` before hidden / on visible / at reset
-- `document.documentElement.scrollHeight`
-- высота контейнера квеста
-- все вызовы `window.scrollTo`
-- все вызовы `scrollIntoView`
-- все вызовы `goToStep` / `setCurrentStepIndex`
+## PATCH 9 — Interview flow (контролируемый, не agentic)
 
-### 1B. Обязательный proof DOM collapse
+Structured UI wizard, не autonomous agent. Сценарии: добавить компанию, добавить физлицо, привязать, подготовить документ. AI помогает внутри interview (дозапрос, нормализация), но не создаёт сущности автономно.
 
-Нужно доказать не предположение, а конкретный механизм:
+DoD: AI ищет существующее перед созданием, missing fields дозапрашиваются, новые сущности — только через explicit UI action.
 
-- падает ли `scrollHeight`;
-- исчезает ли контейнер квеста;
-- появляется ли full-page skeleton;
-- в какой точке timeline это происходит;
-- был ли в этот момент вызов scroll API или scroll пропал без него из-за collapse.
+---
 
-### 1C. Identity churn proof
+## PATCH 10 — 4 DOCX-шаблона + placeholder mapping
 
-Проверить и приложить trace:
+4 шаблона пакета «Годовое собрание»:
+1. Приказ о проведении
+2. Извещение о проведении
+3. Список зарегистрированных лиц
+4. Протокол
 
-- меняется ли только ссылка `user`, а не `user.id`;
-- пересоздаётся ли `fetchLessons` из-за зависимости от объекта `user`;
-- вызывается ли `setLoading(true)` именно после такого re-run;
-- касается ли это также `useTrainingModules`.
+Подход: docxtemplater loops (`{#array}...{/array}`), не фиксированные placeholders.
 
-### 1D. Отдельный trace для browser restore / bfcache
+Источник данных для «Списка зарегистрированных лиц»: `legal_details_entity_person_links` WHERE role_type=founder + manual selection в wizard.
 
-Это третий сценарий, отдельно от route и tab switch:
+DoD: все 4 шаблона в Storage, placeholder mapping документирован, loops используют docxtemplater.
 
-- `pageshow`
-- `pagehide`
-- `event.persisted`
-- `performance.getEntriesByType('navigation')`
+---
 
-## ФАЗА 2 — точечный fix после подтверждения trace
+## PATCH 10.5 — Диагностика `generated_documents` / `order_id` / save flow
 
-### P0. Главный fix: убрать page-level collapse на tab return
+Read-only аудит. Код не меняем.
 
-Файлы:
+Проверить все зависимости `generated_documents.order_id`: FK, SELECT, JOIN, UI. Определить: nullable, surrogate session_id, или отдельная таблица.
 
-- `src/hooks/useTrainingLessons.tsx`
-- при background refetch запрещено:
-  - включать `loading=true`, если уроки уже загружены;
-  - очищать уже отрисованный список;
-  - вызывать full-page skeleton на том же lesson route.
-- разрешён только silent refresh поверх существующего DOM.
-- зависимости стабилизировать по `user?.id`, а не по объекту `user`, если trace подтвердит identity churn.
+DoD: все зависимости перечислены, решение обосновано.
 
-### P0.2. Аналогично проверить `useTrainingModules.tsx`
+---
 
-Если trace покажет тот же паттерн:
+## PATCH 11 — Расширение единого `generate-from-template` до `ai_document_mode`
 
-- не схлопывать layout на background refresh;
-- стабилизировать зависимости;
-- не ломать access state при tab return.
+Расширяем существующую edge function. Не создаём второй pipeline.
 
-### P0.3. Guard в `LibraryLesson.tsx`
+**Гарантия обратной совместимости**: если параметр `mode` не передан, поведение **строго текущее** (billing mode). `mode` = `'billing'` (default) | `'ai_document'`.
 
-Даже если refetch идёт:
+DoD: старый billing mode не сломан, вызов без `mode` = текущее поведение, новый ai_document_mode работает через тот же pipeline.
 
-- не подменять уже открытый lesson full-page skeleton’ом;
-- skeleton допустим только на cold start / first load;
-- при tab return реальный DOM страницы должен оставаться на месте.
+---
 
-### P0.4. Guard в `KvestLessonView.tsx`
+## PATCH 12 — End-to-end «Годовое собрание»
 
-Если refetch пришёл с тем же `lessonId` и тем же `currentStepIndex`:
+UI wizard: выбор компании → проверка связей → выбор участников (checklist) → председатель/секретарь/подписант → дозапрос manual fields → генерация 4 DOCX.
 
-- никаких `setCurrentStepIndex`
-- никаких `goToStep`
-- никаких `scrollToBlock`
-- никаких `scrollIntoView`
-- transient `null/undefined` state во время refetch не должен влиять на UI state.
+Только DOCX output. PDF и Excel — future.
 
-### P1. visibilitychange restore — только backup layer
+DoD: комплект генерируется, реквизиты подставляются, missing данные дозапрашиваются.
 
-Оставлять только как страховку после закрытия P0 причины.
-Не использовать как “замазку” вместо устранения page-level collapse.
+---
 
-### P2. Миграция на React Query
+## PATCH 13 — Security hardening
 
-Не обязательна первой мерой.
-Рассматривать только если минимальный P0 fix не решает баг без побочных эффектов.
+Passport fields в AI prompt — только через **whitelist**. Audit logs на CUD person и link. UI warning при создании физлица.
 
-## STOP-guard
+DoD: sensitive fields не уходят в AI без whitelist, audit на CUD есть, warning в UI.
 
-До event trace запрещено:
+---
 
-- объявлять root cause доказанной;
-- удалять старый route PATCH;
-- объявлять старую причину “ложной” без trace;
-- переписывать весь scroll subsystem;
-- закрывать PATCH по code review, build clean или общему описанию изменений.
+## PATCH 14 — Regression / acceptance + reuse proof
 
-Без видео + trace + before/after на одном и том же маршруте PATCH не считается выполненным.
+Проверить: `/settings/legal-details`, billing generation, MNS pipeline, executors, generated_documents.
 
-## Proof requirements после выполнения
+Дополнительные проверки:
+- Billing-запись **видна** в AI-разделе, но **не редактируется** там
+- Editing flow links — **только из карточки юрлица/ИП**
+- Повторный ввод УНП не создаёт дубль
+- Один person_id связан с несколькими legal_details_id
 
-Обязательный маршрут для сравнения до/после:
+DoD: все старые и новые flows работают, reuse подтверждён.
 
-- один и тот же длинный lesson route, например `/library/.../...`
+---
 
-Обязательные сценарии на одном и том же маршруте:
+## Порядок выполнения
 
-1. длинный квест;
-2. прокрутка в середину/низ;
-3. переход между шагами внутри квеста;
-4. уход на другую вкладку на 5–10 секунд;
-5. возврат;
-6. back/forward;
-7. hard refresh.
+```text
+PATCH 0 → 1 → 2 → 3,4 (параллельно) → 5 → 6 → 7 → 8 → 9 → 10 → 10.5 → 11 → 12 → 13 → 14
+```
 
-По каждому сценарию:
+Checkpoint перед PATCH 11: результат PATCH 10.5 подтверждён.
 
-- видео до фикса;
-- видео после фикса;
-- event trace до фикса;
-- event trace после фикса;
-- before/after по `scrollY`, `scrollHeight`, `currentStepIndex`;
-- указание, был ли spinner / DOM collapse / remount.
+---
 
-## DoD (расширенный, add-only)
+## Общий DoD проекта
 
-Сохраняется из предыдущих планов:
-
-- route POP восстанавливает scroll;
-- PUSH сбрасывает в 0;
-- повторные визиты не показывают init spinner;
-- cold start не сломан;
-- banned redirect не сломан;
-- logout/login не ломает навигацию.
-
-Добавляется:
-
-- root cause для tab-switch либо доказан, либо явно помечен как not proven;
-- найден первый конкретный код, который сбрасывает scroll / step / DOM subtree;
-- при tab return DOM не схлопывается: `scrollHeight` и высота контента не падают до loader-state;
-- при tab return нет spinner;
-- при tab return нет прыжка вверх;
-- при tab return не меняется текущий шаг;
-- нет скрытого `scrollTo` / `scrollIntoView` после возврата;
-- приложены видео и trace до/после на одном и том же маршруте;
-- browser restore / bfcache проверен отдельно.
-
-## Финальный статус плана
-
-
-| Что                       | Статус                                                 |
-| ------------------------- | ------------------------------------------------------ |
-| Route-navigation bug      | отдельный PATCH, implementation present, proof missing |
-| Tab-switch bug            | отдельный PATCH, root cause unconfirmed until trace    |
-| Browser restore / bfcache | отдельный PATCH, diagnostic pending                    |
-
-
-Итог направления: следующий шаг не “ещё один blind scroll patch”, а read-only event trace по tab-switch с проверкой `LibraryLesson -> useTrainingLessons -> lessonsLoading -> skeleton collapse` как текущей основной P0-гипотезы. Только после доказательства этой точки сброса — точечный фикс.
+- В /ai есть вкладка «Реквизиты» с подвкладками «Юрлица / ИП» и «Физлица»
+- Связи реализованы **только внутри карточки юрлица** (не отдельной вкладкой)
+- В карточке физлица — **только read-only reference** на связанные компании
+- Billing-записи в AI-разделе — **read-only**, редактирование только через /settings
+- `client_legal_details` остаётся source of truth
+- Физлица и связи — отдельные таблицы
+- Антидубль по УНП через существующий GRP flow
+- Антидубль физлиц по personal_number / passport / soft warning
+- AI chat реальный, не заглушка, не autonomous agent
+- AI не пишет шаблон с нуля
+- DOCX генерируется через единый `generate-from-template` (расширенный)
+- Вызов без `mode` = текущее billing-поведение без изменений
+- Нет второго generator pipeline
+- Повторяющиеся блоки — через docxtemplater loops
+- Первый пакет из 4 документов работает
+- Billing flow не сломан
+- `/settings/legal-details` не сломан
+- MNS pipeline не сломан
+- Audit и RLS на новых сущностях есть
+- Sensitive fields в AI prompt только через whitelist
+- Только DOCX output в первом релизе
