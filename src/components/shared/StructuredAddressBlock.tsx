@@ -231,7 +231,9 @@ export function StructuredAddressBlock({
   );
 
   const handleBlur = useCallback(() => {
-    setTimeout(() => { if (!isSelectingRef.current) setIsOpen(false); }, 200);
+    setTimeout(() => {
+      if (!isSelectingRef.current && !isHoveringDropdownRef.current) setIsOpen(false);
+    }, 200);
   }, [setIsOpen]);
 
   const showDropdown = isOpen && predictions.length > 0 && dropdownPos !== null;
