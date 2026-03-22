@@ -246,6 +246,39 @@ export type Database = {
           },
         ]
       }
+      ai_chat_messages: {
+        Row: {
+          attachments: Json | null
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          role: string
+          user_id: string
+        }
+        Insert: {
+          attachments?: Json | null
+          content: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role: string
+          user_id: string
+        }
+        Update: {
+          attachments?: Json | null
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       ai_handoffs: {
         Row: {
           assigned_to: string | null
@@ -1232,6 +1265,8 @@ export type Database = {
           leg_unp: string | null
           phone: string | null
           profile_id: string
+          purpose: string
+          status: string
           updated_at: string
           validated_at: string | null
           validation_errors: Json | null
@@ -1277,6 +1312,8 @@ export type Database = {
           leg_unp?: string | null
           phone?: string | null
           profile_id: string
+          purpose?: string
+          status?: string
           updated_at?: string
           validated_at?: string | null
           validation_errors?: Json | null
@@ -1322,6 +1359,8 @@ export type Database = {
           leg_unp?: string | null
           phone?: string | null
           profile_id?: string
+          purpose?: string
+          status?: string
           updated_at?: string
           validated_at?: string | null
           validation_errors?: Json | null
@@ -3746,6 +3785,227 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      legal_details_entity_person_links: {
+        Row: {
+          acts_on_basis: string | null
+          created_at: string
+          custom_position_text: string | null
+          custom_role_text: string | null
+          end_date: string | null
+          id: string
+          is_primary: boolean
+          legal_details_id: string
+          notes: string | null
+          person_id: string
+          position_catalog_id: string | null
+          profile_id: string
+          role_catalog_id: string
+          role_type: string
+          share_percent: number | null
+          start_date: string | null
+          updated_at: string
+        }
+        Insert: {
+          acts_on_basis?: string | null
+          created_at?: string
+          custom_position_text?: string | null
+          custom_role_text?: string | null
+          end_date?: string | null
+          id?: string
+          is_primary?: boolean
+          legal_details_id: string
+          notes?: string | null
+          person_id: string
+          position_catalog_id?: string | null
+          profile_id: string
+          role_catalog_id: string
+          role_type: string
+          share_percent?: number | null
+          start_date?: string | null
+          updated_at?: string
+        }
+        Update: {
+          acts_on_basis?: string | null
+          created_at?: string
+          custom_position_text?: string | null
+          custom_role_text?: string | null
+          end_date?: string | null
+          id?: string
+          is_primary?: boolean
+          legal_details_id?: string
+          notes?: string | null
+          person_id?: string
+          position_catalog_id?: string | null
+          profile_id?: string
+          role_catalog_id?: string
+          role_type?: string
+          share_percent?: number | null
+          start_date?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_details_entity_person_links_legal_details_id_fkey"
+            columns: ["legal_details_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_details_entity_person_links_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "legal_details_persons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_details_entity_person_links_position_catalog_id_fkey"
+            columns: ["position_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "legal_details_positions_catalog"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_details_entity_person_links_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_details_entity_person_links_role_catalog_id_fkey"
+            columns: ["role_catalog_id"]
+            isOneToOne: false
+            referencedRelation: "legal_details_roles_catalog"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_details_persons: {
+        Row: {
+          address_structured: Json | null
+          birth_date: string | null
+          created_at: string
+          email: string | null
+          full_name: string
+          id: string
+          is_active: boolean
+          notes: string | null
+          passport_issued_by: string | null
+          passport_issued_date: string | null
+          passport_number: string | null
+          passport_series: string | null
+          passport_valid_until: string | null
+          personal_number: string | null
+          phone: string | null
+          profile_id: string
+          updated_at: string
+        }
+        Insert: {
+          address_structured?: Json | null
+          birth_date?: string | null
+          created_at?: string
+          email?: string | null
+          full_name: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          passport_issued_by?: string | null
+          passport_issued_date?: string | null
+          passport_number?: string | null
+          passport_series?: string | null
+          passport_valid_until?: string | null
+          personal_number?: string | null
+          phone?: string | null
+          profile_id: string
+          updated_at?: string
+        }
+        Update: {
+          address_structured?: Json | null
+          birth_date?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          passport_issued_by?: string | null
+          passport_issued_date?: string | null
+          passport_number?: string | null
+          passport_series?: string | null
+          passport_valid_until?: string | null
+          personal_number?: string | null
+          phone?: string | null
+          profile_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_details_persons_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_details_positions_catalog: {
+        Row: {
+          code: string
+          country_scope: string | null
+          id: string
+          is_active: boolean
+          is_system: boolean
+          label: string
+          sort_order: number
+        }
+        Insert: {
+          code: string
+          country_scope?: string | null
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          label: string
+          sort_order?: number
+        }
+        Update: {
+          code?: string
+          country_scope?: string | null
+          id?: string
+          is_active?: boolean
+          is_system?: boolean
+          label?: string
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      legal_details_roles_catalog: {
+        Row: {
+          code: string
+          id: string
+          is_active: boolean
+          label: string
+          role_type: string
+          sort_order: number
+        }
+        Insert: {
+          code: string
+          id?: string
+          is_active?: boolean
+          label: string
+          role_type: string
+          sort_order?: number
+        }
+        Update: {
+          code?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          role_type?: string
+          sort_order?: number
+        }
+        Relationships: []
       }
       lesson_attachments: {
         Row: {
