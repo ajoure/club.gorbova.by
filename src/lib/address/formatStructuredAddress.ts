@@ -27,8 +27,10 @@ function isBelarus(structured: CanonicalAddressPayload): boolean {
   const code = (structured as any).country_code;
   if (code && code.toUpperCase() === 'BY') return true;
   const country = structured.country;
-  if (!country) return false;
-  return /беларус/i.test(country);
+  if (country && /беларус/i.test(country)) return true;
+  // Fallback: if city is Minsk, it's always Belarus
+  if (isMinsk(structured.city)) return true;
+  return false;
 }
 
 /** Format city/settlement with type prefix if not already present */
@@ -43,17 +45,42 @@ function formatLocality(city: string | null | undefined): string {
 }
 
 /**
+ * Common city-internal district names that are never oblast-level districts.
+ * These appear in many Belarusian cities (Центральный, Ленинский, etc.)
+ */
+const KNOWN_CITY_DISTRICT_PATTERNS = [
+  'центральн', 'ленинск', 'октябрьск', 'фрунзенск', 'московск',
+  'первомайск', 'советск', 'заводск', 'партизанск', 'железнодорожн',
+];
+
+/**
  * Determine if a district is a city-internal district (e.g. "Фрунзенский район")
  * vs an oblast-level district (e.g. "Лидский район").
- * Conservative: only hide if district clearly derives from the city name.
+ * For Minsk: all districts are city-internal → always hide.
+ * For others: conservative heuristic — hide only if clearly city-internal.
  */
 function isCityDistrict(district: string | null | undefined, city: string | null | undefined): boolean {
   if (!district || !city) return false;
+
+  // For Minsk, ALL districts are city-internal
+  if (isMinsk(city)) return true;
+
+  const districtLower = district.toLowerCase();
+
+  // Check against known city-internal district patterns
+  if (KNOWN_CITY_DISTRICT_PATTERNS.some(p => districtLower.includes(p))) {
+    return true;
+  }
+
+  // Fallback: check if district name derives from city name
+  // Only match if district adjective starts with city root AND city is large enough
+  // This catches "Минский район" for Минск but NOT "Лидский район" for Лида
+  // because for oblast-level districts the district name matches the city — we should KEEP those
+  // So this fallback is intentionally conservative: only trigger for cities with 5+ char names
   const normalizedCity = city.replace(/^(г\.|город|гор\.)\s*/i, '').trim();
-  if (!normalizedCity || normalizedCity.length < 3) return false;
-  // Build a root from city name (e.g. "Минск" → "Минс", "Брест" → "Брес")
-  const cityRoot = normalizedCity.slice(0, Math.max(3, normalizedCity.length - 1));
-  return new RegExp(cityRoot, 'i').test(district);
+  if (!normalizedCity || normalizedCity.length < 5) return false;
+  const cityRoot = normalizedCity.slice(0, Math.max(4, normalizedCity.length - 1));
+  return new RegExp('^' + cityRoot, 'i').test(district.replace(/\s*район$/i, '').trim());
 }
 
 /** Build 2-line Belarus address: [street line, location line] */
