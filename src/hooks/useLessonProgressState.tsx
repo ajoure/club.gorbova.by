@@ -86,7 +86,8 @@ export function useLessonProgressState(lessonId?: string) {
 
   // Save state to DB (debounced)
   const saveState = useCallback(async (newState: LessonProgressStateData) => {
-    if (!lessonId || !user) return;
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) return;
 
     // Skip save if data is identical to last saved version
     const newJson = JSON.stringify(newState);
