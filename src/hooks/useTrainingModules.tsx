@@ -58,11 +58,14 @@ export function useTrainingModules() {
   const [modules, setModules] = useState<TrainingModule[]>([]);
   const [loading, setLoading] = useState(true);
   const isAdminUser = isAdmin();
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchModules = useCallback(async () => {
     try {
-      setLoading(true);
-      
+      // Only show loading on initial fetch — background refetch must NOT collapse DOM
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       // Fetch modules
       const { data: modulesData, error: modulesError } = await supabase
         .from("training_modules")
