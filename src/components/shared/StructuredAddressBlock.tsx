@@ -252,8 +252,13 @@ export function StructuredAddressBlock({
           onMouseLeave={() => {
             isHoveringDropdownRef.current = false;
           }}
+          onPointerDown={(e) => {
+            // Capture pointer before Radix Sheet overlay can intercept
+            e.preventDefault();
+            e.stopPropagation();
+            isSelectingRef.current = true;
+          }}
           onMouseDown={(e) => {
-            // Prevent blur on input + prevent document-level handler from closing dropdown
             e.preventDefault();
             e.stopPropagation();
             isSelectingRef.current = true;
