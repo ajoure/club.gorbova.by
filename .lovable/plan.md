@@ -1,233 +1,213 @@
 да, согласен, с учетом правок:
 
-1. В Этапе A добавь **обязательный proof по одному и тому же кейсу** в двух местах:
+1. В Этапе A не фиксируйте root cause заранее как “именно copy-ID”. Нужно доказать фактически, где ломается interaction-chain:
+  - `pointerdown/mousedown` по suggestion
+  - `blur` input
+  - `click` по suggestion
+  - `onSelect`
+  - `onChange(merged)`
+  - copy-handler label  
+  И только после этого писать точную причину.
+2. В proof обязательно показать **один и тот же кейс** в двух путях:
   - `/ai`
   - `/settings/legal-details`  
-  Для одной и той же записи/УНП показать:
-  - что лежит в `address_structured` до save,
-  - что лежит после save,
-  - что реально рендерится в preview/view.  
-  Иначе можно починить только один путь.
-2. Раздели hotfix на два уровня и не смеш
-3. PATCH 5R++ HOTFIX
+  с одинаковым адресом и одинаковым ожидаемым результатом.
+3. Добавьте обязательный proof не только для mouse path, но и для:
+  - keyboard path (`ArrowDown` + `Enter`)
+  - blur после выбора  
+  Иначе можно починить только клик мышью.
+4. В regression-proof зафиксируйте, что после hotfix не ломаются:
+  - ручной ввод адреса без выбора подсказки
+  - lookup по УНП + apply из `GrpConfirmDialog`
+  - сохранение legacy-полей из `address_structured`
+  - preview/view formatter для Минска и не-Минска
+5. В proof-пакете для `/ai` и `/settings/legal-details` показать не только UI, но и данные:
+  - `address_structured` до save
+  - `address_structured` после save
+  - legacy-поля после save (`street/house/building/apartment/city/region/postal_code/...`)  
+  чтобы было видно, где именно теряются значения, если теряются.
+6. В hotfix явно запретить смешивание display-логики и input-логики:
+  - formatter/view shell не трогаем
+  - правим только shared interaction/data-flow слоя адреса  
+  Иначе снова можно “починить показ”, но оставить сломанным ввод.
+7. Repo-wide coverage оформить явно списком consumer-экранов, которые реально используют `StructuredAddressBlock`, и по каждому дать статус:
+  - проверен / не затронут
+  - требует фикс / не требует фикс
+8. В итоговый DoD добавьте отдельный критерий:
+  - при выборе suggestion **не появляется toast** `ID скопирован`
+  - выбирается именно адрес
+  - все доступные адресные сегменты реально подставляются в форму
+9. До закрытия этого hotfix PATCH 6 действительно не начинать.
+10. &nbsp;
+11. PATCH 5R++ HOTFIX — address input flow proof + fix
 
-## Что уже доказано по факту
+## Что уже видно по коду
 
-### Блокер 1 — почему в UI все еще виден «Центральный район»
+1. Баг локализован не во formatter, а в общем input-shell:
 
-Проблема уже локализована, это не “не тот shell”:
+- `StructuredAddressBlock` — единый компонент адреса для всей системы
+- именно он отвечает и за dropdown Google, и за кликабельные label с `ID скопирован`
 
-- `EntityRecordSheet` действительно вызывает `formatStructuredAddressForView(...)`
-- адрес уже рендерится построчно через `addressLines.map(...)`
-- старого `.join(...)` в view-path нет
+2. Общий риск уже понятен:
 
-Значит, проблема не в рендере shell, а в самих данных/правиле formatter.
+- в `StructuredAddressBlock` label поля адреса кликабелен и копирует FLD-ID
+- тот же компонент рендерит autocomplete dropdown
+- пользовательский симптом “при выборе адреса копируется ID, а адрес не подставляется” совпадает с конфликтом внутри этого shared-компонента, а не с view formatter
 
-Для записи `30347fc5-8b43-4391-88b4-9cdcf7befcb1` в БД сейчас лежит:
+3. Важное покрытие по путям:
 
-```text
-city = Минск
-district = Минский район
-settlement = Центральный район
-region = Минская область
-postal_code = 220035
-street = ул. Панфилова
-house = 2
-apartment = 49л
-source = grp
-```
+- `/ai` и `/settings/legal-details` используют один и тот же `OrganizationDetailsForm`
+- оба пути используют один и тот же `StructuredAddressBlock`
+- значит фикс должен идти в shared address-flow, а не точечно в preview
 
-Именно поэтому UI показывает:
+4. Зоны использования, которые надо проверить:
 
-```text
-ул. Панфилова, д. 2, пом. 49л
-220035, г. Минск, Центральный район
-```
-
-Точный root cause:
-
-- formatter для Минска уже скрывает `district`
-- но он все еще добавляет `settlement`
-- в текущих данных `settlement = Центральный район`
-- значит район города протекает в display не через `district`, а через `settlement`
-
-Это и есть главный дефект по адресу.
-
-### Блокер 2 — что уже доказано по lookup МНС/ГРП
-
-Backend lookup сейчас отвечает корректно. Прямой вызов `grp-lookup` по УНП `193405000` вернул `200` и валидные данные:
-
-- полное наименование
-- адрес
-- статус
-- ИМНС
-- дата регистрации
-
-То есть:
-
-- edge-function жива
-- внешний реестр отвечает
-- контракт `grp-lookup` не сломан на backend-уровне
-
-Следовательно, если lookup “не работает” в реальном UI, root cause нужно искать в client-flow:
-
-- не уходит вызов из формы
-- не открывается confirm dialog
-- apply/save не сохраняет
-- либо ломается только в одном из путей (`/ai` vs `/settings/legal-details`)
+- `OrganizationDetailsForm`
+- `IndividualDetailsForm`
+- `EntrepreneurDetailsForm`
+- `AdminExecutors`
+- при необходимости legacy `LegalEntityDetailsForm`
 
 ## Что исправляем
 
-### 1) Hotfix адреса в реальном UI
+### Уровень 1 — interaction hotfix в `StructuredAddressBlock`
 
-Минимальный обязательный фикс:
+Цель: выбор подсказки всегда должен выбирать адрес, а не запускать copy-ID.
 
-**Файл:** `src/lib/address/formatStructuredAddress.ts`
+План фикса:
 
-Добавить Belarus-specific guard для `settlement`:
+- разобрать конфликт событий между:
+  - label click-copy
+  - focus/blur input
+  - click по dropdown option
+- минимально развести эти сценарии внутри `StructuredAddressBlock`
+- сохранить стандарт копирования FLD-ID, но убрать возможность его срабатывания вместо выбора address suggestion
+- отдельно проверить mouse path и keyboard path:
+  - click по suggestion
+  - Enter по suggestion
+  - blur после выбора
 
-- для `Минск / г. Минск / город Минск` не показывать `settlement`, если это район города
-- для Минска строка 2 должна быть только:
-  - `индекс`
-  - `г. Минск`
+Ожидаемый результат:
 
-Правило:
+- toast `ID скопирован` не появляется при выборе подсказки
+- `handleSelect()` реально отрабатывает
+- `onChange(merged)` обновляет состояние формы
 
-- Минск → скрыть `region`, `district`, `settlement`, если они дают район/область
-- Беларусь не-Минск → оставить `region`, оставить район области, скрывать только район города
-- generic formatter других стран не трогать
+### Уровень 2 — восстановить полный address-flow, а не только dropdown click
 
-### 2) Убрать источник повторного загрязнения адреса
+После выбора адреса должны корректно заполниться:
 
-Нужно не только спрятать вывод, но и проверить ingress-path.
+- улица
+- дом
+- корпус
+- помещение / квартира
+- город
+- область
+- индекс
+- страна
+- район / settlement при наличии
 
-Файлы для проверки и правки:
+Проверка и при необходимости правки:
 
-- `src/lib/legal-entities/GrpAddressParser.ts`
-- `src/lib/address/GrpAddressEnricher.ts`
-- `src/components/legal-details/OrganizationDetailsForm.tsx`
+- `GooglePlacesAdapter.parseComponents`
+- merge в `handleSelect` внутри `StructuredAddressBlock`
+- `handleAddressChange` в формах
+- адаптеры сохранения `*_AddressAdapter.toLegacyFields(...)`
+- чтение/запись `*_address_structured`
 
-Что проверить:
+## Порядок работ
 
-- не кладет ли parser городской район в `settlement`
-- не возвращает ли Google `sublocality/neighborhood = Центральный район`, который затем сохраняется как `settlement`
-- не перетирает ли enrichment корректный GRP-адрес городским районом
+### Этап A — shared root cause proof
 
-Цель hotfix:
+Для одного и того же кейса показать:
 
-- не ломая хранение канонической модели, перестать сохранять район города как display-значимый `settlement` для Минска
-- при этом не сломать адреса не-Минска и район области
+1. что `StructuredAddressBlock` получает dropdown predictions
+2. что выбор suggestion сейчас уводит в copy-ID / не обновляет address state
+3. какие именно поля остаются пустыми после “выбора”
+4. какие consumer-пути реально затронуты:
 
-### 3) Восстановить и доказать UI-flow lookup по УНП
+- `/ai`
+- `/settings/legal-details`
+- остальные места с `StructuredAddressBlock`
 
-Так как backend работает, hotfix по lookup должен идти через реальный flow.
+### Этап B — минимальный shared hotfix
 
-Файлы для диагностики/возможной правки:
+Файлы-кандидаты:
 
-- `src/components/legal-details/OrganizationDetailsForm.tsx`
-- `src/hooks/useGrpLookup.ts`
-- `src/components/legal-details/GrpConfirmDialog.tsx`
-- при необходимости `src/components/ai-requisites/EntityRecordSheet.tsx`
+- `src/components/shared/StructuredAddressBlock.tsx`
+- при необходимости `src/components/legal-details/OrganizationDetailsForm.tsx`
+- при необходимости `src/components/legal-details/IndividualDetailsForm.tsx`
+- при необходимости `src/components/legal-details/FieldLabelWithId.tsx` только если без этого нельзя безопасно развести interaction
 
-Проверяем по шагам:
+Принцип:
 
-1. ввод 9 цифр УНП
-2. уходит ли `supabase.functions.invoke("grp-lookup")`
-3. приходит ли ответ
-4. строится ли diff
-5. открывается ли `GrpConfirmDialog`
-6. после confirm применяются ли:
-  - форма
-  - название
-  - адрес
-  - grp_* metadata
-7. после save сохраняются ли данные в запись
-8. не сломан ли тот же flow в `/settings/legal-details`
+- чинить в общем компоненте
+- не переписывать formatter/view shell
+- не трогать PATCH 6
 
-Если регрессия окажется только в UI:
+### Этап C — proof по реальному UI-flow
 
-- фикс только в форме/confirm-flow
-- backend `grp-lookup` не трогаем
+Обязательный proof-пакет после фикса:
 
-## Порядок выполнения
+#### 1. `/ai`
 
-### Этап A — диагностика hotfix
+Для одного кейса:
 
-1. Проверить live UI-flow lookup в `/ai` и `/settings/legal-details`
-2. Снять network-proof вызова `grp-lookup`
-3. Снять proof, где именно ломается flow:
-  - request не ушел
-  - request ушел, но диалог не открылся
-  - диалог открылся, но apply/save не сохранил
-4. Зафиксировать адресный data-path на проблемной записи:
-  - что приходит в `EntityRecordSheet`
-  - какие поля использует formatter
-  - почему именно `settlement` попадает в display
+- ввод адреса
+- появление подсказок
+- выбор подсказки
+- заполнение всех ячеек
+- состояние `address_structured` до save
+- состояние `address_structured` после save
+- что реально показывается в preview/view
 
-### Этап B — минимальный кодовый hotfix
+#### 2. `/settings/legal-details`
 
-1. Исправить Belarus formatter для Минска
-2. При необходимости санировать ingress-path parser/enricher, чтобы район города не сохранялся как `settlement`
-3. Исправить UI-flow lookup только в том месте, где реально найден root cause
+Тот же тип proof:
 
-### Этап C — proof-пакет
+- ввод
+- подсказки
+- выбор
+- автозаполнение полей
+- save
+- повторное открытие
+- сохранённый `address_structured`
 
-Нужны 4 коротких proof:
+#### 3. Не-Минск кейс
 
-1. **Минск без района**
+Проверить, что адрес с областью/районом области:
 
-```text
-ул. Панфилова, д. 2, пом. 49л
-220035, г. Минск
-```
+- корректно подставляется в форму
+- корректно сохраняется
+- корректно показывается в preview
 
-2. **Минск без Минской области**
+#### 4. Regression-proof
 
-- в строке 2 нет `Минская область`
+Подтвердить, что после hotfix не сломаны:
 
-3. **Не-Минск по Беларуси**
+- lookup по УНП
+- confirm/apply flow
+- preview/view formatter для Минска
 
-```text
-ул. ...
-231300, Гродненская обл., Лидский р-н, г. Лида
-```
+## Короткий вывод по дизайну решения
 
-4. **УНП lookup снова работает**
+Это должен быть не “ещё один formatter patch”, а именно shared fix адресного interaction-layer.
 
-- ввод УНП
-- request уходит
-- confirm dialog открывается
-- apply/save работает
-- данные сохраняются
+Сначала закрываем:
 
-Дополнительно:
+- выбор подсказки
+- заполнение полей
+- сохранение в `address_structured`
+- proof в `/ai` и `/settings/legal-details`
 
-- proof, что `/settings/legal-details` не сломан
-- proof, что billing/view shell не сломан
+Только после этого PATCH 5R++ HOTFIX можно закрывать. PATCH 6 не начинать.
 
-## Какие файлы с высокой вероятностью войдут в hotfix
+## DoD
 
-- `src/lib/address/formatStructuredAddress.ts`
-- `src/lib/legal-entities/GrpAddressParser.ts`
-- `src/lib/address/GrpAddressEnricher.ts`
-- `src/components/legal-details/OrganizationDetailsForm.tsx`
-- возможно `src/hooks/useGrpLookup.ts` (только если root cause подтвердится там)
-
-## Обновленный DoD
-
-- для Минска в view никогда не показываются:
-  - Беларусь
-  - Минская область
-  - район города
-- `EntityRecordSheet` показывает:
-
-```text
-ул. Панфилова, д. 2, пом. 49л
-220035, г. Минск
-```
-
-- не-Минск Беларусь сохраняет область и район области
-- lookup МНС/ГРП работает в реальном UI, а не только на прямом вызове backend
-- confirm/update/save flow не регресснул
-- `/settings/legal-details` не сломан
-- только после этого PATCH 5R++ считается закрытым; к PATCH 6 не переходим
+- при выборе подсказки не срабатывает `ID скопирован`
+- suggestion selection реально подставляет адрес в форму
+- поля адреса массово заполняются из выбранного адреса
+- сохранение пишет корректный `*_address_structured`
+- один и тот же сценарий подтверждён в `/ai` и `/settings/legal-details`
+- preview/view после save показывает правильный адрес
+- lookup по УНП не регресснул
