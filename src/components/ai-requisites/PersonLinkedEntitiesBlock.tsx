@@ -36,7 +36,7 @@ export function PersonLinkedEntitiesBlock({ personId }: PersonLinkedEntitiesBloc
             id, client_type, leg_name, ent_name, leg_org_form
           ),
           legal_details_roles_catalog!legal_details_entity_person_links_role_catalog_id_fkey (
-            name
+            label
           )
         `)
         .eq('person_id', personId);
@@ -53,7 +53,7 @@ export function PersonLinkedEntitiesBlock({ personId }: PersonLinkedEntitiesBloc
           ? (entity.client_type === 'entrepreneur' ? entity.ent_name : entity.leg_name) || 'Без названия'
           : 'Без названия';
         const entityType = entity?.client_type || 'legal_entity';
-        const roleName = roleCatalog?.name || link.custom_role_text || null;
+        const roleName = roleCatalog?.label || link.custom_role_text || null;
 
         return { id: link.id, entityName, entityType, roleName };
       });

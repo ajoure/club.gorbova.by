@@ -5017,6 +5017,88 @@ export type Database = {
           },
         ]
       }
+      payment_links: {
+        Row: {
+          amount: number
+          created_at: string
+          created_by: string | null
+          currency: string
+          current_uses: number
+          description: string | null
+          expires_at: string | null
+          id: string
+          max_uses: number | null
+          offer_id: string | null
+          payment_type: string
+          product_id: string
+          status: string
+          tariff_id: string
+          updated_at: string
+          url_token: string
+          user_id: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          current_uses?: number
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          max_uses?: number | null
+          offer_id?: string | null
+          payment_type?: string
+          product_id: string
+          status?: string
+          tariff_id: string
+          updated_at?: string
+          url_token?: string
+          user_id?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          current_uses?: number
+          description?: string | null
+          expires_at?: string | null
+          id?: string
+          max_uses?: number | null
+          offer_id?: string | null
+          payment_type?: string
+          product_id?: string
+          status?: string
+          tariff_id?: string
+          updated_at?: string
+          url_token?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_links_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_links_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payment_links_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_method_verification_jobs: {
         Row: {
           attempt_count: number
