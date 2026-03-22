@@ -232,10 +232,9 @@ export function StructuredAddressBlock({
   );
 
   const handleBlur = useCallback(() => {
-    setTimeout(() => {
-      if (!isSelectingRef.current && !isHoveringDropdownRef.current) setIsOpen(false);
-    }, 200);
-  }, [setIsOpen]);
+    // Intentionally do not close on blur: portal dropdown selection must survive mouse transition
+    // Closing is handled by outside mousedown, Escape, scroll/resize, and successful selection.
+  }, []);
 
   const showDropdown = isOpen && predictions.length > 0 && dropdownPos !== null;
 
