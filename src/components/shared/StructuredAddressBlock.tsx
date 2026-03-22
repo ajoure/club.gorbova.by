@@ -95,11 +95,15 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      // Guard: don't close dropdown while an address selection is in progress
-      // (Radix Sheet overlay can re-target the event, making contains() fail)
-      if (isSelectingRef.current || isHoveringDropdownRef.current) return;
+      if (isSelectingRef.current || isHoveringDropdownRef.current) {
+        console.log('[ADDR] doc mousedown BLOCKED by guard', { selecting: isSelectingRef.current, hovering: isHoveringDropdownRef.current });
+        return;
+      }
       const target = e.target as Node;
-      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
+      const inContainer = containerRef.current?.contains(target);
+      const inDropdown = dropdownRef.current?.contains(target);
+      console.log('[ADDR] doc mousedown', { inContainer, inDropdown, target: (target as HTMLElement).tagName });
+      if (!inContainer && !inDropdown) {
         setIsOpen(false);
       }
     };
