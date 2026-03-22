@@ -147,7 +147,7 @@ function formatBelarusAddress(structured: CanonicalAddressPayload, apartmentPref
 }
 
 /** Build single-line generic address */
-function formatGenericAddress(structured: CanonicalAddressPayload): string {
+function formatGenericAddress(structured: CanonicalAddressPayload, apartmentPrefix = 'пом.'): string {
   const parts: string[] = [];
 
   if (structured.country) parts.push(structured.country);
