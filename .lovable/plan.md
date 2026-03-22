@@ -2,146 +2,152 @@
 
 &nbsp;
 
-1. ai_chat_messages привести к эталонной схеме:
+1. Validation trigger для role_type ↔ role_catalog_id нужен, это правильное исправление gap. Но лучше оформить это как **отдельную add-only догоняющую миграцию PATCH 2.x**, а не переписывать уже примененную миграцию задним числом.
+2. В trigger-функции не делать два одинаковых SELECT подряд в RAISE.
+  Сделать безопаснее:
   &nbsp;
-  - использовать user_id, а не profile_id;
-  - добавить conversation_id;
-  - оставить attachments jsonb;
-  - metadata можно добавлять только add-only, но не вместо attachments.
-    Иначе это будет расхождение с уже утвержденным планом PATCH 2 и PATCH 8.
+  - сначала SELECT role_type INTO v_catalog_role_type ...
+  - потом сравнение NEW.role_type <> v_catalog_role_type
+  - если v_catalog_role_type IS NULL, выбрасывать отдельную ошибку
+    Так функция будет чище и без повторных запросов.
   &nbsp;
-2. Для legal_details_persons не терять ранее зафиксированную модель адреса:
+3. В trigger обязательно оставить:
   &nbsp;
-  - нужен не только address_structured jsonb,
-  - но и сохранение/поддержка address_* полей, либо явное документированное решение, что они полностью вычисляются/рендерятся из address_structured без потери функционала StructuredAddressBlock.
-    Иначе можно сломать reuse shared form logic из PATCH 6.
+  - SECURITY INVOKER
+  - SET search_path = public
+    Это правильно и должно быть зафиксировано в миграции.
   &nbsp;
-3. Для legal_details_roles_catalog и legal_details_positions_catalog не делать public read.
-  Оставить чтение для authenticated и при необходимости admin manage.
-  public read здесь лишний и не был зафиксирован в эталонном плане.
-4. В legal_details_entity_person_links добавить явные CHECK-ограничения по семантике:
+4. В docs/PATCH_2_DDL_[REPORT.md](http://REPORT.md) нужно добавить не просто описание trigger, а явный proof:
   &nbsp;
-  - share_percent допустим только для founder;
-  - position_catalog_id / custom_position_text допустимы только для position;
-  - для other используется custom_role_text;
-  - запретить одновременно конфликтующие комбинации полей.
-    Сейчас в плане это описано логически, но не зафиксировано как constraint.
+  - имя функции
+  - имя trigger
+  - на какие события навешан (BEFORE INSERT OR UPDATE)
+  - на какую таблицу
+  - зачем нужен
+  - какой именно класс рассинхрона он запрещает
   &nbsp;
-5. Реализацию partial unique indexes не завязывать на подзапросы к role_type внутри predicate и не на хардкод UUID seed-записей.
-  Нужен безопасный, доказуемый способ без хардкод-UUID и без SQL-конструкций, которые могут быть нестабильны для partial index predicate. Это надо явно прописать до миграции.
-6. Для расширения client_legal_details вместе с колонками purpose и status сразу добавить:
+5. В proof-пакет PATCH 2 обязательно добавить:
   &nbsp;
-  - допустимые значения через CHECK или эквивалентный guard;
-  - индексы не только по (profile_id, purpose) и (profile_id, status), но только если они реально нужны по планируемым query paths.
-    Не добавлять “на всякий случай” лишние индексы без объяснения.
+  - список seed записей в legal_details_roles_catalog
+  - список seed записей в legal_details_positions_catalog
+  - список policy по всем 5 новым таблицам
+  - список 6 CHECK constraints
+  - список 4 partial unique indexes
+    Иначе PATCH 2 останется “логически доказан”, но не полностью документирован.
   &nbsp;
-7. В PATCH 2 явно зафиксировать, что:
+6. После применения trigger-миграции отдельно зафиксировать, что:
   &nbsp;
-  - существующие policy и existing partial unique index по is_default не меняются;
-  - setDefault guard по purpose='billing' **не реализуется в PATCH 2**, а только будет обязателен в следующем прикладном PATCH, где меняется логика.
-    Иначе scope PATCH 2 может расползтись.
-  &nbsp;
-8. В DoD уточнить:
-  &nbsp;
-  - “код не менялся” означает без UI/edge changes;
-  - auto-generated types.ts допустим, но только как следствие миграции;
-  - нужен proof applied schema: список созданных таблиц, колонок, policy и индексов после миграции.
+  - существующие данные не конфликтуют с новым trigger
+  - INSERT/UPDATE с корректным role_type проходят
+  - INSERT/UPDATE с несовпадающим role_type падают ожидаемо
+    Это нужно включить в DoD как proof-check.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-PATCH 2 — Новые таблицы + расширение `client_legal_details`
+После этих правок PATCH 2 можно будет считать закрытым полностью.
 
-## Scope
+&nbsp;
 
-6 миграций (один SQL-файл):
+PATCH 2 — Финальный proof-check + исправление gap
 
-1. `purpose` + `status` в `client_legal_details`
-2. `legal_details_persons`
-3. `legal_details_roles_catalog` + seed
-4. `legal_details_positions_catalog` + seed
-5. `legal_details_entity_person_links` + partial unique indexes
-6. `ai_chat_messages`
+## Proof по каждому пункту
 
-## Детали
+### 1. Schema proof — ПОДТВЕРЖДЁН
 
-### 1. Расширение `client_legal_details`
+Миграция содержит все заявленные объекты. Фактический SQL верифицирован.
+
+### 2. address_structured — ПОДТВЕРЖДЁН
+
+`legal_details_persons` содержит только `address_structured JSONB`, без legacy `address_*` колонок. Отчёт фиксирует: "StructuredAddressBlock работает с JSONB напрямую". Это согласуется с canonical address persistence model (CanonicalAddressPayload).
+
+### 3. CHECK constraints на links — ПОДТВЕРЖДЕНЫ (6 штук)
+
+Из SQL миграции:
+
+- `chk_share_percent_founder_only`: share_percent IS NULL OR role_type = 'founder'
+- `chk_position_catalog_position_only`: position_catalog_id IS NULL OR role_type = 'position'
+- `chk_custom_position_position_only`: custom_position_text IS NULL OR role_type = 'position'
+- `chk_custom_role_other_only`: custom_role_text IS NULL OR role_type = 'other'
+- `chk_position_exclusive`: position XOR custom (при role_type = 'position')
+- `chk_other_has_text`: role_type = 'other' → custom_role_text NOT NULL
+
+### 4. purpose/status CHECK — ПОДТВЕРЖДЕНЫ
+
+- `chk_client_legal_details_purpose`: purpose IN ('billing', 'document')
+- `chk_client_legal_details_status`: status IN ('active', 'archived')
+
+### 5. Partial unique indexes — ПОДТВЕРЖДЕНЫ (4 штуки)
+
+Все используют денормализованный `role_type` в WHERE predicate, без subquery, без UUID.
+
+### 6. RLS — ПОДТВЕРЖДЁН для всех 5 таблиц
+
+- persons: 5 policies (4 owner + 1 admin)
+- roles_catalog: 2 (authenticated read + admin)
+- positions_catalog: 2 (authenticated read + admin)
+- links: 5 (4 owner + 1 admin)
+- ai_chat_messages: 3 (2 owner + 1 admin)
+
+### 7. Scope boundary — ПОДТВЕРЖДЁН
+
+Отчёт явно фиксирует: hooks, UI, edge functions, setDefault, старые policy/indexes — не менялись.
+
+---
+
+## КРИТИЧЕСКИЙ GAP: role_type ↔ role_catalog_id синхронизация
+
+**Проблема**: в миграции нет trigger или FK-constraint, гарантирующего что `role_type` в строке links совпадает с `role_type` в referenced `legal_details_roles_catalog` записи. Возможен рассинхрон:
+
+- `role_catalog_id` → запись с role_type='position'
+- `role_type` в строке links = 'founder'
+
+Это делает все CHECK constraints и partial indexes логически хрупкими.
+
+**Решение**: добавить validation trigger на INSERT/UPDATE в `legal_details_entity_person_links`, который проверяет `NEW.role_type = (SELECT role_type FROM legal_details_roles_catalog WHERE id = NEW.role_catalog_id)`.
+
+---
+
+## План действий
+
+### Шаг 1: Миграция — добавить validation trigger
 
 ```sql
-ALTER TABLE public.client_legal_details
-  ADD COLUMN IF NOT EXISTS purpose TEXT NOT NULL DEFAULT 'billing',
-  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+CREATE OR REPLACE FUNCTION public.validate_link_role_type()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+BEGIN
+  IF NEW.role_type != (SELECT role_type FROM public.legal_details_roles_catalog WHERE id = NEW.role_catalog_id) THEN
+    RAISE EXCEPTION 'role_type mismatch: link.role_type=% but catalog.role_type=%',
+      NEW.role_type, (SELECT role_type FROM public.legal_details_roles_catalog WHERE id = NEW.role_catalog_id);
+  END IF;
+  RETURN NEW;
+END; $$;
 
-CREATE INDEX idx_client_legal_details_purpose ON public.client_legal_details(profile_id, purpose);
-CREATE INDEX idx_client_legal_details_status ON public.client_legal_details(profile_id, status);
+CREATE TRIGGER trg_validate_link_role_type
+  BEFORE INSERT OR UPDATE ON public.legal_details_entity_person_links
+  FOR EACH ROW EXECUTE FUNCTION public.validate_link_role_type();
 ```
 
-Все существующие записи автоматически получают `purpose='billing', status='active'`. Zero regression.
+### Шаг 2: Обновить docs/PATCH_2_DDL_REPORT.md
 
-### 2. `legal_details_persons`
+Добавить:
 
-Карточки физлиц. Поля: id, profile_id, full_name, birth_date, personal_number, passport_series/number/issued_by/issued_date/valid_until, phone, email, address_structured (JSONB), notes, is_active, created_at, updated_at.
-
-RLS: owner-based по `profile_id` (SELECT/INSERT/UPDATE/DELETE) + admin ALL.
-
-### 3. `legal_details_roles_catalog`
-
-Справочник типов связей. Поля: id, role_type (founder/position/other), code, label, sort_order, is_active.
-
-Seed: 3 записи — `founder` (Учредитель), `position` (Должностное лицо), `other` (Другое).
-
-Без RLS (public read).
-
-### 4. `legal_details_positions_catalog`
-
-Справочник должностей. Поля: id, code, label, country_scope, is_system, is_active, sort_order.
-
-Seed: Директор, Главный бухгалтер, Заместитель директора, Бухгалтер, Секретарь.
-
-Без RLS (public read).
-
-### 5. `legal_details_entity_person_links`
-
-Связи entity↔person. Поля: id, profile_id, legal_details_id (FK → client_legal_details), person_id (FK → legal_details_persons), role_catalog_id (FK → roles_catalog), position_catalog_id (FK nullable → positions_catalog), custom_role_text, custom_position_text, share_percent, acts_on_basis, is_primary, start_date, end_date, notes, created_at, updated_at.
-
-RLS: owner-based по `profile_id` + admin ALL.
-
-4 partial unique indexes per plan:
-
-- `uq_link_founder`: (legal_details_id, person_id, role_catalog_id) WHERE role_type=founder
-- `uq_link_position_catalog`: (legal_details_id, person_id, role_catalog_id, position_catalog_id) WHERE position_catalog_id IS NOT NULL
-- `uq_link_position_custom`: (legal_details_id, person_id, role_catalog_id, custom_position_text) WHERE position_catalog_id IS NULL AND custom_position_text IS NOT NULL
-- `uq_link_other`: (legal_details_id, person_id, role_catalog_id, custom_role_text) WHERE custom_role_text IS NOT NULL
-
-### 6. `ai_chat_messages`
-
-История AI-чата. Поля: id, profile_id, role (user/assistant/system), content, metadata (JSONB), created_at.
-
-RLS: owner-based по `profile_id` + admin ALL.
-
-### Triggers
-
-`updated_at` trigger на `legal_details_persons` и `legal_details_entity_person_links`.
-
-### Что НЕ меняется
-
-- Существующие RLS на `client_legal_details` — остаются как есть
-- Существующий unique index `idx_client_legal_details_default` — остаётся
-- Все edge functions — не трогаем
-- Все UI — не трогаем
+- Полный перечень CHECK constraints (6 шт) с точным SQL
+- Полный перечень RLS policies по таблицам
+- Секция "role_type consistency" — описание trigger
+- Секция "address model decision" — обоснование JSONB-only
+- Seed data перечень
 
 ### Файлы
 
-- 1 новая миграция (через database migration tool)
+- 1 новая миграция (validation trigger)
+- `docs/PATCH_2_DDL_REPORT.md` — дополнение proof-секций
 
 ### DoD
 
-- Миграция применена
-- 5 новых таблиц созданы
-- `client_legal_details` расширена двумя колонками
-- RLS на всех новых таблицах с персональными данными
-- Seed данные в каталогах
-- Partial unique indexes на links
-- Код не менялся (кроме auto-generated types.ts)
+- Trigger `trg_validate_link_role_type` создан
+- Рассинхрон role_type ↔ role_catalog_id невозможен на уровне БД
+- Отчёт содержит полный proof-пакет
+- PATCH 2 закрыт
