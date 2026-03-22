@@ -129,9 +129,9 @@ export function EntityViewSheet({
   const subtitle = [orgForm, unp ? `УНП ${unp}` : null].filter(Boolean).join(" · ");
 
   // Address — use structured data with fallback to flat string
-  const addressStructured = isEntrepreneur
-    ? (entity.ent_address_structured as CanonicalAddressPayload | null)
-    : (entity.leg_address_structured as CanonicalAddressPayload | null);
+  const addressStructured = (isEntrepreneur
+    ? entity.ent_address_structured
+    : entity.leg_address_structured) as unknown as CanonicalAddressPayload | null;
   const addressFallback = isEntrepreneur ? entity.ent_address : entity.leg_address;
   const addressLines = formatStructuredAddressForView(addressStructured, addressFallback);
 
