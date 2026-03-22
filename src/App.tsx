@@ -167,7 +167,9 @@ const App = () => {
               <Route path="/pricing" element={<Navigate to="/#pricing" replace />} />
               <Route path="/order-payment" element={<LazyRoute><OrderPayment /></LazyRoute>} />
               <Route path="/offer" element={<LazyRoute><Offer /></LazyRoute>} />
+              <Route path="/pay/:token" element={<LazyRoute><PublicPayPage /></LazyRoute>} />
               <Route path="/pay" element={<LazyRoute><Pay /></LazyRoute>} />
+              <Route path="/payment/result" element={<LazyRoute><PaymentResultPage /></LazyRoute>} />
               <Route path="/privacy" element={<LazyRoute><Privacy /></LazyRoute>} />
               <Route path="/consent" element={<LazyRoute><Consent /></LazyRoute>} />
               <Route path="/contacts" element={<LazyRoute><Contacts /></LazyRoute>} />
