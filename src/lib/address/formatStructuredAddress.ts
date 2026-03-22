@@ -95,7 +95,7 @@ function looksLikeCityDistrictValue(value: string | null | undefined): boolean {
 }
 
 /** Build 2-line Belarus address: [street line, location line] */
-function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
+function formatBelarusAddress(structured: CanonicalAddressPayload, apartmentPrefix = 'пом.'): string[] {
   const minskAddr = isMinsk(structured.city);
 
   // Line 1: street, house, building, apartment
