@@ -567,6 +567,24 @@ const AI = () => {
             </GlassCard>
           </div>
         )}
+
+        {/* Requisites stubs */}
+        {(activeSubTab === "entities" || activeSubTab === "persons") && (
+          <div className="flex flex-1 items-center justify-center min-h-[200px]">
+            <GlassCard className="max-w-md w-full text-center py-12">
+              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
+                {activeSubTab === "entities" && <Building2 className="h-8 w-8 text-indigo-500" />}
+                {activeSubTab === "persons" && <Users className="h-8 w-8 text-teal-500" />}
+              </div>
+              <h3 className="text-lg font-semibold mb-2">
+                {subTabs.find(t => t.id === activeSubTab)?.label}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Раздел в разработке. Здесь будет управление реквизитами для автозаполнения документов.
+              </p>
+            </GlassCard>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
