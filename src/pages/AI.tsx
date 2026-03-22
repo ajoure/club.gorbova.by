@@ -285,11 +285,22 @@ const AI = () => {
   const [recordSheetMode, setRecordSheetMode] = useState<RecordSheetMode>("view");
   const [recordSheetEntityId, setRecordSheetEntityId] = useState<string | null>(null);
   const aiEntities = useAiEntities();
+  const aiPersons = useAiPersons();
 
   // Derive entity from query data (stale-proof per state-management-standard)
   const recordSheetEntity = useMemo(
     () => aiEntities.allEntities.find(e => e.id === recordSheetEntityId) ?? null,
     [aiEntities.allEntities, recordSheetEntityId]
+  );
+
+  // Person management state
+  const [personSheetOpen, setPersonSheetOpen] = useState(false);
+  const [personSheetMode, setPersonSheetMode] = useState<RecordSheetMode>("view");
+  const [personSheetPersonId, setPersonSheetPersonId] = useState<string | null>(null);
+
+  const personSheetPerson = useMemo(
+    () => aiPersons.allPersons.find(p => p.id === personSheetPersonId) ?? null,
+    [aiPersons.allPersons, personSheetPersonId]
   );
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
@@ -318,6 +329,34 @@ const AI = () => {
     setRecordSheetMode("view");
     setRecordSheetOpen(true);
   }, []);
+
+  // Person handlers
+  const handleOpenCreatePersonSheet = useCallback(() => {
+    setPersonSheetPersonId(null);
+    setPersonSheetMode("create");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handleOpenViewPersonSheet = useCallback((person: PersonRow) => {
+    setPersonSheetPersonId(person.id);
+    setPersonSheetMode("view");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handleOpenExistingPerson = useCallback((id: string) => {
+    setPersonSheetPersonId(id);
+    setPersonSheetMode("view");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handlePersonCreate = useCallback(async (data: Record<string, any>) => {
+    await aiPersons.createPerson(data as any);
+  }, [aiPersons]);
+
+  const handlePersonUpdate = useCallback(async (data: Record<string, any>) => {
+    if (!personSheetPerson) return;
+    await aiPersons.updatePerson({ id: personSheetPerson.id, ...data } as any);
+  }, [aiPersons, personSheetPerson]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
