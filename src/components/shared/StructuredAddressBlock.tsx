@@ -95,6 +95,9 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      // Guard: don't close dropdown while an address selection is in progress
+      // (Radix Sheet overlay can re-target the event, making contains() fail)
+      if (isSelectingRef.current || isHoveringDropdownRef.current) return;
       const target = e.target as Node;
       if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
         setIsOpen(false);
@@ -249,8 +252,13 @@ export function StructuredAddressBlock({
           onMouseLeave={() => {
             isHoveringDropdownRef.current = false;
           }}
+          onPointerDown={(e) => {
+            // Capture pointer before Radix Sheet overlay can intercept
+            e.preventDefault();
+            e.stopPropagation();
+            isSelectingRef.current = true;
+          }}
           onMouseDown={(e) => {
-            // Prevent blur on input + prevent document-level handler from closing dropdown
             e.preventDefault();
             e.stopPropagation();
             isSelectingRef.current = true;
