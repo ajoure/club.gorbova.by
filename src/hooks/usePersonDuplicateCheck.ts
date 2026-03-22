@@ -138,15 +138,14 @@ export function usePersonDuplicateCheck() {
         }
       }
 
-      // Tier 3: Probable match by normalized full_name + exact birth_date
+      // Tier 3: Probable match — query by birth_date, normalize full_name in code (Variant A)
       if (input.full_name?.trim() && input.birth_date?.trim()) {
-        const normalizedName = normalizeName(input.full_name);
+        const normalizedInputName = normalizeName(input.full_name).toLowerCase();
 
         const query = supabase
           .from('legal_details_persons')
           .select(SELECT_FIELDS)
           .eq('profile_id', profileId)
-          .ilike('full_name', normalizedName)
           .eq('birth_date', input.birth_date.trim());
 
         if (excludePersonId) {
@@ -156,18 +155,24 @@ export function usePersonDuplicateCheck() {
         const { data, error } = await query;
         if (error) throw error;
 
-        if (data && data.length > 0) {
-          const r: PersonDuplicateResult = {
-            matchType: 'probable',
-            candidates: data as PersonMatchCandidate[],
-            matchReason: data.length > 1
-              ? `Найдено ${data.length} записей с похожими ФИО и датой рождения`
-              : 'Совпадение по ФИО и дате рождения',
-            isChecking: false,
-            error: null,
-          };
-          setResult(r);
-          return r;
+        if (data) {
+          const matched = data.filter(row =>
+            row.full_name && normalizeName(row.full_name).toLowerCase() === normalizedInputName
+          );
+
+          if (matched.length > 0) {
+            const r: PersonDuplicateResult = {
+              matchType: 'probable',
+              candidates: matched as PersonMatchCandidate[],
+              matchReason: matched.length > 1
+                ? `Найдено ${matched.length} записей с похожими ФИО и датой рождения`
+                : 'Совпадение по ФИО и дате рождения',
+              isChecking: false,
+              error: null,
+            };
+            setResult(r);
+            return r;
+          }
         }
       }
 
