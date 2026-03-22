@@ -173,7 +173,8 @@ function formatGenericAddress(structured: CanonicalAddressPayload, apartmentPref
  */
 export function formatStructuredAddressForView(
   structured: CanonicalAddressPayload | null | undefined,
-  fallback?: string | null
+  fallback?: string | null,
+  apartmentPrefix?: string
 ): string[] {
   if (!structured) {
     return fallback ? [fallback] : [];
