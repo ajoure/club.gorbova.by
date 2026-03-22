@@ -239,8 +239,10 @@ export function StructuredAddressBlock({
           ref={dropdownRef}
           role="listbox"
           onMouseDown={(e) => {
-            // Prevent document-level mousedown handler from closing dropdown
+            // Prevent blur on input + prevent document-level handler from closing dropdown
+            e.preventDefault();
             e.stopPropagation();
+            isSelectingRef.current = true;
           }}
           style={{
             position: 'fixed',
