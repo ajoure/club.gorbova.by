@@ -1237,6 +1237,15 @@ export type Database = {
           ent_address_structured: Json | null
           ent_name: string | null
           ent_unp: string | null
+          grp_last_fetched_at: string | null
+          grp_liquidation_date: string | null
+          grp_liquidation_reason: string | null
+          grp_registration_date: string | null
+          grp_short_name: string | null
+          grp_status_code: string | null
+          grp_status_name: string | null
+          grp_tax_office_code: string | null
+          grp_tax_office_name: string | null
           id: string
           ind_address_apartment: string | null
           ind_address_city: string | null
@@ -1284,6 +1293,15 @@ export type Database = {
           ent_address_structured?: Json | null
           ent_name?: string | null
           ent_unp?: string | null
+          grp_last_fetched_at?: string | null
+          grp_liquidation_date?: string | null
+          grp_liquidation_reason?: string | null
+          grp_registration_date?: string | null
+          grp_short_name?: string | null
+          grp_status_code?: string | null
+          grp_status_name?: string | null
+          grp_tax_office_code?: string | null
+          grp_tax_office_name?: string | null
           id?: string
           ind_address_apartment?: string | null
           ind_address_city?: string | null
@@ -1331,6 +1349,15 @@ export type Database = {
           ent_address_structured?: Json | null
           ent_name?: string | null
           ent_unp?: string | null
+          grp_last_fetched_at?: string | null
+          grp_liquidation_date?: string | null
+          grp_liquidation_reason?: string | null
+          grp_registration_date?: string | null
+          grp_short_name?: string | null
+          grp_status_code?: string | null
+          grp_status_name?: string | null
+          grp_tax_office_code?: string | null
+          grp_tax_office_name?: string | null
           id?: string
           ind_address_apartment?: string | null
           ind_address_city?: string | null
