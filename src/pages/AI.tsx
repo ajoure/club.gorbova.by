@@ -1,8 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
-import { EntityEditorSheet } from "@/components/ai-requisites/EntityEditorSheet";
-import { EntityViewSheet } from "@/components/ai-requisites/EntityViewSheet";
+import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -278,47 +277,44 @@ const AI = () => {
   const [activeSection, setActiveSection] = useState<Section>("ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
 
-  // Entity management state
-  const [entitySheetOpen, setEntitySheetOpen] = useState(false);
-  const [entitySheetMode, setEntitySheetMode] = useState<"create" | "edit">("create");
-  const [entitySheetTarget, setEntitySheetTarget] = useState<ClientLegalDetails | null>(null);
-  const [entityViewOpen, setEntityViewOpen] = useState(false);
-  const [entityViewTarget, setEntityViewTarget] = useState<ClientLegalDetails | null>(null);
+  // Entity management state — unified shell
+  const [recordSheetOpen, setRecordSheetOpen] = useState(false);
+  const [recordSheetMode, setRecordSheetMode] = useState<RecordSheetMode>("view");
+  const [recordSheetEntityId, setRecordSheetEntityId] = useState<string | null>(null);
   const aiEntities = useAiEntities();
+
+  // Derive entity from query data (stale-proof per state-management-standard)
+  const recordSheetEntity = useMemo(
+    () => aiEntities.allEntities.find(e => e.id === recordSheetEntityId) ?? null,
+    [aiEntities.allEntities, recordSheetEntityId]
+  );
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
     await aiEntities.createEntity(data);
   }, [aiEntities]);
 
   const handleEntityUpdate = useCallback(async (data: Partial<ClientLegalDetails>) => {
-    if (!entitySheetTarget) return;
-    await aiEntities.updateEntity({ id: entitySheetTarget.id, ...data });
-  }, [aiEntities, entitySheetTarget]);
+    if (!recordSheetEntity) return;
+    await aiEntities.updateEntity({ id: recordSheetEntity.id, ...data });
+  }, [aiEntities, recordSheetEntity]);
 
   const handleOpenCreateSheet = useCallback(() => {
-    setEntitySheetTarget(null);
-    setEntitySheetMode("create");
-    setEntitySheetOpen(true);
+    setRecordSheetEntityId(null);
+    setRecordSheetMode("create");
+    setRecordSheetOpen(true);
   }, []);
 
   const handleOpenViewSheet = useCallback((entity: ClientLegalDetails) => {
-    setEntityViewTarget(entity);
-    setEntityViewOpen(true);
-  }, []);
-
-  const handleOpenEditSheet = useCallback((entity: ClientLegalDetails) => {
-    setEntityViewOpen(false);
-    setEntitySheetTarget(entity);
-    setEntitySheetMode("edit");
-    setEntitySheetOpen(true);
+    setRecordSheetEntityId(entity.id);
+    setRecordSheetMode("view");
+    setRecordSheetOpen(true);
   }, []);
 
   const handleOpenExistingEntity = useCallback((id: string) => {
-    const found = aiEntities.allEntities.find(e => e.id === id);
-    if (found) {
-      handleOpenViewSheet(found);
-    }
-  }, [aiEntities.allEntities, handleOpenViewSheet]);
+    setRecordSheetEntityId(id);
+    setRecordSheetMode("view");
+    setRecordSheetOpen(true);
+  }, []);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -626,26 +622,19 @@ const AI = () => {
               onView={handleOpenViewSheet}
               onArchive={(id) => aiEntities.archiveEntity(id)}
             />
-            <EntityViewSheet
-              open={entityViewOpen}
-              onOpenChange={setEntityViewOpen}
-              entity={entityViewTarget}
+            <EntityRecordSheet
+              open={recordSheetOpen}
+              onOpenChange={setRecordSheetOpen}
+              mode={recordSheetMode}
+              onModeChange={setRecordSheetMode}
+              entity={recordSheetEntity}
+              profileId={aiEntities.profileId}
+              isSubmitting={recordSheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
               isArchiving={aiEntities.isArchiving}
-              onEdit={handleOpenEditSheet}
+              onSubmit={recordSheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
               onArchive={(id) => aiEntities.archiveEntity(id)}
+              onOpenExisting={handleOpenExistingEntity}
             />
-            {aiEntities.profileId && (
-              <EntityEditorSheet
-                open={entitySheetOpen}
-                onOpenChange={setEntitySheetOpen}
-                mode={entitySheetMode}
-                entity={entitySheetTarget}
-                profileId={aiEntities.profileId}
-                isSubmitting={entitySheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
-                onSubmit={entitySheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
-                onOpenExisting={handleOpenExistingEntity}
-              />
-            )}
           </>
         )}
 
