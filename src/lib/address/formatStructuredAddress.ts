@@ -78,7 +78,7 @@ function formatBelarusAddress(structured: CanonicalAddressPayload): string {
   if (structured.building) parts.push(`корп. ${structured.building}`);
 
   // 8. Apartment
-  if (structured.apartment) parts.push(`кв./оф. ${structured.apartment}`);
+  if (structured.apartment) parts.push(`пом. ${structured.apartment}`);
 
   return parts.join(', ');
 }
