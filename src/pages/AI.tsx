@@ -22,7 +22,8 @@ import {
   Calculator,
   Briefcase,
   ShieldCheck,
-  FileStack
+  FileStack,
+  Building2
 } from "lucide-react";
 
 interface ChatMessage {
@@ -149,12 +150,13 @@ const prompts: Prompt[] = [
 
 /* ─── Конфигурация секций и подменю ─── */
 
-type Section = "ai" | "documents";
-type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates";
+type Section = "ai" | "documents" | "requisites";
+type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates" | "entities" | "persons";
 
 const SECTIONS = [
   { id: "ai" as const, label: "Gorbova AI", icon: Bot },
   { id: "documents" as const, label: "Документы", icon: FileText },
+  { id: "requisites" as const, label: "Реквизиты", icon: Building2 },
 ];
 
 interface SubMenuItem {
@@ -236,9 +238,31 @@ const DOC_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+const REQ_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "entities",
+    label: "Юрлица / ИП",
+    icon: Building2,
+    gradient: "from-indigo-500/10 to-violet-500/8",
+    activeGradient: "from-indigo-500/20 to-violet-500/15",
+    borderColor: "border-indigo-400/20",
+    iconColor: "text-indigo-500",
+  },
+  {
+    id: "persons",
+    label: "Физлица",
+    icon: Users,
+    gradient: "from-teal-500/10 to-emerald-500/8",
+    activeGradient: "from-teal-500/20 to-emerald-500/15",
+    borderColor: "border-teal-400/20",
+    iconColor: "text-teal-500",
+  },
+];
+
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
   documents: "accountant",
+  requisites: "entities",
 };
 
 const AI = () => {
@@ -295,7 +319,7 @@ const AI = () => {
     setActiveSubTab(DEFAULT_SUB[section]);
   };
 
-  const subTabs = activeSection === "ai" ? AI_SUB_TABS : DOC_SUB_TABS;
+  const subTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
 
   /* ─── Главный таб (pill-bar) ─── */
   const sectionTabClass = (active: boolean) =>
@@ -539,6 +563,24 @@ const AI = () => {
               </h3>
               <p className="text-sm text-muted-foreground">
                 Раздел в разработке. Скоро здесь появятся полезные документы и шаблоны.
+              </p>
+            </GlassCard>
+          </div>
+        )}
+
+        {/* Requisites stubs */}
+        {(activeSubTab === "entities" || activeSubTab === "persons") && (
+          <div className="flex flex-1 items-center justify-center min-h-[200px]">
+            <GlassCard className="max-w-md w-full text-center py-12">
+              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
+                {activeSubTab === "entities" && <Building2 className="h-8 w-8 text-indigo-500" />}
+                {activeSubTab === "persons" && <Users className="h-8 w-8 text-teal-500" />}
+              </div>
+              <h3 className="text-lg font-semibold mb-2">
+                {subTabs.find(t => t.id === activeSubTab)?.label}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Раздел в разработке. Здесь будет управление реквизитами для автозаполнения документов.
               </p>
             </GlassCard>
           </div>
