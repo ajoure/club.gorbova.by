@@ -39,20 +39,30 @@ export function useLessonProgressState(lessonId?: string) {
   const saveStatusResetRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedJsonRef = useRef<string | null>(null);
 
+  // Stable user ID ref — prevents refetch on object identity churn (e.g. TOKEN_REFRESHED)
+  const userIdRef = useRef<string | undefined>(user?.id);
+  userIdRef.current = user?.id;
+
   // Fetch current state
   const fetchState = useCallback(async () => {
-    if (!lessonId || !user) {
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) {
       setRecord(null);
       setLoading(false);
       return;
     }
 
-    try {
+    // Only show loading on initial fetch, not on background refetch (prevents DOM collapse)
+    const isInitialFetch = !record;
+    if (isInitialFetch) {
       setLoading(true);
+    }
+
+    try {
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", uid)
         .eq("lesson_id", lessonId)
         .maybeSingle();
 
@@ -67,7 +77,8 @@ export function useLessonProgressState(lessonId?: string) {
     } finally {
       setLoading(false);
     }
-  }, [lessonId, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id]);
 
   useEffect(() => {
     fetchState();
