@@ -282,6 +282,8 @@ const AI = () => {
   const [entitySheetOpen, setEntitySheetOpen] = useState(false);
   const [entitySheetMode, setEntitySheetMode] = useState<"create" | "edit">("create");
   const [entitySheetTarget, setEntitySheetTarget] = useState<ClientLegalDetails | null>(null);
+  const [entityViewOpen, setEntityViewOpen] = useState(false);
+  const [entityViewTarget, setEntityViewTarget] = useState<ClientLegalDetails | null>(null);
   const aiEntities = useAiEntities();
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
