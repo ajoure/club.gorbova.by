@@ -239,8 +239,10 @@ export function StructuredAddressBlock({
           ref={dropdownRef}
           role="listbox"
           onMouseDown={(e) => {
-            // Prevent document-level mousedown handler from closing dropdown
+            // Prevent blur on input + prevent document-level handler from closing dropdown
+            e.preventDefault();
             e.stopPropagation();
+            isSelectingRef.current = true;
           }}
           style={{
             position: 'fixed',
@@ -304,6 +306,7 @@ export function StructuredAddressBlock({
               )}
               onClick={fieldIds?.get(field.key)?.publicId
                 ? () => {
+                    if (isSelectingRef.current) return;
                     navigator.clipboard.writeText(fieldIds.get(field.key)!.publicId);
                     toast.success("ID скопирован");
                   }
