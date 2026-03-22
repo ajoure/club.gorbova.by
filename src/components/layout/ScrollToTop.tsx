@@ -26,10 +26,15 @@ function onScroll() {
   }, SCROLL_THROTTLE_MS);
 }
 
+// ── Tab-switch scroll guard (P1 backup) ─────────────────────────────────
+// Save scrollY when tab goes hidden; restore when visible — protects against
+// any component that might cause DOM collapse / re-render on tab return.
+let savedScrollOnHide = 0;
+
 if (typeof window !== "undefined") {
   window.addEventListener("scroll", onScroll, { passive: true });
 
-  // Also save on beforeunload (tab close, external navigation)
+  // Save on beforeunload (tab close, external navigation)
   window.addEventListener("beforeunload", () => {
     try {
       if (window.scrollY > 0) {
@@ -38,14 +43,29 @@ if (typeof window !== "undefined") {
     } catch {}
   });
 
-  // Save on visibility change (tab switch)
+  // Save on visibility change (tab switch) + restore guard
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      savedScrollOnHide = window.scrollY;
       try {
         if (window.scrollY > 0) {
           sessionStorage.setItem(SCROLL_KEY_PREFIX + window.location.pathname, String(window.scrollY));
         }
       } catch {}
+    } else if (document.visibilityState === "visible" && savedScrollOnHide > 0) {
+      // Restore scroll position after tab return — use rAF to wait for any re-renders
+      const target = savedScrollOnHide;
+      requestAnimationFrame(() => {
+        if (Math.abs(window.scrollY - target) > 50) {
+          window.scrollTo(0, target);
+        }
+        // Double-check after potential async re-renders
+        requestAnimationFrame(() => {
+          if (Math.abs(window.scrollY - target) > 50) {
+            window.scrollTo(0, target);
+          }
+        });
+      });
     }
   });
 }
