@@ -198,6 +198,7 @@ export function StructuredAddressBlock({
       } catch (err) {
         console.error('[StructuredAddressBlock] handleSelect error:', err);
       } finally {
+        isHoveringDropdownRef.current = false;
         clearPredictions();
         isSelectingRef.current = false;
       }
