@@ -181,11 +181,9 @@ export function StructuredAddressBlock({
 
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
-      console.log('[ADDR] handleSelect START', prediction.placeId);
       isSelectingRef.current = true;
       try {
         const details = await fetchPlaceDetails(prediction);
-        console.log('[ADDR] fetchPlaceDetails done', !!details);
 
         if (details) {
           const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
@@ -199,7 +197,6 @@ export function StructuredAddressBlock({
             lat: details.lat,
             lng: details.lng,
           };
-          console.log('[ADDR] onChange called', { street: merged.street, city: merged.city, house: merged.house });
           onChange(merged);
         }
       } catch (err) {
@@ -208,7 +205,6 @@ export function StructuredAddressBlock({
         isHoveringDropdownRef.current = false;
         clearPredictions();
         isSelectingRef.current = false;
-        console.log('[ADDR] handleSelect FINALLY');
       }
     },
     [fetchPlaceDetails, clearPredictions, onChange, value]
