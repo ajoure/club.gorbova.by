@@ -9,14 +9,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
 
 export interface StructuredAddressBlockProps {
   value: StructuredAddress;
@@ -24,8 +22,8 @@ export interface StructuredAddressBlockProps {
   disabled?: boolean;
   compact?: boolean;
   countries?: string[];
-  /** Optional map: address field key (street, house, etc.) → registry entry for CopyableIdChip */
-  fieldIds?: Map<string, LegalDetailsFieldEntry>;
+  /** @deprecated fieldIds kept for interface compat — no longer interactive in address block */
+  fieldIds?: Map<string, unknown>;
 }
 
 interface FieldConfig {
@@ -179,25 +177,29 @@ export function StructuredAddressBlock({
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
       isSelectingRef.current = true;
-      const details = await fetchPlaceDetails(prediction);
+      try {
+        const details = await fetchPlaceDetails(prediction);
 
-      if (details) {
-        const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
-        const merged: StructuredAddress = {
-          ...emptyAddress(),
-          building: value.building,
-          apartment: value.apartment,
-          address_line_2: value.address_line_2,
-          ...parsed,
-          google_place_id: details.placeId,
-          lat: details.lat,
-          lng: details.lng,
-        };
-        onChange(merged);
+        if (details) {
+          const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const merged: StructuredAddress = {
+            ...emptyAddress(),
+            building: value.building,
+            apartment: value.apartment,
+            address_line_2: value.address_line_2,
+            ...parsed,
+            google_place_id: details.placeId,
+            lat: details.lat,
+            lng: details.lng,
+          };
+          onChange(merged);
+        }
+      } catch (err) {
+        console.error('[StructuredAddressBlock] handleSelect error:', err);
+      } finally {
+        clearPredictions();
+        isSelectingRef.current = false;
       }
-
-      clearPredictions();
-      isSelectingRef.current = false;
     },
     [fetchPlaceDetails, clearPredictions, onChange, value]
   );
@@ -263,12 +265,12 @@ export function StructuredAddressBlock({
                   'px-3 py-2 cursor-pointer text-sm transition-colors',
                   index === highlightIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
                 )}
-                onMouseDown={(e) => {
+                onPointerDown={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   isSelectingRef.current = true;
+                  handleSelect(p);
                 }}
-                onClick={() => handleSelect(p)}
                 onMouseEnter={() => setHighlightIndex(index)}
               >
                 <span className="font-medium">{p.mainText}</span>
@@ -300,24 +302,9 @@ export function StructuredAddressBlock({
           >
             <Label
               htmlFor={`addr-${field.key}`}
-              className={cn(
-                "text-xs text-muted-foreground mb-1 flex items-center gap-1",
-                fieldIds?.get(field.key)?.publicId && "cursor-pointer hover:text-primary transition-colors"
-              )}
-              onClick={fieldIds?.get(field.key)?.publicId
-                ? () => {
-                    if (isSelectingRef.current) return;
-                    navigator.clipboard.writeText(fieldIds.get(field.key)!.publicId);
-                    toast.success("ID скопирован");
-                  }
-                : undefined
-              }
-              title={fieldIds?.get(field.key)?.publicId
-                ? `${fieldIds.get(field.key)!.publicId} — клик для копирования`
-                : undefined
-              }
+              className="text-xs text-muted-foreground mb-1"
             >
-              <span>{field.label}</span>
+              {field.label}
             </Label>
             <Input
               id={`addr-${field.key}`}
