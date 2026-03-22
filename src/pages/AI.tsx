@@ -238,9 +238,31 @@ const DOC_SUB_TABS: SubMenuItem[] = [
   },
 ];
 
+const REQ_SUB_TABS: SubMenuItem[] = [
+  {
+    id: "entities",
+    label: "Юрлица / ИП",
+    icon: Building2,
+    gradient: "from-indigo-500/10 to-violet-500/8",
+    activeGradient: "from-indigo-500/20 to-violet-500/15",
+    borderColor: "border-indigo-400/20",
+    iconColor: "text-indigo-500",
+  },
+  {
+    id: "persons",
+    label: "Физлица",
+    icon: Users,
+    gradient: "from-teal-500/10 to-emerald-500/8",
+    activeGradient: "from-teal-500/20 to-emerald-500/15",
+    borderColor: "border-teal-400/20",
+    iconColor: "text-teal-500",
+  },
+];
+
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
   documents: "accountant",
+  requisites: "entities",
 };
 
 const AI = () => {
