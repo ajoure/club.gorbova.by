@@ -6,6 +6,7 @@ import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisi
 import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
 import type { PersonRow } from "@/hooks/useAiPersons";
+import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
