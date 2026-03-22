@@ -175,7 +175,7 @@ export function EntityTableView({
                   <TableRow
                     key={entity.id}
                     className="cursor-pointer"
-                    onClick={() => onEdit(entity)}
+                    onClick={() => onView(entity)}
                   >
                     <TableCell className="font-medium">
                       {getEntityShortName(entity)}
