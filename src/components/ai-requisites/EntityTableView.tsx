@@ -49,7 +49,7 @@ interface EntityTableViewProps {
   isLoading: boolean;
   isArchiving: boolean;
   onCreateNew: () => void;
-  onEdit: (entity: ClientLegalDetails) => void;
+  onView: (entity: ClientLegalDetails) => void;
   onArchive: (id: string) => void;
 }
 
