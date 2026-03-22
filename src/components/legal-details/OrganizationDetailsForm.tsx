@@ -149,6 +149,7 @@ export function OrganizationDetailsForm({
   const [grpDialogOpen, setGrpDialogOpen] = useState(false);
   const [grpResult, setGrpResult] = useState<GrpAutofillFields | null>(null);
   const [autofilledFields, setAutofilledFields] = useState<Set<string>>(new Set());
+  const [grpMeta, setGrpMeta] = useState<Record<string, string | null>>({});
 
   // Build default values from initialData, reading from correct namespace
   const getDefaultValues = (): FormData => {
