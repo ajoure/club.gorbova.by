@@ -622,26 +622,19 @@ const AI = () => {
               onView={handleOpenViewSheet}
               onArchive={(id) => aiEntities.archiveEntity(id)}
             />
-            <EntityViewSheet
-              open={entityViewOpen}
-              onOpenChange={setEntityViewOpen}
-              entity={entityViewTarget}
+            <EntityRecordSheet
+              open={recordSheetOpen}
+              onOpenChange={setRecordSheetOpen}
+              mode={recordSheetMode}
+              onModeChange={setRecordSheetMode}
+              entity={recordSheetEntity}
+              profileId={aiEntities.profileId}
+              isSubmitting={recordSheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
               isArchiving={aiEntities.isArchiving}
-              onEdit={handleOpenEditSheet}
+              onSubmit={recordSheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
               onArchive={(id) => aiEntities.archiveEntity(id)}
+              onOpenExisting={handleOpenExistingEntity}
             />
-            {aiEntities.profileId && (
-              <EntityEditorSheet
-                open={entitySheetOpen}
-                onOpenChange={setEntitySheetOpen}
-                mode={entitySheetMode}
-                entity={entitySheetTarget}
-                profileId={aiEntities.profileId}
-                isSubmitting={entitySheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
-                onSubmit={entitySheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
-                onOpenExisting={handleOpenExistingEntity}
-              />
-            )}
           </>
         )}
 
