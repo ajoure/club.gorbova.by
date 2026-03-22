@@ -1,8 +1,11 @@
 import { useState, useCallback, useMemo } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
+import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
-import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
+import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
+import type { PersonRow } from "@/hooks/useAiPersons";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
