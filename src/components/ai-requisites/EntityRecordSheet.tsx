@@ -344,7 +344,11 @@ export function EntityRecordSheet({
             <CardContent>
               <div className="flex items-start justify-between gap-2">
                 <span className="text-sm text-muted-foreground shrink-0">Юридический адрес</span>
-                <span className="text-sm text-right break-words">{addressLines.join(", ")}</span>
+                <div className="text-sm text-right break-words">
+                  {addressLines.map((line, i) => (
+                    <div key={i}>{line}</div>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>
