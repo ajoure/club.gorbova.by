@@ -20,10 +20,10 @@ export default function PaymentResultPage() {
   const isFailed = status === 'failed' || status === 'fail';
 
   const icon = isSuccess
-    ? <CheckCircle className="h-16 w-16 text-green-500" />
+    ? <CheckCircle className="h-16 w-16 text-primary" />
     : isDeclined
     ? <XCircle className="h-16 w-16 text-destructive" />
-    : <AlertTriangle className="h-16 w-16 text-yellow-500" />;
+    : <AlertTriangle className="h-16 w-16 text-muted-foreground" />;
 
   const title = isSuccess
     ? 'Оплата успешна!'
