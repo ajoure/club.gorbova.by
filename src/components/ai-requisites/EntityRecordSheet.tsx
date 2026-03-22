@@ -449,6 +449,19 @@ export function EntityRecordSheet({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
+          onPointerDownOutside={(e) => {
+            // Don't let Radix DismissableLayer interfere with portal dropdowns
+            const target = e.target as HTMLElement;
+            if (target.closest('[role="listbox"]') || target.closest('[data-address-dropdown]')) {
+              e.preventDefault();
+            }
+          }}
+          onInteractOutside={(e) => {
+            const target = e.target as HTMLElement;
+            if (target.closest('[role="listbox"]') || target.closest('[data-address-dropdown]')) {
+              e.preventDefault();
+            }
+          }}
         >
           {/* ── Header (identical shell across all modes) ── */}
           <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">

@@ -95,15 +95,9 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (isSelectingRef.current || isHoveringDropdownRef.current) {
-        console.log('[ADDR] doc mousedown BLOCKED by guard', { selecting: isSelectingRef.current, hovering: isHoveringDropdownRef.current });
-        return;
-      }
+      if (isSelectingRef.current || isHoveringDropdownRef.current) return;
       const target = e.target as Node;
-      const inContainer = containerRef.current?.contains(target);
-      const inDropdown = dropdownRef.current?.contains(target);
-      console.log('[ADDR] doc mousedown', { inContainer, inDropdown, target: (target as HTMLElement).tagName });
-      if (!inContainer && !inDropdown) {
+      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
         setIsOpen(false);
       }
     };
@@ -124,11 +118,7 @@ export function StructuredAddressBlock({
   useEffect(() => {
     if (!isOpen) return;
     const close = () => {
-      if (isSelectingRef.current) {
-        console.log('[ADDR] scroll/resize close BLOCKED by isSelecting');
-        return;
-      }
-      console.log('[ADDR] scroll/resize close — clearing predictions');
+      if (isSelectingRef.current) return;
       clearPredictions();
     };
     window.addEventListener('scroll', close, true);
@@ -191,11 +181,9 @@ export function StructuredAddressBlock({
 
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
-      console.log('[ADDR] handleSelect START', prediction.placeId);
       isSelectingRef.current = true;
       try {
         const details = await fetchPlaceDetails(prediction);
-        console.log('[ADDR] fetchPlaceDetails done', !!details);
 
         if (details) {
           const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
@@ -209,7 +197,6 @@ export function StructuredAddressBlock({
             lat: details.lat,
             lng: details.lng,
           };
-          console.log('[ADDR] onChange called', { street: merged.street, city: merged.city, house: merged.house });
           onChange(merged);
         }
       } catch (err) {
@@ -218,7 +205,6 @@ export function StructuredAddressBlock({
         isHoveringDropdownRef.current = false;
         clearPredictions();
         isSelectingRef.current = false;
-        console.log('[ADDR] handleSelect FINALLY');
       }
     },
     [fetchPlaceDetails, clearPredictions, onChange, value]
@@ -268,12 +254,10 @@ export function StructuredAddressBlock({
             isHoveringDropdownRef.current = false;
           }}
           onPointerDown={(e) => {
-            // Stop NATIVE propagation to prevent Radix DismissableLayer from intercepting
             e.preventDefault();
             e.stopPropagation();
             e.nativeEvent.stopImmediatePropagation();
             isSelectingRef.current = true;
-            console.log('[ADDR] dropdown container pointerdown — native propagation stopped');
           }}
           onMouseDown={(e) => {
             e.preventDefault();
@@ -301,7 +285,6 @@ export function StructuredAddressBlock({
                   index === highlightIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
                 )}
                 onPointerDown={(e) => {
-                  console.log('[ADDR] li pointerdown', p.placeId);
                   e.preventDefault();
                   e.stopPropagation();
                   e.nativeEvent.stopImmediatePropagation();
