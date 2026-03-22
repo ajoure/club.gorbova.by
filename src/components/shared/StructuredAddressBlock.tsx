@@ -179,25 +179,29 @@ export function StructuredAddressBlock({
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
       isSelectingRef.current = true;
-      const details = await fetchPlaceDetails(prediction);
+      try {
+        const details = await fetchPlaceDetails(prediction);
 
-      if (details) {
-        const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
-        const merged: StructuredAddress = {
-          ...emptyAddress(),
-          building: value.building,
-          apartment: value.apartment,
-          address_line_2: value.address_line_2,
-          ...parsed,
-          google_place_id: details.placeId,
-          lat: details.lat,
-          lng: details.lng,
-        };
-        onChange(merged);
+        if (details) {
+          const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
+          const merged: StructuredAddress = {
+            ...emptyAddress(),
+            building: value.building,
+            apartment: value.apartment,
+            address_line_2: value.address_line_2,
+            ...parsed,
+            google_place_id: details.placeId,
+            lat: details.lat,
+            lng: details.lng,
+          };
+          onChange(merged);
+        }
+      } catch (err) {
+        console.error('[StructuredAddressBlock] handleSelect error:', err);
+      } finally {
+        clearPredictions();
+        isSelectingRef.current = false;
       }
-
-      clearPredictions();
-      isSelectingRef.current = false;
     },
     [fetchPlaceDetails, clearPredictions, onChange, value]
   );
