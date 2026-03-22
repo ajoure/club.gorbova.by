@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { CopyableIdChip } from '@/components/ui/CopyableIdChip';
 import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
@@ -17,6 +16,7 @@ import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 export interface StructuredAddressBlockProps {
   value: StructuredAddress;
