@@ -238,6 +238,10 @@ export function StructuredAddressBlock({
         <div
           ref={dropdownRef}
           role="listbox"
+          onMouseDown={(e) => {
+            // Prevent document-level mousedown handler from closing dropdown
+            e.stopPropagation();
+          }}
           style={{
             position: 'fixed',
             top: dropdownPos.top,
@@ -257,7 +261,11 @@ export function StructuredAddressBlock({
                   'px-3 py-2 cursor-pointer text-sm transition-colors',
                   index === highlightIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
                 )}
-                onMouseDown={(e) => e.preventDefault()}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  isSelectingRef.current = true;
+                }}
                 onClick={() => handleSelect(p)}
                 onMouseEnter={() => setHighlightIndex(index)}
               >
