@@ -115,19 +115,19 @@ export function formatStructuredAddressForView(
     return fallback ? [fallback] : [];
   }
 
-  let result: string;
-
   if (isBelarus(structured)) {
-    result = formatBelarusAddress(structured);
-  } else {
-    result = formatGenericAddress(structured);
+    const lines = formatBelarusAddress(structured);
+    if (lines.length === 0) {
+      const fb = structured.formatted_address || structured.raw_input || fallback;
+      return fb ? [fb] : [];
+    }
+    return lines;
   }
 
-  // If no useful segments, fall back
+  const result = formatGenericAddress(structured);
   if (!result) {
     const fb = structured.formatted_address || structured.raw_input || fallback;
     return fb ? [fb] : [];
   }
-
   return [result];
 }
