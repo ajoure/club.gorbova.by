@@ -188,7 +188,7 @@ export function VideoUnskippableBlock({
         )}
         
         {embedUrl && (
-          <div className="aspect-video bg-black rounded-lg overflow-hidden opacity-70">
+          <div className="aspect-video bg-black rounded-lg overflow-hidden">
             <iframe
               src={embedUrl}
               className="w-full h-full"

@@ -488,7 +488,7 @@ export function KvestLessonView({
       case 'video_unskippable': {
         const stableKey = `${blockId}-${isCompleted ? 'completed' : 'active'}`;
         return (
-          <div key={stableKey} className={isReadOnly ? "opacity-80 pointer-events-none" : ""}>
+          <div key={stableKey}>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
