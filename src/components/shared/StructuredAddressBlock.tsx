@@ -25,6 +25,8 @@ export interface StructuredAddressBlockProps {
   compact?: boolean;
   countries?: string[];
   fieldIds?: Map<string, LegalDetailsFieldEntry>;
+  /** Override apartment field label (default: "Помещение"). For persons use "Квартира". */
+  apartmentLabel?: string;
 }
 
 interface FieldConfig {
