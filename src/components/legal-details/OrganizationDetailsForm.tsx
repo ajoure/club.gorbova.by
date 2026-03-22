@@ -344,6 +344,8 @@ export function OrganizationDetailsForm({
         bank_code: data.bank_code || null,
         phone: data.phone || null,
         email: data.email || null,
+        // GRP registry metadata
+        ...grpMeta,
         // Clear leg_* fields to avoid stale data on reopen
         leg_org_form: null,
         leg_name: null,
