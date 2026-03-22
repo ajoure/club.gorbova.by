@@ -207,7 +207,7 @@ export function EntityTableView({
                           className="text-xs"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onEdit(entity);
+                            onView(entity);
                           }}
                         >
                           <Pencil className="h-3 w-3 mr-1" />
