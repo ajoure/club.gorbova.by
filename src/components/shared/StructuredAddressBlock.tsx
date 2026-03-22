@@ -89,6 +89,7 @@ export function StructuredAddressBlock({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const isSelectingRef = useRef(false);
+  const isHoveringDropdownRef = useRef(false);
 
   useEffect(() => cleanup, [cleanup]);
 
