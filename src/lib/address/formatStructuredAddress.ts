@@ -27,8 +27,10 @@ function isBelarus(structured: CanonicalAddressPayload): boolean {
   const code = (structured as any).country_code;
   if (code && code.toUpperCase() === 'BY') return true;
   const country = structured.country;
-  if (!country) return false;
-  return /беларус/i.test(country);
+  if (country && /беларус/i.test(country)) return true;
+  // Fallback: if city is Minsk, it's always Belarus
+  if (isMinsk(structured.city)) return true;
+  return false;
 }
 
 /** Format city/settlement with type prefix if not already present */
