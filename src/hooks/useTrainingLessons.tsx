@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -71,6 +71,7 @@ export function useTrainingLessons(moduleId?: string) {
   const isAdminUser = isAdmin();
   const [lessons, setLessons] = useState<TrainingLesson[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchLessons = useCallback(async () => {
     if (!moduleId) {
@@ -80,7 +81,10 @@ export function useTrainingLessons(moduleId?: string) {
     }
 
     try {
-      setLoading(true);
+      // Only show loading on initial fetch — background refetch must NOT collapse DOM
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       
       // PATCH-1: Fetch ALL lessons (admin sees inactive too)
       // Filtering by is_active and published_at happens after enrichment
@@ -143,9 +147,11 @@ export function useTrainingLessons(moduleId?: string) {
       console.error("Error fetching lessons:", error);
       toast.error("Ошибка загрузки уроков");
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
-  }, [moduleId, user, isAdminUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleId, user?.id, isAdminUser]);
 
   useEffect(() => {
     fetchLessons();

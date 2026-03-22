@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -58,11 +58,14 @@ export function useTrainingModules() {
   const [modules, setModules] = useState<TrainingModule[]>([]);
   const [loading, setLoading] = useState(true);
   const isAdminUser = isAdmin();
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchModules = useCallback(async () => {
     try {
-      setLoading(true);
-      
+      // Only show loading on initial fetch — background refetch must NOT collapse DOM
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       // Fetch modules
       const { data: modulesData, error: modulesError } = await supabase
         .from("training_modules")
@@ -154,9 +157,11 @@ export function useTrainingModules() {
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
-  }, [user, isAdminUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, isAdminUser]);
 
   useEffect(() => {
     fetchModules();
