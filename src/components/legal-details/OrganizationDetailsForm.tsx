@@ -374,6 +374,8 @@ export function OrganizationDetailsForm({
         bank_code: data.bank_code || null,
         phone: data.phone || null,
         email: data.email || null,
+        // GRP registry metadata
+        ...grpMeta,
         // Clear ent_* fields to avoid stale data on reopen
         ent_unp: null,
         ent_name: null,
