@@ -301,7 +301,13 @@ const AI = () => {
     setEntitySheetOpen(true);
   }, []);
 
+  const handleOpenViewSheet = useCallback((entity: ClientLegalDetails) => {
+    setEntityViewTarget(entity);
+    setEntityViewOpen(true);
+  }, []);
+
   const handleOpenEditSheet = useCallback((entity: ClientLegalDetails) => {
+    setEntityViewOpen(false);
     setEntitySheetTarget(entity);
     setEntitySheetMode("edit");
     setEntitySheetOpen(true);
@@ -310,9 +316,9 @@ const AI = () => {
   const handleOpenExistingEntity = useCallback((id: string) => {
     const found = aiEntities.allEntities.find(e => e.id === id);
     if (found) {
-      handleOpenEditSheet(found);
+      handleOpenViewSheet(found);
     }
-  }, [aiEntities.allEntities, handleOpenEditSheet]);
+  }, [aiEntities.allEntities, handleOpenViewSheet]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
