@@ -95,15 +95,9 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (isSelectingRef.current || isHoveringDropdownRef.current) {
-        console.log('[ADDR] doc mousedown BLOCKED by guard', { selecting: isSelectingRef.current, hovering: isHoveringDropdownRef.current });
-        return;
-      }
+      if (isSelectingRef.current || isHoveringDropdownRef.current) return;
       const target = e.target as Node;
-      const inContainer = containerRef.current?.contains(target);
-      const inDropdown = dropdownRef.current?.contains(target);
-      console.log('[ADDR] doc mousedown', { inContainer, inDropdown, target: (target as HTMLElement).tagName });
-      if (!inContainer && !inDropdown) {
+      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
         setIsOpen(false);
       }
     };
