@@ -71,6 +71,7 @@ export function useTrainingLessons(moduleId?: string) {
   const isAdminUser = isAdmin();
   const [lessons, setLessons] = useState<TrainingLesson[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchLessons = useCallback(async () => {
     if (!moduleId) {
@@ -80,7 +81,10 @@ export function useTrainingLessons(moduleId?: string) {
     }
 
     try {
-      setLoading(true);
+      // Only show loading on initial fetch — background refetch must NOT collapse DOM
+      if (!hasLoadedOnceRef.current) {
+        setLoading(true);
+      }
       
       // PATCH-1: Fetch ALL lessons (admin sees inactive too)
       // Filtering by is_active and published_at happens after enrichment
