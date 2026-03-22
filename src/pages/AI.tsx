@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
