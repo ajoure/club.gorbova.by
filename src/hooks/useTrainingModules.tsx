@@ -157,9 +157,11 @@ export function useTrainingModules() {
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
-  }, [user, isAdminUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, isAdminUser]);
 
   useEffect(() => {
     fetchModules();
