@@ -306,3 +306,18 @@ ALTER TABLE client_legal_details
 - `supabase--read_query` (SELECT only)
 
 **Ни один файл не был модифицирован в рамках PATCH 1.**
+
+---
+
+## 10. Query points to update later (Правка 3)
+
+Перечень мест, требующих корректировки **после внедрения `purpose`/`status` в PATCH 2**:
+
+| Место | Что изменить | Когда |
+|---|---|---|
+| `/settings/legal-details` list query | Добавить `WHERE purpose = 'billing'` | PATCH 5 |
+| `useLegalDetails.tsx` → `setDefault` mutation | Добавить `WHERE purpose = 'billing'` в unset all + guard на insert | PATCH 5 |
+| Новый AI Requisites list query | Фильтр по `purpose` + badge для billing-записей | PATCH 5 |
+| Edge functions fallback (`is_default`) | **НЕ МЕНЯТЬ** — но только при условии, что document-entities никогда не получат `is_default = true` (см. Правку 4, секция 3) |
+| `useLegalDetails.tsx` → `createDetails` | Для document-entities: `is_default = false` всегда | PATCH 5 |
+| Future: billing-only selectors | При необходимости — helper `useBillingDetails()` с фильтром | Backlog |
