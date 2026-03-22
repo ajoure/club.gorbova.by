@@ -161,7 +161,7 @@ function formatGenericAddress(structured: CanonicalAddressPayload, apartmentPref
   if (structured.street) parts.push(structured.street);
   if (structured.house) parts.push(`д. ${structured.house}`);
   if (structured.building) parts.push(`корп. ${structured.building}`);
-  if (structured.apartment) parts.push(`пом. ${structured.apartment}`);
+  if (structured.apartment) parts.push(`${apartmentPrefix} ${structured.apartment}`);
 
   return parts.join(', ');
 }
