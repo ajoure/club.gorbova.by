@@ -43,6 +43,8 @@ const MnsResponseService = lazy(() => import("./pages/audits/MnsResponseService"
 const MnsDocumentHistory = lazy(() => import("./pages/audits/MnsDocumentHistory"));
 const Purchases = lazy(() => import("./pages/Purchases"));
 const Pay = lazy(() => import("./pages/Pay"));
+const PublicPayPage = lazy(() => import("./pages/PublicPayPage"));
+const PaymentResultPage = lazy(() => import("./pages/PaymentResultPage"));
 const Documentation = lazy(() => import("./pages/Documentation"));
 const Help = lazy(() => import("./pages/Help"));
 const ProfileSettings = lazy(() => import("./pages/settings/Profile"));
