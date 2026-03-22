@@ -256,7 +256,7 @@ export function StructuredAddressBlock({
   }, [fieldIds]);
 
   const portalTarget =
-    (containerRef.current?.closest('[data-address-portal-root]') as HTMLElement | null) ?? document.body;
+    (containerRef.current?.closest('[data-address-shell="true"]')?.querySelector('[data-address-portal-root]') as HTMLElement | null) ?? document.body;
 
   const showDropdown = isOpen && predictions.length > 0 && dropdownPos !== null;
 
