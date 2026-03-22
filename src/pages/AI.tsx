@@ -606,38 +606,27 @@ const AI = () => {
           </div>
         )}
 
-        {/* Entities — full CRUD */}
+        {/* Entities — table + sheet editor */}
         {activeSubTab === "entities" && (
           <>
-            {entityMode === "list" && (
-              <EntityListScreen
-                billingEntities={aiEntities.billingEntities}
-                activeDocumentEntities={aiEntities.activeDocumentEntities}
-                archivedDocumentEntities={aiEntities.archivedDocumentEntities}
-                isLoading={aiEntities.isLoading}
-                isArchiving={aiEntities.isArchiving}
-                onCreateNew={() => setEntityMode("create")}
-                onEdit={handleEntityEdit}
-                onArchive={(id) => aiEntities.archiveEntity(id)}
-              />
-            )}
-            {entityMode === "create" && aiEntities.profileId && (
-              <EntityFormScreen
-                mode="create"
+            <EntityTableView
+              allEntities={aiEntities.allEntities}
+              isLoading={aiEntities.isLoading}
+              isArchiving={aiEntities.isArchiving}
+              onCreateNew={handleOpenCreateSheet}
+              onEdit={handleOpenEditSheet}
+              onArchive={(id) => aiEntities.archiveEntity(id)}
+            />
+            {aiEntities.profileId && (
+              <EntityEditorSheet
+                open={entitySheetOpen}
+                onOpenChange={setEntitySheetOpen}
+                mode={entitySheetMode}
+                entity={entitySheetTarget}
                 profileId={aiEntities.profileId}
-                isSubmitting={aiEntities.isCreating}
-                onSubmit={handleEntityCreate}
-                onBack={handleEntityBack}
-              />
-            )}
-            {entityMode === "edit" && editingEntity && aiEntities.profileId && (
-              <EntityFormScreen
-                mode="edit"
-                initialData={editingEntity}
-                profileId={aiEntities.profileId}
-                isSubmitting={aiEntities.isUpdating}
-                onSubmit={handleEntityUpdate}
-                onBack={handleEntityBack}
+                isSubmitting={entitySheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
+                onSubmit={entitySheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
+                onOpenExisting={handleOpenExistingEntity}
               />
             )}
           </>
