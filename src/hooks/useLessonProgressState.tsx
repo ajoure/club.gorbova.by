@@ -156,7 +156,7 @@ export function useLessonProgressState(lessonId?: string) {
       saveState(newState);
       pendingStateRef.current = null;
     }, 500);
-  }, [record, user, lessonId, saveState]);
+  }, [record, lessonId, saveState]);
 
   // Mark a block as completed
   // Исправление 2: читаем completedSteps из pendingStateRef.current (не из stale record)
