@@ -45,15 +45,36 @@ function formatLocality(city: string | null | undefined): string {
 }
 
 /**
+ * Common city-internal district names that are never oblast-level districts.
+ * These appear in many Belarusian cities (Центральный, Ленинский, etc.)
+ */
+const KNOWN_CITY_DISTRICT_PATTERNS = [
+  'центральн', 'ленинск', 'октябрьск', 'фрунзенск', 'московск',
+  'первомайск', 'советск', 'заводск', 'партизанск', 'железнодорожн',
+];
+
+/**
  * Determine if a district is a city-internal district (e.g. "Фрунзенский район")
  * vs an oblast-level district (e.g. "Лидский район").
- * Conservative: only hide if district clearly derives from the city name.
+ * For Minsk: all districts are city-internal → always hide.
+ * For others: conservative heuristic — hide only if clearly city-internal.
  */
 function isCityDistrict(district: string | null | undefined, city: string | null | undefined): boolean {
   if (!district || !city) return false;
+
+  // For Minsk, ALL districts are city-internal
+  if (isMinsk(city)) return true;
+
+  const districtLower = district.toLowerCase();
+
+  // Check against known city-internal district patterns
+  if (KNOWN_CITY_DISTRICT_PATTERNS.some(p => districtLower.includes(p))) {
+    return true;
+  }
+
+  // Fallback: check if district name derives from city name
   const normalizedCity = city.replace(/^(г\.|город|гор\.)\s*/i, '').trim();
   if (!normalizedCity || normalizedCity.length < 3) return false;
-  // Build a root from city name (e.g. "Минск" → "Минс", "Брест" → "Брес")
   const cityRoot = normalizedCity.slice(0, Math.max(3, normalizedCity.length - 1));
   return new RegExp(cityRoot, 'i').test(district);
 }
