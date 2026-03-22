@@ -24,7 +24,7 @@ interface PersonFieldsFormProps {
   isSubmitting: boolean;
 }
 
-function parseAddress(structured: any): StructuredAddress {
+function parseAddress(structured: unknown): StructuredAddress {
   if (!structured) return emptyAddress();
   const s = structured as CanonicalAddressPayload;
   return {
