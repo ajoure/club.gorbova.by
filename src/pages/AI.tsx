@@ -22,7 +22,8 @@ import {
   Calculator,
   Briefcase,
   ShieldCheck,
-  FileStack
+  FileStack,
+  Building2
 } from "lucide-react";
 
 interface ChatMessage {
