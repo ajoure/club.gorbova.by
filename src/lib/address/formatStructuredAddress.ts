@@ -103,7 +103,7 @@ function formatBelarusAddress(structured: CanonicalAddressPayload, apartmentPref
   if (structured.street) line1Parts.push(structured.street);
   if (structured.house) line1Parts.push(`д. ${structured.house}`);
   if (structured.building) line1Parts.push(`корп. ${structured.building}`);
-  if (structured.apartment) line1Parts.push(`пом. ${structured.apartment}`);
+  if (structured.apartment) line1Parts.push(`${apartmentPrefix} ${structured.apartment}`);
 
   // Line 2: postal_code, [region, district], city/settlement
   const line2Parts: string[] = [];
