@@ -251,6 +251,7 @@ export function PersonRecordSheet({
     return (
       <div className="px-4 sm:px-6 py-4 pb-24">
         <PersonFieldsForm
+          key={person?.id ?? 'create'}
           initialData={isEditMode ? person : null}
           onSubmit={handleFormSubmit}
           isSubmitting={isSubmitting || duplicateCheck.isChecking}
