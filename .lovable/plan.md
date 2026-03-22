@@ -1,40 +1,70 @@
 
 
-# PATCH — Разрешить пересмотр видео в завершённых уроках
+# FIX — Scroll to top при возврате на страницу
 
-## Проблема клиента
+## Проблема
 
-Пользователь завершил урок с видео, но не может пересмотреть видео — оно затемнено и не реагирует на клики.
+Компонент `ScrollToTop` (src/components/layout/ScrollToTop.tsx) вызывает `window.scrollTo(0, 0)` при **любом** изменении `pathname` — включая навигацию назад (кнопка "Назад" браузера, возврат на предыдущую вкладку приложения).
 
-## Причина (2 бага)
+Когда пользователь:
+1. Прокрутил страницу урока до середины
+2. Перешёл на другую страницу (другой урок, раздел)
+3. Вернулся назад
 
-1. **`VideoUnskippableBlock.tsx` строка 191**: в completed state iframe рендерится с `opacity-70` — видео выглядит неактивным
-2. **`KvestLessonView.tsx` строка 491**: завершённые блоки оборачиваются в `pointer-events-none` — iframe полностью заблокирован для взаимодействия
+`pathname` меняется → `ScrollToTop` срабатывает → страница прокручивается в начало.
 
-## Исправления
+Это системная проблема, затрагивающая **все** страницы приложения.
 
-### 1. `src/components/admin/lesson-editor/blocks/VideoUnskippableBlock.tsx`
+## Решение
 
-В completed state (строка 191):
-- Убрать `opacity-70` с контейнера iframe — видео должно быть полностью интерактивным
-- Оставить плашку «Видео просмотрено» как индикатор, но не блокировать воспроизведение
+Использовать `useNavigationType()` из React Router v6 для определения типа навигации:
 
-### 2. `src/components/lesson/KvestLessonView.tsx`
+- **PUSH** (переход вперёд) → скроллить в начало ✅
+- **POP** (назад/вперёд) → **не скроллить**, сохранять позицию ✅
+- **REPLACE** → скроллить в начало ✅
 
-В case `video_unskippable` (строка 491):
-- Для видео-блоков **не** применять `pointer-events-none` даже когда `isReadOnly`
-- Оставить лёгкую визуальную индикацию (`opacity-80`) но без блокировки pointer-events
-- Другие блоки (quiz, role_description) остаются с `pointer-events-none` — это правильно
+Дополнительно: включить `history.scrollRestoration = 'manual'` чтобы браузер не вмешивался в управление скроллом.
+
+## Изменения
+
+### Файл: `src/components/layout/ScrollToTop.tsx`
+
+```typescript
+import { useEffect } from "react";
+import { useLocation, useNavigationType } from "react-router-dom";
+
+export function ScrollToTop() {
+  const { pathname } = useLocation();
+  const navigationType = useNavigationType();
+
+  // Disable browser's built-in scroll restoration
+  useEffect(() => {
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  }, []);
+
+  useEffect(() => {
+    // Only scroll to top on forward navigation (PUSH/REPLACE)
+    // On POP (back/forward), let the browser preserve scroll position
+    if (navigationType !== "POP") {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname, navigationType]);
+
+  return null;
+}
+```
 
 ## Не делаем
 
-- Не меняем логику завершения/прогресса
-- Не трогаем другие типы блоков
-- Не меняем save/load flow
+- Не трогаем явные `window.scrollTo` в LibraryLesson.tsx (они привязаны к конкретным действиям — seek to video)
+- Не добавляем сохранение/восстановление позиции скролла (браузер сам это делает при `POP` навигации, если не вызывать `scrollTo(0,0)`)
+- Не меняем другие компоненты
 
 ## DoD
 
-- Завершённое видео полностью воспроизводимо (не затемнено, кликабельно)
-- Плашка «Видео просмотрено» остаётся как индикатор
-- Незавершённые блоки работают как раньше
+- При переходе на новую страницу — скролл в начало (как раньше)
+- При возврате назад — позиция скролла сохраняется
+- Работает во всех разделах: уроки, квесты, библиотека, админка
 
