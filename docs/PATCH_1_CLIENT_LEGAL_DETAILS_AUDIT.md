@@ -274,6 +274,13 @@ ALTER TABLE client_legal_details
 - `/settings/legal-details`: добавить `WHERE purpose = 'billing'` чтобы document-entities не появлялись в billing-настройках
 - `setDefault` mutation: добавить `WHERE purpose = 'billing'` чтобы нельзя было назначить document-entity основной для billing
 
+> **⚠️ GUARD ДЛЯ `setDefault` (Правка 1):**
+> Обязательный acceptance-критерий для PATCH 5:
+> - После внедрения `purpose`/`status`, мутация `setDefault` **обязана** содержать `WHERE purpose = 'billing'`
+> - Document-entity **не может** стать billing default
+> - Это **обязательный guard**, а не опция
+> - Без этого guard edge functions fallback по `is_default` небезопасен (см. секцию 3)
+
 ---
 
 ## 8. Места, которые нельзя сломать
