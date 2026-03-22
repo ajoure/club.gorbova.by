@@ -599,13 +599,49 @@ const AI = () => {
           </div>
         )}
 
-        {/* Requisites stubs */}
-        {(activeSubTab === "entities" || activeSubTab === "persons") && (
+        {/* Entities — full CRUD */}
+        {activeSubTab === "entities" && (
+          <>
+            {entityMode === "list" && (
+              <EntityListScreen
+                billingEntities={aiEntities.billingEntities}
+                activeDocumentEntities={aiEntities.activeDocumentEntities}
+                archivedDocumentEntities={aiEntities.archivedDocumentEntities}
+                isLoading={aiEntities.isLoading}
+                isArchiving={aiEntities.isArchiving}
+                onCreateNew={() => setEntityMode("create")}
+                onEdit={handleEntityEdit}
+                onArchive={(id) => aiEntities.archiveEntity(id)}
+              />
+            )}
+            {entityMode === "create" && aiEntities.profileId && (
+              <EntityFormScreen
+                mode="create"
+                profileId={aiEntities.profileId}
+                isSubmitting={aiEntities.isCreating}
+                onSubmit={handleEntityCreate}
+                onBack={handleEntityBack}
+              />
+            )}
+            {entityMode === "edit" && editingEntity && aiEntities.profileId && (
+              <EntityFormScreen
+                mode="edit"
+                initialData={editingEntity}
+                profileId={aiEntities.profileId}
+                isSubmitting={aiEntities.isUpdating}
+                onSubmit={handleEntityUpdate}
+                onBack={handleEntityBack}
+              />
+            )}
+          </>
+        )}
+
+        {/* Persons stub */}
+        {activeSubTab === "persons" && (
           <div className="flex flex-1 items-center justify-center min-h-[200px]">
             <GlassCard className="max-w-md w-full text-center py-12">
               <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
-                {activeSubTab === "entities" && <Building2 className="h-8 w-8 text-indigo-500" />}
-                {activeSubTab === "persons" && <Users className="h-8 w-8 text-teal-500" />}
+                <Users className="h-8 w-8 text-teal-500" />
               </div>
               <h3 className="text-lg font-semibold mb-2">
                 {subTabs.find(t => t.id === activeSubTab)?.label}
