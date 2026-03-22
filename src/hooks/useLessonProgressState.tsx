@@ -140,7 +140,7 @@ export function useLessonProgressState(lessonId?: string) {
       state_json: newState
     } : {
       id: '',
-      user_id: user?.id || '',
+      user_id: userIdRef.current || '',
       lesson_id: lessonId || '',
       state_json: newState,
       completed_at: null,
