@@ -136,6 +136,14 @@ profile_id IN (
 3. Если ничего не найдено → clientDetails = null, clientType = 'individual'
 ```
 
+> **⚠️ УСЛОВИЕ БЕЗОПАСНОСТИ FALLBACK (Правка 4):**
+> Вывод «edge functions можно не менять» верен **только если** document-entities **никогда не смогут получить `is_default = true`**.
+> Если это условие нарушено — fallback по шагу 2 может вернуть document-entity вместо billing-записи, что **сломает генерацию счёт-актов**.
+> Гарантии:
+> - `setDefault` mutation обязана фильтровать по `WHERE purpose = 'billing'`
+> - UI AI-раздела **не должен** вызывать `setDefault` для document-записей
+> - Это **обязательный acceptance-критерий** для PATCH 5
+
 ### В useLegalDetails.tsx (hook):
 
 ```
