@@ -150,12 +150,13 @@ const prompts: Prompt[] = [
 
 /* ─── Конфигурация секций и подменю ─── */
 
-type Section = "ai" | "documents";
-type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates";
+type Section = "ai" | "documents" | "requisites";
+type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates" | "entities" | "persons";
 
 const SECTIONS = [
   { id: "ai" as const, label: "Gorbova AI", icon: Bot },
   { id: "documents" as const, label: "Документы", icon: FileText },
+  { id: "requisites" as const, label: "Реквизиты", icon: Building2 },
 ];
 
 interface SubMenuItem {
