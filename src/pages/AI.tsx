@@ -278,31 +278,38 @@ const AI = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
 
   // Entity management state
-  const [entityMode, setEntityMode] = useState<"list" | "create" | "edit">("list");
-  const [editingEntity, setEditingEntity] = useState<ClientLegalDetails | null>(null);
+  const [entitySheetOpen, setEntitySheetOpen] = useState(false);
+  const [entitySheetMode, setEntitySheetMode] = useState<"create" | "edit">("create");
+  const [entitySheetTarget, setEntitySheetTarget] = useState<ClientLegalDetails | null>(null);
   const aiEntities = useAiEntities();
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
     await aiEntities.createEntity(data);
-    setEntityMode("list");
   }, [aiEntities]);
 
   const handleEntityUpdate = useCallback(async (data: Partial<ClientLegalDetails>) => {
-    if (!editingEntity) return;
-    await aiEntities.updateEntity({ id: editingEntity.id, ...data });
-    setEntityMode("list");
-    setEditingEntity(null);
-  }, [aiEntities, editingEntity]);
+    if (!entitySheetTarget) return;
+    await aiEntities.updateEntity({ id: entitySheetTarget.id, ...data });
+  }, [aiEntities, entitySheetTarget]);
 
-  const handleEntityEdit = useCallback((entity: ClientLegalDetails) => {
-    setEditingEntity(entity);
-    setEntityMode("edit");
+  const handleOpenCreateSheet = useCallback(() => {
+    setEntitySheetTarget(null);
+    setEntitySheetMode("create");
+    setEntitySheetOpen(true);
   }, []);
 
-  const handleEntityBack = useCallback(() => {
-    setEntityMode("list");
-    setEditingEntity(null);
+  const handleOpenEditSheet = useCallback((entity: ClientLegalDetails) => {
+    setEntitySheetTarget(entity);
+    setEntitySheetMode("edit");
+    setEntitySheetOpen(true);
   }, []);
+
+  const handleOpenExistingEntity = useCallback((id: string) => {
+    const found = aiEntities.allEntities.find(e => e.id === id);
+    if (found) {
+      handleOpenEditSheet(found);
+    }
+  }, [aiEntities.allEntities, handleOpenEditSheet]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
