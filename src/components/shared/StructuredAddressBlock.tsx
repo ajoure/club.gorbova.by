@@ -301,8 +301,10 @@ export function StructuredAddressBlock({
                   index === highlightIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
                 )}
                 onPointerDown={(e) => {
+                  console.log('[ADDR] li pointerdown', p.placeId);
                   e.preventDefault();
                   e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
                   isSelectingRef.current = true;
                   handleSelect(p);
                 }}
