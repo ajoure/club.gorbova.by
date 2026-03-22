@@ -77,9 +77,11 @@ export function KvestLessonView({
     state?.currentStepIndex ?? 0
   );
 
-  // Sync with saved state
+  // Sync with saved state — guard against transient null during background refetch
   useEffect(() => {
-    if (state?.currentStepIndex !== undefined && state.currentStepIndex !== currentStepIndex) {
+    // If state is null/undefined (e.g. during refetch), do NOT reset currentStepIndex
+    if (state == null) return;
+    if (state.currentStepIndex !== undefined && state.currentStepIndex !== currentStepIndex) {
       setCurrentStepIndex(state.currentStepIndex);
     }
   }, [state?.currentStepIndex]);
