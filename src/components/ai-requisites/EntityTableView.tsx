@@ -58,7 +58,7 @@ export function EntityTableView({
   isLoading,
   isArchiving,
   onCreateNew,
-  onEdit,
+  onView,
   onArchive,
 }: EntityTableViewProps) {
   const [search, setSearch] = useState("");
