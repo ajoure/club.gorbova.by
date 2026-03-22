@@ -49,7 +49,7 @@ interface EntityTableViewProps {
   isLoading: boolean;
   isArchiving: boolean;
   onCreateNew: () => void;
-  onEdit: (entity: ClientLegalDetails) => void;
+  onView: (entity: ClientLegalDetails) => void;
   onArchive: (id: string) => void;
 }
 
@@ -58,7 +58,7 @@ export function EntityTableView({
   isLoading,
   isArchiving,
   onCreateNew,
-  onEdit,
+  onView,
   onArchive,
 }: EntityTableViewProps) {
   const [search, setSearch] = useState("");
@@ -175,7 +175,7 @@ export function EntityTableView({
                   <TableRow
                     key={entity.id}
                     className="cursor-pointer"
-                    onClick={() => onEdit(entity)}
+                    onClick={() => onView(entity)}
                   >
                     <TableCell className="font-medium">
                       {getEntityShortName(entity)}
@@ -207,7 +207,7 @@ export function EntityTableView({
                           className="text-xs"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onEdit(entity);
+                            onView(entity);
                           }}
                         >
                           <Pencil className="h-3 w-3 mr-1" />

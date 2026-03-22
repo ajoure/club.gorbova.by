@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityEditorSheet } from "@/components/ai-requisites/EntityEditorSheet";
+import { EntityViewSheet } from "@/components/ai-requisites/EntityViewSheet";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -281,6 +282,8 @@ const AI = () => {
   const [entitySheetOpen, setEntitySheetOpen] = useState(false);
   const [entitySheetMode, setEntitySheetMode] = useState<"create" | "edit">("create");
   const [entitySheetTarget, setEntitySheetTarget] = useState<ClientLegalDetails | null>(null);
+  const [entityViewOpen, setEntityViewOpen] = useState(false);
+  const [entityViewTarget, setEntityViewTarget] = useState<ClientLegalDetails | null>(null);
   const aiEntities = useAiEntities();
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
@@ -298,7 +301,13 @@ const AI = () => {
     setEntitySheetOpen(true);
   }, []);
 
+  const handleOpenViewSheet = useCallback((entity: ClientLegalDetails) => {
+    setEntityViewTarget(entity);
+    setEntityViewOpen(true);
+  }, []);
+
   const handleOpenEditSheet = useCallback((entity: ClientLegalDetails) => {
+    setEntityViewOpen(false);
     setEntitySheetTarget(entity);
     setEntitySheetMode("edit");
     setEntitySheetOpen(true);
@@ -307,9 +316,9 @@ const AI = () => {
   const handleOpenExistingEntity = useCallback((id: string) => {
     const found = aiEntities.allEntities.find(e => e.id === id);
     if (found) {
-      handleOpenEditSheet(found);
+      handleOpenViewSheet(found);
     }
-  }, [aiEntities.allEntities, handleOpenEditSheet]);
+  }, [aiEntities.allEntities, handleOpenViewSheet]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -614,6 +623,14 @@ const AI = () => {
               isLoading={aiEntities.isLoading}
               isArchiving={aiEntities.isArchiving}
               onCreateNew={handleOpenCreateSheet}
+              onView={handleOpenViewSheet}
+              onArchive={(id) => aiEntities.archiveEntity(id)}
+            />
+            <EntityViewSheet
+              open={entityViewOpen}
+              onOpenChange={setEntityViewOpen}
+              entity={entityViewTarget}
+              isArchiving={aiEntities.isArchiving}
               onEdit={handleOpenEditSheet}
               onArchive={(id) => aiEntities.archiveEntity(id)}
             />
