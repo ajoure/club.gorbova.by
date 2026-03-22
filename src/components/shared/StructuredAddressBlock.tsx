@@ -53,7 +53,7 @@ const COMPACT_LAYOUT: FieldConfig[] = [
   { key: 'street', label: 'Улица', placeholder: 'ул. Ленина', colSpan: 'col-span-2' },
   { key: 'house', label: 'Дом', placeholder: '19' },
   { key: 'building', label: 'Корпус', placeholder: '' },
-  { key: 'apartment', label: 'Кв./Офис', placeholder: '' },
+  { key: 'apartment', label: 'Помещение', placeholder: '' },
   { key: 'city', label: 'Город', placeholder: 'Минск' },
   { key: 'region', label: 'Область', placeholder: '' },
   { key: 'postal_code', label: 'Индекс', placeholder: '' },
