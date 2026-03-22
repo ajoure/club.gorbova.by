@@ -5,14 +5,15 @@
 
 import { useState, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, User, FileText, MapPin, Phone, Info } from 'lucide-react';
 import { StructuredAddressBlock } from '@/components/shared/StructuredAddressBlock';
+import { CopyablePlainLabel } from '@/components/ui/CopyablePlainLabel';
+import { useLegalDetailsFields } from '@/hooks/useLegalDetailsFields';
 import type { StructuredAddress } from '@/lib/address/types';
 import { emptyAddress } from '@/lib/address/utils';
 import type { CanonicalAddressPayload } from '@/lib/address/types';
@@ -69,7 +70,23 @@ function addressToStructured(addr: StructuredAddress): CanonicalAddressPayload {
   };
 }
 
+/** Map registry column names → fieldsMap keys for person fields */
+const PERSON_FIELD_KEYS: Record<string, string> = {
+  full_name: 'ind_full_name',
+  birth_date: 'ind_birth_date',
+  personal_number: 'ind_personal_number',
+  passport_series: 'ind_passport_series',
+  passport_number: 'ind_passport_number',
+  passport_issued_by: 'ind_passport_issued_by',
+  passport_issued_date: 'ind_passport_issued_date',
+  passport_valid_until: 'ind_passport_valid_until',
+  phone: 'phone',
+  email: 'email',
+};
+
 export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: PersonFieldsFormProps) {
+  const { fieldsMap } = useLegalDetailsFields();
+
   const [fullName, setFullName] = useState(initialData?.full_name || '');
   const [birthDate, setBirthDate] = useState(initialData?.birth_date || '');
   const [personalNumber, setPersonalNumber] = useState(initialData?.personal_number || '');
@@ -83,6 +100,9 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
   const [notes, setNotes] = useState(initialData?.notes || '');
   const [isActive, setIsActive] = useState(initialData?.is_active ?? true);
   const [address, setAddress] = useState<StructuredAddress>(() => parseAddress(initialData?.address_structured));
+
+  /** Get publicId for a person field from registry */
+  const pid = (formField: string) => fieldsMap.get(PERSON_FIELD_KEYS[formField])?.publicId;
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,16 +139,16 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
         </CardHeader>
         <CardContent className="space-y-3">
           <div>
-            <Label htmlFor="pf-full-name" className="text-xs text-muted-foreground">ФИО *</Label>
+            <CopyablePlainLabel htmlFor="pf-full-name" label="ФИО *" publicId={pid('full_name')} />
             <Input id="pf-full-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Иванов Иван Иванович" required />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="pf-birth-date" className="text-xs text-muted-foreground">Дата рождения</Label>
+              <CopyablePlainLabel htmlFor="pf-birth-date" label="Дата рождения" publicId={pid('birth_date')} />
               <Input id="pf-birth-date" type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="pf-personal-number" className="text-xs text-muted-foreground">Личный номер</Label>
+              <CopyablePlainLabel htmlFor="pf-personal-number" label="Личный номер" publicId={pid('personal_number')} />
               <Input id="pf-personal-number" value={personalNumber} onChange={(e) => setPersonalNumber(e.target.value)} placeholder="3010178A001PB2" />
             </div>
           </div>
@@ -146,32 +166,32 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="pf-passport-series" className="text-xs text-muted-foreground">Серия</Label>
+              <CopyablePlainLabel htmlFor="pf-passport-series" label="Серия" publicId={pid('passport_series')} />
               <Input id="pf-passport-series" value={passportSeries} onChange={(e) => setPassportSeries(e.target.value)} placeholder="AB" />
             </div>
             <div>
-              <Label htmlFor="pf-passport-number" className="text-xs text-muted-foreground">Номер</Label>
+              <CopyablePlainLabel htmlFor="pf-passport-number" label="Номер" publicId={pid('passport_number')} />
               <Input id="pf-passport-number" value={passportNumber} onChange={(e) => setPassportNumber(e.target.value)} placeholder="1234567" />
             </div>
           </div>
           <div>
-            <Label htmlFor="pf-passport-issued-by" className="text-xs text-muted-foreground">Кем выдан</Label>
+            <CopyablePlainLabel htmlFor="pf-passport-issued-by" label="Кем выдан" publicId={pid('passport_issued_by')} />
             <Input id="pf-passport-issued-by" value={passportIssuedBy} onChange={(e) => setPassportIssuedBy(e.target.value)} placeholder="Фрунзенский РУВД г. Минска" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="pf-passport-issued-date" className="text-xs text-muted-foreground">Дата выдачи</Label>
+              <CopyablePlainLabel htmlFor="pf-passport-issued-date" label="Дата выдачи" publicId={pid('passport_issued_date')} />
               <Input id="pf-passport-issued-date" type="date" value={passportIssuedDate} onChange={(e) => setPassportIssuedDate(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="pf-passport-valid-until" className="text-xs text-muted-foreground">Срок действия</Label>
+              <CopyablePlainLabel htmlFor="pf-passport-valid-until" label="Срок действия" publicId={pid('passport_valid_until')} />
               <Input id="pf-passport-valid-until" type="date" value={passportValidUntil} onChange={(e) => setPassportValidUntil(e.target.value)} />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Address */}
+      {/* Address — no clickable labels per approved plan */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -199,11 +219,11 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
         <CardContent className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="pf-phone" className="text-xs text-muted-foreground">Телефон</Label>
+              <CopyablePlainLabel htmlFor="pf-phone" label="Телефон" publicId={pid('phone')} />
               <Input id="pf-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+375 29 123 45 67" />
             </div>
             <div>
-              <Label htmlFor="pf-email" className="text-xs text-muted-foreground">Email</Label>
+              <CopyablePlainLabel htmlFor="pf-email" label="Email" publicId={pid('email')} />
               <Input id="pf-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ivan@example.com" />
             </div>
           </div>
