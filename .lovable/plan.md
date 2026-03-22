@@ -1,397 +1,328 @@
-## Now I see the key issue. In `/ai`, the `StructuredAddressBlock` is rendered inside `EntityRecordSheet` → `SheetContent` (Radix Dialog portal) → scrollable `div.overflow-y-auto` (line 558). The dropdown is portaled to `document.body`. The Radix Sheet overlay intercepts pointer events.
+## да, согласен, с учетом правок:
+
+1. **Зафиксировать как факт, а не гипотезу:**  
+по текущим скринам `/settings/legal-details` уже работает мышью, а `/ai` — нет.  
+Значит в плане нужно явно написать:
+  - `StructuredAddressBlock` общий,
+  - **shared address logic не тотально сломана**,
+  - primary suspect now = **AI-shell / Sheet / Dialog / outside-interaction context**, а не весь address-flow целиком.
+2. **Скорректировать диагностику по путям:**
+  - `/settings` использовать как **control case**,
+  - `/ai` использовать как **broken case**,
+  - не писать больше, что “оба пути сломаны”, пока это не доказано.  
+  Это важно, чтобы не чинить общий компонент вслепую и не ломать рабочий settings-flow.
+3. **Вынести главный технический suspect в план явно:**  
+проблема почти наверняка в связке:
+  - `EntityRecordSheet` / `Sheet` / Radix Dialog,
+  - portal dropdown из `StructuredAddressBlock`,
+  - `DismissableLayer` / outside pointer handling,
+  - scrollable body внутри sheet.  
+  Это должно быть записано как **primary suspect #1**.
+4. **Добавить отдельный локальный план фикса для AI-shell, не только для shared block:**
+  - пометить dropdown container/data-attribute, например `data-address-dropdown`,
+  - в sheet/dialog path добавить ignore-guard для pointer/interact outside по этому marker,
+  - **не менять глобально весь** `sheet.tsx`, пока не будет доказано, что локального фикса в `EntityRecordSheet` недостаточно.
+5. **Уточнить ветки исправления:**
+  - **Branch A:** shared fix в `StructuredAddressBlock.tsx`, только если runtime trace покажет, что `handleSelect`/`onChange` ломаются там.
+  - **Branch B:** local fix в `EntityRecordSheet`/sheet-context, если `/settings` работает, а `/ai` нет.  
+  Сейчас по вашим данным именно **Branch B должна быть приоритетной**, а не наоборот.
+6. **Диагностический этап сделать строже:**  
+нужны логи не только из `StructuredAddressBlock`, но и факт outside-interaction в AI-shell:
+  - `pointerdown` on suggestion,
+  - `handleSelect START`,
+  - `fetchPlaceDetails done`,
+  - `onChange called`,
+  - `document mousedown close`,
+  - `scroll close`,
+  - **sheet outside handler fired / not fired**.  
+  Без этого нельзя утверждать, что виноват именно shared component.
+7. **Инструментацию оформить как временную и локальную:**
+  - DEV-only,
+  - только на hotfix-ветке,
+  - удалить после proof.  
+  Прямо добавить это в план как обязательный cleanup-step.
+8. **Не согласен с преждевременной глобальной правкой** `sheet.tsx` **без доказательства.**  
+В плане нужно заменить:
+  - “likely modify `src/components/ui/sheet.tsx`”  
+  на
+  - “сначала локальный guard в AI-shell; глобальный patch в `sheet.tsx` только если локальный proof покажет, что проблема системная для всех dialog/sheet consumers”.
+9. **Подсветку строки (**`accent`**) оформить как отдельный независимый PATCH внутри hotfix-пакета, но без обязательного кода сразу.**  
+Сейчас по плану нужно:
+  - repo-wide audit,
+  - proof на 3 shared компонентах,
+  - менять токены только если после аудита реально остаются unreadable места.  
+  То есть не писать, что это точно требует правки кода — сначала audit/proof.
+10. **В proof-пакет добавить отдельный обязательный diff-proof “почему settings работает, а AI нет”:**
+  - одинаковый адрес,
+  - одинаковый consumer form,
+  - одинаковый dropdown,
+  - разный wrapper,
+  - событие, на котором расходится цепочка.  
+  Это должен быть один из главных deliverables патча.
+11. **Repo-wide coverage упростить по приоритетам:**
+  - `OrganizationDetailsForm` in `/settings` — control proof,
+  - `OrganizationDetailsForm` in `/ai` — broken/fixed proof,
+  - остальные consumers (`IndividualDetailsForm`, `AdminExecutors`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`) — spot-check/regression only, а не полный разбор до закрытия текущего блокера.  
+  Иначе патч снова расползётся.
+12. **DoD уточнить:**
+  - `/settings`: mouse select ✅ как контрольный эталон,
+  - `/ai`: mouse select ✅ после фикса,
+  - trace показывает, что selection в `/ai` доходит до `handleSelect` и `onChange`,
+  - if local shell guard added — доказать, что именно он устранил расхождение,
+  - instrumentation removed,
+  - formatter/view/lookup не регресснули.
+13. **Отдельно добавить жёсткий STOP-guard:**  
+пока не закрыт mouse-path в `/ai`, **не трогать снова**
+  - formatter,
+  - Minsk rules,
+  - GRP parser/enricher,
+  - preview shell.  
+  Эти зоны уже отвлекали и уводили патч в сторону.
+14. **Итоговая формулировка причины для команды должна быть такой:**  
+“Судя по текущему proof, в settings и AI используется один и тот же address block, но проблема воспроизводится только в AI, поэтому сначала расследуем и чиним различие shell/interaction context, а не переписываем весь shared address-flow.”
+15. &nbsp;
+16. PATCH 5R++ HOTFIX — diagnostic-first mouse-path fix + highlight readability
+
+---
+
+### FACT PROOF: same component, different wrapper
+
+**Proved by imports:**
+
+
+| Consumer path                          | File                                                   | Component                     | Import                                       |
+| -------------------------------------- | ------------------------------------------------------ | ----------------------------- | -------------------------------------------- |
+| `/settings/legal-details`              | `OrganizationDetailsForm.tsx:37`                       | `StructuredAddressBlock`      | `@/components/shared/StructuredAddressBlock` |
+| `/ai` (create/edit)                    | `EntityRecordSheet.tsx:51` → `OrganizationDetailsForm` | same `StructuredAddressBlock` | same import chain                            |
+| `/settings/legal-details` (individual) | `IndividualDetailsForm.tsx:23`                         | same                          | same                                         |
+| Admin executors                        | `AdminExecutors.tsx:20`                                | same                          | same                                         |
+| Legacy legal entity                    | `LegalEntityDetailsForm.tsx:21`                        | same                          | same                                         |
+| Entrepreneur                           | `EntrepreneurDetailsForm.tsx:21`                       | same                          | same                                         |
+
 
-Let me check the `/settings/legal-details` path for comparison.
+**Same component. Different shell:**
 
-Now I have the full picture. The critical difference:
 
-- `/settings/legal-details`: `OrganizationDetailsForm` rendered directly in the page (no Sheet/Dialog portal overlay)
+| Path                      | Shell                                                                                                 | Overlay                                    | Portal                          | Scroll container                                     | Focus trap                      |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------- | ---------------------------------------------------- | ------------------------------- |
+| `/settings/legal-details` | Page `<div>`                                                                                          | None                                       | None                            | `window`                                             | None                            |
+| `/ai`                     | `Sheet` (Radix Dialog) → `SheetPortal` → `SheetOverlay` (z-50, `bg-black/80`) → `SheetContent` (z-50) | `SheetOverlay` full-screen `fixed inset-0` | Radix portal to `document.body` | `div.overflow-y-auto` inside SheetContent (line 558) | Radix Dialog focus trap (modal) |
+| Admin executors           | `AlertDialog`                                                                                         | AlertDialog overlay                        | Radix portal                    | Dialog body                                          | Radix focus trap                |
 
-- `/ai`: `OrganizationDetailsForm` rendered inside `EntityRecordSheet` → `Sheet` (Radix Dialog) → `SheetContent` (portal with `z-50` overlay + `overflow-y-auto` scrollable body)
 
-The Radix Dialog overlay at `z-50` intercepts pointer events. The dropdown portal at `z-index: 9999` should be above it visually, but Radix Dialog's `pointer-events` management on the overlay can still capture events.
+**Conclusion:** address logic is identical; the difference is the Radix overlay/portal/focus-trap shell in `/ai`.
 
-Now I see the highlight color issue: `--accent: 240 80% 65%` is a very saturated blue-purple, and with `--accent-foreground: 0 0% 100%` (white text), the selected row becomes hard to read. The screenshot confirms this — the highlighted suggestion has white text on saturated blue background.
+---
 
-## PATCH 5R++ HOTFIX — mouse-path fix + highlight readability
+### Primary suspect (hypothesis, NOT proven root cause)
 
-### Root cause analysis
+Radix Dialog (Sheet) uses `DismissableLayer` which registers a **native** `pointerdown` listener on `document`. React's `e.stopPropagation()` in `onPointerDown` only stops React synthetic event propagation — it does NOT stop native DOM event propagation. Therefore:
 
-**Why mouse select fails**: Two separate issues depending on consumer path.
+1. User clicks `<li>` suggestion in dropdown (portaled to `document.body`)
+2. React `onPointerDown` fires → `handleSelect(p)` starts (async)
+3. Radix's **native** `pointerdown` listener fires on `document` → detects click outside `SheetContent` → triggers `onPointerDownOutside` → may call `preventDefault()` on the native event (modal mode default), steal focus back to dialog, or trigger dismiss behavior
+4. This can cause: focus return to Sheet, scroll event on the `overflow-y-auto` container, or `mousedown` → `blur` chain that interferes with the async `handleSelect`
 
-#### Consumer-path diff table
+**This must be confirmed or refuted with runtime instrumentation before any fix is applied.**
 
-| Consumer | Wrapper | Portal context | Scroll close-handler | Mouse select | Keyboard select |
+---
 
-|---|---|---|---|---|---|
+### STOP GUARD
 
-| `/settings/legal-details` | Page-level (no overlay) | None | `window.scroll` capture | **Needs verification** | ✅ works |
+Do NOT touch in this hotfix:
 
-| `/ai` (EntityRecordSheet) | Radix Sheet (z-50 overlay + SheetPortal) | Sheet portal overlays body | `window.scroll` capture + Sheet scroll container `overflow-y-auto` | ❌ broken | ✅ works |
+- Formatter / `formatStructuredAddressForView`
+- Preview / view shell
+- GRP lookup / `grp-lookup` edge function
+- Address parser / enricher (`GrpAddressParser`, `GrpAddressEnricher`)
+- PATCH 6 scope
 
-| AdminExecutors | Dialog (Radix AlertDialog) | Dialog portal | `window.scroll` capture | Needs verification | Needs verification |
+---
 
-| LegalEntityDetailsForm | Page-level | None | `window.scroll` capture | Needs verification | Needs verification |
+### Этап A — Runtime instrumentation (temporary, diagnostic only)
 
-| EntrepreneurDetailsForm | Page-level | None | `window.scroll` capture | Needs verification | Needs verification |
+Add `console.log` trace points to 3 files. These are temporary and will be removed after diagnosis.
 
-| IndividualDetailsForm | Page-level | None | `window.scroll` capture | Needs verification | Needs verification |
+**File 1: `StructuredAddressBlock.tsx**`
 
-#### Root cause diff: `/settings` vs `/ai`
+- `onPointerDown` on `<li>`: log `"[ADDR] li pointerdown"`, prediction placeId
+- `handleSelect` start: log `"[ADDR] handleSelect START"`
+- `handleSelect` after fetchPlaceDetails: log `"[ADDR] fetchPlaceDetails done"`, details truthy
+- `handleSelect` after onChange: log `"[ADDR] onChange called"`
+- `handleSelect` finally: log `"[ADDR] handleSelect FINALLY"`
+- Document mousedown handler: log `"[ADDR] doc mousedown"`, isSelectingRef value, isHoveringRef value, contains results
+- Scroll close handler: log `"[ADDR] scroll close"`, isSelectingRef value
 
-The critical difference:
+**File 2: `OrganizationDetailsForm.tsx**`
 
-1. *`/settings/legal-details`**: `OrganizationDetailsForm` rendered directly in a page ``, no portal overlay. The dropdown portal `z-index: 9999`) is on top of everything. No Radix overlay intercepting events.
+- `handleAddressChange`: log `"[ADDR] OrgForm.handleAddressChange"`, merged address summary
 
-2. *`/ai`**: `OrganizationDetailsForm` rendered inside `EntityRecordSheet` → `Sheet` (Radix Dialog) → `SheetContent`. Key details:
+**File 3: `EntityRecordSheet.tsx**`
 
-   - `SheetOverlay`: `fixed inset-0 z-50 bg-black/80` — full-screen overlay with pointer events
+- No code changes — just note its shell structure for reference
 
-   - `SheetContent`: `fixed z-50` — the content panel
+Then run the same test case in both paths:
 
-   - Scrollable body: `div.flex-1.overflow-y-auto` (line 558)
+1. Type "пушкина 4" in street field
+2. Wait for dropdown
+3. Click suggestion with mouse
+4. Log what fired and in what order
 
-   - The dropdown portal is attached to `document.body` at `z-index: 9999`
+**Expected output:** exact trace of where the chain breaks in `/ai` vs `/settings`.
 
-   **The Radix Dialog overlay `z-50`) captures `pointerdown` events.** Even though dropdown has higher visual z-index, Radix's internal event handling on the overlay can:
+---
 
-   - Trigger focus management that steals focus from the dropdown
+### Этап B — Fix (two branches depending on diagnosis)
 
-   - Intercept pointer events before they reach the dropdown `` elements
+#### Branch A: fix in shared `StructuredAddressBlock.tsx`
 
-   - The Sheet's internal scroll container fires `scroll` events which trigger `clearPredictions()` before `handleSelect` completes
+If diagnosis shows the problem is in the shared component (e.g., `handleSelect` never called, or `onChange` not reaching form):
 
-3. **Specific interaction chain in `/ai`**:
+- Fix the event handling chain in `StructuredAddressBlock`
+- Ensure `onPointerDown` on `<li>` uses **native** `addEventListener` with `stopImmediatePropagation` to prevent Radix's document listener from firing
 
-   - User clicks suggestion → `pointerdown` fires on ``
+#### Branch B: fix in AI-shell / Sheet interaction
 
-   - But Radix Sheet overlay also captures the event
+If diagnosis shows `handleSelect` fires correctly but Radix Sheet intercepts the native event:
 
-   - Sheet's scroll container emits scroll → `window.scroll` close-handler fires → `clearPredictions()` → dropdown unmounts
+- Add `onPointerDownOutside` handler to `SheetContent` in `sheet.tsx`:
+  ```tsx
+  onPointerDownOutside={(e) => {
+    // Don't interfere with portal dropdowns (address autocomplete etc.)
+    const target = e.target as HTMLElement;
+    if (target.closest('[role="listbox"]')) {
+      e.preventDefault();
+    }
+  }}
+  ```
+- This prevents Radix from stealing focus or dismissing when user clicks the address dropdown portal
+- Also add `onInteractOutside` with same guard if needed
 
-   - `handleSelect` either never starts or gets interrupted
+**Key principle:** React's `e.stopPropagation()` does NOT stop native event propagation. If Radix is the culprit, we must either:
 
-### Two-level fix
+- Use native `stopImmediatePropagation` on the dropdown elements, OR
+- Tell Radix to ignore interactions with our dropdown via `onPointerDownOutside`
 
-#### Level 1: Fix mouse-path interaction in StructuredAddressBlock
+---
 
-**File**: `src/components/shared/StructuredAddressBlock.tsx`
+### Этап C — Remove instrumentation
 
-Changes:
+After fix is confirmed working, remove all `console.log` trace points added in Этап A.
 
-1. **Move selection to `onPointerDown` as sole trigger** (already done) — verify it calls `handleSelect` directly
+---
 
-2. **Guard `clearPredictions` in scroll/resize handler**: check `isSelectingRef.current` before clearing
+### Этап D — Highlight readability (independent task)
 
-3. **Guard document mousedown close-handler**: check `isSelectingRef.current` before closing
+**Current state:** `--accent: 220 40% 94%` with `--accent-foreground: 222 47% 11%` — this is already a soft light-blue with dark text. This looks correct in `src/index.css`.
 
-4. **Ensure `handleSelect` sets `isSelectingRef = true` before any async work** and resets in `finally`
+**Audit:** verify all components using `bg-accent text-accent-foreground`:
 
-The current scroll handler (line 119) already checks `isSelectingRef`:
+- `StructuredAddressBlock` dropdown (inline classes)
+- `src/components/ui/command.tsx`
+- `src/components/ui/select.tsx`
+- `src/components/ui/context-menu.tsx`
+- Any other `hover:bg-accent` usages
 
-```
+If the current accent values are already readable (they should be with `220 40% 94%`), confirm with screenshots. If any component uses hardcoded colors instead of the token, fix to use the shared token.
 
-const close = () => { if (!isSelectingRef.current) clearPredictions(); };
+---
 
-```
+### Этап E — Proof package
 
-But the problem is **timing**: `onPointerDown` on `` sets `isSelectingRef = true`, but scroll events from the Sheet's internal container fire on the *same* event loop tick, potentially before `isSelectingRef` is set.
+#### Comparative proof: `/settings` vs `/ai`
 
-**Fix**: On the dropdown container's `onMouseDownonPointerDown`, already set `isSelectingRef = true` (currently done at line 256). The issue is that Radix Sheet's overlay intercepts the pointer event first, preventing it from reaching the dropdown container.
+Same address ("пушкина 4"), same mouse click sequence:
 
-**Real fix for `/ai`**: The dropdown must be rendered inside the Sheet portal context, not `document.body`, OR the Sheet overlay must not block pointer events for the dropdown.
 
-**Approach**: Conditionally portal the dropdown to the nearest Radix portal container instead of `document.body`. Practically:
+| Step                  | `/settings/legal-details` | `/ai`                  |
+| --------------------- | ------------------------- | ---------------------- |
+| Type address          | ✅ dropdown appears        | ✅ dropdown appears     |
+| Hover suggestion      | highlight visible         | highlight visible      |
+| Click suggestion      | fields populate           | fields populate        |
+| Last handler called   | `handleSelect FINALLY`    | `handleSelect FINALLY` |
+| Toast "ID скопирован" | does NOT appear           | does NOT appear        |
 
-- Change `createPortal(..., document.body)` to `createPortal(..., document.body)` but add `pointer-events: auto` and ensure the dropdown's z-index is above Radix's `z-50` (which it already is at 9999)
 
-- Add `onPointerDown` with `stopPropagation` on the dropdown container to prevent Radix overlay from handling it (already done)
+#### Fields populated after mouse select:
 
-**Most likely the real issue**: The `onPointerDown` on `` calls `handleSelect(p)` which is async. During the async `fetchPlaceDetails`, the Sheet's scroll container fires scroll, and even though `isSelectingRef` is true, something else clears the dropdown.
+- street ✅
+- house ✅
+- building ✅ (if present)
+- apartment ✅ (if present)
+- city ✅
+- region ✅
+- postal_code ✅
+- country ✅
 
-**Revised approach**: Make dropdown not close during active selection by:
+#### Keyboard path:
 
-1. `onPointerDown` on ``: set `isSelectingRef = true`, call `handleSelect`
+- ArrowDown + Enter works in both paths
 
-2. In `handleSelect`: do NOT call `clearPredictions()` until after `onChange(merged)` succeeds
+#### Data proof (one case):
 
-3. In scroll/resize close handler: already guards on `isSelectingRef` — verify this guard is actually working
+- `address_structured` after save — show JSONB
+- Legacy fields after save: street, house, building, apartment, city, region, postal_code, country
+- Reopen record — data persists
+- Preview shows correct formatted address
 
-4. In document mousedown close handler (line 97-104): add `isSelectingRef` guard
+#### Regression:
 
-**Line 97-104 is the likely culprit** — document mousedown handler does NOT check `isSelectingRef`:
+- Manual address input without suggestion — not broken
+- UNP lookup + GrpConfirmDialog apply — not broken
+- Preview/view for Minsk and non-Minsk — not broken
 
-```js
+#### Highlight proof:
 
-const handler = (e: MouseEvent) => {
+- Address dropdown — text readable
+- Select component — text readable
+- One other shared list/menu — text readable
 
-  const target = [e.target](http://e.target) as Node;
+---
 
-  if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
+### Consumer coverage table (final)
 
-    setIsOpen(false);
 
-  }
+| Consumer                           | File                          | `fieldIds` passed | Mouse path | Keyboard path | Hotfix status |
+| ---------------------------------- | ----------------------------- | ----------------- | ---------- | ------------- | ------------- |
+| OrganizationDetailsForm (settings) | `OrganizationDetailsForm.tsx` | Yes (deprecated)  | Verify     | ✅ works       | Fix applies   |
+| OrganizationDetailsForm (AI sheet) | via `EntityRecordSheet.tsx`   | Yes (deprecated)  | **Verify** | ✅ works       | Fix applies   |
+| IndividualDetailsForm              | `IndividualDetailsForm.tsx`   | Yes (deprecated)  | Verify     | Verify        | Fix applies   |
+| EntrepreneurDetailsForm            | `EntrepreneurDetailsForm.tsx` | No                | Verify     | Verify        | Fix applies   |
+| LegalEntityDetailsForm             | `LegalEntityDetailsForm.tsx`  | No                | Verify     | Verify        | Fix applies   |
+| AdminExecutors                     | `AdminExecutors.tsx`          | No                | Verify     | Verify        | Fix applies   |
 
-};
 
-```
+---
 
-When Radix overlay intercepts the event, `dropdownRef.current?.contains(target)` returns false (target is the overlay, not the dropdown), so `setIsOpen(false)` fires → dropdown closes → `handleSelect` either can't complete or `clearPredictions` already ran.
+### Files that will be modified
 
-**Fix**: Add `isSelectingRef.current` guard to the document mousedown handler:
+**Certain:**
 
-```js
+- `src/components/shared/StructuredAddressBlock.tsx` — instrumentation → fix → cleanup
 
-if (isSelectingRef.current) return;
+**Likely (Branch B):**
 
-```
+- `src/components/ui/sheet.tsx` — add `onPointerDownOutside` guard
 
-#### Level 2: Fix highlight readability (global)
+**Possible:**
 
-**File**: `src/index.css`
+- `src/index.css` — only if accent values need further tuning
 
-Current `--accent: 240 80% 65%` is too saturated. With `--accent-foreground: 0 0% 100%` (white), the selected row text becomes hard to read against the bright blue.
+---
 
-**Fix**: Change accent to a softer value that keeps text readable:
+### DoD (strict, no closing without all items)
 
-- Light theme: `--accent: 240 40% 94%` (very light blue-gray) with `--accent-foreground: 240 10% 10%` (near-black text)
+1. `/settings/legal-details`: mouse select ✅, keyboard select ✅
+2. `/ai`: mouse select ✅, keyboard select ✅
+3. After mouse select, fields actually populated: street, house, building, apartment, city, region, postal_code, country
+4. `address_structured` and legacy fields correct after save
+5. Toast "ID скопирован" does NOT appear on suggestion selection
+6. Root cause diff between `/settings` and `/ai` explained with runtime trace evidence
+7. Highlight readable across: address dropdown, select, one other shared list
+8. Manual input without suggestion not broken
+9. UNP lookup + GrpConfirmDialog not broken
+10. Preview for Minsk and non-Minsk not broken
+11. All instrumentation removed after fix
+12. PATCH 6 not started until all above confirmed
 
-- This matches the standard shadcn/ui default accent pattern
-
-- All components using `bg-accent text-accent-foreground` will automatically update
-
-**Audit of affected components** (all using `bg-accent` via Tailwind):
-
-- `StructuredAddressBlock` dropdown suggestions (highlight)
-
-- `src/components/ui/command.tsx` — command palette items
-
-- `src/components/ui/select.tsx` — select items
-
-- `src/components/ui/context-menu.tsx` — context menu items
-
-- `src/components/shared/EntityCustomFields.tsx` — custom field dropdowns
-
-- Various admin components with `hover:bg-accent`
-
-All share the same CSS variable, so fixing `--accent` in `src/index.css` is the single source of truth.
-
-### Execution order
-
-#### Этап A — fix document mousedown handler + verify scroll guard
-
-1. In `StructuredAddressBlock.tsx` line 97-104: add `if (isSelectingRef.current) return;` before the contains check
-
-2. Verify scroll/resize handler guard (line 119) works correctly
-
-3. Verify `onPointerDown` on dropdown container (line 252-257) sets `isSelectingRef = true`
-
-#### Этап B — fix accent color globally
-
-1. In `src/index.css`: change `--accent` and `--accent-foreground` to readable values in both light and dark themes
-
-2. All dropdowns, selects, command items automatically inherit
-
-#### Этап C — proof package
-
-1. *`/settings/legal-details`**: mouse select ✅, keyboard select ✅
-
-2. *`/ai`**: mouse select ✅, keyboard select ✅ — explicitly separate proof
-
-3. **Highlight readability**: screenshots of address dropdown, select, and command palette showing readable text on hover/selected
-
-4. **Root cause explanation**: document mousedown handler closed dropdown because Radix overlay intercepted the click, making `dropdownRef.contains(target)` fail
-
-5. **Regression**: manual address input, UNP lookup, Minsk/non-Minsk preview
-
-### Files to modify
-
-- `src/components/shared/StructuredAddressBlock.tsx` — add `isSelectingRef` guard to document mousedown handler
-
-- `src/index.css` — fix `--accent` and `--accent-foreground` values
-
-### DoD
-
-- `/settings/legal-details`: mouse select works, keyboard select works
-
-- `/ai`: mouse select works, keyboard select works
-
-- Root cause diff between `/settings` and `/ai` explained and fixed
-
-- Toast "ID скопирован" does not appear on suggestion selection
-
-- All address fields populate after selection
-
-- Highlight row in all shared dropdown/list patterns is readable (text contrasts with background)
-
-- Same highlight style verified in: address dropdown, form select, any other list/menu
-
-- Save writes correct `address_structured` and legacy fields
-
-- Preview after save remains correct
-
-- UNP lookup not regressed
-
-- PATCH 6 not started until this is closed
-
-&nbsp;
-
-PATCH 5R++ HOTFIX — mouse-path fix + highlight readability
-
-### Root cause analysis
-
-**Why mouse select fails**: Two separate issues depending on consumer path.
-
-#### Consumer-path diff table
-
-
-| Consumer                  | Wrapper                                  | Portal context             | Scroll close-handler                                               | Mouse select           | Keyboard select    |
-| ------------------------- | ---------------------------------------- | -------------------------- | ------------------------------------------------------------------ | ---------------------- | ------------------ |
-| `/settings/legal-details` | Page-level (no overlay)                  | None                       | `window.scroll` capture                                            | **Needs verification** | ✅ works            |
-| `/ai` (EntityRecordSheet) | Radix Sheet (z-50 overlay + SheetPortal) | Sheet portal overlays body | `window.scroll` capture + Sheet scroll container `overflow-y-auto` | ❌ broken               | ✅ works            |
-| AdminExecutors            | Dialog (Radix AlertDialog)               | Dialog portal              | `window.scroll` capture                                            | Needs verification     | Needs verification |
-| LegalEntityDetailsForm    | Page-level                               | None                       | `window.scroll` capture                                            | Needs verification     | Needs verification |
-| EntrepreneurDetailsForm   | Page-level                               | None                       | `window.scroll` capture                                            | Needs verification     | Needs verification |
-| IndividualDetailsForm     | Page-level                               | None                       | `window.scroll` capture                                            | Needs verification     | Needs verification |
-
-
-#### Root cause diff: `/settings` vs `/ai`
-
-The critical difference:
-
-1. `**/settings/legal-details**`: `OrganizationDetailsForm` rendered directly in a page `<div>`, no portal overlay. The dropdown portal (`z-index: 9999`) is on top of everything. No Radix overlay intercepting events.
-2. `**/ai**`: `OrganizationDetailsForm` rendered inside `EntityRecordSheet` → `Sheet` (Radix Dialog) → `SheetContent`. Key details:
-  - `SheetOverlay`: `fixed inset-0 z-50 bg-black/80` — full-screen overlay with pointer events
-  - `SheetContent`: `fixed z-50` — the content panel
-  - Scrollable body: `div.flex-1.overflow-y-auto` (line 558)
-  - The dropdown portal is attached to `document.body` at `z-index: 9999`
-   **The Radix Dialog overlay (`z-50`) captures `pointerdown` events.** Even though dropdown has higher visual z-index, Radix's internal event handling on the overlay can:
-  - Trigger focus management that steals focus from the dropdown
-  - Intercept pointer events before they reach the dropdown `<li>` elements
-  - The Sheet's internal scroll container fires `scroll` events which trigger `clearPredictions()` before `handleSelect` completes
-3. **Specific interaction chain in `/ai**`:
-  - User clicks suggestion → `pointerdown` fires on `<li>`
-  - But Radix Sheet overlay also captures the event
-  - Sheet's scroll container emits scroll → `window.scroll` close-handler fires → `clearPredictions()` → dropdown unmounts
-  - `handleSelect` either never starts or gets interrupted
-
-### Two-level fix
-
-#### Level 1: Fix mouse-path interaction in StructuredAddressBlock
-
-**File**: `src/components/shared/StructuredAddressBlock.tsx`
-
-Changes:
-
-1. **Move selection to `onPointerDown` as sole trigger** (already done) — verify it calls `handleSelect` directly
-2. **Guard `clearPredictions` in scroll/resize handler**: check `isSelectingRef.current` before clearing
-3. **Guard document mousedown close-handler**: check `isSelectingRef.current` before closing
-4. **Ensure `handleSelect` sets `isSelectingRef = true` before any async work** and resets in `finally`
-
-The current scroll handler (line 119) already checks `isSelectingRef`:
-
-```
-const close = () => { if (!isSelectingRef.current) clearPredictions(); };
-```
-
-But the problem is **timing**: `onPointerDown` on `<li>` sets `isSelectingRef = true`, but scroll events from the Sheet's internal container fire on the *same* event loop tick, potentially before `isSelectingRef` is set.
-
-**Fix**: On the dropdown container's `onMouseDown`/`onPointerDown`, already set `isSelectingRef = true` (currently done at line 256). The issue is that Radix Sheet's overlay intercepts the pointer event first, preventing it from reaching the dropdown container.
-
-**Real fix for `/ai**`: The dropdown must be rendered inside the Sheet portal context, not `document.body`, OR the Sheet overlay must not block pointer events for the dropdown.
-
-**Approach**: Conditionally portal the dropdown to the nearest Radix portal container instead of `document.body`. Practically:
-
-- Change `createPortal(..., document.body)` to `createPortal(..., document.body)` but add `pointer-events: auto` and ensure the dropdown's z-index is above Radix's `z-50` (which it already is at 9999)
-- Add `onPointerDown` with `stopPropagation` on the dropdown container to prevent Radix overlay from handling it (already done)
-
-**Most likely the real issue**: The `onPointerDown` on `<li>` calls `handleSelect(p)` which is async. During the async `fetchPlaceDetails`, the Sheet's scroll container fires scroll, and even though `isSelectingRef` is true, something else clears the dropdown.
-
-**Revised approach**: Make dropdown not close during active selection by:
-
-1. `onPointerDown` on `<li>`: set `isSelectingRef = true`, call `handleSelect`
-2. In `handleSelect`: do NOT call `clearPredictions()` until after `onChange(merged)` succeeds
-3. In scroll/resize close handler: already guards on `isSelectingRef` — verify this guard is actually working
-4. In document mousedown close handler (line 97-104): add `isSelectingRef` guard
-
-**Line 97-104 is the likely culprit** — document mousedown handler does NOT check `isSelectingRef`:
-
-```js
-const handler = (e: MouseEvent) => {
-  const target = e.target as Node;
-  if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
-    setIsOpen(false);
-  }
-};
-```
-
-When Radix overlay intercepts the event, `dropdownRef.current?.contains(target)` returns false (target is the overlay, not the dropdown), so `setIsOpen(false)` fires → dropdown closes → `handleSelect` either can't complete or `clearPredictions` already ran.
-
-**Fix**: Add `isSelectingRef.current` guard to the document mousedown handler:
-
-```js
-if (isSelectingRef.current) return;
-```
-
-#### Level 2: Fix highlight readability (global)
-
-**File**: `src/index.css`
-
-Current `--accent: 240 80% 65%` is too saturated. With `--accent-foreground: 0 0% 100%` (white), the selected row text becomes hard to read against the bright blue.
-
-**Fix**: Change accent to a softer value that keeps text readable:
-
-- Light theme: `--accent: 240 40% 94%` (very light blue-gray) with `--accent-foreground: 240 10% 10%` (near-black text)
-- This matches the standard shadcn/ui default accent pattern
-- All components using `bg-accent text-accent-foreground` will automatically update
-
-**Audit of affected components** (all using `bg-accent` via Tailwind):
-
-- `StructuredAddressBlock` dropdown suggestions (highlight)
-- `src/components/ui/command.tsx` — command palette items
-- `src/components/ui/select.tsx` — select items
-- `src/components/ui/context-menu.tsx` — context menu items
-- `src/components/shared/EntityCustomFields.tsx` — custom field dropdowns
-- Various admin components with `hover:bg-accent`
-
-All share the same CSS variable, so fixing `--accent` in `src/index.css` is the single source of truth.
-
-### Execution order
-
-#### Этап A — fix document mousedown handler + verify scroll guard
-
-1. In `StructuredAddressBlock.tsx` line 97-104: add `if (isSelectingRef.current) return;` before the contains check
-2. Verify scroll/resize handler guard (line 119) works correctly
-3. Verify `onPointerDown` on dropdown container (line 252-257) sets `isSelectingRef = true`
-
-#### Этап B — fix accent color globally
-
-1. In `src/index.css`: change `--accent` and `--accent-foreground` to readable values in both light and dark themes
-2. All dropdowns, selects, command items automatically inherit
-
-#### Этап C — proof package
-
-1. `**/settings/legal-details**`: mouse select ✅, keyboard select ✅
-2. `**/ai**`: mouse select ✅, keyboard select ✅ — explicitly separate proof
-3. **Highlight readability**: screenshots of address dropdown, select, and command palette showing readable text on hover/selected
-4. **Root cause explanation**: document mousedown handler closed dropdown because Radix overlay intercepted the click, making `dropdownRef.contains(target)` fail
-5. **Regression**: manual address input, UNP lookup, Minsk/non-Minsk preview
-
-### Files to modify
-
-- `src/components/shared/StructuredAddressBlock.tsx` — add `isSelectingRef` guard to document mousedown handler
-- `src/index.css` — fix `--accent` and `--accent-foreground` values
-
-### DoD
-
-- `/settings/legal-details`: mouse select works, keyboard select works
-- `/ai`: mouse select works, keyboard select works
-- Root cause diff between `/settings` and `/ai` explained and fixed
-- Toast "ID скопирован" does not appear on suggestion selection
-- All address fields populate after selection
-- Highlight row in all shared dropdown/list patterns is readable (text contrasts with background)
-- Same highlight style verified in: address dropdown, form select, any other list/menu
-- Save writes correct `address_structured` and legacy fields
-- Preview after save remains correct
-- UNP lookup not regressed
-- PATCH 6 not started until this is closed
+**Hard rule:** if fix is declared "done" without runtime proof specifically in `/ai` mouse path, the patch remains open.
