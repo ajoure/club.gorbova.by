@@ -73,10 +73,14 @@ function isCityDistrict(district: string | null | undefined, city: string | null
   }
 
   // Fallback: check if district name derives from city name
+  // Only match if district adjective starts with city root AND city is large enough
+  // This catches "Минский район" for Минск but NOT "Лидский район" for Лида
+  // because for oblast-level districts the district name matches the city — we should KEEP those
+  // So this fallback is intentionally conservative: only trigger for cities with 5+ char names
   const normalizedCity = city.replace(/^(г\.|город|гор\.)\s*/i, '').trim();
-  if (!normalizedCity || normalizedCity.length < 3) return false;
-  const cityRoot = normalizedCity.slice(0, Math.max(3, normalizedCity.length - 1));
-  return new RegExp(cityRoot, 'i').test(district);
+  if (!normalizedCity || normalizedCity.length < 5) return false;
+  const cityRoot = normalizedCity.slice(0, Math.max(4, normalizedCity.length - 1));
+  return new RegExp('^' + cityRoot, 'i').test(district.replace(/\s*район$/i, '').trim());
 }
 
 /** Build 2-line Belarus address: [street line, location line] */
