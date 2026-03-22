@@ -1,88 +1,27 @@
-# да, согласен, с учетом правок:
 
-1. В `formatBelarusAddress` сразу зафиксируй нормализацию Минска:
-  - `Минск`
-  - `г. Минск`
-  - `город Минск`  
-  должны сводиться к одному special-case: **без области, без района**.
-2. Правило по району лучше описать не только через `district contains city`, а так:
-  - если это **Минск** → район всегда скрываем;
-  - для остальных адресов BY район показываем **только если это не район города**;
-  - если reliable-определения нет, лучше не ломать generic данные и оставить район как есть, чем ошибочно скрыть район области.  
-  То есть в коде нужен аккуратный guard, а не слишком агрессивное скрытие.
-3. В плане добавь явное правило по пустым строкам:
-  - если строка 1 пустая, не рендерить пустую строку;
-  - если строка 2 пустая, не рендерить пустую строку;
-  - formatter возвращает массив только из непустых строк.
-4. В `EntityRecordSheet` нужно не `.join(...)`, а именно рендер **каждой строки отдельно**, чтобы 2-строчный формат реально сохранялся визуально.
-5. Зафиксируй, что этот PATCH вводит **product-standard для Беларуси**, а:
-  - generic formatter для других стран не меняется;
-  - правила для других стран СНГ пока не внедряются в этом патче.
-6. В DoD добавь отдельную приемку для fallback:
-  - если street/house нет, formatter не ломается;
-  - если есть только индекс + населённый пункт, вывод остается корректным;
-  - хранение данных не меняется вообще.
-7. Отдельно зафиксируй, что `пом.` / `кв.` в этом PATCH не пересматриваются:
-  - для текущего entity-контекста остается `пом.`
-  - параметризация для физлиц остается задачей PATCH 6.
-  - &nbsp;
-  - PATCH — 2-строчный formatter адреса для Беларуси
 
-## Что меняем
+# Fix: "Центральный район" showing for Minsk address
 
-Переписываем `formatBelarusAddress` в `src/lib/address/formatStructuredAddress.ts` на 2-строчный вывод:
+## Root Cause
 
-- **Строка 1**: улица, дом, корпус, пом./кв.
-- **Строка 2**: индекс, [область, район], населённый пункт
+The `isBelarus()` check likely fails for some records where `country_code` and `country` are not stored in the JSONB payload (older records or data gaps). When `isBelarus()` returns `false`, the generic formatter runs and includes the district field.
 
-Новые правила:
+Additionally, even when `isBelarus()` passes, the `isCityDistrict()` helper won't catch districts like "Центральный район" because "Центральный" doesn't contain "Минс" (the city root). This matters for non-Minsk cities with city-internal districts.
 
-- Районы городов (Фрунзенский район) — **не показываем**
-- Районы областей (Лидский р-н) — **показываем**
-- Минск: без области, без района
-- ЮЛ/ИП → `пом.`, ФЛ → `кв.` (параметризация в PATCH 6)
+## Fix (1 file)
 
-## Примеры вывода
+**`src/lib/address/formatStructuredAddress.ts`**:
 
-Минск:
+1. **`isBelarus()`** — add fallback: if `isMinsk(structured.city)` is true, return `true` (Minsk = Belarus, always)
+2. **`isCityDistrict()`** — for Minsk, always return `true` (all Minsk districts are city-internal). For other cities, keep current conservative heuristic but also match common city-district patterns like "Центральный", "Ленинский", "Октябрьский" etc. that are never oblast-level districts.
 
-```
-ул. Советская, д. 10, пом. 5
-220030, г. Минск
-```
+These two guards together ensure district is never shown for Minsk regardless of data completeness.
 
-Не-Минск:
+## Proof examples (after fix)
 
-```
-ул. Ленина, д. 3, пом. 12
-231300, Гродненская обл., Лидский р-н, г. Лида
-```
+The formatter will produce:
+1. Minsk: `ул. Панфилова, д. 2, пом. 49л` / `220035, г. Минск`
+2. Non-Minsk BY: `ул. Ленина, д. 3, пом. 12` / `231300, Гродненская обл., Лидский р-н, г. Лида`
+3. City district filtered: Minsk + "Центральный район" → district hidden
+4. Fallback (only postal + city): single line `220030, г. Минск`
 
-## Техническое решение
-
-`formatStructuredAddressForView` уже возвращает `string[]`. Сейчас возвращает массив с одним элементом. Меняем `formatBelarusAddress` чтобы возвращал **2 строки** (массив из 2 элементов).
-
-Для определения "район области" vs "район города": если `district` содержит слово "район" + название города совпадает с частью district — это район города, пропускаем. Иначе — район области, показываем с сокращением `р-н`.
-
-### Файл: `src/lib/address/formatStructuredAddress.ts`
-
-Изменения:
-
-1. `formatBelarusAddress` → возвращает `string[]` (2 строки)
-2. Строка 1: street, house, building, apartment
-3. Строка 2: postal_code, region (не Минск), district (если район области), city/settlement
-4. Добавить хелпер `isCityDistrict(district, city)` — определяет район города vs район области
-5. `formatStructuredAddressForView` — для BY возвращает результат `formatBelarusAddress` напрямую (уже массив)
-6. Generic formatter — без изменений, одна строка
-
-### Файл: `src/components/ai-requisites/EntityRecordSheet.tsx`
-
-Проверить что `addressLines` (массив строк) рендерится корректно при 2 элементах. Сейчас используется `.join` или `.map` — убедиться что каждая строка на отдельной строке в UI.
-
-## DoD
-
-- Минск: 2 строки, без области, без района
-- Не-Минск BY: 2 строки, область + район области (если есть)
-- Районы городов не показываются
-- Generic (не-BY) — без изменений
-- Хранение данных не затронуто
