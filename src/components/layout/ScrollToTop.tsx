@@ -4,14 +4,54 @@ import { useLocation, useNavigationType } from "react-router-dom";
 const SCROLL_KEY_PREFIX = "scroll:";
 const MAX_ENTRIES = 50;
 const RESTORE_TIMEOUT = 5000;
+const SCROLL_THROTTLE_MS = 150;
 
-function saveScrollPosition(pathname: string) {
-  try {
+// ── Continuous scroll tracking ──────────────────────────────────────────
+// We MUST save scroll position continuously because by the time
+// React Router unmounts the old route and our useEffect runs,
+// window.scrollY is already 0 (old content is gone).
+let currentPathname = typeof window !== "undefined" ? window.location.pathname : "/";
+let scrollThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onScroll() {
+  if (scrollThrottleTimer) return;
+  scrollThrottleTimer = setTimeout(() => {
+    scrollThrottleTimer = null;
     const y = window.scrollY;
     if (y > 0) {
-      sessionStorage.setItem(SCROLL_KEY_PREFIX + pathname, String(y));
+      try {
+        sessionStorage.setItem(SCROLL_KEY_PREFIX + currentPathname, String(y));
+      } catch {}
     }
-    // Cleanup old entries if exceeding limit
+  }, SCROLL_THROTTLE_MS);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("scroll", onScroll, { passive: true });
+
+  // Also save on beforeunload (tab close, external navigation)
+  window.addEventListener("beforeunload", () => {
+    try {
+      if (window.scrollY > 0) {
+        sessionStorage.setItem(SCROLL_KEY_PREFIX + window.location.pathname, String(window.scrollY));
+      }
+    } catch {}
+  });
+
+  // Save on visibility change (tab switch)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      try {
+        if (window.scrollY > 0) {
+          sessionStorage.setItem(SCROLL_KEY_PREFIX + window.location.pathname, String(window.scrollY));
+        }
+      } catch {}
+    }
+  });
+}
+
+function cleanupOldEntries() {
+  try {
     const keys = Object.keys(sessionStorage).filter(k => k.startsWith(SCROLL_KEY_PREFIX));
     if (keys.length > MAX_ENTRIES) {
       keys.slice(0, keys.length - MAX_ENTRIES).forEach(k => sessionStorage.removeItem(k));
@@ -25,12 +65,11 @@ function restoreScrollPosition(pathname: string) {
   const target = parseInt(saved, 10);
   if (!target || target <= 0) return;
 
-  // Try immediately first
   const tryScroll = () => {
     window.scrollTo(0, target);
   };
 
-  const canScroll = () => 
+  const canScroll = () =>
     document.documentElement.scrollHeight >= target + window.innerHeight * 0.5;
 
   // If DOM is already tall enough, scroll immediately
@@ -60,44 +99,18 @@ function restoreScrollPosition(pathname: string) {
     characterData: false,
   });
 
-  // Fallback timeout - force scroll even if height never reaches target
+  // Fallback timeout
   const timeout = setTimeout(() => {
     observer.disconnect();
     tryScroll();
   }, RESTORE_TIMEOUT);
 
-  // Cleanup on next navigation (stored for potential abort)
   const cleanup = () => {
     observer.disconnect();
     clearTimeout(timeout);
   };
 
-  // Store cleanup on window for potential early abort
   (window as any).__scrollRestoreCleanup = cleanup;
-}
-
-// Save on beforeunload (tab close, external navigation)
-if (typeof window !== "undefined") {
-  window.addEventListener("beforeunload", () => {
-    try {
-      const pathname = window.location.pathname;
-      if (window.scrollY > 0) {
-        sessionStorage.setItem(SCROLL_KEY_PREFIX + pathname, String(window.scrollY));
-      }
-    } catch {}
-  });
-
-  // Save on visibility change (tab switch)
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      try {
-        const pathname = window.location.pathname;
-        if (window.scrollY > 0) {
-          sessionStorage.setItem(SCROLL_KEY_PREFIX + pathname, String(window.scrollY));
-        }
-      } catch {}
-    }
-  });
 }
 
 export function ScrollToTop() {
@@ -105,14 +118,14 @@ export function ScrollToTop() {
   const navigationType = useNavigationType();
   const prevPathRef = useRef(pathname);
 
-  // Disable browser's built-in scroll restoration to prevent conflicts
+  // Disable browser's built-in scroll restoration
   useEffect(() => {
     if ("scrollRestoration" in window.history) {
       window.history.scrollRestoration = "manual";
     }
   }, []);
 
-  // Save scroll position of the previous page before navigating away
+  // Update the tracked pathname for the scroll listener
   useEffect(() => {
     if (prevPathRef.current !== pathname) {
       // Abort any pending restoration from previous navigation
@@ -120,8 +133,10 @@ export function ScrollToTop() {
         (window as any).__scrollRestoreCleanup();
         (window as any).__scrollRestoreCleanup = null;
       }
-      saveScrollPosition(prevPathRef.current);
+      // Update currentPathname so the scroll listener saves to the right key
+      currentPathname = pathname;
       prevPathRef.current = pathname;
+      cleanupOldEntries();
     }
   }, [pathname]);
 
