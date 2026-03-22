@@ -38,21 +38,31 @@ export function useLessonProgressState(lessonId?: string) {
   const pendingStateRef = useRef<LessonProgressStateData | null>(null);
   const saveStatusResetRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedJsonRef = useRef<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
+
+  // Stable user ID ref — prevents refetch on object identity churn (e.g. TOKEN_REFRESHED)
+  const userIdRef = useRef<string | undefined>(user?.id);
+  userIdRef.current = user?.id;
 
   // Fetch current state
   const fetchState = useCallback(async () => {
-    if (!lessonId || !user) {
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) {
       setRecord(null);
       setLoading(false);
       return;
     }
 
-    try {
+    // Only show loading on initial fetch, not on background refetch (prevents DOM collapse)
+    if (!hasLoadedOnceRef.current) {
       setLoading(true);
+    }
+
+    try {
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", uid)
         .eq("lesson_id", lessonId)
         .maybeSingle();
 
@@ -65,9 +75,11 @@ export function useLessonProgressState(lessonId?: string) {
     } catch (error) {
       console.error("Error fetching lesson progress state:", error);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
-  }, [lessonId, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id]);
 
   useEffect(() => {
     fetchState();
@@ -75,7 +87,8 @@ export function useLessonProgressState(lessonId?: string) {
 
   // Save state to DB (debounced)
   const saveState = useCallback(async (newState: LessonProgressStateData) => {
-    if (!lessonId || !user) return;
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) return;
 
     // Skip save if data is identical to last saved version
     const newJson = JSON.stringify(newState);
@@ -88,7 +101,7 @@ export function useLessonProgressState(lessonId?: string) {
       const { data, error } = await supabase
         .from("lesson_progress_state")
         .upsert({
-          user_id: user.id,
+          user_id: uid,
           lesson_id: lessonId,
           state_json: newState as unknown as Record<string, unknown>,
           updated_at: new Date().toISOString(),
@@ -113,7 +126,8 @@ export function useLessonProgressState(lessonId?: string) {
       console.error("Error saving lesson progress state:", error);
       setSaveStatus('error');
     }
-  }, [lessonId, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id]);
 
   // Update state with debouncing
   const updateState = useCallback((partial: Partial<LessonProgressStateData>) => {
@@ -127,7 +141,7 @@ export function useLessonProgressState(lessonId?: string) {
       state_json: newState
     } : {
       id: '',
-      user_id: user?.id || '',
+      user_id: userIdRef.current || '',
       lesson_id: lessonId || '',
       state_json: newState,
       completed_at: null,
@@ -143,7 +157,7 @@ export function useLessonProgressState(lessonId?: string) {
       saveState(newState);
       pendingStateRef.current = null;
     }, 500);
-  }, [record, user, lessonId, saveState]);
+  }, [record, lessonId, saveState]);
 
   // Mark a block as completed
   // Исправление 2: читаем completedSteps из pendingStateRef.current (не из stale record)
@@ -164,13 +178,14 @@ export function useLessonProgressState(lessonId?: string) {
 
   // Mark entire lesson as completed
   const markLessonCompleted = useCallback(async () => {
-    if (!lessonId || !user) return;
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) return;
 
     try {
       const { error } = await supabase
         .from("lesson_progress_state")
         .upsert({
-          user_id: user.id,
+          user_id: uid,
           lesson_id: lessonId,
           state_json: record?.state_json || {},
           completed_at: new Date().toISOString(),
@@ -184,7 +199,8 @@ export function useLessonProgressState(lessonId?: string) {
     } catch (error) {
       console.error("Error marking lesson completed:", error);
     }
-  }, [lessonId, user, record, fetchState]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id, record, fetchState]);
 
   // Reset progress - now just clears local state and refetches
   // Actual deletion is done via Edge Function (service role)
