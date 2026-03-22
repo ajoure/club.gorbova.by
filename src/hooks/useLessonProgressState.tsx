@@ -125,7 +125,8 @@ export function useLessonProgressState(lessonId?: string) {
       console.error("Error saving lesson progress state:", error);
       setSaveStatus('error');
     }
-  }, [lessonId, user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id]);
 
   // Update state with debouncing
   const updateState = useCallback((partial: Partial<LessonProgressStateData>) => {
