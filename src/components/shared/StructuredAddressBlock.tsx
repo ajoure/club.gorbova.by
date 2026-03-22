@@ -25,6 +25,8 @@ export interface StructuredAddressBlockProps {
   compact?: boolean;
   countries?: string[];
   fieldIds?: Map<string, LegalDetailsFieldEntry>;
+  /** Override apartment field label (default: "Помещение"). For persons use "Квартира". */
+  apartmentLabel?: string;
 }
 
 interface FieldConfig {
@@ -68,8 +70,12 @@ export function StructuredAddressBlock({
   compact,
   countries,
   fieldIds,
+  apartmentLabel,
 }: StructuredAddressBlockProps) {
-  const layout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
+  const baseLayout = compact ? COMPACT_LAYOUT : FULL_LAYOUT;
+  const layout = apartmentLabel
+    ? baseLayout.map(f => f.key === 'apartment' ? { ...f, label: apartmentLabel } : f)
+    : baseLayout;
 
   const {
     predictions,

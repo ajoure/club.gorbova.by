@@ -1,7 +1,11 @@
 import { useState, useCallback, useMemo } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
+import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
+import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
+import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
+import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
@@ -282,11 +286,22 @@ const AI = () => {
   const [recordSheetMode, setRecordSheetMode] = useState<RecordSheetMode>("view");
   const [recordSheetEntityId, setRecordSheetEntityId] = useState<string | null>(null);
   const aiEntities = useAiEntities();
+  const aiPersons = useAiPersons();
 
   // Derive entity from query data (stale-proof per state-management-standard)
   const recordSheetEntity = useMemo(
     () => aiEntities.allEntities.find(e => e.id === recordSheetEntityId) ?? null,
     [aiEntities.allEntities, recordSheetEntityId]
+  );
+
+  // Person management state
+  const [personSheetOpen, setPersonSheetOpen] = useState(false);
+  const [personSheetMode, setPersonSheetMode] = useState<RecordSheetMode>("view");
+  const [personSheetPersonId, setPersonSheetPersonId] = useState<string | null>(null);
+
+  const personSheetPerson = useMemo(
+    () => aiPersons.allPersons.find(p => p.id === personSheetPersonId) ?? null,
+    [aiPersons.allPersons, personSheetPersonId]
   );
 
   const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
@@ -315,6 +330,34 @@ const AI = () => {
     setRecordSheetMode("view");
     setRecordSheetOpen(true);
   }, []);
+
+  // Person handlers
+  const handleOpenCreatePersonSheet = useCallback(() => {
+    setPersonSheetPersonId(null);
+    setPersonSheetMode("create");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handleOpenViewPersonSheet = useCallback((person: PersonRow) => {
+    setPersonSheetPersonId(person.id);
+    setPersonSheetMode("view");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handleOpenExistingPerson = useCallback((id: string) => {
+    setPersonSheetPersonId(id);
+    setPersonSheetMode("view");
+    setPersonSheetOpen(true);
+  }, []);
+
+  const handlePersonCreate = useCallback(async (data: Record<string, any>) => {
+    await aiPersons.createPerson(data as any);
+  }, [aiPersons]);
+
+  const handlePersonUpdate = useCallback(async (data: Record<string, any>) => {
+    if (!personSheetPerson) return;
+    await aiPersons.updatePerson({ id: personSheetPerson.id, ...data } as any);
+  }, [aiPersons, personSheetPerson]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -638,21 +681,29 @@ const AI = () => {
           </>
         )}
 
-        {/* Persons stub */}
+        {/* Persons — table + sheet */}
         {activeSubTab === "persons" && (
-          <div className="flex flex-1 items-center justify-center min-h-[200px]">
-            <GlassCard className="max-w-md w-full text-center py-12">
-              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
-                <Users className="h-8 w-8 text-teal-500" />
-              </div>
-              <h3 className="text-lg font-semibold mb-2">
-                {subTabs.find(t => t.id === activeSubTab)?.label}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Раздел в разработке. Здесь будет управление реквизитами для автозаполнения документов.
-              </p>
-            </GlassCard>
-          </div>
+          <>
+            <PersonsTableView
+              allPersons={aiPersons.allPersons}
+              isLoading={aiPersons.isLoading}
+              onCreateNew={handleOpenCreatePersonSheet}
+              onView={handleOpenViewPersonSheet}
+            />
+            <PersonRecordSheet
+              open={personSheetOpen}
+              onOpenChange={setPersonSheetOpen}
+              mode={personSheetMode}
+              onModeChange={setPersonSheetMode}
+              person={personSheetPerson}
+              profileId={aiPersons.profileId}
+              isSubmitting={personSheetMode === "create" ? aiPersons.isCreating : aiPersons.isUpdating}
+              isDeactivating={aiPersons.isDeactivating}
+              onSubmit={personSheetMode === "create" ? handlePersonCreate : handlePersonUpdate}
+              onDeactivate={(id) => aiPersons.deactivatePerson(id)}
+              onOpenExisting={handleOpenExistingPerson}
+            />
+          </>
         )}
       </div>
     </DashboardLayout>

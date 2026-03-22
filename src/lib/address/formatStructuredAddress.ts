@@ -95,7 +95,7 @@ function looksLikeCityDistrictValue(value: string | null | undefined): boolean {
 }
 
 /** Build 2-line Belarus address: [street line, location line] */
-function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
+function formatBelarusAddress(structured: CanonicalAddressPayload, apartmentPrefix = 'пом.'): string[] {
   const minskAddr = isMinsk(structured.city);
 
   // Line 1: street, house, building, apartment
@@ -103,7 +103,7 @@ function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
   if (structured.street) line1Parts.push(structured.street);
   if (structured.house) line1Parts.push(`д. ${structured.house}`);
   if (structured.building) line1Parts.push(`корп. ${structured.building}`);
-  if (structured.apartment) line1Parts.push(`пом. ${structured.apartment}`);
+  if (structured.apartment) line1Parts.push(`${apartmentPrefix} ${structured.apartment}`);
 
   // Line 2: postal_code, [region, district], city/settlement
   const line2Parts: string[] = [];
@@ -147,7 +147,7 @@ function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
 }
 
 /** Build single-line generic address */
-function formatGenericAddress(structured: CanonicalAddressPayload): string {
+function formatGenericAddress(structured: CanonicalAddressPayload, apartmentPrefix = 'пом.'): string {
   const parts: string[] = [];
 
   if (structured.country) parts.push(structured.country);
@@ -161,7 +161,7 @@ function formatGenericAddress(structured: CanonicalAddressPayload): string {
   if (structured.street) parts.push(structured.street);
   if (structured.house) parts.push(`д. ${structured.house}`);
   if (structured.building) parts.push(`корп. ${structured.building}`);
-  if (structured.apartment) parts.push(`пом. ${structured.apartment}`);
+  if (structured.apartment) parts.push(`${apartmentPrefix} ${structured.apartment}`);
 
   return parts.join(', ');
 }
@@ -173,14 +173,15 @@ function formatGenericAddress(structured: CanonicalAddressPayload): string {
  */
 export function formatStructuredAddressForView(
   structured: CanonicalAddressPayload | null | undefined,
-  fallback?: string | null
+  fallback?: string | null,
+  apartmentPrefix?: string
 ): string[] {
   if (!structured) {
     return fallback ? [fallback] : [];
   }
 
   if (isBelarus(structured)) {
-    const lines = formatBelarusAddress(structured);
+    const lines = formatBelarusAddress(structured, apartmentPrefix);
     if (lines.length === 0) {
       const fb = structured.formatted_address || structured.raw_input || fallback;
       return fb ? [fb] : [];
@@ -188,7 +189,7 @@ export function formatStructuredAddressForView(
     return lines;
   }
 
-  const result = formatGenericAddress(structured);
+  const result = formatGenericAddress(structured, apartmentPrefix);
   if (!result) {
     const fb = structured.formatted_address || structured.raw_input || fallback;
     return fb ? [fb] : [];
