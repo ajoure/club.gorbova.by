@@ -1,8 +1,6 @@
-
-
 # ФИНАЛЬНЫЙ ЭТАЛОННЫЙ ПЛАН: модуль «Нейросеть → Реквизиты → AI-документы»
 
-*Версия с учётом всех правок. Изменения относительно предыдущей версии помечены.*
+*Версия с учётом всех правок. Утверждён пользователем.*
 
 ---
 
@@ -46,7 +44,7 @@ DoD: аудит зависимостей завершён, семантика з
 
 5 миграций: `legal_details_persons`, `legal_details_roles_catalog`, `legal_details_positions_catalog`, `legal_details_entity_person_links`, `ai_chat_messages`.
 
-**Уточнение unique constraint в `legal_details_entity_person_links`** *(правка)*:
+**Уточнение unique constraint в `legal_details_entity_person_links`**:
 
 Простой `UNIQUE (legal_details_id, person_id, role_catalog_id)` слишком грубый — `role_catalog_id = position` один для всех должностей, а различие идёт через `position_catalog_id` / `custom_position_text`.
 
@@ -59,31 +57,7 @@ DoD: аудит зависимостей завершён, семантика з
 | `position` + custom | UNIQUE (legal_details_id, person_id, role_catalog_id, custom_position_text) — одна custom-должность на пару |
 | `other` | UNIQUE (legal_details_id, person_id, role_catalog_id, custom_role_text) — одна custom-роль на пару |
 
-Реализация: вместо одного UNIQUE constraint — **partial unique indexes**:
-
-```sql
--- founder: одна связь на пару entity+person
-CREATE UNIQUE INDEX uq_link_founder
-  ON legal_details_entity_person_links (legal_details_id, person_id, role_catalog_id)
-  WHERE role_catalog_id IN (SELECT id FROM legal_details_roles_catalog WHERE role_type = 'founder');
-
--- position с catalog: одна должность из справочника на пару
-CREATE UNIQUE INDEX uq_link_position_catalog
-  ON legal_details_entity_person_links (legal_details_id, person_id, role_catalog_id, position_catalog_id)
-  WHERE position_catalog_id IS NOT NULL;
-
--- position с custom text: одна custom-должность на пару
-CREATE UNIQUE INDEX uq_link_position_custom
-  ON legal_details_entity_person_links (legal_details_id, person_id, role_catalog_id, custom_position_text)
-  WHERE position_catalog_id IS NULL AND custom_position_text IS NOT NULL;
-
--- other: одна custom-роль на пару
-CREATE UNIQUE INDEX uq_link_other
-  ON legal_details_entity_person_links (legal_details_id, person_id, role_catalog_id, custom_role_text)
-  WHERE custom_role_text IS NOT NULL;
-```
-
-Это не блокирует валидные сценарии (одно лицо = и директор, и учредитель), но предотвращает exact duplicates.
+Реализация — partial unique indexes.
 
 DoD: миграции проходят, RLS работает, seed данные на месте, uniqueness корректна для всех role_type.
 
@@ -163,98 +137,11 @@ DoD: AI ищет существующее перед созданием, missing
 3. Список зарегистрированных лиц
 4. Протокол
 
-### Подход к повторяющимся данным (founders/participants) *(правка)*
+Подход: docxtemplater loops (`{#array}...{/array}`), не фиксированные placeholders.
 
-**Первый релиз: docxtemplater loops (`{#array}...{/array}`)**, а не фиксированные `founder_1`, `founder_2`:
+Источник данных для «Списка зарегистрированных лиц»: `legal_details_entity_person_links` WHERE role_type=founder + manual selection в wizard.
 
-Обоснование: docxtemplater уже подключён в `generate-from-template` и нативно поддерживает loops. Фиксированные placeholders ломаются при N>max и оставляют мусор при N<max.
-
-Формат данных для шаблона:
-```javascript
-placeholderData = {
-  entity_name: "ООО «Рога и копыта»",
-  director_name: "Иванов И.И.",
-  meeting_date: "15 марта 2026 г.",
-  // ... scalar fields ...
-  founders: [
-    { name: "Петров П.П.", share: "60%", passport: "..." },
-    { name: "Сидоров С.С.", share: "40%", passport: "..." },
-  ],
-  participants: [
-    { name: "Петров П.П.", registered: true },
-    { name: "Сидоров С.С.", registered: true },
-  ],
-};
-```
-
-В DOCX-шаблоне:
-```
-{#founders}
-{name} — доля {share}
-{/founders}
-```
-
-**Ограничение первого релиза**: не ограничиваем число участников, но тестируем на 1–5.
-
-### Источник данных для «Списка зарегистрированных лиц» *(правка)*
-
-Это документ с табличной/повторяющейся структурой (таблица участников).
-
-| Данные | Источник | Обязательность |
-|---|---|---|
-| Список участников | `legal_details_entity_person_links` WHERE role_type=founder для данного entity | required (min 1) |
-| ФИО каждого | `legal_details_persons.full_name` через link | required |
-| Доля каждого | `link.share_percent` | required |
-| Паспортные данные | `legal_details_persons.passport_*` | required для данного шаблона |
-| Статус регистрации | **manual selection в wizard** — пользователь отмечает, кто зарегистрирован | required |
-
-Flow в wizard (PATCH 12):
-1. Загрузить все founder-links для выбранного entity
-2. Показать checklist — пользователь отмечает, кто зарегистрировался
-3. Дозапросить missing данные (если у founder нет паспортных данных)
-4. Сформировать массив `participants[]` для docxtemplater loop
-
-### Placeholder mapping по шаблонам
-
-**Шаблон 1: Приказ о проведении**
-
-| Placeholder | Источник | Обязат. | Дозапрос |
-|---|---|---|---|
-| `{entity_name}` | `client_legal_details.leg_name` | да | нет |
-| `{entity_org_form}` | `client_legal_details.leg_org_form` | да | нет |
-| `{director_name}` | links(role=position, position=director) → person.full_name | да | если нет связи |
-| `{director_position}` | link.position_title или positions_catalog.label | да | если нет |
-| `{meeting_date}` | manual | да | да |
-| `{meeting_time}` | manual | да | да |
-| `{meeting_place}` | manual | да | да |
-| `{agenda_items}` | manual | да | да |
-| `{order_date}` | manual | да | да |
-| `{order_number}` | manual | да | да |
-
-**Шаблон 2: Извещение о проведении**
-
-Те же scalar placeholders + loop `{#founders}...{/founders}` для списка уведомляемых лиц (ФИО, доля, адрес).
-
-**Шаблон 3: Список зарегистрированных лиц**
-
-| Placeholder | Источник | Обязат. | Дозапрос |
-|---|---|---|---|
-| `{entity_name}` | entity | да | нет |
-| `{meeting_date}` | manual | да | да |
-| `{#participants}` | founders links + manual checklist | да | если нет founders |
-| `{participants.name}` | person.full_name | да | нет |
-| `{participants.share}` | link.share_percent | да | если нет |
-| `{participants.passport}` | person.passport_* (whitelist!) | да | если нет |
-| `{participants.registered}` | manual checkbox | да | да |
-| `{/participants}` | — | — | — |
-| `{total_shares}` | sum(share_percent) зарегистрированных | да | авто |
-| `{quorum_status}` | manual или авто (>50%) | да | авто/да |
-
-**Шаблон 4: Протокол**
-
-Scalar placeholders (entity, director, meeting_date/time/place) + `{#founders}` loop + `{#agenda_items}` loop + `{#decisions}` loop (manual input).
-
-DoD: все 4 шаблона в Storage, placeholder mapping документирован, loops используют docxtemplater `{#array}...{/array}`, нет свободно генерируемых юридических блоков.
+DoD: все 4 шаблона в Storage, placeholder mapping документирован, loops используют docxtemplater.
 
 ---
 
@@ -262,7 +149,7 @@ DoD: все 4 шаблона в Storage, placeholder mapping документи�
 
 Read-only аудит. Код не меняем.
 
-Проверить все зависимости `generated_documents.order_id`: FK, SELECT, JOIN, UI. Определить: nullable, surrogate session_id, или отдельная таблица `ai_generated_documents`.
+Проверить все зависимости `generated_documents.order_id`: FK, SELECT, JOIN, UI. Определить: nullable, surrogate session_id, или отдельная таблица.
 
 DoD: все зависимости перечислены, решение обосновано.
 
@@ -272,48 +159,25 @@ DoD: все зависимости перечислены, решение обо
 
 Расширяем существующую edge function. Не создаём второй pipeline.
 
-**Гарантия обратной совместимости** *(правка)*: если параметр `mode` не передан, поведение **строго текущее** (billing mode). Никаких изменений существующих billing-вызовов не требуется. `mode` = `'billing'` (default) | `'ai_document'`.
+**Гарантия обратной совместимости**: если параметр `mode` не передан, поведение **строго текущее** (billing mode). `mode` = `'billing'` (default) | `'ai_document'`.
 
-В `ai_document_mode`:
-- Принимает: `template_id`, `client_details_id`, `person_link_ids[]`, `extra_fields`
-- Собирает placeholderData из entity + persons + links + manual fields
-- **Поддержка массивов** для docxtemplater loops: `founders[]`, `participants[]`, `agenda_items[]`, `decisions[]`
-- Способ записи в `generated_documents` — по решению из PATCH 10.5
-
-Reuse 1:1: docxtemplater render, PizZip, upload в Storage, save flow.
-
-Только DOCX output. PDF и Excel — backlog/future.
-
-DoD: старый billing mode не сломан (тест генерации счёт-акта), вызов без `mode` = текущее поведение, новый ai_document_mode работает через тот же pipeline.
+DoD: старый billing mode не сломан, вызов без `mode` = текущее поведение, новый ai_document_mode работает через тот же pipeline.
 
 ---
 
 ## PATCH 12 — End-to-end «Годовое собрание»
 
-UI wizard flow:
-1. Выбор компании из своих entity
-2. Проверка связанных лиц (director, founders) — из links
-3. **Выбор участников** *(правка)*:
-   - Показать всех founder-links для выбранного entity
-   - Пользователь отмечает, кто участвует (checklist)
-   - Пользователь выбирает/подтверждает:
-     - кто **председатель** собрания (default = director)
-     - кто **секретарь** (выбор из persons или manual ввод)
-     - кто **подписант** документов (default = director)
-   - Для «Списка зарегистрированных» — кто фактически зарегистрировался (checklist)
-4. Дозапрос missing manual fields (дата, время, место, повестка, решения, кворум)
-5. Вызов `generate-from-template` в `ai_document_mode` для каждого из 4 шаблонов
-6. Результат — 4 DOCX для скачивания
+UI wizard: выбор компании → проверка связей → выбор участников (checklist) → председатель/секретарь/подписант → дозапрос manual fields → генерация 4 DOCX.
 
 Только DOCX output. PDF и Excel — future.
 
-DoD: комплект генерируется, реквизиты подставляются, founders/participants формируются через links + manual selection, missing данные дозапрашиваются.
+DoD: комплект генерируется, реквизиты подставляются, missing данные дозапрашиваются.
 
 ---
 
 ## PATCH 13 — Security hardening
 
-Passport fields в AI prompt — только через **whitelist** (для каждого шаблона — явный список разрешённых полей). Audit logs на create/update/delete person и link. UI warning при создании физлица.
+Passport fields в AI prompt — только через **whitelist**. Audit logs на CUD person и link. UI warning при создании физлица.
 
 DoD: sensitive fields не уходят в AI без whitelist, audit на CUD есть, warning в UI.
 
@@ -321,24 +185,12 @@ DoD: sensitive fields не уходят в AI без whitelist, audit на CUD �
 
 ## PATCH 14 — Regression / acceptance + reuse proof
 
-Проверить:
-- `/settings/legal-details` CRUD работает
-- Billing генерация через `generate-from-template` без `mode` — работает как раньше
-- MNS pipeline — работает
-- `executors` — не затронуты
-- `generated_documents` старые записи — работают
+Проверить: `/settings/legal-details`, billing generation, MNS pipeline, executors, generated_documents.
 
-Reuse proofs:
-- GRP lookup = тот же `grp-lookup` edge fn
-- Google Maps = тот же `StructuredAddressBlock`
-- Генерация = тот же `generate-from-template`
-- Нет второго generator pipeline
-
-**Дополнительные проверки** *(правка)*:
-- Billing-запись **видна** в AI-разделе, но **не редактируется** там — редактирование только через `/settings/legal-details`
-- Editing flow links идёт **только из карточки юрлица/ИП** — в карточке физлица связи read-only
+Дополнительные проверки:
+- Billing-запись **видна** в AI-разделе, но **не редактируется** там
+- Editing flow links — **только из карточки юрлица/ИП**
 - Повторный ввод УНП не создаёт дубль
-- Повторное создание физлица не создаёт дубль по правилам матчинга
 - Один person_id связан с несколькими legal_details_id
 
 DoD: все старые и новые flows работают, reuse подтверждён.
@@ -378,8 +230,3 @@ Checkpoint перед PATCH 11: результат PATCH 10.5 подтвержд
 - Audit и RLS на новых сущностях есть
 - Sensitive fields в AI prompt только через whitelist
 - Только DOCX output в первом релизе
-
----
-
-После этих правок план считается **эталонным** для проверки выполненных PATCH-ов.
-
