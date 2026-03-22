@@ -38,6 +38,7 @@ export function useLessonProgressState(lessonId?: string) {
   const pendingStateRef = useRef<LessonProgressStateData | null>(null);
   const saveStatusResetRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedJsonRef = useRef<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   // Stable user ID ref — prevents refetch on object identity churn (e.g. TOKEN_REFRESHED)
   const userIdRef = useRef<string | undefined>(user?.id);
@@ -53,8 +54,7 @@ export function useLessonProgressState(lessonId?: string) {
     }
 
     // Only show loading on initial fetch, not on background refetch (prevents DOM collapse)
-    const isInitialFetch = !record;
-    if (isInitialFetch) {
+    if (!hasLoadedOnceRef.current) {
       setLoading(true);
     }
 
