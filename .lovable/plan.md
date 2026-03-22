@@ -1,213 +1,203 @@
 да, согласен, с учетом правок:
 
-1. В Этапе A не фиксируйте root cause заранее как “именно copy-ID”. Нужно доказать фактически, где ломается interaction-chain:
-  - `pointerdown/mousedown` по suggestion
-  - `blur` input
-  - `click` по suggestion
-  - `onSelect`
-  - `onChange(merged)`
-  - copy-handler label  
-  И только после этого писать точную причину.
-2. В proof обязательно показать **один и тот же кейс** в двух путях:
-  - `/ai`
-  - `/settings/legal-details`  
-  с одинаковым адресом и одинаковым ожидаемым результатом.
-3. Добавьте обязательный proof не только для mouse path, но и для:
-  - keyboard path (`ArrowDown` + `Enter`)
-  - blur после выбора  
-  Иначе можно починить только клик мышью.
-4. В regression-proof зафиксируйте, что после hotfix не ломаются:
-  - ручной ввод адреса без выбора подсказки
-  - lookup по УНП + apply из `GrpConfirmDialog`
-  - сохранение legacy-полей из `address_structured`
-  - preview/view formatter для Минска и не-Минска
-5. В proof-пакете для `/ai` и `/settings/legal-details` показать не только UI, но и данные:
-  - `address_structured` до save
-  - `address_structured` после save
-  - legacy-поля после save (`street/house/building/apartment/city/region/postal_code/...`)  
-  чтобы было видно, где именно теряются значения, если теряются.
-6. В hotfix явно запретить смешивание display-логики и input-логики:
-  - formatter/view shell не трогаем
-  - правим только shared interaction/data-flow слоя адреса  
-  Иначе снова можно “починить показ”, но оставить сломанным ввод.
-7. Repo-wide coverage оформить явно списком consumer-экранов, которые реально используют `StructuredAddressBlock`, и по каждому дать статус:
-  - проверен / не затронут
-  - требует фикс / не требует фикс
-8. В итоговый DoD добавьте отдельный критерий:
-  - при выборе suggestion **не появляется toast** `ID скопирован`
-  - выбирается именно адрес
-  - все доступные адресные сегменты реально подставляются в форму
-9. До закрытия этого hotfix PATCH 6 действительно не начинать.
+1. В `StructuredAddressBlock` делай не просто rollback label-copy, а **полный локальный rollback всего address-label interaction**:
+  - убрать `onClick`
+  - убрать `title`
+  - убрать `cursor-pointer` и hover-стили
+  - убрать любые вызовы `toast.success("ID скопирован")`
+  - убрать зависимость address-label rendering от `fieldIds` в UI-поведении  
+  `fieldIds` можно оставить только как данные, без интерактива.
+2. Для suggestion item используй **один основной путь выбора**:
+  - `onPointerDown` как основной
+  - внутри сразу `preventDefault()`, `stopPropagation()`, `isSelectingRef.current = true`, прямой `handleSelect(prediction)`
+  - `onClick` для выбора адреса убрать, чтобы не было второго конкурирующего сценария.
+3. После `handleSelect` обязателен симметричный reset selection-guard:
+  - `isSelectingRef.current = false` в success-path
+  - `isSelectingRef.current = false` в error/finally-path  
+  Иначе можно починить один клик и сломать следующий.
+4. Отдельно проверь, что blur/close логика не убивает pointer-path:
+  - dropdown не закрывается раньше `handleSelect`
+  - `clearPredictions()` не вызывается до завершения выбора
+  - после выбора dropdown закрывается уже штатно, а не “раньше времени”.
+5. В proof для `/ai` и `/settings/legal-details` добавь **один и тот же адрес** и покажи два отдельных сценария:
+  - mouse select
+  - keyboard select  
+  И по каждому явно зафиксируй:
+  - toast `ID скопирован` не появляется
+  - поля реально заполнены
+  - save проходит.
+6. В data-proof покажи не только `address_structured`, но и что в legacy-поля реально ушли:
+  - street
+  - house
+  - building
+  - apartment
+  - city
+  - region
+  - postal_code
+  - country  
+  иначе можно сохранить JSONB, но потерять совместимость текущих форм/preview.
+7. Repo-wide coverage оформи таблицей по всем consumer-путям `StructuredAddressBlock`:
+  - экран
+  - есть ли `fieldIds`
+  - проверен ли mouse path
+  - проверен ли keyboard path
+  - затронут / не затронут hotfix  
+  Без этого нельзя считать shared-fix доказанным.
+8. В regression-proof отдельно добавь:
+  - ручной ввод без выбора suggestion не ломается
+  - lookup по УНП + `GrpConfirmDialog` по-прежнему работает
+  - preview для Минска и не-Минска не регресснул после hotfix.
+9. До закрытия hotfix не переходить к PATCH 6.
 10. &nbsp;
-11. PATCH 5R++ HOTFIX — address input flow proof + fix
+11. &nbsp;
+12. PATCH 5R++ HOTFIX — rollback copy inside StructuredAddressBlock + select on pointerdown/mousedown
 
-## Что уже видно по коду
+## Что подтверждено по факту
 
-1. Баг локализован не во formatter, а в общем input-shell:
+- Баг в mouse path реально не закрыт: в session replay после выбора address suggestion снова появляется toast `ID скопирован`.
+- Клавиатурный path уже живой, значит `handleSelect()` и сам autocomplete в целом работают.
+- Проблема остаётся именно в mouse interaction chain.
+- `StructuredAddressBlock` сейчас всё ещё смешивает:
+  - input/autocomplete interaction
+  - copy-by-label через `fieldIds`
+- Это подтверждается кодом:
+  - внутри `StructuredAddressBlock.tsx` label всё ещё имеет `onClick`, `title`, `cursor-pointer`, `toast.success("ID скопирован")`
+  - suggestions по mouse path всё ещё выбираются через `onClick`, а не прямым select на `pointerdown/mousedown`
+- Repo-wide consumers `StructuredAddressBlock`:
+  - `OrganizationDetailsForm` — передаёт `fieldIds`, затронут
+  - `IndividualDetailsForm` — передаёт `fieldIds`, затронут
+  - `LegalEntityDetailsForm` — без `fieldIds`, проверить, но rollback безопасен
+  - `EntrepreneurDetailsForm` — без `fieldIds`, проверить, но rollback безопасен
+  - `AdminExecutors` — без `fieldIds`, проверить, но rollback безопасен
 
-- `StructuredAddressBlock` — единый компонент адреса для всей системы
-- именно он отвечает и за dropdown Google, и за кликабельные label с `ID скопирован`
+## Что делаем
 
-2. Общий риск уже понятен:
+### 1) Обязательный rollback только внутри StructuredAddressBlock
 
-- в `StructuredAddressBlock` label поля адреса кликабелен и копирует FLD-ID
-- тот же компонент рендерит autocomplete dropdown
-- пользовательский симптом “при выборе адреса копируется ID, а адрес не подставляется” совпадает с конфликтом внутри этого shared-компонента, а не с view formatter
+Файл: `src/components/shared/StructuredAddressBlock.tsx`
 
-3. Важное покрытие по путям:
+У всех label внутри address block:
 
-- `/ai` и `/settings/legal-details` используют один и тот же `OrganizationDetailsForm`
-- оба пути используют один и тот же `StructuredAddressBlock`
-- значит фикс должен идти в shared address-flow, а не точечно в preview
+- убрать `onClick`
+- убрать copy handler
+- убрать `title` с `FLD-...`
+- убрать `cursor-pointer` / hover-стили
+- вернуть обычные статичные label
 
-4. Зоны использования, которые надо проверить:
+Важно:
 
-- `OrganizationDetailsForm`
-- `IndividualDetailsForm`
-- `EntrepreneurDetailsForm`
-- `AdminExecutors`
-- при необходимости legacy `LegalEntityDetailsForm`
+- `FieldLabelWithId` в остальных частях платформы не трогать
+- rollback только локально в address block
 
-## Что исправляем
+### 2) Перенести выбор suggestion на раннюю фазу события
 
-### Уровень 1 — interaction hotfix в `StructuredAddressBlock`
+В `StructuredAddressBlock.tsx` для suggestion item:
 
-Цель: выбор подсказки всегда должен выбирать адрес, а не запускать copy-ID.
+- делать выбор на `onPointerDown` (или минимум `onMouseDown`)
+- внутри:
+  - `preventDefault()`
+  - `stopPropagation()`
+  - прямой вызов `handleSelect(prediction)`
+- не полагаться на последующий `click` для выбора
 
-План фикса:
+Цель:
 
-- разобрать конфликт событий между:
-  - label click-copy
-  - focus/blur input
-  - click по dropdown option
-- минимально развести эти сценарии внутри `StructuredAddressBlock`
-- сохранить стандарт копирования FLD-ID, но убрать возможность его срабатывания вместо выбора address suggestion
-- отдельно проверить mouse path и keyboard path:
-  - click по suggestion
-  - Enter по suggestion
-  - blur после выбора
+- адрес выбирается в момент нажатия на suggestion, до blur / close / unmount / протекания клика вниз
 
-Ожидаемый результат:
+### 3) Не трогать display-слой
 
-- toast `ID скопирован` не появляется при выборе подсказки
-- `handleSelect()` реально отрабатывает
-- `onChange(merged)` обновляет состояние формы
+Сейчас не менять:
 
-### Уровень 2 — восстановить полный address-flow, а не только dropdown click
+- formatter
+- preview/view shell
+- GRP lookup
+- PATCH 6
 
-После выбора адреса должны корректно заполниться:
+## Порядок выполнения
 
-- улица
-- дом
-- корпус
-- помещение / квартира
-- город
-- область
-- индекс
-- страна
-- район / settlement при наличии
+### Этап A — минимальный hotfix
 
-Проверка и при необходимости правки:
+1. Убрать copy-by-label из `StructuredAddressBlock`
+2. Перенести selection suggestion на `pointerdown/mousedown`
+3. Сохранить keyboard path (`ArrowDown + Enter`) без изменений
 
-- `GooglePlacesAdapter.parseComponents`
-- merge в `handleSelect` внутри `StructuredAddressBlock`
-- `handleAddressChange` в формах
-- адаптеры сохранения `*_AddressAdapter.toLegacyFields(...)`
-- чтение/запись `*_address_structured`
+### Этап B — proof в реальном UI
 
-## Порядок работ
+Один и тот же кейс, один и тот же адрес, в двух путях:
 
-### Этап A — shared root cause proof
+#### `/ai`
 
-Для одного и того же кейса показать:
-
-1. что `StructuredAddressBlock` получает dropdown predictions
-2. что выбор suggestion сейчас уводит в copy-ID / не обновляет address state
-3. какие именно поля остаются пустыми после “выбора”
-4. какие consumer-пути реально затронуты:
-
-- `/ai`
-- `/settings/legal-details`
-- остальные места с `StructuredAddressBlock`
-
-### Этап B — минимальный shared hotfix
-
-Файлы-кандидаты:
-
-- `src/components/shared/StructuredAddressBlock.tsx`
-- при необходимости `src/components/legal-details/OrganizationDetailsForm.tsx`
-- при необходимости `src/components/legal-details/IndividualDetailsForm.tsx`
-- при необходимости `src/components/legal-details/FieldLabelWithId.tsx` только если без этого нельзя безопасно развести interaction
-
-Принцип:
-
-- чинить в общем компоненте
-- не переписывать formatter/view shell
-- не трогать PATCH 6
-
-### Этап C — proof по реальному UI-flow
-
-Обязательный proof-пакет после фикса:
-
-#### 1. `/ai`
-
-Для одного кейса:
+Показать:
 
 - ввод адреса
 - появление подсказок
-- выбор подсказки
-- заполнение всех ячеек
-- состояние `address_structured` до save
-- состояние `address_structured` после save
-- что реально показывается в preview/view
+- клик мышью по suggestion
+- toast `ID скопирован` не появляется
+- поля заполняются:
+  - улица
+  - дом
+  - корпус
+  - помещение
+  - город
+  - область
+  - индекс
+  - страна
 
-#### 2. `/settings/legal-details`
+#### `/settings/legal-details`
 
-Тот же тип proof:
+Тот же сценарий 1:1:
 
 - ввод
 - подсказки
-- выбор
-- автозаполнение полей
-- save
-- повторное открытие
-- сохранённый `address_structured`
+- mouse select
+- поля заполнены
+- без toast
 
-#### 3. Не-Минск кейс
+#### Keyboard path
 
-Проверить, что адрес с областью/районом области:
+Отдельно:
 
-- корректно подставляется в форму
-- корректно сохраняется
-- корректно показывается в preview
+- `ArrowDown + Enter`
+- адрес по-прежнему выбирается корректно
 
-#### 4. Regression-proof
+### Этап C — data proof
 
-Подтвердить, что после hotfix не сломаны:
+Для одного кейса:
 
-- lookup по УНП
-- confirm/apply flow
-- preview/view formatter для Минска
+- `address_structured` после save
+- legacy-поля после save (`street/house/building/apartment/city/region/postal_code/...`)
+- повторное открытие записи
+- preview показывает корректный адрес
 
-## Короткий вывод по дизайну решения
+### Этап D — regression-proof
 
-Это должен быть не “ещё один formatter patch”, а именно shared fix адресного interaction-layer.
+Подтвердить, что не сломаны:
 
-Сначала закрываем:
+- ручной ввод адреса без выбора подсказки
+- lookup по УНП + apply через `GrpConfirmDialog`
+- сохранение legacy-полей из `address_structured`
+- preview/view formatter для Минска и не-Минска
 
-- выбор подсказки
-- заполнение полей
-- сохранение в `address_structured`
-- proof в `/ai` и `/settings/legal-details`
+## Файлы, которые с высокой вероятностью войдут
 
-Только после этого PATCH 5R++ HOTFIX можно закрывать. PATCH 6 не начинать.
+- `src/components/shared/StructuredAddressBlock.tsx`
+
+Возможны только proof-проверки по:
+
+- `src/components/legal-details/OrganizationDetailsForm.tsx`
+- `src/components/legal-details/IndividualDetailsForm.tsx`
+- `src/components/legal-details/LegalEntityDetailsForm.tsx`
+- `src/components/legal-details/EntrepreneurDetailsForm.tsx`
+- `src/pages/admin/AdminExecutors.tsx`
 
 ## DoD
 
-- при выборе подсказки не срабатывает `ID скопирован`
-- suggestion selection реально подставляет адрес в форму
-- поля адреса массово заполняются из выбранного адреса
-- сохранение пишет корректный `*_address_structured`
+- в `StructuredAddressBlock` больше нет copy-by-label
+- при выборе suggestion не появляется toast `ID скопирован`
+- mouse path стабильно выбирает именно адрес
+- keyboard path продолжает работать
+- все доступные адресные сегменты подставляются в форму
 - один и тот же сценарий подтверждён в `/ai` и `/settings/legal-details`
-- preview/view после save показывает правильный адрес
-- lookup по УНП не регресснул
+- save пишет корректный `address_structured` и legacy-поля
+- preview после save остаётся корректным
+- PATCH 6 не начинаем до закрытия этого hotfix
