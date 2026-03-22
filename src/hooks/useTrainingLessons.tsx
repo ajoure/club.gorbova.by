@@ -147,9 +147,11 @@ export function useTrainingLessons(moduleId?: string) {
       console.error("Error fetching lessons:", error);
       toast.error("Ошибка загрузки уроков");
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
-  }, [moduleId, user, isAdminUser]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleId, user?.id, isAdminUser]);
 
   useEffect(() => {
     fetchLessons();
