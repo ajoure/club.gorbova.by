@@ -95,11 +95,15 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      // Guard: don't close dropdown while an address selection is in progress
-      // (Radix Sheet overlay can re-target the event, making contains() fail)
-      if (isSelectingRef.current || isHoveringDropdownRef.current) return;
+      if (isSelectingRef.current || isHoveringDropdownRef.current) {
+        console.log('[ADDR] doc mousedown BLOCKED by guard', { selecting: isSelectingRef.current, hovering: isHoveringDropdownRef.current });
+        return;
+      }
       const target = e.target as Node;
-      if (!containerRef.current?.contains(target) && !dropdownRef.current?.contains(target)) {
+      const inContainer = containerRef.current?.contains(target);
+      const inDropdown = dropdownRef.current?.contains(target);
+      console.log('[ADDR] doc mousedown', { inContainer, inDropdown, target: (target as HTMLElement).tagName });
+      if (!inContainer && !inDropdown) {
         setIsOpen(false);
       }
     };
@@ -119,7 +123,14 @@ export function StructuredAddressBlock({
 
   useEffect(() => {
     if (!isOpen) return;
-    const close = () => { if (!isSelectingRef.current) clearPredictions(); };
+    const close = () => {
+      if (isSelectingRef.current) {
+        console.log('[ADDR] scroll/resize close BLOCKED by isSelecting');
+        return;
+      }
+      console.log('[ADDR] scroll/resize close — clearing predictions');
+      clearPredictions();
+    };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
     return () => {
@@ -180,9 +191,11 @@ export function StructuredAddressBlock({
 
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
+      console.log('[ADDR] handleSelect START', prediction.placeId);
       isSelectingRef.current = true;
       try {
         const details = await fetchPlaceDetails(prediction);
+        console.log('[ADDR] fetchPlaceDetails done', !!details);
 
         if (details) {
           const parsed = GooglePlacesAdapter.parseComponents(details.addressComponents as any[]);
@@ -196,6 +209,7 @@ export function StructuredAddressBlock({
             lat: details.lat,
             lng: details.lng,
           };
+          console.log('[ADDR] onChange called', { street: merged.street, city: merged.city, house: merged.house });
           onChange(merged);
         }
       } catch (err) {
@@ -204,6 +218,7 @@ export function StructuredAddressBlock({
         isHoveringDropdownRef.current = false;
         clearPredictions();
         isSelectingRef.current = false;
+        console.log('[ADDR] handleSelect FINALLY');
       }
     },
     [fetchPlaceDetails, clearPredictions, onChange, value]
@@ -253,14 +268,17 @@ export function StructuredAddressBlock({
             isHoveringDropdownRef.current = false;
           }}
           onPointerDown={(e) => {
-            // Capture pointer before Radix Sheet overlay can intercept
+            // Stop NATIVE propagation to prevent Radix DismissableLayer from intercepting
             e.preventDefault();
             e.stopPropagation();
+            e.nativeEvent.stopImmediatePropagation();
             isSelectingRef.current = true;
+            console.log('[ADDR] dropdown container pointerdown — native propagation stopped');
           }}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            e.nativeEvent.stopImmediatePropagation();
             isSelectingRef.current = true;
           }}
           style={{
@@ -283,8 +301,10 @@ export function StructuredAddressBlock({
                   index === highlightIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
                 )}
                 onPointerDown={(e) => {
+                  console.log('[ADDR] li pointerdown', p.placeId);
                   e.preventDefault();
                   e.stopPropagation();
+                  e.nativeEvent.stopImmediatePropagation();
                   isSelectingRef.current = true;
                   handleSelect(p);
                 }}
