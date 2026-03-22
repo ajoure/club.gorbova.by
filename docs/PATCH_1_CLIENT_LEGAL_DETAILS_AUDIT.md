@@ -136,6 +136,14 @@ profile_id IN (
 3. Если ничего не найдено → clientDetails = null, clientType = 'individual'
 ```
 
+> **⚠️ УСЛОВИЕ БЕЗОПАСНОСТИ FALLBACK (Правка 4):**
+> Вывод «edge functions можно не менять» верен **только если** document-entities **никогда не смогут получить `is_default = true`**.
+> Если это условие нарушено — fallback по шагу 2 может вернуть document-entity вместо billing-записи, что **сломает генерацию счёт-актов**.
+> Гарантии:
+> - `setDefault` mutation обязана фильтровать по `WHERE purpose = 'billing'`
+> - UI AI-раздела **не должен** вызывать `setDefault` для document-записей
+> - Это **обязательный acceptance-критерий** для PATCH 5
+
 ### В useLegalDetails.tsx (hook):
 
 ```
@@ -233,6 +241,12 @@ FK: FOREIGN KEY (order_id) REFERENCES orders_v2(id) ON DELETE CASCADE
 
 ## 7. Рекомендация
 
+> **СТАТУС (Правка 2):**
+> - PATCH 1 **не внедряет** DDL — это read-only аудит
+> - PATCH 1 только **рекомендует** Вариант 2
+> - Финальное DDL будет применяться **только в PATCH 2** (миграция)
+> - До PATCH 2 рекомендация = **гипотеза**, не решение
+
 ### Рекомендуемая модель: Вариант 2 — два поля
 
 ```sql
@@ -260,6 +274,13 @@ ALTER TABLE client_legal_details
 - `/settings/legal-details`: добавить `WHERE purpose = 'billing'` чтобы document-entities не появлялись в billing-настройках
 - `setDefault` mutation: добавить `WHERE purpose = 'billing'` чтобы нельзя было назначить document-entity основной для billing
 
+> **⚠️ GUARD ДЛЯ `setDefault` (Правка 1):**
+> Обязательный acceptance-критерий для PATCH 5:
+> - После внедрения `purpose`/`status`, мутация `setDefault` **обязана** содержать `WHERE purpose = 'billing'`
+> - Document-entity **не может** стать billing default
+> - Это **обязательный guard**, а не опция
+> - Без этого guard edge functions fallback по `is_default` небезопасен (см. секцию 3)
+
 ---
 
 ## 8. Места, которые нельзя сломать
@@ -285,3 +306,18 @@ ALTER TABLE client_legal_details
 - `supabase--read_query` (SELECT only)
 
 **Ни один файл не был модифицирован в рамках PATCH 1.**
+
+---
+
+## 10. Query points to update later (Правка 3)
+
+Перечень мест, требующих корректировки **после внедрения `purpose`/`status` в PATCH 2**:
+
+| Место | Что изменить | Когда |
+|---|---|---|
+| `/settings/legal-details` list query | Добавить `WHERE purpose = 'billing'` | PATCH 5 |
+| `useLegalDetails.tsx` → `setDefault` mutation | Добавить `WHERE purpose = 'billing'` в unset all + guard на insert | PATCH 5 |
+| Новый AI Requisites list query | Фильтр по `purpose` + badge для billing-записей | PATCH 5 |
+| Edge functions fallback (`is_default`) | **НЕ МЕНЯТЬ** — но только при условии, что document-entities никогда не получат `is_default = true` (см. Правку 4, секция 3) |
+| `useLegalDetails.tsx` → `createDetails` | Для document-entities: `is_default = false` всегда | PATCH 5 |
+| Future: billing-only selectors | При необходимости — helper `useBillingDetails()` с фильтром | Backlog |
