@@ -177,13 +177,14 @@ export function useLessonProgressState(lessonId?: string) {
 
   // Mark entire lesson as completed
   const markLessonCompleted = useCallback(async () => {
-    if (!lessonId || !user) return;
+    const uid = userIdRef.current;
+    if (!lessonId || !uid) return;
 
     try {
       const { error } = await supabase
         .from("lesson_progress_state")
         .upsert({
-          user_id: user.id,
+          user_id: uid,
           lesson_id: lessonId,
           state_json: record?.state_json || {},
           completed_at: new Date().toISOString(),
@@ -197,7 +198,8 @@ export function useLessonProgressState(lessonId?: string) {
     } catch (error) {
       console.error("Error marking lesson completed:", error);
     }
-  }, [lessonId, user, record, fetchState]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonId, user?.id, record, fetchState]);
 
   // Reset progress - now just clears local state and refetches
   // Actual deletion is done via Edge Function (service role)
