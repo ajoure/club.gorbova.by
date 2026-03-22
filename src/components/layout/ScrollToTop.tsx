@@ -3,6 +3,7 @@ import { useLocation, useNavigationType } from "react-router-dom";
 
 const SCROLL_KEY_PREFIX = "scroll:";
 const MAX_ENTRIES = 50;
+const RESTORE_TIMEOUT = 5000;
 
 function saveScrollPosition(pathname: string) {
   try {
@@ -24,32 +25,58 @@ function restoreScrollPosition(pathname: string) {
   const target = parseInt(saved, 10);
   if (!target || target <= 0) return;
 
-  let attempts = 0;
-  const maxAttempts = 15;
-  const interval = 150;
-
-  const tryRestore = () => {
-    attempts++;
-    const canScroll = document.documentElement.scrollHeight >= target + window.innerHeight * 0.5;
-    
-    if (canScroll || attempts >= maxAttempts) {
-      window.scrollTo(0, target);
-      // Final verification after a short delay
-      requestAnimationFrame(() => {
-        if (Math.abs(window.scrollY - target) > 50 && attempts < maxAttempts) {
-          window.scrollTo(0, target);
-        }
-      });
-    } else {
-      setTimeout(tryRestore, interval);
-    }
+  // Try immediately first
+  const tryScroll = () => {
+    window.scrollTo(0, target);
   };
 
-  // Start after first paint
-  requestAnimationFrame(() => tryRestore());
+  const canScroll = () => 
+    document.documentElement.scrollHeight >= target + window.innerHeight * 0.5;
+
+  // If DOM is already tall enough, scroll immediately
+  if (canScroll()) {
+    requestAnimationFrame(tryScroll);
+    return;
+  }
+
+  // Otherwise use MutationObserver to wait for content
+  const observer = new MutationObserver(() => {
+    if (canScroll()) {
+      observer.disconnect();
+      tryScroll();
+      // Verify after paint
+      requestAnimationFrame(() => {
+        if (Math.abs(window.scrollY - target) > 50) {
+          tryScroll();
+        }
+      });
+    }
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: false,
+    characterData: false,
+  });
+
+  // Fallback timeout - force scroll even if height never reaches target
+  const timeout = setTimeout(() => {
+    observer.disconnect();
+    tryScroll();
+  }, RESTORE_TIMEOUT);
+
+  // Cleanup on next navigation (stored for potential abort)
+  const cleanup = () => {
+    observer.disconnect();
+    clearTimeout(timeout);
+  };
+
+  // Store cleanup on window for potential early abort
+  (window as any).__scrollRestoreCleanup = cleanup;
 }
 
-// Also save on beforeunload (tab close, external navigation)
+// Save on beforeunload (tab close, external navigation)
 if (typeof window !== "undefined") {
   window.addEventListener("beforeunload", () => {
     try {
@@ -58,6 +85,18 @@ if (typeof window !== "undefined") {
         sessionStorage.setItem(SCROLL_KEY_PREFIX + pathname, String(window.scrollY));
       }
     } catch {}
+  });
+
+  // Save on visibility change (tab switch)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      try {
+        const pathname = window.location.pathname;
+        if (window.scrollY > 0) {
+          sessionStorage.setItem(SCROLL_KEY_PREFIX + pathname, String(window.scrollY));
+        }
+      } catch {}
+    }
   });
 }
 
@@ -76,6 +115,11 @@ export function ScrollToTop() {
   // Save scroll position of the previous page before navigating away
   useEffect(() => {
     if (prevPathRef.current !== pathname) {
+      // Abort any pending restoration from previous navigation
+      if ((window as any).__scrollRestoreCleanup) {
+        (window as any).__scrollRestoreCleanup();
+        (window as any).__scrollRestoreCleanup = null;
+      }
       saveScrollPosition(prevPathRef.current);
       prevPathRef.current = pathname;
     }
