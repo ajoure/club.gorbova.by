@@ -1,171 +1,185 @@
 # да, согласен, с учетом правок:
 
-1. В задаче 2 зафиксируй однозначно: по клику на label копируется `public_id` **поля (**`FLD-...`**)**, а не `tokenString`/`{{cf...}}`. Визуально FLD-ID не показывается, но копируется именно ID поля.
-2. В задаче 2 отдельно укажи, что патч делается **только для FLD-контекста**:
-  - `FieldLabelWithId`
-  - inline FLD у УНП
-  - FLD в `StructuredAddressBlock`  
-  `CopyableIdChip` для PRD-/T-/прочих не-FLD сущностей не трогаем.
-3. В задаче 4 добавь явный add-only guard для новых `grp_*` колонок:
-  - без изменения существующих колонок и логики,
-  - без backfill в этом патче,
-  - новые поля nullable,
-  - существующие записи остаются валидными без миграции данных.
-4. В задаче 5 зафиксируй, что сохранение `grp_*` полей должно происходить **и для ЮЛ, и для ИП** через существующий `handleGrpConfirm`, без расхождения flow.
-5. В задаче 5 уточни: секция **«Данные реестра»** в `EntityViewSheet` должна быть **read-only**, а в edit-mode эти поля показываются как read-only info/summary, не как ручные editable inputs.
-6. Для address formatter закрепи reusable-назначение:
-  - сначала для `EntityViewSheet`,
-  - затем тот же helper переиспользуется в PATCH 6 для физлиц,
-  - адрес не собирать строкой прямо в JSX.
-7. В совокупный DoD добавь отдельные проверки:
-  - `onOpenExisting` из duplicate-flow по-прежнему открывает **view-sheet**;
-  - billing-record в view-sheet редактируется, но не архивируется;
-  - document-record архивируется только через confirm-flow;
-  - settings page визуально/функционально не регресснул после сохранения новых `grp_*` полей.
-8. В порядок реализации добавь явный checkpoint после задачи 4:
-  - сначала proof applied schema по `grp_*` колонкам,
-  - только потом UI-патч на сохранение и показ этих полей.
-9. В плане лучше явно переименовать задачу 2 в **отдельный cross-platform UI PATCH**, чтобы не потерять, что это не локальная правка только для реквизитов, а единый стандарт по всей платформе.
-10. &nbsp;
-11. PATCH 5R++ — Сводный план: 6 задач
+1. В блоке **Belarus Address Formatter** не ограничивайся только кейсом `city === "Минск"`.  
+Нужно нормализовать и поддержать варианты:
+  - `Минск`
+  - `г. Минск`
+  - `город Минск`  
+  И только после нормализации применять special-case: **без страны, без области, без района**.
+2. Для Беларуси не хардкодить всегда `г.` перед населенным пунктом.  
+Форматтер должен использовать тип населенного пункта, если он есть в structured data:
+  - `г.`
+  - `аг.`
+  - `д.`
+  - `п.`
+  - `г.п.`  
+  Для Минска — `г. Минск`; для других случаев — по фактическому типу населенного пункта.
+3. В плане лучше уточнить, что formatter возвращает **одну готовую display-строку**, а UI уже сам переносит ее по ширине контейнера.  
+Не делать отдельный “многострочный бизнес-формат” внутри formatter для Беларуси.  
+То есть:
+  - formatter → одна нормализованная строка
+  - view-card → обычный wrap по ширине  
+  Это даст аккуратный и предсказуемый результат.
+4. Для адреса Беларуси добавь явные product-rules по сегментам:
+  - индекс — в начале
+  - населенный пункт
+  - улица
+  - дом
+  - корпус
+  - квартира/офис  
+  При этом:
+  - пустые сегменты пропускаются
+  - район не показывается
+  - страна не показывается
+  - Минская область для Минска не показывается  
+  Это нужно зафиксировать в плане не только примером, а как правило formatter.
+5. Для **других стран СНГ** в этом PATCH не пытайся сразу вводить “правила СНГ”.  
+Правильнее зафиксировать:
+  - в этом патче вводится **product-standard для Беларуси**;
+  - для остальных стран пока остается generic formatter;
+  - отдельная нормализация по странам СНГ — future patch при наличии требований.  
+  Иначе scope расползется.
+6. В блоке **Unified EntityRecordSheet** добавь явный guard для edit-mode:
+  - если запись billing/document уже открыта в `view`,
+  - переключение в `edit` не должно терять `recordSheetEntity`,
+  - после save нужно либо:
+    - обновить текущую сущность в sheet и вернуть `mode="view"`,
+    - либо закрыть sheet только по явному решению UX.  
+    Это надо закрепить как предсказуемый post-save flow.
+7. Для archive action в `view` mode добавь явный confirm-step в план.  
+Сейчас в DoD написано “archivable via confirm”, это правильно, но стоит вынести в сам flow:
+  - `В архив` → confirm dialog
+  - только после подтверждения update `status='archived'`.
+8. В DoD добавь явную проверку для address formatter:
+  - `220018, г. Минск, ул. Одинцова, д. 19, кв. 306`
+  - без `Беларусь`
+  - без `Минская область`
+  - без района  
+  И второй пример:
+  - не-Минск адрес Беларуси показывает область, но не страну и не район.
+9. В блоке **FLD-ID and GRP — verification only** лучше переименовать секцию, чтобы было понятно:  
+это не “ничего не делаем”, а:
+  - код уже внедрен ранее,
+  - в этом PATCH требуется **regression-proof verification**.  
+  Иначе это звучит слишком пассивно.
+10. В финальном DoD добавь:
 
-## Задача 1: Verify view-edit flow (no code changes)
+- `view` и `edit` используют один и тот же shell;
+- body-content может отличаться;
+- shell не прыгает по ширине/overlay/header;
+- create-mode использует тот же контейнерный shell-стандарт, даже если контент формы отличается.
+- &nbsp;
+- PATCH 5R++ fix — Unified Shell + Belarus Address Formatter
 
-Подтвердить что `EntityViewSheet` → кнопка «Редактировать» → `EntityEditorSheet` → сохранение работает корректно. Никаких файлов не меняем.
+## Summary
 
----
+Three changes: (1) merge EntityViewSheet + EntityEditorSheet into one `EntityRecordSheet` with view/edit/create modes sharing identical shell, (2) rewrite address formatter for Belarus product standard, (3) verify FLD-ID and GRP registry data.
 
-## Задача 2: Cross-Platform UI PATCH — скрытие FLD-ID, copy-by-label
+## 1. Unified EntityRecordSheet
 
-**Scope**: только FLD-контекст. `CopyableIdChip` для PRD-/T-/прочих сущностей не трогаем.
+**Problem**: View and edit open in two separate sheets with different widths, headers, and styling.
 
-**Что копируется**: по клику на label копируется `publicId` (FLD-000042), а НЕ `tokenString` ({{cf.legal_details.FLD-000042}}).
+**Solution**: Create `EntityRecordSheet.tsx` that replaces both. Single shell with internal `mode` state (`view | edit | create`).
 
-### Затрагиваемые файлы
-
-
-| Файл                                                       | Что меняем                                                                                                                                                            |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/components/legal-details/FieldLabelWithId.tsx`        | Убрать `CopyableIdChip`, сделать label кликабельным: `onClick → copyToClipboard(fieldEntry.publicId, "ID скопирован")`, добавить `cursor-pointer`, `title` с publicId |
-| `src/components/legal-details/OrganizationDetailsForm.tsx` | Строки 400-408: убрать inline `CopyableIdChip` для УНП, сделать FormLabel кликабельным по тому же паттерну                                                            |
-| `src/components/shared/StructuredAddressBlock.tsx`         | Строки 293-297: убрать `CopyableIdChip` из address labels, сделать Label кликабельным                                                                                 |
-
-
-### Новый паттерн FieldLabelWithId
-
-```tsx
-export function FieldLabelWithId({ label, fieldEntry, required, children }) {
-  const handleCopy = fieldEntry?.publicId
-    ? (e) => { e.preventDefault(); copyToClipboard(fieldEntry.publicId, "ID скопирован"); }
-    : undefined;
-
-  return (
-    <FormLabel
-      className={cn("flex items-center gap-1.5 flex-wrap", handleCopy && "cursor-pointer hover:text-primary")}
-      onClick={handleCopy}
-      title={fieldEntry?.publicId ? `${fieldEntry.publicId} — клик для копирования` : undefined}
-    >
-      <span>{label}{required ? " *" : ""}</span>
-      {children}
-    </FormLabel>
-  );
-}
+```text
+EntityRecordSheet
+  ├─ Shell (always same): SheetContent w-full sm:max-w-[60vw] lg:max-w-3xl ...
+  ├─ Header (always same): icon + title + subtitle + separator + action bar
+  ├─ Body (switches by mode):
+  │   ├─ mode="view" → sectioned Card blocks (current EntityViewSheet content)
+  │   ├─ mode="edit" → OrganizationDetailsForm + duplicate check logic
+  │   └─ mode="create" → OrganizationDetailsForm (empty) + duplicate check
+  └─ Action bar adapts:
+      ├─ view: [Редактировать] [В архив?]
+      ├─ edit: [Отмена → back to view] (form has its own submit button)
+      └─ create: (form has its own submit button)
 ```
 
----
+**Key behaviors**:
 
-## Задача 3: Аудит полноты данных из API МНС/ГРП (уже выполнен)
+- Click row in table → opens RecordSheet in `view` mode
+- Click "Редактировать" → same sheet switches to `edit` mode (no close/reopen, no shell change)
+- Click "Отмена" in edit → back to `view` mode
+- "Добавить" button → opens RecordSheet in `create` mode
+- `onOpenExisting` from duplicate flow → opens RecordSheet in `view` mode
+- After save in edit → switches back to `view` with refreshed data
+- After save in create → closes sheet
 
-Данные проходят через `GrpAutofillService` → `GrpConfirmDialog` → `handleGrpConfirm`. Поля `registration_date`, `tax_office_code/name`, `status_code/name`, `short_name`, `liquidation_date/reason` доступны в типах, но **не сохраняются в БД** — нет колонок.
-
----
-
-## Задача 4: Schema PATCH — добавить grp_* колонки
-
-**Guard**: add-only, без изменения существующих колонок, без backfill, все nullable, существующие записи валидны без миграции данных.
-
-```sql
-ALTER TABLE client_legal_details
-  ADD COLUMN IF NOT EXISTS grp_registration_date text,
-  ADD COLUMN IF NOT EXISTS grp_tax_office_code text,
-  ADD COLUMN IF NOT EXISTS grp_tax_office_name text,
-  ADD COLUMN IF NOT EXISTS grp_status_code text,
-  ADD COLUMN IF NOT EXISTS grp_status_name text,
-  ADD COLUMN IF NOT EXISTS grp_short_name text,
-  ADD COLUMN IF NOT EXISTS grp_liquidation_date text,
-  ADD COLUMN IF NOT EXISTS grp_liquidation_reason text,
-  ADD COLUMN IF NOT EXISTS grp_last_fetched_at timestamptz;
-```
-
-**Checkpoint**: после применения миграции — proof что колонки существуют, прежде чем переходить к задаче 5.
-
----
-
-## Задача 5: UI PATCH — сохранение GRP-полей + address formatter + секция «Данные реестра»
-
-### Сохранение grp_* полей
-
-В `OrganizationDetailsForm.tsx` → `handleGrpConfirm`: добавить в submit data маппинг GRP-полей в `grp_*` колонки. Работает одинаково и для ЮЛ, и для ИП — через единый `handleGrpConfirm`.
-
-### Address formatter (reusable)
-
-Создать `src/lib/address/formatStructuredAddress.ts`:
-
-```typescript
-export function formatStructuredAddressForView(
-  structured: CanonicalAddressPayload | null,
-  fallback?: string | null
-): string[] {
-  // Returns array of lines, skipping empty segments
-  // Reusable: EntityViewSheet сейчас, PersonViewSheet в PATCH 6
-}
-```
-
-### Секция «Данные реестра» в EntityViewSheet
-
-- Read-only Card block, показывается только если хотя бы одно `grp_*` поле заполнено
-- Поля: дата регистрации, статус, ИМНС, краткое название, ликвидация (если есть), дата обновления
-- В edit-mode (EntityEditorSheet): эти поля показываются как read-only info/summary, не как editable inputs
-
-### Адрес в EntityViewSheet
-
-Заменить текущий `<InfoRow label="Юридический адрес" value={address} />` на многострочный вывод через `formatStructuredAddressForView`.
-
-### Файлы
+### Files
 
 
-| Файл                                                       | Действие                                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------------------- |
-| `src/lib/address/formatStructuredAddress.ts`               | **создать** — reusable formatter                                    |
-| `src/components/legal-details/OrganizationDetailsForm.tsx` | **изменить** — в handleGrpConfirm сохранять grp_* поля              |
-| `src/components/ai-requisites/EntityViewSheet.tsx`         | **изменить** — добавить секцию «Данные реестра» + address formatter |
+| File                                                 | Action                                        |
+| ---------------------------------------------------- | --------------------------------------------- |
+| `src/components/ai-requisites/EntityRecordSheet.tsx` | **create** — unified component                |
+| `src/components/ai-requisites/EntityViewSheet.tsx`   | **delete** — merged into RecordSheet          |
+| `src/components/ai-requisites/EntityEditorSheet.tsx` | **delete** — merged into RecordSheet          |
+| `src/pages/AI.tsx`                                   | **simplify** — one sheet state instead of two |
 
 
----
+### AI.tsx state simplification
 
-## Задача 6: Проверка и закрытие
+Replace:
 
-### Совокупный DoD
+- `entitySheetOpen` + `entityViewOpen` (two booleans)
+- `entitySheetMode` + `entitySheetTarget` + `entityViewTarget`
 
-- Клик по label копирует `publicId` (FLD-...), визуально FLD-ID нигде не показывается (для FLD-контекста)
-- `CopyableIdChip` для PRD-/T- не затронут
-- Адрес в view-mode читаемый, многострочный (через reusable formatter)
-- 9 колонок `grp_*` добавлены в БД (add-only, nullable, без backfill)
-- GRP-поля сохраняются и для ЮЛ, и для ИП через единый handleGrpConfirm
-- Секция «Данные реестра» read-only в view и в edit
-- `onOpenExisting` из duplicate-flow открывает view-sheet
-- Billing-record в view-sheet редактируется, но не архивируется
-- Document-record архивируется только через confirm-flow
-- Settings page визуально/функционально не регресснула после grp_* полей
-- Текущий GRP lookup/autofill/confirm flow не сломан
+With:
 
-### Порядок реализации
+- `recordSheetOpen: boolean`
+- `recordSheetMode: "view" | "edit" | "create"`
+- `recordSheetEntity: ClientLegalDetails | null`
 
-1. Задача 1 — verify view-edit flow
-2. Задача 2 — cross-platform FLD-ID hide + copy-by-label
-3. Задача 3 — audit (done)
-4. Задача 4 — DB migration → **checkpoint: proof schema applied**
-5. Задача 5 — save GRP fields + address formatter + view card section
-6. Задача 6 — verification
+`handleOpenEditSheet` no longer closes one sheet and opens another — it just calls `setRecordSheetMode("edit")`.
 
-После закрытия всех 6 задач → PATCH 6 (физлица) на готовом стандарте shell + labels + address formatting.
+## 2. Belarus Address Formatter
+
+**Problem**: Current formatter shows "Беларусь, Минская область, Фрунзенский район" for Minsk addresses.
+
+**Solution**: Rewrite `formatStructuredAddressForView` with Belarus-specific rules.
+
+**Rules for Belarus (`country_code === 'BY'` or `country === 'Беларусь'`)**:
+
+- **Minsk** (city matches `Минск`):
+  - Skip country, region, district
+  - Format: `220018, г. Минск, ул. Одинцова, д. 19, кв. 306`
+- **Other Belarus cities**:
+  - Skip country, skip district
+  - Show region as abbreviated: `Гродненская обл.`
+  - Format: `231300, Гродненская обл., г. Лида, ул. ..., д. ...`
+- **Non-Belarus**: keep current generic formatting
+
+**Single-line output** for view-mode (one formatted string), with segments in order: postal_code, region (if not Minsk), city, street, house, building, apartment.
+
+### File
+
+
+| File                                         | Action                                   |
+| -------------------------------------------- | ---------------------------------------- |
+| `src/lib/address/formatStructuredAddress.ts` | **rewrite** — add Belarus-specific logic |
+
+
+## 3. FLD-ID and GRP — verification only
+
+Already implemented in previous patch. Verify:
+
+- `FieldLabelWithId` copies `publicId` on click, no visual chip
+- `StructuredAddressBlock` labels copy `publicId` on click
+- GRP registry section shows in view mode as read-only
+- GRP fields saved for both ЮЛ and ИП
+
+No code changes expected here — just DoD confirmation.
+
+## DoD
+
+- Record opens in one sheet — view and edit share identical shell
+- "Редактировать" switches mode inside same sheet, no second sheet
+- Width/overlay/header/close button don't change between view↔edit
+- Create mode uses same shell dimensions
+- `onOpenExisting` from duplicate-flow opens view mode in same sheet
+- Billing record: editable, not archivable
+- Document record: archivable via confirm
+- Minsk address: no "Беларусь", no "Минская область", no district
+- Other Belarus: region shown, no country, no district
+- FLD-ID visually hidden, `publicId` copied on label click
+- GRP registry data saved and shown as read-only section
+- Settings page not regressed
