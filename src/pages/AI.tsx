@@ -277,6 +277,33 @@ const AI = () => {
   const [activeSection, setActiveSection] = useState<Section>("ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
 
+  // Entity management state
+  const [entityMode, setEntityMode] = useState<"list" | "create" | "edit">("list");
+  const [editingEntity, setEditingEntity] = useState<ClientLegalDetails | null>(null);
+  const aiEntities = useAiEntities();
+
+  const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
+    await aiEntities.createEntity(data);
+    setEntityMode("list");
+  }, [aiEntities]);
+
+  const handleEntityUpdate = useCallback(async (data: Partial<ClientLegalDetails>) => {
+    if (!editingEntity) return;
+    await aiEntities.updateEntity({ id: editingEntity.id, ...data });
+    setEntityMode("list");
+    setEditingEntity(null);
+  }, [aiEntities, editingEntity]);
+
+  const handleEntityEdit = useCallback((entity: ClientLegalDetails) => {
+    setEditingEntity(entity);
+    setEntityMode("edit");
+  }, []);
+
+  const handleEntityBack = useCallback(() => {
+    setEntityMode("list");
+    setEditingEntity(null);
+  }, []);
+
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
