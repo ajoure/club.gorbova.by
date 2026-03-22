@@ -89,6 +89,7 @@ export function StructuredAddressBlock({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const isSelectingRef = useRef(false);
+  const isHoveringDropdownRef = useRef(false);
 
   useEffect(() => cleanup, [cleanup]);
 
@@ -197,6 +198,7 @@ export function StructuredAddressBlock({
       } catch (err) {
         console.error('[StructuredAddressBlock] handleSelect error:', err);
       } finally {
+        isHoveringDropdownRef.current = false;
         clearPredictions();
         isSelectingRef.current = false;
       }
@@ -230,8 +232,9 @@ export function StructuredAddressBlock({
   );
 
   const handleBlur = useCallback(() => {
-    setTimeout(() => { if (!isSelectingRef.current) setIsOpen(false); }, 200);
-  }, [setIsOpen]);
+    // Intentionally do not close on blur: portal dropdown selection must survive mouse transition
+    // Closing is handled by outside mousedown, Escape, scroll/resize, and successful selection.
+  }, []);
 
   const showDropdown = isOpen && predictions.length > 0 && dropdownPos !== null;
 
@@ -240,6 +243,12 @@ export function StructuredAddressBlock({
         <div
           ref={dropdownRef}
           role="listbox"
+          onMouseEnter={() => {
+            isHoveringDropdownRef.current = true;
+          }}
+          onMouseLeave={() => {
+            isHoveringDropdownRef.current = false;
+          }}
           onMouseDown={(e) => {
             // Prevent blur on input + prevent document-level handler from closing dropdown
             e.preventDefault();
