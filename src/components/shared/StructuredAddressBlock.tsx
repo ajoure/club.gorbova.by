@@ -7,9 +7,11 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { toast } from 'sonner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { usePlaceAutocomplete } from '@/hooks/usePlaceAutocomplete';
+import type { LegalDetailsFieldEntry } from '@/hooks/useLegalDetailsFields';
 import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter';
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
@@ -22,8 +24,7 @@ export interface StructuredAddressBlockProps {
   disabled?: boolean;
   compact?: boolean;
   countries?: string[];
-  /** @deprecated fieldIds kept for interface compat — no longer interactive in address block */
-  fieldIds?: Map<string, unknown>;
+  fieldIds?: Map<string, LegalDetailsFieldEntry>;
 }
 
 interface FieldConfig {
@@ -106,14 +107,22 @@ export function StructuredAddressBlock({
   }, [setIsOpen]);
 
   const updateDropdownPosition = useCallback(() => {
-    if (!activeField) { setDropdownPos(null); return; }
+    if (!activeField) {
+      setDropdownPos(null);
+      return;
+    }
     const el = fieldRefs.current.get(activeField);
-    if (!el) { setDropdownPos(null); return; }
+    if (!el) {
+      setDropdownPos(null);
+      return;
+    }
     const rect = el.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom + 2, left: rect.left, width: rect.width });
   }, [activeField]);
 
-  useEffect(() => { updateDropdownPosition(); }, [activeField, predictions, updateDropdownPosition]);
+  useEffect(() => {
+    updateDropdownPosition();
+  }, [activeField, predictions, updateDropdownPosition]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -133,7 +142,6 @@ export function StructuredAddressBlock({
     (field: keyof StructuredAddress, val: string) => {
       let updated = { ...value, [field]: val };
 
-      // Hard reset stale dependent data when editing primary address fields
       if (field === 'street') {
         updated = {
           ...updated,
@@ -240,6 +248,16 @@ export function StructuredAddressBlock({
     // Closing is handled by outside mousedown, Escape, scroll/resize, and successful selection.
   }, []);
 
+  const handleLabelCopy = useCallback((fieldKey: keyof StructuredAddress) => {
+    const fieldEntry = fieldIds?.get(fieldKey);
+    if (!fieldEntry?.publicId) return;
+    navigator.clipboard.writeText(fieldEntry.publicId);
+    toast.success('ID скопирован');
+  }, [fieldIds]);
+
+  const portalTarget =
+    (containerRef.current?.closest('[data-address-shell="true"]')?.querySelector('[data-address-portal-root]') as HTMLElement | null) ?? document.body;
+
   const showDropdown = isOpen && predictions.length > 0 && dropdownPos !== null;
 
   const dropdownElement = showDropdown
@@ -247,6 +265,7 @@ export function StructuredAddressBlock({
         <div
           ref={dropdownRef}
           role="listbox"
+          data-address-dropdown="true"
           onMouseEnter={() => {
             isHoveringDropdownRef.current = true;
           }}
@@ -272,7 +291,7 @@ export function StructuredAddressBlock({
             width: dropdownPos.width,
             zIndex: DROPDOWN_Z_INDEX,
           }}
-          className="rounded-md border border-border bg-popover text-popover-foreground shadow-lg overflow-hidden"
+          className="pointer-events-auto rounded-md border border-border bg-popover text-popover-foreground shadow-lg overflow-hidden"
         >
           <ul className="py-1 max-h-60 overflow-y-auto">
             {predictions.map((p, index) => (
@@ -304,42 +323,56 @@ export function StructuredAddressBlock({
             Powered by Google
           </div>
         </div>,
-        document.body
+        portalTarget
       )
     : null;
 
   return (
     <div ref={containerRef} className="w-full">
       <div className={cn('grid gap-3', 'grid-cols-4')}>
-        {layout.map((field) => (
-          <div
-            key={field.key}
-            ref={(el) => {
-              if (el) fieldRefs.current.set(field.key, el);
-              else fieldRefs.current.delete(field.key);
-            }}
-            className={cn(field.colSpan || 'col-span-1')}
-          >
-            <Label
-              htmlFor={`addr-${field.key}`}
-              className="text-xs text-muted-foreground mb-1"
+        {layout.map((field) => {
+          const fieldEntry = fieldIds?.get(field.key);
+          const canCopyFieldId = !!fieldEntry?.publicId;
+
+          return (
+            <div
+              key={field.key}
+              ref={(el) => {
+                if (el) fieldRefs.current.set(field.key, el);
+                else fieldRefs.current.delete(field.key);
+              }}
+              className={cn(field.colSpan || 'col-span-1')}
             >
-              {field.label}
-            </Label>
-            <Input
-              id={`addr-${field.key}`}
-              value={(value[field.key] as string) ?? ''}
-              onChange={(e) => handleFieldChange(field.key, e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={handleBlur}
-              onFocus={() => setActiveField(field.key)}
-              disabled={disabled}
-              placeholder={field.placeholder}
-              autoComplete="off"
-              className="h-9 text-sm"
-            />
-          </div>
-        ))}
+              <Label
+                htmlFor={`addr-${field.key}`}
+                className={cn(
+                  'text-xs text-muted-foreground mb-1',
+                  canCopyFieldId && 'cursor-pointer hover:text-primary transition-colors'
+                )}
+                onClick={canCopyFieldId ? (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleLabelCopy(field.key);
+                } : undefined}
+                title={fieldEntry?.publicId ? `${fieldEntry.publicId} — клик для копирования` : undefined}
+              >
+                {field.label}
+              </Label>
+              <Input
+                id={`addr-${field.key}`}
+                value={(value[field.key] as string) ?? ''}
+                onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                onKeyDown={handleKeyDown}
+                onBlur={handleBlur}
+                onFocus={() => setActiveField(field.key)}
+                disabled={disabled}
+                placeholder={field.placeholder}
+                autoComplete="off"
+                className="h-9 text-sm"
+              />
+            </div>
+          );
+        })}
       </div>
       {dropdownElement}
     </div>
