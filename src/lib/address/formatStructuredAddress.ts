@@ -181,7 +181,7 @@ export function formatStructuredAddressForView(
   }
 
   if (isBelarus(structured)) {
-    const lines = formatBelarusAddress(structured);
+    const lines = formatBelarusAddress(structured, apartmentPrefix);
     if (lines.length === 0) {
       const fb = structured.formatted_address || structured.raw_input || fallback;
       return fb ? [fb] : [];
