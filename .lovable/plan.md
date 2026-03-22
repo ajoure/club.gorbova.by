@@ -1,60 +1,67 @@
 
 
-# PATCH 3 fix — Probable match normalization
+# PATCH 4 — Секция «Реквизиты» в /ai + placeholder screens
 
-## Problem
-Tier 3 uses `ilike('full_name', normalizedName)` which only normalizes the input side. Dirty DB data (double spaces, trailing whitespace) won't match.
+## Scope
 
-## Solution: Variant A
-Query by `birth_date` only, then normalize and compare `full_name` in application code. This is the safest approach without DB-side functions.
+Add-only расширение `src/pages/AI.tsx`. Никаких новых таблиц, миграций, edge functions, hooks с данными. Только UI-каркас.
 
-## Change in `src/hooks/usePersonDuplicateCheck.ts`
+## Что делаем
 
-**Lines ~141-170**: Replace the Tier 3 block:
-
-1. Query `legal_details_persons` filtering only by `profile_id`, `birth_date`, and `excludePersonId`
-2. For each returned row, normalize `full_name` using the same `normalizeName()` function
-3. Compare normalized DB name with normalized input name (case-insensitive via `.toLowerCase()`)
-4. Filter candidates in code
+### 1. Расширить типы в AI.tsx
 
 ```typescript
-// Tier 3: Probable match — query by birth_date, normalize full_name in code
-if (input.full_name?.trim() && input.birth_date?.trim()) {
-  const normalizedInputName = normalizeName(input.full_name).toLowerCase();
-
-  const query = supabase
-    .from('legal_details_persons')
-    .select(SELECT_FIELDS)
-    .eq('profile_id', profileId)
-    .eq('birth_date', input.birth_date.trim());
-
-  if (excludePersonId) {
-    query.neq('id', excludePersonId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-
-  if (data) {
-    const matched = data.filter(row =>
-      row.full_name && normalizeName(row.full_name).toLowerCase() === normalizedInputName
-    );
-    if (matched.length > 0) {
-      // ... return probable match with matched candidates
-    }
-  }
-}
+type Section = "ai" | "documents" | "requisites";
+type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates" | "entities" | "persons";
 ```
 
-## Update `docs/PATCH_3_ANTI_DUPLICATE_AND_REUSE.md`
-Add proof block: Variant A chosen. Both input and DB-side `full_name` normalized via `normalizeName()` + `toLowerCase()` in application code. Covers double spaces, trailing whitespace, case differences.
+### 2. Добавить секцию «Реквизиты» в SECTIONS
 
-## Files
-- `src/hooks/usePersonDuplicateCheck.ts` — Tier 3 fix
-- `docs/PATCH_3_ANTI_DUPLICATE_AND_REUSE.md` — proof addendum
+Новый элемент с иконкой `Building2` (или `FileText` / `Briefcase` — по контексту существующих).
+
+### 3. Добавить REQUISITES_SUB_TABS
+
+Два подменю:
+- **Юрлица / ИП** (`entities`) — иконка `Building2`, glass pill style
+- **Физлица** (`persons`) — иконка `Users`, glass pill style
+
+Стиль — аналогичный существующим `AI_SUB_TABS` и `DOC_SUB_TABS` (gradient + border + icon color).
+
+### 4. Обновить DEFAULT_SUB
+
+```typescript
+const DEFAULT_SUB: Record<Section, SubTab> = {
+  ai: "chat",
+  documents: "accountant",
+  requisites: "entities",
+};
+```
+
+### 5. Обновить subTabs selector
+
+Добавить третью ветку: `activeSection === "requisites" ? REQUISITES_SUB_TABS : ...`
+
+### 6. Добавить placeholder screens для entities и persons
+
+По аналогии с существующими document stubs (строки 528-544): GlassCard с иконкой, заголовком и текстом «Раздел в разработке».
+
+## Файлы
+
+- `src/pages/AI.tsx` — единственный файл, add-only изменения
+
+## Что НЕ меняется
+
+- Никакие hooks
+- Никакие edge functions
+- Никакие таблицы
+- Никакие компоненты вне AI.tsx
+- Существующие секции ai / documents — без изменений
 
 ## DoD
-- Dirty DB data (extra spaces, case) matched correctly
-- No DB-side function needed
-- PATCH 3 closed
+
+- Третья секция «Реквизиты» видна в pill-bar
+- Переключение работает корректно
+- SubTabs «Юрлица / ИП» и «Физлица» отображаются
+- Placeholder screens показываются
+- Существующие секции не сломаны
 
