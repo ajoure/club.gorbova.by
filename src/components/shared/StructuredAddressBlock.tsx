@@ -306,6 +306,7 @@ export function StructuredAddressBlock({
               )}
               onClick={fieldIds?.get(field.key)?.publicId
                 ? () => {
+                    if (isSelectingRef.current) return;
                     navigator.clipboard.writeText(fieldIds.get(field.key)!.publicId);
                     toast.success("ID скопирован");
                   }
