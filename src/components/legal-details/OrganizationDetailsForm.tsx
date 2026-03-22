@@ -298,9 +298,23 @@ export function OrganizationDetailsForm({
       }
     }
 
+    // Store GRP registry metadata for persistence
+    const rawData = grpLookup.data?.data;
+    setGrpMeta({
+      grp_registration_date: grpResult.registration_date || null,
+      grp_tax_office_code: grpResult.tax_office_code || null,
+      grp_tax_office_name: grpResult.tax_office_name || null,
+      grp_status_code: grpResult.status_code || null,
+      grp_status_name: grpResult.status_name || null,
+      grp_short_name: grpResult.short_name || null,
+      grp_liquidation_date: rawData?.liquidation_date || null,
+      grp_liquidation_reason: rawData?.liquidation_reason || null,
+      grp_last_fetched_at: new Date().toISOString(),
+    });
+
     setAutofilledFields(filled);
     setGrpDialogOpen(false);
-  }, [grpResult, form]);
+  }, [grpResult, grpLookup.data, form]);
 
   const handleAddressChange = useCallback((val: StructuredAddress) => {
     setAddress(val);
