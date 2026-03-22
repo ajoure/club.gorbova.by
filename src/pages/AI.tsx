@@ -623,6 +623,14 @@ const AI = () => {
               isLoading={aiEntities.isLoading}
               isArchiving={aiEntities.isArchiving}
               onCreateNew={handleOpenCreateSheet}
+              onView={handleOpenViewSheet}
+              onArchive={(id) => aiEntities.archiveEntity(id)}
+            />
+            <EntityViewSheet
+              open={entityViewOpen}
+              onOpenChange={setEntityViewOpen}
+              entity={entityViewTarget}
+              isArchiving={aiEntities.isArchiving}
               onEdit={handleOpenEditSheet}
               onArchive={(id) => aiEntities.archiveEntity(id)}
             />
