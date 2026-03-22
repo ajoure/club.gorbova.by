@@ -319,7 +319,7 @@ const AI = () => {
     setActiveSubTab(DEFAULT_SUB[section]);
   };
 
-  const subTabs = activeSection === "ai" ? AI_SUB_TABS : DOC_SUB_TABS;
+  const subTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
 
   /* ─── Главный таб (pill-bar) ─── */
   const sectionTabClass = (active: boolean) =>
