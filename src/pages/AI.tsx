@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useAiEntities } from "@/hooks/useAiEntities";
+import { EntityListScreen } from "@/components/ai-requisites/EntityListScreen";
+import { EntityFormScreen } from "@/components/ai-requisites/EntityFormScreen";
+import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
