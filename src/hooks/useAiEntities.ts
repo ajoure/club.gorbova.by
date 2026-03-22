@@ -1,13 +1,15 @@
 /**
  * useAiEntities — dedicated hook for AI requisites section.
  * 
- * Loads all entity records from client_legal_details for current user,
- * splits them by purpose (billing vs document).
+ * Loads all entity records from client_legal_details for current user.
+ * Returns allEntities for table + filtered views.
  * 
- * Mutations (create/update/archive) are ONLY for document-purpose records.
- * Billing records are read-only in this context.
+ * Mutations:
+ * - create: always purpose='document'
+ * - update: any record (billing or document), but strips purpose/status/is_default
+ * - archive: only purpose='document' records
  * 
- * profileId is resolved internally from useAuth → profiles table.
+ * profileId resolved from useAuth → profiles table.
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -39,7 +41,7 @@ export function useAiEntities() {
   const profileId = profile?.id ?? null;
 
   // Load ALL entity records (including archived) for this owner
-  const { data: allEntities, isLoading } = useQuery({
+  const { data: allEntities = [], isLoading } = useQuery({
     queryKey: ["ai-entities", profileId],
     queryFn: async () => {
       if (!profileId) return [];
@@ -55,19 +57,16 @@ export function useAiEntities() {
     enabled: !!profileId,
   });
 
-  // Split by purpose and status
-  const billingEntities = allEntities?.filter(e => e.purpose === "billing") ?? [];
-  const activeDocumentEntities = allEntities?.filter(e => e.purpose === "document" && e.status === "active") ?? [];
-  const archivedDocumentEntities = allEntities?.filter(e => e.purpose === "document" && e.status === "archived") ?? [];
-
   // Create — always document purpose
   const createMutation = useMutation({
     mutationFn: async (details: Partial<ClientLegalDetails>) => {
       if (!profileId) throw new Error("Профиль не найден");
+      // Strip protected fields
+      const { purpose, status, is_default, ...safeDetails } = details as any;
       const { data, error } = await supabase
         .from("client_legal_details")
         .insert({
-          ...details,
+          ...safeDetails,
           profile_id: profileId,
           purpose: "document",
           status: "active",
@@ -86,19 +85,17 @@ export function useAiEntities() {
     },
   });
 
-  // Update — only document records
+  // Update — any record owned by user, but never change purpose/status/is_default
   const updateMutation = useMutation({
     mutationFn: async ({ id, ...details }: Partial<ClientLegalDetails> & { id: string }) => {
-      // Guard: verify this is a document record owned by user
-      const target = allEntities?.find(e => e.id === id);
-      if (!target || target.purpose !== "document") {
-        throw new Error("Можно редактировать только документные реквизиты");
-      }
+      const target = allEntities.find(e => e.id === id);
+      if (!target) throw new Error("Запись не найдена");
+      // Strip protected fields
+      const { purpose, status, is_default, ...safeDetails } = details as any;
       const { data, error } = await supabase
         .from("client_legal_details")
-        .update(details)
+        .update(safeDetails)
         .eq("id", id)
-        .eq("purpose", "document")
         .select()
         .single();
       if (error) throw error;
@@ -116,8 +113,7 @@ export function useAiEntities() {
   // Archive — only document records
   const archiveMutation = useMutation({
     mutationFn: async (id: string) => {
-      // Guard: verify this is a document record
-      const target = allEntities?.find(e => e.id === id);
+      const target = allEntities.find(e => e.id === id);
       if (!target || target.purpose !== "document") {
         throw new Error("Можно архивировать только документные реквизиты");
       }
@@ -139,9 +135,7 @@ export function useAiEntities() {
 
   return {
     profileId,
-    billingEntities,
-    activeDocumentEntities,
-    archivedDocumentEntities,
+    allEntities,
     isLoading,
     createEntity: createMutation.mutateAsync,
     updateEntity: updateMutation.mutateAsync,
