@@ -83,6 +83,17 @@ function isCityDistrict(district: string | null | undefined, city: string | null
   return new RegExp('^' + cityRoot, 'i').test(district.replace(/\s*район$/i, '').trim());
 }
 
+/** Check if a value looks like a city-internal district (e.g. "Центральный район", "Фрунзенский район") */
+function looksLikeCityDistrictValue(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const lower = value.toLowerCase().trim();
+  // Must contain "район" to be considered a district at all
+  if (!/район/i.test(lower)) return false;
+  // Check against known city-internal district patterns
+  if (KNOWN_CITY_DISTRICT_PATTERNS.some(p => lower.includes(p))) return true;
+  return false;
+}
+
 /** Build 2-line Belarus address: [street line, location line] */
 function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
   const minskAddr = isMinsk(structured.city);
@@ -116,8 +127,17 @@ function formatBelarusAddress(structured: CanonicalAddressPayload): string[] {
   if (structured.city) {
     line2Parts.push(formatLocality(structured.city));
   }
+
+  // Settlement: show only if it's a real settlement, NOT a city-internal district
   if (structured.settlement && structured.settlement !== structured.city) {
-    line2Parts.push(structured.settlement);
+    // For Minsk: never show settlement if it looks like a city district
+    if (minskAddr && looksLikeCityDistrictValue(structured.settlement)) {
+      // skip — city district leaked into settlement field
+    } else if (!minskAddr && looksLikeCityDistrictValue(structured.settlement)) {
+      // For non-Minsk: also skip city-district-looking settlements
+    } else {
+      line2Parts.push(structured.settlement);
+    }
   }
 
   const line1 = line1Parts.join(', ');

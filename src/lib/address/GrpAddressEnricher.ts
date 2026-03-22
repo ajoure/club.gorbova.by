@@ -143,16 +143,39 @@ export async function enrichAddressViaGoogle(
 
         // ===== SAFE MERGE =====
         // GRP fields have absolute priority. Google only fills empty gaps.
+        // IMPORTANT: For Minsk, Google returns city districts (Центральный, Фрунзенский)
+        // as sublocality/settlement — we must NOT save those as settlement.
+        const cityForCheck = preliminary.city || googleParsed.city || '';
+        const isMsk = /минск/i.test(cityForCheck.replace(/^(г\.|город)\s*/i, '').trim());
+
+        // Filter out city-district values from settlement and district
+        const CITY_DISTRICT_PATTERNS = [
+          'центральн', 'ленинск', 'октябрьск', 'фрунзенск', 'московск',
+          'первомайск', 'советск', 'заводск', 'партизанск', 'железнодорожн',
+        ];
+        const looksLikeCityDistrict = (v: string) =>
+          /район/i.test(v) && CITY_DISTRICT_PATTERNS.some(p => v.toLowerCase().includes(p));
+
+        let mergedSettlement = preliminary.settlement || googleParsed.settlement || '';
+        if (mergedSettlement && looksLikeCityDistrict(mergedSettlement)) {
+          mergedSettlement = ''; // Don't save city districts as settlement
+        }
+
+        let mergedDistrict = preliminary.district || googleParsed.district || '';
+        if (isMsk && mergedDistrict && looksLikeCityDistrict(mergedDistrict)) {
+          mergedDistrict = ''; // For Minsk, skip city-internal districts
+        }
+
         const merged: StructuredAddress = {
           // GRP-priority fields — never overwritten by Google
           street: preliminary.street || googleParsed.street || '',
           house: preliminary.house || googleParsed.house || '',
           city: preliminary.city || googleParsed.city || '',
           building: preliminary.building || googleParsed.building || '',
-          settlement: preliminary.settlement || googleParsed.settlement || '',
+          settlement: mergedSettlement,
           apartment: preliminary.apartment || googleParsed.apartment || '',
           // Google fills only empty meta-fields
-          district: preliminary.district || googleParsed.district || '',
+          district: mergedDistrict,
           region: preliminary.region || googleParsed.region || '',
           postal_code: preliminary.postal_code || googleParsed.postal_code || '',
           country_code: preliminary.country_code || googleParsed.country_code || 'BY',
