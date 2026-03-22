@@ -59,6 +59,10 @@ export interface ClientLegalDetails {
   validation_errors: Record<string, string> | null;
   validated_at: string | null;
   
+  // Lifecycle
+  purpose: string;
+  status: string;
+  
   created_at: string;
   updated_at: string;
 }

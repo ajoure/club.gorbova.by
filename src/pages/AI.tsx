@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { useAiEntities } from "@/hooks/useAiEntities";
+import { EntityListScreen } from "@/components/ai-requisites/EntityListScreen";
+import { EntityFormScreen } from "@/components/ai-requisites/EntityFormScreen";
+import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -272,6 +276,33 @@ const AI = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<Section>("ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
+
+  // Entity management state
+  const [entityMode, setEntityMode] = useState<"list" | "create" | "edit">("list");
+  const [editingEntity, setEditingEntity] = useState<ClientLegalDetails | null>(null);
+  const aiEntities = useAiEntities();
+
+  const handleEntityCreate = useCallback(async (data: Partial<ClientLegalDetails>) => {
+    await aiEntities.createEntity(data);
+    setEntityMode("list");
+  }, [aiEntities]);
+
+  const handleEntityUpdate = useCallback(async (data: Partial<ClientLegalDetails>) => {
+    if (!editingEntity) return;
+    await aiEntities.updateEntity({ id: editingEntity.id, ...data });
+    setEntityMode("list");
+    setEditingEntity(null);
+  }, [aiEntities, editingEntity]);
+
+  const handleEntityEdit = useCallback((entity: ClientLegalDetails) => {
+    setEditingEntity(entity);
+    setEntityMode("edit");
+  }, []);
+
+  const handleEntityBack = useCallback(() => {
+    setEntityMode("list");
+    setEditingEntity(null);
+  }, []);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -568,13 +599,49 @@ const AI = () => {
           </div>
         )}
 
-        {/* Requisites stubs */}
-        {(activeSubTab === "entities" || activeSubTab === "persons") && (
+        {/* Entities — full CRUD */}
+        {activeSubTab === "entities" && (
+          <>
+            {entityMode === "list" && (
+              <EntityListScreen
+                billingEntities={aiEntities.billingEntities}
+                activeDocumentEntities={aiEntities.activeDocumentEntities}
+                archivedDocumentEntities={aiEntities.archivedDocumentEntities}
+                isLoading={aiEntities.isLoading}
+                isArchiving={aiEntities.isArchiving}
+                onCreateNew={() => setEntityMode("create")}
+                onEdit={handleEntityEdit}
+                onArchive={(id) => aiEntities.archiveEntity(id)}
+              />
+            )}
+            {entityMode === "create" && aiEntities.profileId && (
+              <EntityFormScreen
+                mode="create"
+                profileId={aiEntities.profileId}
+                isSubmitting={aiEntities.isCreating}
+                onSubmit={handleEntityCreate}
+                onBack={handleEntityBack}
+              />
+            )}
+            {entityMode === "edit" && editingEntity && aiEntities.profileId && (
+              <EntityFormScreen
+                mode="edit"
+                initialData={editingEntity}
+                profileId={aiEntities.profileId}
+                isSubmitting={aiEntities.isUpdating}
+                onSubmit={handleEntityUpdate}
+                onBack={handleEntityBack}
+              />
+            )}
+          </>
+        )}
+
+        {/* Persons stub */}
+        {activeSubTab === "persons" && (
           <div className="flex flex-1 items-center justify-center min-h-[200px]">
             <GlassCard className="max-w-md w-full text-center py-12">
               <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
-                {activeSubTab === "entities" && <Building2 className="h-8 w-8 text-indigo-500" />}
-                {activeSubTab === "persons" && <Users className="h-8 w-8 text-teal-500" />}
+                <Users className="h-8 w-8 text-teal-500" />
               </div>
               <h3 className="text-lg font-semibold mb-2">
                 {subTabs.find(t => t.id === activeSubTab)?.label}
