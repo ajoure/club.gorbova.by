@@ -254,12 +254,10 @@ export function StructuredAddressBlock({
             isHoveringDropdownRef.current = false;
           }}
           onPointerDown={(e) => {
-            // Stop NATIVE propagation to prevent Radix DismissableLayer from intercepting
             e.preventDefault();
             e.stopPropagation();
             e.nativeEvent.stopImmediatePropagation();
             isSelectingRef.current = true;
-            console.log('[ADDR] dropdown container pointerdown — native propagation stopped');
           }}
           onMouseDown={(e) => {
             e.preventDefault();
