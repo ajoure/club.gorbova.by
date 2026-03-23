@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 export interface DocumentPackageTemplate {
@@ -27,29 +28,51 @@ export interface DocumentPackageItem {
 }
 
 export function useDocumentPackages() {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: packages = [], isLoading } = useQuery({
-    queryKey: ["document-packages"],
+  // Resolve profiles.id from auth user (same pattern as useAiDocuments)
+  const { data: profile } = useQuery({
+    queryKey: ["user-profile", user?.id],
     queryFn: async () => {
+      if (!user) return null;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", user.id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const profileId = profile?.id ?? null;
+
+  const { data: packages = [], isLoading } = useQuery({
+    queryKey: ["document-packages", profileId],
+    queryFn: async () => {
+      if (!profileId) return [];
       const { data, error } = await supabase
         .from("document_package_templates")
         .select("*")
+        .eq("profile_id", profileId)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as DocumentPackageTemplate[];
     },
+    enabled: !!profileId,
   });
 
   const createPackage = useMutation({
     mutationFn: async (input: { name: string; description?: string }) => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
+      if (!profileId) throw new Error("Профиль не найден. Перезагрузите страницу.");
+      if (!user) throw new Error("Не авторизован");
       const { data, error } = await supabase
         .from("document_package_templates")
         .insert({
-          profile_id: user.id,
-          created_by: user.id,
+          profile_id: profileId,       // profiles.id
+          created_by: user.id,         // auth.users.id
           name: input.name,
           description: input.description || null,
         })
@@ -59,7 +82,7 @@ export function useDocumentPackages() {
       return data;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["document-packages"] });
+      queryClient.invalidateQueries({ queryKey: ["document-packages", profileId] });
       toast.success("Пакет создан");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -73,13 +96,12 @@ export function useDocumentPackages() {
           name: input.name,
           description: input.description || null,
           is_active: input.is_active,
-          updated_at: new Date().toISOString(),
         })
         .eq("id", input.id);
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["document-packages"] });
+      queryClient.invalidateQueries({ queryKey: ["document-packages", profileId] });
       toast.success("Пакет обновлён");
     },
     onError: (e: Error) => toast.error(e.message),
@@ -94,13 +116,13 @@ export function useDocumentPackages() {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["document-packages"] });
+      queryClient.invalidateQueries({ queryKey: ["document-packages", profileId] });
       toast.success("Пакет удалён");
     },
     onError: (e: Error) => toast.error(e.message),
   });
 
-  return { packages, isLoading, createPackage, updatePackage, deletePackage };
+  return { packages, isLoading, profileId, createPackage, updatePackage, deletePackage };
 }
 
 export function useDocumentPackageItems(packageId: string | null) {
