@@ -10926,6 +10926,10 @@ export type Database = {
         }
         Returns: Json
       }
+      create_position_catalog_entry: {
+        Args: { p_label: string }
+        Returns: string
+      }
       create_support_ticket: {
         Args: { p_category?: string; p_description: string; p_subject: string }
         Returns: Json

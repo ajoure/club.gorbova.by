@@ -143,7 +143,7 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
         .from("legal_details_positions_catalog")
         .select("id, label, code")
         .eq("is_active", true)
-        .order("sort_order");
+        .order("label");
       if (error) throw error;
       return data as PositionCatalogEntry[];
     },
@@ -218,6 +218,35 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
     onError: (error) => toast.error(error.message),
   });
 
+  /* ── createPosition via secure RPC ── */
+  const createPosition = useMutation({
+    mutationFn: async (label: string): Promise<string> => {
+      const trimmed = label.trim().replace(/\s+/g, " ");
+      if (!trimmed) throw new Error("Название должности не может быть пустым");
+
+      // Check locally first for UX (normalized comparison)
+      const normalized = trimmed.toLowerCase();
+      const existing = positionsCatalog.find(
+        (p) => p.label.trim().replace(/\s+/g, " ").toLowerCase() === normalized
+      );
+      if (existing) {
+        toast.info("Такая должность уже есть в справочнике");
+        return existing.id;
+      }
+
+      const { data, error } = await supabase.rpc("create_position_catalog_entry", {
+        p_label: trimmed,
+      });
+      if (error) throw new Error(error.message);
+      // RPC returns uuid — could be existing or new
+      return data as string;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["positions-catalog"] });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   return {
     links,
     linksLoading,
@@ -226,8 +255,10 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
     createLink: createLink.mutateAsync,
     updateLink: updateLink.mutateAsync,
     deleteLink: deleteLink.mutateAsync,
+    createPosition: createPosition.mutateAsync,
     isCreating: createLink.isPending,
     isUpdating: updateLink.isPending,
     isDeleting: deleteLink.isPending,
+    isCreatingPosition: createPosition.isPending,
   };
 }

@@ -36,6 +36,7 @@ export function EntityPersonLinksBlock({ legalDetailsId, profileId }: EntityPers
     createLink,
     updateLink,
     deleteLink,
+    createPosition,
     isCreating,
     isUpdating,
     isDeleting,
@@ -165,6 +166,7 @@ export function EntityPersonLinksBlock({ legalDetailsId, profileId }: EntityPers
         profileId={profileId}
         editingLink={editingLink}
         onSubmit={editingLink ? (p) => updateLink({ ...p, id: editingLink.id, old_person_id: editingLink.person_id } as any) : createLink}
+        onCreatePosition={createPosition}
         isSubmitting={isCreating || isUpdating}
       />
 

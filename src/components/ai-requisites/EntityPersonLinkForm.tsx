@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { PersonPicker } from "./PersonPicker";
+import { PositionPicker } from "./PositionPicker";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { RoleCatalogEntry, PositionCatalogEntry, LinkRow, LinkInsertPayload } from "@/hooks/useEntityPersonLinks";
 
@@ -48,6 +49,7 @@ interface EntityPersonLinkFormProps {
   profileId: string;
   editingLink?: LinkRow | null;
   onSubmit: (payload: LinkInsertPayload) => Promise<any>;
+  onCreatePosition: (label: string) => Promise<string | null>;
   isSubmitting: boolean;
 }
 
@@ -61,6 +63,7 @@ export function EntityPersonLinkForm({
   profileId,
   editingLink,
   onSubmit,
+  onCreatePosition,
   isSubmitting,
 }: EntityPersonLinkFormProps) {
   const [personId, setPersonId] = useState<string | null>(null);
@@ -107,7 +110,7 @@ export function EntityPersonLinkForm({
     !!personId &&
     !!roleCatalogId &&
     (roleType !== "other" || customRoleText.trim().length > 0) &&
-    (roleType !== "position" || positionCatalogId || customPositionText.trim().length > 0);
+    (roleType !== "position" || !!positionCatalogId);
 
   const buildPayload = (): LinkInsertPayload => ({
     person_id: personId!,
@@ -220,39 +223,28 @@ export function EntityPersonLinkForm({
               </div>
             )}
 
-            {/* Position: catalog or custom */}
+            {/* Position: searchable picker with add-new */}
             {roleType === "position" && (
-              <>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">Должность из справочника</Label>
-                  <Select
-                    value={positionCatalogId}
-                    onValueChange={(v) => {
-                      setPositionCatalogId(v);
-                      if (v) setCustomPositionText("");
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите…" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {positionsCatalog.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {!positionCatalogId && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Или своя должность *</Label>
-                    <Input
-                      value={customPositionText}
-                      onChange={(e) => setCustomPositionText(e.target.value)}
-                      placeholder="Введите должность…"
-                    />
-                  </div>
-                )}
-              </>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Должность *</Label>
+                <PositionPicker
+                  positions={positionsCatalog}
+                  value={positionCatalogId || null}
+                  onChange={(id) => {
+                    setPositionCatalogId(id || "");
+                    if (id) setCustomPositionText("");
+                  }}
+                  onCreateNew={async (label) => {
+                    const newId = await onCreatePosition(label);
+                    return newId;
+                  }}
+                  legacyCustomText={
+                    editingLink && !positionCatalogId && editingLink.custom_position_text
+                      ? editingLink.custom_position_text
+                      : null
+                  }
+                />
+              </div>
             )}
 
             {/* Other: custom role text */}
