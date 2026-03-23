@@ -45,13 +45,19 @@ export function PositionPicker({
   const normalizedSearch = normalizeForCompare(search);
 
   const filtered = useMemo(() => {
-    if (!normalizedSearch) {
-      return [...positions].sort((a, b) => a.label.localeCompare(b.label, "ru")).slice(0, 50);
-    }
-    return positions
-      .filter((p) => p.label.toLowerCase().includes(normalizedSearch))
-      .sort((a, b) => a.label.localeCompare(b.label, "ru"))
-      .slice(0, 50);
+    const sorted = [...positions].sort((a, b) => a.label.localeCompare(b.label, "ru"));
+    // Dedupe by normalized label (defensive layer)
+    const seen = new Set<string>();
+    const deduped = sorted.filter((p) => {
+      const norm = normalizeForCompare(p.label);
+      if (seen.has(norm)) return false;
+      seen.add(norm);
+      return true;
+    });
+    const base = normalizedSearch
+      ? deduped.filter((p) => p.label.toLowerCase().includes(normalizedSearch))
+      : deduped;
+    return base.slice(0, 50);
   }, [positions, normalizedSearch]);
 
   const hasExactMatch = useMemo(() => {
