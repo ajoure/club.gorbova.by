@@ -42,6 +42,7 @@ import {
   Copy,
   ClipboardList,
   X,
+  Trash2,
 } from "lucide-react";
 import {
   getEntityShortName,
