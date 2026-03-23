@@ -2,224 +2,162 @@
 
 &nbsp;
 
-1. Сохранение заполненных данных делать через БД, не через localStorage как основной источник.
-  Для “между сессиями wizard” использовать последний ai_generated_documents по template_id + profile_id и брать prefill из snapshot/meta.
-  localStorage можно использовать только как временный draft внутри текущей незавершённой сессии, но не как источник истины.
-2. Не подставлять старые данные молча.
-  Если для шаблона уже есть предыдущий документ, в шаге 1 показать явный CTA:
+1. Не менять глобально sheet.tsx и sheetVariants в этом патче.
+  Это риск регресса по всему приложению. Делай локальный shared shell helper/class и подключай его только в:
   &nbsp;
-  - Использовать данные из последнего документа
-  - Заполнить заново
-    Автозамена без подтверждения не нужна.
+  - EntityRecordSheet.tsx
+  - PersonRecordSheet.tsx
+  - AiDocumentTemplatesManager.tsx
+  - GenerateAiDocumentDialog.tsx
   &nbsp;
-3. Сохранить trace, откуда взят prefill.
-  При генерации нового документа, если данные взяты из предыдущего, записывать в ai_generated_documents.meta:
+2. Не использовать my-auto как основной способ inset/layout для fixed sheet.
+  Нужны явные offsets, чтобы стабильно были видны все 4 угла:
   &nbsp;
-  - prefill_from_document_id
-  - prefill_source = "history"
-  - selected_entity_id
-  - selected_person_id
-  - selected_signer_link_id
+  - !top-2 !bottom-2 !right-2 sm:!top-4 sm:!bottom-4 sm:!right-4
+  - !left-auto
+  - единая ширина как у реквизитов
+    Иначе будут плавающие баги позиционирования.
   &nbsp;
-4. AiDocumentTemplatesManager сделать ещё шире, чем обычные реквизиты.
-  Для менеджера шаблонов лучше не lg:max-w-4xl, а минимум lg:max-w-5xl, потому что там длинные имена файлов, токены и диагностические блоки.
-  Для wizard генерации можно оставить ближе к shell реквизитов.
-5. Убрать двойной vertical scroll полностью.
-  Проверить, чтобы:
+3. Единый shell должен быть реально один и тот же по размеру.
+  Никаких разных lg:max-w-3xl / 4xl / 5xl.
+  Один эталонный размер, как у окна реквизитов, и один shared class/helper без копипасты.
+4. Зафиксируй единый layout shell:
   &nbsp;
-  - SheetContent имел overflow-hidden
-  - scroll был только на body
-  - footer был отдельным фиксированным блоком
-  - список токенов внутри body не создавал второй лишний внешний scroll
+  - header flex-shrink-0
+  - body flex-1 overflow-y-auto
+  - footer flex-shrink-0
+  - без двойного scroll
+  - scrollbar аккуратный и не перекрывает контент/кнопки
   &nbsp;
-6. TokenPreviewTable не должен создавать вложенный конфликтующий scroll.
-  Если body уже скроллится, у preview-таблицы:
+5. Fix wizard state делай не через скрытие chooser, а через режимы.
+  Нужны явные состояния:
   &nbsp;
-  - убрать лишний max-h, если он даёт nested scroll
-  - оставить обычный flow-контент
-    Отдельный внутренний scroll допустим только для очень длинного списка токенов и только если он не ломает основной body-scroll.
+  - history
+  - fresh
+  - none
+    И на шаге 1 блок выбора режима должен оставаться доступным всегда, если есть lastDoc.
   &nbsp;
-7. Для AiDocumentTemplatesManager разделить режимы list и create/edit визуально как в реквизитах.
-  Не просто смена содержимого, а полноценные section/card-блоки:
+6. После Заполнить заново обязательно:
   &nbsp;
-  - header
-  - основной контент
-  - диагностический блок токенов
-  - footer действий
-    Сейчас это нужно привести к тому же уровню аккуратности, что и карточки реквизитов.
+  - очистить entityId / personId / signerLinkId
+  - сохранить возможность одним кликом вернуть прошлые данные
+  - не требовать закрытия окна
   &nbsp;
-8. В режиме edit шаблона обязательно показать текущий файл и текущие токены.
-  Если новый файл не загружен:
+7. Добавь DoD по визуалу:
   &nbsp;
-  - текущий файл не теряется
-  - текущие placeholders остаются видимыми
-  - пользователь понимает, что именно уже сохранено
+  - у всех 4 окон видны все 4 скруглённых угла
+  - окно не прилипает к краям
+  - одинаковый размер shell
+  - одинаковые header/body/footer
+  - нет второго scrollbar
+  - в wizard можно переключаться прошлые данные ↔ заполнить заново без закрытия
   &nbsp;
-9. DoD добавить явно.
-  Нужно доказать:
+8. Добавь DoD по regression-check:
   &nbsp;
-  - Управление шаблонами открывается как широкий правый sheet
-  - Заполнить документ wizard открыт в таком же shell-стиле
-  - нет внешнего грубого вертикального scrollbar
-  - footer всегда виден
-  - при наличии предыдущего документа wizard предлагает reuse, но не подставляет молча
-  - после выбора reuse select’ы реально prefilled
-  - после генерации в meta записан источник prefill
-  - layout не режет длинные имена файлов и длинные токены
+  - реквизиты не сломаны
+  - AI manager не обрезает длинные названия файлов и токены
+  - footer-кнопки всегда видны
+  - шаг 1 wizard не теряет chooser после выбора fresh/history
   &nbsp;
+9. Соблюдай add-only.
+  Ничего из PATCH 8.3 не удалять, только переиспользовать и дофиксить.
+10. Отдельно зафиксируй как future patch:
+  после этого патча идём в пакеты документов / группы документов, где один сценарий создаёт 2–4 документа за один проход. Это не смешивать с PATCH 8.4.
 
 &nbsp;
 
 &nbsp;
 
-Копируемый блок для Lovable:
+PATCH 8.4 — Единый shell + fix reset/reuse в wizard
 
-```
-PATCH 8.3 UI-FIX + PREFILL — привести AI Documents к shell-стандарту реквизитов и добавить reuse заполненных данных
+## Проблемы
 
-1. AiDocumentTemplatesManager:
-- перевести на тот же right-side Sheet shell, что EntityRecordSheet / PersonRecordSheet
-- ширина менеджера шаблонов: минимум `lg:max-w-5xl`
-- `SheetContent`: `p-0`, `flex flex-col`, `h-[100dvh] max-h-[100dvh]`, `overflow-hidden`
-- header фиксированный
-- body: `flex-1 overflow-y-auto`
-- footer фиксированный, всегда видим
-- никаких узких center modal
-
-2. GenerateAiDocumentDialog:
-- тоже перевести на тот же Sheet shell
-- header фиксированный
-- body scrollable
-- footer фиксированный
-- step indicator в header
-- единый стиль с окнами реквизитов
-
-3. Scroll:
-- убрать двойной vertical scroll
-- внешний shell только `overflow-hidden`
-- основной scroll только на body
-- nested scroll разрешён только там, где он реально нужен и не ломает UX
-
-4. TokenPreviewTable:
-- убрать конфликтующий nested scroll, если он есть
-- не создавать вторую лишнюю полосу прокрутки
-- токены и preview должны читаться в основном body-scroll
-
-5. Сохранение / reuse заполненных данных:
-- основной источник prefill = БД, не localStorage
-- брать последний `ai_generated_documents` по `template_id + profile_id`
-- доставать из `snapshot/meta` выбранные ids
-- localStorage можно использовать только как временный draft внутри текущей незавершённой сессии
-
-6. Не подставлять старые данные автоматически:
-- при открытии wizard, если есть предыдущий документ, показать явный выбор:
-  - `Использовать данные из последнего документа`
-  - `Заполнить заново`
-- без silent prefill
-
-7. Trace reuse:
-- при генерации нового документа, если был reuse, писать в `ai_generated_documents.meta`:
-  - `prefill_from_document_id`
-  - `prefill_source = "history"`
-  - `selected_entity_id`
-  - `selected_person_id`
-  - `selected_signer_link_id`
-
-8. Edit mode шаблона:
-- если новый файл не загружен, текущий файл и текущие placeholders должны оставаться видимыми
-- пользователь должен понимать, что сохранено сейчас
-
-DoD:
-- `Управление шаблонами` открывается wide right-side sheet
-- `Заполнить документ` wizard открывается в том же shell-стандарте
-- нет некрасивого внешнего vertical scrollbar
-- footer всегда виден
-- длинные имена файлов и токены не режутся
-- wizard предлагает reuse последнего документа только через явный выбор
-- после выбора reuse select’ы реально prefilled
-- после генерации в `meta` сохранён источник prefill
-
-PATCH 8.3 UI-FIX — Shell-стандарт реквизитов + сохранение заполненных данных
-```
-
-## Анализ
-
-### Текущий shell-паттерн (EntityRecordSheet)
-
-```text
-Sheet (right side)
-  SheetContent: w-full sm:max-w-[60vw] lg:max-w-3xl p-0 
-                pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]
-                flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden
-    SheetHeader: p-4 sm:p-6 pb-3 flex-shrink-0
-      Icon + Title + Subtitle
-      Separator
-      Badge pills + actions
-    Body: flex-1 overflow-y-auto
-      px-4 sm:px-6 py-4 pb-24
-      Card sections with CardHeader/CardContent
-```
-
-### Текущие проблемы
-
-1. `AiDocumentTemplatesManager` — узкий Dialog `max-w-lg`, тесно, обрезается
-2. `GenerateAiDocumentDialog` — узкий Dialog `max-w-lg`, не совпадает с shell реквизитов
-3. Нет сохранения заполненных данных — каждый раз wizard начинает с нуля
-4. Скролл на всём Dialog вместо внутреннего body
+1. **Все Sheet прилипают к краям** — `h-[100dvh]` + `inset-y-0 right-0` из `sheetVariants` = нет видимых 4 углов, нет inset от viewport
+2. **Разные max-w** — EntityRecord/PersonRecord/GenerateDialog = `lg:max-w-3xl`, Manager = `lg:max-w-5xl`
+3. **Prefill one-way** — `startFresh()` ставит `showPrefillChoice = false` и `prefillSource = null`, после чего вернуть данные невозможно без закрытия wizard
 
 ## Решение
 
-### 1. `AiDocumentTemplatesManager.tsx` — Dialog → Sheet
+### 1. Shared shell className — один источник истины
 
-Заменить `Dialog/DialogContent` на `Sheet/SheetContent` с тем же shell, что EntityRecordSheet:
+Создать `src/lib/sheetShell.ts`:
 
-- `SheetContent className="w-full sm:max-w-[60vw] lg:max-w-4xl p-0 pt-[env(...)] pb-[env(...)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"`
-- Фиксированный `SheetHeader` с иконкой Upload + заголовок + описание
-- `flex-1 overflow-y-auto` body
-- Фиксированный footer для кнопок в режиме create/edit (sticky bottom)
-- Блок токенов — отдельный `Card` с `max-h-[200px] overflow-y-auto` внутри, badges с `flex-wrap`
+```ts
+/** Unified sheet shell className for all right-side panels */
+export const SHEET_SHELL_CLASS =
+  "w-[calc(100%-1rem)] sm:w-[calc(100%-2rem)] sm:max-w-3xl " +
+  "h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] " +
+  "my-auto mr-2 sm:mr-4 " +
+  "rounded-2xl " +
+  "p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] " +
+  "flex flex-col overflow-hidden";
+```
 
-### 2. `GenerateAiDocumentDialog.tsx` — Dialog → Sheet
+Это даст:
 
-Заменить `Dialog/DialogContent` на `Sheet/SheetContent`:
+- Inset от правого края: `mr-2 sm:mr-4`
+- Inset сверху/снизу: `my-auto` + `h-[calc(100dvh-2rem)]`
+- Видны все 4 округлённых угла: `rounded-2xl`
+- Единая ширина для всех окон
 
-- Тот же shell-паттерн
-- `SheetHeader`: иконка FileText + имя шаблона + step indicator
-- Body: `flex-1 overflow-y-auto px-4 sm:px-6 py-4`
-- Footer: фиксированный с кнопками Назад/Далее/Сформировать
-- Step indicator внутри header, не в body
+Для `sheetVariants` в `sheet.tsx` — поправить вариант `right`: убрать `h-full`, чтобы не конфликтовал с кастомным `h-[calc...]`.
 
-### 3. Сохранение заполненных данных между сессиями wizard
+### 2. Применить SHEET_SHELL_CLASS в 4 файлах
 
-Новая функциональность — при повторном "Заполнить документ" предлагать выбор:
 
-- **Подход**: хранить последние использованные `entityId`, `personId`, `signerLinkId` per template в `localStorage` или в `ai_generated_documents.snapshot`
-- При открытии wizard для шаблона, у которого уже есть сгенерированные документы:
-  - Предлагать "Использовать данные из последнего документа" (подставить entityId/personId/signerLinkId из последнего snapshot)
-  - Или "Заполнить заново"
-- Реализация: в `GenerateAiDocumentDialog` при open подтягивать последний документ по `template_id` из `ai_generated_documents` и pre-fill select значения
+| Файл                             | Было                     | Станет              |
+| -------------------------------- | ------------------------ | ------------------- |
+| `EntityRecordSheet.tsx`          | длинный inline className | `SHEET_SHELL_CLASS` |
+| `PersonRecordSheet.tsx`          | длинный inline className | `SHEET_SHELL_CLASS` |
+| `AiDocumentTemplatesManager.tsx` | `lg:max-w-5xl` inline    | `SHEET_SHELL_CLASS` |
+| `GenerateAiDocumentDialog.tsx`   | `lg:max-w-3xl` inline    | `SHEET_SHELL_CLASS` |
 
-### 4. Скролл
 
-- Body за Sheet не скроллится (Sheet overlay блокирует)
-- Внутренний скролл через `overflow-y-auto` на body div
-- `ScrollArea` использовать не обязательно — достаточно `overflow-y-auto` как в EntityRecordSheet
+### 3. Правка `sheet.tsx` — вариант `right`
+
+Текущий вариант `right`:
+
+```
+inset-y-0 right-0 h-full w-3/4 border-r ...
+```
+
+Нужно убрать `h-full` и `inset-y-0` из варианта, чтобы SheetContent с кастомным `h-[calc...]` и `my-auto` мог работать. Заменить на более гибкий `top-0 right-0` или оставить позиционирование shell-классу.
+
+Альтернатива (безопаснее): не менять `sheetVariants`, а передавать `side={undefined}` или переопределять через className с `!important`-like utilities (`!h-auto !inset-auto`). Но чище — поправить вариант `right`, добавив поддержку inset-окна.
+
+**Выбранный подход**: в `SHEET_SHELL_CLASS` добавить override: `!h-auto !inset-y-auto` чтобы перебить вариант, не трогая `sheet.tsx` (add-only).
+
+### 4. Fix prefill reset/reuse в GenerateAiDocumentDialog
+
+Текущий баг: `startFresh()` ставит `showPrefillChoice = false`, после чего нет UI для возврата.
+
+**Исправление**: 
+
+- Убрать `setShowPrefillChoice(false)` из `startFresh()`
+- Вместо скрытия banner, менять его состояние — показывать кнопку "Использовать прошлые данные" когда user в fresh mode
+- Логика:
+  - `prefillSource === null` и `lastDoc` существует → показать обе кнопки (initial state)
+  - `prefillSource === "history"` → показать badge + кнопку "Заполнить заново"
+  - `prefillSource === "fresh"` (новое значение) → показать badge "Заполнено вручную" + кнопку "Использовать прошлые данные"
+- `startFresh()`: ставит `prefillSource = "fresh"` вместо `null`
+- Banner всегда виден на шаге 1, пока есть `lastDoc`
 
 ## Файлы
 
 
-| Файл                                                         | Действие                                                    |
-| ------------------------------------------------------------ | ----------------------------------------------------------- |
-| `src/components/ai-documents/AiDocumentTemplatesManager.tsx` | Dialog → Sheet shell, фикс layout, footer, token card       |
-| `src/components/ai-documents/GenerateAiDocumentDialog.tsx`   | Dialog → Sheet shell, фикс layout, pre-fill из истории      |
-| `src/components/ai-documents/TokenPreviewTable.tsx`          | Мини-правка — убрать внутренний max-h (sheet body скроллит) |
+| Файл                                                         | Действие                                         |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| `src/lib/sheetShell.ts`                                      | Создать — единая константа shell className       |
+| `src/components/ai-requisites/EntityRecordSheet.tsx`         | Заменить inline className на `SHEET_SHELL_CLASS` |
+| `src/components/ai-requisites/PersonRecordSheet.tsx`         | Заменить inline className на `SHEET_SHELL_CLASS` |
+| `src/components/ai-documents/AiDocumentTemplatesManager.tsx` | Заменить inline className на `SHEET_SHELL_CLASS` |
+| `src/components/ai-documents/GenerateAiDocumentDialog.tsx`   | Shell className + fix prefill toggle             |
 
 
 ## Что НЕ трогаем
 
-- `AI.tsx` — tabs не меняем
-- `AiDocumentsGenerateView.tsx` — не меняем (кнопки уже ок)
-- `AiDocumentsHistoryView.tsx` — не меняем
-- billing flow, `generated_documents`, `generate-from-template`
-- `EntityRecordSheet`, `PersonRecordSheet` — только reference
+- `sheet.tsx` sheetVariants (override через className)
+- billing flow / generated_documents / generate-from-template
 - PATCH 5/6/7
+- AdminDocumentTemplates
+- AI.tsx tabs
