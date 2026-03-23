@@ -23,7 +23,7 @@ import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { useEntityPersonLinks, type LinkRow } from "@/hooks/useEntityPersonLinks";
 import { useAiDocuments } from "@/hooks/useAiDocuments";
-import { useDocumentPackageItems, type DocumentPackageTemplate } from "@/hooks/useDocumentPackages";
+import { useDocumentPackageItems, useLastPackageBatch, type DocumentPackageTemplate } from "@/hooks/useDocumentPackages";
 import { useDocumentTemplates } from "@/hooks/useDocumentTemplates";
 import { useAiDocumentPackageGeneration } from "@/hooks/useAiDocumentPackageGeneration";
 import {
