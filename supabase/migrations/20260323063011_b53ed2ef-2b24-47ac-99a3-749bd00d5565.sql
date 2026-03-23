@@ -1,0 +1,2 @@
+DELETE FROM legal_details_entity_person_links WHERE person_id = 'b876711c-b5a4-4d10-8b21-8c0a44d5119c';
+UPDATE legal_details_persons SET is_active = false WHERE id = 'b876711c-b5a4-4d10-8b21-8c0a44d5119c';
