@@ -30,6 +30,7 @@ export interface AiGeneratedDocument {
   generation_batch_id: string | null;
   package_template_id: string | null;
   package_item_id: string | null;
+  batch: { title: string } | null;
   deleted_at: string | null;
   created_by: string | null;
   created_at: string;
