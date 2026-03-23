@@ -110,7 +110,7 @@ export function EntityPersonLinkForm({
     !!personId &&
     !!roleCatalogId &&
     (roleType !== "other" || customRoleText.trim().length > 0) &&
-    (roleType !== "position" || positionCatalogId || customPositionText.trim().length > 0);
+    (roleType !== "position" || !!positionCatalogId);
 
   const buildPayload = (): LinkInsertPayload => ({
     person_id: personId!,
