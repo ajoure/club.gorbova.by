@@ -251,7 +251,7 @@ const REQ_SUB_TABS: SubMenuItem[] = [
 
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
-  documents: "accountant",
+  documents: "generate",
   requisites: "entities",
 };
 
