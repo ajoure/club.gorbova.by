@@ -103,6 +103,9 @@ export function AiDocumentsHistoryView() {
         docs[0].created_at,
       );
       const batchTitle = docs[0]?.batch?.title ?? "Пакет документов";
+      docs.sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
       result.push({ kind: "batch", batchId, batchTitle, maxCreatedAt, docs });
     }
 
