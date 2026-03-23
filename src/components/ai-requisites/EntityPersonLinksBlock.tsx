@@ -36,6 +36,7 @@ export function EntityPersonLinksBlock({ legalDetailsId, profileId }: EntityPers
     createLink,
     updateLink,
     deleteLink,
+    createPosition,
     isCreating,
     isUpdating,
     isDeleting,
