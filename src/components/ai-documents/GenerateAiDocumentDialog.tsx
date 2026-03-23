@@ -196,38 +196,53 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 pb-24">
           {step === 1 && (
             <div className="space-y-5 max-w-2xl">
-              {/* Prefill choice banner */}
-              {showPrefillChoice && lastDoc && (
+              {/* Prefill choice banner — always visible on step 1 when lastDoc exists */}
+              {lastDoc && (
                 <Card className="border-primary/20 bg-primary/5">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
                       <History className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">Найден ранее созданный документ</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Вы можете использовать данные из последнего документа или заполнить заново.
-                        </p>
-                        <div className="flex gap-2 mt-3">
-                          <Button size="sm" onClick={applyPrefill}>
-                            <History className="h-3.5 w-3.5 mr-1.5" />
-                            Использовать прошлые данные
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={startFresh}>
-                            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                            Заполнить заново
-                          </Button>
-                        </div>
+                        {prefillSource === null && (
+                          <>
+                            <p className="text-sm font-medium">Найден ранее созданный документ</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Вы можете использовать данные из последнего документа или заполнить заново.
+                            </p>
+                            <div className="flex gap-2 mt-3">
+                              <Button size="sm" onClick={applyPrefill}>
+                                <History className="h-3.5 w-3.5 mr-1.5" />
+                                Использовать прошлые данные
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={startFresh}>
+                                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                                Заполнить заново
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                        {prefillSource === "history" && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm">Данные из последнего документа</span>
+                            <Button size="sm" variant="ghost" onClick={startFresh}>
+                              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                              Заполнить заново
+                            </Button>
+                          </div>
+                        )}
+                        {prefillSource === "fresh" && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm">Заполнение вручную</span>
+                            <Button size="sm" variant="ghost" onClick={applyPrefill}>
+                              <History className="h-3.5 w-3.5 mr-1.5" />
+                              Вернуть прошлые данные
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              )}
-
-              {prefillSource === "history" && (
-                <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/10">
-                  <History className="h-3.5 w-3.5 text-primary shrink-0" />
-                  <span className="text-xs text-muted-foreground">Данные из последнего документа</span>
-                </div>
               )}
 
               {/* Entity picker */}
