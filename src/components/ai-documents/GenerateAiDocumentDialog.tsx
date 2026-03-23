@@ -64,12 +64,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     return documents.find((d) => d.template_id === template.id) ?? null;
   }, [documents, template?.id]);
 
-  // Show prefill choice when opening wizard with existing history
-  useEffect(() => {
-    if (open && lastDoc && step === 1 && !prefillSource) {
-      setShowPrefillChoice(true);
-    }
-  }, [open, lastDoc, step, prefillSource]);
+  // No effect needed — banner visibility driven by lastDoc + prefillSource
 
   const applyPrefill = () => {
     if (!lastDoc) return;
