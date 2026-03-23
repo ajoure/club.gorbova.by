@@ -143,7 +143,7 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
         .from("legal_details_positions_catalog")
         .select("id, label, code")
         .eq("is_active", true)
-        .order("sort_order");
+        .order("label");
       if (error) throw error;
       return data as PositionCatalogEntry[];
     },
