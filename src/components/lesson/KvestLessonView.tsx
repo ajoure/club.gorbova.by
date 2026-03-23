@@ -525,7 +525,7 @@ export function KvestLessonView({
         }
         // V1
         return (
-          <div className={isReadOnly ? "opacity-80" : ""}>
+          <div>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{
