@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Download, Trash2, FileText, Loader2, Clock } from "lucide-react";
+import { Download, Trash2, FileText, Loader2, Clock, Package } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
