@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FileText, Search, Loader2, Settings, Upload, PenLine, Package } from "lucide-react";
 import { GenerateAiDocumentDialog } from "./GenerateAiDocumentDialog";
+import { GenerateAiDocumentPackageDialog } from "./GenerateAiDocumentPackageDialog";
 import { AiDocumentTemplatesManager } from "./AiDocumentTemplatesManager";
 import { AiDocumentPackagesManager } from "./AiDocumentPackagesManager";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
+import type { DocumentPackageTemplate } from "@/hooks/useDocumentPackages";
 
 function PackageItemCount({ packageId }: { packageId: string }) {
   const { items } = useDocumentPackageItems(packageId);
@@ -21,7 +23,9 @@ export function AiDocumentsGenerateView() {
   const { packages, isLoading: packagesLoading } = useDocumentPackages();
   const [search, setSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<DocumentTemplate | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<DocumentPackageTemplate | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [packageWizardOpen, setPackageWizardOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [packagesManagerOpen, setPackagesManagerOpen] = useState(false);
 
@@ -159,10 +163,13 @@ export function AiDocumentsGenerateView() {
                       <Button
                         variant="secondary"
                         className="w-full"
-                        disabled
+                        onClick={() => {
+                          setSelectedPackage(pkg);
+                          setPackageWizardOpen(true);
+                        }}
                       >
-                        <Package className="h-4 w-4 mr-2" />
-                        Скоро
+                        <PenLine className="h-4 w-4 mr-2" />
+                        Заполнить пакет
                       </Button>
                     </GlassCard>
                   ))}
@@ -234,6 +241,15 @@ export function AiDocumentsGenerateView() {
       <AiDocumentPackagesManager
         open={packagesManagerOpen}
         onOpenChange={setPackagesManagerOpen}
+      />
+
+      <GenerateAiDocumentPackageDialog
+        open={packageWizardOpen}
+        onOpenChange={(v) => {
+          setPackageWizardOpen(v);
+          if (!v) setSelectedPackage(null);
+        }}
+        packageTemplate={selectedPackage}
       />
     </>
   );

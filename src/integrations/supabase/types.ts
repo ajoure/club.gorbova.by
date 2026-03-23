@@ -279,6 +279,57 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_document_generation_batches: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          meta: Json
+          package_template_id: string | null
+          profile_id: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          meta?: Json
+          package_template_id?: string | null
+          profile_id: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          meta?: Json
+          package_template_id?: string | null
+          profile_id?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_document_generation_batches_package_template_id_fkey"
+            columns: ["package_template_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_document_generation_batches_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_generated_documents: {
         Row: {
           created_at: string
@@ -287,6 +338,7 @@ export type Database = {
           file_mime: string | null
           file_name: string | null
           file_path: string | null
+          generation_batch_id: string | null
           generation_error: string | null
           id: string
           legal_details_id: string | null
@@ -314,6 +366,7 @@ export type Database = {
           file_mime?: string | null
           file_name?: string | null
           file_path?: string | null
+          generation_batch_id?: string | null
           generation_error?: string | null
           id?: string
           legal_details_id?: string | null
@@ -341,6 +394,7 @@ export type Database = {
           file_mime?: string | null
           file_name?: string | null
           file_path?: string | null
+          generation_batch_id?: string | null
           generation_error?: string | null
           id?: string
           legal_details_id?: string | null
@@ -362,6 +416,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "ai_generated_documents_generation_batch_id_fkey"
+            columns: ["generation_batch_id"]
+            isOneToOne: false
+            referencedRelation: "ai_document_generation_batches"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "ai_generated_documents_profile_id_fkey"
             columns: ["profile_id"]

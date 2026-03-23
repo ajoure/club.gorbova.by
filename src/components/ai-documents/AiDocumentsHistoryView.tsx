@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Download, Trash2, FileText, Loader2, Clock } from "lucide-react";
+import { Download, Trash2, FileText, Loader2, Clock, Package } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
@@ -101,6 +101,12 @@ export function AiDocumentsHistoryView() {
                     <span className="text-sm font-medium truncate max-w-[200px]">
                       {doc.title}
                     </span>
+                    {doc.package_template_id && (
+                      <Badge variant="outline" className="text-xs shrink-0 gap-1">
+                        <Package className="h-3 w-3" />
+                        Пакет
+                      </Badge>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">

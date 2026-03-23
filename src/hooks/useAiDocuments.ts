@@ -27,6 +27,9 @@ export interface AiGeneratedDocument {
   missing_tokens: string[];
   meta: Record<string, unknown>;
   generation_error: string | null;
+  generation_batch_id: string | null;
+  package_template_id: string | null;
+  package_item_id: string | null;
   deleted_at: string | null;
   created_by: string | null;
   created_at: string;
