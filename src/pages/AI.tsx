@@ -5,6 +5,8 @@ import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
 import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
+import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
+import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -27,10 +29,6 @@ import {
   MessageSquare,
   Lightbulb,
   Zap,
-  Calculator,
-  Briefcase,
-  ShieldCheck,
-  FileStack,
   Building2
 } from "lucide-react";
 
