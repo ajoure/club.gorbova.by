@@ -21,7 +21,7 @@ export function TokenPreviewTable({ tokens }: TokenPreviewTableProps) {
         </div>
       )}
 
-      <div className="rounded-lg border divide-y max-h-[320px] overflow-y-auto">
+      <div className="rounded-lg border divide-y">
         {tokens.map((t) => (
           <div
             key={t.token}
