@@ -63,6 +63,7 @@ export function EntityPersonLinkForm({
   profileId,
   editingLink,
   onSubmit,
+  onCreatePosition,
   isSubmitting,
 }: EntityPersonLinkFormProps) {
   const [personId, setPersonId] = useState<string | null>(null);
