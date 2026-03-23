@@ -7,9 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { FileText, Search, Loader2, Settings, Upload, PenLine, Package } from "lucide-react";
 import { GenerateAiDocumentDialog } from "./GenerateAiDocumentDialog";
+import { GenerateAiDocumentPackageDialog } from "./GenerateAiDocumentPackageDialog";
 import { AiDocumentTemplatesManager } from "./AiDocumentTemplatesManager";
 import { AiDocumentPackagesManager } from "./AiDocumentPackagesManager";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
+import type { DocumentPackageTemplate } from "@/hooks/useDocumentPackages";
 
 function PackageItemCount({ packageId }: { packageId: string }) {
   const { items } = useDocumentPackageItems(packageId);
