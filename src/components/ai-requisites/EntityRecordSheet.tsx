@@ -630,6 +630,24 @@ export function EntityRecordSheet({
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Delete confirm dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить навсегда?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Запись «{entity ? getEntityShortName(entity) : ""}» будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить навсегда
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Duplicate warning dialog */}
       {showDuplicateDialog && duplicateCheck.candidates.length > 0 && (
         <DuplicateWarningDialog
