@@ -140,6 +140,37 @@ export function useDocumentTemplates() {
     },
   });
 
+  // Hard delete: remove file from storage + DB record
+  const deleteTemplateWithFileMutation = useMutation({
+    mutationFn: async ({ id, templatePath }: { id: string; templatePath: string }) => {
+      // 1. Delete file from storage
+      if (templatePath) {
+        const { error: storageError } = await supabase.storage
+          .from("documents-templates")
+          .remove([templatePath]);
+        if (storageError) {
+          console.warn("Storage delete warning:", storageError);
+          // Continue with DB delete even if storage fails
+        }
+      }
+      // 2. Delete DB record
+      const { error } = await supabase
+        .from("document_templates")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["document-templates"] });
+      toast.success("Шаблон и файл удалены");
+    },
+    onError: (error) => {
+      console.error("Delete template with file error:", error);
+      toast.error("Ошибка удаления шаблона");
+    },
+  });
+
   const uploadTemplateFile = async (file: File, code: string): Promise<string> => {
     const fileName = `${code}_${Date.now()}.docx`;
     const filePath = `templates/${fileName}`;
@@ -158,10 +189,12 @@ export function useDocumentTemplates() {
     createTemplate: createTemplate.mutateAsync,
     updateTemplate: updateTemplate.mutateAsync,
     deleteTemplate: deleteTemplate.mutateAsync,
+    deleteTemplateWithFile: async (id: string, templatePath: string) =>
+      deleteTemplateWithFileMutation.mutateAsync({ id, templatePath }),
     uploadTemplateFile,
     isCreating: createTemplate.isPending,
     isUpdating: updateTemplate.isPending,
-    isDeleting: deleteTemplate.isPending,
+    isDeleting: deleteTemplate.isPending || deleteTemplateWithFileMutation.isPending,
   };
 }
 

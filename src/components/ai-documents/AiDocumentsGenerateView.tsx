@@ -31,6 +31,8 @@ export function AiDocumentsGenerateView() {
     return true;
   });
 
+  const hasTemplates = filtered.length > 0;
+
   const handleGenerate = (tpl: DocumentTemplate) => {
     setSelectedTemplate(tpl);
     setWizardOpen(true);
@@ -47,28 +49,30 @@ export function AiDocumentsGenerateView() {
   return (
     <>
       <div className="space-y-4">
-        {/* Header with search + manage button */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Поиск шаблонов..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
+        {/* Header: search + single CTA, only when templates exist */}
+        {hasTemplates && (
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Поиск шаблонов..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setManagerOpen(true)}
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Управление шаблонами
+            </Button>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setManagerOpen(true)}
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Управление шаблонами
-          </Button>
-        </div>
+        )}
 
-        {filtered.length === 0 ? (
+        {!hasTemplates ? (
           <GlassCard className="text-center py-12">
             <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
               <FileText className="h-8 w-8 text-muted-foreground" />
@@ -77,16 +81,10 @@ export function AiDocumentsGenerateView() {
             <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
               Сначала загрузите шаблон DOCX, затем сможете заполнить и сформировать документ.
             </p>
-            <div className="flex items-center justify-center gap-3">
-              <Button onClick={() => setManagerOpen(true)}>
-                <Upload className="h-4 w-4 mr-2" />
-                Загрузить шаблон
-              </Button>
-              <Button variant="outline" onClick={() => setManagerOpen(true)}>
-                <Settings className="h-4 w-4 mr-2" />
-                Управление шаблонами
-              </Button>
-            </div>
+            <Button onClick={() => setManagerOpen(true)}>
+              <Upload className="h-4 w-4 mr-2" />
+              Загрузить шаблон
+            </Button>
           </GlassCard>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
