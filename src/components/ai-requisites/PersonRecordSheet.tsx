@@ -73,12 +73,13 @@ interface PersonRecordSheetProps {
 
 export function PersonRecordSheet({
   open, onOpenChange, mode, onModeChange, person, profileId,
-  isSubmitting, isDeactivating, onSubmit, onDeactivate, onOpenExisting,
+  isSubmitting, isDeactivating, isDeleting, onSubmit, onDeactivate, onDelete, onOpenExisting,
 }: PersonRecordSheetProps) {
   const duplicateCheck = usePersonDuplicateCheck();
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingData, setPendingData] = useState<Record<string, any> | null>(null);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isViewMode = mode === 'view';
   const isEditMode = mode === 'edit';
