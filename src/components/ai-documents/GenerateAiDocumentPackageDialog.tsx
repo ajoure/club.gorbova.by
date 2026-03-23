@@ -227,6 +227,20 @@ export function GenerateAiDocumentPackageDialog({
 
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 pb-24">
+          {/* Empty package guard */}
+          {items.length === 0 && step === 1 && (
+            <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-950/20 mb-4">
+              <CardContent className="p-4 flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium">Пакет пуст</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Добавьте шаблоны в пакет через менеджер пакетов, чтобы начать генерацию.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {/* Step 1: Data selection */}
           {step === 1 && (
             <div className="space-y-5 max-w-2xl">
@@ -408,7 +422,7 @@ export function GenerateAiDocumentPackageDialog({
             {step === 1 && (
               <>
                 <div />
-                <Button onClick={() => setStep(2)}>
+                <Button onClick={() => setStep(2)} disabled={items.length === 0}>
                   Далее
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
