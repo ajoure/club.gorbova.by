@@ -1,17 +1,18 @@
 import { useState, useCallback } from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   useDocumentTemplates,
   type DocumentTemplate,
@@ -29,6 +30,8 @@ import {
   Plus,
   AlertTriangle,
   CheckCircle2,
+  ArrowLeft,
+  Tag,
 } from "lucide-react";
 
 interface Props {
@@ -82,7 +85,6 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
   const [editTemplatePath, setEditTemplatePath] = useState<string>("");
   const [form, setForm] = useState<TemplateForm>(emptyForm);
 
-  // Show all ai/both templates (including inactive) for management
   const aiTemplates = templates.filter(
     (t) => t.template_scope === "ai" || t.template_scope === "both"
   );
@@ -92,9 +94,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       setForm((prev) => ({ ...prev, file: null, parsedPlaceholders: [], isParsing: false, parseError: null }));
       return;
     }
-
     setForm((prev) => ({ ...prev, file, isParsing: true, parseError: null, parsedPlaceholders: [] }));
-
     try {
       const placeholders = await extractDocxPlaceholders(file);
       setForm((prev) => ({
@@ -143,11 +143,8 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       toast.error("Укажите название шаблона");
       return;
     }
-
     try {
-      // Use parsed placeholders from DOCX, or keep existing ones on edit without new file
       const placeholders = form.parsedPlaceholders;
-
       if (mode === "create") {
         if (!form.file) {
           toast.error("Загрузите файл шаблона (.docx)");
@@ -173,7 +170,6 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
           document_type: form.document_type,
           is_active: form.is_active,
         };
-        // Update placeholders only if new file was parsed or existing ones changed
         if (form.file || form.parsedPlaceholders.length > 0) {
           updates.placeholders = placeholders;
         }
@@ -184,7 +180,6 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
         }
         await updateTemplate(updates);
       }
-
       setMode("list");
       setEditId(null);
       setForm(emptyForm);
@@ -202,268 +197,259 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
     }
   };
 
-  const handleToggleActive = async (t: DocumentTemplate) => {
-    try {
-      await updateTemplate({ id: t.id, is_active: !t.is_active });
-    } catch {
-      // errors handled in hook
-    }
-  };
-
   const handleDownload = async (t: DocumentTemplate) => {
     try {
       const { data, error } = await supabase.storage
         .from("documents-templates")
         .createSignedUrl(t.template_path, 60);
       if (error) throw error;
-      if (data?.signedUrl) {
-        window.open(data.signedUrl, "_blank");
-      }
+      if (data?.signedUrl) window.open(data.signedUrl, "_blank");
     } catch {
       toast.error("Ошибка скачивания шаблона");
     }
   };
 
-  const renderPlaceholdersDiagnostics = () => {
-    if (form.isParsing) {
-      return (
-        <div className="flex items-center gap-2 p-3 rounded-xl border border-border/50 bg-muted/30">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Анализ шаблона…</span>
-        </div>
-      );
-    }
-
-    if (form.parseError) {
-      return (
-        <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-500/30 bg-amber-500/5">
-          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-          <span className="text-sm text-amber-700 dark:text-amber-400">{form.parseError}</span>
-        </div>
-      );
-    }
-
-    if (form.parsedPlaceholders.length > 0) {
-      return (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm font-medium">
-              Найдено токенов: {form.parsedPlaceholders.length}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {form.parsedPlaceholders.map((p) => (
-              <Badge key={p} variant="secondary" className="text-xs font-mono">
-                {`{{${p}}}`}
-              </Badge>
-            ))}
-          </div>
-        </div>
-      );
-    }
-
-    if (mode === "edit" && !form.file) {
-      // Show existing placeholders from DB
-      const existing = form.parsedPlaceholders;
-      if (existing.length > 0) {
-        return (
-          <div className="space-y-2">
-            <span className="text-sm font-medium">Текущие токены:</span>
-            <div className="flex flex-wrap gap-1.5">
-              {existing.map((p) => (
-                <Badge key={p} variant="secondary" className="text-xs font-mono">
-                  {`{{${p}}}`}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        );
-      }
-    }
-
-    return null;
+  const handleBack = () => {
+    setMode("list");
+    setEditId(null);
+    setForm(emptyForm);
   };
 
-  const renderForm = () => (
-    <div className="space-y-5">
-      {/* Name */}
-      <div className="space-y-1.5">
-        <Label className="text-sm font-medium">Название шаблона</Label>
-        <Input
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          placeholder="Например: Счёт-акт для ИП"
-        />
-      </div>
+  const headerTitle = mode === "list"
+    ? "Управление шаблонами"
+    : mode === "create"
+      ? "Новый шаблон"
+      : "Редактирование шаблона";
 
-      {/* Description */}
-      <div className="space-y-1.5">
-        <Label className="text-sm font-medium">Описание</Label>
-        <Input
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="Краткое описание назначения шаблона"
-        />
-      </div>
-
-      <Separator />
-
-      {/* DOCX file */}
-      <div className="space-y-1.5">
-        <Label className="text-sm font-medium">
-          Файл шаблона (.docx) {mode === "create" ? "*" : ""}
-        </Label>
-        <Input
-          type="file"
-          accept=".docx"
-          onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-        />
-        {mode === "edit" && !form.file && (
-          <p className="text-xs text-muted-foreground">
-            Оставьте пустым, чтобы сохранить текущий файл
-          </p>
-        )}
-      </div>
-
-      {/* Placeholders diagnostics */}
-      {renderPlaceholdersDiagnostics()}
-
-      <Separator />
-
-      {/* Active switch */}
-      <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium">Активен</Label>
-        <Switch
-          checked={form.is_active}
-          onCheckedChange={(v) => setForm({ ...form, is_active: v })}
-        />
-      </div>
-
-      {/* Actions */}
-      <div className="flex gap-2 pt-2">
-        <Button
-          variant="outline"
-          className="flex-1"
-          onClick={() => {
-            setMode("list");
-            setEditId(null);
-            setForm(emptyForm);
-          }}
-        >
-          Отмена
-        </Button>
-        <Button className="flex-1" onClick={handleSave} disabled={isCreating || isUpdating}>
-          {(isCreating || isUpdating) && (
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          )}
-          {mode === "create" ? "Загрузить" : "Сохранить"}
-        </Button>
-      </div>
-    </div>
-  );
-
-  const renderList = () => (
-    <div className="space-y-3">
-      <Button onClick={handleCreate} variant="outline" className="w-full">
-        <Plus className="h-4 w-4 mr-2" />
-        Загрузить новый шаблон
-      </Button>
-
-      {isLoading ? (
-        <div className="flex justify-center py-8">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : aiTemplates.length === 0 ? (
-        <div className="text-center py-8">
-          <FileText className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">
-            Нет AI-шаблонов. Загрузите первый шаблон DOCX.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2 max-h-[400px] overflow-y-auto">
-          {aiTemplates.map((t) => (
-            <div
-              key={t.id}
-              className="flex items-center gap-3 p-3 rounded-xl border border-border/50 bg-card"
-            >
-              <FileText className="h-4 w-4 text-primary shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{t.name}</p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  {t.is_active ? (
-                    <Badge variant="default" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
-                      активен
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-[10px]">
-                      неактивен
-                    </Badge>
-                  )}
-                  {Array.isArray(t.placeholders) && t.placeholders.length > 0 && (
-                    <span className="text-[10px] text-muted-foreground">
-                      {t.placeholders.length} токенов
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => handleEdit(t)}
-                  title="Редактировать"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => handleDownload(t)}
-                  title="Скачать исходный файл"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-7 w-7"
-                  onClick={() => handleDelete(t)}
-                  title="Удалить"
-                  disabled={isDeleting}
-                >
-                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  const headerDesc = mode === "list"
+    ? "Загрузка, редактирование и удаление шаблонов документов"
+    : mode === "create"
+      ? "Загрузите файл DOCX с токенами для автозаполнения"
+      : "Измените параметры шаблона или загрузите обновлённый файл";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5 text-primary" />
-            Управление шаблонами
-          </DialogTitle>
-          <DialogDescription>
-            {mode === "list"
-              ? "Загрузка, редактирование и удаление шаблонов документов"
-              : mode === "create"
-                ? "Загрузите новый шаблон DOCX с токенами для автозаполнения"
-                : "Редактирование шаблона"}
-          </DialogDescription>
-        </DialogHeader>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        className="w-full sm:max-w-[60vw] lg:max-w-5xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
+      >
+        {/* Fixed Header */}
+        <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            {mode !== "list" && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={handleBack}>
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <div className="p-2 rounded-xl bg-primary/10 shrink-0">
+              <Upload className="h-5 w-5 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <SheetTitle className="text-left">{headerTitle}</SheetTitle>
+              <SheetDescription className="text-left text-sm mt-0.5">{headerDesc}</SheetDescription>
+            </div>
+          </div>
+          <Separator className="mt-3" />
+        </SheetHeader>
 
-        {mode === "list" ? renderList() : renderForm()}
-      </DialogContent>
-    </Dialog>
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 pb-24">
+          {mode === "list" ? (
+            /* ─── LIST MODE ─── */
+            <div className="space-y-4">
+              {isLoading ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : aiTemplates.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
+                    <FileText className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <h3 className="text-lg font-semibold mb-2">Нет AI-шаблонов</h3>
+                  <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+                    Загрузите первый шаблон DOCX с токенами для автозаполнения.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {aiTemplates.map((t) => (
+                    <Card key={t.id} className="border-border/50">
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                            <FileText className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium leading-tight break-words">{t.name}</p>
+                            {t.description && (
+                              <p className="text-sm text-muted-foreground mt-0.5 break-words">{t.description}</p>
+                            )}
+                            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                              {t.is_active ? (
+                                <Badge variant="default" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                                  активен
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  неактивен
+                                </Badge>
+                              )}
+                              {Array.isArray(t.placeholders) && t.placeholders.length > 0 && (
+                                <span className="text-[10px] text-muted-foreground">
+                                  {t.placeholders.length} токенов
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(t)} title="Редактировать">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDownload(t)} title="Скачать">
+                              <Download className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDelete(t)} title="Удалить" disabled={isDeleting}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            /* ─── CREATE / EDIT MODE ─── */
+            <div className="space-y-6 max-w-2xl">
+              {/* Name */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Основные данные</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">Название шаблона</Label>
+                    <Input
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      placeholder="Например: Счёт-акт для ИП"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">Описание</Label>
+                    <Input
+                      value={form.description}
+                      onChange={(e) => setForm({ ...form, description: e.target.value })}
+                      placeholder="Краткое описание назначения шаблона"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Активен</Label>
+                    <Switch
+                      checked={form.is_active}
+                      onCheckedChange={(v) => setForm({ ...form, is_active: v })}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* File */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium">Файл шаблона</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">
+                      Файл DOCX {mode === "create" && <span className="text-destructive">*</span>}
+                    </Label>
+                    <Input
+                      type="file"
+                      accept=".docx"
+                      onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                    />
+                    {mode === "edit" && !form.file && (
+                      <p className="text-xs text-muted-foreground">
+                        Оставьте пустым, чтобы сохранить текущий файл
+                      </p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Placeholders diagnostics */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Tag className="h-4 w-4" />
+                    Найденные токены
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {form.isParsing ? (
+                    <div className="flex items-center gap-2 p-3 rounded-xl border border-border/50 bg-muted/30">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      <span className="text-sm text-muted-foreground">Анализ шаблона…</span>
+                    </div>
+                  ) : form.parseError ? (
+                    <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-500/30 bg-amber-500/5">
+                      <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                      <span className="text-sm text-amber-700 dark:text-amber-400">{form.parseError}</span>
+                    </div>
+                  ) : form.parsedPlaceholders.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                        <span className="text-sm font-medium">
+                          Найдено: {form.parsedPlaceholders.length}
+                        </span>
+                      </div>
+                      <div className="max-h-[200px] overflow-y-auto rounded-lg border border-border/50 p-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {form.parsedPlaceholders.map((p) => (
+                            <Badge key={p} variant="secondary" className="text-xs font-mono">
+                              {`{{${p}}}`}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : mode === "edit" && !form.file ? (
+                    <p className="text-sm text-muted-foreground">
+                      Токены не обнаружены. Загрузите обновлённый файл DOCX для повторного анализа.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Загрузите файл DOCX — токены будут определены автоматически.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+
+        {/* Fixed Footer */}
+        <div className="flex-shrink-0 border-t bg-background px-4 sm:px-6 py-3 sm:py-4">
+          {mode === "list" ? (
+            <Button onClick={handleCreate} className="w-full sm:w-auto">
+              <Plus className="h-4 w-4 mr-2" />
+              Загрузить новый шаблон
+            </Button>
+          ) : (
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={handleBack}>
+                Отмена
+              </Button>
+              <Button onClick={handleSave} disabled={isCreating || isUpdating}>
+                {(isCreating || isUpdating) && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                {mode === "create" ? "Загрузить" : "Сохранить"}
+              </Button>
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
