@@ -208,3 +208,31 @@ export function useDocumentPackageItems(packageId: string | null) {
 
   return { items, isLoading, addItem, removeItem, reorderItem };
 }
+
+/** Last successful batch for a package template (for prefill). */
+export function useLastPackageBatch(packageTemplateId: string | null, profileId: string | null) {
+  return useQuery({
+    queryKey: ["last-package-batch", packageTemplateId, profileId],
+    queryFn: async () => {
+      if (!packageTemplateId || !profileId) return null;
+      const { data, error } = await supabase
+        .from("ai_document_generation_batches")
+        .select("id, title, meta, status, created_at")
+        .eq("package_template_id", packageTemplateId)
+        .eq("profile_id", profileId)
+        .in("status", ["generated", "partial"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      return data as {
+        id: string;
+        title: string;
+        meta: Record<string, unknown>;
+        status: string;
+        created_at: string;
+      } | null;
+    },
+    enabled: !!packageTemplateId && !!profileId,
+  });
+}

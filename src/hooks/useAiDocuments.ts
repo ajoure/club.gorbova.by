@@ -65,7 +65,7 @@ export function useAiDocuments() {
       if (!profileId) return [];
       const { data, error } = await supabase
         .from("ai_generated_documents")
-        .select("*")
+        .select("*, batch:ai_document_generation_batches!ai_generated_documents_generation_batch_id_fkey(title)")
         .eq("profile_id", profileId)
         .is("deleted_at", null)
         .order("created_at", { ascending: false });

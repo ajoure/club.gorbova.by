@@ -231,7 +231,7 @@ export function GenerateAiDocumentPackageDialog({
           {step === 1 && (
             <div className="space-y-5 max-w-2xl">
               {/* Prefill banner */}
-              {lastBatchDoc && (
+              {hasPrefillData && (
                 <Card className="border-primary/20 bg-primary/5">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
