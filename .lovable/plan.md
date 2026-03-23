@@ -1,37 +1,148 @@
+# да, согласен, с учетом правок:
+
+1. PATCH 7 запускать **только после формального закрытия PATCH 6**:
+  - ручной proof `probable duplicate`
+  - ручной proof `keyboard select` адреса
+  - cleanup тестовых записей  
+  Без этого PATCH 7 не считать разрешённым к execute.
+2. Из scope PATCH 7 **убрать inline create нового физлица внутри link-form**.  
+В этом патче работать только со **существующими** физлицами через `PersonPicker`.  
+Inline create вынести в отдельный следующий patch, чтобы не смешивать person CRUD и links CRUD.
+3. В `useEntityPersonLinks.ts` зафиксировать joins и поля явно:
+  - для `legal_details_roles_catalog` использовать `label`, не `name`
+  - для `legal_details_positions_catalog` использовать `label`
+  - не опираться на догадки по schema-полям.
+4. В `PersonPicker` по умолчанию показывать **только активных** физлиц владельца, но в edit existing link корректно отображать уже выбранного person даже если он стал inactive. Иначе редактирование старых связей будет ломаться.
+5. В `EntityPersonLinkForm` перед submit обязательно делать sanitization по `role_type`:
+  - `founder` → очищать position/custom role поля
+  - `position` → очищать `share_percent` и enforce XOR `position_catalog_id` / `custom_position_text`
+  - `other` → очищать position/share fields и требовать `custom_role_text`  
+  Нельзя полагаться только на DB CHECK constraints.
+6. Удаление в PATCH 7 — это **только delete link**, не deactivate person и не archive entity. Это нужно явно зафиксировать в плане и proof.
+7. В DoD добавить отдельные proof-кейсы:
+  - founder + `share_percent`
+  - position через `position_catalog_id`
+  - position через `custom_position_text`
+  - other через `custom_role_text`
+  - duplicate link → человекочитаемая ошибка
+  - delete link → блок в карточке физлица обновился read-only
+  - existing inactive person in edit path не ломает форму
+8. В `EntityRecordSheet` новый блок `Связанные лица` добавлять только в **view mode** и не менять shell/edit flow карточки юрлица.
+9. `/settings/legal-details`, documents, generate-from-template, AI interview и PATCH 8+ явно оставить вне scope не только текстом, но и в финальном proof-отчёте отдельным разделом `Не затронуто`.
+10. &nbsp;
+11. PATCH 7 — Связи физлиц в карточке юрлица/ИП
+
+## Что делаем
+
+Добавляем полноценный модуль управления связями (links) внутри `EntityRecordSheet` (view mode): список, создание, редактирование, удаление связей между юрлицом/ИП и физлицами.
+
+## Схема данных (уже существует)
+
+```text
+legal_details_entity_person_links
+├── person_id → legal_details_persons
+├── legal_details_id → client_legal_details
+├── role_catalog_id → legal_details_roles_catalog (founder/position/other)
+├── role_type (denormalized, validated by trigger)
+├── position_catalog_id → legal_details_positions_catalog (только для position)
+├── custom_position_text (XOR с position_catalog_id для position)
+├── custom_role_text (обязательно для other)
+├── share_percent (только для founder)
+├── acts_on_basis, is_primary, notes, start_date, end_date
+└── profile_id (owner, RLS)
+```
+
+Partial unique indexes и CHECK constraints из PATCH 2 уже защищают от дублей и семантических ошибок.
+
+## Файлы
+
+### Создать (4 файла)
+
+**1. `src/hooks/useEntityPersonLinks.ts**`
+
+- Загрузка links по `legal_details_id` с joins на `legal_details_persons`, `legal_details_roles_catalog`, `legal_details_positions_catalog`
+- Загрузка catalogs (roles + positions) — отдельные queries
+- Mutations: `createLink`, `updateLink`, `deleteLink`
+- Query key: `['entity-person-links', legalDetailsId]`
+- При ошибке insert/update — парсинг PostgreSQL unique violation → человекочитаемое сообщение
+
+**2. `src/components/ai-requisites/EntityPersonLinksBlock.tsx**`
+
+- Секция «Связанные лица» в view mode карточки юрлица
+- Список карточек: ФИО, badge роли, доля (founder), должность (position), is_primary badge
+- Кнопка «Добавить связь» → открывает dialog
+- На каждой записи: edit / delete actions
+- Empty state: «Нет связанных лиц»
+- Props: `legalDetailsId`, `profileId`
+
+**3. `src/components/ai-requisites/EntityPersonLinkForm.tsx**`
+
+- Форма внутри Dialog/Sheet для создания/редактирования связи
+- PersonPicker (combobox): поиск по ФИО среди активных физлиц владельца
+- Select роли из `legal_details_roles_catalog`
+- Conditional fields:
+  - founder → `share_percent` (number input, optional)
+  - position → select из `legal_details_positions_catalog` ИЛИ custom text (exclusive)
+  - other → `custom_role_text` (обязательное текстовое поле)
+- Optional: `acts_on_basis`, `is_primary`, `notes`
+- Validation: person required, role required, role-specific fields validated
+- Submit → `createLink` / `updateLink`
+
+**4. `src/components/ai-requisites/PersonPicker.tsx**`
+
+- Combobox для выбора физлица из существующих
+- Reuse `useAiPersons` для получения списка
+- Фильтрация по ФИО, личному номеру
+- Показывает: ФИО + личный номер (если есть)
+- Возвращает `person_id`
+
+### Изменить (1 файл)
+
+`**src/components/ai-requisites/EntityRecordSheet.tsx**`
+
+- В `renderViewContent()` после секции «Служебная информация» (строка ~426) вставить `<EntityPersonLinksBlock>`
+- Import нового компонента
+- Передать `entity.id` и `profileId`
+
+### Не трогать
+
+- `PersonLinkedEntitiesBlock` — остаётся read-only, уже корректно работает
+- `PersonRecordSheet` — без изменений
+- `PersonFieldsForm` — без изменений
+- `/settings/legal-details` — без изменений
+- Billing/payment flow — без изменений
+- Document generation — без изменений
+- Edge functions — без изменений
+
+## Логика ролей (enforcement)
 
 
-## PATCH 6 PROOF-2 — Результаты
+| role_type | share_percent | position_catalog_id | custom_position_text | custom_role_text |
+| --------- | ------------- | ------------------- | -------------------- | ---------------- |
+| founder   | optional      | —                   | —                    | —                |
+| position  | —             | XOR                 | XOR                  | —                |
+| other     | —             | —                   | —                    | required         |
 
-### Подтверждено фактами (runtime proof)
 
-| # | Сценарий | Статус | Доказательство |
-|---|----------|--------|----------------|
-| B1 | Address mouse select в /ai для физлица | ✅ | Набрал "улица Одинцова" → dropdown появился → клик по suggestion → поля заполнились (улица, город, район, область, индекс) |
-| B2 | Address save + reopen | ✅ | Сохранил с кв. 42 → view показывает "улица Одинцова, кв. 42 / г. Минск" → DB: apartment=42, street=улица Одинцова, city=Минск |
-| B3 | address_structured persisted | ✅ | SQL proof: `apartment: 42, street: улица Одинцова, city: Минск` |
-| B4 | Preview/view "кв." для физлица | ✅ | Скриншот: "улица Одинцова, **кв.** 42" |
-| B5 | Entity regression "пом." | ✅ | Скриншот АЖУР инкам: "ул. Панфилова, д. 2, **пом.** 49л" |
-| C | /settings/legal-details regression | ✅ | Скриншот: страница загружается, оба billing-реквизита видны, ошибок нет |
-| D | FLD-ID copy-by-label | ✅ | Клик по "ФИО *" → toast "ID скопирован" → title="FLD-000020 — клик для копирования" |
-| E | Entity module в /ai не сломан | ✅ | Карточка юрлица открывается, все секции видны |
-| F | Tab switching persons↔entities | ✅ | Переключение не вызывает ошибок, state не перемешивается |
+Форма динамически показывает/скрывает поля в зависимости от выбранной роли. При сабмите зануляет невалидные поля (CHECK constraints в БД не допустят иначе).
 
-### Не подтверждено (ограничение browser automation)
+## Обработка ошибок дублей
 
-| # | Сценарий | Статус | Причина |
-|---|----------|--------|---------|
-| A | Probable duplicate warn + continue | ⚠️ | HTML date input не заполняется через browser automation (`type`/`fill` не устанавливают значение для `<input type="date">`). Без birth_date Tier 3 матч не срабатывает. Код логически корректен (строки 93-118 PersonRecordSheet + usePersonDuplicateCheck Tier 3). **Требует ручной проверки.** |
-| B6 | Address keyboard select | ⚠️ | Browser automation не поддерживает навигацию стрелками по dropdown и Enter. **Требует ручной проверки.** |
+Partial unique indexes в БД выбросят `23505` (unique_violation). Hook парсит `detail` из ошибки PostgreSQL и показывает toast:
 
-### Cleanup needed
+- «Такая связь уже существует» — вместо сырого SQL-сообщения
 
-Две тестовые записи нужно деактивировать или удалить:
-- `bb703846` — "Тестовый ДубликатФедорчук Сергей Валерьвич" (personal_number: 9999999X999XX9)
-- `be9d8d93` — "Федорчук Сергей Валерьвич" (personal_number: 1111111X111XX1)
+## UX flow
 
-Деактивация через UI доступна (кнопка "деактивировать" в карточке), но не успел завершить в текущей сессии.
+1. Открыть карточку юрлица → view mode → секция «Связанные лица»
+2. Нажать «Добавить связь» → Dialog
+3. Выбрать физлицо из combobox
+4. Выбрать роль → появляются conditional fields
+5. Заполнить → Save → toast → список обновился
+6. Edit: клик edit на записи → тот же Dialog с prefill
+7. Delete: клик delete → confirm → toast → запись удалена
 
-### Итог
+## Invalidation
 
-**13 из 15 сценариев подтверждены runtime proof.** Два оставшихся (probable duplicate + keyboard select) требуют ручной проверки из-за ограничений browser automation с date inputs и keyboard navigation в dropdowns. Код для обоих сценариев структурно корректен.
-
+- При create/update/delete link → invalidate `['entity-person-links', legalDetailsId]`
+- Также invalidate `['person-linked-entities', personId]` чтобы в карточке физлица read-only блок обновился
