@@ -240,9 +240,16 @@ export function DiagnosticTableBlock({
     };
   }, []);
   
+  // Guard: skip props sync while user is actively editing (prevents cursor reset)
+  const userEditingRef = useRef(false);
+
   // Initialize local rows from props OR create first empty row
   useEffect(() => {
     if (rows.length > 0) {
+      // After init, skip sync from props if user is editing (prevents cursor jump)
+      if (initDoneRef.current && userEditingRef.current) {
+        return;
+      }
       setLocalRows(rows);
       initDoneRef.current = true;
       return;
