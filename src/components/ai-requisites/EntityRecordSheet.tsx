@@ -231,10 +231,8 @@ export function EntityRecordSheet({
       onOpenChange(false);
     }
   }, [entity, onDelete, onOpenChange]);
-      onArchive(entity.id);
-    }
-    setShowArchiveConfirm(false);
-  }, [entity, onArchive]);
+
+
 
   /* ── view content ── */
 
