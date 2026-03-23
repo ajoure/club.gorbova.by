@@ -28,7 +28,7 @@ import { Loader2, FileText, ChevronRight, ChevronLeft, Star } from "lucide-react
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  template: DocumentTemplate;
+  template: DocumentTemplate | null;
 }
 
 export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props) {
@@ -84,7 +84,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   );
 
   // Preview tokens
-  const placeholders: string[] = Array.isArray(template.placeholders) ? template.placeholders : [];
+  const placeholders: string[] = template && Array.isArray(template.placeholders) ? template.placeholders : [];
   const previewData: SnapshotData = {
     entity: selectedEntity,
     person: selectedPerson as any,
@@ -95,6 +95,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const missingCount = tokens.filter((t) => !t.filled).length;
 
   const handleGenerate = async () => {
+    if (!template?.id) return;
     try {
       const result = await generate({
         template_id: template.id,
@@ -140,7 +141,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5 text-primary" />
-            {template.name}
+            {template?.name ?? "Документ"}
           </DialogTitle>
           <DialogDescription>
             {step === 1 ? "Выберите источники данных для документа" : "Проверьте заполнение полей"}
