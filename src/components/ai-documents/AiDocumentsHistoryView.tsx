@@ -113,7 +113,9 @@ export function AiDocumentsHistoryView() {
       result.push({ kind: "standalone", maxCreatedAt: doc.created_at, doc });
     }
 
-    result.sort((a, b) => (b.maxCreatedAt > a.maxCreatedAt ? 1 : -1));
+    result.sort((a, b) =>
+      new Date(b.maxCreatedAt).getTime() - new Date(a.maxCreatedAt).getTime()
+    );
     return result;
   }, [documents]);
 
