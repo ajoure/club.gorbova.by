@@ -84,7 +84,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   );
 
   // Preview tokens
-  const placeholders: string[] = Array.isArray(template.placeholders) ? template.placeholders : [];
+  const placeholders: string[] = template && Array.isArray(template.placeholders) ? template.placeholders : [];
   const previewData: SnapshotData = {
     entity: selectedEntity,
     person: selectedPerson as any,
