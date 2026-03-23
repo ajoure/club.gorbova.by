@@ -26,6 +26,7 @@ import { useEntityPersonLinks, type LinkRow } from "@/hooks/useEntityPersonLinks
 import { useAiDocuments } from "@/hooks/useAiDocuments";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
 import { Loader2, FileText, ChevronRight, ChevronLeft, Star, AlertTriangle, History, RefreshCw } from "lucide-react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 
 interface Props {
   open: boolean;
