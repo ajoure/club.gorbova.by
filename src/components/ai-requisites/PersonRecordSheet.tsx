@@ -18,7 +18,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power,
+  User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power, Trash2,
 } from 'lucide-react';
 import { PersonFieldsForm } from './PersonFieldsForm';
 import { PersonLinkedEntitiesBlock } from './PersonLinkedEntitiesBlock';
