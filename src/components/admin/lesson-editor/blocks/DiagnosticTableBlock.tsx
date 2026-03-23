@@ -358,6 +358,7 @@ export function DiagnosticTableBlock({
 
   // Update local row with debounced commit
   const updateLocalRow = (index: number, colId: string, value: unknown) => {
+    userEditingRef.current = true;
     setLocalRows(prev => {
       const newRows = [...prev];
       newRows[index] = { ...newRows[index], [colId]: value };
