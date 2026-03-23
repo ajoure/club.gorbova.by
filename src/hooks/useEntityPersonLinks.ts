@@ -150,10 +150,14 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
     staleTime: 5 * 60 * 1000,
   });
 
-  const invalidateLinks = (personId?: string) => {
+  const invalidateLinks = (...personIds: (string | undefined | null)[]) => {
     queryClient.invalidateQueries({ queryKey: ["entity-person-links", legalDetailsId] });
-    if (personId) {
-      queryClient.invalidateQueries({ queryKey: ["person-linked-entities", personId] });
+    const seen = new Set<string>();
+    for (const pid of personIds) {
+      if (pid && !seen.has(pid)) {
+        seen.add(pid);
+        queryClient.invalidateQueries({ queryKey: ["person-linked-entities", pid] });
+      }
     }
   };
 
