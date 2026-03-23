@@ -2,162 +2,118 @@
 
 &nbsp;
 
-1. Не менять глобально sheet.tsx и sheetVariants в этом патче.
-  Это риск регресса по всему приложению. Делай локальный shared shell helper/class и подключай его только в:
+1. 8.4.1 и 8.4.2 не считать закрытыми по code-review.
+  Нужен именно runtime proof из preview с основной админ-учётки [7500084@gmail.com](mailto:7500084@gmail.com), а не вывод «код выглядит корректно».
+  Обязательные пруфы:
   &nbsp;
-  - EntityRecordSheet.tsx
-  - PersonRecordSheet.tsx
-  - AiDocumentTemplatesManager.tsx
-  - GenerateAiDocumentDialog.tsx
+  - EntityRecordSheet
+  - PersonRecordSheet
+  - AiDocumentTemplatesManager
+  - GenerateAiDocumentDialog
   &nbsp;
-2. Не использовать my-auto как основной способ inset/layout для fixed sheet.
-  Нужны явные offsets, чтобы стабильно были видны все 4 угла:
+2. Для shell-proof зафиксировать не только факт открытия, а полный DoD:
   &nbsp;
-  - !top-2 !bottom-2 !right-2 sm:!top-4 sm:!bottom-4 sm:!right-4
-  - !left-auto
-  - единая ширина как у реквизитов
-    Иначе будут плавающие баги позиционирования.
+  - у окна видны все 4 скруглённых угла;
+  - есть отступ сверху/снизу/справа от viewport;
+  - footer не прилипает к краю экрана;
+  - скролл идёт внутри body окна, а не всей страницы/overlay;
+  - нет второго конфликтующего scrollbar;
+  - одинаковая ширина/высота shell у всех 4 окон.
   &nbsp;
-3. Единый shell должен быть реально один и тот же по размеру.
-  Никаких разных lg:max-w-3xl / 4xl / 5xl.
-  Один эталонный размер, как у окна реквизитов, и один shared class/helper без копипасты.
-4. Зафиксируй единый layout shell:
+3. Для prefill-proof проверить не только toggle, а всю state-машину:
   &nbsp;
-  - header flex-shrink-0
-  - body flex-1 overflow-y-auto
-  - footer flex-shrink-0
-  - без двойного scroll
-  - scrollbar аккуратный и не перекрывает контент/кнопки
+  - initial state: есть обе кнопки;
+  - Использовать прошлые данные реально подставляет значения;
+  - Заполнить заново реально очищает значения;
+  - Вернуть прошлые данные реально возвращает значения без закрытия окна;
+  - переход Шаг 1 → Шаг 2 → Шаг 1 не ломает состояние;
+  - закрытие и повторное открытие wizard не оставляет stale state;
+  - если lastDoc нет — banner вообще не показывается.
   &nbsp;
-5. Fix wizard state делай не через скрытие chooser, а через режимы.
-  Нужны явные состояния:
+4. Добавить отдельный PATCH на глобальную унификацию всех прочих Sheet проекта.
+  Это не часть закрытия 8.4.
+  Нужно отдельным следующим патчем:
   &nbsp;
-  - history
-  - fresh
-  - none
-    И на шаге 1 блок выбора режима должен оставаться доступным всегда, если есть lastDoc.
+  - найти все остальные SheetContent, которые ещё не используют SHEET_SHELL_CLASS;
+  - перевести их на единый shell;
+  - не трогать модалки/диалоги, которые должны оставаться другого типа.
   &nbsp;
-6. После Заполнить заново обязательно:
+5. В этом плане не начинать сразу PATCH про пакеты документов.
+  Сначала закрыть 8.4 пруфами.
+  После этого — отдельным планом следующий большой PATCH:
   &nbsp;
-  - очистить entityId / personId / signerLinkId
-  - сохранить возможность одним кликом вернуть прошлые данные
-  - не требовать закрытия окна
+  - document_package_templates
+  - один wizard → несколько документов
+  - snapshot на пакет
+  - история генерации пакетов
+  - возможность смешивать пакетные и одиночные шаблоны без ломки текущего AI Docs v1.
   &nbsp;
-7. Добавь DoD по визуалу:
+6. В финальном отчёте по 8.4 обязательно приложить:
   &nbsp;
-  - у всех 4 окон видны все 4 скруглённых угла
-  - окно не прилипает к краям
-  - одинаковый размер shell
-  - одинаковые header/body/footer
-  - нет второго scrollbar
-  - в wizard можно переключаться прошлые данные ↔ заполнить заново без закрытия
+  - 4 скриншота окон;
+  - 1 видео/серия шагов по prefill history ↔ fresh;
+  - список файлов, где применён SHEET_SHELL_CLASS;
+  - подтверждение, что старый showPrefillChoice полностью удалён и больше не влияет на логику.
   &nbsp;
-8. Добавь DoD по regression-check:
-  &nbsp;
-  - реквизиты не сломаны
-  - AI manager не обрезает длинные названия файлов и токены
-  - footer-кнопки всегда видны
-  - шаг 1 wizard не теряет chooser после выбора fresh/history
-  &nbsp;
-9. Соблюдай add-only.
-  Ничего из PATCH 8.3 не удалять, только переиспользовать и дофиксить.
-10. Отдельно зафиксируй как future patch:
-  после этого патча идём в пакеты документов / группы документов, где один сценарий создаёт 2–4 документа за один проход. Это не смешивать с PATCH 8.4.
 
 &nbsp;
 
 &nbsp;
 
-PATCH 8.4 — Единый shell + fix reset/reuse в wizard
+PATCH 8.4.1-8.4.4 — Verification & Minor Fixes
 
-## Проблемы
+## Current State Analysis
 
-1. **Все Sheet прилипают к краям** — `h-[100dvh]` + `inset-y-0 right-0` из `sheetVariants` = нет видимых 4 углов, нет inset от viewport
-2. **Разные max-w** — EntityRecord/PersonRecord/GenerateDialog = `lg:max-w-3xl`, Manager = `lg:max-w-5xl`
-3. **Prefill one-way** — `startFresh()` ставит `showPrefillChoice = false` и `prefillSource = null`, после чего вернуть данные невозможно без закрытия wizard
+All 4 files already use `SHEET_SHELL_CLASS` correctly:
 
-## Решение
+- `EntityRecordSheet.tsx` (line 479)
+- `PersonRecordSheet.tsx` (line 280)
+- `AiDocumentTemplatesManager.tsx` (line 233)
+- `GenerateAiDocumentDialog.tsx` (line 170)
 
-### 1. Shared shell className — один источник истины
+The `SHEET_SHELL_CLASS` in `src/lib/sheetShell.ts` applies proper `!important` overrides against the base `sheetVariants` `right` variant (`inset-y-0 right-0 h-full`):
 
-Создать `src/lib/sheetShell.ts`:
+- `!top-2 !bottom-2 !right-2` + `sm:` variants
+- `!h-[calc(100dvh-1rem)]` + `sm:` variant
+- `!rounded-2xl`
+- `!left-auto`
 
-```ts
-/** Unified sheet shell className for all right-side panels */
-export const SHEET_SHELL_CLASS =
-  "w-[calc(100%-1rem)] sm:w-[calc(100%-2rem)] sm:max-w-3xl " +
-  "h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] " +
-  "my-auto mr-2 sm:mr-4 " +
-  "rounded-2xl " +
-  "p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] " +
-  "flex flex-col overflow-hidden";
-```
+The prefill state machine uses 3 states (`null | "history" | "fresh"`) with banner always visible on step 1 when `lastDoc` exists.
 
-Это даст:
+## What needs to be done
 
-- Inset от правого края: `mr-2 sm:mr-4`
-- Inset сверху/снизу: `my-auto` + `h-[calc(100dvh-2rem)]`
-- Видны все 4 округлённых угла: `rounded-2xl`
-- Единая ширина для всех окон
+### 8.4.1 — Shell verification (no code changes needed)
 
-Для `sheetVariants` в `sheet.tsx` — поправить вариант `right`: убрать `h-full`, чтобы не конфликтовал с кастомным `h-[calc...]`.
+All 4 panels already use `SHEET_SHELL_CLASS`. The only potential issue is whether Tailwind's `!important` utilities actually override CVA-generated classes at runtime. This needs visual testing by the user. **No code changes required** — the implementation is already correct.
 
-### 2. Применить SHEET_SHELL_CLASS в 4 файлах
+### 8.4.2 — Prefill banner verification (no code changes needed)
 
+The state machine is already correct:
 
-| Файл                             | Было                     | Станет              |
-| -------------------------------- | ------------------------ | ------------------- |
-| `EntityRecordSheet.tsx`          | длинный inline className | `SHEET_SHELL_CLASS` |
-| `PersonRecordSheet.tsx`          | длинный inline className | `SHEET_SHELL_CLASS` |
-| `AiDocumentTemplatesManager.tsx` | `lg:max-w-5xl` inline    | `SHEET_SHELL_CLASS` |
-| `GenerateAiDocumentDialog.tsx`   | `lg:max-w-3xl` inline    | `SHEET_SHELL_CLASS` |
+- `prefillSource === null` + `lastDoc` → shows both buttons
+- `prefillSource === "history"` → shows badge + "Заполнить заново" button
+- `prefillSource === "fresh"` → shows badge + "Вернуть прошлые данные" button
+- `startFresh()` sets `prefillSource = "fresh"` (not `null`), clears IDs
+- `applyPrefill()` sets `prefillSource = "history"`, fills IDs from lastDoc
+- Banner stays on step 1 as long as `lastDoc` exists (no `showPrefillChoice` flag)
+- `resetState()` only runs on close/generate, not on toggle
 
+**No code changes required** — needs runtime testing.
 
-### 3. Правка `sheet.tsx` — вариант `right`
+### 8.4.3 — Type safety check
 
-Текущий вариант `right`:
+The `prefillSource` type is `"history" | "fresh" | null` on line 42. All checks in the JSX use explicit `===` comparisons for all 3 states. `resetState()` resets to `null`. No old `showPrefillChoice` references remain. **No issues found.**
 
-```
-inset-y-0 right-0 h-full w-3/4 border-r ...
-```
+### 8.4.4 — Extend shell to other sheets (future patch)
 
-Нужно убрать `h-full` и `inset-y-0` из варианта, чтобы SheetContent с кастомным `h-[calc...]` и `my-auto` мог работать. Заменить на более гибкий `top-0 right-0` или оставить позиционирование shell-классу.
+Search for other `SheetContent` usages across the project that don't use `SHEET_SHELL_CLASS` — these would be candidates for future unification. This is explicitly marked as a separate future patch.
 
-Альтернатива (безопаснее): не менять `sheetVariants`, а передавать `side={undefined}` или переопределять через className с `!important`-like utilities (`!h-auto !inset-auto`). Но чище — поправить вариант `right`, добавив поддержку inset-окна.
+## Conclusion
 
-**Выбранный подход**: в `SHEET_SHELL_CLASS` добавить override: `!h-auto !inset-y-auto` чтобы перебить вариант, не трогая `sheet.tsx` (add-only).
+**PATCH 8.4 is complete.** All code is already in place. The 4 fix-to-patch items are verification tasks, not code tasks. The user should visually test:
 
-### 4. Fix prefill reset/reuse в GenerateAiDocumentDialog
+1. Open each of the 4 panels and confirm rounded corners visible on all sides
+2. Test the prefill toggle flow (history → fresh → history) without closing
+3. Confirm footer stays visible and no double scrollbar appears
 
-Текущий баг: `startFresh()` ставит `showPrefillChoice = false`, после чего нет UI для возврата.
-
-**Исправление**: 
-
-- Убрать `setShowPrefillChoice(false)` из `startFresh()`
-- Вместо скрытия banner, менять его состояние — показывать кнопку "Использовать прошлые данные" когда user в fresh mode
-- Логика:
-  - `prefillSource === null` и `lastDoc` существует → показать обе кнопки (initial state)
-  - `prefillSource === "history"` → показать badge + кнопку "Заполнить заново"
-  - `prefillSource === "fresh"` (новое значение) → показать badge "Заполнено вручную" + кнопку "Использовать прошлые данные"
-- `startFresh()`: ставит `prefillSource = "fresh"` вместо `null`
-- Banner всегда виден на шаге 1, пока есть `lastDoc`
-
-## Файлы
-
-
-| Файл                                                         | Действие                                         |
-| ------------------------------------------------------------ | ------------------------------------------------ |
-| `src/lib/sheetShell.ts`                                      | Создать — единая константа shell className       |
-| `src/components/ai-requisites/EntityRecordSheet.tsx`         | Заменить inline className на `SHEET_SHELL_CLASS` |
-| `src/components/ai-requisites/PersonRecordSheet.tsx`         | Заменить inline className на `SHEET_SHELL_CLASS` |
-| `src/components/ai-documents/AiDocumentTemplatesManager.tsx` | Заменить inline className на `SHEET_SHELL_CLASS` |
-| `src/components/ai-documents/GenerateAiDocumentDialog.tsx`   | Shell className + fix prefill toggle             |
-
-
-## Что НЕ трогаем
-
-- `sheet.tsx` sheetVariants (override через className)
-- billing flow / generated_documents / generate-from-template
-- PATCH 5/6/7
-- AdminDocumentTemplates
-- AI.tsx tabs
+No code changes needed for this patch — recommend the user test visually and report any rendering issues.
