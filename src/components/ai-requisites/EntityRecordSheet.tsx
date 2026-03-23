@@ -133,14 +133,17 @@ export function EntityRecordSheet({
   profileId,
   isSubmitting,
   isArchiving,
+  isDeleting,
   onSubmit,
   onArchive,
+  onDelete,
   onOpenExisting,
 }: EntityRecordSheetProps) {
   const duplicateCheck = useEntityDuplicateCheck();
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingData, setPendingData] = useState<Partial<ClientLegalDetails> | null>(null);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isViewMode = mode === "view";
   const isEditMode = mode === "edit";
