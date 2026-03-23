@@ -150,10 +150,14 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
     staleTime: 5 * 60 * 1000,
   });
 
-  const invalidateLinks = (personId?: string) => {
+  const invalidateLinks = (...personIds: (string | undefined | null)[]) => {
     queryClient.invalidateQueries({ queryKey: ["entity-person-links", legalDetailsId] });
-    if (personId) {
-      queryClient.invalidateQueries({ queryKey: ["person-linked-entities", personId] });
+    const seen = new Set<string>();
+    for (const pid of personIds) {
+      if (pid && !seen.has(pid)) {
+        seen.add(pid);
+        queryClient.invalidateQueries({ queryKey: ["person-linked-entities", pid] });
+      }
     }
   };
 
@@ -178,7 +182,7 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
   });
 
   const updateLink = useMutation({
-    mutationFn: async ({ id, person_id, ...payload }: Partial<LinkInsertPayload> & { id: string; person_id?: string }) => {
+    mutationFn: async ({ id, old_person_id, ...payload }: Partial<LinkInsertPayload> & { id: string; old_person_id?: string }) => {
       const { data, error } = await supabase
         .from("legal_details_entity_person_links")
         .update(payload)
@@ -189,10 +193,10 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
         const friendly = parseUniqueViolation(error);
         throw new Error(friendly || error.message);
       }
-      return data;
+      return { ...data, old_person_id };
     },
-    onSuccess: (_data, variables) => {
-      invalidateLinks(variables.person_id);
+    onSuccess: (data: any, variables) => {
+      invalidateLinks(variables.old_person_id, data.person_id);
       toast.success("Связь обновлена");
     },
     onError: (error) => toast.error(error.message),
