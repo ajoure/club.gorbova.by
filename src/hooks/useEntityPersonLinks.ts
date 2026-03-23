@@ -178,6 +178,8 @@ export function useEntityPersonLinks(legalDetailsId: string | null, profileId: s
       invalidateLinks(variables.person_id);
       toast.success("Связь добавлена");
     },
+    onError: (error) => toast.error(error.message),
+  });
 
   const updateLink = useMutation({
     mutationFn: async ({ id, old_person_id, ...payload }: Partial<LinkInsertPayload> & { id: string; old_person_id?: string }) => {
