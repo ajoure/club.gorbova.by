@@ -45,13 +45,19 @@ export function PositionPicker({
   const normalizedSearch = normalizeForCompare(search);
 
   const filtered = useMemo(() => {
-    if (!normalizedSearch) {
-      return [...positions].sort((a, b) => a.label.localeCompare(b.label, "ru")).slice(0, 50);
-    }
-    return positions
-      .filter((p) => p.label.toLowerCase().includes(normalizedSearch))
-      .sort((a, b) => a.label.localeCompare(b.label, "ru"))
-      .slice(0, 50);
+    const sorted = [...positions].sort((a, b) => a.label.localeCompare(b.label, "ru"));
+    // Dedupe by normalized label (defensive layer)
+    const seen = new Set<string>();
+    const deduped = sorted.filter((p) => {
+      const norm = normalizeForCompare(p.label);
+      if (seen.has(norm)) return false;
+      seen.add(norm);
+      return true;
+    });
+    const base = normalizedSearch
+      ? deduped.filter((p) => p.label.toLowerCase().includes(normalizedSearch))
+      : deduped;
+    return base.slice(0, 50);
   }, [positions, normalizedSearch]);
 
   const hasExactMatch = useMemo(() => {
@@ -106,7 +112,7 @@ export function PositionPicker({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-        <div className="p-2">
+        <div className="p-2 border-b">
           <Input
             placeholder="Поиск должности…"
             value={search}
@@ -115,7 +121,8 @@ export function PositionPicker({
             autoFocus
           />
         </div>
-        <div className="max-h-60 overflow-y-auto">
+        {/* Scrollable list area */}
+        <div className="max-h-[280px] overflow-y-auto overscroll-contain">
           {filtered.length === 0 && hasExactMatch && (
             <p className="text-sm text-muted-foreground p-3 text-center">Не найдено</p>
           )}
@@ -137,12 +144,14 @@ export function PositionPicker({
               <span className="truncate">{p.label}</span>
             </button>
           ))}
-          {/* Add new — only when no exact normalized match */}
-          {!hasExactMatch && normalizedSearch.length >= 2 && (
+        </div>
+        {/* Sticky footer — add new position */}
+        {!hasExactMatch && normalizedSearch.length >= 2 && (
+          <div className="border-t">
             <button
               type="button"
               disabled={isCreating}
-              className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors text-primary border-t"
+              className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors text-primary"
               onClick={handleCreate}
             >
               <Plus className="w-4 h-4 shrink-0" />
@@ -150,8 +159,8 @@ export function PositionPicker({
                 {isCreating ? "Добавляем…" : `Добавить «${search.trim()}» в справочник`}
               </span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   );
