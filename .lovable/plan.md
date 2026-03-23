@@ -1,154 +1,144 @@
 # да, согласен, с учетом правок:
 
-1. **Не делать** `INSERT for authenticated` **в общий справочник напрямую.**  
-Это слишком широкое право для общей таблицы. Лучше:
-  - либо secure RPC / edge / server-side action для `createPosition`
-  - либо отдельная SQL function с проверкой, нормализацией, anti-duplicate и audit  
-  Прямую RLS policy `INSERT to authenticated` на общий каталог не добавлять.
-2. **Для** `ON CONFLICT (code)` **нужен гарантированный unique index / unique constraint на** `code`**.**  
-Это нужно явно включить в миграцию, если его ещё нет.  
-Без этого seed/upsert план неполный.
-3. **Сортировку в UI делать по** `label`**, а не надеяться на** `sort_order=999` **у новых записей.**  
-Иначе новые добавленные должности будут визуально жить отдельно.  
-Правильно:
-  - seed может проставить `sort_order`
-  - но `PositionPicker` для списка и поиска сортирует по `label asc`
-4. **Кнопку** `Добавить "..." в справочник` **показывать только если нет точного нормализованного совпадения.**  
-Не по правилу “нет exact match, даже если есть partial match”, а именно:
-  - partial match можно показывать списком
-  - add-new показывать только когда после нормализации точного совпадения нет  
-  Это уменьшит мусор и дубли.
-5. **Нормализацию нужно зафиксировать одинаковой в seed и в UI mutation.**  
-Не только для `label`, но и для `code`.  
-То есть один и тот же алгоритм:
-  - trim
-  - collapse spaces
-  - lowercase
-  - для `code`: пробелы в `_`, убрать лишние спецсимволы  
-  Иначе seed и UI начнут создавать расхождения.
-6. **Для старых links с** `custom_position_text` **нужен мягкий edit-flow.**  
-При edit такого link:
-  - не терять текущее значение молча
-  - либо показывать его в picker search/input
-  - либо отдельным текстом: “Текущая должность: …”  
-  Чтобы пользователь понимал, что было сохранено раньше.
-7. `custom_position_text` **пока не убирать из payload полностью.**  
-Оставить совместимость:
-  - старые записи читаются как раньше
-  - новые записи по основному UX должны идти через `position_catalog_id`
-  - fallback оставить только для legacy-совместимости
-8. **Для createPosition нужен proof anti-duplicate на двух кейсах:**
-  - точный дубль: `директор`
-  - нормализованный дубль: `Директор` / `ДИРЕКТОР`  
-  В обоих случаях новая запись не должна создаваться.
-9. **Добавить audit proof.**  
-При создании новой должности из UI нужно логировать факт создания новой записи в audit_logs или эквивалентный журнал.  
-Это особенно важно, раз справочник общий.
-10. **В** `Что НЕ трогаем` **добавить ещё:**
+1. **Нельзя хардкодить UUID canonical/duplicate записей.**  
+Cleanup надо делать **доказуемо по normalized label**, а не по конкретным id из текущей базы.  
+Иначе патч будет не переносим между окружениями.  
+Нужно:
+  - построить группы дублей по `normalized_label`
+  - внутри каждой группы выбрать canonical запись по правилу
+  - все links перевесить на canonical id
+  - остальные записи удалить/деактивировать
+2. **Явно зафиксировать правило выбора canonical записи.**  
+Не просто “кириллический code”, а детерминированный приоритет, например:
+  - `is_active = true`
+  - затем запись с `code`, совпадающим с нормализованным label
+  - затем минимальный `created_at`
+  - затем минимальный `id` как tie-breaker  
+  Это нужно, чтобы cleanup был воспроизводимым и без ручного списка id.
+3. **Cleanup должен идти раньше финального proof и в том же патче обновить seed-логику.**  
+Нужно не только почистить текущие дубли, но и исключить повторное появление дублей при повторном прогоне seed.  
+То есть:
+  - cleanup migration
+  - затем seed/upsert
+  - затем proof, что повторный прогон миграции/seed не создаёт дублей снова
+4. **UI dedupe в** `PositionPicker` **оставить как страховку, но не как основное решение.**  
+Нужно явно зафиксировать:
+  - primary fix = cleanup БД
+  - UI dedupe = defensive layer до/после миграции  
+  Иначе можно скрыть мусор в UI, но оставить мусор в базе.
+5. **Scroll fix описать точнее.**  
+Нужен не просто `max-height`, а разделение:
+  - scrollable list area
+  - sticky footer / отдельный footer для кнопки “Добавить … в справочник”  
+  И обязательно проверить:
+  - wheel scroll
+  - trackpad scroll
+  - keyboard navigation
+  - список внутри modal/sheet
+  - footer не уезжает вместе со списком
+6. **Proof по RPC расширить.**  
+Нужна проверка не только на `Бухгалтер`, но и минимум на:
+  - `бухгалтер`
+  - `Бухгалтер`
+  - `БУХГАЛТЕР`  
+  Во всех случаях должна возвращаться **одна и та же существующая запись**, без insert дубля.
+7. **Добавить SQL proof по links rebind.**  
+После cleanup показать:
+  - сколько `legal_details_entity_person_links.position_catalog_id` было перевязано
+  - какие normalized labels были слиты
+  - что после cleanup нет orphan/invalid references
+  - что `position_catalog_id` в links указывает только на существующие записи
+8. **Отдельно проверить edit существующих links после cleanup.**  
+Нужен proof, что:
+  - старый link с бывшим duplicate id открывается нормально
+  - picker показывает уже canonical запись
+  - сохранение не создаёт дубль
+  - legacy `custom_position_text` не ломается
+9. **Нужен STOP-guard на удаление каталогов.**  
+Если по какой-то группе дублей после rebind остаётся более одной активной canonical-кандидатной записи или есть неочевидный конфликт, миграция должна:
+  - либо безопасно скипнуть группу
+  - либо логировать её в audit/result set  
+  Нельзя слепо удалять записи без guard-проверки.
+10. **DoD дополнить явной проверкой отсутствия дублей в БД.**  
+После патча должно быть:
 
-- `legal_details_roles_catalog`
-- links founder/other semantics
-- delete/reassign UX, кроме совместимости с новым picker
+- `count(*) > 1` по `normalized_label` = 0
+- UI по поиску `бух` не показывает дублей
+- RPC не создаёт дублей
+- links после cleanup валидны
 
-В остальном план правильный и можно отдавать в исполнение.
+Если пришлют обновлённый план с этими правками, его уже можно брать в работу.
 
 &nbsp;
 
-PATCH 7.3 — Справочник должностей: поиск + выбор + добавление новых
+PATCH 7.3 FIX — Scroll + Dedupe Positions
 
-## Scope
+## Проблемы
 
-3 задачи:
+1. **Нет вертикального скролла** — `max-h-60 overflow-y-auto` в `PositionPicker.tsx` уже есть в коде (строка 118), но проблема может быть в том, что PopoverContent ограничивает высоту или контент не растягивается. Нужно убедиться, что scroll контейнер работает корректно внутри sheet/modal.
+2. **5 групп дублей в БД** — старые seed-записи с английскими кодами (`accountant`, `chief_accountant`, `director`, `deputy_director`, `secretary`) + новые с кириллическими кодами. RPC не поймала их, потому что искала по normalized label, но вставка шла через `ON CONFLICT (code)`, а коды разные.
 
-1. Seed-миграция ~230 должностей в `legal_details_positions_catalog`
-2. Новый компонент `PositionPicker` — searchable combobox с возможностью добавления
-3. Mutation для создания новой должности из UI + интеграция в форму
+## Найденные дубли
 
-## Что меняется
 
-### 1. Миграция — seed/upsert должностей
+| Нормализованный label | IDs                    | Коды                                       |
+| --------------------- | ---------------------- | ------------------------------------------ |
+| бухгалтер             | `8bb5498e`, `d02c8177` | `бухгалтер`, `accountant`                  |
+| главный бухгалтер     | `18be473e`, `731dbdfa` | `главный_бухгалтер`, `chief_accountant`    |
+| директор              | `0f330158`, `ff08b590` | `director`, `директор`                     |
+| заместитель директора | `2a0a30c0`, `28f5f974` | `заместитель_директора`, `deputy_director` |
+| секретарь             | `9017e1e3`, `52a8c5a5` | `secretary`, `секретарь`                   |
 
-SQL-миграция с `INSERT ... ON CONFLICT (code) DO UPDATE SET is_active = true`.
 
-Генерация `code` — детерминированная: `lower(trim(label))`, пробелы → `_`, дефисы сохраняются, удаление спецсимволов. Например: `"заведующий архивом"` → `"заведующий_архивом"`.
+Существующий link: `position_catalog_id = 731dbdfa` (Главный бухгалтер, старый код `chief_accountant`) — нужно перевесить на `18be473e`.
 
-`sort_order` — по алфавитному порядку (порядковый номер в отсортированном списке).
+## Что делаем
 
-Существующие 5 записей (директор, главный бухгалтер, зам. директора, бухгалтер, секретарь) не удаляются — `ON CONFLICT` их не тронет если активны, реактивирует если нет.
+### 1. SQL миграция — cleanup дублей
 
-~230 новых записей из переданного списка.
+Для каждой группы дублей:
 
-### 2. Компонент `PositionPicker.tsx`
+- Каноническая запись = та, что с кириллическим кодом (новый seed)
+- `UPDATE legal_details_entity_person_links SET position_catalog_id = canonical_id WHERE position_catalog_id = duplicate_id`
+- `DELETE FROM legal_details_positions_catalog WHERE id = duplicate_id`
 
-Новый файл `src/components/ai-requisites/PositionPicker.tsx`.
+Конкретно:
 
-Архитектура — копия паттерна `PersonPicker`:
+- `731dbdfa` → `18be473e` (главный бухгалтер) — 1 link перевешивается
+- `d02c8177` → `8bb5498e` (бухгалтер) — 0 links
+- `0f330158` → `ff08b590` (директор) — 0 links
+- `28f5f974` → `2a0a30c0` (заместитель директора) — 0 links (NB: в seed списке была `заместитель директора`, а старая была `Заместитель директора` — обе с `зам.` нет, точная пара)
+- `9017e1e3` → `52a8c5a5` (секретарь) — 0 links
 
-- `Popover` + `Input` (поиск) + список кнопок
-- Props: `positions: PositionCatalogEntry[]`, `value: string | null`, `onChange: (id: string | null) => void`, `onCreateNew: (label: string) => Promise<string | null>`
-- При пустом поиске — полный список (max 50, прокрутка)
-- При вводе — фильтрация по подстроке (case-insensitive)
-- Если совпадений нет или точного совпадения нет — показать кнопку `+ Добавить "..." в справочник`
-- Клик по кнопке → вызов `onCreateNew(label)` → получение id → `onChange(id)` → закрытие
+### 2. PositionPicker.tsx — scroll fix
 
-### 3. Hook — mutation `createPosition` в `useEntityPersonLinks.ts`
+Строка 108: добавить ограничение высоты PopoverContent и убедиться в scroll:
 
-Новая функция нормализации:
+- На `PopoverContent` убрать дефолтный `p-4` (уже `p-0`)
+- Обернуть scrollable area в div с явным `max-h-[280px] overflow-y-auto overscroll-contain`
+- Кнопку "Добавить в справочник" вынести **за пределы** scroll-контейнера, закрепить внизу (sticky footer), чтобы она всегда была видна
 
-```text
-normalizePositionLabel(raw: string): string
-  → trim → collapse spaces → lowercase
-```
+### 3. PositionPicker.tsx — UI dedupe
 
-Mutation `createPosition`:
+В `filtered` memo добавить dedupe по normalized label. Из группы с одинаковым normalized label оставлять первую запись (после сортировки). Это страховка на случай, если cleanup миграция ещё не применилась или появятся новые дубли.
 
-1. Нормализовать label
-2. Проверить: `select id from legal_details_positions_catalog where lower(trim(label)) = normalizedLabel and is_active = true`
-3. Если найдено → toast «Такая должность уже есть в справочнике» → вернуть существующий id
-4. Если не найдено → `insert` с `code` = normalized label с `_` вместо пробелов, `sort_order = 999`
-5. Invalidate `["positions-catalog"]`
-6. Вернуть новый id
+### 4. RPC уже корректна
 
-### 4. Интеграция в `EntityPersonLinkForm.tsx`
-
-Заменить блок `roleType === "position"` (строки 224–256):
-
-- Вместо `<Select>` + fallback `<Input>` → единый `<PositionPicker>`
-- `onCreateNew` → вызывает `createPosition` из hook → устанавливает `positionCatalogId`
-- `custom_position_text` input убирается из основного flow, но `buildPayload` сохраняет обратную совместимость для старых записей с `custom_position_text`
-- `canSubmit` для `position`: достаточно `positionCatalogId` (custom text path больше не нужен для новых записей)
-
-### 5. Обратная совместимость
-
-- Старые links с `custom_position_text` и без `position_catalog_id` продолжают отображаться в `EntityPersonLinksBlock` как раньше (badge берётся из `position_label || custom_position_text`)
-- При edit такого link — `positionCatalogId` будет пустым, picker покажет placeholder, пользователь выберет из каталога
+RPC `create_position_catalog_entry` уже ищет по `lower(trim(regexp_replace(label, '\s+', ' ', 'g')))` — это правильно. Проблема была только в seed, который шёл через `ON CONFLICT (code)` и не ловил старые записи с английскими кодами. После cleanup дублей RPC будет работать корректно.
 
 ## Файлы
 
 
-| Файл                                                    | Действие                                          |
-| ------------------------------------------------------- | ------------------------------------------------- |
-| Миграция SQL                                            | Создать — seed ~230 должностей                    |
-| `src/components/ai-requisites/PositionPicker.tsx`       | Создать — searchable combobox                     |
-| `src/hooks/useEntityPersonLinks.ts`                     | Добавить `createPosition` mutation + нормализацию |
-| `src/components/ai-requisites/EntityPersonLinkForm.tsx` | Заменить Select на PositionPicker                 |
+| Файл                                              | Действие                                  |
+| ------------------------------------------------- | ----------------------------------------- |
+| SQL миграция                                      | Cleanup 5 групп дублей + перевязка 1 link |
+| `src/components/ai-requisites/PositionPicker.tsx` | Scroll fix + UI dedupe                    |
 
 
 ## Что НЕ трогаем
 
-- delete / reassign logic
-- `/settings/legal-details`
-- documents / generate-from-template
-- billing / payment flow
-- PATCH 6 persons module
-- edge functions / webhooks
-- GRP / адреса / formatter
-- founder / other role types
-
-## Технические детали
-
-RLS для insert в `legal_details_positions_catalog`:
-
-- Текущая политика `positions_catalog_admin_manage` разрешает ALL только admin/superadmin
-- Нужно добавить политику INSERT для authenticated пользователей, или использовать edge function / RPC
-- Рекомендация: добавить RLS policy `positions_catalog_insert_authenticated` для INSERT to authenticated — это справочник, добавление новой должности не представляет угрозы безопасности
+- `useEntityPersonLinks.ts` — без изменений
+- `EntityPersonLinkForm.tsx` — без изменений
+- founder / other / delete / reassign
+- `/settings/legal-details`, documents, billing
+- RPC `create_position_catalog_entry` — уже корректна
