@@ -102,10 +102,17 @@ export function AiDocumentsHistoryView() {
                       {doc.title}
                     </span>
                     {doc.package_template_id && (
-                      <Badge variant="outline" className="text-xs shrink-0 gap-1">
-                        <Package className="h-3 w-3" />
-                        Пакет
-                      </Badge>
+                      <>
+                        <Badge variant="outline" className="text-xs shrink-0 gap-1">
+                          <Package className="h-3 w-3" />
+                          Пакет
+                        </Badge>
+                        {doc.batch?.title && (
+                          <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={doc.batch.title}>
+                            {doc.batch.title}
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </TableCell>

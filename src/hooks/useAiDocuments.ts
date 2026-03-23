@@ -30,6 +30,7 @@ export interface AiGeneratedDocument {
   generation_batch_id: string | null;
   package_template_id: string | null;
   package_item_id: string | null;
+  batch: { title: string } | null;
   deleted_at: string | null;
   created_by: string | null;
   created_at: string;
@@ -64,7 +65,7 @@ export function useAiDocuments() {
       if (!profileId) return [];
       const { data, error } = await supabase
         .from("ai_generated_documents")
-        .select("*")
+        .select("*, batch:ai_document_generation_batches!ai_generated_documents_generation_batch_id_fkey(title)")
         .eq("profile_id", profileId)
         .is("deleted_at", null)
         .order("created_at", { ascending: false });
