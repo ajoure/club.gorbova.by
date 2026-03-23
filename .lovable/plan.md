@@ -1,79 +1,42 @@
-# да, согласен, с учетом правок:
 
-&nbsp;
 
-1. Группировку делай по generation_batch_id, но сортировку истории рассчитывай по последнему created_at внутри группы (max(created_at)), а не по первому документу. Иначе старые пакеты могут подниматься/опускаться некорректно.
-2. Не ломай семантику таблицы. Collapsible нельзя вставлять произвольными div внутрь table. Делай либо:
-  &nbsp;
-  - отдельный tbody на каждую batch-группу,
-  - либо полностью переводи историю в list/grid.
-    Предпочтительно оставить таблицу и рендерить batch как tbody с header-row + child rows.
-  &nbsp;
-3. Итоговый статус batch считай так:
-  &nbsp;
-  - все generated → Готов
-  - есть и generated, и error → Частично
-  - все error → Ошибка
-  - если встретятся pending / processing / иные промежуточные статусы → В обработке
-  &nbsp;
-4. В header группы обязательно делай fallback:
-  &nbsp;
-  - batch.title ?? "Пакет документов"
-  - если batch по join отсутствует, но generation_batch_id есть, группа всё равно должна нормально отрисоваться без падения.
-  &nbsp;
-5. Дочерние строки batch оставь с теми же действиями, что и сейчас: скачать и удалить. Логику standalone не менять вообще.
-6. После удаления последнего документа из batch группа должна исчезать автоматически за счёт пересборки grouped-data из documents, без отдельного cleanup-кода и без доп. мутаций batch.
-7. Если пакет раскрыт, child rows должны наследовать текущую визуальную сетку колонок таблицы. Не делай отдельную «мини-таблицу» с другим набором колонок.
-8. Правка строго локальная: только AiDocumentsHistoryView.tsx, add-only, без изменений useAiDocuments, edge functions, billing, одиночной генерации и без новых миграций.
+# PATCH 10.2 fix — три правки в AiDocumentsHistoryView.tsx
 
-&nbsp;
+## Что уже правильно
 
-&nbsp;
+Код уже использует отдельный `<TableBody>` для каждого batch и standalone — структура `table > thead + N×tbody` валидна. Это закрывает пункт 1 из замечаний.
 
-PATCH 10.2 — История пакетов как группы
+## Три правки
 
-## Что делаем
+### 1. Сортировка — корректный comparator (строка 113)
 
-Группируем пакетные документы по `generation_batch_id` в collapsible-секции. Одиночные документы остаются flat-строками без изменений.
+Текущий код:
+```ts
+result.sort((a, b) => (b.maxCreatedAt > a.maxCreatedAt ? 1 : -1));
+```
+При равных значениях возвращает -1 вместо 0. Исправить на:
+```ts
+result.sort((a, b) =>
+  new Date(b.maxCreatedAt).getTime() - new Date(a.maxCreatedAt).getTime()
+);
+```
 
-## Логика группировки (в компоненте)
+### 2. Сортировка child rows внутри batch (строка 106)
 
-Из массива `documents` построить два списка:
+Перед `result.push` для batch отсортировать `docs` по `created_at` DESC:
+```ts
+docs.sort((a, b) =>
+  new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+);
+```
 
-- **Batched**: `Map<batch_id, AiGeneratedDocument[]>` — документы с `generation_batch_id`
-- **Standalone**: документы без `generation_batch_id`
+### 3. Семантика таблицы — уже ок
 
-Отрисовка в порядке `created_at` (по дате первого документа batch или дате standalone):
-
-- Standalone → обычная строка таблицы (как сейчас)
-- Batch → collapsible header-строка + вложенные строки документов
-
-## UI batch-header
-
-Использовать `Collapsible` (уже есть в проекте). Header-строка batch:
-
-- Дата (по первому документу)
-- `Package` icon + batch title (например "Годовое собрание — PKG-260323-042")
-- Badge: "3 документа" (количество)
-- Общий статус batch (все generated → "Готов", есть error → "Частично", все error → "Ошибка")
-- Chevron раскрытия
-
-Вложенные строки:
-
-- Без колонки даты (наследуют от header)
-- Название документа + template_name + статус + действия (скачать/удалить)
+Проверено: batch рендерится как `<TableBody key={entry.batchId}>` (строка 212), standalone как `<TableBody key={entry.doc.id}>` (строка 278). Каждая запись — отдельный `tbody`. Структура валидна, правка не нужна.
 
 ## Файлы
 
+| Действие | Файл | Строки |
+|----------|------|--------|
+| Edit | `src/components/ai-documents/AiDocumentsHistoryView.tsx` | 106, 113 |
 
-| Действие | Файл                                                                                 |
-| -------- | ------------------------------------------------------------------------------------ |
-| Edit     | `src/components/ai-documents/AiDocumentsHistoryView.tsx` — группировка + collapsible |
-
-
-Больше ничего не меняется: hook, edge function, одиночная генерация, billing — без изменений.
-
-## Ограничения
-
-- "Скачать всё" (zip) — не в этом патче
-- Удаление всего batch одной кнопкой — не в этом патче
