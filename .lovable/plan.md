@@ -1,169 +1,154 @@
 # да, согласен, с учетом правок:
 
-1. **Hard delete** принимать только как справочниковое удаление.  
-В proof обязательно отдельно показать, что delete затрагивает только:
-  - `legal_details_persons` / `client_legal_details`
-  - `legal_details_entity_person_links`  
-  и **не затрагивает** таблицы документов / historical outputs / snapshots.
-2. Для `deletePerson` и `deleteEntity` после успешного удаления обязательно:
-  - закрыть открытый sheet, если удаляется текущая открытая запись
-  - очистить selected id / target state в `AI.tsx`
-  - обновить список без ручного refresh
-3. Для `deletePerson` invalidation расширить:
-  - `['ai-persons']`
-  - `['entity-person-links', ...]` по открытому entity, если релевантно
-  - `['person-linked-entities', personId]`
-  - при необходимости entity card/query, если удаление произошло из открытого связанного контекста
-4. Для `deleteEntity` invalidation расширить:
-  - `['ai-entities']`
-  - `['entity-person-links', entityId]`
-  - `['person-linked-entities', personId]` для связанных лиц, если links удаляются каскадно  
-  То есть после delete document-entity read-only блоки у физлиц тоже должны обновиться.
-5. В `EntityRecordSheet` кнопку **«удалить навсегда»** показывать:
-  - только для `purpose='document'`
-  - только в **view mode**
-  - для billing entity явно не показывать вообще
-6. В `EntityTableView.tsx` и `PersonsTableView.tsx` не вводить новый context menu, если его там сейчас нет.  
-Лучше:
-  - либо row action button/menu в уже существующем стиле
-  - либо оставить удаление только из карточки записи  
-  Не раздувать UI лишним новым паттерном без необходимости.
-7. Для **reassign link** добавить ещё один guard:
-  - если `editingLink` и person не менялся, confirm не показывать
-  - если person поменялся, confirm показывать один раз перед submit
-  - текущий inactive person в edit path должен оставаться видимым в picker
-8. По **positions UX** согласен:  
-searchable dropdown + `custom_position_text` оставить как есть, **без автосохранения в каталог**.
-9. В proof по PATCH 7.1/7.2 обязательно показать отдельно:
-  - reassign link в UI
-  - delete person
-  - delete entity(document)
-  - billing protected
-  - documents/history not touched
-  - cleanup выполнен
-10. Процессно: в финальном отчёте всё ещё держать разделение:
+1. **Не делать** `INSERT for authenticated` **в общий справочник напрямую.**  
+Это слишком широкое право для общей таблицы. Лучше:
+  - либо secure RPC / edge / server-side action для `createPosition`
+  - либо отдельная SQL function с проверкой, нормализацией, anti-duplicate и audit  
+  Прямую RLS policy `INSERT to authenticated` на общий каталог не добавлять.
+2. **Для** `ON CONFLICT (code)` **нужен гарантированный unique index / unique constraint на** `code`**.**  
+Это нужно явно включить в миграцию, если его ещё нет.  
+Без этого seed/upsert план неполный.
+3. **Сортировку в UI делать по** `label`**, а не надеяться на** `sort_order=999` **у новых записей.**  
+Иначе новые добавленные должности будут визуально жить отдельно.  
+Правильно:
+  - seed может проставить `sort_order`
+  - но `PositionPicker` для списка и поиска сортирует по `label asc`
+4. **Кнопку** `Добавить "..." в справочник` **показывать только если нет точного нормализованного совпадения.**  
+Не по правилу “нет exact match, даже если есть partial match”, а именно:
+  - partial match можно показывать списком
+  - add-new показывать только когда после нормализации точного совпадения нет  
+  Это уменьшит мусор и дубли.
+5. **Нормализацию нужно зафиксировать одинаковой в seed и в UI mutation.**  
+Не только для `label`, но и для `code`.  
+То есть один и тот же алгоритм:
+  - trim
+  - collapse spaces
+  - lowercase
+  - для `code`: пробелы в `_`, убрать лишние спецсимволы  
+  Иначе seed и UI начнут создавать расхождения.
+6. **Для старых links с** `custom_position_text` **нужен мягкий edit-flow.**  
+При edit такого link:
+  - не терять текущее значение молча
+  - либо показывать его в picker search/input
+  - либо отдельным текстом: “Текущая должность: …”  
+  Чтобы пользователь понимал, что было сохранено раньше.
+7. `custom_position_text` **пока не убирать из payload полностью.**  
+Оставить совместимость:
+  - старые записи читаются как раньше
+  - новые записи по основному UX должны идти через `position_catalog_id`
+  - fallback оставить только для legacy-совместимости
+8. **Для createPosition нужен proof anti-duplicate на двух кейсах:**
+  - точный дубль: `директор`
+  - нормализованный дубль: `Директор` / `ДИРЕКТОР`  
+  В обоих случаях новая запись не должна создаваться.
+9. **Добавить audit proof.**  
+При создании новой должности из UI нужно логировать факт создания новой записи в audit_logs или эквивалентный журнал.  
+Это особенно важно, раз справочник общий.
+10. **В** `Что НЕ трогаем` **добавить ещё:**
 
-- `PATCH 7.1/7.2 proof`
-- `Cleanup выполнен`
-- `Не затронуто`
-- и отметить, что PATCH 7 остаётся связан с формальным закрытием PATCH 6.
-- &nbsp;
-- PATCH 7.1/7.2 — Delete + Reassign + Positions UX
+- `legal_details_roles_catalog`
+- links founder/other semantics
+- delete/reassign UX, кроме совместимости с новым picker
+
+В остальном план правильный и можно отдавать в исполнение.
+
+&nbsp;
+
+PATCH 7.3 — Справочник должностей: поиск + выбор + добавление новых
 
 ## Scope
 
-Три направления в одном патче:
+3 задачи:
 
-1. **Hard delete** для физлиц и document-entity (с guard-проверками)
-2. **Reassign link** — разблокировка PersonPicker в edit mode
-3. **Positions UX** — без авто-сохранения в каталог, только searchable dropdown + custom text (уже работает)
+1. Seed-миграция ~230 должностей в `legal_details_positions_catalog`
+2. Новый компонент `PositionPicker` — searchable combobox с возможностью добавления
+3. Mutation для создания новой должности из UI + интеграция в форму
 
----
+## Что меняется
 
-## 1. Hard Delete
+### 1. Миграция — seed/upsert должностей
 
-### 1a. Физлица — `useAiPersons.ts`
+SQL-миграция с `INSERT ... ON CONFLICT (code) DO UPDATE SET is_active = true`.
 
-Добавить mutation `deletePerson`:
+Генерация `code` — детерминированная: `lower(trim(label))`, пробелы → `_`, дефисы сохраняются, удаление спецсимволов. Например: `"заведующий архивом"` → `"заведующий_архивом"`.
 
-- Сначала `DELETE FROM legal_details_entity_person_links WHERE person_id = ?`
-- Затем `DELETE FROM legal_details_persons WHERE id = ?`
-- Invalidate: `ai-persons`, `entity-person-links`
-- Toast: «Физлицо удалено навсегда»
+`sort_order` — по алфавитному порядку (порядковый номер в отсортированном списке).
 
-### 1b. Entity (document) — `useAiEntities.ts`
+Существующие 5 записей (директор, главный бухгалтер, зам. директора, бухгалтер, секретарь) не удаляются — `ON CONFLICT` их не тронет если активны, реактивирует если нет.
 
-Добавить mutation `deleteEntity`:
+~230 новых записей из переданного списка.
 
-- Guard: `purpose !== 'document'` → throw «Можно удалить только документные реквизиты»
-- Сначала `DELETE FROM legal_details_entity_person_links WHERE legal_details_id = ?`
-- Затем `DELETE FROM client_legal_details WHERE id = ? AND purpose = 'document'`
-- Invalidate: `ai-entities`, `entity-person-links`
-- Toast: «Реквизиты удалены навсегда»
-- billing записи → только archive/edit, delete заблокирован
+### 2. Компонент `PositionPicker.tsx`
 
-### 1c. UI — `PersonRecordSheet.tsx`
+Новый файл `src/components/ai-requisites/PositionPicker.tsx`.
 
-В view mode добавить badge «удалить навсегда» (красный, с иконкой Trash2) рядом с «деактивировать»:
+Архитектура — копия паттерна `PersonPicker`:
 
-- AlertDialog с предупреждением: «Запись будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся.»
-- Кнопка «Удалить навсегда»
+- `Popover` + `Input` (поиск) + список кнопок
+- Props: `positions: PositionCatalogEntry[]`, `value: string | null`, `onChange: (id: string | null) => void`, `onCreateNew: (label: string) => Promise<string | null>`
+- При пустом поиске — полный список (max 50, прокрутка)
+- При вводе — фильтрация по подстроке (case-insensitive)
+- Если совпадений нет или точного совпадения нет — показать кнопку `+ Добавить "..." в справочник`
+- Клик по кнопке → вызов `onCreateNew(label)` → получение id → `onChange(id)` → закрытие
 
-### 1d. UI — `EntityRecordSheet.tsx`
+### 3. Hook — mutation `createPosition` в `useEntityPersonLinks.ts`
 
-В view mode для document-purpose записей добавить badge «удалить навсегда» рядом с «в архив»:
+Новая функция нормализации:
 
-- AlertDialog с аналогичным предупреждением
-- Для billing записей badge не показывается (только archive)
+```text
+normalizePositionLabel(raw: string): string
+  → trim → collapse spaces → lowercase
+```
 
-### 1e. UI — `EntityTableView.tsx`
+Mutation `createPosition`:
 
-В контекстном меню строки добавить пункт «Удалить навсегда» для document-purpose записей.
+1. Нормализовать label
+2. Проверить: `select id from legal_details_positions_catalog where lower(trim(label)) = normalizedLabel and is_active = true`
+3. Если найдено → toast «Такая должность уже есть в справочнике» → вернуть существующий id
+4. Если не найдено → `insert` с `code` = normalized label с `_` вместо пробелов, `sort_order = 999`
+5. Invalidate `["positions-catalog"]`
+6. Вернуть новый id
 
-### 1f. UI — `PersonsTableView.tsx`
+### 4. Интеграция в `EntityPersonLinkForm.tsx`
 
-Проверить, есть ли контекстное действие — если да, добавить «Удалить навсегда».
+Заменить блок `roleType === "position"` (строки 224–256):
 
----
+- Вместо `<Select>` + fallback `<Input>` → единый `<PositionPicker>`
+- `onCreateNew` → вызывает `createPosition` из hook → устанавливает `positionCatalogId`
+- `custom_position_text` input убирается из основного flow, но `buildPayload` сохраняет обратную совместимость для старых записей с `custom_position_text`
+- `canSubmit` для `position`: достаточно `positionCatalogId` (custom text path больше не нужен для новых записей)
 
-## 2. Reassign Link
+### 5. Обратная совместимость
 
-### 2a. `EntityPersonLinkForm.tsx` (строка 145)
+- Старые links с `custom_position_text` и без `position_catalog_id` продолжают отображаться в `EntityPersonLinksBlock` как раньше (badge берётся из `position_label || custom_position_text`)
+- При edit такого link — `positionCatalogId` будет пустым, picker покажет placeholder, пользователь выберет из каталога
 
-Убрать `disabled={!!editingLink}` с PersonPicker. Picker всегда активен.
-
-### 2b. Confirm при смене person
-
-В `handleSubmit` (строка 99): если `editingLink` и `personId !== editingLink.person_id`:
-
-- Показать confirm dialog: «Вы хотите перевесить связь с «{старое ФИО}» на «{новое ФИО}»?»
-- Только после подтверждения отправлять update
-
-### 2c. Invalidation (уже готово)
-
-FIX-1 уже реализовал dual invalidation в `useEntityPersonLinks.ts` для old/new person_id.
-
----
-
-## 3. Positions UX
-
-Текущая реализация уже соответствует требованиям:
-
-- Searchable dropdown из справочника `legal_details_positions_catalog`
-- Custom text через `custom_position_text` если справочник не выбран
-- Авто-сохранение в каталог **не делаем** — используется `custom_position_text`
-
-Без изменений.
-
----
-
-## Файлы для изменения
+## Файлы
 
 
-| Файл                                                    | Что меняется                                                          |
-| ------------------------------------------------------- | --------------------------------------------------------------------- |
-| `src/hooks/useAiPersons.ts`                             | Добавить `deletePerson` mutation                                      |
-| `src/hooks/useAiEntities.ts`                            | Добавить `deleteEntity` mutation (guard: document only)               |
-| `src/components/ai-requisites/PersonRecordSheet.tsx`    | Badge «удалить навсегда» + AlertDialog                                |
-| `src/components/ai-requisites/EntityRecordSheet.tsx`    | Badge «удалить навсегда» для document + AlertDialog + prop `onDelete` |
-| `src/components/ai-requisites/EntityTableView.tsx`      | Пункт «Удалить» в контексте для document                              |
-| `src/components/ai-requisites/EntityPersonLinkForm.tsx` | Убрать `disabled` с PersonPicker + confirm при смене person           |
-| `src/pages/AI.tsx`                                      | Прокинуть `onDelete` / `deletePerson` / `deleteEntity`                |
+| Файл                                                    | Действие                                          |
+| ------------------------------------------------------- | ------------------------------------------------- |
+| Миграция SQL                                            | Создать — seed ~230 должностей                    |
+| `src/components/ai-requisites/PositionPicker.tsx`       | Создать — searchable combobox                     |
+| `src/hooks/useEntityPersonLinks.ts`                     | Добавить `createPosition` mutation + нормализацию |
+| `src/components/ai-requisites/EntityPersonLinkForm.tsx` | Заменить Select на PositionPicker                 |
 
 
 ## Что НЕ трогаем
 
-- `/settings/legal-details` — без изменений
-- documents / generate-from-template — без изменений
-- billing/payment flow — без изменений (billing entity защищена от delete)
-- PATCH 6 persons module — без изменений
-- edge functions / webhooks — без изменений
-- Уже созданные документы и snapshots — не затрагиваются
+- delete / reassign logic
+- `/settings/legal-details`
+- documents / generate-from-template
+- billing / payment flow
+- PATCH 6 persons module
+- edge functions / webhooks
+- GRP / адреса / formatter
+- founder / other role types
 
-## Принцип удаления
+## Технические детали
 
-Справочниковое, не историческое:
+RLS для insert в `legal_details_positions_catalog`:
 
-- Удаление записи из реквизитов не ломает уже созданные документы
-- Если документы хранят snapshot данных — он остаётся как есть
-- Guard-проверки выполняются до delete (сначала links, потом сама запись)
+- Текущая политика `positions_catalog_admin_manage` разрешает ALL только admin/superadmin
+- Нужно добавить политику INSERT для authenticated пользователей, или использовать edge function / RPC
+- Рекомендация: добавить RLS policy `positions_catalog_insert_authenticated` для INSERT to authenticated — это справочник, добавление новой должности не представляет угрозы безопасности
