@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
 import { CreditCard, Download, Ban, RotateCcw, CheckCircle, XCircle, Clock, FileText, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -148,7 +149,7 @@ export function SubscriptionDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-md overflow-y-auto">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
           <SheetTitle className="text-left truncate">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}

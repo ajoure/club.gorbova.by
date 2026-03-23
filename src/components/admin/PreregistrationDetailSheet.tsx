@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -179,7 +180,7 @@ export function PreregistrationDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="space-y-1">
           <SheetTitle className="text-xl">{preregistration.name}</SheetTitle>
         </SheetHeader>

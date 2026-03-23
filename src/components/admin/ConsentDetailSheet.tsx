@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -99,7 +100,7 @@ export function ConsentDetailSheet({ profile, open, onOpenChange }: ConsentDetai
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pb-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center">

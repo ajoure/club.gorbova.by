@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import {
   Sheet,
   SheetContent,
@@ -129,7 +131,7 @@ export function FeedbackDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg flex flex-col p-0 backdrop-blur-xl bg-background/95 dark:bg-background/90 border-border/50">
+      <SheetContent className={cn(SHEET_SHELL_CLASS, "backdrop-blur-xl bg-background/95 dark:bg-background/90 border-border/50")}>
         {/* Glassmorphism header */}
         <SheetHeader className="p-4 pb-3 border-b border-border/50 bg-gradient-to-r from-primary/5 to-primary/10">
           <div className="flex items-start gap-3">

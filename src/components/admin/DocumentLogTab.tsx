@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -254,7 +255,7 @@ export function DocumentLogTab() {
 
       {/* Document Details Sheet */}
       <Sheet open={!!selectedDoc} onOpenChange={() => setSelectedDoc(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent className={SHEET_SHELL_CLASS}>
           <SheetHeader>
             <SheetTitle>Документ {selectedDoc?.document_number}</SheetTitle>
             <SheetDescription>

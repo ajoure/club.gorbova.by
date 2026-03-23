@@ -4,6 +4,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
@@ -52,7 +53,7 @@ export function IntegrationLogsSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
           <SheetTitle className="truncate">Логи: {instance?.alias}</SheetTitle>
         </SheetHeader>

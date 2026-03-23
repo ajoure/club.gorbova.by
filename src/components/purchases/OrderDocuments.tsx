@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -81,7 +82,7 @@ export function OrderDocuments({ orderId, orderNumber, trigger, open: controlled
           {trigger || defaultTrigger}
         </SheetTrigger>
       ) : null}
-      <SheetContent className="w-[400px] sm:w-[540px]">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader>
           <SheetTitle>Документы</SheetTitle>
           <SheetDescription>

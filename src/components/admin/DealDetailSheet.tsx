@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -454,7 +455,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 flex flex-col">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="p-4 sm:p-6 pb-4 pr-14 sm:pr-16">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3 sm:gap-4">

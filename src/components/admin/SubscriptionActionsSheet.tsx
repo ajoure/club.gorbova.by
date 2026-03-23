@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -127,7 +128,7 @@ export function SubscriptionActionsSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg overflow-y-auto">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
           <SheetTitle className="flex items-center gap-2">
             <CreditCard className="h-5 w-5" />

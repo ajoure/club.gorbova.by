@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { ru } from "date-fns/locale";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -127,7 +128,7 @@ export function AccessHistorySheet({ open, onOpenChange, userId }: AccessHistory
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pb-4 pr-12 border-b">
           <SheetTitle className="flex items-center gap-2">
             <History className="w-5 h-5 shrink-0" />
