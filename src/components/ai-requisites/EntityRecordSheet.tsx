@@ -577,6 +577,16 @@ export function EntityRecordSheet({
                       в архив
                     </Badge>
                   )}
+                  {canDelete && (
+                    <Badge
+                      variant="outline"
+                      className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-red-500/40 text-red-600 hover:bg-red-500/10"
+                      onClick={() => setShowDeleteConfirm(true)}
+                    >
+                      {isDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                      удалить навсегда
+                    </Badge>
+                  )}
                 </>
               )}
 
