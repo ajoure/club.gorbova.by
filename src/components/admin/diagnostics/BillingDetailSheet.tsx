@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

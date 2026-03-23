@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from 'react-router-dom';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Badge } from '@/components/ui/badge';

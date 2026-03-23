@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

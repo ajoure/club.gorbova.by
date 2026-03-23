@@ -4,6 +4,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
