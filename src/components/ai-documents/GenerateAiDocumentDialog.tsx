@@ -42,7 +42,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const { generate, isGenerating } = useAiDocuments();
 
   // Load links for selected entity
-  const { links } = useEntityPersonLinks(entityId || undefined);
+  const { links } = useEntityPersonLinks(entityId || null, null);
 
   // Active entities only
   const activeEntities = useMemo(
