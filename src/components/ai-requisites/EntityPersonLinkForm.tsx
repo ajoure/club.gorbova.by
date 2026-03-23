@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { PersonPicker } from "./PersonPicker";
+import { PositionPicker } from "./PositionPicker";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { RoleCatalogEntry, PositionCatalogEntry, LinkRow, LinkInsertPayload } from "@/hooks/useEntityPersonLinks";
 
