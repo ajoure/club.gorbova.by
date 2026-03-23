@@ -122,6 +122,7 @@ export default function AdminDocumentTemplates() {
           template_path: templatePath,
           placeholders: INVOICE_ACT_PLACEHOLDERS.map(p => p.key),
           is_active: formData.is_active,
+          template_scope: "billing",
         });
       }
 
