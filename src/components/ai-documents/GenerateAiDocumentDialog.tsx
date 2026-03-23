@@ -95,6 +95,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const missingCount = tokens.filter((t) => !t.filled).length;
 
   const handleGenerate = async () => {
+    if (!template?.id) return;
     try {
       const result = await generate({
         template_id: template.id,
