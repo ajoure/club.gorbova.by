@@ -1,70 +1,76 @@
 # да, согласен, с учетом правок:
 
-1. В `AiDocumentsGenerateView.tsx` после закрытия dialog очищать `selectedTemplate`, чтобы не было stale-template при следующем открытии:
-  - обернуть `onOpenChange`
-  - при `false` делать `setWizardOpen(false)` и `setSelectedTemplate(null)`
-2. Для надёжного remount dialog при смене шаблона добавить `key={selectedTemplate?.id ?? "no-template"}` на `GenerateAiDocumentDialog`, чтобы шаг wizard и внутренний state не перетекали между разными шаблонами.
-3. В `GenerateAiDocumentDialog.tsx` null-guard сделать безопасным:
-  - не просто `template?.name`, `template?.placeholders`, `template?.id`
-  - инициализацию preview / placeholders / generate params тоже строить от `template ?? null`, без доступа к полям до проверки
-4. В `handleGenerate` обязательно:
-  - `if (!template?.id) return`
-  - не вызывать `generate(...)` без валидного `template_id`
-5. DoD дополнить:
-  - повторный клик по тому же шаблону после закрытия снова открывает wizard
-  - клик по одному шаблону, закрытие, затем клик по другому шаблону открывает wizard уже с новым названием и чистым state шага
-6. STOP GUARD:
-  - не трогать `AI.tsx` tab-shell
-  - не менять edge function и историю документов в этом патче, только открытие wizard и null-safety диалога
-  - &nbsp;
-  - PATCH 8.1 — Fix "Сформировать" button not opening wizard
+&nbsp;
 
-## Root cause
+1. В useDocumentTemplates нужно не только добавить template_scope в DocumentTemplate interface, но и прокинуть его в create/update payload, иначе UI будет показывать выбор scope, а в БД снова сохранится default billing.
+2. В AiDocumentTemplatesManager обязательно добавить редактирование существующего шаблона:  
 
-Line 107 in `AiDocumentsGenerateView.tsx`:
+  - смена template_scope
+  - is_active
+  - название
+  - описание  
+  Это нужно, чтобы можно было быстро перевести уже загруженный шаблон из billing в both или ai, а не только загружать новый.
+3. &nbsp;
+4. Не оставлять placeholders просто пустым массивом без UX.  
+Минимально нужно одно из двух:  
 
-```
-{selectedTemplate && (
-  <GenerateAiDocumentDialog ... />
-)}
-```
+  - либо textarea/manual editor списка placeholders,
+  - либо автопарсинг placeholders из docx при загрузке.  
+  Иначе wizard откроется, но preview токенов будет пустой и смысл генерации потеряется.
+5. &nbsp;
+6. В AiDocumentsGenerateView для пустого состояния сделать два CTA:  
 
-The conditional mount `selectedTemplate &&` causes a race condition — React batches `setSelectedTemplate` + `setWizardOpen(true)` but the Dialog component isn't mounted yet when `open` becomes `true`, so Radix Dialog never triggers its open animation.
+  - Загрузить шаблон
+  - Управление шаблонами  
+  Чтобы не было тупика даже после первого открытия.
+7. &nbsp;
+8. Кнопку на карточке шаблона переименовать в «Заполнить документ».  
+Название вкладки оставить «Создать документ».  
+Это убирает путаницу между вкладкой и действием.
+9. В manager добавить список уже загруженных AI/both шаблонов с действиями:  
 
-## Fix
+  - редактировать
+  - активировать / деактивировать
+  - удалить
+  - скачать исходный .docx  
+  Без этого manager будет неполным.
+10. &nbsp;
+11. Нужен явный фильтр и единый source of truth:  
 
-### 1. `AiDocumentsGenerateView.tsx` (lines 107-113)
+  - AI-вкладка показывает только template_scope in ('ai','both') и is_active=true
+  - manager показывает все ai/both, включая неактивные
+  - billing flow не трогать
+12. &nbsp;
+13. Для загрузки файла использовать существующий documents-templates bucket и существующий upload flow, без новой отдельной storage-логики.
+14. Добавить DoD:  
 
-Always render `GenerateAiDocumentDialog`, remove conditional:
+  - после загрузки AI-шаблона он появляется во вкладке «Создать документ» без ручного refresh
+  - шаблон с scope='both' виден и в AI, и в старом потоке
+  - шаблон с scope='billing' в AI не виден
+  - при пустом списке есть понятный CTA, а не тупик
+  - кнопка Заполнить документ реально открывает wizard
+15. &nbsp;
+16. Add-only правило:
 
-```tsx
-<GenerateAiDocumentDialog
-  open={wizardOpen}
-  onOpenChange={setWizardOpen}
-  template={selectedTemplate}
-/>
-```
+&nbsp;
 
-### 2. `GenerateAiDocumentDialog.tsx`
+&nbsp;
 
-Change `template` prop from required to nullable:
+&nbsp;
 
-- Props: `template: DocumentTemplate | null`
-- Add early guard in body: if `!template` and `open`, render dialog with empty/placeholder content or just return closed dialog
-- Guard all `template.xxx` accesses: `template?.name`, `template?.placeholders`, `template?.id`
-- In `handleGenerate`: guard `if (!template) return`
+- не убирать текущие рабочие вкладки generate/history
+- не переписывать GenerateAiDocumentDialog, если достаточно только починить вход и данные шаблонов
+- AdminDocumentTemplates не ломать; максимум позже отдельно синхронизировать scope-UI, но не в этом патче.
 
-## Files
+&nbsp;
 
+&nbsp;
 
-| File                                                       | Change                                           |
-| ---------------------------------------------------------- | ------------------------------------------------ |
-| `src/components/ai-documents/AiDocumentsGenerateView.tsx`  | Remove `selectedTemplate &&` conditional wrapper |
-| `src/components/ai-documents/GenerateAiDocumentDialog.tsx` | Make `template` nullable, add null guards        |
+PATCH 8.2 — AI-шаблоны: загрузка, активация, точка входа в мастер
 
+## Анализ
 
-## Not touched
+### Что уже есть
 
-- billing flow, `generated_documents`, `generate-from-template`
-- `/settings/legal-details`
-- PATCH 5/6/7 modules
+1. `**document_templates**` — таблица с полем `template_scope` (default `'billing'`). Сейчас единственный шаблон имеет scope `'billing'`, поэтому AI-вкладка пустая.
+2. `**AdminDocumentTemplates**` (`src/pages/admin/AdminDocumentTemplates.tsx`) — полноценный CRUD для шаблонов, но **без поля `template_scope**` в форме. Всегда создаёт шаблоны без указания scope → default
