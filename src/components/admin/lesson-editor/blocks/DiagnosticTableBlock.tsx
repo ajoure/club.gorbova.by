@@ -277,12 +277,14 @@ export function DiagnosticTableBlock({
     saveTimeoutRef.current = setTimeout(() => {
       try {
         onRowsChange?.(newRows);
+        userEditingRef.current = false; // Allow props sync again after commit
         if (!externalSaveStatus) {
           setLocalSaveStatus('saved');
           if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
           saveStatusTimeoutRef.current = setTimeout(() => setLocalSaveStatus('idle'), 2000);
         }
       } catch {
+        userEditingRef.current = false;
         if (!externalSaveStatus) setLocalSaveStatus('error');
       }
     }, 300);
