@@ -2,82 +2,78 @@
 
 &nbsp;
 
-1. В useAiDocuments.ts для join на batch используй явный relation alias по FK, а не неявный join. Формат вида:
-  batch:ai_document_generation_batches!ai_generated_documents_generation_batch_id_fkey(title)
-  Это безопаснее и не зависит от неоднозначного auto-relations.
-2. В useLastPackageBatch обязательно фильтруй по profile_id владельца через уже используемый project pattern ([profiles.id](http://profiles.id)), а не по [auth.users.id](http://auth.users.id).
-3. Для prefill бери последний batch только по статусам generated / partial, чтобы не подтягивать невалидный запуск с error как основной источник данных.
-4. В GenerateAiDocumentPackageDialog.tsx оставь graceful fallback:
-  если batch не найден или в batch.meta нет selected_entity_id / selected_person_id / selected_signer_link_id, banner prefill не показывать и wizard открывать в чистом состоянии.
-5. В AiDocumentsHistoryView.tsx batch title показывай рядом с badge Пакет как отдельный текстовый label, но не вместо template_name. Должно остаться видно:
+1. Группировку делай по generation_batch_id, но сортировку истории рассчитывай по последнему created_at внутри группы (max(created_at)), а не по первому документу. Иначе старые пакеты могут подниматься/опускаться некорректно.
+2. Не ломай семантику таблицы. Collapsible нельзя вставлять произвольными div внутрь table. Делай либо:
   &nbsp;
-  - название конкретного документа,
-  - badge Пакет,
-  - имя batch/package.
+  - отдельный tbody на каждую batch-группу,
+  - либо полностью переводи историю в list/grid.
+    Предпочтительно оставить таблицу и рендерить batch как tbody с header-row + child rows.
   &nbsp;
-6. Ничего из текущего PATCH 10 не удалять:
+3. Итоговый статус batch считай так:
   &nbsp;
-  - badge Пакет сохранить,
-  - flat history сохранить,
-  - одиночную генерацию не трогать,
-  - edge function пакета не менять.
+  - все generated → Готов
+  - есть и generated, и error → Частично
+  - все error → Ошибка
+  - если встретятся pending / processing / иные промежуточные статусы → В обработке
   &nbsp;
+4. В header группы обязательно делай fallback:
+  &nbsp;
+  - batch.title ?? "Пакет документов"
+  - если batch по join отсутствует, но generation_batch_id есть, группа всё равно должна нормально отрисоваться без падения.
+  &nbsp;
+5. Дочерние строки batch оставь с теми же действиями, что и сейчас: скачать и удалить. Логику standalone не менять вообще.
+6. После удаления последнего документа из batch группа должна исчезать автоматически за счёт пересборки grouped-data из documents, без отдельного cleanup-кода и без доп. мутаций batch.
+7. Если пакет раскрыт, child rows должны наследовать текущую визуальную сетку колонок таблицы. Не делай отдельную «мини-таблицу» с другим набором колонок.
+8. Правка строго локальная: только AiDocumentsHistoryView.tsx, add-only, без изменений useAiDocuments, edge functions, billing, одиночной генерации и без новых миграций.
 
 &nbsp;
 
 &nbsp;
 
-PATCH 10.1 — Batch title in history + prefill from batch
+PATCH 10.2 — История пакетов как группы
 
-## Проблемы
+## Что делаем
 
-1. **История**: badge "Пакет" есть, но нет имени пакета/batch. Документы пакета визуально неотличимы.
-2. **Prefill**: wizard ищет `lastBatchDoc` через `documents.find(d => d.package_template_id === ...)` — это берёт первый попавшийся документ, а не последний batch. Нужно читать из `ai_document_generation_batches`.
+Группируем пакетные документы по `generation_batch_id` в collapsible-секции. Одиночные документы остаются flat-строками без изменений.
 
-## Изменения
+## Логика группировки (в компоненте)
 
-### 1. `AiDocumentsHistoryView.tsx` — показать batch title
+Из массива `documents` построить два списка:
 
-- Изменить запрос в `useAiDocuments` (или добавить отдельный lookup): для документов с `generation_batch_id` подтянуть `batch.title` через join или отдельный запрос.
-- Вариант реализации: в `useAiDocuments` query добавить select с join на `ai_document_generation_batches`:
-  ```
-  .select("*, batch:ai_document_generation_batches(title)")
-  ```
-- В `AiDocumentsHistoryView` рядом с badge "Пакет" показать `doc.batch?.title` как текст (например, "Годовое собрание — PKG-260323-042").
+- **Batched**: `Map<batch_id, AiGeneratedDocument[]>` — документы с `generation_batch_id`
+- **Standalone**: документы без `generation_batch_id`
 
-### 2. `GenerateAiDocumentPackageDialog.tsx` — prefill из batch, а не из документа
+Отрисовка в порядке `created_at` (по дате первого документа batch или дате standalone):
 
-Текущий код (строки 72-83): ищет `lastBatchDoc` в `documents` по `package_template_id` — ненадёжно.
+- Standalone → обычная строка таблицы (как сейчас)
+- Batch → collapsible header-строка + вложенные строки документов
 
-Исправление:
+## UI batch-header
 
-- Добавить в `useDocumentPackages` (или отдельный hook) запрос последнего batch для данного `package_template_id`:
-  ```sql
-  SELECT * FROM ai_document_generation_batches 
-  WHERE package_template_id = ? AND profile_id = ?
-  ORDER BY created_at DESC LIMIT 1
-  ```
-- В `applyPrefill` читать `batch.meta` (где уже сохранены `selected_entity_id`, `selected_person_id`, `selected_signer_link_id`).
-- Убрать зависимость prefill от `documents` массива.
+Использовать `Collapsible` (уже есть в проекте). Header-строка batch:
 
-### 3. `useAiDocuments.ts` — добавить join на batch
+- Дата (по первому документу)
+- `Package` icon + batch title (например "Годовое собрание — PKG-260323-042")
+- Badge: "3 документа" (количество)
+- Общий статус batch (все generated → "Готов", есть error → "Частично", все error → "Ошибка")
+- Chevron раскрытия
 
-- В query добавить join: `*, batch:ai_document_generation_batches(title)`
-- В interface `AiGeneratedDocument` добавить optional `batch?: { title: string } | null`
+Вложенные строки:
+
+- Без колонки даты (наследуют от header)
+- Название документа + template_name + статус + действия (скачать/удалить)
 
 ## Файлы
 
 
-| Действие | Файл                                                                                   |
-| -------- | -------------------------------------------------------------------------------------- |
-| Edit     | `src/hooks/useAiDocuments.ts` — join batch title                                       |
-| Edit     | `src/components/ai-documents/AiDocumentsHistoryView.tsx` — render batch title          |
-| Edit     | `src/components/ai-documents/GenerateAiDocumentPackageDialog.tsx` — prefill from batch |
-| Edit     | `src/hooks/useDocumentPackages.ts` — add `useLastPackageBatch` query                   |
+| Действие | Файл                                                                                 |
+| -------- | ------------------------------------------------------------------------------------ |
+| Edit     | `src/components/ai-documents/AiDocumentsHistoryView.tsx` — группировка + collapsible |
 
 
-## Что НЕ меняется
+Больше ничего не меняется: hook, edge function, одиночная генерация, billing — без изменений.
 
-- Edge function — без изменений
-- Одиночная генерация — без изменений
-- Billing, shell, templates manager — без изменений
+## Ограничения
+
+- "Скачать всё" (zip) — не в этом патче
+- Удаление всего batch одной кнопкой — не в этом патче
