@@ -381,7 +381,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                   {t.is_active ? (
                     <X className="h-3.5 w-3.5 text-muted-foreground" />
                   ) : (
-                    <Plus className="h-3.5 w-3.5 text-green-600" />
+                    <Plus className="h-3.5 w-3.5 text-primary" />
                   )}
                 </Button>
                 <Button
