@@ -1,0 +1,1 @@
+UPDATE legal_details_persons SET is_active = false WHERE id = '9f6a564a-935d-4f03-a42b-04dd5366137b';
