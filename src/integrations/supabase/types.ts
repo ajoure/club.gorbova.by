@@ -279,6 +279,99 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_generated_documents: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          deleted_at: string | null
+          file_mime: string | null
+          file_name: string | null
+          file_path: string | null
+          generation_error: string | null
+          id: string
+          legal_details_id: string | null
+          meta: Json
+          missing_tokens: Json
+          person_id: string | null
+          profile_id: string
+          signer_link_id: string | null
+          signer_person_id: string | null
+          snapshot: Json
+          status: string
+          storage_bucket: string
+          template_id: string | null
+          template_name: string
+          template_source_path: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          deleted_at?: string | null
+          file_mime?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          generation_error?: string | null
+          id?: string
+          legal_details_id?: string | null
+          meta?: Json
+          missing_tokens?: Json
+          person_id?: string | null
+          profile_id: string
+          signer_link_id?: string | null
+          signer_person_id?: string | null
+          snapshot?: Json
+          status?: string
+          storage_bucket?: string
+          template_id?: string | null
+          template_name: string
+          template_source_path?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          deleted_at?: string | null
+          file_mime?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          generation_error?: string | null
+          id?: string
+          legal_details_id?: string | null
+          meta?: Json
+          missing_tokens?: Json
+          person_id?: string | null
+          profile_id?: string
+          signer_link_id?: string | null
+          signer_person_id?: string | null
+          snapshot?: Json
+          status?: string
+          storage_bucket?: string
+          template_id?: string | null
+          template_name?: string
+          template_source_path?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_generated_documents_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_generated_documents_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_handoffs: {
         Row: {
           assigned_to: string | null
@@ -1749,6 +1842,7 @@ export type Database = {
           name: string
           placeholders: Json | null
           template_path: string
+          template_scope: string
           updated_at: string
         }
         Insert: {
@@ -1761,6 +1855,7 @@ export type Database = {
           name: string
           placeholders?: Json | null
           template_path: string
+          template_scope?: string
           updated_at?: string
         }
         Update: {
@@ -1773,6 +1868,7 @@ export type Database = {
           name?: string
           placeholders?: Json | null
           template_path?: string
+          template_scope?: string
           updated_at?: string
         }
         Relationships: []
