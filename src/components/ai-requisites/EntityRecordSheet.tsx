@@ -54,6 +54,7 @@ import { useEntityDuplicateCheck } from "@/hooks/useEntityDuplicateCheck";
 import { formatStructuredAddressForView } from "@/lib/address/formatStructuredAddress";
 import type { CanonicalAddressPayload } from "@/lib/address/types";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { EntityPersonLinksBlock } from "./EntityPersonLinksBlock";
 import { toast } from "sonner";
 
 /* ── helpers ── */
