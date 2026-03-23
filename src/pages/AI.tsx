@@ -674,8 +674,10 @@ const AI = () => {
               profileId={aiEntities.profileId}
               isSubmitting={recordSheetMode === "create" ? aiEntities.isCreating : aiEntities.isUpdating}
               isArchiving={aiEntities.isArchiving}
+              isDeleting={aiEntities.isDeleting}
               onSubmit={recordSheetMode === "create" ? handleEntityCreate : handleEntityUpdate}
               onArchive={(id) => aiEntities.archiveEntity(id)}
+              onDelete={(id) => aiEntities.deleteEntity(id)}
               onOpenExisting={handleOpenExistingEntity}
             />
           </>
@@ -699,8 +701,10 @@ const AI = () => {
               profileId={aiPersons.profileId}
               isSubmitting={personSheetMode === "create" ? aiPersons.isCreating : aiPersons.isUpdating}
               isDeactivating={aiPersons.isDeactivating}
+              isDeleting={aiPersons.isDeleting}
               onSubmit={personSheetMode === "create" ? handlePersonCreate : handlePersonUpdate}
               onDeactivate={(id) => aiPersons.deactivatePerson(id)}
+              onDelete={(id) => aiPersons.deletePerson(id)}
               onOpenExisting={handleOpenExistingPerson}
             />
           </>
