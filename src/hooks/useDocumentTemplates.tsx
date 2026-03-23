@@ -11,6 +11,7 @@ export interface DocumentTemplate {
   template_path: string;
   placeholders: string[];
   is_active: boolean;
+  template_scope: string;
   created_at: string;
   updated_at: string;
 }

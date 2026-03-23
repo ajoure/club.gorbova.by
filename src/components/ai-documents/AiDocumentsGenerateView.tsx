@@ -4,8 +4,9 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Search, Plus, Loader2 } from "lucide-react";
+import { FileText, Search, Loader2, Settings, Upload, PenLine } from "lucide-react";
 import { GenerateAiDocumentDialog } from "./GenerateAiDocumentDialog";
+import { AiDocumentTemplatesManager } from "./AiDocumentTemplatesManager";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
 
 export function AiDocumentsGenerateView() {
@@ -13,12 +14,12 @@ export function AiDocumentsGenerateView() {
   const [search, setSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<DocumentTemplate | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [managerOpen, setManagerOpen] = useState(false);
 
   // Filter: only ai/both scope, active, and search match
   const filtered = templates.filter((t) => {
     if (!t.is_active) return false;
-    // template_scope filtering — show ai & both; if column doesn't exist yet, show all
-    const scope = (t as any).template_scope as string | undefined;
+    const scope = t.template_scope as string | undefined;
     if (scope && scope !== "ai" && scope !== "both") return false;
     if (search) {
       const q = search.toLowerCase();
@@ -46,15 +47,25 @@ export function AiDocumentsGenerateView() {
   return (
     <>
       <div className="space-y-4">
-        {/* Search */}
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск шаблонов..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+        {/* Header with search + manage button */}
+        <div className="flex items-center gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Поиск шаблонов..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setManagerOpen(true)}
+          >
+            <Settings className="h-4 w-4 mr-2" />
+            Управление шаблонами
+          </Button>
         </div>
 
         {filtered.length === 0 ? (
@@ -62,12 +73,20 @@ export function AiDocumentsGenerateView() {
             <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
               <FileText className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold mb-2">Нет доступных шаблонов</h3>
-            <p className="text-sm text-muted-foreground">
-              {search
-                ? "По вашему запросу шаблонов не найдено."
-                : "Добавьте шаблоны документов в разделе администрирования."}
+            <h3 className="text-lg font-semibold mb-2">Нет доступных AI-шаблонов</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+              Сначала загрузите шаблон DOCX, затем сможете заполнить и сформировать документ.
             </p>
+            <div className="flex items-center justify-center gap-3">
+              <Button onClick={() => setManagerOpen(true)}>
+                <Upload className="h-4 w-4 mr-2" />
+                Загрузить шаблон
+              </Button>
+              <Button variant="outline" onClick={() => setManagerOpen(true)}>
+                <Settings className="h-4 w-4 mr-2" />
+                Управление шаблонами
+              </Button>
+            </div>
           </GlassCard>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -95,8 +114,8 @@ export function AiDocumentsGenerateView() {
                   className="w-full"
                   onClick={() => handleGenerate(tpl)}
                 >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Сформировать
+                  <PenLine className="h-4 w-4 mr-2" />
+                  Заполнить документ
                 </Button>
               </GlassCard>
             ))}
@@ -112,6 +131,11 @@ export function AiDocumentsGenerateView() {
           if (!v) setSelectedTemplate(null);
         }}
         template={selectedTemplate}
+      />
+
+      <AiDocumentTemplatesManager
+        open={managerOpen}
+        onOpenChange={setManagerOpen}
       />
     </>
   );
