@@ -53,8 +53,9 @@ export function GenerateAiDocumentPackageDialog({
 
   const { allEntities } = useAiEntities();
   const { allPersons } = useAiPersons();
-  const { documents } = useAiDocuments();
+  const { profileId } = useAiDocuments();
   const { items } = useDocumentPackageItems(packageTemplate?.id ?? null);
+  const { data: lastBatch } = useLastPackageBatch(packageTemplate?.id ?? null, profileId);
   const { templates } = useDocumentTemplates();
   const { generatePackage, isGenerating } = useAiDocumentPackageGeneration();
   const { links } = useEntityPersonLinks(entityId || null, null);
