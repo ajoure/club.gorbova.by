@@ -49,6 +49,7 @@ import {
   getEntityTypeBadge,
   getEntityUnp,
 } from "@/lib/legal-entities/entityDisplayUtils";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { DuplicateWarningDialog } from "@/components/ai-requisites/DuplicateWarningDialog";
 import { useEntityDuplicateCheck } from "@/hooks/useEntityDuplicateCheck";
