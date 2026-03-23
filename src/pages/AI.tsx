@@ -5,6 +5,8 @@ import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
 import { EntityRecordSheet, type RecordSheetMode } from "@/components/ai-requisites/EntityRecordSheet";
 import { PersonsTableView } from "@/components/ai-requisites/PersonsTableView";
 import { PersonRecordSheet } from "@/components/ai-requisites/PersonRecordSheet";
+import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGenerateView";
+import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -27,10 +29,6 @@ import {
   MessageSquare,
   Lightbulb,
   Zap,
-  Calculator,
-  Briefcase,
-  ShieldCheck,
-  FileStack,
   Building2
 } from "lucide-react";
 
@@ -159,7 +157,7 @@ const prompts: Prompt[] = [
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "tutorials" | "prompts" | "accountant" | "manager" | "audit" | "templates" | "entities" | "persons";
+type SubTab = "chat" | "tutorials" | "prompts" | "generate" | "history" | "entities" | "persons";
 
 const SECTIONS = [
   { id: "ai" as const, label: "Gorbova AI", icon: Bot },
@@ -209,36 +207,18 @@ const AI_SUB_TABS: SubMenuItem[] = [
 
 const DOC_SUB_TABS: SubMenuItem[] = [
   {
-    id: "accountant",
-    label: "Для бухгалтера",
-    icon: Calculator,
+    id: "generate",
+    label: "Создать документ",
+    icon: FileText,
     gradient: "from-emerald-500/10 to-teal-500/8",
     activeGradient: "from-emerald-500/20 to-teal-500/15",
     borderColor: "border-emerald-400/20",
     iconColor: "text-emerald-500",
   },
   {
-    id: "manager",
-    label: "Для руководителя",
-    icon: Briefcase,
-    gradient: "from-rose-500/10 to-pink-500/8",
-    activeGradient: "from-rose-500/20 to-pink-500/15",
-    borderColor: "border-rose-400/20",
-    iconColor: "text-rose-500",
-  },
-  {
-    id: "audit",
-    label: "При проверке",
-    icon: ShieldCheck,
-    gradient: "from-sky-500/10 to-cyan-500/8",
-    activeGradient: "from-sky-500/20 to-cyan-500/15",
-    borderColor: "border-sky-400/20",
-    iconColor: "text-sky-500",
-  },
-  {
-    id: "templates",
-    label: "Шаблоны",
-    icon: FileStack,
+    id: "history",
+    label: "История",
+    icon: Clock,
     gradient: "from-slate-500/10 to-gray-500/8",
     activeGradient: "from-slate-500/20 to-gray-500/15",
     borderColor: "border-slate-400/20",
@@ -269,7 +249,7 @@ const REQ_SUB_TABS: SubMenuItem[] = [
 
 const DEFAULT_SUB: Record<Section, SubTab> = {
   ai: "chat",
-  documents: "accountant",
+  documents: "generate",
   requisites: "entities",
 };
 
@@ -634,25 +614,9 @@ const AI = () => {
           </>
         )}
 
-        {/* Document stubs */}
-        {(activeSubTab === "accountant" || activeSubTab === "manager" || activeSubTab === "audit" || activeSubTab === "templates") && (
-          <div className="flex flex-1 items-center justify-center min-h-[200px]">
-            <GlassCard className="max-w-md w-full text-center py-12">
-              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
-                {activeSubTab === "accountant" && <Calculator className="h-8 w-8 text-emerald-500" />}
-                {activeSubTab === "manager" && <Briefcase className="h-8 w-8 text-rose-500" />}
-                {activeSubTab === "audit" && <ShieldCheck className="h-8 w-8 text-sky-500" />}
-                {activeSubTab === "templates" && <FileStack className="h-8 w-8 text-slate-500" />}
-              </div>
-              <h3 className="text-lg font-semibold mb-2">
-                {subTabs.find(t => t.id === activeSubTab)?.label}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Раздел в разработке. Скоро здесь появятся полезные документы и шаблоны.
-              </p>
-            </GlassCard>
-          </div>
-        )}
+        {/* Documents — generate + history */}
+        {activeSubTab === "generate" && <AiDocumentsGenerateView />}
+        {activeSubTab === "history" && <AiDocumentsHistoryView />}
 
         {/* Entities — table + sheet editor */}
         {activeSubTab === "entities" && (
