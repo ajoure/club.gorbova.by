@@ -23,7 +23,9 @@ export function AiDocumentsGenerateView() {
   const { packages, isLoading: packagesLoading } = useDocumentPackages();
   const [search, setSearch] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<DocumentTemplate | null>(null);
+  const [selectedPackage, setSelectedPackage] = useState<DocumentPackageTemplate | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [packageWizardOpen, setPackageWizardOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [packagesManagerOpen, setPackagesManagerOpen] = useState(false);
 
