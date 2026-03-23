@@ -1,0 +1,2 @@
+DELETE FROM legal_details_entity_person_links WHERE person_id = '9f6a564a-935d-4f03-a42b-04dd5366137b';
+DELETE FROM legal_details_entity_person_links WHERE role_type = 'founder' AND person_id = '26402449-4eb1-4b87-a004-8f5cbbc2ff65' AND legal_details_id = '30347fc5-8b43-4391-88b4-9cdcf7befcb1';
