@@ -23,7 +23,7 @@ import { useAiPersons } from "@/hooks/useAiPersons";
 import { useEntityPersonLinks, type LinkRow } from "@/hooks/useEntityPersonLinks";
 import { useAiDocuments } from "@/hooks/useAiDocuments";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
-import { Loader2, FileText, ChevronRight, ChevronLeft, Star } from "lucide-react";
+import { Loader2, FileText, ChevronRight, ChevronLeft, Star, AlertTriangle } from "lucide-react";
 
 interface Props {
   open: boolean;
