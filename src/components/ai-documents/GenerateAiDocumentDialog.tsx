@@ -23,7 +23,7 @@ import { useAiPersons } from "@/hooks/useAiPersons";
 import { useEntityPersonLinks, type LinkRow } from "@/hooks/useEntityPersonLinks";
 import { useAiDocuments } from "@/hooks/useAiDocuments";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
-import { Loader2, FileText, ChevronRight, ChevronLeft, Star } from "lucide-react";
+import { Loader2, FileText, ChevronRight, ChevronLeft, Star, AlertTriangle } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -233,9 +233,15 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
         {step === 2 && (
           <div className="space-y-4">
             {placeholders.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                У шаблона нет зарегистрированных плейсхолдеров. Документ будет сформирован как есть.
-              </p>
+              <div className="flex items-start gap-2 p-3 rounded-xl border border-amber-500/30 bg-amber-500/5">
+                <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-medium text-amber-700 dark:text-amber-400">Плейсхолдеры не найдены</p>
+                  <p className="text-muted-foreground mt-1">
+                    Шаблон не содержит токенов для автозаполнения. Документ будет сформирован без подстановки данных.
+                  </p>
+                </div>
+              </div>
             ) : (
               <TokenPreviewTable tokens={tokens} />
             )}
