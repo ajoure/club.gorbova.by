@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAiDocuments, type AiGeneratedDocument } from "@/hooks/useAiDocuments";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -21,13 +21,109 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Download, Trash2, FileText, Loader2, Clock, Package } from "lucide-react";
+import { Download, Trash2, FileText, Loader2, Clock, Package, ChevronRight, ChevronDown } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+
+/* ── Types for grouped rendering ── */
+
+type BatchGroup = {
+  kind: "batch";
+  batchId: string;
+  batchTitle: string;
+  maxCreatedAt: string;
+  docs: AiGeneratedDocument[];
+};
+
+type StandaloneRow = {
+  kind: "standalone";
+  maxCreatedAt: string;
+  doc: AiGeneratedDocument;
+};
+
+type HistoryEntry = BatchGroup | StandaloneRow;
+
+/* ── Helpers ── */
+
+function batchStatus(docs: AiGeneratedDocument[]): string {
+  const statuses = docs.map((d) => d.status);
+  const allGenerated = statuses.every((s) => s === "generated");
+  const allError = statuses.every((s) => s === "error");
+  const hasPending = statuses.some((s) => s === "pending" || s === "processing");
+
+  if (allGenerated) return "generated";
+  if (allError) return "error";
+  if (hasPending) return "pending";
+  return "partial";
+}
+
+function statusBadge(status: string) {
+  switch (status) {
+    case "generated":
+      return <Badge variant="default" className="bg-emerald-500/15 text-emerald-600 border-emerald-300/30">Готов</Badge>;
+    case "error":
+      return <Badge variant="destructive">Ошибка</Badge>;
+    case "partial":
+      return <Badge className="bg-amber-500/15 text-amber-600 border-amber-300/30">Частично</Badge>;
+    case "pending":
+    case "processing":
+      return <Badge variant="secondary">В обработке</Badge>;
+    default:
+      return <Badge variant="secondary">{status}</Badge>;
+  }
+}
+
+/* ── Component ── */
 
 export function AiDocumentsHistoryView() {
   const { documents, isLoading, deleteDocument, isDeleting, getDownloadUrl } = useAiDocuments();
   const [deletingDoc, setDeletingDoc] = useState<AiGeneratedDocument | null>(null);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+
+  /* Build grouped + sorted list */
+  const entries = useMemo<HistoryEntry[]>(() => {
+    const batchMap = new Map<string, AiGeneratedDocument[]>();
+    const standalone: AiGeneratedDocument[] = [];
+
+    for (const doc of documents) {
+      if (doc.generation_batch_id) {
+        const arr = batchMap.get(doc.generation_batch_id) || [];
+        arr.push(doc);
+        batchMap.set(doc.generation_batch_id, arr);
+      } else {
+        standalone.push(doc);
+      }
+    }
+
+    const result: HistoryEntry[] = [];
+
+    for (const [batchId, docs] of batchMap) {
+      const maxCreatedAt = docs.reduce(
+        (max, d) => (d.created_at > max ? d.created_at : max),
+        docs[0].created_at,
+      );
+      const batchTitle = docs[0]?.batch?.title ?? "Пакет документов";
+      result.push({ kind: "batch", batchId, batchTitle, maxCreatedAt, docs });
+    }
+
+    for (const doc of standalone) {
+      result.push({ kind: "standalone", maxCreatedAt: doc.created_at, doc });
+    }
+
+    result.sort((a, b) => (b.maxCreatedAt > a.maxCreatedAt ? 1 : -1));
+    return result;
+  }, [documents]);
+
+  /* Handlers */
+
+  const toggleBatch = (batchId: string) => {
+    setExpandedBatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(batchId)) next.delete(batchId);
+      else next.add(batchId);
+      return next;
+    });
+  };
 
   const handleDownload = async (doc: AiGeneratedDocument) => {
     if (!doc.file_path) return;
@@ -43,16 +139,7 @@ export function AiDocumentsHistoryView() {
     setDeletingDoc(null);
   };
 
-  const statusBadge = (status: string) => {
-    switch (status) {
-      case "generated":
-        return <Badge variant="default" className="bg-emerald-500/15 text-emerald-600 border-emerald-300/30">Готов</Badge>;
-      case "error":
-        return <Badge variant="destructive">Ошибка</Badge>;
-      default:
-        return <Badge variant="secondary">{status}</Badge>;
-    }
-  };
+  /* Loading / empty */
 
   if (isLoading) {
     return (
@@ -76,6 +163,100 @@ export function AiDocumentsHistoryView() {
     );
   }
 
+  /* Render helpers */
+
+  const renderDocActions = (doc: AiGeneratedDocument) => (
+    <div className="flex items-center justify-end gap-1">
+      {doc.file_path && doc.status === "generated" && (
+        <Button variant="ghost" size="icon" onClick={() => handleDownload(doc)} title="Скачать">
+          <Download className="h-4 w-4" />
+        </Button>
+      )}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => setDeletingDoc(doc)}
+        title="Удалить"
+        className="text-destructive hover:text-destructive"
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+
+  const renderStandaloneRow = (doc: AiGeneratedDocument) => (
+    <TableRow key={doc.id}>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+        {format(new Date(doc.created_at), "dd MMM yyyy, HH:mm", { locale: ru })}
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-sm font-medium truncate max-w-[200px]">{doc.title}</span>
+        </div>
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
+        {doc.template_name}
+      </TableCell>
+      <TableCell>{statusBadge(doc.status)}</TableCell>
+      <TableCell className="text-right">{renderDocActions(doc)}</TableCell>
+    </TableRow>
+  );
+
+  const renderBatchGroup = (entry: BatchGroup) => {
+    const isOpen = expandedBatches.has(entry.batchId);
+    const aggStatus = batchStatus(entry.docs);
+    const Chevron = isOpen ? ChevronDown : ChevronRight;
+
+    return (
+      <TableBody key={entry.batchId}>
+        {/* Batch header row */}
+        <TableRow
+          className="cursor-pointer hover:bg-muted/50"
+          onClick={() => toggleBatch(entry.batchId)}
+        >
+          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+            {format(new Date(entry.maxCreatedAt), "dd MMM yyyy, HH:mm", { locale: ru })}
+          </TableCell>
+          <TableCell>
+            <div className="flex items-center gap-2">
+              <Chevron className="h-4 w-4 text-muted-foreground shrink-0" />
+              <Package className="h-4 w-4 text-primary shrink-0" />
+              <span className="text-sm font-medium truncate max-w-[200px]">
+                {entry.batchTitle}
+              </span>
+              <Badge variant="outline" className="text-xs shrink-0">
+                {entry.docs.length} док.
+              </Badge>
+            </div>
+          </TableCell>
+          <TableCell />
+          <TableCell>{statusBadge(aggStatus)}</TableCell>
+          <TableCell />
+        </TableRow>
+
+        {/* Child rows */}
+        {isOpen &&
+          entry.docs.map((doc) => (
+            <TableRow key={doc.id} className="bg-muted/20">
+              <TableCell />
+              <TableCell>
+                <div className="flex items-center gap-2 pl-6">
+                  <FileText className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-medium truncate max-w-[200px]">{doc.title}</span>
+                </div>
+              </TableCell>
+              <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
+                {doc.template_name}
+              </TableCell>
+              <TableCell>{statusBadge(doc.status)}</TableCell>
+              <TableCell className="text-right">{renderDocActions(doc)}</TableCell>
+            </TableRow>
+          ))}
+      </TableBody>
+    );
+  };
+
   return (
     <>
       <GlassCard className="p-0 overflow-hidden">
@@ -89,63 +270,16 @@ export function AiDocumentsHistoryView() {
               <TableHead className="text-right">Действия</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {documents.map((doc) => (
-              <TableRow key={doc.id}>
-                <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                  {format(new Date(doc.created_at), "dd MMM yyyy, HH:mm", { locale: ru })}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-primary shrink-0" />
-                    <span className="text-sm font-medium truncate max-w-[200px]">
-                      {doc.title}
-                    </span>
-                    {doc.package_template_id && (
-                      <>
-                        <Badge variant="outline" className="text-xs shrink-0 gap-1">
-                          <Package className="h-3 w-3" />
-                          Пакет
-                        </Badge>
-                        {doc.batch?.title && (
-                          <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={doc.batch.title}>
-                            {doc.batch.title}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
-                  {doc.template_name}
-                </TableCell>
-                <TableCell>{statusBadge(doc.status)}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    {doc.file_path && doc.status === "generated" && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDownload(doc)}
-                        title="Скачать"
-                      >
-                        <Download className="h-4 w-4" />
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setDeletingDoc(doc)}
-                      title="Удалить"
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
+
+          {entries.map((entry) =>
+            entry.kind === "batch" ? (
+              renderBatchGroup(entry)
+            ) : (
+              <TableBody key={entry.doc.id}>
+                {renderStandaloneRow(entry.doc)}
+              </TableBody>
+            ),
+          )}
         </Table>
       </GlassCard>
 
