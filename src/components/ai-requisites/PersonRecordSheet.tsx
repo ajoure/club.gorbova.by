@@ -64,8 +64,10 @@ interface PersonRecordSheetProps {
   profileId: string | null;
   isSubmitting: boolean;
   isDeactivating: boolean;
+  isDeleting?: boolean;
   onSubmit: (data: Record<string, any>) => Promise<void>;
   onDeactivate: (id: string) => void;
+  onDelete?: (id: string) => void;
   onOpenExisting?: (id: string) => void;
 }
 
