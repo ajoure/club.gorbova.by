@@ -141,7 +141,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5 text-primary" />
-            {template.name}
+            {template?.name ?? "Документ"}
           </DialogTitle>
           <DialogDescription>
             {step === 1 ? "Выберите источники данных для документа" : "Проверьте заполнение полей"}
