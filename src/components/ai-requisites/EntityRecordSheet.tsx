@@ -155,6 +155,7 @@ export function EntityRecordSheet({
   const typeBadge = entity ? getEntityTypeBadge(entity) : null;
   const unp = entity ? getEntityUnp(entity) : null;
   const canArchive = entity?.purpose === "document" && entity?.status === "active";
+  const canDelete = entity?.purpose === "document" && !!onDelete;
 
   const orgForm = isEntrepreneur ? "Индивидуальный предприниматель" : entity?.leg_org_form;
   const subtitle = entity
