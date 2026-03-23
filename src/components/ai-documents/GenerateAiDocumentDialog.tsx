@@ -39,9 +39,8 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const [entityId, setEntityId] = useState<string>("");
   const [personId, setPersonId] = useState<string>("");
   const [signerLinkId, setSignerLinkId] = useState<string>("");
-  const [prefillSource, setPrefillSource] = useState<string | null>(null);
+  const [prefillSource, setPrefillSource] = useState<"history" | "fresh" | null>(null);
   const [prefillDocId, setPrefillDocId] = useState<string | null>(null);
-  const [showPrefillChoice, setShowPrefillChoice] = useState(false);
 
   const { allEntities } = useAiEntities();
   const { allPersons } = useAiPersons();
