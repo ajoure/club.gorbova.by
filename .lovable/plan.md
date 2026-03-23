@@ -1,148 +1,118 @@
-# да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
-1. PATCH 7 запускать **только после формального закрытия PATCH 6**:
-  - ручной proof `probable duplicate`
-  - ручной proof `keyboard select` адреса
-  - cleanup тестовых записей  
-  Без этого PATCH 7 не считать разрешённым к execute.
-2. Из scope PATCH 7 **убрать inline create нового физлица внутри link-form**.  
-В этом патче работать только со **существующими** физлицами через `PersonPicker`.  
-Inline create вынести в отдельный следующий patch, чтобы не смешивать person CRUD и links CRUD.
-3. В `useEntityPersonLinks.ts` зафиксировать joins и поля явно:
-  - для `legal_details_roles_catalog` использовать `label`, не `name`
-  - для `legal_details_positions_catalog` использовать `label`
-  - не опираться на догадки по schema-полям.
-4. В `PersonPicker` по умолчанию показывать **только активных** физлиц владельца, но в edit existing link корректно отображать уже выбранного person даже если он стал inactive. Иначе редактирование старых связей будет ломаться.
-5. В `EntityPersonLinkForm` перед submit обязательно делать sanitization по `role_type`:
-  - `founder` → очищать position/custom role поля
-  - `position` → очищать `share_percent` и enforce XOR `position_catalog_id` / `custom_position_text`
-  - `other` → очищать position/share fields и требовать `custom_role_text`  
-  Нельзя полагаться только на DB CHECK constraints.
-6. Удаление в PATCH 7 — это **только delete link**, не deactivate person и не archive entity. Это нужно явно зафиксировать в плане и proof.
-7. В DoD добавить отдельные proof-кейсы:
-  - founder + `share_percent`
-  - position через `position_catalog_id`
-  - position через `custom_position_text`
-  - other через `custom_role_text`
-  - duplicate link → человекочитаемая ошибка
-  - delete link → блок в карточке физлица обновился read-only
-  - existing inactive person in edit path не ломает форму
-8. В `EntityRecordSheet` новый блок `Связанные лица` добавлять только в **view mode** и не менять shell/edit flow карточки юрлица.
-9. `/settings/legal-details`, documents, generate-from-template, AI interview и PATCH 8+ явно оставить вне scope не только текстом, но и в финальном proof-отчёте отдельным разделом `Не затронуто`.
-10. &nbsp;
-11. PATCH 7 — Связи физлиц в карточке юрлица/ИП
+1. **PATCH 7 остаётся provisional**, пока формально не закрыт PATCH 6:
+  - ручной `probable duplicate`
+  - ручной `keyboard select`
+  - cleanup тестовых person-records
+2. В `useEntityPersonLinks.ts` лучше зафиксировать тип явно, а не через расплывчатый `Partial`:
+  - `updateLink(payload: LinkUpdatePayload & { id: string; old_person_id?: string })`
+  - чтобы не потерять `person_id` снова при следующей правке
+3. В `updateLink` нужно явно подтвердить, что в `.update(payload)` теперь реально уходит:
+  - `person_id`
+  - `role_catalog_id`
+  - `role_type`
+  - `position_catalog_id`
+  - `custom_position_text`
+  - `custom_role_text`
+  - `share_percent`
+  - `acts_on_basis`
+  - `is_primary`
+  - `notes`  
+  И что `old_person_id` туда **не** попадает.
+4. В invalidation лучше описать точнее:
+  - `['entity-person-links', legalDetailsId]` инвалидируется всегда один раз
+  - `['person-linked-entities', old_person_id]` инвалидируется, если был old
+  - `['person-linked-entities', new_person_id]` инвалидируется, если отличается от old  
+  То есть не дёргать лишний раз один и тот же person-block.
+5. В proof round после FIX-1 обязательно добавить отдельный кейс:
+  - редактирование связи и **смена person_id**
+  - после save link исчез из старой карточки физлица
+  - появился в новой карточке физлица
+  - в карточке юрлица отображается новый человек, а не старый
+6. Отдельно в proof round зафиксировать:
+  - delete удаляет **только link**
+  - person не деактивируется
+  - entity не меняется
+7. В финальном отчёте по PATCH 7 нужен отдельный блок:
+  - **FIX-1**
+  - затем **PATCH 7 PROOF-1**
+  - затем **Не затронуто**
 
-## Что делаем
+Итог: сам фикс правильный, его можно делать именно в таком направлении. После него сразу нужен runtime proof, особенно на сценарий **reassign link другому person**.
 
-Добавляем полноценный модуль управления связями (links) внутри `EntityRecordSheet` (view mode): список, создание, редактирование, удаление связей между юрлицом/ИП и физлицами.
+PATCH 7 FIX-1: Исправление edit path + подготовка к proof round
 
-## Схема данных (уже существует)
+### Баг
 
-```text
-legal_details_entity_person_links
-├── person_id → legal_details_persons
-├── legal_details_id → client_legal_details
-├── role_catalog_id → legal_details_roles_catalog (founder/position/other)
-├── role_type (denormalized, validated by trigger)
-├── position_catalog_id → legal_details_positions_catalog (только для position)
-├── custom_position_text (XOR с position_catalog_id для position)
-├── custom_role_text (обязательно для other)
-├── share_percent (только для founder)
-├── acts_on_basis, is_primary, notes, start_date, end_date
-└── profile_id (owner, RLS)
+Строка 167 в `EntityPersonLinksBlock.tsx`:
+
+```
+onSubmit={editingLink ? (p) => updateLink({ ...p, id: editingLink.id, person_id: editingLink.person_id } as any) : createLink}
 ```
 
-Partial unique indexes и CHECK constraints из PATCH 2 уже защищают от дублей и семантических ошибок.
+Проблема двойная:
 
-## Файлы
+1. `person_id: editingLink.person_id` затирает новый `person_id` из формы — нельзя перевесить связь на другого человека
+2. `updateLink` в хуке деструктурирует `person_id` из payload и **не включает его в `.update()**` (строка 181: `{ id, person_id, ...payload }` — `person_id` уходит в rest-деструктуризацию, но используется только для invalidation)
 
-### Создать (4 файла)
+### Исправления
 
-**1. `src/hooks/useEntityPersonLinks.ts**`
+**Файл 1: `src/components/ai-requisites/EntityPersonLinksBlock.tsx**` (строка 167)
 
-- Загрузка links по `legal_details_id` с joins на `legal_details_persons`, `legal_details_roles_catalog`, `legal_details_positions_catalog`
-- Загрузка catalogs (roles + positions) — отдельные queries
-- Mutations: `createLink`, `updateLink`, `deleteLink`
-- Query key: `['entity-person-links', legalDetailsId]`
-- При ошибке insert/update — парсинг PostgreSQL unique violation → человекочитаемое сообщение
+Убрать затирание `person_id`. Передавать `id` и **оба** person_id (старый для invalidation, новый в payload):
 
-**2. `src/components/ai-requisites/EntityPersonLinksBlock.tsx**`
+```typescript
+onSubmit={editingLink 
+  ? (p) => updateLink({ ...p, id: editingLink.id, old_person_id: editingLink.person_id } as any) 
+  : createLink}
+```
 
-- Секция «Связанные лица» в view mode карточки юрлица
-- Список карточек: ФИО, badge роли, доля (founder), должность (position), is_primary badge
-- Кнопка «Добавить связь» → открывает dialog
-- На каждой записи: edit / delete actions
-- Empty state: «Нет связанных лиц»
-- Props: `legalDetailsId`, `profileId`
+**Файл 2: `src/hooks/useEntityPersonLinks.ts**` (строки 180-198)
 
-**3. `src/components/ai-requisites/EntityPersonLinkForm.tsx**`
+Изменить `updateLink` mutation:
 
-- Форма внутри Dialog/Sheet для создания/редактирования связи
-- PersonPicker (combobox): поиск по ФИО среди активных физлиц владельца
-- Select роли из `legal_details_roles_catalog`
-- Conditional fields:
-  - founder → `share_percent` (number input, optional)
-  - position → select из `legal_details_positions_catalog` ИЛИ custom text (exclusive)
-  - other → `custom_role_text` (обязательное текстовое поле)
-- Optional: `acts_on_basis`, `is_primary`, `notes`
-- Validation: person required, role required, role-specific fields validated
-- Submit → `createLink` / `updateLink`
+- Принимать `old_person_id` отдельно
+- Включить `person_id` в `.update()` payload (чтобы связь реально перевешивалась)
+- При invalidation инвалидировать **и** старый, **и** новый `person_id`
 
-**4. `src/components/ai-requisites/PersonPicker.tsx**`
+```typescript
+const updateLink = useMutation({
+  mutationFn: async ({ id, old_person_id, ...payload }: Partial<LinkInsertPayload> & { id: string; old_person_id?: string }) => {
+    const { data, error } = await supabase
+      .from("legal_details_entity_person_links")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) {
+      const friendly = parseUniqueViolation(error);
+      throw new Error(friendly || error.message);
+    }
+    return { ...data, old_person_id };
+  },
+  onSuccess: (data, variables) => {
+    invalidateLinks(variables.old_person_id);
+    if (data.person_id && data.person_id !== variables.old_person_id) {
+      invalidateLinks(data.person_id);
+    }
+    toast.success("Связь обновлена");
+  },
+  onError: (error) => toast.error(error.message),
+});
+```
 
-- Combobox для выбора физлица из существующих
-- Reuse `useAiPersons` для получения списка
-- Фильтрация по ФИО, личному номеру
-- Показывает: ФИО + личный номер (если есть)
-- Возвращает `person_id`
+**Файл 3: `src/components/ai-requisites/EntityPersonLinkForm.tsx**` (строки 118-123)
 
-### Изменить (1 файл)
+Форма уже корректно передает `person_id` из state в payload (строка 104). Проблема была только в затирании на уровне `EntityPersonLinksBlock`. Форму не трогаем.
 
-`**src/components/ai-requisites/EntityRecordSheet.tsx**`
+### Не трогаем
 
-- В `renderViewContent()` после секции «Служебная информация» (строка ~426) вставить `<EntityPersonLinksBlock>`
-- Import нового компонента
-- Передать `entity.id` и `profileId`
-
-### Не трогать
-
-- `PersonLinkedEntitiesBlock` — остаётся read-only, уже корректно работает
-- `PersonRecordSheet` — без изменений
-- `PersonFieldsForm` — без изменений
+- `PersonPicker` — без изменений
+- `PersonLinkedEntitiesBlock` — read-only, без изменений  
+- `PersonFieldsForm` / `PersonRecordSheet` — без изменений
 - `/settings/legal-details` — без изменений
-- Billing/payment flow — без изменений
-- Document generation — без изменений
-- Edge functions — без изменений
+- Documents / billing / edge functions — без изменений
 
-## Логика ролей (enforcement)
+### После FIX-1 — proof round PATCH 7
 
-
-| role_type | share_percent | position_catalog_id | custom_position_text | custom_role_text |
-| --------- | ------------- | ------------------- | -------------------- | ---------------- |
-| founder   | optional      | —                   | —                    | —                |
-| position  | —             | XOR                 | XOR                  | —                |
-| other     | —             | —                   | —                    | required         |
-
-
-Форма динамически показывает/скрывает поля в зависимости от выбранной роли. При сабмите зануляет невалидные поля (CHECK constraints в БД не допустят иначе).
-
-## Обработка ошибок дублей
-
-Partial unique indexes в БД выбросят `23505` (unique_violation). Hook парсит `detail` из ошибки PostgreSQL и показывает toast:
-
-- «Такая связь уже существует» — вместо сырого SQL-сообщения
-
-## UX flow
-
-1. Открыть карточку юрлица → view mode → секция «Связанные лица»
-2. Нажать «Добавить связь» → Dialog
-3. Выбрать физлицо из combobox
-4. Выбрать роль → появляются conditional fields
-5. Заполнить → Save → toast → список обновился
-6. Edit: клик edit на записи → тот же Dialog с prefill
-7. Delete: клик delete → confirm → toast → запись удалена
-
-## Invalidation
-
-- При create/update/delete link → invalidate `['entity-person-links', legalDetailsId]`
-- Также invalidate `['person-linked-entities', personId]` чтобы в карточке физлица read-only блок обновился
+Runtime proof по всем обязательным сценариям из DoD.
