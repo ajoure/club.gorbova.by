@@ -242,6 +242,15 @@ export function AiDocumentsGenerateView() {
         open={packagesManagerOpen}
         onOpenChange={setPackagesManagerOpen}
       />
+
+      <GenerateAiDocumentPackageDialog
+        open={packageWizardOpen}
+        onOpenChange={(v) => {
+          setPackageWizardOpen(v);
+          if (!v) setSelectedPackage(null);
+        }}
+        packageTemplate={selectedPackage}
+      />
     </>
   );
 }
