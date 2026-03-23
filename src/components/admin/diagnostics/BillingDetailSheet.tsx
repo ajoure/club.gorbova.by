@@ -123,7 +123,7 @@ export function BillingDetailSheet({ open, onOpenChange, item, date }: BillingDe
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <User className="h-5 w-5" />

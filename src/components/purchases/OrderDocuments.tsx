@@ -81,7 +81,7 @@ export function OrderDocuments({ orderId, orderNumber, trigger, open: controlled
           {trigger || defaultTrigger}
         </SheetTrigger>
       ) : null}
-      <SheetContent className="w-[400px] sm:w-[540px]">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader>
           <SheetTitle>Документы</SheetTitle>
           <SheetDescription>

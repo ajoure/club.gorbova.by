@@ -254,7 +254,7 @@ export function DocumentLogTab() {
 
       {/* Document Details Sheet */}
       <Sheet open={!!selectedDoc} onOpenChange={() => setSelectedDoc(null)}>
-        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent className={SHEET_SHELL_CLASS}>
           <SheetHeader>
             <SheetTitle>Документ {selectedDoc?.document_number}</SheetTitle>
             <SheetDescription>

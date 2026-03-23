@@ -52,7 +52,7 @@ export function IntegrationLogsSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
           <SheetTitle className="truncate">Логи: {instance?.alias}</SheetTitle>
         </SheetHeader>

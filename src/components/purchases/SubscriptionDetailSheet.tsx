@@ -148,7 +148,7 @@ export function SubscriptionDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-md overflow-y-auto">
+      <SheetContent className={SHEET_SHELL_CLASS}>
         <SheetHeader className="pr-10">
           <SheetTitle className="text-left truncate">
             {subscription.products_v2?.name || subscription.products_v2?.code} — {subscription.tariffs?.name}
