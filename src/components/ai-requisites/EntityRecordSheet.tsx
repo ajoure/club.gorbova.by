@@ -224,6 +224,18 @@ export function EntityRecordSheet({
     setShowArchiveConfirm(false);
   }, [entity, onArchive]);
 
+  const handleDeleteConfirm = useCallback(async () => {
+    if (entity && onDelete) {
+      await onDelete(entity.id);
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    }
+  }, [entity, onDelete, onOpenChange]);
+      onArchive(entity.id);
+    }
+    setShowArchiveConfirm(false);
+  }, [entity, onArchive]);
+
   /* ── view content ── */
 
   const renderViewContent = () => {
