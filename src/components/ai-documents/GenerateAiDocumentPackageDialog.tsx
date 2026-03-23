@@ -422,7 +422,7 @@ export function GenerateAiDocumentPackageDialog({
             {step === 1 && (
               <>
                 <div />
-                <Button onClick={() => setStep(2)}>
+                <Button onClick={() => setStep(2)} disabled={items.length === 0}>
                   Далее
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
