@@ -292,6 +292,8 @@ export type Database = {
           legal_details_id: string | null
           meta: Json
           missing_tokens: Json
+          package_item_id: string | null
+          package_template_id: string | null
           person_id: string | null
           profile_id: string
           signer_link_id: string | null
@@ -317,6 +319,8 @@ export type Database = {
           legal_details_id?: string | null
           meta?: Json
           missing_tokens?: Json
+          package_item_id?: string | null
+          package_template_id?: string | null
           person_id?: string | null
           profile_id: string
           signer_link_id?: string | null
@@ -342,6 +346,8 @@ export type Database = {
           legal_details_id?: string | null
           meta?: Json
           missing_tokens?: Json
+          package_item_id?: string | null
+          package_template_id?: string | null
           person_id?: string | null
           profile_id?: string
           signer_link_id?: string | null
@@ -1828,6 +1834,84 @@ export type Database = {
           prefix?: string
           updated_at?: string | null
           year?: number
+        }
+        Relationships: []
+      }
+      document_package_template_items: {
+        Row: {
+          created_at: string
+          id: string
+          is_required: boolean
+          package_template_id: string
+          sort_order: number
+          template_id: string
+          title_override: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          package_template_id: string
+          sort_order?: number
+          template_id: string
+          title_override?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_required?: boolean
+          package_template_id?: string
+          sort_order?: number
+          template_id?: string
+          title_override?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_package_template_items_package_template_id_fkey"
+            columns: ["package_template_id"]
+            isOneToOne: false
+            referencedRelation: "document_package_templates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_package_template_items_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "document_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_package_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          profile_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          profile_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          profile_id?: string
+          updated_at?: string
         }
         Relationships: []
       }
