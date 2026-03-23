@@ -154,6 +154,14 @@ export function PersonRecordSheet({
     setShowDeactivateConfirm(false);
   }, [person, onDeactivate]);
 
+  const handleDeleteConfirm = useCallback(async () => {
+    if (person && onDelete) {
+      await onDelete(person.id);
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    }
+  }, [person, onDelete, onOpenChange]);
+
   const renderViewContent = () => {
     if (!person) return null;
     const addressLines = getPersonAddressLines(person);
