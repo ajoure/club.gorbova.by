@@ -69,18 +69,19 @@ export function GenerateAiDocumentPackageDialog({
     [allPersons]
   );
 
-  // Find last batch document for this package template
-  const lastBatchDoc = useMemo(() => {
-    if (!packageTemplate?.id) return null;
-    return documents.find((d) => (d as any).package_template_id === packageTemplate.id) ?? null;
-  }, [documents, packageTemplate?.id]);
+  // Check if last batch has valid prefill data
+  const hasPrefillData = useMemo(() => {
+    if (!lastBatch?.meta) return false;
+    const m = lastBatch.meta;
+    return !!(m.selected_entity_id || m.selected_person_id || m.selected_signer_link_id);
+  }, [lastBatch]);
 
   const applyPrefill = () => {
-    if (!lastBatchDoc) return;
-    const meta = lastBatchDoc.meta as Record<string, unknown> | null;
-    setEntityId((meta?.selected_entity_id as string) || (lastBatchDoc.legal_details_id as string) || "");
-    setPersonId((meta?.selected_person_id as string) || (lastBatchDoc.person_id as string) || "");
-    setSignerLinkId((meta?.selected_signer_link_id as string) || (lastBatchDoc.signer_link_id as string) || "");
+    if (!lastBatch?.meta) return;
+    const m = lastBatch.meta;
+    setEntityId((m.selected_entity_id as string) || "");
+    setPersonId((m.selected_person_id as string) || "");
+    setSignerLinkId((m.selected_signer_link_id as string) || "");
     setPrefillSource("history");
   };
 
