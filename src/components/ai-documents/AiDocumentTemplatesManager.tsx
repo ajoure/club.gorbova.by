@@ -33,6 +33,7 @@ import {
   ArrowLeft,
   Tag,
 } from "lucide-react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 
 interface Props {
   open: boolean;
