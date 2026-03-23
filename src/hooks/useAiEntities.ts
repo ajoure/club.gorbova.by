@@ -133,6 +133,51 @@ export function useAiEntities() {
     },
   });
 
+  // Delete — only document records, cascading links first
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const target = allEntities.find(e => e.id === id);
+      if (!target || target.purpose !== "document") {
+        throw new Error("Можно удалить только документные реквизиты");
+      }
+
+      // Collect affected person IDs for invalidation
+      const { data: affectedLinks } = await supabase
+        .from("legal_details_entity_person_links")
+        .select("person_id")
+        .eq("legal_details_id", id);
+      const affectedPersonIds = (affectedLinks || []).map((l: any) => l.person_id);
+
+      // 1. Delete all related links
+      const { error: linksError } = await supabase
+        .from("legal_details_entity_person_links")
+        .delete()
+        .eq("legal_details_id", id);
+      if (linksError) throw linksError;
+
+      // 2. Delete the entity record
+      const { error } = await supabase
+        .from("client_legal_details")
+        .delete()
+        .eq("id", id)
+        .eq("purpose", "document");
+      if (error) throw error;
+
+      return { affectedPersonIds };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["ai-entities"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-person-links"] });
+      for (const pid of result.affectedPersonIds) {
+        queryClient.invalidateQueries({ queryKey: ["person-linked-entities", pid] });
+      }
+      toast.success("Реквизиты удалены навсегда");
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + error.message);
+    },
+  });
+
   return {
     profileId,
     allEntities,
@@ -140,8 +185,10 @@ export function useAiEntities() {
     createEntity: createMutation.mutateAsync,
     updateEntity: updateMutation.mutateAsync,
     archiveEntity: archiveMutation.mutateAsync,
+    deleteEntity: deleteMutation.mutateAsync,
     isCreating: createMutation.isPending,
     isUpdating: updateMutation.isPending,
     isArchiving: archiveMutation.isPending,
+    isDeleting: deleteMutation.isPending,
   };
 }

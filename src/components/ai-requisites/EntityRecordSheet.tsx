@@ -42,6 +42,7 @@ import {
   Copy,
   ClipboardList,
   X,
+  Trash2,
 } from "lucide-react";
 import {
   getEntityShortName,
@@ -113,8 +114,10 @@ interface EntityRecordSheetProps {
   profileId: string | null;
   isSubmitting: boolean;
   isArchiving: boolean;
+  isDeleting?: boolean;
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   onArchive: (id: string) => void;
+  onDelete?: (id: string) => void;
   /** Called when user chooses to open an existing duplicate instead */
   onOpenExisting?: (id: string) => void;
 }
@@ -130,14 +133,17 @@ export function EntityRecordSheet({
   profileId,
   isSubmitting,
   isArchiving,
+  isDeleting,
   onSubmit,
   onArchive,
+  onDelete,
   onOpenExisting,
 }: EntityRecordSheetProps) {
   const duplicateCheck = useEntityDuplicateCheck();
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingData, setPendingData] = useState<Partial<ClientLegalDetails> | null>(null);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isViewMode = mode === "view";
   const isEditMode = mode === "edit";
@@ -149,6 +155,7 @@ export function EntityRecordSheet({
   const typeBadge = entity ? getEntityTypeBadge(entity) : null;
   const unp = entity ? getEntityUnp(entity) : null;
   const canArchive = entity?.purpose === "document" && entity?.status === "active";
+  const canDelete = entity?.purpose === "document" && !!onDelete;
 
   const orgForm = isEntrepreneur ? "Индивидуальный предприниматель" : entity?.leg_org_form;
   const subtitle = entity
@@ -216,6 +223,16 @@ export function EntityRecordSheet({
     }
     setShowArchiveConfirm(false);
   }, [entity, onArchive]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (entity && onDelete) {
+      await onDelete(entity.id);
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    }
+  }, [entity, onDelete, onOpenChange]);
+
+
 
   /* ── view content ── */
 
@@ -560,6 +577,16 @@ export function EntityRecordSheet({
                       в архив
                     </Badge>
                   )}
+                  {canDelete && (
+                    <Badge
+                      variant="outline"
+                      className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-red-500/40 text-red-600 hover:bg-red-500/10"
+                      onClick={() => setShowDeleteConfirm(true)}
+                    >
+                      {isDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                      удалить навсегда
+                    </Badge>
+                  )}
                 </>
               )}
 
@@ -598,6 +625,24 @@ export function EntityRecordSheet({
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction onClick={handleArchiveConfirm}>
               В архив
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete confirm dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить навсегда?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Запись «{entity ? getEntityShortName(entity) : ""}» будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить навсегда
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

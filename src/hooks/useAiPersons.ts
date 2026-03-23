@@ -110,6 +110,33 @@ export function useAiPersons() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      // 1. Delete all related links first
+      const { error: linksError } = await supabase
+        .from("legal_details_entity_person_links")
+        .delete()
+        .eq("person_id", id);
+      if (linksError) throw linksError;
+
+      // 2. Delete the person record
+      const { error } = await supabase
+        .from("legal_details_persons")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, deletedId) => {
+      queryClient.invalidateQueries({ queryKey: ["ai-persons"] });
+      queryClient.invalidateQueries({ queryKey: ["entity-person-links"] });
+      queryClient.invalidateQueries({ queryKey: ["person-linked-entities", deletedId] });
+      toast.success("Физлицо удалено навсегда");
+    },
+    onError: (error) => {
+      toast.error("Ошибка: " + error.message);
+    },
+  });
+
   return {
     profileId,
     allPersons,
@@ -117,8 +144,10 @@ export function useAiPersons() {
     createPerson: createMutation.mutateAsync,
     updatePerson: updateMutation.mutateAsync,
     deactivatePerson: deactivateMutation.mutateAsync,
+    deletePerson: deleteMutation.mutateAsync,
     isCreating: createMutation.isPending,
     isUpdating: updateMutation.isPending,
     isDeactivating: deactivateMutation.isPending,
+    isDeleting: deleteMutation.isPending,
   };
 }

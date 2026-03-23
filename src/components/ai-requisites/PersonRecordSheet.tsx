@@ -18,7 +18,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power,
+  User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power, Trash2,
 } from 'lucide-react';
 import { PersonFieldsForm } from './PersonFieldsForm';
 import { PersonLinkedEntitiesBlock } from './PersonLinkedEntitiesBlock';
@@ -64,19 +64,22 @@ interface PersonRecordSheetProps {
   profileId: string | null;
   isSubmitting: boolean;
   isDeactivating: boolean;
+  isDeleting?: boolean;
   onSubmit: (data: Record<string, any>) => Promise<void>;
   onDeactivate: (id: string) => void;
+  onDelete?: (id: string) => void;
   onOpenExisting?: (id: string) => void;
 }
 
 export function PersonRecordSheet({
   open, onOpenChange, mode, onModeChange, person, profileId,
-  isSubmitting, isDeactivating, onSubmit, onDeactivate, onOpenExisting,
+  isSubmitting, isDeactivating, isDeleting, onSubmit, onDeactivate, onDelete, onOpenExisting,
 }: PersonRecordSheetProps) {
   const duplicateCheck = usePersonDuplicateCheck();
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingData, setPendingData] = useState<Record<string, any> | null>(null);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isViewMode = mode === 'view';
   const isEditMode = mode === 'edit';
@@ -150,6 +153,14 @@ export function PersonRecordSheet({
     if (person) onDeactivate(person.id);
     setShowDeactivateConfirm(false);
   }, [person, onDeactivate]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (person && onDelete) {
+      await onDelete(person.id);
+      setShowDeleteConfirm(false);
+      onOpenChange(false);
+    }
+  }, [person, onDelete, onOpenChange]);
 
   const renderViewContent = () => {
     if (!person) return null;
@@ -325,6 +336,16 @@ export function PersonRecordSheet({
                       деактивировать
                     </Badge>
                   )}
+                  {onDelete && (
+                    <Badge
+                      variant="outline"
+                      className="cursor-pointer h-7 px-2.5 text-xs gap-1 border-red-500/40 text-red-600 hover:bg-red-500/10"
+                      onClick={() => setShowDeleteConfirm(true)}
+                    >
+                      {isDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                      удалить навсегда
+                    </Badge>
+                  )}
                 </>
               )}
 
@@ -359,6 +380,23 @@ export function PersonRecordSheet({
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeactivateConfirm}>Деактивировать</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить навсегда?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Запись «{person ? getPersonDisplayName(person) : ''}» будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить навсегда
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
