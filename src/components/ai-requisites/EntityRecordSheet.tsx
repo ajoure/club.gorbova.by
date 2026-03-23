@@ -425,6 +425,14 @@ export function EntityRecordSheet({
             <InfoRow label="ID" value={entity.id} copyable mono />
           </CardContent>
         </Card>
+
+        {/* Section 7: Linked persons */}
+        {profileId && (
+          <EntityPersonLinksBlock
+            legalDetailsId={entity.id}
+            profileId={profileId}
+          />
+        )}
       </div>
     );
   };
