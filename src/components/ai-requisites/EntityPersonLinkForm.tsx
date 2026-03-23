@@ -49,6 +49,7 @@ interface EntityPersonLinkFormProps {
   profileId: string;
   editingLink?: LinkRow | null;
   onSubmit: (payload: LinkInsertPayload) => Promise<any>;
+  onCreatePosition: (label: string) => Promise<string | null>;
   isSubmitting: boolean;
 }
 
