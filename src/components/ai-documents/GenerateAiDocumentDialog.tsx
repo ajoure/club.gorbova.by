@@ -150,7 +150,6 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     setSignerLinkId("");
     setPrefillSource(null);
     setPrefillDocId(null);
-    setShowPrefillChoice(false);
   };
 
   const handleClose = (v: boolean) => {
