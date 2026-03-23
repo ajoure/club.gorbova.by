@@ -163,10 +163,13 @@ export function AiDocumentsGenerateView() {
                       <Button
                         variant="secondary"
                         className="w-full"
-                        disabled
+                        onClick={() => {
+                          setSelectedPackage(pkg);
+                          setPackageWizardOpen(true);
+                        }}
                       >
-                        <Package className="h-4 w-4 mr-2" />
-                        Скоро
+                        <PenLine className="h-4 w-4 mr-2" />
+                        Заполнить пакет
                       </Button>
                     </GlassCard>
                   ))}
