@@ -69,7 +69,6 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const applyPrefill = () => {
     if (!lastDoc) return;
     const meta = lastDoc.meta as Record<string, unknown> | null;
-    const snapshot = lastDoc.snapshot as Record<string, unknown> | null;
 
     const eId = (meta?.selected_entity_id as string) || (lastDoc.legal_details_id as string) || "";
     const pId = (meta?.selected_person_id as string) || (lastDoc.person_id as string) || "";
@@ -80,16 +79,14 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     setSignerLinkId(sId);
     setPrefillSource("history");
     setPrefillDocId(lastDoc.id);
-    setShowPrefillChoice(false);
   };
 
   const startFresh = () => {
     setEntityId("");
     setPersonId("");
     setSignerLinkId("");
-    setPrefillSource(null);
+    setPrefillSource("fresh");
     setPrefillDocId(null);
-    setShowPrefillChoice(false);
   };
 
   const selectedEntity = useMemo(
