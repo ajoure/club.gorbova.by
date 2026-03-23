@@ -114,8 +114,10 @@ interface EntityRecordSheetProps {
   profileId: string | null;
   isSubmitting: boolean;
   isArchiving: boolean;
+  isDeleting?: boolean;
   onSubmit: (data: Partial<ClientLegalDetails>) => Promise<void>;
   onArchive: (id: string) => void;
+  onDelete?: (id: string) => void;
   /** Called when user chooses to open an existing duplicate instead */
   onOpenExisting?: (id: string) => void;
 }

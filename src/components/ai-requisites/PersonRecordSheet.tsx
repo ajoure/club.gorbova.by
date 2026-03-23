@@ -384,7 +384,23 @@ export function PersonRecordSheet({
         </AlertDialogContent>
       </AlertDialog>
 
-      {showDuplicateDialog && duplicateCheck.candidates.length > 0 && (
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить навсегда?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Запись «{person ? getPersonDisplayName(person) : ''}» будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся. Это действие нельзя отменить.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Удалить навсегда
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
         <DuplicateWarningDialog
           open={showDuplicateDialog}
           onOpenChange={setShowDuplicateDialog}
