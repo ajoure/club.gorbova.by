@@ -49,6 +49,7 @@ import {
   getEntityTypeBadge,
   getEntityUnp,
 } from "@/lib/legal-entities/entityDisplayUtils";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { OrganizationDetailsForm } from "@/components/legal-details/OrganizationDetailsForm";
 import { DuplicateWarningDialog } from "@/components/ai-requisites/DuplicateWarningDialog";
 import { useEntityDuplicateCheck } from "@/hooks/useEntityDuplicateCheck";
@@ -475,7 +476,7 @@ export function EntityRecordSheet({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           data-address-shell="true"
-          className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
+          className={SHEET_SHELL_CLASS}
           onPointerDownOutside={(e) => {
             const target = e.target as HTMLElement;
             if (target.closest('[role="listbox"]') || target.closest('[data-address-dropdown]')) {

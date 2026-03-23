@@ -26,6 +26,7 @@ import { useEntityPersonLinks, type LinkRow } from "@/hooks/useEntityPersonLinks
 import { useAiDocuments } from "@/hooks/useAiDocuments";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
 import { Loader2, FileText, ChevronRight, ChevronLeft, Star, AlertTriangle, History, RefreshCw } from "lucide-react";
+import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 
 interface Props {
   open: boolean;
@@ -38,9 +39,8 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
   const [entityId, setEntityId] = useState<string>("");
   const [personId, setPersonId] = useState<string>("");
   const [signerLinkId, setSignerLinkId] = useState<string>("");
-  const [prefillSource, setPrefillSource] = useState<string | null>(null);
+  const [prefillSource, setPrefillSource] = useState<"history" | "fresh" | null>(null);
   const [prefillDocId, setPrefillDocId] = useState<string | null>(null);
-  const [showPrefillChoice, setShowPrefillChoice] = useState(false);
 
   const { allEntities } = useAiEntities();
   const { allPersons } = useAiPersons();
@@ -64,17 +64,11 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     return documents.find((d) => d.template_id === template.id) ?? null;
   }, [documents, template?.id]);
 
-  // Show prefill choice when opening wizard with existing history
-  useEffect(() => {
-    if (open && lastDoc && step === 1 && !prefillSource) {
-      setShowPrefillChoice(true);
-    }
-  }, [open, lastDoc, step, prefillSource]);
+  // No effect needed — banner visibility driven by lastDoc + prefillSource
 
   const applyPrefill = () => {
     if (!lastDoc) return;
     const meta = lastDoc.meta as Record<string, unknown> | null;
-    const snapshot = lastDoc.snapshot as Record<string, unknown> | null;
 
     const eId = (meta?.selected_entity_id as string) || (lastDoc.legal_details_id as string) || "";
     const pId = (meta?.selected_person_id as string) || (lastDoc.person_id as string) || "";
@@ -85,16 +79,14 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     setSignerLinkId(sId);
     setPrefillSource("history");
     setPrefillDocId(lastDoc.id);
-    setShowPrefillChoice(false);
   };
 
   const startFresh = () => {
     setEntityId("");
     setPersonId("");
     setSignerLinkId("");
-    setPrefillSource(null);
+    setPrefillSource("fresh");
     setPrefillDocId(null);
-    setShowPrefillChoice(false);
   };
 
   const selectedEntity = useMemo(
@@ -158,7 +150,6 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
     setSignerLinkId("");
     setPrefillSource(null);
     setPrefillDocId(null);
-    setShowPrefillChoice(false);
   };
 
   const handleClose = (v: boolean) => {
@@ -176,9 +167,7 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
 
   return (
     <Sheet open={open} onOpenChange={handleClose}>
-      <SheetContent
-        className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
-      >
+      <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Fixed Header */}
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
           <div className="flex items-center gap-3">
@@ -207,38 +196,53 @@ export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 pb-24">
           {step === 1 && (
             <div className="space-y-5 max-w-2xl">
-              {/* Prefill choice banner */}
-              {showPrefillChoice && lastDoc && (
+              {/* Prefill choice banner — always visible on step 1 when lastDoc exists */}
+              {lastDoc && (
                 <Card className="border-primary/20 bg-primary/5">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
                       <History className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">Найден ранее созданный документ</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Вы можете использовать данные из последнего документа или заполнить заново.
-                        </p>
-                        <div className="flex gap-2 mt-3">
-                          <Button size="sm" onClick={applyPrefill}>
-                            <History className="h-3.5 w-3.5 mr-1.5" />
-                            Использовать прошлые данные
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={startFresh}>
-                            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                            Заполнить заново
-                          </Button>
-                        </div>
+                        {prefillSource === null && (
+                          <>
+                            <p className="text-sm font-medium">Найден ранее созданный документ</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Вы можете использовать данные из последнего документа или заполнить заново.
+                            </p>
+                            <div className="flex gap-2 mt-3">
+                              <Button size="sm" onClick={applyPrefill}>
+                                <History className="h-3.5 w-3.5 mr-1.5" />
+                                Использовать прошлые данные
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={startFresh}>
+                                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                                Заполнить заново
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                        {prefillSource === "history" && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm">Данные из последнего документа</span>
+                            <Button size="sm" variant="ghost" onClick={startFresh}>
+                              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                              Заполнить заново
+                            </Button>
+                          </div>
+                        )}
+                        {prefillSource === "fresh" && (
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm">Заполнение вручную</span>
+                            <Button size="sm" variant="ghost" onClick={applyPrefill}>
+                              <History className="h-3.5 w-3.5 mr-1.5" />
+                              Вернуть прошлые данные
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              )}
-
-              {prefillSource === "history" && (
-                <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/10">
-                  <History className="h-3.5 w-3.5 text-primary shrink-0" />
-                  <span className="text-xs text-muted-foreground">Данные из последнего документа</span>
-                </div>
               )}
 
               {/* Entity picker */}

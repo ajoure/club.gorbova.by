@@ -20,6 +20,7 @@ import {
 import {
   User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power, Trash2,
 } from 'lucide-react';
+import { SHEET_SHELL_CLASS } from '@/lib/sheetShell';
 import { PersonFieldsForm } from './PersonFieldsForm';
 import { PersonLinkedEntitiesBlock } from './PersonLinkedEntitiesBlock';
 import { DuplicateWarningDialog } from './DuplicateWarningDialog';
@@ -276,7 +277,7 @@ export function PersonRecordSheet({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           data-address-shell="true"
-          className="w-full sm:max-w-[60vw] lg:max-w-3xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
+          className={SHEET_SHELL_CLASS}
           onPointerDownOutside={(e) => {
             const target = e.target as HTMLElement;
             if (target.closest('[role="listbox"]') || target.closest('[data-address-dropdown]')) {
