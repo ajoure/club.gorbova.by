@@ -28,7 +28,7 @@ import { Loader2, FileText, ChevronRight, ChevronLeft, Star } from "lucide-react
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  template: DocumentTemplate;
+  template: DocumentTemplate | null;
 }
 
 export function GenerateAiDocumentDialog({ open, onOpenChange, template }: Props) {

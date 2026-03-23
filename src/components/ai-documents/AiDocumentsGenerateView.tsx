@@ -104,13 +104,15 @@ export function AiDocumentsGenerateView() {
         )}
       </div>
 
-      {selectedTemplate && (
-        <GenerateAiDocumentDialog
-          open={wizardOpen}
-          onOpenChange={setWizardOpen}
-          template={selectedTemplate}
-        />
-      )}
+      <GenerateAiDocumentDialog
+        key={selectedTemplate?.id ?? "no-template"}
+        open={wizardOpen}
+        onOpenChange={(v) => {
+          setWizardOpen(v);
+          if (!v) setSelectedTemplate(null);
+        }}
+        template={selectedTemplate}
+      />
     </>
   );
 }
