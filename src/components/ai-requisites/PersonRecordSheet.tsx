@@ -20,6 +20,7 @@ import {
 import {
   User, Pencil, Loader2, MapPin, FileText, Phone, Info, Copy, X, Link2, Power, Trash2,
 } from 'lucide-react';
+import { SHEET_SHELL_CLASS } from '@/lib/sheetShell';
 import { PersonFieldsForm } from './PersonFieldsForm';
 import { PersonLinkedEntitiesBlock } from './PersonLinkedEntitiesBlock';
 import { DuplicateWarningDialog } from './DuplicateWarningDialog';
