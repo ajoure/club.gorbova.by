@@ -230,9 +230,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        className="w-full sm:max-w-[60vw] lg:max-w-5xl p-0 pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden"
-      >
+      <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Fixed Header */}
         <SheetHeader className="p-4 sm:p-6 pb-3 sm:pb-4 pr-14 sm:pr-16 flex-shrink-0">
           <div className="flex items-center gap-3">
