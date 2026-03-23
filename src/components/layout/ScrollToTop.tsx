@@ -55,15 +55,18 @@ if (typeof window !== "undefined") {
     } else if (document.visibilityState === "visible" && savedScrollOnHide > 0) {
       // Restore scroll position after tab return — use rAF to wait for any re-renders
       const target = savedScrollOnHide;
-      requestAnimationFrame(() => {
+      const tryRestore = () => {
         if (Math.abs(window.scrollY - target) > 50) {
           window.scrollTo(0, target);
         }
+      };
+      requestAnimationFrame(() => {
+        tryRestore();
         // Double-check after potential async re-renders
         requestAnimationFrame(() => {
-          if (Math.abs(window.scrollY - target) > 50) {
-            window.scrollTo(0, target);
-          }
+          tryRestore();
+          // 3rd fallback: catch late React async re-renders
+          setTimeout(tryRestore, 300);
         });
       });
     }

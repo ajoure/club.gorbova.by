@@ -68,6 +68,17 @@ export function useLessonProgressState(lessonId?: string) {
 
       if (error) throw error;
       
+      // On background refetch, skip setRecord if state_json is unchanged
+      // to avoid unnecessary re-renders that cause scroll jumps
+      if (hasLoadedOnceRef.current && data) {
+        const newJson = JSON.stringify(data.state_json || {});
+        const currentJson = JSON.stringify(record?.state_json || {});
+        if (newJson === currentJson) {
+          // Data unchanged — skip state update to prevent DOM rebuild
+          return;
+        }
+      }
+
       setRecord(data ? {
         ...data,
         state_json: (data.state_json || {}) as LessonProgressStateData

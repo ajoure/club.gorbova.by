@@ -489,6 +489,7 @@ export function KvestLessonView({
       
       case 'video_unskippable': {
         const stableKey = `${blockId}-${isCompleted ? 'completed' : 'active'}`;
+        // Video stays interactive even when completed — user can rewatch
         return (
           <div key={stableKey}>
             <LessonBlockRenderer 
@@ -507,8 +508,8 @@ export function KvestLessonView({
         if (isDiagnosticV2(block.content)) {
           // V2: rows come from state (prefill handled by useEffect above)
           return (
-            <div className={isReadOnly ? "opacity-80" : ""}>
-              <LessonBlockRenderer 
+            <div>
+              <LessonBlockRenderer
                 {...commonProps}
                 kvestProps={{
                   rows: pointAV2Rows,
@@ -524,7 +525,7 @@ export function KvestLessonView({
         }
         // V1
         return (
-          <div className={isReadOnly ? "opacity-80" : ""}>
+          <div>
             <LessonBlockRenderer 
               {...commonProps}
               kvestProps={{

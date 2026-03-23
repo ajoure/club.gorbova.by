@@ -240,9 +240,16 @@ export function DiagnosticTableBlock({
     };
   }, []);
   
+  // Guard: skip props sync while user is actively editing (prevents cursor reset)
+  const userEditingRef = useRef(false);
+
   // Initialize local rows from props OR create first empty row
   useEffect(() => {
     if (rows.length > 0) {
+      // After init, skip sync from props if user is editing (prevents cursor jump)
+      if (initDoneRef.current && userEditingRef.current) {
+        return;
+      }
       setLocalRows(rows);
       initDoneRef.current = true;
       return;
@@ -270,12 +277,14 @@ export function DiagnosticTableBlock({
     saveTimeoutRef.current = setTimeout(() => {
       try {
         onRowsChange?.(newRows);
+        userEditingRef.current = false; // Allow props sync again after commit
         if (!externalSaveStatus) {
           setLocalSaveStatus('saved');
           if (saveStatusTimeoutRef.current) clearTimeout(saveStatusTimeoutRef.current);
           saveStatusTimeoutRef.current = setTimeout(() => setLocalSaveStatus('idle'), 2000);
         }
       } catch {
+        userEditingRef.current = false;
         if (!externalSaveStatus) setLocalSaveStatus('error');
       }
     }, 300);
@@ -351,6 +360,7 @@ export function DiagnosticTableBlock({
 
   // Update local row with debounced commit
   const updateLocalRow = (index: number, colId: string, value: unknown) => {
+    userEditingRef.current = true;
     setLocalRows(prev => {
       const newRows = [...prev];
       newRows[index] = { ...newRows[index], [colId]: value };
