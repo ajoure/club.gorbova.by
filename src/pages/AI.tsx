@@ -616,25 +616,9 @@ const AI = () => {
           </>
         )}
 
-        {/* Document stubs */}
-        {(activeSubTab === "accountant" || activeSubTab === "manager" || activeSubTab === "audit" || activeSubTab === "templates") && (
-          <div className="flex flex-1 items-center justify-center min-h-[200px]">
-            <GlassCard className="max-w-md w-full text-center py-12">
-              <div className="mx-auto mb-4 p-4 rounded-2xl bg-muted/40 w-fit">
-                {activeSubTab === "accountant" && <Calculator className="h-8 w-8 text-emerald-500" />}
-                {activeSubTab === "manager" && <Briefcase className="h-8 w-8 text-rose-500" />}
-                {activeSubTab === "audit" && <ShieldCheck className="h-8 w-8 text-sky-500" />}
-                {activeSubTab === "templates" && <FileStack className="h-8 w-8 text-slate-500" />}
-              </div>
-              <h3 className="text-lg font-semibold mb-2">
-                {subTabs.find(t => t.id === activeSubTab)?.label}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Раздел в разработке. Скоро здесь появятся полезные документы и шаблоны.
-              </p>
-            </GlassCard>
-          </div>
-        )}
+        {/* Documents — generate + history */}
+        {activeSubTab === "generate" && <AiDocumentsGenerateView />}
+        {activeSubTab === "history" && <AiDocumentsHistoryView />}
 
         {/* Entities — table + sheet editor */}
         {activeSubTab === "entities" && (
