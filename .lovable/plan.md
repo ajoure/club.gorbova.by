@@ -1,119 +1,169 @@
 # да, согласен, с учетом правок:
 
-1. До начала PATCH 7 PROOF-2 сначала **формально закрыть PATCH 6**:
-  - ручной `probable duplicate`
-  - ручной `keyboard select`
-  - подтвердить cleanup тестовых person-records
-2. В подготовке для PATCH 7 использовать **временное второе физлицо**, созданное через UI, и в конце proof round обязательно:
-  - деактивировать его
-  - удалить/очистить все временные links
-  - вернуть систему в чистое состояние
-3. В сценариях 1–4 после каждого create фиксировать **не только скриншот UI, но и SQL-proof**:
-  - `role_type`
-  - `person_id`
-  - `legal_details_id`
-  - `share_percent` / `position_catalog_id` / `custom_position_text` / `custom_role_text`
-4. В сценарии 5 (duplicate) нужно проверить **именно UI-сообщение**:
-  - toast или form error должен быть человекочитаемым
-  - без сырого PostgreSQL текста
-5. В сценарии 6 (delete) добавить обязательный proof:
-  - удалена только запись из `legal_details_entity_person_links`
-  - person остался активным
-  - entity не изменена
-  - read-only блок в карточке физлица обновился
-6. В сценарии 7 (reassign) обязательно доказать **runtime invalidation**, а не только итог после перезагрузки:
-  - в карточке юрлица сразу новый человек
-  - у старого физлица связь исчезла
-  - у нового физлица связь появилась
-  - по возможности без hard refresh
-7. Бонус `inactive person edit` сделать не факультативным, а обязательным:
-  - это один из критичных кейсов PATCH 7
-  - picker должен показать текущего inactive person и не ломать edit flow
-8. В финальном отчёте отдельными блоками показать:
-  - `PATCH 7 PROOF-2`
-  - `SQL verification`
-  - `Cleanup выполнен`
-  - `Не затронуто`:
-    - `/settings/legal-details`
-    - documents / generate-from-template
-    - billing/payment flow
-    - PATCH 6 persons module
-    - entity shell/edit flow
-9. Если browser automation упрётся в `PersonPicker`, это надо явно фиксировать как ограничение инструмента, но сначала сделать максимум через runtime UI, а не уходить сразу в SQL-only proof.
-10. &nbsp;
-11. PATCH 7 PROOF-2 — Runtime UI Verification Plan
+1. **Hard delete** принимать только как справочниковое удаление.  
+В proof обязательно отдельно показать, что delete затрагивает только:
+  - `legal_details_persons` / `client_legal_details`
+  - `legal_details_entity_person_links`  
+  и **не затрагивает** таблицы документов / historical outputs / snapshots.
+2. Для `deletePerson` и `deleteEntity` после успешного удаления обязательно:
+  - закрыть открытый sheet, если удаляется текущая открытая запись
+  - очистить selected id / target state в `AI.tsx`
+  - обновить список без ручного refresh
+3. Для `deletePerson` invalidation расширить:
+  - `['ai-persons']`
+  - `['entity-person-links', ...]` по открытому entity, если релевантно
+  - `['person-linked-entities', personId]`
+  - при необходимости entity card/query, если удаление произошло из открытого связанного контекста
+4. Для `deleteEntity` invalidation расширить:
+  - `['ai-entities']`
+  - `['entity-person-links', entityId]`
+  - `['person-linked-entities', personId]` для связанных лиц, если links удаляются каскадно  
+  То есть после delete document-entity read-only блоки у физлиц тоже должны обновиться.
+5. В `EntityRecordSheet` кнопку **«удалить навсегда»** показывать:
+  - только для `purpose='document'`
+  - только в **view mode**
+  - для billing entity явно не показывать вообще
+6. В `EntityTableView.tsx` и `PersonsTableView.tsx` не вводить новый context menu, если его там сейчас нет.  
+Лучше:
+  - либо row action button/menu в уже существующем стиле
+  - либо оставить удаление только из карточки записи  
+  Не раздувать UI лишним новым паттерном без необходимости.
+7. Для **reassign link** добавить ещё один guard:
+  - если `editingLink` и person не менялся, confirm не показывать
+  - если person поменялся, confirm показывать один раз перед submit
+  - текущий inactive person в edit path должен оставаться видимым в picker
+8. По **positions UX** согласен:  
+searchable dropdown + `custom_position_text` оставить как есть, **без автосохранения в каталог**.
+9. В proof по PATCH 7.1/7.2 обязательно показать отдельно:
+  - reassign link в UI
+  - delete person
+  - delete entity(document)
+  - billing protected
+  - documents/history not touched
+  - cleanup выполнен
+10. Процессно: в финальном отчёте всё ещё держать разделение:
 
-## Цель
+- `PATCH 7.1/7.2 proof`
+- `Cleanup выполнен`
+- `Не затронуто`
+- и отметить, что PATCH 7 остаётся связан с формальным закрытием PATCH 6.
+- &nbsp;
+- PATCH 7.1/7.2 — Delete + Reassign + Positions UX
 
-Провести browser-based runtime proof по 7 обязательным UI-сценариям в карточке юрлица/ИП на странице `/ai`.
+## Scope
 
-## Предварительные условия
+Три направления в одном патче:
 
-- Пользователь должен быть авторизован в preview
-- Нужно минимум 2 активных физлица. Сейчас есть 1 (Федорчук). Нужно создать второе через persons tab перед началом proof round, а после — деактивировать.
+1. **Hard delete** для физлиц и document-entity (с guard-проверками)
+2. **Reassign link** — разблокировка PersonPicker в edit mode
+3. **Positions UX** — без авто-сохранения в каталог, только searchable dropdown + custom text (уже работает)
 
-## Сценарии (7 штук)
+---
 
-### 1. Founder в UI
+## 1. Hard Delete
 
-- Открыть карточку АЖУР инкам → view → секция «Связанные лица» → «Добавить»
-- Выбрать физлицо → роль «Учредитель» → доля 50 → Save
-- Screenshot: badge «Учредитель» + «50%» в списке
+### 1a. Физлица — `useAiPersons.ts`
 
-### 2. Position через catalog в UI
+Добавить mutation `deletePerson`:
 
-- «Добавить» → физлицо → роль «Должностное лицо» → выбрать «Директор» из справочника → Save
-- Screenshot: badge «Должностное лицо» + «Директор»
+- Сначала `DELETE FROM legal_details_entity_person_links WHERE person_id = ?`
+- Затем `DELETE FROM legal_details_persons WHERE id = ?`
+- Invalidate: `ai-persons`, `entity-person-links`
+- Toast: «Физлицо удалено навсегда»
 
-### 3. Position через custom text в UI
+### 1b. Entity (document) — `useAiEntities.ts`
 
-- «Добавить» → роль «Должностное лицо» → не выбирать из справочника → ввести «Финансовый аналитик» → Save
-- Screenshot: badge + custom текст
+Добавить mutation `deleteEntity`:
 
-### 4. Other в UI
+- Guard: `purpose !== 'document'` → throw «Можно удалить только документные реквизиты»
+- Сначала `DELETE FROM legal_details_entity_person_links WHERE legal_details_id = ?`
+- Затем `DELETE FROM client_legal_details WHERE id = ? AND purpose = 'document'`
+- Invalidate: `ai-entities`, `entity-person-links`
+- Toast: «Реквизиты удалены навсегда»
+- billing записи → только archive/edit, delete заблокирован
 
-- «Добавить» → роль «Другое» → ввести «Доверенное лицо» → Save
-- Screenshot: badge «Другое» + «Доверенное лицо»
+### 1c. UI — `PersonRecordSheet.tsx`
 
-### 5. Duplicate в UI
+В view mode добавить badge «удалить навсегда» (красный, с иконкой Trash2) рядом с «деактивировать»:
 
-- Повторить создание одной из уже существующих связей
-- Screenshot: toast с человекочитаемой ошибкой «Такая связь уже существует»
+- AlertDialog с предупреждением: «Запись будет удалена навсегда вместе со всеми связями. Уже созданные документы не изменятся.»
+- Кнопка «Удалить навсегда»
 
-### 6. Delete в UI
+### 1d. UI — `EntityRecordSheet.tsx`
 
-- Удалить одну связь → confirm → toast «Связь удалена»
-- Screenshot: связь исчезла из списка
-- SQL verify: person активен, entity не изменена
+В view mode для document-purpose записей добавить badge «удалить навсегда» рядом с «в архив»:
 
-### 7. Reassign в UI
+- AlertDialog с аналогичным предупреждением
+- Для billing записей badge не показывается (только archive)
 
-- Edit существующую связь → сменить person → Save
-- Screenshot карточки юрлица: новый человек
-- Проверить карточку старого физлица: связь исчезла
-- Проверить карточку нового физлица: связь появилась
+### 1e. UI — `EntityTableView.tsx`
 
-### Бонус: Inactive person edit
+В контекстном меню строки добавить пункт «Удалить навсегда» для document-purpose записей.
 
-- Деактивировать второе физлицо
-- Открыть edit связи с ним
-- Screenshot: picker показывает inactive person, форма не ломается
+### 1f. UI — `PersonsTableView.tsx`
 
-## Ограничения browser automation
+Проверить, есть ли контекстное действие — если да, добавить «Удалить навсегда».
 
-PersonPicker — это custom combobox (Popover + Input), не стандартный select. Может потребовать специфическую навигацию через automation. Если combobox не поддастся — зафиксировать для ручной проверки.
+---
 
-## Порядок выполнения
+## 2. Reassign Link
 
-1. Подготовка: создать второе физлицо
-2. Сценарии 1–4 (create links разных типов)
-3. Сценарий 5 (duplicate)
-4. Сценарий 7 (reassign) — пока есть несколько links
-5. Сценарий 6 (delete)
-6. Бонус (inactive person edit)
-7. Cleanup: деактивировать/удалить временные данные
-8. Финальный отчёт с screenshots и SQL
+### 2a. `EntityPersonLinkForm.tsx` (строка 145)
 
-## Не меняем код
+Убрать `disabled={!!editingLink}` с PersonPicker. Picker всегда активен.
 
-Никаких правок файлов. Только browser testing + SQL verification.
+### 2b. Confirm при смене person
+
+В `handleSubmit` (строка 99): если `editingLink` и `personId !== editingLink.person_id`:
+
+- Показать confirm dialog: «Вы хотите перевесить связь с «{старое ФИО}» на «{новое ФИО}»?»
+- Только после подтверждения отправлять update
+
+### 2c. Invalidation (уже готово)
+
+FIX-1 уже реализовал dual invalidation в `useEntityPersonLinks.ts` для old/new person_id.
+
+---
+
+## 3. Positions UX
+
+Текущая реализация уже соответствует требованиям:
+
+- Searchable dropdown из справочника `legal_details_positions_catalog`
+- Custom text через `custom_position_text` если справочник не выбран
+- Авто-сохранение в каталог **не делаем** — используется `custom_position_text`
+
+Без изменений.
+
+---
+
+## Файлы для изменения
+
+
+| Файл                                                    | Что меняется                                                          |
+| ------------------------------------------------------- | --------------------------------------------------------------------- |
+| `src/hooks/useAiPersons.ts`                             | Добавить `deletePerson` mutation                                      |
+| `src/hooks/useAiEntities.ts`                            | Добавить `deleteEntity` mutation (guard: document only)               |
+| `src/components/ai-requisites/PersonRecordSheet.tsx`    | Badge «удалить навсегда» + AlertDialog                                |
+| `src/components/ai-requisites/EntityRecordSheet.tsx`    | Badge «удалить навсегда» для document + AlertDialog + prop `onDelete` |
+| `src/components/ai-requisites/EntityTableView.tsx`      | Пункт «Удалить» в контексте для document                              |
+| `src/components/ai-requisites/EntityPersonLinkForm.tsx` | Убрать `disabled` с PersonPicker + confirm при смене person           |
+| `src/pages/AI.tsx`                                      | Прокинуть `onDelete` / `deletePerson` / `deleteEntity`                |
+
+
+## Что НЕ трогаем
+
+- `/settings/legal-details` — без изменений
+- documents / generate-from-template — без изменений
+- billing/payment flow — без изменений (billing entity защищена от delete)
+- PATCH 6 persons module — без изменений
+- edge functions / webhooks — без изменений
+- Уже созданные документы и snapshots — не затрагиваются
+
+## Принцип удаления
+
+Справочниковое, не историческое:
+
+- Удаление записи из реквизитов не ломает уже созданные документы
+- Если документы хранят snapshot данных — он остаётся как есть
+- Guard-проверки выполняются до delete (сначала links, потом сама запись)
