@@ -401,6 +401,7 @@ export function PersonRecordSheet({
         </AlertDialogContent>
       </AlertDialog>
 
+      {showDuplicateDialog && duplicateCheck.candidates.length > 0 && (
         <DuplicateWarningDialog
           open={showDuplicateDialog}
           onOpenChange={setShowDuplicateDialog}
