@@ -78,7 +78,38 @@
 - [x] Loop syntax для DOCX зафиксирован
 - [x] Package tokens доступны для будущего tokenContext="documents:annual_meeting"
 
-### PATCH 2.3 — Context-based token source adapter: НЕ НАЧАТ
+### PATCH 2.3 — Context-based token source adapter: ВЫПОЛНЕН
+
+**Что сделано:**
+
+**A. TokenContext type + getTokenGroupsForContext() в tokenRegistry.ts:**
+- `TokenContext = "messages" | "documents" | "documents:annual_meeting"`
+- `loadTokensForContext(context)` — загружает все нужные кэши параллельно (Promise.all)
+- `getTokenGroupsForContext(context)` — возвращает группы из кэшей по контексту
+- "messages" → Product
+- "documents" → + LegalDetails, Entity, Person, EntityPerson, Meeting, Document
+- "documents:annual_meeting" → + Package roles, Package arrays, Agenda, Decisions
+
+**B. TokenizedRichInput обновлён:**
+- Новый prop `tokenContext?: TokenContext` — финальный standard для всех новых интеграций
+- При `tokenContext` — useQuery загружает `loadTokensForContext()` и рендерит `contextGroups`
+- При отсутствии `tokenContext` — legacy path (только productFields)
+- `extraTokenGroups` помечен `@deprecated` в JSDoc, оставлен для backward compat
+- Existing Telegram/email editors не затронуты (не передают tokenContext)
+
+**C. Picker rendering:**
+- Contact + DateTime — всегда показываются (static)
+- Context groups — рендерятся только при tokenContext
+- Product (legacy) — рендерится только БЕЗ tokenContext
+- extraTokenGroups — рендерится всегда (backward compat)
+
+**DoD:**
+- [x] tokenContext — финальный standard
+- [x] extraTokenGroups deprecated, не используется в новых интеграциях
+- [x] Contexts зафиксированы: messages, documents, documents:annual_meeting
+- [x] Package/agenda/decision группы доступны через tokenContext="documents:annual_meeting"
+- [x] Existing Telegram/email flows не изменились
+- [x] Новый picker component не создан
 
 ### PATCH 2.1 — End-to-end proof: НЕ НАЧАТ
 

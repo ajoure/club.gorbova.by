@@ -37,7 +37,10 @@ import {
   setProductFieldsCache,
   tokenStringToLabel,
   extractShortUuid,
+  loadTokensForContext,
+  getTokenGroupsForContext,
   type TokenDef,
+  type TokenContext,
 } from "@/lib/tokens/tokenRegistry";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
@@ -302,8 +305,18 @@ interface TokenizedRichInputProps {
   className?: string;
   /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
   allowAlign?: boolean;
-  /** Additional token groups to show in picker (e.g. for document editors).
-   *  Existing groups (Contact, DateTime, Product) are always shown. */
+  /**
+   * Token context — determines which token groups are shown in the picker.
+   * Use this for all new integrations. Supported values:
+   * - "messages" — Contact + DateTime + Product (default)
+   * - "documents" — messages + Legal Details + Entity + Person + Meeting + Document
+   * - "documents:annual_meeting" — documents + Package roles + Arrays + Agenda + Decisions
+   */
+  tokenContext?: TokenContext;
+  /**
+   * @deprecated Use tokenContext instead. Kept only for backward compatibility.
+   * Additional token groups to show in picker.
+   */
   extraTokenGroups?: Array<{
     heading: string;
     tokens: import("@/lib/tokens/tokenRegistry").TokenDef[];
@@ -319,6 +332,7 @@ export function TokenizedRichInput({
   disabled = false,
   className,
   allowAlign = false,
+  tokenContext,
   extraTokenGroups,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -339,17 +353,31 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
-  // Load product fields for registry
+  // Load token groups based on context (or just product fields for legacy)
+  const effectiveContext = tokenContext ?? "messages";
+  const { data: contextGroups = [] } = useQuery({
+    queryKey: ["token-context-groups", effectiveContext],
+    queryFn: async () => {
+      await loadTokensForContext(effectiveContext);
+      return getTokenGroupsForContext(effectiveContext);
+    },
+    staleTime: 60_000,
+  });
+
+  // For backward compat: also load product fields when no tokenContext (legacy path)
   const { data: productFields = [] } = useQuery({
     queryKey: ["token-registry-product-fields"],
     queryFn: loadProductFields,
     staleTime: 60_000,
+    enabled: !tokenContext,
   });
 
-  // Update cache when product fields load
+  // Update cache when product fields load (legacy path)
   useEffect(() => {
-    setProductFieldsCache(productFields);
-  }, [productFields]);
+    if (!tokenContext) {
+      setProductFieldsCache(productFields);
+    }
+  }, [productFields, tokenContext]);
 
   // Build extensions list
   const extensions = useMemo(() => {
@@ -837,7 +865,22 @@ export function TokenizedRichInput({
                   </CommandItem>
                 ))}
               </CommandGroup>
-              {productFields.length > 0 && (
+              {/* Context-based groups (when tokenContext is provided) */}
+              {tokenContext && contextGroups.map((group) => (
+                group.tokens.length > 0 && (
+                  <CommandGroup heading={group.heading} key={group.heading}>
+                    {group.tokens.map((t) => (
+                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                        onSelect={() => handleTokenSelect(t)}>
+                        <span className="flex-1 truncate">{t.label}</span>
+                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )
+              ))}
+              {/* Legacy: product fields (when no tokenContext) */}
+              {!tokenContext && productFields.length > 0 && (
                 <CommandGroup heading="Продукт">
                   {productFields.map((t) => (
                     <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
@@ -848,6 +891,7 @@ export function TokenizedRichInput({
                   ))}
                 </CommandGroup>
               )}
+              {/* @deprecated: extraTokenGroups for backward compat only */}
               {extraTokenGroups?.map((group) => (
                 group.tokens.length > 0 && (
                   <CommandGroup heading={group.heading} key={group.heading}>
