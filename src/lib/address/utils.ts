@@ -79,6 +79,7 @@ export function isAddressEmpty(addr: StructuredAddress): boolean {
     !addr.region &&
     !addr.district &&
     !addr.city &&
+    !addr.city_district &&
     !addr.settlement &&
     !addr.street &&
     !addr.house &&

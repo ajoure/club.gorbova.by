@@ -8,14 +8,8 @@
  *
  * Three-tier matching:
  * 1. Exact: personal_number (trimmed)
- * 2. Exact: passport_series + passport_number (both trimmed)
+ * 2. Exact: passport_number_full (trimmed, unified field)
  * 3. Probable: normalized full_name (case-insensitive, trimmed) + exact birth_date
- *
- * Normalization rules:
- * - full_name: trim, collapse whitespace, case-insensitive via ilike
- * - personal_number: trim
- * - passport_series/number: trim
- * - birth_date: exact match (ISO format)
  */
 
 import { useCallback, useState } from 'react';
@@ -29,8 +23,7 @@ export interface PersonMatchCandidate {
   full_name: string | null;
   birth_date: string | null;
   personal_number: string | null;
-  passport_series: string | null;
-  passport_number: string | null;
+  passport_number_full: string | null;
   is_active: boolean;
   created_at: string;
 }
@@ -45,8 +38,7 @@ export interface PersonDuplicateResult {
 
 export interface PersonCheckInput {
   personal_number?: string | null;
-  passport_series?: string | null;
-  passport_number?: string | null;
+  passport_number_full?: string | null;
   full_name?: string | null;
   birth_date?: string | null;
 }
@@ -59,7 +51,7 @@ const INITIAL_STATE: PersonDuplicateResult = {
   error: null,
 };
 
-const SELECT_FIELDS = 'id, profile_id, full_name, birth_date, personal_number, passport_series, passport_number, is_active, created_at';
+const SELECT_FIELDS = 'id, profile_id, full_name, birth_date, personal_number, passport_number_full, is_active, created_at';
 
 /** Normalize name: trim + collapse multiple spaces */
 function normalizeName(name: string): string {
@@ -107,14 +99,13 @@ export function usePersonDuplicateCheck() {
         }
       }
 
-      // Tier 2: Exact match by passport_series + passport_number
-      if (input.passport_series?.trim() && input.passport_number?.trim()) {
+      // Tier 2: Exact match by passport_number_full (unified field)
+      if (input.passport_number_full?.trim()) {
         const query = supabase
           .from('legal_details_persons')
           .select(SELECT_FIELDS)
           .eq('profile_id', profileId)
-          .eq('passport_series', input.passport_series.trim())
-          .eq('passport_number', input.passport_number.trim());
+          .eq('passport_number_full', input.passport_number_full.trim());
 
         if (excludePersonId) {
           query.neq('id', excludePersonId);
@@ -138,7 +129,7 @@ export function usePersonDuplicateCheck() {
         }
       }
 
-      // Tier 3: Probable match — query by birth_date, normalize full_name in code (Variant A)
+      // Tier 3: Probable match — query by birth_date, normalize full_name in code
       if (input.full_name?.trim() && input.birth_date?.trim()) {
         const normalizedInputName = normalizeName(input.full_name).toLowerCase();
 
