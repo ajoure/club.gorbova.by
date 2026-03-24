@@ -150,31 +150,6 @@ export function buildContactUrl(params: BuildContactUrlParams): string | null {
   return `${baseUrl}/admin/contacts?search=${encodeURIComponent(email)}`;
 }
 
-/**
- * Format compact ID for Telegram display.
- * 
- * Strips known prefixes (sbs_, trn_, uid_) and shows:
- * {PREFIX} {first6}…{last4}
- * 
- * If value is short (≤12 chars after prefix strip) — show it fully.
- * 
- * Examples:
- *   formatCompactId('sbs_5fa286120bb17a89', 'SBS') → 'SBS 5fa286…7a89'
- *   formatCompactId('trn_18b56b8f50b44240', 'PAY') → 'PAY 18b56b…4240'
- *   formatCompactId('12345', 'PAY') → 'PAY 12345'
- */
-export function formatCompactId(value: string, prefix: 'SBS' | 'PAY'): string {
-  // Strip known raw prefixes to avoid ugly hybrid like "PAY trn_18b5…4240"
-  const stripped = value.replace(/^(sbs_|trn_|uid_)/i, '');
-  
-  if (stripped.length <= 12) {
-    return `${prefix} ${stripped}`;
-  }
-  
-  const first6 = stripped.substring(0, 6);
-  const last4 = stripped.substring(stripped.length - 4);
-  return `${prefix} ${first6}…${last4}`;
-}
 
 // =====================================================================
 // Main builder
