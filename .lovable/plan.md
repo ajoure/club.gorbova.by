@@ -1,121 +1,151 @@
-# План: Унификация Telegram-уведомлений об оплатах (v2 — ВЫПОЛНЕНО)
+# да, согласен, с учетом правок:
 
-## Статус: ✅ Выполнено
+&nbsp;
 
----
+1. В разделе Raw helper proof обязательно показывать helper-фрагменты в fenced code block и дополнительно дублировать рядом короткой строкой-подтверждением, что это именно raw-фрагмент из файла с указанием файла и диапазона строк. Без диапазона строк proof не считается.
+2. В разделе Raw call-site proof для 3 обязательных точек нужно показывать не обрывок, а непрерывный фрагмент, где одновременно видны:  
 
-## Что сделано
+  - buildContactUrl(...)
+  - buildAdminNotifyMessage(...)
+  - вызов telegram-notify-admins
+  - parse_mode или отсутствие parse_mode в этом вызове  
+  Иначе не получится доказать связь helper → реальный боевой вызов.
+3. &nbsp;
+4. В матрице 11/11 добавь ещё колонку proof_ref, где для каждой точки будет ссылка вида: helper raw / call-site raw / default parse_mode raw. Это уберёт спорные места по тому, чем именно подтверждена строка матрицы.
+5. В разделе 3 raw HTML dry-run examples нужно показывать именно итоговую строку, которую вернёт builder, а не объект параметров. Внутри примера должны быть видны raw <a ...> и raw <code>...</code>. Если в примере хотя бы один из этих тегов пропал, пример не засчитывается.
+6. В разделе STOP-guard зафиксируй ещё одно правило: если хотя бы по одной из 11 точек нет raw call-site proof, то статус всей матрицы автоматически not accepted, даже если helper сам по себе корректен.
+7. В финальном разделе Mismatch / Exceptions указывать не только none или список проблем, но и число закрытых точек в формате:  
 
-### Шаг 1: Создан shared helper
-**Файл**: `supabase/functions/_shared/admin-notify-message.ts`
+  - 11/11 closed
+  - либо 10/11 closed, 1 open
+8. &nbsp;
+9. Финальный вывод accepted / not accepted должен ставиться только после матрицы и блока Mismatch / Exceptions, не раньше и без промежуточных формулировок.
+  План: пересборка acceptance report в доказуемом raw-виде
 
-Содержит:
-- `buildAdminNotifyMessage(params)` — единый builder (только форматирование, не знает про домен/роутинг)
-- `buildContactUrl(params)` — построение URL с guards (пустой base/email → null) и нормализацией trailing slash
-- `escapeHtml()`, `maskEmail()`, `formatMoney()`, `formatDate()`, `buildClientLine()`
-- Единый mapping `operation_type → icon + title` (8 типов)
-- Правило маскирования email: 2 символа local + `***` + домен; для коротких (<2) — 1 символ + `***`
+## Цель
 
-### Шаг 2: Обновлены все 11 notification points
+Не выпускать ещё один “общий” отчёт. Вместо этого собрать acceptance report только из raw-доказательств, чтобы HTML-теги не терялись рендером чата и не было внутренних противоречий.
 
-| # | Файл | operation_type | parse_mode | contact_url source |
-|---|------|---------------|------------|-------------------|
-| 1 | bepaid-webhook ~1628 | `bepaid_subscription_payment` | HTML | APP_URL/SITE_URL + email |
-| 2 | bepaid-webhook ~2535 | `link_payment` | HTML | APP_URL/SITE_URL + email |
-| 3 | bepaid-webhook ~3149 | `link_payment` | HTML | APP_URL/SITE_URL + email |
-| 4 | bepaid-webhook ~4181 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
-| 5 | bepaid-webhook ~5365 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
-| 6 | bepaid-auto-process ~889 | `auto_payment` | HTML | APP_URL/SITE_URL + email |
-| 7 | payments-reconcile ~583 | `reconciled_payment` | HTML | APP_URL/SITE_URL + email |
-| 8 | subscription-charge ~1662 | `subscription_renewal` | HTML | APP_URL/SITE_URL + email |
-| 9 | admin-manual-charge ~448 | `manual_charge` | HTML | APP_URL/SITE_URL + email |
-| 10 | direct-charge ~639 | `trial` | HTML | APP_URL/SITE_URL + email |
-| 11 | direct-charge ~1120 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
+## Что уже подтверждено по коду
 
-### Шаг 3: Деплой
-Все 6 функций задеплоены: `bepaid-webhook`, `bepaid-auto-process`, `payments-reconcile`, `subscription-charge`, `admin-manual-charge`, `direct-charge`.
+По реальным файлам сейчас видно:
 
----
+- в helper есть raw HTML-ссылка: `return \`[\${safeName}](\${escapeHtml(contactUrl)});`
+- `order_number` и `bepaid_subscription_id` оборачиваются в `<code>...</code>`
+- `escapeHtml()` содержит замены `&`, `<`, `>`, `"`
+- в `bepaid-webhook`, `subscription-charge`, `admin-manual-charge` helper реально используется
+- default `parse_mode = 'HTML'` есть в `telegram-notify-admins`
+- часть вызовов передаёт `parse_mode: 'HTML'` явно
 
-## Dry-run sample outputs (проверены)
+Но это нужно оформить в acceptance-отчёт так, чтобы доказательства были неоспоримыми.
 
-### Сценарий 1: Обычная оплата
-```
-💰 Оплата
+## Как будет пересобран отчёт
 
-👤 Клиент: <a href="...">Иванов Иван Петрович</a>
-📧 Email: iv***@gmail.com
-💬 Telegram: @ivanpetrov
+### 1) Raw-proof helper
 
-📦 Продукт: Клуб Горбовой
-📋 Тариф: Стандарт (месяц)
-💵 Сумма: 29.00 BYN
-🆔 Заказ: <code>ORD-20260324-001</code>
-📎 Источник: Webhook bePaid
-```
+Показать отдельными code block без пересказа:
 
-### Сценарий 2: Продление подписки
-```
-🔁 Продление подписки
+- `escapeHtml()`
+- `buildClientLine()`
+- `if (order_number)`
+- `if (bepaid_subscription_id)`
 
-👤 Клиент: <a href="...">Петрова Мария</a>
-📧 Email: m***@ya.ru
-💬 Telegram: @mashap
+Формат: только raw-код, без “объяснения своими словами” внутри блока.
 
-📦 Продукт: не указан
-📋 Тариф: Премиум (год)
-💵 Сумма: 290.00 BYN
-🆔 Заказ: <code>sub_abc123</code>
-📎 Источник: Автосписание
-```
+### 2) Raw-proof call sites
 
-### Сценарий 3: Оплата по ссылке
-```
-💳 Оплата по ссылке
+Показать минимум 3 реальных raw-вызова:
 
-👤 Клиент: <a href="...">Сидорова Анна</a>
-📧 Email: an***@mail.ru
+- `bepaid-webhook`
+- `subscription-charge`
+- `admin-manual-charge`
 
-📦 Продукт: не указан
-💵 Сумма: 49.50 BYN
-🆔 Заказ: <code>ORD-20260324-007</code>
-📎 bePaid sub: <code>sbs_12345678</code>
-📎 Источник: Оплата по ссылке
-```
+В каждом raw-фрагменте должны быть одновременно видны:
 
----
+- `buildContactUrl(...)`
+- `buildAdminNotifyMessage({...})`
+- вызов `telegram-notify-admins`
+- источник `parse_mode` (явный либо через default)
 
-## DoD
+### 3) Матрица 11/11 на acceptance-уровне
 
-1. ✅ Все 11 payment-уведомлений используют `buildAdminNotifyMessage`
-2. ✅ Ссылка на клиента кликабельна и ведёт на страницу контактов приложения; в текущей версии используется маршрут поиска по email. Открытие во внешнем браузере зависит от Telegram/OS
-3. ✅ Email замаскирован по единому правилу (2 символа + `***` + домен; для коротких — 1 символ)
-4. ✅ Телефон убран из всех уведомлений
-5. ✅ Продукт: "не указан" как fallback; тариф: строка скрыта если нет значения
-6. ✅ order_number и bepaid_subscription_id обёрнуты в `<code>` после `escapeHtml()`
-7. ✅ Пустые строки отсутствуют
-8. ✅ `parse_mode = HTML` во всех вызовах без исключений
-9. ✅ `admin_label` только для `manual_charge` (передаётся только из admin-manual-charge)
-10. ✅ Бизнес-логика не изменена
-11. ✅ Домен из env (APP_URL / SITE_URL), не захардкожен. Если отсутствует → имя текстом без ссылки
-12. ✅ 3 dry-run sample outputs сохранены и сверены с ожидаемым форматом до деплоя
+Собрать таблицу по всем payment-related точкам со столбцами:
 
----
+- файл
+- место вызова
+- helper used
+- contact_url source
+- client_link (`raw link` / `text fallback`)
+- parse_mode source (`explicit HTML` / `default HTML`)
+- id_wrapped_in_code
+- status
 
-## Scope exclusion (НЕ входит в этот патч)
+Отдельно пометить:
 
-- Nightly/system health alerts
-- Reconcile summary reports (строка ~787 в payments-reconcile)
-- Технические cron alerts
-- Support/inbox notifications
-- Системные алерты в bepaid-webhook (ошибки/auto-fix, не оплаты)
-- Тестовые функции
+- где `contact_url` строится через `buildContactUrl(...)`
+- где `parse_mode` берётся явно
+- где он берётся из default в `telegram-notify-admins`
 
----
+### 4) Dry-run proof только как raw HTML string
 
-## Future patch (отдельный)
+Показать 3 примера строго в code block как итоговые raw-строки:
 
-- Добавить direct admin contact route `/admin/contacts/{profile_id}`
-- Открытие `ContactDetailSheet` по deep-link (карточка контакта без ручного поиска)
-- Переключить `buildContactUrl` на `mode: 'direct'` (без переделки уведомлений)
-- Исследование universal mobile open behavior outside Telegram WebView
+1. обычная оплата
+2. продление подписки
+3. оплата по ссылке
+
+В каждом примере должны явно присутствовать:
+
+- `<a href="...">`
+- `<code>...</code>`
+- masked email
+- отсутствие пустых строк между условными полями
+
+### 5) Правило для parse_mode
+
+Для каждой из 11 точек в матрице будет указан один из двух доказуемых вариантов:
+
+- `parse_mode: 'HTML'` передан явно
+- `parse_mode` не передан, но есть raw-proof default: `const { message, parse_mode = 'HTML', ... }`
+
+### 6) STOP-guard
+
+Если при перепроверке обнаружится хотя бы одна точка:
+
+- без helper
+- без `<code>`
+- без ссылки / корректного text fallback
+- без доказуемого HTML parse mode
+
+тогда acceptance report не выпускается как final.
+Вместо него будет отдельный mini-fix plan по конкретной незакрытой точке, а уже потом — новый полный acceptance report.
+
+## Что не входит
+
+В acceptance-матрицу не включаются:
+
+- error/debug/system alerts
+- summary/report notifications
+- тестовые функции
+
+Показываются только 11 payment-related уведомлений.
+
+## Итоговый формат сдачи
+
+Финальный acceptance report будет содержать разделы в таком порядке:
+
+1. Raw helper proof
+2. Raw call-site proof (3 места)
+3. Raw default parse_mode proof
+4. Матрица 11/11
+5. 3 raw HTML dry-run examples
+6. `Mismatch / Exceptions: none` либо точный список незакрытых точек
+7. Итог только одним словом:
+
+- `accepted`
+или
+- `not accepted`
+
+## Ожидаемый результат
+
+Следующий отчёт будет не “описанием”, а доказательной приёмкой по исходникам. Это снимет текущую причину отказа: отсутствие raw-пруфов в форме, устойчивой к рендеру чата.
