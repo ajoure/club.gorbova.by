@@ -21,6 +21,7 @@ export function emptyAddress(): StructuredAddress {
     region: '',
     district: '',
     city: '',
+    city_district: '',
     settlement: '',
     street: '',
     house: '',

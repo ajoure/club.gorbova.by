@@ -31,6 +31,7 @@ export class AddressNormalizationService {
       region: addr.region || null,
       district: addr.district || null,
       city: addr.city || null,
+      city_district: addr.city_district || null,
       settlement: addr.settlement || null,
       street: addr.street || null,
       house: addr.house || null,
@@ -82,6 +83,7 @@ export class AddressNormalizationService {
       region: payload.region || '',
       district: payload.district || '',
       city: payload.city || '',
+      city_district: payload.city_district || '',
       settlement: payload.settlement || '',
       street: payload.street || '',
       house: payload.house || '',
@@ -106,6 +108,7 @@ export class AddressNormalizationService {
       !payload.region &&
       !payload.district &&
       !payload.city &&
+      !payload.city_district &&
       !payload.settlement &&
       !payload.street &&
       !payload.house &&

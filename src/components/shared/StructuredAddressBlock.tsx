@@ -43,6 +43,7 @@ const FULL_LAYOUT: FieldConfig[] = [
   { key: 'apartment', label: 'Помещение', placeholder: '' },
   { key: 'postal_code', label: 'Индекс', placeholder: '220000' },
   { key: 'city', label: 'Город', placeholder: 'Минск', colSpan: 'col-span-2' },
+  { key: 'city_district', label: 'Район города', placeholder: 'Фрунзенский' },
   { key: 'settlement', label: 'Населённый пункт', placeholder: '' },
   { key: 'district', label: 'Район', placeholder: '' },
   { key: 'region', label: 'Область / Регион', placeholder: '', colSpan: 'col-span-2' },
