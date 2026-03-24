@@ -234,7 +234,7 @@ export function calculatePackageManifest(
         : 'Обязательный документ годового собрания',
       legal_basis: legalBasis,
       category: tpl.category,
-      required_data: [],
+      required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
     });
   }
