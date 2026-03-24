@@ -1704,6 +1704,111 @@ export type Database = {
         }
         Relationships: []
       }
+      corporate_draft_sessions: {
+        Row: {
+          blocking_errors: Json | null
+          charter_confirmed_at: string | null
+          charter_confirmed_by: string | null
+          charter_extraction_status: string | null
+          charter_file_path: string | null
+          charter_raw_text: string | null
+          charter_source_type: string | null
+          confirmed_charter_rules: Json | null
+          corporate_params: Json | null
+          created_at: string | null
+          created_by: string | null
+          extracted_charter_rules: Json | null
+          id: string
+          legal_details_id: string | null
+          metadata: Json | null
+          non_blocking_warnings: Json | null
+          package_manifest: Json | null
+          procedure_mode: string
+          procedure_mode_override_reason: string | null
+          profile_id: string
+          public_id: string | null
+          report_year: number
+          rules_basis: string | null
+          status: string
+          updated_at: string | null
+          updated_by: string | null
+          warnings: Json | null
+        }
+        Insert: {
+          blocking_errors?: Json | null
+          charter_confirmed_at?: string | null
+          charter_confirmed_by?: string | null
+          charter_extraction_status?: string | null
+          charter_file_path?: string | null
+          charter_raw_text?: string | null
+          charter_source_type?: string | null
+          confirmed_charter_rules?: Json | null
+          corporate_params?: Json | null
+          created_at?: string | null
+          created_by?: string | null
+          extracted_charter_rules?: Json | null
+          id?: string
+          legal_details_id?: string | null
+          metadata?: Json | null
+          non_blocking_warnings?: Json | null
+          package_manifest?: Json | null
+          procedure_mode?: string
+          procedure_mode_override_reason?: string | null
+          profile_id: string
+          public_id?: string | null
+          report_year?: number
+          rules_basis?: string | null
+          status?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          warnings?: Json | null
+        }
+        Update: {
+          blocking_errors?: Json | null
+          charter_confirmed_at?: string | null
+          charter_confirmed_by?: string | null
+          charter_extraction_status?: string | null
+          charter_file_path?: string | null
+          charter_raw_text?: string | null
+          charter_source_type?: string | null
+          confirmed_charter_rules?: Json | null
+          corporate_params?: Json | null
+          created_at?: string | null
+          created_by?: string | null
+          extracted_charter_rules?: Json | null
+          id?: string
+          legal_details_id?: string | null
+          metadata?: Json | null
+          non_blocking_warnings?: Json | null
+          package_manifest?: Json | null
+          procedure_mode?: string
+          procedure_mode_override_reason?: string | null
+          profile_id?: string
+          public_id?: string | null
+          report_year?: number
+          rules_basis?: string | null
+          status?: string
+          updated_at?: string | null
+          updated_by?: string | null
+          warnings?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "corporate_draft_sessions_legal_details_id_fkey"
+            columns: ["legal_details_id"]
+            isOneToOne: false
+            referencedRelation: "client_legal_details"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "corporate_draft_sessions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       course_preregistrations: {
         Row: {
           consent: boolean
