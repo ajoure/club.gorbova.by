@@ -159,6 +159,17 @@ export type DocumentCategory = 'system_generated' | 'externally_provided' | 'con
 
 export type LegalBasis = 'law_default' | 'charter_confirmed' | 'user_selected';
 
+export type TemplateAvailability =
+  | 'available'
+  | 'pending_sprint3'
+  | 'missing_db_record'
+  | 'inactive_template'
+  | 'missing_template_path'
+  | 'missing_storage_file'
+  | 'not_applicable';
+
+export type TemplateRuntimeStatus = 'active' | 'pending_sprint3';
+
 export interface PackageManifestItem {
   template_code: string;
   title: string;
@@ -168,6 +179,14 @@ export interface PackageManifestItem {
   category: DocumentCategory;
   required_data: string[];
   missing_data: string[];
+  /** Runtime status from corporateTemplateSpec — source of truth */
+  runtime_status?: TemplateRuntimeStatus;
+  /** DB template UUID after resolver enrichment */
+  db_template_id?: string;
+  /** Storage path after resolver enrichment */
+  template_path?: string;
+  /** Availability after resolver check */
+  availability?: TemplateAvailability;
 }
 
 // ─── Quorum ───────────────────────────────────────────────────────
