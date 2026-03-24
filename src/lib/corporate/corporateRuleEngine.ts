@@ -19,7 +19,10 @@ import type {
   DocumentCategory,
   LegalBasis,
   AgendaItem,
+  TemplateRuntimeStatus,
 } from './corporateTypes';
+
+import { getTemplateSpec } from './corporateTemplateSpec';
 
 import {
   DEFAULT_CHARTER_RULES,
@@ -225,6 +228,7 @@ export function calculatePackageManifest(
     : ANNUAL_MEETING_TEMPLATES;
 
   for (const tpl of baseTemplates) {
+    const spec = getTemplateSpec(tpl.code);
     manifest.push({
       template_code: tpl.code,
       title: tpl.title,
@@ -236,6 +240,7 @@ export function calculatePackageManifest(
       category: tpl.category,
       required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
+      runtime_status: (spec?.runtime_status as TemplateRuntimeStatus) || 'active',
     });
   }
 
@@ -282,6 +287,7 @@ export function calculatePackageManifest(
       reason = 'Не применяется для решения единственного участника';
     }
 
+    const spec = getTemplateSpec(tpl.code);
     manifest.push({
       template_code: tpl.code,
       title: tpl.title,
@@ -291,6 +297,7 @@ export function calculatePackageManifest(
       category: tpl.category,
       required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
+      runtime_status: (spec?.runtime_status as TemplateRuntimeStatus) || 'active',
     });
   }
 

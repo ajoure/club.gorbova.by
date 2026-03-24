@@ -4,9 +4,41 @@
 
 - Machine-readable spec: `src/lib/corporate/corporateTemplateSpec.ts`
 - Manifest constants: `src/lib/corporate/corporateRuleEngine.ts`
+- Template resolver: `src/lib/corporate/corporateTemplateResolver.ts`
 - DOCX-исходники: `assets/corporate-templates/`
 - Storage: `documents-templates/templates/corp_*.docx`
 - DB: `document_templates` (template_scope = 'corporate')
+
+---
+
+## Архитектура: manifest-driven corporate flow
+
+### Почему НЕ DB packages (`document_package_templates`)
+
+Корпоративные пакеты **не хранятся** в `document_package_templates` по следующим причинам:
+
+1. **Таблица tenant-scoped** — требует `profile_id`, а корпоративные пакеты — системные нормативные комплекты.
+2. **Динамический состав** — набор документов зависит от подтверждённых правил устава (`charter_rules`), формы голосования, повестки дня и других параметров сессии. Статический DB package не может это выразить.
+3. **Rule engine уже решает эту задачу** — `calculatePackageManifest()` формирует состав пакета на лету.
+
+### Flow
+
+```
+corporate_wizard (UI)
+  → calculatePackageManifest()     # rule engine формирует manifest
+  → resolveManifestTemplates()     # resolver проверяет DB + storage
+  → validateTemplateAvailability() # validation layer
+  → edge function (Sprint 3)      # генерация DOCX
+```
+
+### Visibility policy: почему corporate templates скрыты из AI-менеджера
+
+Corporate templates используют `template_scope = 'corporate'`, который **intentionally** не видим в generic AI templates UI (`scope = 'ai' | 'both'`).
+
+Причины:
+- Корпоративные шаблоны — системные нормативные документы, не пользовательские универсальные.
+- Редактирование и использование идёт исключительно через corporate wizard, не через generic AI documents flow.
+- Шаблоны содержат специфичную loop/conditional разметку для docxtemplater, не предназначенную для ручного редактирования.
 
 ---
 
@@ -89,6 +121,20 @@
 
 ---
 
+## Resolver: типы недоступности
+
+| Статус | Описание | Blocking? |
+|---|---|---|
+| `available` | Шаблон в БД, активен, файл указан, runtime active | — |
+| `pending_sprint3` | Шаблон в БД, но требует поддержки loops/arrays | non-blocking |
+| `missing_db_record` | Нет записи в document_templates | blocking (если active + included) |
+| `inactive_template` | Запись есть, но is_active = false | blocking (если active + included) |
+| `missing_template_path` | Запись есть, но template_path пуст | blocking (если active + included) |
+| `missing_storage_file` | Путь указан, но файла нет в storage | blocking (если active + included) |
+| `not_applicable` | Внешний документ, не генерируется | informational |
+
+---
+
 ## Пакеты (ownership model)
 
 Корпоративные пакеты НЕ хранятся в `document_package_templates` (таблица tenant-scoped, требует profile_id).
@@ -111,3 +157,4 @@
 | Preview | Предпросмотр сгенерированного DOCX |
 | Wizard → Edge Function | Передача параметров сессии в генератор |
 | Activation | 9 шаблонов помечены `pending_sprint3` — требуют array support |
+| Storage verification | `verifyStorageFiles()` — глубокая проверка при генерации |
