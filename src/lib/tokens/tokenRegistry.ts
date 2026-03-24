@@ -32,7 +32,7 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity";
+  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity" | "package_role" | "package_default" | "package_array" | "agenda" | "decision";
   badge: string;
   searchKeywords: string;
 }
