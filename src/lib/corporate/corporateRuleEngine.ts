@@ -39,13 +39,12 @@ interface TemplateDefinition {
 }
 
 export const ANNUAL_MEETING_TEMPLATES: TemplateDefinition[] = [
-  { code: 'corp_order_meeting', title: 'Решение/приказ о проведении годового общего собрания участников', category: 'system_generated' },
+  { code: 'corp_order_meeting', title: 'Решение (приказ) о проведении годового общего собрания участников', category: 'system_generated' },
   { code: 'corp_notice', title: 'Извещение участнику о проведении годового общего собрания', category: 'system_generated' },
   { code: 'corp_notice_journal', title: 'Журнал направления извещений участникам', category: 'system_generated' },
   { code: 'corp_review_list', title: 'Перечень документов, предоставляемых для ознакомления', category: 'system_generated' },
   { code: 'corp_draft_decisions', title: 'Проекты решений по вопросам повестки дня', category: 'system_generated' },
   { code: 'corp_registration_list', title: 'Список лиц, зарегистрированных для участия в собрании', category: 'system_generated' },
-  { code: 'corp_ballot', title: 'Бюллетень (карточка) для голосования', category: 'system_generated' },
   { code: 'corp_protocol', title: 'Протокол годового общего собрания участников', category: 'system_generated' },
   { code: 'corp_notification_decisions', title: 'Уведомление участникам о принятых решениях', category: 'system_generated' },
 ];
@@ -56,6 +55,7 @@ export const SOLE_PARTICIPANT_TEMPLATES: TemplateDefinition[] = [
 ];
 
 export const CONDITIONAL_TEMPLATES: TemplateDefinition[] = [
+  { code: 'corp_ballot', title: 'Бюллетень (карточка) для голосования', category: 'conditional_generated', condition: 'voting_form_secret_or_charter' },
   { code: 'corp_board_candidates', title: 'Сведения о кандидатах в совет директоров (наблюдательный совет)', category: 'conditional_generated', condition: 'has_board' },
   { code: 'corp_board_consent', title: 'Согласие кандидата в совет директоров (наблюдательный совет)', category: 'conditional_generated', condition: 'has_board' },
   { code: 'corp_auditor_candidates', title: 'Сведения о кандидате в ревизоры', category: 'conditional_generated', condition: 'has_auditor' },
@@ -71,6 +71,33 @@ export const EXTERNALLY_PROVIDED_DOCUMENTS: TemplateDefinition[] = [
   { code: 'ext_audit_report', title: 'Аудиторское заключение', category: 'externally_provided' },
   { code: 'ext_auditor_conclusion', title: 'Заключение ревизора / ревизионной комиссии', category: 'externally_provided' },
 ];
+
+// ─── Required Data Mapping (business-level, NOT technical placeholders) ────
+
+const TEMPLATE_REQUIRED_DATA: Record<string, string[]> = {
+  corp_order_meeting: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full'],
+  corp_notice: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full', 'meeting.notice.date'],
+  corp_notice_journal: ['entity.name', 'meeting.notice.date'],
+  corp_review_list: ['entity.name'],
+  corp_draft_decisions: ['entity.name'],
+  corp_registration_list: ['entity.name', 'meeting.date'],
+  corp_protocol: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full'],
+  corp_notification_decisions: ['entity.name', 'meeting.date'],
+  corp_sole_decision: ['entity.name'],
+  corp_sole_appendices: ['entity.name'],
+  corp_ballot: ['entity.name', 'meeting.date'],
+  corp_board_candidates: ['entity.name'],
+  corp_board_consent: ['entity.name'],
+  corp_auditor_candidates: ['entity.name'],
+  corp_auditor_consent: ['entity.name'],
+  corp_audit_commission: ['entity.name'],
+  corp_agenda_change_notice: ['entity.name', 'meeting.date'],
+  corp_charter_amendments: ['entity.name'],
+};
+
+function getRequiredDataForTemplate(code: string): string[] {
+  return TEMPLATE_REQUIRED_DATA[code] || [];
+}
 
 // ─── Core Functions ───────────────────────────────────────────────
 
@@ -207,7 +234,7 @@ export function calculatePackageManifest(
         : 'Обязательный документ годового собрания',
       legal_basis: legalBasis,
       category: tpl.category,
-      required_data: [],
+      required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
     });
   }
@@ -216,7 +243,14 @@ export function calculatePackageManifest(
     let included = false;
     let reason = '';
 
-    if (tpl.condition === 'has_board') {
+    if (tpl.condition === 'voting_form_secret_or_charter') {
+      const isSecret = params.meeting?.voting_form === 'secret';
+      const charterRequiresBallot = rulesBasis === 'charter_confirmed';
+      included = isSecret || charterRequiresBallot;
+      reason = included
+        ? (isSecret ? 'Тайное голосование — бюллетень обязателен' : 'Бюллетень предусмотрен уставом')
+        : 'Открытое голосование — бюллетень не требуется';
+    } else if (tpl.condition === 'has_board') {
       included = rules.has_board;
       reason = included ? 'Совет директоров предусмотрен уставом' : 'Совет директоров не предусмотрен';
     } else if (tpl.condition === 'has_auditor') {
@@ -234,6 +268,15 @@ export function calculatePackageManifest(
       reason = 'Включается при изменении повестки после первичного извещения';
     }
 
+    // Conditional templates tied to charter_confirmed rules are excluded
+    // if charter is not confirmed (correction #8)
+    if (tpl.condition && ['has_board', 'has_auditor', 'has_audit_commission'].includes(tpl.condition)) {
+      if (rulesBasis === 'law_default') {
+        included = false;
+        reason = 'Правила устава не подтверждены — условный документ отключён';
+      }
+    }
+
     if (mode === 'sole_participant_decision' && tpl.condition) {
       included = false;
       reason = 'Не применяется для решения единственного участника';
@@ -244,9 +287,9 @@ export function calculatePackageManifest(
       title: tpl.title,
       included,
       reason,
-      legal_basis: tpl.condition ? legalBasis : 'user_selected',
+      legal_basis: tpl.condition ? (rulesBasis === 'charter_confirmed' ? 'charter_confirmed' : 'law_default') : 'user_selected',
       category: tpl.category,
-      required_data: [],
+      required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
     });
   }
