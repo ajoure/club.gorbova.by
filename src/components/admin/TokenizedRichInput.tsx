@@ -302,6 +302,12 @@ interface TokenizedRichInputProps {
   className?: string;
   /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
   allowAlign?: boolean;
+  /** Additional token groups to show in picker (e.g. for document editors).
+   *  Existing groups (Contact, DateTime, Product) are always shown. */
+  extraTokenGroups?: Array<{
+    heading: string;
+    tokens: import("@/lib/tokens/tokenRegistry").TokenDef[];
+  }>;
 }
 
 export function TokenizedRichInput({
@@ -313,6 +319,7 @@ export function TokenizedRichInput({
   disabled = false,
   className,
   allowAlign = false,
+  extraTokenGroups,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
