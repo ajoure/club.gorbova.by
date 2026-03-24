@@ -1,104 +1,65 @@
-# да, согласен, с учетом правок:
+# PATCH 1+2: Canonical Token Standard + Reuse Existing Picker
 
-&nbsp;
+## Статус: ВЫПОЛНЕНО
 
-1. buildClientLine() не менять повторно, если в реальном файле оно уже возвращает \<code>\${safeName}\</code>. Сначала grep/raw-пруф по helper, и только если там не code — править. Не делать лишний churn.
-2. В патч обязательно включить raw-пруф удаления ID-блока из helper:  
+### Что сделано
 
-  - удалить из интерфейса AdminNotifyMessageParams оба поля ID;
-  - удалить из деструктуризации buildAdminNotifyMessage оба поля ID;
-  - удалить formatCompactId();
-  - удалить весь conditional block рендера ID подписки / ID платежа.
-3. &nbsp;
-4. По call sites сделать не “4 точки + остальное проверить не нужно”, а полный dry-run grep по всем 11 payment-related вызовам buildAdminNotifyMessage(...) и отдельно зафиксировать:  
+#### 1. fields_registry — seed новых entity_types (39 записей)
+- `person` (12 записей): full_name, initials, birth_date, personal_number, passport_*, phone, email, address
+- `entity_person` (6 записей): role_label, position, share_percent, acts_on_basis, start_date, is_primary
+- `document` (3 записи): number, date, date_short
+- `meeting` (12 записей): date, time, location.full, notice.date, notice.method, registration.*, review.*, report_year, candidates.deadline
+- `entity` (6 записей): name, settlement_display, director_short, address.legal.full, settlement.type.short, settlement.name
+- Existing `legal_details.*` (47 записей) и `product` (2 записи) — НЕ тронуты
 
-  - bepaid_payment_id больше нигде не передаётся;
-  - bepaid_subscription_id больше нигде не передаётся;
-  - next_charge_at не потерян в точках, где он уже был нужен.
-5. &nbsp;
-6. Для direct-charge не писать “нужно найти точную строку” — сначала найти точную строку и включить её в план. План должен быть исполнимым без дозапроса.
-7. В разделе “Что НЕ меняется” явно добавить:  
+#### 2. tokenRegistry.ts — расширен
+- Добавлены 5 новых loader-функций: loadPersonFields, loadEntityPersonFields, loadDocumentFields, loadMeetingFields, loadEntityFields
+- Добавлены соответствующие кэши и setter-функции
+- tokenStringToLabel() обновлён для поиска по всем новым кэшам
+- Добавлена helper-функция getDocumentTokenGroups() для UI
+- Универсальный loadFieldsByEntityType() для DRY
+- JSDoc обновлён: задокументировано правило registry-first и 4 уровня представления токена
 
-  - next_charge_at в subscription-charge и webhook subscription остаётся;
-  - source_label не меняется;
-  - preview остаётся отключённым.
-8. &nbsp;
-9. В деплое перечислить все функции, которые импортируют shared helper, потому что изменение helper требует их передеплоя даже без локальных правок в файле. Не писать “telegram-notify-admins не нужен”, если shared helper туда не импортируется — это ок, но остальные функции перечислить исчерпывающе.
-10. Добавить DoD:  
+#### 3. TokenizedRichInput.tsx — расширен
+- Добавлен prop `extraTokenGroups?: Array<{ heading: string; tokens: TokenDef[] }>`
+- В picker dropdown после существующих групп рендерятся дополнительные группы
+- Существующие вызовы (Telegram/email) не затронуты — у них нет extraTokenGroups
 
-  - в Telegram нет строк ID подписки и ID платежа;
-  - 👤 Клиент: <code>ФИО</code>;
-  - Следующее списание осталось в нужных сценариях;
-  - grep по проекту не находит передачу bepaid_payment_id: и bepaid_subscription_id: в buildAdminNotifyMessage(...);
-  - новый скрин реального уведомления без ID.
-11. &nbsp;
+#### 4. Compatibility layer в edge functions
+- ai-generate-document: canonical key aliases добавлены параллельно с ad-hoc
+- ai-generate-document-package: аналогично
+- Старые DOCX шаблоны с ad-hoc ключами продолжают работать
+- Новые шаблоны могут использовать canonical keys (e.g. {{person.full_name}}, {{entity.name}})
 
-&nbsp;
+### Canonical Naming Standard
 
-&nbsp;
+4 уровня представления:
+1. **internal id**: UUID (fields_registry.id)
+2. **canonical key**: e.g. `meeting.notice.date` (fields_registry.key)
+3. **system token**: `{{meeting.notice.date}}` (хранится в тексте/шаблонах)
+4. **UI token**: `[Дата направления извещения]` (показывается в редакторе)
 
-PATCH: убрать ID из payment notifications
+### Файлы изменены
+- `src/lib/tokens/tokenRegistry.ts` — полная переработка с новыми loaders
+- `src/components/admin/TokenizedRichInput.tsx` — +prop extraTokenGroups, +рендер
+- `supabase/functions/ai-generate-document/index.ts` — +canonical key aliases
+- `supabase/functions/ai-generate-document-package/index.ts` — +canonical key aliases
+- `fields_registry` — +39 записей (add-only)
 
-## Текущее состояние
+### Что НЕ менялось
+- Existing `legal_details.*` записи в fields_registry
+- Existing `LEGAL_DETAILS_FIELD_MAP`
+- Existing `token-resolver.ts`
+- Existing DOCX шаблоны
+- Existing Telegram/email использование TokenizedRichInput
+- `generate-from-template` (protected billing flow)
 
-По скрину и коду подтверждено:
-
-- `buildClientLine()` уже возвращает `<code>ФИО</code>` (строка 131-134) — **уже готово, менять не нужно**
-- ID-блок (строки 242-249) рендерит `📎 ID подписки` / `📎 ID платежа` — **нужно удалить**
-- `bepaid_subscription_id` и `bepaid_payment_id` есть в интерфейсе (строки 49-50) — **нужно удалить**
-- `formatCompactId()` (строки 155-179) — **нужно удалить**
-- 4 call sites передают `bepaid_payment_id`: `subscription-charge`, `bepaid-auto-process`, `admin-manual-charge`, `direct-charge`
-
-## Что делаем
-
-### 1. Shared helper (`_shared/admin-notify-message.ts`)
-
-**Удалить из интерфейса `AdminNotifyMessageParams`:**
-
-- `bepaid_subscription_id?: string | null` (строка 49)
-- `bepaid_payment_id?: string | null` (строка 50)
-
-**Удалить функцию `formatCompactId**` (строки 155-179)
-
-**Удалить ID-блок в builder** (строки 242-249)
-
-**Удалить из деструктуризации в `buildAdminNotifyMessage`:**
-
-- `bepaid_subscription_id` (строка 197)
-- `bepaid_payment_id` (строка 198)
-
-**Обновить JSDoc** (строки 9, 16) — убрать упоминания bepaid ID
-
-### 2. Call sites — убрать `bepaid_payment_id`
-
-
-| #   | Файл                | Строка                    | Поле                                               |
-| --- | ------------------- | ------------------------- | -------------------------------------------------- |
-| 1   | subscription-charge | ~1689                     | `bepaid_payment_id: bepaidUid || undefined`        |
-| 2   | bepaid-auto-process | ~919                      | `bepaid_payment_id: item.bepaid_uid || undefined`  |
-| 3   | admin-manual-charge | ~463                      | `bepaid_payment_id: chargeResult.uid || undefined` |
-| 4   | direct-charge       | нужно найти точную строку | `bepaid_payment_id`                                |
-
-
-Остальные 7 call sites (bepaid-webhook ×5, payments-reconcile, direct-charge trial) не передают ID полей — проверять не нужно.
-
-### 3. Что НЕ меняется
-
-- `buildClientLine()` — уже `<code>ФИО</code>`, менять не нужно
-- `next_charge_at`, `source_label`, `admin_label` — без изменений
-- `disable_web_page_preview` — без изменений
-- `parse_mode = HTML` — без изменений
-- `buildContactUrl()` — остаётся как future-ready
-
-### 4. Деплой
-
-6 функций (shared деплоится с каждой):
-
-- `bepaid-auto-process`
-- `subscription-charge`
-- `admin-manual-charge`
-- `direct-charge`
-- `bepaid-webhook` (shared изменился)
-- `payments-reconcile` (shared изменился)
-
-`telegram-notify-admins` — код не меняется, передеплой не нужен.
+### Следующие шаги (PATCH 3+)
+- Token catalog service layer (registry + computed + package + loop)
+- Package roles namespace (package.signer.*, package.chairperson.*)
+- Loops/arrays support (package.participants[], agenda.items[])
+- Draft sessions + snapshots
+- Schema-driven forms + legal warnings
+- Multi-role model
+- 4 шаблона годового собрания на canonical standard
+- Deprecation plan для legacy ad-hoc tokens
