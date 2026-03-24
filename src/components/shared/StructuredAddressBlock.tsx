@@ -4,6 +4,12 @@
  *
  * Uses usePlaceAutocomplete + GooglePlacesAdapter (anti-corruption layer).
  * ALL address forms MUST use this component.
+ *
+ * Field mapping:
+ *   city (backend) → "Населённый пункт" (UI)
+ *   city_district  → "Район города"
+ *   district       → "Район" (административный район области)
+ *   settlement / address_line_2 — kept in types for backend compat, removed from UI
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -36,19 +42,32 @@ interface FieldConfig {
   colSpan?: string;
 }
 
+/**
+ * Full layout — ordered per approved spec:
+ * 1. Страна
+ * 2. Область / Регион (col-span-2)
+ * 3. Район
+ * 4. Населённый пункт (city backend) (col-span-2)
+ * 5. Район города
+ * 6. Индекс
+ * 7. Улица (col-span-2)
+ * 8. Дом
+ * 9. Корпус
+ * 10. Квартира
+ *
+ * settlement and address_line_2 removed from UI (backend compat preserved in types).
+ */
 const FULL_LAYOUT: FieldConfig[] = [
+  { key: 'country_name', label: 'Страна', placeholder: '' },
+  { key: 'region', label: 'Область / Регион', placeholder: '', colSpan: 'col-span-2' },
+  { key: 'district', label: 'Район', placeholder: '' },
+  { key: 'city', label: 'Населённый пункт', placeholder: 'г. Минск', colSpan: 'col-span-2' },
+  { key: 'city_district', label: 'Район города', placeholder: 'Фрунзенский' },
+  { key: 'postal_code', label: 'Индекс', placeholder: '220000' },
   { key: 'street', label: 'Улица', placeholder: 'ул. Ленина', colSpan: 'col-span-2' },
   { key: 'house', label: 'Дом', placeholder: '19' },
   { key: 'building', label: 'Корпус', placeholder: '' },
   { key: 'apartment', label: 'Помещение', placeholder: '' },
-  { key: 'postal_code', label: 'Индекс', placeholder: '220000' },
-  { key: 'city', label: 'Город', placeholder: 'Минск', colSpan: 'col-span-2' },
-  { key: 'city_district', label: 'Район города', placeholder: 'Фрунзенский' },
-  { key: 'settlement', label: 'Населённый пункт', placeholder: '' },
-  { key: 'district', label: 'Район', placeholder: '' },
-  { key: 'region', label: 'Область / Регион', placeholder: '', colSpan: 'col-span-2' },
-  { key: 'address_line_2', label: 'Доп. строка', placeholder: 'Этаж, подъезд…' },
-  { key: 'country_name', label: 'Страна', placeholder: '' },
 ];
 
 const COMPACT_LAYOUT: FieldConfig[] = [
@@ -56,7 +75,7 @@ const COMPACT_LAYOUT: FieldConfig[] = [
   { key: 'house', label: 'Дом', placeholder: '19' },
   { key: 'building', label: 'Корпус', placeholder: '' },
   { key: 'apartment', label: 'Помещение', placeholder: '' },
-  { key: 'city', label: 'Город', placeholder: 'Минск' },
+  { key: 'city', label: 'Населённый пункт', placeholder: 'г. Минск' },
   { key: 'region', label: 'Область', placeholder: '' },
   { key: 'postal_code', label: 'Индекс', placeholder: '' },
   { key: 'country_name', label: 'Страна', placeholder: '' },
@@ -149,18 +168,8 @@ export function StructuredAddressBlock({
     (field: keyof StructuredAddress, val: string) => {
       let updated = { ...value, [field]: val };
 
-      if (field === 'street') {
-        updated = {
-          ...updated,
-          house: '',
-          building: '',
-          apartment: '',
-          postal_code: '',
-          google_place_id: null,
-          lat: null,
-          lng: null,
-        };
-      } else if (field === 'city') {
+      // Hierarchical clearing — when editing city (= населённый пункт), clear child fields
+      if (field === 'city') {
         updated = {
           ...updated,
           house: '',
@@ -168,14 +177,17 @@ export function StructuredAddressBlock({
           apartment: '',
           postal_code: '',
           street: '',
-          settlement: '',
           google_place_id: null,
           lat: null,
           lng: null,
         };
-      } else if (field === 'settlement') {
+      } else if (field === 'street') {
         updated = {
           ...updated,
+          house: '',
+          building: '',
+          apartment: '',
+          postal_code: '',
           google_place_id: null,
           lat: null,
           lng: null,
@@ -206,7 +218,6 @@ export function StructuredAddressBlock({
             ...emptyAddress(),
             building: value.building,
             apartment: value.apartment,
-            address_line_2: value.address_line_2,
             ...parsed,
             google_place_id: details.placeId,
             lat: details.lat,
@@ -252,7 +263,6 @@ export function StructuredAddressBlock({
 
   const handleBlur = useCallback(() => {
     // Intentionally do not close on blur: portal dropdown selection must survive mouse transition
-    // Closing is handled by outside mousedown, Escape, scroll/resize, and successful selection.
   }, []);
 
   const handleLabelCopy = useCallback((fieldKey: keyof StructuredAddress) => {

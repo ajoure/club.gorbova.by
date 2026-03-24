@@ -14,7 +14,7 @@ import { Loader2, User, FileText, MapPin, Phone, Info } from 'lucide-react';
 import { StructuredAddressBlock } from '@/components/shared/StructuredAddressBlock';
 import { CopyablePlainLabel } from '@/components/ui/CopyablePlainLabel';
 import { useLegalDetailsFields } from '@/hooks/useLegalDetailsFields';
-import { normalizePassport } from '@/lib/persons/passportNormalizer';
+import { normalizePassport, containsCyrillic } from '@/lib/persons/passportNormalizer';
 import type { StructuredAddress } from '@/lib/address/types';
 import { emptyAddress } from '@/lib/address/utils';
 import type { CanonicalAddressPayload } from '@/lib/address/types';
@@ -134,7 +134,7 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
       }
       setPassportError('');
     } else {
-      setPassportError('Допустимы только латинские буквы (A-Z) и цифры (0-9)');
+      setPassportError('Используйте латиницу. Серия и номер паспорта вводятся только английскими буквами и цифрами, без пробелов.');
       setPassportHint('');
     }
   }, [passportFull]);
@@ -147,7 +147,7 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
     if (passportFull.trim()) {
       const result = normalizePassport(passportFull);
       if (!result.success) {
-        setPassportError('Допустимы только латинские буквы (A-Z) и цифры (0-9)');
+        setPassportError('Используйте латиницу. Серия и номер паспорта вводятся только английскими буквами и цифрами, без пробелов.');
         return;
       }
     }
@@ -218,9 +218,14 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
               id="pf-passport-full"
               value={passportFull}
               onChange={(e) => {
-                setPassportFull(e.target.value);
-                setPassportError('');
+                const v = e.target.value;
+                setPassportFull(v);
                 setPassportHint('');
+                if (containsCyrillic(v)) {
+                  setPassportError('Используйте латиницу. Серия и номер паспорта вводятся только английскими буквами и цифрами, без пробелов.');
+                } else {
+                  setPassportError('');
+                }
               }}
               onBlur={handlePassportBlur}
               placeholder="MP4187696"
@@ -233,7 +238,7 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
               <p className="text-xs text-destructive mt-1">{passportError}</p>
             )}
             <p className="text-[11px] text-muted-foreground mt-1">
-              Только латинские буквы и цифры, без пробелов. Например: MP4187696
+              Только английские буквы и цифры, без пробелов. Например: MP4187696
             </p>
           </div>
           <div>

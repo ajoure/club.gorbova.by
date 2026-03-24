@@ -62,9 +62,9 @@ export class GooglePlacesAdapter {
     const city = findByType(components, 'locality', 'postal_town', 'administrative_area_level_3');
     if (city) result.city = getText(city, 'long');
 
-    // Settlement / sublocality — fallback chain
-    const settlement = findByType(components, 'sublocality_level_1', 'sublocality', 'neighborhood');
-    if (settlement) result.settlement = getText(settlement, 'long');
+    // City district / sublocality — mapped to city_district (not settlement)
+    const cityDistrict = findByType(components, 'sublocality_level_1', 'sublocality', 'neighborhood');
+    if (cityDistrict) result.city_district = getText(cityDistrict, 'long');
 
     // Street
     const route = findByType(components, 'route');

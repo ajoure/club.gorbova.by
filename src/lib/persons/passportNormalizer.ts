@@ -3,20 +3,11 @@
  *
  * Rules:
  * - trim, uppercase
- * - safe transliteration of visually-identical Cyrillic → Latin (М→M, А→A, etc.)
  * - remove spaces, hyphens, invisible characters
+ * - NO Cyrillic transliteration — Cyrillic input is rejected
  * - retain only A-Z0-9
  * - final regex: /^[A-Z0-9]+$/
  */
-
-/** Cyrillic letters that have visually identical Latin equivalents */
-const CYRILLIC_TO_LATIN: Record<string, string> = {
-  'А': 'A', 'В': 'B', 'С': 'C', 'Е': 'E', 'Н': 'H', 'К': 'K',
-  'М': 'M', 'О': 'O', 'Р': 'P', 'Т': 'T', 'Х': 'X',
-  // lowercase mapped too (will be uppercased first, but just in case)
-  'а': 'A', 'в': 'B', 'с': 'C', 'е': 'E', 'н': 'H', 'к': 'K',
-  'м': 'M', 'о': 'O', 'р': 'P', 'т': 'T', 'х': 'X',
-};
 
 export interface PassportNormalizationResult {
   normalized: string;
@@ -25,9 +16,15 @@ export interface PassportNormalizationResult {
   original: string;
 }
 
+/** Check if string contains any Cyrillic characters */
+export function containsCyrillic(value: string): boolean {
+  return /[\u0400-\u04FF]/.test(value);
+}
+
 /**
  * Normalize a passport string to canonical format.
- * Returns success=false if the result doesn't match /^[A-Z0-9]+$/ or is empty.
+ * Returns success=false if the result doesn't match /^[A-Z0-9]+$/ or is empty,
+ * or if the input contains Cyrillic characters.
  */
 export function normalizePassport(input: string): PassportNormalizationResult {
   const original = input.trim();
@@ -35,16 +32,18 @@ export function normalizePassport(input: string): PassportNormalizationResult {
     return { normalized: '', success: true, original };
   }
 
+  // Reject Cyrillic — no silent transliteration
+  if (containsCyrillic(original)) {
+    return { normalized: '', success: false, original };
+  }
+
   // Step 1: uppercase
   let val = original.toUpperCase();
 
-  // Step 2: transliterate safe Cyrillic → Latin
-  val = val.split('').map(ch => CYRILLIC_TO_LATIN[ch] || ch).join('');
-
-  // Step 3: remove spaces, hyphens, invisible chars — retain only A-Z0-9
+  // Step 2: remove spaces, hyphens, invisible chars — retain only A-Z0-9
   val = val.replace(/[^A-Z0-9]/g, '');
 
-  // Step 4: validate
+  // Step 3: validate
   const success = val.length > 0 && /^[A-Z0-9]+$/.test(val);
 
   return { normalized: val, success, original };

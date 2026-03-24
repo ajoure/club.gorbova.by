@@ -465,6 +465,28 @@ serve(async (req) => {
         .from("documents")
         .createSignedUrl(filePath, 86400);
 
+      // Build snapshot enrichment data
+      const tokenManifest = {
+        requested: placeholders.map((p: string) => p.replace(/^\{\{/, "").replace(/\}\}$/, "")),
+        found: placeholders
+          .map((p: string) => p.replace(/^\{\{/, "").replace(/\}\}$/, ""))
+          .filter((key: string) => tokenData[key] && tokenData[key] !== ""),
+        missing: missingTokens,
+        unresolved: [],
+        legacy_used: [],
+      };
+
+      const sourceTrace: Record<string, { source: string; table: string; column: string }> = {};
+      for (const key of Object.keys(tokenData)) {
+        if (key.startsWith("entity_")) {
+          sourceTrace[key] = { source: "db", table: "client_legal_details", column: key };
+        } else if (key.startsWith("person_") || key.startsWith("signer_")) {
+          sourceTrace[key] = { source: "db", table: "legal_details_persons", column: key.replace(/^(person_|signer_)/, "") };
+        } else if (key.startsWith("document_")) {
+          sourceTrace[key] = { source: "computed", table: "", column: "" };
+        }
+      }
+
       // Save record
       const { data: savedDoc } = await supabase
         .from("ai_generated_documents")
@@ -473,6 +495,8 @@ serve(async (req) => {
           template_id: template.id,
           template_name: itemName,
           template_source_path: template.template_path,
+          template_code: template.code || null,
+          template_version: template.version || null,
           title: `${itemName} — ${docNumber}`,
           status: "generated",
           legal_details_id: legal_details_id || null,
@@ -483,6 +507,10 @@ serve(async (req) => {
           file_name: fileName,
           snapshot,
           missing_tokens: missingTokens,
+          token_manifest_snapshot: tokenManifest,
+          template_tokens_snapshot: placeholders,
+          source_trace: sourceTrace,
+          warnings_snapshot: missingTokens.length > 0 ? { missing_count: missingTokens.length, missing_keys: missingTokens } : null,
           generation_batch_id: batch.id,
           package_template_id: package_template_id,
           package_item_id: item.id,
