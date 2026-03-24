@@ -216,7 +216,14 @@ export function calculatePackageManifest(
     let included = false;
     let reason = '';
 
-    if (tpl.condition === 'has_board') {
+    if (tpl.condition === 'voting_form_secret_or_charter') {
+      const isSecret = params.meeting?.voting_form === 'secret';
+      const charterRequiresBallot = rulesBasis === 'charter_confirmed';
+      included = isSecret || charterRequiresBallot;
+      reason = included
+        ? (isSecret ? 'Тайное голосование — бюллетень обязателен' : 'Бюллетень предусмотрен уставом')
+        : 'Открытое голосование — бюллетень не требуется';
+    } else if (tpl.condition === 'has_board') {
       included = rules.has_board;
       reason = included ? 'Совет директоров предусмотрен уставом' : 'Совет директоров не предусмотрен';
     } else if (tpl.condition === 'has_auditor') {
@@ -234,6 +241,15 @@ export function calculatePackageManifest(
       reason = 'Включается при изменении повестки после первичного извещения';
     }
 
+    // Conditional templates tied to charter_confirmed rules are excluded
+    // if charter is not confirmed (correction #8)
+    if (tpl.condition && ['has_board', 'has_auditor', 'has_audit_commission'].includes(tpl.condition)) {
+      if (rulesBasis === 'law_default') {
+        included = false;
+        reason = 'Правила устава не подтверждены — условный документ отключён';
+      }
+    }
+
     if (mode === 'sole_participant_decision' && tpl.condition) {
       included = false;
       reason = 'Не применяется для решения единственного участника';
@@ -244,9 +260,9 @@ export function calculatePackageManifest(
       title: tpl.title,
       included,
       reason,
-      legal_basis: tpl.condition ? legalBasis : 'user_selected',
+      legal_basis: tpl.condition ? (rulesBasis === 'charter_confirmed' ? 'charter_confirmed' : 'law_default') : 'user_selected',
       category: tpl.category,
-      required_data: [],
+      required_data: getRequiredDataForTemplate(tpl.code),
       missing_data: [],
     });
   }
