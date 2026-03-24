@@ -29,6 +29,7 @@ export function AiDocumentsGenerateView() {
   const [packageWizardOpen, setPackageWizardOpen] = useState(false);
   const [managerOpen, setManagerOpen] = useState(false);
   const [packagesManagerOpen, setPackagesManagerOpen] = useState(false);
+  const [corporateWizardOpen, setCorporateWizardOpen] = useState(false);
 
   // Filter: only ai/both scope, active, and search match
   const filtered = templates.filter((t) => {
