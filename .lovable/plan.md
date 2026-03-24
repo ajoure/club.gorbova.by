@@ -2,59 +2,75 @@
 
 &nbsp;
 
-1. **charter_source_type расширить.**
-  Сейчас есть только upload | text | manual. Нужно сразу add-only поддержать минимум:
+1. **Не привязывать share_percent только к role_type='founder'.**
+  Это можно использовать как helper, но не как обязательное условие. В текущих связях роль участника может быть не размечена идеально. Нужно:
   &nbsp;
-  - upload_docx
-  - upload_pdf
-  - upload_image
-  - text
-  - manual
-    И отдельно хранить charter_extraction_status. Это упростит дальнейший Sprint 4 и не потребует потом ломать схему.
+  - сначала предлагать linked persons текущего юрлица;
+  - если у link есть доля — подставлять;
+  - если доли нет — оставлять пустой и требовать ручного подтверждения.
+    Иначе есть риск ложного автозаполнения.
   &nbsp;
-2. **corporate_draft_sessions добавить поле для явной фиксации правовой базы расчета.**
-  Нужны add-only поля вроде:
+2. **Quick-create участника не должен ограничиваться только ФИО.**
+  Минимум сразу заложить:
   &nbsp;
-  - rules_basis = charter_confirmed | law_default | mixed
-  - blocking_errors jsonb default '[]'
-  - non_blocking_warnings jsonb default '[]'
-    Сейчас warnings есть, но лучше сразу разделить блокирующие и неблокирующие проверки, потому что это понадобится на preview и на финальной генерации.
+  - ФИО,
+  - тип лица,
+  - при необходимости паспорт/идентификационные данные позже.
+    Для PATCH 1.1 можно оставить минимальный create, но в плане явно указать, что это временный режим и дальше карточка лица должна дозаполняться.
   &nbsp;
-3. **В Step 3 отдельно выделить блок “лицо, имеющее право на участие” vs “представитель”.**
-  Не смешивать участника и представителя в одной сущности без явной модели полномочий. Для собрания закон отдельно завязывает участие на лицах, имеющих право на участие, а регистрация представителей требует подтверждения полномочий. Это уже видно и в ваших шаблонах извещения/регистрации.   
-4. **В Rule Engine сразу зафиксировать сроки по общему правилу закона, если устав не подтвержден.**
-  Как минимум:
+3. **По датам разделить inline-warning и final-blocking явно в архитектуре.**
+  Сейчас в плане написано: на Step 3 не блокировать, на Step 5 блокировать. Это правильно, но нужно зафиксировать технически:
   &nbsp;
-  - годовое собрание — не позднее 31 марта следующего года;
-  - извещение — не менее чем за 30 дней;
-  - доступ к документам — не менее чем за 20 дней.
-    Это должно работать как law_default, пока нет подтвержденных правил устава.     
+  - либо validateSession(..., context: 'edit' | 'confirm'),
+  - либо отдельные softValidation / hardValidation.
+    Иначе одна и та же функция начнет давать конфликтующее поведение.
   &nbsp;
-5. **В package manifest сразу разделить документы на:**
+4. **Step 3 должен включать не только дату извещения и [review.date](http://review.date)_from, но и место/режим ознакомления.**
+  Потому что в извещении и перечне документов важны:
   &nbsp;
-  - system_generated
-  - externally_provided
-  - conditional_generated
-    Это важно, потому что часть материалов система не создает сама, а только учитывает: годовая отчетность, аудиторское заключение, заключение ревизора и т.п. И это уже отражено в ваших текущих шаблонах протокола/извещения как внешние приложения, а не как самостоятельные документы генерации.   
+  - где ознакомиться,
+  - с какого по какое число,
+  - при необходимости режим ознакомления.
+    Это уже ближе к будущим документам и лучше заложить сейчас, чтобы не переделывать структуру.
   &nbsp;
-6. **В manifest constants сразу убрать жесткую обязательность board / auditor / amendments.**
-  Оставлять их только как conditional templates. Это уже правильно заложено, но нужно прямо запретить трактовать их как always-on, потому что ваши текущие заготовки извещения и протокола как раз этим страдают.   
-7. **Для procedure_mode добавить manual override с audit reason, но только если нет подтвержденного состава участников.**
-  Базово вы правильно считаете режим по подтвержденному составу участников. Но в реальном intake до заполнения состава может понадобиться временный manual mode selection. Он не должен быть silent — только с логированием причины и последующей перепроверкой.
-8. **В DoD добавить proof по naming rules.**
-  Нужно отдельно проверить, что в UI и будущих документах используется:
+5. **Для председателя и секретаря лучше не ограничиваться только picker.**
+  Нужен режим:
   &nbsp;
-  - участники, а не учредители;
-  - решение единственного участника, а не протокол/собрание.
-    Это критично, потому что текущие пользовательские шаблоны как раз содержат неверную терминологию.     
+  - выбрать из linked persons,
+  - выбрать из всех persons,
+  - quick-create,
+  - fallback ручной ввод с warning “лицо не создано в реквизитах”.
+    Потому что в реальном кейсе секретарь собрания может не быть заранее заведенным лицом.
   &nbsp;
-9. **В мосте к Sprint 2 добавить еще один обязательный шаблон:**
+6. **getDefaultAgenda() сделать зависимым не только от charterRules, но и от procedure_mode.**
+  Для sole_participant_decision вопросы должны формулироваться как для решения единственного участника, а не просто копией годового собрания. Это важно и по логике будущих шаблонов, и по терминологии.
+7. **В UX-статусе устава показать отдельно:**
   &nbsp;
-  - corp_participants_decision_notice_change_agenda / уведомление об изменении повестки дня
-    Не обязательно в MVP генерации, но как обязательный backlog item внутри corporate manifest roadmap. Это логично, если после первичного извещения повестка меняется.
+  - файл загружен,
+  - текст сохранен,
+  - текст извлечен,
+  - правила подтверждены,
+  - применяется закон по умолчанию.
+    Сейчас в плане это почти есть, но text saved и text extracted лучше не смешивать, потому что на скринах у вас как раз был кейс “текст сохранен, но логика не перешла дальше”.
   &nbsp;
-10. **В PATCH 1 зафиксировать документарные constraints для будущих шаблонов как отдельный markdown/spec файл, а не только constants.**
-  То есть помимо TS constants нужен явный documentation artifact с правилами оформления:
+8. **В Preview добавить источник данных для участников и адреса.**
+  Минимум бейджами:
+  &nbsp;
+  - из реквизитов,
+  - из linked persons,
+  - введено вручную.
+    Это поможет потом проверять, что пакет собран на корректной основе.
+  &nbsp;
+9. **В DoD добавить proof re-open draft.**
+  Нужно проверить не только сохранение, но и повторное открытие:
+  &nbsp;
+  - загруженный/вставленный устав виден после reload,
+  - выбранные участники сохраняются,
+  - адрес и даты сохраняются,
+  - повестка не теряется.
+  &nbsp;
+10. **Сразу зафиксировать мост к следующему патчу по парсингу устава.**
+  В конце отчета нужен явный раздел:
 
 &nbsp;
 
@@ -62,310 +78,176 @@
 
 &nbsp;
 
-- реквизиты документа;
-- вид документа;
-- дата / номер / место;
-- протокол / приказ / решение;
-- поля страницы и базовые требования Инструкции по делопроизводству.
-  Это избавит от потерь при переходе к Sprint 2. Основание — Инструкция по делопроизводству и ваш master-plan. 
+- что уже готово для extraction,
+- какие поля будут извлекаться следующими: участники, доли, кворум, способ извещения, орган созыва.
+  Чтобы это не потерялось между PATCH 1.1 и следующим спринтом.
 
 &nbsp;
 
 &nbsp;
 
-В таком виде план уже можно брать как **PATCH 1 / Sprint 1**. Следующий правильный шаг после его фиксации — отдельно оформить **Sprint 2: полный пакет корпоративных шаблонов и правила их применения**.
+В таком виде план уже можно отдавать в работу как **PATCH 1.1**.
 
 &nbsp;
 
-PATCH 1 — Корпоративные документы: Intake + Draft + Rule Layer
+PATCH 1.1 — Корректировка corporate wizard
 
 ## Scope
 
-Add-only расширение модуля «Нейросеть → Документы». Существующие flows не затрагиваются. Никаких миграций на существующие таблицы.
+Fix-only / add-only поверх PATCH 1. Не переписываем wizard с нуля. Существующие flows не затрагиваются.
 
 ---
 
-## 1. Миграция: таблица `corporate_draft_sessions`
+## 1. Fix загрузки файла устава
 
-```sql
--- public_id sequence
-INSERT INTO public.public_id_sequences (entity_type, prefix, last_value)
-VALUES ('corporate_draft', 'CDS', 0) ON CONFLICT DO NOTHING;
+**Файл:** `src/components/corporate/CharterIntakeStep.tsx`
 
-CREATE TABLE public.corporate_draft_sessions (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  public_id text UNIQUE,
-  profile_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  legal_details_id uuid REFERENCES public.client_legal_details(id),
-  
-  report_year integer NOT NULL DEFAULT (EXTRACT(YEAR FROM now()) - 1)::int,
-  procedure_mode text NOT NULL DEFAULT 'annual_meeting'
-    CHECK (procedure_mode IN ('annual_meeting', 'sole_participant_decision')),
-  
-  -- Charter
-  charter_source_type text CHECK (charter_source_type IN ('upload', 'text', 'manual')),
-  charter_file_path text,
-  charter_raw_text text,
-  extracted_charter_rules jsonb DEFAULT '{}',
-  confirmed_charter_rules jsonb DEFAULT '{}',
-  charter_confirmed_at timestamptz,
-  charter_confirmed_by text, -- 'ai_extraction' | 'manual'
-  
-  -- Corporate params (structured JSONB — see types below)
-  corporate_params jsonb DEFAULT '{}',
-  
-  -- Package manifest (calculated by rule engine)
-  package_manifest jsonb DEFAULT '{}',
-  
-  warnings jsonb DEFAULT '[]',
-  
-  status text NOT NULL DEFAULT 'draft'
-    CHECK (status IN ('draft','charter_pending','params_pending',
-                      'preview','confirmed','generating','generated','cancelled')),
-  
-  metadata jsonb DEFAULT '{}',
-  created_by uuid REFERENCES auth.users(id),
-  updated_by uuid REFERENCES auth.users(id),
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
+**Проблема:** `filePath` содержит оригинальное имя файла с пробелами/спецсимволами → Supabase Storage отклоняет key.
 
--- public_id trigger (BEFORE INSERT)
-CREATE TRIGGER trg_corporate_draft_public_id
-  BEFORE INSERT ON public.corporate_draft_sessions
-  FOR EACH ROW EXECUTE FUNCTION public.set_public_id('corporate_draft');
+**Решение:**
 
-ALTER TABLE public.corporate_draft_sessions ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Owner full access" ON public.corporate_draft_sessions
-  FOR ALL TO authenticated
-  USING (profile_id IN (SELECT id FROM profiles WHERE user_id = auth.uid()))
-  WITH CHECK (profile_id IN (SELECT id FROM profiles WHERE user_id = auth.uid()));
-
-CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.corporate_draft_sessions
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-```
-
-Storage bucket `charter-documents` (private, owner-only RLS).
+- Sanitize filename: `Date.now() + '_' + slug(name)` (транслитерация + замена спецсимволов)
+- Сохранять оригинальное имя в `metadata.original_filename`
+- После upload обновлять session: `charter_file_path`, `charter_raw_text`, `charter_extraction_status`
+- Добавить явный UX-статус загрузки: файл загружен ✓ / текст извлечён ✓ / текст не извлечён ⚠
 
 ---
 
-## 2. Types — `src/lib/corporate/corporateTypes.ts`
+## 2. Fix state machine подтверждения правил устава
 
-Полные TypeScript интерфейсы:
+**Файл:** `src/components/corporate/CharterIntakeStep.tsx`, `src/lib/corporate/corporateRuleEngine.ts`
 
-**CorporateParams** — включая **блок участников с долями/голосами/представителями**:
+**Проблема:** Warning «правила устава не подтверждены» показывается даже после ручного подтверждения. Причина: `rules_basis` остаётся `'law_default'` после `confirmCharterRules`.
 
-```typescript
-interface Participant {
-  person_id?: string;        // FK legal_details_persons
-  entity_id?: string;        // FK client_legal_details (если участник — юрлицо)
-  type: 'individual' | 'legal_entity';
-  name: string;
-  share_percent: number;
-  vote_count: number;
-  representative?: { name: string; basis: string };
-  attendance: 'present' | 'absent' | 'absentee_vote';
-}
-```
+**Решение:**
 
-**CharterRules** — подтверждённые правила устава:
-
-```typescript
-interface CharterRules {
-  convening_authority: 'director' | 'board' | 'participants';
-  notice_days_min: number;
-  notice_method: string;
-  quorum_percent: number;
-  has_board: boolean;
-  has_auditor: boolean;
-  has_audit_commission: boolean;
-  allowed_meeting_formats: ('in_person' | 'absentee' | 'mixed')[];
-  allowed_voting_forms: ('open' | 'secret')[];
-  special_rules?: string;
-}
-```
-
-**PackageManifestItem**:
-
-```typescript
-interface PackageManifestItem {
-  template_code: string;
-  title: string;
-  included: boolean;
-  reason: string;
-  legal_basis: 'law_default' | 'charter_confirmed' | 'user_selected';
-  required_data: string[];
-  missing_data: string[];
-}
-```
-
-`procedure_mode` рассчитывается из **подтверждённого списка участников** (`corporate_params.participants`), а не из `entity_person_links`.
+- В `useCorporateDraftSession.confirmCharterRules` уже корректно устанавливается `rules_basis: 'charter_confirmed'` и `charter_extraction_status: 'confirmed'`. Нужно убедиться что `CharterIntakeStep.handleConfirmRules` вызывает `onConfirmRules` с правильными параметрами, а session refetch корректно обновляет UI.
+- В `CharterIntakeStep` добавить явный блок статуса extraction pipeline:
+  - `none` → «Устав не загружен»
+  - `pending` → «Файл загружен, текст не извлечён»
+  - `extracted` → «Текст извлечён, правила требуют подтверждения»
+  - `confirmed` → «Правила подтверждены» (зелёный)
+  - `failed` → «Ошибка извлечения»
+- В `validateSession` (rule engine): проверять `charter_extraction_status === 'confirmed'` вместо только `rulesBasis`, чтобы warning корректно убирался
 
 ---
 
-## 3. Rule Engine — `src/lib/corporate/corporateRuleEngine.ts`
+## 3. Участники: picker из существующих физлиц + quick-create
 
-Pure functions (shared-ready для будущего серверного использования):
+**Файл:** `src/components/corporate/CorporateStep3Params.tsx` (основные изменения)
 
-- `determineProcedureMode(participants: Participant[]): ProcedureMode` — по количеству участников в подтверждённом составе
-- `calculateQuorum(participants, charterRules): QuorumResult` — расчёт кворума по долям/голосам
-- `calculatePackageManifest(mode, charterRules, params): PackageManifestItem[]` — включение/исключение документов с `legal_basis`
-- `validateSession(session): ValidationResult` — blocking/warning checks (сроки, кворум, конфликты)
+**Текущее:** Ручные text inputs для ФИО участника.
 
-Обязательные правила:
+**Решение:**
 
-- 1 участник (по подтверждённому составу) → `sole_participant_decision`
-- `!has_board` → исключить board-документы (`legal_basis: 'charter_confirmed'`)
-- `!has_auditor && !has_audit_commission` → исключить auditor-документы
-- Нет charter данных → warning + `legal_basis: 'law_default'`
-- Нарушение сроков → blocking warning
-- Нет кворума → blocking warning
-
----
-
-## 4. Hook — `src/hooks/useCorporateDraftSession.ts`
-
-- `createSession(profileId, legalDetailsId, reportYear)` — с `created_by`
-- `updateSession(id, patch)` — debounced auto-save, с `updated_by`
-- `deleteSession(id)`
-- `useActiveSessions(profileId)` — list non-cancelled
-- `useSession(id)` — single with full data
-- Audit logging на критичные действия (создание, подтверждение charter, смена mode, подтверждение пакета) через `audit_logs`
+- Добавить props: `session.legal_details_id` для загрузки linked persons
+- Использовать `useAiPersons()` для получения всех физлиц
+- Использовать `useEntityPersonLinks(legalDetailsId)` для получения связанных лиц
+- В UI участника: заменить Input на **PersonPicker** (reuse `src/components/ai-requisites/PersonPicker.tsx`) + кнопка «Добавить нового»
+- При выборе из picker: автозаполнение `name`, `person_id`, `type`
+- Для linked persons с role_type='founder': автозаполнение `share_percent` из link
+- **Quick-create**: модальное окно с минимальным набором полей (ФИО) → `useAiPersons().create` → auto-link через `useEntityPersonLinks().create` с role_type='founder' → добавить в список участников
+- Ручной ввод ФИО оставить как fallback (toggle «Ввести вручную»)
 
 ---
 
-## 5. Corporate Wizard — `src/components/corporate/CorporateWizard.tsx`
+## 4. Место проведения по умолчанию из адреса юрлица
 
-5-step Sheet wizard:
+**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
 
-
-| Step | Компонент                   | Содержание                                                                                                                                                                                                                                |
-| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `CorporateStep1Company.tsx` | Выбор юрлица (reuse `useAiEntities`), год, показ карточки общества. **Не** auto-detect participantCount из links                                                                                                                          |
-| 2    | `CharterIntakeStep.tsx`     | 3 табa: Upload (DOCX/PDF/image → `fileExtractor`), Text (textarea), Manual (structured form). Manual = first-class flow с явной отметкой «данные подтверждены пользователем, не извлечены из устава». Confirmation UI для каждого правила |
-| 3    | `CorporateStep3Params.tsx`  | **Состав участников** (отдельный блок с типом, долей, голосами, представителем, присутствием). Параметры процедуры (дата/время/место/формат/голосование). Повестка (add/remove items). Кандидаты. Председатель/секретарь                  |
-| 4    | `CorporateStep4Preview.tsx` | Manifest с inclusion/exclusion + `legal_basis` + `reason`. Warnings. Missing data. Кворум. «Что система создаст / что только учитывает»                                                                                                   |
-| 5    | `CorporateStep5Confirm.tsx` | Summary. Кнопка «Подтвердить» (сохраняет status=`confirmed`). Генерация DOCX — Sprint 3                                                                                                                                                   |
-
+- При инициализации step, если `meetingLocation` пустое:
+  - Загрузить entity по `session.legal_details_id` (уже доступно через `useAiEntities`)
+  - Извлечь адрес из `leg_address_structured` / `ent_address_structured` через `formatStructuredAddressForView()`
+  - Подставить в `meetingLocation`
+- Показать label «Подставлено из реквизитов юрлица» (Badge), которая исчезает при ручном редактировании
 
 ---
 
-## 6. Entry Point — `AiDocumentsGenerateView.tsx`
+## 5. Даты по умолчанию
 
-Новая секция **«Корпоративные документы»** перед «Пакеты документов»:
+**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
 
-- Карточка «Годовое собрание ООО/ОДО» с иконкой Building2, badge «Новое»
-- Кнопка «Начать» → открывает CorporateWizard
-- Терминология: **участники** (не учредители), **решение единственного участника** (не протокол)
-
----
-
-## 7. Audit
-
-Логирование в `audit_logs` (best-effort, non-blocking — паттерн из `useGrpRefresh`):
-
-- `corporate_draft.created`
-- `corporate_draft.charter_confirmed` (с `charter_confirmed_by`)
-- `corporate_draft.mode_changed`
-- `corporate_draft.package_confirmed`
+- При инициализации, если даты пустые:
+  - `meetingDate`: предложить дату = 31 марта (report_year + 1) или ближайший рабочий день до дедлайна
+  - `notice.date`: meetingDate минус `charter_rules.notice_days_min` (или 30 дней law default)
+  - `review.date_from`: meetingDate минус `LAW_REVIEW_DAYS_MIN` (20 дней)
+- Показать Badge «По умолчанию (общее правило закона)» рядом с предзаполненными датами
+- Если дата уже просрочена: warning inline (amber), но НЕ блокировка ввода на этом шаге
+- В `validateSession`: сделать `MEETING_AFTER_DEADLINE` non-blocking warning вместо blocking error. Blocking только на Step 5.
+- Добавить поля notice date и review date_from в UI Step 3 (сейчас отсутствуют)
 
 ---
 
-## 8. Мост к Sprint 2
+## 6. Председатель и секретарь: picker
 
-В `corporateRuleEngine.ts` зафиксировать полный manifest обязательных шаблонов как constants:
+**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
 
-```typescript
-const ANNUAL_MEETING_TEMPLATES = [
-  { code: 'corp_order_meeting', title: 'Решение/приказ о проведении годового собрания' },
-  { code: 'corp_notice', title: 'Извещение участнику' },
-  { code: 'corp_notice_journal', title: 'Журнал направления извещений' },
-  { code: 'corp_review_list', title: 'Перечень документов для ознакомления' },
-  { code: 'corp_draft_decisions', title: 'Проекты решений по вопросам повестки' },
-  { code: 'corp_registration_list', title: 'Список зарегистрированных лиц' },
-  { code: 'corp_ballot', title: 'Бюллетень/карточка голосования' },
-  { code: 'corp_protocol', title: 'Протокол годового собрания' },
-  { code: 'corp_notification_decisions', title: 'Уведомление о принятых решениях' },
-];
+- Заменить текстовые Input для chairman/secretary на **PersonPicker** (reuse)
+- При выборе: сохранять `person_id` + `name` в `corporate_params.chair` / `secretary`
+- Добавить кнопку quick-create аналогично участникам
+- Ручной ввод как fallback
 
-const SOLE_PARTICIPANT_TEMPLATES = [
-  { code: 'corp_sole_decision', title: 'Решение единственного участника' },
-  { code: 'corp_sole_appendices', title: 'Приложения к решению' },
-];
+---
 
-const CONDITIONAL_TEMPLATES = [
-  { code: 'corp_board_candidates', title: 'Сведения о кандидатах в совет директоров', condition: 'has_board' },
-  // ... auditor, charter amendments etc.
-];
-```
+## 7. Повестка дня по умолчанию
 
-Также зафиксировать constraints для будущих DOCX-шаблонов (реквизиты документа, поля страницы, правила оформления) как documentation constants в `corporateTypes.ts`.
+**Файл:** `src/components/corporate/CorporateStep3Params.tsx`, `src/lib/corporate/corporateRuleEngine.ts`
+
+- Добавить функцию `getDefaultAgenda(mode, charterRules)` в rule engine:
+  - Для `annual_meeting`:
+    1. «Утверждение годового отчёта»
+    2. «Утверждение годовой бухгалтерской отчётности»
+    3. «Распределение прибыли и убытков»
+    4. (conditional) «Избрание совета директоров» если `has_board`
+    5. (conditional) «Избрание ревизора» если `has_auditor`
+  - Для `sole_participant_decision`: аналогичный набор без процедурных вопросов
+- При инициализации Step 3: если agenda пуста — предзаполнить из `getDefaultAgenda()`
+- Пользователь может редактировать/удалять/добавлять
+
+---
+
+## 8. UX-статус по уставу
+
+**Файл:** `src/components/corporate/CharterIntakeStep.tsx`, `src/components/corporate/CorporateStep4Preview.tsx`
+
+- В Step 2: добавить status bar с pipeline состояний (5 бейджей)
+- В Step 4 Preview: показать текущий статус устава + rules_basis
+- Цветовая индикация: зелёный (confirmed), amber (pending/extracted), серый (none), красный (failed)
 
 ---
 
 ## Полный список файлов
 
-### Новые
-
-
-| Файл                                                 | Назначение                                                         |
-| ---------------------------------------------------- | ------------------------------------------------------------------ |
-| `src/lib/corporate/corporateTypes.ts`                | Types: CorporateParams, CharterRules, PackageManifest, Participant |
-| `src/lib/corporate/corporateRuleEngine.ts`           | Rule engine + template manifest constants                          |
-| `src/hooks/useCorporateDraftSession.ts`              | CRUD hook + audit logging                                          |
-| `src/components/corporate/CorporateWizard.tsx`       | 5-step wizard shell                                                |
-| `src/components/corporate/CorporateStep1Company.tsx` | Step 1: company + year                                             |
-| `src/components/corporate/CharterIntakeStep.tsx`     | Step 2: charter (upload/text/manual) + confirmation                |
-| `src/components/corporate/CorporateStep3Params.tsx`  | Step 3: participants + params + agenda                             |
-| `src/components/corporate/CorporateStep4Preview.tsx` | Step 4: manifest preview + warnings                                |
-| `src/components/corporate/CorporateStep5Confirm.tsx` | Step 5: summary + confirm                                          |
-
-
 ### Изменяемые
 
 
-| Файл                                                      | Что                                       |
-| --------------------------------------------------------- | ----------------------------------------- |
-| `src/components/ai-documents/AiDocumentsGenerateView.tsx` | Добавить секцию «Корпоративные документы» |
+| Файл                                                 | Что                                                                                                                  |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `src/components/corporate/CharterIntakeStep.tsx`     | Fix upload (sanitize key), extraction status UX, fix confirm flow                                                    |
+| `src/components/corporate/CorporateStep3Params.tsx`  | PersonPicker для участников/председателя/секретаря, default address/dates/agenda, quick-create, notice/review fields |
+| `src/components/corporate/CorporateStep4Preview.tsx` | Charter status block                                                                                                 |
+| `src/components/corporate/CorporateWizard.tsx`       | Pass legal_details_id to Step 3                                                                                      |
+| `src/lib/corporate/corporateRuleEngine.ts`           | `getDefaultAgenda()`, fix deadline validation severity                                                               |
+| `src/hooks/useCorporateDraftSession.ts`              | Ensure confirmCharterRules properly sets all fields                                                                  |
 
 
-### Миграции
+### Что НЕ меняется
 
-- `corporate_draft_sessions` table + RLS + triggers + public_id
-- `charter-documents` storage bucket + RLS
-
-## Что НЕ меняется
-
-- `GenerateAiDocumentDialog` / `GenerateAiDocumentPackageDialog`
-- Edge functions `ai-generate-document` / `ai-generate-document-package`
+- Edge functions
 - `document_templates` / `document_package_templates`
-- `fields_registry` / `tokenRegistry`
-- Billing / MNS / protected flows
-
-## GAP на следующие спринты
-
-
-| GAP                                   | Спринт |
-| ------------------------------------- | ------ |
-| DOCX шаблоны корпоративных документов | 2      |
-| Arrays/loops в token builder          | 3      |
-| Генерация DOCX из corporate wizard    | 3      |
-| AI extraction из устава               | 4      |
-| Audit trail расширенный               | 5      |
-
+- Existing generation flows
+- `PersonPicker.tsx` (reuse as-is)
+- DB schema (no migrations)
 
 ## DoD
 
-- Таблица `corporate_draft_sessions` с public_id, RLS, created_by/updated_by
-- Storage bucket `charter-documents`
-- Corporate wizard 5 шагов доступен из «Создать документ»
-- Состав участников с долями/голосами/представителями
-- procedure_mode рассчитывается из подтверждённого состава участников
-- Charter intake: upload/text/manual как равноправные modes
-- Rule engine с legal_basis для каждого документа
-- Кворум рассчитывается по долям/голосам
-- Preview с inclusion/exclusion/reason/legal_basis
-- Audit logging критичных действий
-- Manifest Sprint 2 шаблонов зафиксирован в constants
+- Upload устава работает стабильно (sanitized key)
+- Статус устава: 5 состояний с визуальной индикацией
+- Warning «правила не подтверждены» исчезает после подтверждения
+- Участники выбираются из PersonPicker (existing persons + linked)
+- Quick-create нового физлица + auto-link к юрлицу
+- Адрес подставляется из реквизитов юрлица
+- Даты предзаполняются по закону, warning при просрочке без блокировки ввода
+- Председатель/секретарь через PersonPicker
+- Повестка предзаполняется базовым набором
 - Existing flows не сломаны, build clean
