@@ -21,12 +21,12 @@ const QUERY_KEY = "corporate-draft-sessions";
 // Audit helper (non-blocking, best-effort)
 async function logAudit(action: string, userId: string | undefined, meta: Record<string, unknown>) {
   try {
-    await supabase.from("audit_logs").insert({
+    await (supabase.from("audit_logs") as any).insert([{
       action,
       actor_type: "user",
       actor_user_id: userId ?? null,
       meta,
-    });
+    }]);
   } catch {
     // non-blocking
   }
