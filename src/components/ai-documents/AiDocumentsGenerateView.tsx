@@ -288,6 +288,11 @@ export function AiDocumentsGenerateView() {
         }}
         packageTemplate={selectedPackage}
       />
+
+      <CorporateWizard
+        open={corporateWizardOpen}
+        onOpenChange={setCorporateWizardOpen}
+      />
     </>
   );
 }
