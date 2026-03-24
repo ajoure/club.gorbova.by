@@ -378,30 +378,39 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
 
       {/* ─── Close Confirm Dialog ──────────────────────────────── */}
       <AlertDialog open={showCloseConfirm} onOpenChange={setShowCloseConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
+        <AlertDialogContent className="max-w-md p-5 gap-3">
+          <AlertDialogHeader className="gap-1.5">
             <AlertDialogTitle>Выйти из мастера?</AlertDialogTitle>
             <AlertDialogDescription>
-              У вас есть активная черновая сессия. Что вы хотите сделать?
+              У вас есть несохранённые данные. Что сделать с черновиком?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel disabled={closeSaving}>Остаться</AlertDialogCancel>
+          <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-between gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
               onClick={handleExitWithoutSave}
               disabled={closeSaving}
             >
               Выйти без сохранения
             </Button>
-            <AlertDialogAction onClick={handleSaveAndClose} disabled={closeSaving}>
-              {closeSaving ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4 mr-2" />
-              )}
-              Сохранить и выйти
-            </AlertDialogAction>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <AlertDialogCancel disabled={closeSaving} className="mt-0">
+                Остаться
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleSaveAndClose}
+                disabled={closeSaving}
+                className="min-w-[160px]"
+              >
+                {closeSaving ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                Сохранить и выйти
+              </AlertDialogAction>
+            </div>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
