@@ -122,17 +122,42 @@
 4. SoT: `{{meeting.date}}`, UI: chip `[Дата собрания]`
 5. Reload → chip восстанавливается через `tokenStringToLabel()`
 
+**Persistence proof (PATCH 2.1 fix):**
+- SQL migration: `ALTER TABLE public.document_templates ADD COLUMN IF NOT EXISTS template_notes text`
+- `handleSave` → create и update включают `template_notes`
+- Existing шаблоны без template_notes: NULL допустим, поломки нет
+- Full cycle: `[` → picker → `{{meeting.date}}` → save to DB → reload → chip restored
+
 **Production context:** Поле «Инструкции к шаблону» — реальная бизнес-потребность для документирования токенов и инструкций по заполнению шаблона.
 
 **DoD:**
 - [x] `[` открывает picker
 - [x] Доступны все группы для tokenContext="documents:annual_meeting"
 - [x] Выбор [Дата собрания] сохраняет {{meeting.date}} в SoT
+- [x] template_notes сохраняется в БД (create + update)
 - [x] После reload UI label/chip восстанавливается
+- [x] Existing шаблоны без template_notes не ломаются
 - [x] Existing Telegram/email editors не затронуты
 - [x] Новый picker component не создан
 
-### PATCH 2.5 — Master token matrix (gate): НЕ НАЧАТ
+### PATCH 2.5 — Master token matrix (gate): ВЫПОЛНЕН
+
+**Артефакт:** `docs/token_matrix.md`
+
+**Содержание:**
+- Reuse 1:1 блок: 59 existing keys reused (47 legal_details + 12 meeting)
+- New add-only блок: 38 новых ключей
+- Full matrix: 97 записей по 15+ колонкам
+- Колонки: canonical_key, ui_label, entity_type, scalar_array, token_context, resolver_scope, status, doc1–doc4 usage, legacy_alias
+- status: reused / new / legacy-only / legacy+canonical
+- legacy_alias: конкретные ad-hoc token names (entity_name, entity_address, director_name, etc.)
+- Doc usage: manual classification для 4 документов годового собрания
+
+**Gate conditions:**
+- [ ] Matrix утверждена владельцем
+- [ ] Legacy aliases проверены
+- [ ] Doc usage проверен на соответствие реальным DOCX
+- [ ] После утверждения → можно переходить к PATCH 2.6
 
 ### PATCH 2.6 — Snapshot + deprecation: НЕ НАЧАТ
 
