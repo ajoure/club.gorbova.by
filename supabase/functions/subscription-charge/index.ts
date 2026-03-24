@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
@@ -1660,25 +1661,25 @@ async function chargeSubscription(
       try {
         const { data: profile } = await supabase
           .from('profiles')
-          .select('full_name, email, phone, telegram_username')
+          .select('full_name, email, telegram_username')
           .eq('user_id', user_id)
           .single();
 
-        const formattedDate = newEndDate.toLocaleDateString('ru-RU', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric'
-        });
+        const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+        const contactUrl = buildContactUrl({ appBaseUrl, email: profile?.email, mode: 'search' });
 
-        const adminMessage = `🔁 <b>Продление подписки</b>\n\n` +
-          `👤 <b>Клиент:</b> ${profile?.full_name || 'Не указано'}\n` +
-          `📧 Email: ${profile?.email || 'Не указан'}\n` +
-          `📱 Телефон: ${profile?.phone || 'Не указан'}\n` +
-          (profile?.telegram_username ? `💬 Telegram: @${profile.telegram_username}\n` : '') +
-          `\n📦 <b>Тариф:</b> ${tariff.name || 'N/A'}\n` +
-          `💵 Сумма: ${amount} ${currency}\n` +
-          `📆 Доступ до: ${formattedDate}\n` +
-          `🆔 Подписка: ${id}`;
+        const adminMessage = buildAdminNotifyMessage({
+          operation_type: 'subscription_renewal',
+          client_name: profile?.full_name,
+          contact_url: contactUrl,
+          email: profile?.email,
+          telegram_username: profile?.telegram_username,
+          tariff_name: tariff.name,
+          amount,
+          currency,
+          order_number: id,
+          source_label: 'Автосписание',
+        });
 
         const { data: notifyData, error: notifyError } = await supabase.functions.invoke('telegram-notify-admins', {
           body: { 

@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayWarsaw } from '../_shared/timezone.ts';
+import { buildAdminNotifyMessage, buildContactUrl, maskEmail } from '../_shared/admin-notify-message.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -749,16 +750,7 @@ async function recordWebhookEvent(
   }
 }
 
-// =====================================================================
-// PATCH P2: PII masking helper
-// =====================================================================
-function maskEmail(email: string | null | undefined): string {
-  if (!email) return 'не указан';
-  const [local, domain] = email.split('@');
-  if (!domain) return '***';
-  const prefix = local.substring(0, Math.min(3, local.length));
-  return `${prefix}***@${domain}`;
-}
+// maskEmail is now imported from _shared/admin-notify-message.ts
 
 // Helper to create safe subset of webhook body for orphans (NO PII/card data)
 function createSafeOrphanData(body: any, trackingId: string | null): Record<string, any> {
@@ -1627,25 +1619,28 @@ Deno.serve(async (req) => {
           // Full admin notification (same detail level as regular checkout)
           const { data: customerProfile } = await supabase
             .from('profiles')
-            .select('full_name, email, phone, telegram_username')
+            .select('full_name, email, telegram_username')
             .eq('user_id', subV2.user_id)
             .maybeSingle();
 
-          const productName = subV2.products_v2?.name || 'Подписка';
-          const tariffName = subV2.tariffs?.name || '';
-          const amountFormatted = paymentAmount.toFixed(2);
-          const paymentType = '💰 Оплата через подписку bePaid';
-          
-          const notifyMessage = `${paymentType}\n\n` +
-            `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-            `📧 Email: ${maskEmail(customerProfile?.email)}\n` +
-            (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-            `\n📦 <b>Продукт:</b> ${productName}\n` +
-            `📋 Тариф: ${tariffName}\n` +
-            `💵 Сумма: ${amountFormatted} BYN\n` +
-            `🆔 Заказ: ${orderV2?.order_number || 'N/A'}\n` +
-            `🔄 Следующее списание: ${renewAt.toLocaleDateString('ru-RU')}\n` +
-            `📎 bePaid sub: ${subscriptionId}`;
+          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
+
+          const notifyMessage = buildAdminNotifyMessage({
+            operation_type: 'bepaid_subscription_payment',
+            client_name: customerProfile?.full_name,
+            contact_url: contactUrl,
+            email: customerProfile?.email,
+            telegram_username: customerProfile?.telegram_username,
+            product_name: subV2.products_v2?.name,
+            tariff_name: subV2.tariffs?.name,
+            amount: paymentAmount,
+            currency: 'BYN',
+            order_number: orderV2?.order_number,
+            next_charge_at: renewAt.toISOString(),
+            bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+            source_label: 'Webhook bePaid / subscription',
+          });
             
           const notifyResp = await fetch(
             `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
@@ -2538,12 +2533,21 @@ Deno.serve(async (req) => {
           .eq('user_id', linkOrder.user_id)
           .maybeSingle();
 
-        const notifyMessage = `💳 Оплата по ссылке (подписка bePaid)\n\n` +
-          `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-          `📧 Email: ${maskEmail(customerProfile?.email || linkOrder.customer_email)}\n` +
-          `\n💵 Сумма: ${paymentAmount.toFixed(2)} BYN\n` +
-          `🆔 Заказ: ${linkOrder.order_number || 'N/A'}\n` +
-          `📎 bePaid sub: ${subscriptionId}`;
+        const appBaseUrl2 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+        const contactUrl2 = buildContactUrl({ appBaseUrl: appBaseUrl2, email: customerProfile?.email || linkOrder.customer_email, mode: 'search' });
+
+        const notifyMessage = buildAdminNotifyMessage({
+          operation_type: 'link_payment',
+          client_name: customerProfile?.full_name,
+          contact_url: contactUrl2,
+          email: customerProfile?.email || linkOrder.customer_email,
+          telegram_username: customerProfile?.telegram_username,
+          amount: paymentAmount,
+          currency: 'BYN',
+          order_number: linkOrder.order_number,
+          bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+          source_label: 'Оплата по ссылке',
+        });
 
         await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
@@ -3146,7 +3150,16 @@ Deno.serve(async (req) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
             body: JSON.stringify({
-              message: `💳 Оплата по ссылке\n\n👤 <b>Клиент:</b> ${linkProfile.full_name || 'Не указано'}\n📧 Email: ${maskEmail(linkProfile.email || linkOrderV2.customer_email)}\n\n💵 Сумма: ${linkPaymentAmount.toFixed(2)} BYN\n🆔 Заказ: ${linkOrderV2.order_number || 'N/A'}`,
+              message: buildAdminNotifyMessage({
+                operation_type: 'link_payment',
+                client_name: linkProfile.full_name,
+                contact_url: buildContactUrl({ appBaseUrl: Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '', email: linkProfile.email || linkOrderV2.customer_email, mode: 'search' }),
+                email: linkProfile.email || linkOrderV2.customer_email,
+                amount: linkPaymentAmount,
+                currency: 'BYN',
+                order_number: linkOrderV2.order_number,
+                source_label: 'Оплата по ссылке',
+              }),
               source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
             }),
           }
@@ -4180,23 +4193,26 @@ Deno.serve(async (req) => {
             // Get customer profile for notification
             const { data: customerProfile } = await supabase
               .from('profiles')
-              .select('full_name, email, phone, telegram_username')
+              .select('full_name, email, telegram_username')
               .eq('user_id', notifyOrderData.user_id)
               .single();
 
-            const amountFormatted = Number(paymentV2.amount).toFixed(2);
-            const paymentType = notifyOrderData.is_trial ? '🔔 Пробный период' : '💰 Оплата';
-            const productName = (notifyOrderData.products_v2 as any)?.name || 'N/A';
-            const tariffName = (notifyOrderData.tariffs as any)?.name || 'N/A';
+            const appBaseUrl4 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+            const contactUrl4 = buildContactUrl({ appBaseUrl: appBaseUrl4, email: customerProfile?.email || notifyOrderData.customer_email, mode: 'search' });
 
-            const notifyMessage = `${paymentType}\n\n` +
-              `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-              `📧 Email: ${maskEmail(customerProfile?.email || notifyOrderData.customer_email)}\n` +
-              (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-              `\n📦 <b>Продукт:</b> ${productName}\n` +
-              `📋 Тариф: ${tariffName}\n` +
-              `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
-              `🆔 Заказ: ${notifyOrderData.order_number}`;
+            const notifyMessage = buildAdminNotifyMessage({
+              operation_type: notifyOrderData.is_trial ? 'trial' : 'payment',
+              client_name: customerProfile?.full_name,
+              contact_url: contactUrl4,
+              email: customerProfile?.email || notifyOrderData.customer_email,
+              telegram_username: customerProfile?.telegram_username,
+              product_name: (notifyOrderData.products_v2 as any)?.name,
+              tariff_name: (notifyOrderData.tariffs as any)?.name,
+              amount: paymentV2.amount,
+              currency: paymentV2.currency,
+              order_number: notifyOrderData.order_number,
+              source_label: 'Webhook bePaid',
+            });
 
             // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
             try {
@@ -5364,7 +5380,7 @@ ${userName}, к сожалению, не удалось провести опл�
         // Get customer profile for notification
         const { data: customerProfile } = await supabase
           .from('profiles')
-          .select('full_name, email, phone, telegram_username')
+          .select('full_name, email, telegram_username')
           .eq('user_id', order.user_id)
           .maybeSingle();
         
@@ -5375,14 +5391,22 @@ ${userName}, к сожалению, не удалось провести опл�
           .eq('meta->>legacy_order_id', internalOrderId)
           .maybeSingle();
 
-        const telegramNotifyMessage = `${paymentType}\n\n` +
-          `👤 <b>Клиент:</b> ${customerProfile?.full_name || meta.customer_first_name || 'Не указано'}\n` +
-          `📧 Email: ${maskEmail(customerProfile?.email || order.customer_email)}\n` +
-          (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-          `\n📦 <b>Продукт:</b> ${legacyProductName}\n` +
-          `📋 Тариф: ${legacyTariffName}\n` +
-          `💵 Сумма: ${amountFormatted} ${order.currency}\n` +
-          `🆔 Заказ: ${legacyOrderV2?.order_number || internalOrderId}`;
+        const appBaseUrl5 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+        const contactUrl5 = buildContactUrl({ appBaseUrl: appBaseUrl5, email: customerProfile?.email || order.customer_email, mode: 'search' });
+
+        const telegramNotifyMessage = buildAdminNotifyMessage({
+          operation_type: meta.is_trial ? 'trial' : 'payment',
+          client_name: customerProfile?.full_name || meta.customer_first_name,
+          contact_url: contactUrl5,
+          email: customerProfile?.email || order.customer_email,
+          telegram_username: customerProfile?.telegram_username,
+          product_name: legacyProductName,
+          tariff_name: legacyTariffName || undefined,
+          amount: amountFormatted,
+          currency: order.currency,
+          order_number: legacyOrderV2?.order_number || internalOrderId,
+          source_label: 'Webhook bePaid',
+        });
 
         const notifyResponse = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,

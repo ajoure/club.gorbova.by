@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -446,20 +447,27 @@ Deno.serve(async (req) => {
         try {
           const { data: customerProfile } = await supabase
             .from('profiles')
-            .select('full_name, email, phone, telegram_username')
+            .select('full_name, email, telegram_username')
             .eq('user_id', user_id)
             .single();
 
-          const notifyMessage = `💳 <b>Ручное списание</b>\n\n` +
-            `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-            `📧 Email: ${customerProfile?.email || 'Не указан'}\n` +
-            `📱 Телефон: ${customerProfile?.phone || 'Не указан'}\n` +
-            (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-            `\n📦 <b>Продукт:</b> ${product?.name || 'N/A'}\n` +
-            `📋 Тариф: ${tariff?.name || 'N/A'}\n` +
-            `💵 Сумма: ${amount / 100} BYN\n` +
-            `🆔 Заказ: ${orderNumber}\n` +
-            `👨‍💼 Админ: ${user.email}`;
+          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
+
+          const notifyMessage = buildAdminNotifyMessage({
+            operation_type: 'manual_charge',
+            client_name: customerProfile?.full_name,
+            contact_url: contactUrl,
+            email: customerProfile?.email,
+            telegram_username: customerProfile?.telegram_username,
+            product_name: product?.name,
+            tariff_name: tariff?.name,
+            amount: amount / 100,
+            currency: 'BYN',
+            order_number: orderNumber,
+            source_label: 'Ручное списание',
+            admin_label: user.email,
+          });
 
           const { data: notifyData, error: notifyInvokeError } = await supabase.functions.invoke('telegram-notify-admins', {
             body: { 

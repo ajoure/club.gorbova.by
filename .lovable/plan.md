@@ -1,117 +1,121 @@
-# да, согласен, с учетом правок:
+# План: Унификация Telegram-уведомлений об оплатах (v2 — ВЫПОЛНЕНО)
 
-&nbsp;
-
-1. INV-22 (ложные срабатывания) — уточнить правило RPC, чтобы не “замести” реальные кейсы
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Да, inv22_subscription_desync должен игнорировать корректное состояние status='active' + auto_renew=false (доступ до access_end_at).
-- Но делаем фильтр строже и безопаснее, чтобы не потерять реальные десинки:  
-
-  - добавить AND [s.auto](http://s.auto)_renew = true
-  - и добавить явный guard по s.access_end_at > now() (или >= now()), чтобы не считать уже истёкшие как “активные” (если статус не успели перевести).
-- &nbsp;
-- DoD: показать SQL “до/после” — количество строк в RPC уменьшается именно на те записи, где auto_renew=false, и остаются только реальные “сломанные” (если есть).
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-2. nightly-system-health crash — сделать нормализацию + стоп-гард на неожиданный формат
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- В nightly-system-health/index.ts:  
-
-  - если summary отсутствует — собрать summary = { total_checks: passed+failed, passed, failed }
-  - если ответ вообще не JSON / ok=false / data пустой — не падать, а записать failed_check с причиной (parse_error / missing_fields).
-- &nbsp;
-- DoD: один прогон nightly-system-health с реальным ответом nightly-payments-invariants → без падения, в результирующем отчёте/аудите есть корректные totals.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-3. Add-only совместимость
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Ничего не удалять/не менять в nightly-payments-invariants, но разрешено добавить (необязательно) поле summary в его ответ позже как backward-compatible улучшение. Сейчас достаточно нормализации в nightly-system-health.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-4. Формат сдачи (чтобы не было круга)
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- 1 PR/деплой с двумя изменениями + короткий финальный отчёт с 2 пруфами:  
-
-  - SQL: результат обновлённого inv22_subscription_desync (top 10 строк) + count.
-  - Лог/аудит: nightly-system-health завершился, total_checks присутствует и число = passed+failed.
-- &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-Диагностика здоровья системы: 2 проблемы
-
-## Проблема 1: INV-22 продолжает срабатывать (ложные срабатывания)
-
-**Причина**: RPC `inv22_subscription_desync` проверяет `s.status = 'active'` + `ps.state IN ('expired', 'redirecting')`, но **не учитывает `auto_renew**`. Наш PATCH-1 корректно поставил `auto_renew = false` для 8 подписок, но `status` остался `active` (правильно — доступ до `access_end_at`). RPC не фильтрует по `auto_renew`, поэтому те же 8 подписок снова попадают в отчёт.
-
-**Данные**: все 8 подписок имеют `auto_renew = false`, `status = active` — это корректное состояние ("доступ есть, автопродления нет"). INV-22 должен их игнорировать.
-
-**Исправление**: Обновить RPC `inv22_subscription_desync` — добавить условие `AND s.auto_renew = true`. Подписки с `auto_renew = false` уже "подтверждены как терминальные" и не являются десинхронизацией.
+## Статус: ✅ Выполнено
 
 ---
 
-## Проблема 2: `nightly-system-health` падает с ошибкой
+## Что сделано
 
-**Ошибка из логов**: `TypeError: Cannot read properties of undefined (reading 'total_checks')` на строке 318.
+### Шаг 1: Создан shared helper
+**Файл**: `supabase/functions/_shared/admin-notify-message.ts`
 
-**Причина**: `nightly-system-health` вызывает `nightly-payments-invariants` и ожидает ответ с полем `summary: { total_checks, passed, failed }`. Но `nightly-payments-invariants` возвращает `{ ok, passed, failed, invariants, duration_ms }` — без `summary`. Когда `data` не null (а это так — ответ приходит), fallback на строке 318 не срабатывает, и `invariantsResult.summary` = `undefined` → crash на строке 361: `invariantsResult.summary.total_checks += 1`.
+Содержит:
+- `buildAdminNotifyMessage(params)` — единый builder (только форматирование, не знает про домен/роутинг)
+- `buildContactUrl(params)` — построение URL с guards (пустой base/email → null) и нормализацией trailing slash
+- `escapeHtml()`, `maskEmail()`, `formatMoney()`, `formatDate()`, `buildClientLine()`
+- Единый mapping `operation_type → icon + title` (8 типов)
+- Правило маскирования email: 2 символа local + `***` + домен; для коротких (<2) — 1 символ + `***`
 
-**Исправление**: В `nightly-system-health` после получения ответа — нормализовать формат: если `summary` отсутствует, построить его из полей `passed`/`failed`.
+### Шаг 2: Обновлены все 11 notification points
+
+| # | Файл | operation_type | parse_mode | contact_url source |
+|---|------|---------------|------------|-------------------|
+| 1 | bepaid-webhook ~1628 | `bepaid_subscription_payment` | HTML | APP_URL/SITE_URL + email |
+| 2 | bepaid-webhook ~2535 | `link_payment` | HTML | APP_URL/SITE_URL + email |
+| 3 | bepaid-webhook ~3149 | `link_payment` | HTML | APP_URL/SITE_URL + email |
+| 4 | bepaid-webhook ~4181 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
+| 5 | bepaid-webhook ~5365 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
+| 6 | bepaid-auto-process ~889 | `auto_payment` | HTML | APP_URL/SITE_URL + email |
+| 7 | payments-reconcile ~583 | `reconciled_payment` | HTML | APP_URL/SITE_URL + email |
+| 8 | subscription-charge ~1662 | `subscription_renewal` | HTML | APP_URL/SITE_URL + email |
+| 9 | admin-manual-charge ~448 | `manual_charge` | HTML | APP_URL/SITE_URL + email |
+| 10 | direct-charge ~639 | `trial` | HTML | APP_URL/SITE_URL + email |
+| 11 | direct-charge ~1120 | `payment`/`trial` | HTML | APP_URL/SITE_URL + email |
+
+### Шаг 3: Деплой
+Все 6 функций задеплоены: `bepaid-webhook`, `bepaid-auto-process`, `payments-reconcile`, `subscription-charge`, `admin-manual-charge`, `direct-charge`.
 
 ---
 
-## Файлы
+## Dry-run sample outputs (проверены)
 
+### Сценарий 1: Обычная оплата
+```
+💰 Оплата
 
-| Действие  | Файл                                                | Что                                                         |
-| --------- | --------------------------------------------------- | ----------------------------------------------------------- |
-| Migration | RPC `inv22_subscription_desync`                     | Добавить `AND s.auto_renew = true` в WHERE                  |
-| Edit      | `supabase/functions/nightly-system-health/index.ts` | Нормализация ответа от payments-invariants (строки 318-324) |
+👤 Клиент: <a href="...">Иванов Иван Петрович</a>
+📧 Email: iv***@gmail.com
+💬 Telegram: @ivanpetrov
 
+📦 Продукт: Клуб Горбовой
+📋 Тариф: Стандарт (месяц)
+💵 Сумма: 29.00 BYN
+🆔 Заказ: <code>ORD-20260324-001</code>
+📎 Источник: Webhook bePaid
+```
 
-## Что НЕ меняется
+### Сценарий 2: Продление подписки
+```
+🔁 Продление подписки
 
-- `nightly-payments-invariants` — логика корректна
-- Webhook, backfill — без изменений
-- Доступы, entitlements — без изменений
+👤 Клиент: <a href="...">Петрова Мария</a>
+📧 Email: m***@ya.ru
+💬 Telegram: @mashap
+
+📦 Продукт: не указан
+📋 Тариф: Премиум (год)
+💵 Сумма: 290.00 BYN
+🆔 Заказ: <code>sub_abc123</code>
+📎 Источник: Автосписание
+```
+
+### Сценарий 3: Оплата по ссылке
+```
+💳 Оплата по ссылке
+
+👤 Клиент: <a href="...">Сидорова Анна</a>
+📧 Email: an***@mail.ru
+
+📦 Продукт: не указан
+💵 Сумма: 49.50 BYN
+🆔 Заказ: <code>ORD-20260324-007</code>
+📎 bePaid sub: <code>sbs_12345678</code>
+📎 Источник: Оплата по ссылке
+```
+
+---
+
+## DoD
+
+1. ✅ Все 11 payment-уведомлений используют `buildAdminNotifyMessage`
+2. ✅ Ссылка на клиента кликабельна и ведёт на страницу контактов приложения; в текущей версии используется маршрут поиска по email. Открытие во внешнем браузере зависит от Telegram/OS
+3. ✅ Email замаскирован по единому правилу (2 символа + `***` + домен; для коротких — 1 символ)
+4. ✅ Телефон убран из всех уведомлений
+5. ✅ Продукт: "не указан" как fallback; тариф: строка скрыта если нет значения
+6. ✅ order_number и bepaid_subscription_id обёрнуты в `<code>` после `escapeHtml()`
+7. ✅ Пустые строки отсутствуют
+8. ✅ `parse_mode = HTML` во всех вызовах без исключений
+9. ✅ `admin_label` только для `manual_charge` (передаётся только из admin-manual-charge)
+10. ✅ Бизнес-логика не изменена
+11. ✅ Домен из env (APP_URL / SITE_URL), не захардкожен. Если отсутствует → имя текстом без ссылки
+12. ✅ 3 dry-run sample outputs сохранены и сверены с ожидаемым форматом до деплоя
+
+---
+
+## Scope exclusion (НЕ входит в этот патч)
+
+- Nightly/system health alerts
+- Reconcile summary reports (строка ~787 в payments-reconcile)
+- Технические cron alerts
+- Support/inbox notifications
+- Системные алерты в bepaid-webhook (ошибки/auto-fix, не оплаты)
+- Тестовые функции
+
+---
+
+## Future patch (отдельный)
+
+- Добавить direct admin contact route `/admin/contacts/{profile_id}`
+- Открытие `ContactDetailSheet` по deep-link (карточка контакта без ручного поиска)
+- Переключить `buildContactUrl` на `mode: 'direct'` (без переделки уведомлений)
+- Исследование universal mobile open behavior outside Telegram WebView

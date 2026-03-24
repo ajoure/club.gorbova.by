@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -581,7 +582,7 @@ async function fixOrderAndCreateSubscription(
     try {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("full_name, email, phone, telegram_username")
+        .select("full_name, email, telegram_username")
         .eq("user_id", order.user_id)
         .single();
 
@@ -591,15 +592,22 @@ async function fixOrderAndCreateSubscription(
         .eq("id", order.tariff_id)
         .single();
 
-      const adminMessage = `🔄 <b>Платёж восстановлен (reconcile)</b>\n\n` +
-        `👤 <b>Клиент:</b> ${profile?.full_name || 'Не указано'}\n` +
-        `📧 Email: ${profile?.email || order.customer_email || 'Не указан'}\n` +
-        `📱 Телефон: ${profile?.phone || 'Не указан'}\n` +
-        (profile?.telegram_username ? `💬 Telegram: @${profile.telegram_username}\n` : '') +
-        `\n📦 <b>Продукт:</b> ${product?.name || 'N/A'}\n` +
-        `📋 Тариф: ${tariffData?.name || 'N/A'}\n` +
-        `💵 Сумма: ${order.final_price} ${order.currency || 'BYN'}\n` +
-        `🆔 Заказ: ${order.order_number}`;
+      const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+      const contactUrl = buildContactUrl({ appBaseUrl, email: profile?.email || order.customer_email, mode: 'search' });
+
+      const adminMessage = buildAdminNotifyMessage({
+        operation_type: 'reconciled_payment',
+        client_name: profile?.full_name,
+        contact_url: contactUrl,
+        email: profile?.email || order.customer_email,
+        telegram_username: profile?.telegram_username,
+        product_name: product?.name,
+        tariff_name: tariffData?.name,
+        amount: order.final_price,
+        currency: order.currency || 'BYN',
+        order_number: order.order_number,
+        source_label: 'Reconcile',
+      });
 
       const { data: notifyData, error: notifyError } = await supabase.functions.invoke("telegram-notify-admins", {
         body: { 
