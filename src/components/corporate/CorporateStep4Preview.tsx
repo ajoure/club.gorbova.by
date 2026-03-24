@@ -1,5 +1,6 @@
 /**
  * CorporateStep4Preview — Step 4: Package manifest preview + warnings.
+ * Now includes charter status block and data source indicators.
  */
 
 import { useMemo } from "react";
@@ -13,12 +14,15 @@ import {
   ShieldAlert,
   ExternalLink,
   Scale,
+  Clock,
+  BookOpen,
 } from "lucide-react";
 import type {
   CorporateDraftSession,
   CorporateParams,
   CharterRules,
   PackageManifestItem,
+  CharterExtractionStatus,
 } from "@/lib/corporate/corporateTypes";
 import {
   calculatePackageManifest,
@@ -40,7 +44,7 @@ export function CorporateStep4Preview({ session }: Props) {
   );
 
   const validation = useMemo(
-    () => validateSession(session.procedure_mode, params, charterRules, session.report_year, session.rules_basis),
+    () => validateSession(session.procedure_mode, params, charterRules, session.report_year, session.rules_basis, 'edit'),
     [session.procedure_mode, params, charterRules, session.report_year, session.rules_basis]
   );
 
@@ -53,6 +57,8 @@ export function CorporateStep4Preview({ session }: Props) {
   const conditionalGenerated = manifest.filter(m => m.category === 'conditional_generated');
   const externallyProvided = manifest.filter(m => m.category === 'externally_provided');
 
+  const extractionStatus = (session.charter_extraction_status || 'none') as CharterExtractionStatus;
+
   return (
     <div className="space-y-6">
       <div>
@@ -61,6 +67,57 @@ export function CorporateStep4Preview({ session }: Props) {
           Проверьте состав документов перед подтверждением.
         </p>
       </div>
+
+      {/* Charter status block */}
+      <GlassCard className="p-3">
+        <div className="flex items-start gap-2">
+          <BookOpen className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Устав</span>
+              {extractionStatus === 'confirmed' && (
+                <Badge variant="default" className="text-[10px]">
+                  <Check className="h-3 w-3 mr-1" />
+                  Правила подтверждены
+                </Badge>
+              )}
+              {extractionStatus === 'extracted' && (
+                <Badge variant="secondary" className="text-[10px]">
+                  <Clock className="h-3 w-3 mr-1" />
+                  Текст извлечён, правила не подтверждены
+                </Badge>
+              )}
+              {extractionStatus === 'pending' && (
+                <Badge variant="secondary" className="text-[10px]">
+                  <Clock className="h-3 w-3 mr-1" />
+                  Файл загружен, текст не извлечён
+                </Badge>
+              )}
+              {(extractionStatus === 'none' || !extractionStatus) && (
+                <Badge variant="outline" className="text-[10px]">
+                  Устав не загружен
+                </Badge>
+              )}
+              {extractionStatus === 'failed' && (
+                <Badge variant="destructive" className="text-[10px]">
+                  <X className="h-3 w-3 mr-1" />
+                  Ошибка извлечения
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Правовая основа:</span>
+              <Badge variant="outline" className="text-[10px]">
+                {session.rules_basis === 'charter_confirmed'
+                  ? 'Подтверждённый устав'
+                  : session.rules_basis === 'mixed'
+                  ? 'Устав + закон'
+                  : 'Общие правила закона'}
+              </Badge>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
 
       {/* Mode */}
       <GlassCard className="p-3">
