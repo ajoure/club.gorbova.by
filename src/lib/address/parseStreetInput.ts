@@ -62,3 +62,13 @@ export function parseStreetInput(input: string): ParsedStreetInput {
   // No apartment pattern found — return unchanged
   return { street: trimmed };
 }
+
+/**
+ * Strip common apartment/room prefixes from a value.
+ * "кв. 4" → "4", "пом. 49л" → "49л", "офис 12" → "12"
+ * Prefix-only: only removes from the start of the string.
+ */
+export function stripApartmentPrefix(value: string): string {
+  if (!value) return value;
+  return value.replace(/^(кв\.?|квартира|пом\.?|помещение|оф\.?|офис)\s*/i, '').trim();
+}

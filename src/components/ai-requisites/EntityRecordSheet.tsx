@@ -59,6 +59,27 @@ import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { EntityPersonLinksBlock } from "./EntityPersonLinksBlock";
 import { toast } from "sonner";
 
+/* ── GRP status badge ── */
+
+const GRP_ACTIVE_STATUSES = ['действующий', 'действующая', 'действующее'];
+
+function normalizeStatus(raw: string): 'active' | 'inactive' | 'unknown' {
+  const s = raw.trim().toLowerCase();
+  if (GRP_ACTIVE_STATUSES.some(a => s.includes(a))) return 'active';
+  if (s.includes('ликвидир') || s.includes('прекра') || s.includes('недейств')) return 'inactive';
+  return 'unknown';
+}
+
+function GrpStatusBadge({ status }: { status: string }) {
+  const kind = normalizeStatus(status);
+  const cls = kind === 'active'
+    ? 'text-green-700/70 border-green-200/50 bg-green-50/30 dark:text-green-400/70 dark:border-green-800/50 dark:bg-green-950/30'
+    : kind === 'inactive'
+    ? 'text-red-700/70 border-red-200/50 bg-red-50/30 dark:text-red-400/70 dark:border-red-800/50 dark:bg-red-950/30'
+    : 'text-muted-foreground';
+  return <Badge variant="outline" className={cls}>{status}</Badge>;
+}
+
 /* ── helpers ── */
 
 function copyToClipboard(text: string, label: string) {
@@ -311,7 +332,10 @@ export function EntityRecordSheet({
               {entity.grp_status_name && (
                 <>
                   {entity.grp_registration_date && <Separator />}
-                  <InfoRow label="Статус" value={entity.grp_status_name} />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">Статус</span>
+                    <GrpStatusBadge status={entity.grp_status_name} />
+                  </div>
                 </>
               )}
               {entity.grp_tax_office_name && (

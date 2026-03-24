@@ -27,7 +27,7 @@ import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter'
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
-import { parseStreetInput } from '@/lib/address/parseStreetInput';
+import { parseStreetInput, stripApartmentPrefix } from '@/lib/address/parseStreetInput';
 import { cn } from '@/lib/utils';
 
 export interface StructuredAddressBlockProps {
@@ -280,6 +280,11 @@ export function StructuredAddressBlock({
             }
           }
 
+          // Final guard: strip apartment prefix from any source
+          if (merged.apartment) {
+            merged.apartment = stripApartmentPrefix(merged.apartment);
+          }
+
           onChange(merged);
         }
       } catch (err) {
@@ -323,8 +328,18 @@ export function StructuredAddressBlock({
       if (field === 'city') {
         handleCityBlur();
       }
+      // Strip apartment prefix on blur — final guard against "кв. 4" in storage
+      if (field === 'apartment') {
+        const raw = value.apartment?.trim();
+        if (raw) {
+          const clean = stripApartmentPrefix(raw);
+          if (clean !== raw) {
+            onChange({ ...value, apartment: clean });
+          }
+        }
+      }
     },
-    [handleCityBlur]
+    [handleCityBlur, value, onChange]
   );
 
   const handleLabelCopy = useCallback((fieldKey: keyof StructuredAddress) => {
