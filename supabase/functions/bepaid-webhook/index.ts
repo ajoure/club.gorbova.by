@@ -3172,10 +3172,10 @@ Deno.serve(async (req) => {
                 tariff_name: linkV2TariffName,
                 amount: linkPaymentAmount,
                 currency: 'BYN',
-                order_number: linkOrderV2.order_number,
+                bepaid_payment_id: transactionUid || undefined,
                 source_label: 'Оплата по ссылке bePaid',
               }),
-              source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
+              source: 'bepaid_link_webhook', order_id: linkOrderV2.id,
             }),
           }
         );
