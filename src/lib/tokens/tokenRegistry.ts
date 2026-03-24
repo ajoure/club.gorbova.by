@@ -72,7 +72,7 @@ const DATA_TYPE_BADGES: Record<string, string> = {
 };
 
 /** Extract search_keywords from options JSONB */
-function extractSearchKeywords(f: { label: string; key: string; options?: Record<string, unknown> | null }): string {
+function extractSearchKeywords(f: { label: string; key: string; options?: unknown }): string {
   const opts = f.options as Record<string, unknown> | null;
   const kw = opts?.search_keywords as string | undefined;
   return kw ? `${f.label} ${kw}` : `${f.label} ${f.key}`;
