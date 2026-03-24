@@ -750,16 +750,7 @@ async function recordWebhookEvent(
   }
 }
 
-// =====================================================================
-// PATCH P2: PII masking helper
-// =====================================================================
-function maskEmail(email: string | null | undefined): string {
-  if (!email) return 'не указан';
-  const [local, domain] = email.split('@');
-  if (!domain) return '***';
-  const prefix = local.substring(0, Math.min(3, local.length));
-  return `${prefix}***@${domain}`;
-}
+// maskEmail is now imported from _shared/admin-notify-message.ts
 
 // Helper to create safe subset of webhook body for orphans (NO PII/card data)
 function createSafeOrphanData(body: any, trackingId: string | null): Record<string, any> {
