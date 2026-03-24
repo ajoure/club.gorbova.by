@@ -10,8 +10,9 @@ export interface StructuredAddress {
   country_code: string;    // ISO 3166-1 alpha-2 upper-case (BY, PL, DE…)
   country_name: string;    // human-readable
   region: string;          // область / state / province
-  district: string;        // район
+  district: string;        // район (административный район области)
   city: string;            // город / locality
+  city_district: string;   // район города (Фрунзенский, Центральный…)
   settlement: string;      // населённый пункт / sublocality
   street: string;          // улица / route
   house: string;           // дом / street_number
@@ -37,6 +38,7 @@ export interface CanonicalAddressPayload {
   region: string | null;
   district: string | null;
   city: string | null;
+  city_district: string | null;
   settlement: string | null;
   street: string | null;
   house: string | null;
