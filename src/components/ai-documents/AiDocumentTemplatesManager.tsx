@@ -139,6 +139,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       parsedPlaceholders: Array.isArray(t.placeholders) ? t.placeholders : [],
       isParsing: false,
       parseError: null,
+      template_notes: (t as any).template_notes || "",
     });
     setMode("edit");
   };
