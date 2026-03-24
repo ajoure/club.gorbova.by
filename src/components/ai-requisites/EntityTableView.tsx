@@ -6,7 +6,7 @@
  * Archive action only for purpose=document && status=active.
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,6 +18,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { GlassCard } from "@/components/ui/GlassCard";
 import {
   Building2,
@@ -26,12 +36,15 @@ import {
   Pencil,
   Search,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import {
   getEntityShortName,
   getEntityTypeBadge,
   getEntityUnp,
 } from "@/lib/legal-entities/entityDisplayUtils";
+import { useGrpRefresh, type BulkDryRunResult, type BulkRefreshResult } from "@/hooks/useGrpRefresh";
+import { useRbac } from "@/hooks/useRbac";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 
 type FilterKey = "all" | "legal" | "entrepreneur" | "active" | "archived";
