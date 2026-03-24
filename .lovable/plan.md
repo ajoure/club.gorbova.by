@@ -1,151 +1,172 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В разделе Raw helper proof обязательно показывать helper-фрагменты в fenced code block и дополнительно дублировать рядом короткой строкой-подтверждением, что это именно raw-фрагмент из файла с указанием файла и диапазона строк. Без диапазона строк proof не считается.
-2. В разделе Raw call-site proof для 3 обязательных точек нужно показывать не обрывок, а непрерывный фрагмент, где одновременно видны:  
+1. Не писать, что в payments-reconcile «нет bePaid ID в контексте», пока это не проверено raw-кодом. В этом пункте нужно заменить формулировку на:  
 
-  - buildContactUrl(...)
-  - buildAdminNotifyMessage(...)
-  - вызов telegram-notify-admins
-  - parse_mode или отсутствие parse_mode в этом вызове  
-  Иначе не получится доказать связь helper → реальный боевой вызов.
-3. &nbsp;
-4. В матрице 11/11 добавь ещё колонку proof_ref, где для каждой точки будет ссылка вида: helper raw / call-site raw / default parse_mode raw. Это уберёт спорные места по тому, чем именно подтверждена строка матрицы.
-5. В разделе 3 raw HTML dry-run examples нужно показывать именно итоговую строку, которую вернёт builder, а не объект параметров. Внутри примера должны быть видны raw <a ...> и raw <code>...</code>. Если в примере хотя бы один из этих тегов пропал, пример не засчитывается.
-6. В разделе STOP-guard зафиксируй ещё одно правило: если хотя бы по одной из 11 точек нет raw call-site proof, то статус всей матрицы автоматически not accepted, даже если helper сам по себе корректен.
-7. В финальном разделе Mismatch / Exceptions указывать не только none или список проблем, но и число закрытых точек в формате:  
+  - сначала dry-run/grep по фактическим полям в точке вызова;
+  - если доступен provider_payment_id / gateway_payment_id / transaction_uid, передавать его как bepaid_payment_id;
+  - только если реально ничего нет — строку ID платежа скрывать.
+2. &nbsp;
+3. В таблице 11 call sites для точек direct-charge и payments-reconcile нельзя заранее фиксировать «— (нет bePaid ID в контексте)`. Нужно переписать как:  
 
-  - 11/11 closed
-  - либо 10/11 closed, 1 open
+  - bepaid_payment_id передать при наличии;
+  - иначе не рендерить.  
+  Иначе это уже предположение, а не доказуемый план.
+4. &nbsp;
+5. Для subscription-charge добавить явный STOP-guard по product_name:  
+
+  - сначала взять продукт из уже доступного контекста / join;
+  - только если его реально нет — отдельный lookup по product_id;
+  - не делать лишний запрос, если product_name уже есть в памяти/данных.  
+  Это сохраняет add-only и не плодит лишние запросы.
+6. &nbsp;
+7. Для compact ID зафиксировать единое правило в helper:  
+
+  - подписка: SBS {first6}…{last4}
+  - платеж: PAY {first6}…{last4}
+  - если строка уже имеет префикс sbs_ / trn_ / uid_, не дублировать этот сырой префикс в тексте, а нормализовать только в display label.  
+  Иначе можно получить некрасивый гибрид вида PAY trn_18b5…4240.
 8. &nbsp;
-9. Финальный вывод accepted / not accepted должен ставиться только после матрицы и блока Mismatch / Exceptions, не раньше и без промежуточных формулировок.
-  План: пересборка acceptance report в доказуемом raw-виде
+9. В helper явно зафиксировать приоритет ID:  
 
-## Цель
+  - сначала bepaid_subscription_id
+  - потом bepaid_payment_id
+  - одновременно оба не выводить.  
+  Это уже есть в плане по смыслу, но нужно указать как raw DoD пункт, иначе исполнитель может показать две строки сразу.
+10. &nbsp;
+11. Добавить отдельный raw DoD по helper:  
 
-Не выпускать ещё один “общий” отчёт. Вместо этого собрать acceptance report только из raw-доказательств, чтобы HTML-теги не терялись рендером чата и не было внутренних противоречий.
+  - поле order_number удалено из интерфейса AdminNotifyMessageParams
+  - блок 🆔 Заказ физически удалён из builder
+  - добавлено поле bepaid_payment_id
+  - добавлена функция formatCompactId(...)
+  - ID-блок в builder рендерит только ID подписки либо ID платежа.
+12. &nbsp;
+13. Добавить raw DoD по call sites:  
 
-## Что уже подтверждено по коду
+  - grep/проверка: order_number: отсутствует во всех 11 вызовах buildAdminNotifyMessage(...)
+  - grep/проверка: строка Заказ: больше не формируется ни в одном payment-related notification
+  - grep/проверка: next_charge_at передаётся во всех subscription-сценариях, где дата реально есть.
+14. &nbsp;
+15. В пункте про telegram-notify-admins указать: передеплой нужен только для консистентности артефакта, но код там в этом патче не меняется. Иначе получится ложное впечатление, что там есть новая логика.
+16. В финальном acceptance добавить обязательный раздел Mismatch / Exceptions:  
 
-По реальным файлам сейчас видно:
+  - либо none
+  - либо точный список точек, где bepaid_payment_id не найден и поэтому строка скрыта.  
+  Это важно, чтобы потом не спорить, почему в части уведомлений ID есть, а в части нет.
+17. &nbsp;
+18. В итоговый пример формата добавить ещё один пример для разовой оплаты:
 
-- в helper есть raw HTML-ссылка: `return \`[\${safeName}](\${escapeHtml(contactUrl)});`
-- `order_number` и `bepaid_subscription_id` оборачиваются в `<code>...</code>`
-- `escapeHtml()` содержит замены `&`, `<`, `>`, `"`
-- в `bepaid-webhook`, `subscription-charge`, `admin-manual-charge` helper реально используется
-- default `parse_mode = 'HTML'` есть в `telegram-notify-admins`
-- часть вызовов передаёт `parse_mode: 'HTML'` явно
+&nbsp;
 
-Но это нужно оформить в acceptance-отчёт так, чтобы доказательства были неоспоримыми.
+&nbsp;
 
-## Как будет пересобран отчёт
+&nbsp;
 
-### 1) Raw-proof helper
+- без Следующее списание
+- без ID подписки
+- с ID платежа: PAY ...  
+Иначе по примерам останется не до конца видно, как должен выглядеть non-subscription flow.
 
-Показать отдельными code block без пересказа:
+&nbsp;
 
-- `escapeHtml()`
-- `buildClientLine()`
-- `if (order_number)`
-- `if (bepaid_subscription_id)`
+Имя клиента также обернуть в <code>имя</code>, чтобы можно было легко скопировать  
 
-Формат: только raw-код, без “объяснения своими словами” внутри блока.
+# PATCH: Убрать Заказ, добавить компактные bePaid ID, вернуть Следующее списание
 
-### 2) Raw-proof call sites
+## Что меняется
 
-Показать минимум 3 реальных raw-вызова:
+### 1. Shared helper (`_shared/admin-notify-message.ts`)
 
+**Удалить:**
+
+- Поле `order_number` из интерфейса `AdminNotifyMessageParams`
+- Блок рендера `🆔 Заказ: ...` (строки 220-222)
+
+**Добавить:**
+
+- Поле `bepaid_payment_id?: string | null` в интерфейс
+- Функцию `formatCompactId(value, prefix)`:
+  - `sbs_5fa286120bb17a89` → `SBS 5fa286…7a89` (prefix + первые 6 + … + последние 4)
+  - `trn_18b56b8f50b44240` → `PAY 18b56b…4240`
+  - Если значение короткое (≤12 символов) — выводить целиком
+
+**Изменить рендер ID-блока:**
+
+- Вместо `🆔 Заказ` — два условных поля:
+  - `📎 ID подписки: <code>{compact}</code>` — если есть `bepaid_subscription_id`
+  - `📎 ID платежа: <code>{compact}</code>` — если есть `bepaid_payment_id` и нет `bepaid_subscription_id`
+- Одновременно оба не показывать: подписка приоритетнее
+
+**Следующее списание** — уже есть в helper (строки 224-229), не трогаем. Нужно только передавать `next_charge_at` из call sites.
+
+### 2. Все 11 call sites — убрать `order_number`, добавить нужные поля
+
+
+| #   | Файл                | Строка | Что убрать     | Что добавить                                                                                                                                         |
+| --- | ------------------- | ------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | bepaid-webhook      | ~1635  | `order_number` | `bepaid_payment_id` (из transaction uid); `next_charge_at` уже есть                                                                                  |
+| 2   | bepaid-webhook      | ~2553  | `order_number` | `bepaid_payment_id` (из transaction uid)                                                                                                             |
+| 3   | bepaid-webhook      | ~3177  | `order_number` | `bepaid_payment_id` (из transaction uid)                                                                                                             |
+| 4   | bepaid-webhook      | ~4226  | `order_number` | `bepaid_payment_id` (из transaction uid)                                                                                                             |
+| 5   | bepaid-webhook      | ~5416  | `order_number` | `bepaid_payment_id` (из transaction uid)                                                                                                             |
+| 6   | bepaid-auto-process | ~919   | `order_number` | `bepaid_payment_id` (из `item.bepaid_uid`)                                                                                                           |
+| 7   | payments-reconcile  | ~604   | `order_number` | — (reconcile, нет bePaid ID в контексте)                                                                                                             |
+| 8   | subscription-charge | ~1676  | `order_number` | `next_charge_at: nextChargeDate.toISOString()` (переменная доступна в scope); `product_name` добавить из `tariff.products_v2?.name` или через lookup |
+| 9   | admin-manual-charge | ~463   | `order_number` | `bepaid_payment_id` (из `chargeResult.transaction?.uid`)                                                                                             |
+| 10  | direct-charge       | ~653   | `order_number` | — (trial, нет bePaid payment uid)                                                                                                                    |
+| 11  | direct-charge       | ~1138  | `order_number` | `bepaid_payment_id` (из `chargeResult.transaction?.uid`)                                                                                             |
+
+
+Также убрать `order_number` из `body` вызова `telegram-notify-admins` в тех местах, где он передавался как tracking field — оставить только `order_id`.
+
+### 3. subscription-charge: добить `product_name` и `next_charge_at`
+
+В строке ~1668 сейчас нет `product_name` и `next_charge_at`. Нужно:
+
+- `product_name`: взять из существующего контекста — `tariff.name` уже передаётся как `tariff_name`, но `product_name` отсутствует. Добавить lookup по `product_id` (уже доступен в scope как переменная)
+- `next_charge_at: nextChargeDate.toISOString()` — переменная `nextChargeDate` уже вычислена выше (строка ~1178)
+
+### 4. bepaid-webhook точки #2 и #3: product/tariff lookup уже добавлен
+
+В предыдущем патче уже добавлены lookups для `linkProductName`/`linkTariffName`. Проверено — они на месте (строки 2533-2542 и 3148-3161).
+
+### 5. Файлы на деплой (7 функций)
+
+- `_shared/admin-notify-message.ts` (shared, деплоится с каждой функцией)
 - `bepaid-webhook`
+- `bepaid-auto-process`
+- `payments-reconcile`
 - `subscription-charge`
 - `admin-manual-charge`
+- `direct-charge`
+- `telegram-notify-admins` (без изменений в этом патче, но передеплоить для consistency)
 
-В каждом raw-фрагменте должны быть одновременно видны:
+### 6. Что НЕ меняется
 
-- `buildContactUrl(...)`
-- `buildAdminNotifyMessage({...})`
-- вызов `telegram-notify-admins`
-- источник `parse_mode` (явный либо через default)
+- `telegram-notify-admins` — `disable_web_page_preview` уже есть
+- `buildContactUrl` — остаётся в shared как future-ready, не используется
+- `buildClientLine` — уже рендерит `<code>ФИО</code>` без ссылки
+- `source_label` — уже переведены на бизнес-значения
+- Системные/error алерты — не трогаем
 
-### 3) Матрица 11/11 на acceptance-уровне
+### 7. Итоговый формат уведомления после патча
 
-Собрать таблицу по всем payment-related точкам со столбцами:
+```text
+{icon} {title}
 
-- файл
-- место вызова
-- helper used
-- contact_url source
-- client_link (`raw link` / `text fallback`)
-- parse_mode source (`explicit HTML` / `default HTML`)
-- id_wrapped_in_code
-- status
+👤 Клиент: {client_name}
+📧 Email: {masked_email}
+💬 Telegram: @{username}
 
-Отдельно пометить:
+📦 Продукт: {product_name}
+📋 Тариф: {tariff_name}
+💵 Сумма: {amount} {currency}
+🔄 Следующее списание: DD.MM.YYYY HH:mm
+📎 ID подписки: <code>SBS 5fa286…7a89</code>
+📎 Источник: Подписка bePaid (автосписание)
+👨‍💼 Админ: admin@example.com
+```
 
-- где `contact_url` строится через `buildContactUrl(...)`
-- где `parse_mode` берётся явно
-- где он берётся из default в `telegram-notify-admins`
-
-### 4) Dry-run proof только как raw HTML string
-
-Показать 3 примера строго в code block как итоговые raw-строки:
-
-1. обычная оплата
-2. продление подписки
-3. оплата по ссылке
-
-В каждом примере должны явно присутствовать:
-
-- `<a href="...">`
-- `<code>...</code>`
-- masked email
-- отсутствие пустых строк между условными полями
-
-### 5) Правило для parse_mode
-
-Для каждой из 11 точек в матрице будет указан один из двух доказуемых вариантов:
-
-- `parse_mode: 'HTML'` передан явно
-- `parse_mode` не передан, но есть raw-proof default: `const { message, parse_mode = 'HTML', ... }`
-
-### 6) STOP-guard
-
-Если при перепроверке обнаружится хотя бы одна точка:
-
-- без helper
-- без `<code>`
-- без ссылки / корректного text fallback
-- без доказуемого HTML parse mode
-
-тогда acceptance report не выпускается как final.
-Вместо него будет отдельный mini-fix plan по конкретной незакрытой точке, а уже потом — новый полный acceptance report.
-
-## Что не входит
-
-В acceptance-матрицу не включаются:
-
-- error/debug/system alerts
-- summary/report notifications
-- тестовые функции
-
-Показываются только 11 payment-related уведомлений.
-
-## Итоговый формат сдачи
-
-Финальный acceptance report будет содержать разделы в таком порядке:
-
-1. Raw helper proof
-2. Raw call-site proof (3 места)
-3. Raw default parse_mode proof
-4. Матрица 11/11
-5. 3 raw HTML dry-run examples
-6. `Mismatch / Exceptions: none` либо точный список незакрытых точек
-7. Итог только одним словом:
-
-- `accepted`
-или
-- `not accepted`
-
-## Ожидаемый результат
-
-Следующий отчёт будет не “описанием”, а доказательной приёмкой по исходникам. Это снимет текущую причину отказа: отсутствие raw-пруфов в форме, устойчивой к рендеру чата.
+Пустые строки не рендерятся. `Заказ` отсутствует. ID компактный.
