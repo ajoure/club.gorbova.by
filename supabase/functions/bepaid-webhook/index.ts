@@ -1785,14 +1785,14 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
         
-      } else if (subscriptionState === 'canceled' || subscriptionState === 'expired') {
-        console.log('[WEBHOOK-SUBSCRIPTION] Processing CANCELED/EXPIRED subscription');
+      } else if (['canceled', 'expired', 'failed', 'redirecting'].includes(subscriptionState)) {
+        console.log(`[WEBHOOK-SUBSCRIPTION] Processing TERMINAL subscription state: ${subscriptionState}`);
         
-        // Update provider_subscriptions state
+        // Update provider_subscriptions state to actual state (not hardcoded)
         await supabase
           .from('provider_subscriptions')
           .update({
-            state: 'canceled',
+            state: subscriptionState,
           })
           .eq('provider_subscription_id', subscriptionId);
         
@@ -1803,7 +1803,7 @@ Deno.serve(async (req) => {
             auto_renew: false,
             meta: {
               ...(subV2.meta || {}),
-              bepaid_canceled_at: now.toISOString(),
+              [`bepaid_${subscriptionState}_at`]: now.toISOString(),
             },
           })
           .eq('id', subscriptionV2Id);
@@ -1813,19 +1813,20 @@ Deno.serve(async (req) => {
           actor_type: 'system',
           actor_user_id: null,
           actor_label: 'bepaid-webhook',
-          action: 'bepaid.subscription.canceled',
+          action: 'billing.inv22.autorenew_disabled_from_provider_state',
           target_user_id: subV2.user_id,
           meta: {
             subscription_v2_id: subscriptionV2Id,
             provider_subscription_id: subscriptionId,
             state: subscriptionState,
+            reason: 'terminal_provider_state',
           },
         });
         
         return new Response(JSON.stringify({ 
           ok: true, 
           mode: 'provider_managed_subscription', 
-          status: 'canceled',
+          status: subscriptionState,
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
