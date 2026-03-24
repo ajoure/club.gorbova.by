@@ -1,115 +1,130 @@
 # да, согласен, с учетом правок:
 
-1. **Apartment parser применять только к ручному вводу / fallback после Google, но не к UNP/GRP enrichment path.**  
-Это у тебя уже фактически соблюдается, но в плане пропиши явно:
-  - parser работает только в `StructuredAddressBlock.handleSelect` и/или при ручном вводе;
-  - `enrichAddressViaGoogle()` / GRP auto-fill не трогаем.
-2. **Soft normalization для** `city` **делать максимально узко и безопасно.**  
-Оставить:
-  - только on blur;
-  - только для BY;
-  - только если значение без существующего префикса;
-  - только если это одиночное название города.  
-  Но не делать агрессивный глобальный whitelist/guessing, если нет уверенности. Если значение спорное — ничего не менять автоматически.
-3. **В compact layout переупорядочивание поддерживаю, но нужен отдельный proof по юрлицам.**  
-Так как `OrganizationDetailsForm`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm` наследуют `StructuredAddressBlock`, в DoD добавь:
-  - UNP auto-fill не сломан;
-  - compact forms юрлиц после reorder работают корректно;
-  - адрес после GRP + Google enrichment отображается в правильном порядке.
-4. **Postal code пункт оформить как explicit verify, а не как предположение.**  
-В отчёте потом показать:
-  - Google select с индексом;
-  - индекс сохранился;
-  - apartment parser не затёр `postal_code`.
-5. **DoD дополнить отдельным кейсом по compact layout.**  
-Сейчас есть общий DoD, но добавь явно:
-  - compact layout у юрлиц и исполнителей тоже перестроен;
-  - existing autocomplete/enrichment flow не сломан.
-6. **Что не меняется — оставить, но добавить ещё один пункт:**
-  - без изменений `enrichAddressViaGoogle` / GRP flow, кроме того, что они продолжают использовать уже исправленный `GooglePlacesAdapter` и общий `StructuredAddressBlock`.
+1. **Apartment normalization делать не только в Google path, но и в любом ручном сохранении поля.**  
+Правильно:
+  - `stripApartmentPrefix()` вызывать:
+    - после `subpremise` из Google,
+    - после parser fallback,
+    - на blur поля `apartment`,
+    - перед submit/save как финальный guard.  
+    Иначе часть значений `кв. 4` всё равно может проскочить.
+2. `stripApartmentPrefix()` **должен быть строго “prefix-only”.**  
+Убирать только префиксы в начале строки:
+  - `кв.`, `кв`, `квартира`
+  - `пом.`, `пом`, `помещение`
+  - `оф.`, `офис`  
+  Не удалять ничего из середины строки и не пытаться “угадывать” помещение по произвольному тексту.
+3. **Для юрлиц статус МНС — да, делать плашкой, но через нормализованную проверку.**  
+Не только по подстроке `действующ`, а:
+  - trim + lowercase;
+  - список допустимых active/inactive значений;
+  - unknown status — нейтральная серая плашка, а не красная по умолчанию.  
+  Иначе нестандартные значения будут ошибочно краснеть.
+4. **В отчёте по MNS metadata обязательно разделить “уже сохранялось” и “теперь улучшено отображение”.**  
+По твоему аудиту:
+  - дата регистрации, код ИМНС, название ИМНС, статус уже сохраняются в `grp_*`;
+  - в этом корректирующем PATCH меняется именно UI-представление статуса, а не сама persistence.  
+  Это важно честно зафиксировать.
+5. **city_district для юрлиц — в этом PATCH как verify-only принимаю.**  
+Но в отчёте нужен явный proof:
+  - форма юрлица;
+  - поле видно;
+  - значение сохраняется/загружается;
+  - `Фрунзенский район` не попадает в населённый пункт.
+6. **postal_code — тоже как verify-only ок**, но нужен честный proof:
+  - сценарий Google select без квартиры;
+  - сценарий Google select с квартирой;
+  - индекс не потерян.  
+  Если кейс с квартирой всё же иногда ломается, не писать “исправлено”, а писать “проверено / требует отдельного follow-up”.
+7. **Formatter не трогать — правильно.**  
+Но в отчёте прямо указать:
+  - баг был не во formatter,
+  - баг был в том, что в `apartment` сохранялось уже префиксованное значение.
+8. **DoD дополнить ещё одним кейсом:**
+  - `пом. 49л` → хранится `49л`
+  - в юрлице formatter выводит `пом. 49л`, но не `пом. пом. 49л`
+  - в физлице `кв. 4` → хранится `4`, выводится `кв. 4`
+9. **Что не меняется — оставить, но добавить:**
+  - без DB миграций;
+  - без изменения snapshot architecture;
+  - без изменения persistence MNS metadata;
+  - только apartment normalization + status badge + verification.
+10. **Итоговый статус этого корректирующего PATCH я бы формулировал так:**
 
-После этих уточнений mini-PATCH выглядит [правильно.](http://правильно.Mini)
+- если apartment normalization и badge реально проверены в UI, а city_district/postal_code подтверждены скринами/сценариями — **PATCH ЗАКРЫТ**;
+- если postal code кейс с квартирой ещё нестабилен — **PATCH ЧАСТИЧНО ЗАКРЫТ, нужен follow-up по Google address parsing**.
+- &nbsp;
+- Корректирующий PATCH — Apartment normalization + MNS metadata status badge + city_district verification
 
-&nbsp;
+## Текущее состояние (audit)
 
-[Mini](http://правильно.Mini)-PATCH: Address UX Polish + Legal Entity Address Normalization
+1. **Apartment bug**: Google subpremise может вернуть `кв. 4` — сохраняется as-is в `apartment`. Formatter в `formatStructuredAddress.ts` добавляет `пом.` / `кв.` prefix → получается `кв. кв. 4`. Аналогично `parseStreetInput` уже возвращает чистое число, но Google path не нормализует.
+2. **MNS metadata**: Уже сохраняется в `grp_*` полях (`grp_registration_date`, `grp_status_name`, etc.) и отображается в `EntityRecordSheet.tsx` секцией "Данные реестра". Но статус показывается простым текстом, без цветовой плашки.
+3. **city_district для юрлиц**: `StructuredAddressBlock` уже используется во всех формах (юрлица, ИП, физлица). Поле `city_district` уже в layout. Работает автоматически.
+4. **postal_code**: Google select устанавливает все поля атомарно через `onChange(merged)`, минуя `handleFieldChange`. Индекс не теряется.
 
-## What changes
+---
 
-### 1. Reorder FULL_LAYOUT in `StructuredAddressBlock.tsx`
+## Изменения
 
-New order — street/house first, administrative context below:
+### PATCH C — Нормализация apartment (основной баг)
 
-```text
-1. Улица (street)              col-span-2
-2. Дом (house)
-3. Корпус (building)
-4. Квартира/Помещение (apartment)
-5. Страна (country_name)
-6. Область / Регион (region)   col-span-2
-7. Район (district)
-8. Населённый пункт (city)     col-span-2
-9. Район города (city_district)
-10. Индекс (postal_code)
-```
+**Новая функция** `stripApartmentPrefix` в `src/lib/address/parseStreetInput.ts`:
 
-COMPACT_LAYOUT: same reorder — street/house/building/apartment first, then city/region/postal/country.
+- Убирает префиксы `кв.`, `кв`, `пом.`, `пом`, `квартира`, `помещение`, `офис`, `оф.` из начала строки
+- Оставляет только номер/значение: `кв. 4` → `4`, `пом. 49л` → `49л`
 
-### 2. Apartment parser as fallback — new `src/lib/address/parseStreetInput.ts`
+**Применить в 3 точках:**
 
-Conservative parser, only fires when Google did NOT return `subpremise`:
+1. `GooglePlacesAdapter.parseComponents()` — нормализовать `apartment` после извлечения из subpremise
+2. `StructuredAddressBlock.handleSelect()` — нормализовать `merged.apartment` после parser fallback
+3. `StructuredAddressBlock.handleFieldChange()` — на blur поля `apartment` strip prefix (аналогично city blur)
 
-- Pattern `19-306` — only when dash is in the tail after house number, NOT inside street name
-- Pattern `19 кв 306`, `19 кв. 306`, `19, кв 306`
-- Regex anchored to end of string to avoid corrupting street names with dashes
-- Returns `{ street, house, apartment }` or unchanged input if no confident match
+### PATCH A — Статус-плашка для МНС данных
 
-Applied in `StructuredAddressBlock.handleSelect`: after Google merge, if `apartment` is empty and `street` or `house` contain apartment-like patterns, parse and distribute.
+**Файл:** `src/components/ai-requisites/EntityRecordSheet.tsx`
 
-### 3. Soft normalization for city on blur
+Заменить простой `<InfoRow label="Статус" value={...} />` на плашку:
 
-In `StructuredAddressBlock`, add `onBlur` handler for `city` field only:
+- `grp_status_name` содержит "действующ" → зеленый бейдж (`bg-green-50 text-green-700 border-green-200`)
+- Иначе → красный бейдж (`bg-red-50 text-red-700 border-red-200`)
+- Используем `<Badge variant="outline">` с conditional className
 
-- Only if `country_code === 'BY'` or `country_name` contains "Беларус"
-- Only if value is a single word without existing prefix (`г.`, `д.`, `п.`, `аг.`)
-- Only for known large cities (Минск, Брест, Гомель, Гродно, Витебск, Могилёв)
-- Prepend `г.`  — e.g., "Минск" → "г. Минск"
-- Never during typing, only on blur
+### PATCH B — city_district для юрлиц (verify only)
 
-### 4. Postal code guard
+`StructuredAddressBlock` уже содержит `city_district` в `FULL_LAYOUT`. Все формы юрлиц (`OrganizationDetailsForm`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`) используют этот компонент. Поле уже видно, сохраняется и загружается. Google adapter маппит sublocality → city_district.
 
-Verify that `handleFieldChange` hierarchical clearing for `street` does NOT affect postal code set by Google select. The `handleSelect` path sets all fields atomically via `onChange(merged)`, bypassing `handleFieldChange`. No code change needed — document as verified.
+Изменений не требуется — только verification в отчете.
 
-### 5. Legal entity forms — already covered
+### PATCH D — postal_code (verify only)
 
-All legal entity forms (`OrganizationDetailsForm`, `LegalEntityDetailsForm`, `EntrepreneurDetailsForm`) already use `StructuredAddressBlock` with the same component. Changes to layout, parser, and normalization apply automatically.
+`handleSelect` устанавливает поля атомарно. Parser не затирает postal_code. Изменений не требуется.
 
-UNP auto-fill flow: UNP → GRP lookup → `enrichAddressViaGoogle()` → `GooglePlacesAdapter.parseComponents()` → address set via `setAddress()`. The enricher already uses `GooglePlacesAdapter` which maps sublocality → `city_district`. The apartment parser in `handleSelect` won't affect enricher flow (enricher sets address directly, not through `handleSelect`). This is correct — GRP addresses don't contain apartments.
+---
 
-## Files
+## Файлы
 
 
-| File                                               | What                                                                                          |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `src/components/shared/StructuredAddressBlock.tsx` | Reorder both layouts, add city blur normalization, integrate apartment parser in handleSelect |
-| `src/lib/address/parseStreetInput.ts`              | New: conservative apartment extraction parser                                                 |
+| Файл                                                 | Что                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------- |
+| `src/lib/address/parseStreetInput.ts`                | Добавить `stripApartmentPrefix()`                        |
+| `src/lib/address/adapters/GooglePlacesAdapter.ts`    | Нормализовать apartment после subpremise                 |
+| `src/components/shared/StructuredAddressBlock.tsx`   | Blur-нормализация apartment + apply strip в handleSelect |
+| `src/components/ai-requisites/EntityRecordSheet.tsx` | Статус-плашка для grp_status_name                        |
 
 
-## What does NOT change
+## Что НЕ меняется
 
-- No DB migrations
-- No backend column changes
-- No formatter changes
-- No GooglePlacesAdapter mapping changes
-- No GrpAddressEnricher changes
-- No changes to legal entity form components (they inherit StructuredAddressBlock changes)
+- Formatter (`formatStructuredAddress.ts`) — не трогаем
+- Backend columns — без миграций
+- GrpAddressEnricher — не трогаем
+- Person address flow — не трогаем
+- Billing/template flows — не трогаем
 
 ## DoD
 
-- Field order changed in both full and compact layouts
-- `Одинцова 19-306` → street=Одинцова, house=19, apartment=306 (only if Google didn't provide apartment)
-- Street names with dashes preserved (e.g., "Карла Маркса" not broken)
-- `postal_code` not lost during Google select or apartment parsing
-- City soft normalization: "Минск" → "г. Минск" on blur for BY only
-- Existing Google/autocomplete flow not broken
-- All legal entity forms get same improvements automatically
+- `apartment` хранится без префикса (`4`, не `кв. 4`)
+- Formatter не дублирует `кв. кв. 4`
+- Статус юрлица отображается цветной плашкой
+- city_district у юрлиц работает (verification proof)
+- postal_code стабилен (verification proof)
