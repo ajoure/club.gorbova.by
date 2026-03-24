@@ -4202,23 +4202,26 @@ Deno.serve(async (req) => {
             // Get customer profile for notification
             const { data: customerProfile } = await supabase
               .from('profiles')
-              .select('full_name, email, phone, telegram_username')
+              .select('full_name, email, telegram_username')
               .eq('user_id', notifyOrderData.user_id)
               .single();
 
-            const amountFormatted = Number(paymentV2.amount).toFixed(2);
-            const paymentType = notifyOrderData.is_trial ? '🔔 Пробный период' : '💰 Оплата';
-            const productName = (notifyOrderData.products_v2 as any)?.name || 'N/A';
-            const tariffName = (notifyOrderData.tariffs as any)?.name || 'N/A';
+            const appBaseUrl4 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+            const contactUrl4 = buildContactUrl({ appBaseUrl: appBaseUrl4, email: customerProfile?.email || notifyOrderData.customer_email, mode: 'search' });
 
-            const notifyMessage = `${paymentType}\n\n` +
-              `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-              `📧 Email: ${maskEmail(customerProfile?.email || notifyOrderData.customer_email)}\n` +
-              (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-              `\n📦 <b>Продукт:</b> ${productName}\n` +
-              `📋 Тариф: ${tariffName}\n` +
-              `💵 Сумма: ${amountFormatted} ${paymentV2.currency}\n` +
-              `🆔 Заказ: ${notifyOrderData.order_number}`;
+            const notifyMessage = buildAdminNotifyMessage({
+              operation_type: notifyOrderData.is_trial ? 'trial' : 'payment',
+              client_name: customerProfile?.full_name,
+              contact_url: contactUrl4,
+              email: customerProfile?.email || notifyOrderData.customer_email,
+              telegram_username: customerProfile?.telegram_username,
+              product_name: (notifyOrderData.products_v2 as any)?.name,
+              tariff_name: (notifyOrderData.tariffs as any)?.name,
+              amount: paymentV2.amount,
+              currency: paymentV2.currency,
+              order_number: notifyOrderData.order_number,
+              source_label: 'Webhook bePaid',
+            });
 
             // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
             try {
