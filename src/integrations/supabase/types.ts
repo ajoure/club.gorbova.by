@@ -281,6 +281,7 @@ export type Database = {
       }
       ai_document_generation_batches: {
         Row: {
+          corporate_draft_session_id: string | null
           created_at: string
           created_by: string | null
           id: string
@@ -292,6 +293,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          corporate_draft_session_id?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -303,6 +305,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          corporate_draft_session_id?: string | null
           created_at?: string
           created_by?: string | null
           id?: string
@@ -314,6 +317,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "ai_document_generation_batches_corporate_draft_session_id_fkey"
+            columns: ["corporate_draft_session_id"]
+            isOneToOne: false
+            referencedRelation: "corporate_draft_sessions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "ai_document_generation_batches_package_template_id_fkey"
             columns: ["package_template_id"]
