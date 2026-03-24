@@ -305,8 +305,18 @@ interface TokenizedRichInputProps {
   className?: string;
   /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
   allowAlign?: boolean;
-  /** Additional token groups to show in picker (e.g. for document editors).
-   *  Existing groups (Contact, DateTime, Product) are always shown. */
+  /**
+   * Token context — determines which token groups are shown in the picker.
+   * Use this for all new integrations. Supported values:
+   * - "messages" — Contact + DateTime + Product (default)
+   * - "documents" — messages + Legal Details + Entity + Person + Meeting + Document
+   * - "documents:annual_meeting" — documents + Package roles + Arrays + Agenda + Decisions
+   */
+  tokenContext?: TokenContext;
+  /**
+   * @deprecated Use tokenContext instead. Kept only for backward compatibility.
+   * Additional token groups to show in picker.
+   */
   extraTokenGroups?: Array<{
     heading: string;
     tokens: import("@/lib/tokens/tokenRegistry").TokenDef[];
@@ -322,6 +332,7 @@ export function TokenizedRichInput({
   disabled = false,
   className,
   allowAlign = false,
+  tokenContext,
   extraTokenGroups,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
