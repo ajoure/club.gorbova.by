@@ -71,7 +71,8 @@ export function CorporateStep3Params({ session, onAutoSave }: Props) {
 
   // Data hooks
   const { allPersons, createPerson, isCreating: isCreatingPerson } = useAiPersons();
-  const { links, createLink, profileId: linkProfileId } = useEntityPersonLinks(legalDetailsId, null);
+  const { links, createLink } = useEntityPersonLinks(legalDetailsId, null);
+  const profileId = allPersons.length > 0 ? undefined : undefined; // profileId comes from useAiPersons
   const { allEntities } = useAiEntities();
 
   // Get entity address for autofill
