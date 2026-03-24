@@ -340,12 +340,25 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                       placeholder="Например: Счёт-акт для ИП"
                     />
                   </div>
-                  <div className="space-y-1.5">
+                   <div className="space-y-1.5">
                     <Label className="text-sm">Описание</Label>
                     <Input
                       value={form.description}
                       onChange={(e) => setForm({ ...form, description: e.target.value })}
                       placeholder="Краткое описание назначения шаблона"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">Инструкции к шаблону</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Заметки о токенах и особенностях заполнения. Нажмите [ для вставки токена.
+                    </p>
+                    <TokenizedRichInput
+                      value={form.template_notes}
+                      onChange={(v) => setForm({ ...form, template_notes: v })}
+                      placeholder="Например: В этом шаблоне используется [Дата собрания] и [ФИО подписанта]..."
+                      rows={3}
+                      tokenContext="documents:annual_meeting"
                     />
                   </div>
                   <div className="flex items-center justify-between">
