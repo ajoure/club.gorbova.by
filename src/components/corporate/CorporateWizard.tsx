@@ -59,7 +59,7 @@ function SaveStatusIndicator({ status }: { status: SaveStatus }) {
       );
     case 'saved':
       return (
-        <span className="flex items-center gap-1.5 text-xs text-emerald-600">
+        <span className="flex items-center gap-1.5 text-xs text-primary">
           <CheckCircle2 className="h-3 w-3" />
           Сохранено
         </span>
@@ -73,8 +73,8 @@ function SaveStatusIndicator({ status }: { status: SaveStatus }) {
       );
     case 'dirty':
       return (
-        <span className="flex items-center gap-1.5 text-xs text-amber-600">
-          <Circle className="h-3 w-3 fill-amber-400" />
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Circle className="h-3 w-3 fill-muted-foreground/50" />
           Не сохранено
         </span>
       );
