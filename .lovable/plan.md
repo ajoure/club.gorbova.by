@@ -1,197 +1,300 @@
-# PATCH 2.1–2.6: Завершение архитектуры токенов
+# да, согласен, с учетом правок:
 
-## Статус
+1. **Убрать из PATCH 2.6 отдельный live preview адреса полностью**  
+По текущему edit mode он дублирует уже существующий structured UI и не даёт новой пользы.  
+Оставить только:
+  - structured address fields,
+  - автозаполнение Google,
+  - добавление/сохранение `район города`,
+  - compact postal view в режиме просмотра.
+2. **Паспорт делать одним полем** `passport_number_full` **как основной SoT для физлица**  
+Формат хранения строго:
+  - только `A-Z0-9`
+  - без пробелов
+  - без дефисов
+  - пример: `MP4187696`
+3. **Нормализацию паспорта уточнить**
+  - uppercase
+  - убрать пробелы/дефисы/невидимые символы
+  - финальный regex: `^[A-Z0-9]+$`
+  - разрешить только **безопасную автонормализацию визуально совпадающих кириллических букв серии в латиницу**  
+  пример: `МП 4187696` → `MP4187696`
+  - если строка не может быть безопасно нормализована — validation error, без сохранения мусора
+4. **Старые** `passport_series` **/** `passport_number` **не хранить как мусор**
+  - сначала dry-run dependency audit;
+  - если active prod usage = 0 и данные тестовые — удалить в этом же PATCH:
+    - DB fields
+    - form bindings
+    - view bindings
+    - duplicate check split logic
+    - registry split keys
+    - legacy aliases по split passport
+  - если активные зависимости есть — controlled migration, затем удаление
+5. **Address model доработать так, чтобы появился именно** `район города`**, а не дублировался** `район`
+  - `district` оставить как административный район/район области
+  - добавить отдельное поле `city_district`
+  - не смешивать их
+6. **Исправить текущую семантическую путаницу адреса**  
+По скрину видно риск, что `Фрунзенский район` сейчас попадает не в то поле.  
+В PATCH 2.6 обязательно:
+  - проверить, куда сейчас сохраняется городской район;
+  - если он сейчас попадает в `settlement`/другое неподходящее поле — сделать migration/backfill в `city_district`;
+  - настроить enricher/normalizer так, чтобы городской район больше не терялся и не записывался в неверное поле.
+7. **Edit mode адреса**
+  - добавить и показывать отдельное поле `Район города`
+  - подключить save/load cycle
+  - если Google/autocomplete умеет его вытаскивать — reuse existing mapping
+  - если не умеет — поле должно оставаться доступным для ручного ввода
+8. **View mode адреса**
+  - оставить compact postal address
+  - `район города` не выводить в основной компактный блок, если это перегружает карточку
+  - formatter компактного адреса не менять лишнего
+9. **Snapshot / deprecation часть PATCH 2.6 поддерживаю**  
+Обязательно сохранить:
+  - `token_manifest_snapshot`
+  - `template_tokens_snapshot`
+  - `source_trace`
+  - `template_id`
+  - `template_code`
+  - `template_version`
+  - `registry_version`
+  - `resolver_version`
+  - `warnings_snapshot`
+10. **Passport resolver/update**
+  - resolver приоритетно берёт `passport_number_full`
+  - split passport logic использовать только как временный fallback, если cleanup не завершён
+  - после safe cleanup split fallback удалить
+11. **Duplicate check**
+  - перевести на unified passport field
+  - split comparison убрать после cleanup
+12. **Matrix / token registry**
+  - добавить `person.passport_number_full`
+  - `person.passport_series` и `person.passport_number` пометить как delete candidate / deprecated
+  - signer passport mapping тоже перевести на unified field
+13. **DoD PATCH 2.6 дополнить**
+  - в edit mode физлица одно поле паспорта
+  - копирование даёт одно слово без пробелов
+  - `city_district` сохраняется и загружается
+  - городской район не теряется и не попадает в неверное поле
+  - view mode остаётся компактным
+  - split passport поля удалены, если dry-run доказал безопасность удаления; иначе показан dependency report и выполнен controlled migration.
+  - &nbsp;
+  - PATCH 2.6 — Snapshot / Passport / Address / Deprecation
 
-### PATCH 2.2 — Duplicate guard + UNIQUE(key): ВЫПОЛНЕН
+## Обзор текущего состояния
 
-**Dry-run proof:**
-- SQL: `SELECT key, COUNT(*) FROM fields_registry GROUP BY key HAVING COUNT(*) > 1` → **0 дублей**
-- Безопасно введён глобальный UNIQUE constraint
+**Snapshot:** Таблица `ai_generated_documents` уже хранит `snapshot` (JSONB) и `missing_tokens`, но без структурированных полей (`token_manifest_snapshot`, `template_tokens_snapshot`, `source_trace`, версионирование). Отдельной таблицы `document_generation_snapshots` нет.
 
-**Что сделано:**
-1. **SQL migration:** `ALTER TABLE public.fields_registry ADD CONSTRAINT fields_registry_key_unique UNIQUE (key)` — canonical key уникален по всей системе
-2. **`src/lib/tokens/tokenDuplicateGuard.ts`** — новый service:
-   - `checkTokenDuplicate(key, label, entityType)` — обязательный вызов перед любым INSERT
-   - 3 уровня: exact key (block), exact token (block), fuzzy label Levenshtein<3 (block + require explicit reuse decision)
-   - Применяется к: admin UI, seed/migration, программное создание
-   - Export: `normalizeLabel`, `levenshteinDistance` для тестирования
+**Passport:** В БД (`legal_details_persons`) — два отдельных поля `passport_series` и `passport_number`. Используются в 18 файлах: UI формы, view, resolver, duplicate check, edge functions. Поля `passport_number_full` не существует.
 
-**DoD:**
-- [x] duplicate_keys = 0 (dry-run proof)
-- [x] UNIQUE(key) constraint в БД
-- [x] Guard service с 3 уровнями проверки
-- [x] Fuzzy match не автосоздаёт — требует explicit decision
-- [x] JSDoc с registry-first policy
-
----
-
-### PATCH 2.4 — Package roles + defaults + arrays: ВЫПОЛНЕН
-
-**Reuse audit (registry-first):**
-- `package.notice.method` → **skip** (exists as `meeting.notice.method`)
-- `package.meeting.location.full` → **skip** (exists as `meeting.location.full`)
-- `package.review.location.full` → **skip** (exists as `meeting.review.location.full`)
-- `package.review.from` → **skip** (exists as `meeting.review.start`)
-- `package.candidates.deadline` → **skip** (exists as `meeting.candidates.deadline`)
-- `package.report_year` → **skip** (exists as `meeting.report_year`)
-
-**Что сделано:**
-
-**A. Missing meeting defaults (3 записи):**
-- `meeting.review.to` — Окончание рассмотрения вопросов
-- `meeting.review.break_from` — Начало перерыва
-- `meeting.review.break_to` — Окончание перерыва
-
-**B. Scalar package-role tokens (4 записи, entity_type='package'):**
-- `package.signer.full_name` — ФИО подписанта (source_strategy: package_role, role: signer)
-- `package.signer.position` — Должность подписанта
-- `package.chairperson.full_name` — ФИО председателя
-- `package.secretary.full_name` — ФИО секретаря
-
-**C. Array/loop tokens (4 записи):**
-- `package.participants` (entity_type='package', data_type='array') — item_schema: full_name✱, share_percent✱, votes_count
-- `package.registered_persons` (entity_type='package') — item_schema: full_name✱, registration_time, representative, share_percent
-- `agenda.items` (entity_type='agenda') — item_schema: number✱, title✱, speaker, decision_text, votes_for, votes_against, votes_abstained
-- `decision.items` (entity_type='decision') — item_schema: agenda_number✱, text✱, result
-
-**D. tokenRegistry.ts обновлён:**
-- `loadPackageFields()` — возвращает `{ roles, arrays }` с разделением по source_strategy
-- `loadAgendaFields()`, `loadDecisionFields()` — новые loaders
-- Кэши: `_packageRolesCache`, `_packageArraysCache`, `_agendaFieldsCache`, `_decisionFieldsCache`
-- `tokenStringToLabel()` — рефакторинг, поддерживает все кэши
-- `getDocumentTokenGroups()` — 4 новые группы: «Роли в пакете», «Списки пакета», «Повестка дня», «Решения»
-- `ArrayTokenResolverContract` type + JSDoc resolver contract
-
-**E. Resolver contract (задокументирован в tokenRegistry.ts):**
-- Registry: data_type='array', options.source_strategy='loop', options.item_schema=[...]
-- Source: resolver собирает из entity_person_links + persons / package metadata
-- Payload: plain objects matching item_schema keys
-- DOCX loop: `{#package.participants}{full_name} — {share_percent}%{/package.participants}`
-- Validation: required fields checked at generation, warnings in token_manifest_snapshot
-
-**DoD:**
-- [x] Registry entries add-only (11 новых, 0 удалённых/изменённых)
-- [x] Scalar roles и arrays разделены (разные groups в picker)
-- [x] Existing legal_details.* не затронуты
-- [x] Existing Telegram/email picker не затронут
-- [x] Resolver contract задокументирован (JSDoc + type)
-- [x] Loop syntax для DOCX зафиксирован
-- [x] Package tokens доступны для будущего tokenContext="documents:annual_meeting"
-
-### PATCH 2.3 — Context-based token source adapter: ВЫПОЛНЕН
-
-**Что сделано:**
-
-**A. TokenContext type + getTokenGroupsForContext() в tokenRegistry.ts:**
-- `TokenContext = "messages" | "documents" | "documents:annual_meeting"`
-- `loadTokensForContext(context)` — загружает все нужные кэши параллельно (Promise.all)
-- `getTokenGroupsForContext(context)` — возвращает группы из кэшей по контексту
-- "messages" → Product
-- "documents" → + LegalDetails, Entity, Person, EntityPerson, Meeting, Document
-- "documents:annual_meeting" → + Package roles, Package arrays, Agenda, Decisions
-
-**B. TokenizedRichInput обновлён:**
-- Новый prop `tokenContext?: TokenContext` — финальный standard для всех новых интеграций
-- При `tokenContext` — useQuery загружает `loadTokensForContext()` и рендерит `contextGroups`
-- При отсутствии `tokenContext` — legacy path (только productFields)
-- `extraTokenGroups` помечен `@deprecated` в JSDoc, оставлен для backward compat
-- Existing Telegram/email editors не затронуты (не передают tokenContext)
-
-**C. Picker rendering:**
-- Contact + DateTime — всегда показываются (static)
-- Context groups — рендерятся только при tokenContext
-- Product (legacy) — рендерится только БЕЗ tokenContext
-- extraTokenGroups — рендерится всегда (backward compat)
-
-**DoD:**
-- [x] tokenContext — финальный standard
-- [x] extraTokenGroups deprecated, не используется в новых интеграциях
-- [x] Contexts зафиксированы: messages, documents, documents:annual_meeting
-- [x] Package/agenda/decision группы доступны через tokenContext="documents:annual_meeting"
-- [x] Existing Telegram/email flows не изменились
-- [x] Новый picker component не создан
-
-### PATCH 2.1 — End-to-end proof: ВЫПОЛНЕН
-
-**Где встроен:** `AiDocumentTemplatesManager.tsx` — поле «Инструкции к шаблону» в create/edit форме шаблона документа.
-
-**Что сделано:**
-1. Добавлено поле `template_notes` (tokenized) в форму создания/редактирования AI-шаблона
-2. Используется `TokenizedRichInput` с `tokenContext="documents:annual_meeting"`
-3. Picker при `[` показывает все document groups: Contact, DateTime, Product, Реквизиты, Юрлицо, Физлицо, Связи, Собрание, Документ, Роли в пакете, Списки пакета, Повестка дня, Решения
-4. SoT: `{{meeting.date}}`, UI: chip `[Дата собрания]`
-5. Reload → chip восстанавливается через `tokenStringToLabel()`
-
-**Persistence proof (PATCH 2.1 fix):**
-- SQL migration: `ALTER TABLE public.document_templates ADD COLUMN IF NOT EXISTS template_notes text`
-- `handleSave` → create и update включают `template_notes`
-- Existing шаблоны без template_notes: NULL допустим, поломки нет
-- Full cycle: `[` → picker → `{{meeting.date}}` → save to DB → reload → chip restored
-
-**Production context:** Поле «Инструкции к шаблону» — реальная бизнес-потребность для документирования токенов и инструкций по заполнению шаблона.
-
-**DoD:**
-- [x] `[` открывает picker
-- [x] Доступны все группы для tokenContext="documents:annual_meeting"
-- [x] Выбор [Дата собрания] сохраняет {{meeting.date}} в SoT
-- [x] template_notes сохраняется в БД (create + update)
-- [x] После reload UI label/chip восстанавливается
-- [x] Existing шаблоны без template_notes не ломаются
-- [x] Existing Telegram/email editors не затронуты
-- [x] Новый picker component не создан
-
-### PATCH 2.5 — Master token matrix (gate): ВЫПОЛНЕН
-
-**Артефакт:** `docs/token_matrix.md`
-
-**Содержание (v2):**
-- Reuse 1:1 блок: 59 existing keys reused (47 legal_details + 12 meeting)
-- New add-only блок: 39 новых ключей (person=12, исправлено с 38)
-- Full matrix: 98 записей (59+39) по 13 колонкам
-- Колонки: canonical_key, entity_type, ui_label, scalar_array, source, token_context, resolver_scope, status, doc1–doc4 usage, legacy_alias
-- entity_type и source присутствуют в каждой строке
-- status: reused / new / legacy-only / legacy+canonical
-- Legacy aliases: 64 полных mapping (34 legacy+canonical, 30 legacy-only)
-- Источники: aiDocumentSnapshotResolver.ts + 4 edge functions
-- Doc usage: manual classification для 4 документов годового собрания
-
-**Gate conditions:**
-- [ ] Matrix утверждена владельцем
-- [ ] Legacy aliases проверены
-- [ ] Doc usage проверен на соответствие реальным DOCX
-- [ ] После утверждения → можно переходить к PATCH 2.6
-
-### PATCH 2.6 — Snapshot + deprecation: НЕ НАЧАТ
+**Address:** `StructuredAddress` НЕ содержит `city_district`. В `StructuredAddressBlock` поле "Район" = `district` (административный район области). Городской район (Фрунзенский, Центральный) сейчас **фильтруется** в enricher и formatter как мусор — не сохраняется. View mode уже использует `formatStructuredAddressForView` с двухстрочным форматом.
 
 ---
 
-## Утверждённые правила
+## Порядок выполнения
 
-### Reusable rule (обязательно для всех будущих функций)
-1. Сначала искать existing key в global registry
-2. Использовать existing square-bracket picker
-3. Не создавать новый локальный список токенов без proof, что reuse невозможен
+### Шаг 1: Dry-run audit (read-only)
 
-### STOP-guards
-- Не ломать existing Telegram/email token flows
-- Не менять формат уже сохранённых `{{system.token}}`
-- Не менять billing/template flows (`generate-from-template`)
+Перед любыми изменениями — полный аудит зависимостей:
+
+**Passport fields audit:**
+
+- `passport_series` / `passport_number` используются в: `PersonFieldsForm`, `PersonRecordSheet`, `PersonsTableView`, `usePersonDuplicateCheck`, `aiDocumentSnapshotResolver`, `personDisplayUtils`, edge functions (`ai-generate-document`, `ai-generate-document-package`)
+- Активные prod-данные: проверить через `SELECT count(*) FROM legal_details_persons WHERE passport_series IS NOT NULL OR passport_number IS NOT NULL`
+
+**City district audit:**
+
+- `city_district` не существует ни в `StructuredAddress`, ни в `CanonicalAddressPayload`, ни в БД
+- Нужно добавить новое поле
+
+**Snapshot audit:**
+
+- `ai_generated_documents.snapshot` — flat JSONB без структуры
+- Нет `source_trace`, `token_manifest`, `template_tokens`, версий
+
+**Deliverable:** Dependency report с решением: hard cleanup или controlled migration для passport fields.
+
+---
+
+### Шаг 2: PATCH 2.6A — Snapshot strategy
+
+**Миграция БД** — добавить колонки в `ai_generated_documents`:
+
+```sql
+ALTER TABLE ai_generated_documents ADD COLUMN IF NOT EXISTS
+  token_manifest_snapshot jsonb,
+  template_tokens_snapshot jsonb,
+  source_trace jsonb,
+  template_code text,
+  template_version text,
+  registry_version text,
+  resolver_version text,
+  warnings_snapshot jsonb;
+```
+
+Existing `snapshot` колонка = `placeholder_data_snapshot` (rename не нужен, add-only).
+
+**Edge functions** (`ai-generate-document`, `ai-generate-document-package`):
+
+- Собирать `token_manifest_snapshot` из resolver (requested/found/missing/legacy)
+- Собирать `template_tokens_snapshot` из docxtemplater parsed tags
+- Добавить `source_trace` per-key
+- Записывать версии при insert
+
+**Legacy deprecation:**
+
+- Phase A: dual resolve уже работает в `aiDocumentSnapshotResolver.ts`
+- Phase B: добавить `console.warn` если legacy token resolved
+- Phase C: отдельный endpoint/query для admin deprecation report (шаблон → legacy tokens → canonical replacement → статус)
+
+**Файлы:**
+
+- `supabase/migrations/new` — ALTER TABLE
+- `supabase/functions/ai-generate-document/index.ts` — snapshot enrichment
+- `supabase/functions/ai-generate-document-package/index.ts` — snapshot enrichment
+- `src/utils/aiDocumentSnapshotResolver.ts` — добавить manifest/trace collection
+
+---
+
+### Шаг 3: PATCH 2.6B — Unified passport field
+
+**Миграция БД:**
+
+```sql
+ALTER TABLE legal_details_persons
+  ADD COLUMN IF NOT EXISTS passport_number_full text;
+```
+
+**Нормализатор** — новый `src/lib/persons/passportNormalizer.ts`:
+
+- `normalizePassport(input: string): { normalized: string; success: boolean }`
+- trim → uppercase → remove spaces/hyphens/invisible chars → retain only A-Z0-9
+- Транслитерация кириллицы (М→M, П→P, etc.) для безопасной нормализации
+- Regex validation: `^[A-Z0-9]+$`
+
+**Data migration** (через insert tool, не через миграцию):
+
+```sql
+UPDATE legal_details_persons
+SET passport_number_full = UPPER(REGEXP_REPLACE(
+  COALESCE(passport_series, '') || COALESCE(passport_number, ''),
+  '[^A-Z0-9]', '', 'gi'
+))
+WHERE passport_number_full IS NULL
+  AND (passport_series IS NOT NULL OR passport_number IS NOT NULL);
+```
+
+**Registry:** Добавить `person.passport_number_full` в `fields_registry`. Отметить `person.passport_series` и `person.passport_number` как deprecated.
+
+---
+
+### Шаг 4: PATCH 2.6C — Person card passport UI
+
+**Edit mode** (`PersonFieldsForm.tsx`):
+
+- Заменить два поля (Серия + Номер) на одно: "Серия и номер паспорта"
+- Helper text: "Только латинские буквы и цифры, без пробелов. Например: MP4187696"
+- При blur/save: нормализация через `normalizePassport()`
+- Если успешно → hint "Сохранено как: MP4187696"
+- Если неуспешно → validation error, не сохранять
+
+**View mode** (`PersonRecordSheet.tsx`):
+
+- Одна строка "Серия и номер паспорта: MP4187696"
+- Copy копирует слитное значение
+
+**Duplicate check** (`usePersonDuplicateCheck.ts`):
+
+- Tier 2: перейти на `passport_number_full` вместо `passport_series` + `passport_number`
+
+---
+
+### Шаг 5: PATCH 2.6D — Address city_district
+
+**Новое поле в модели:**
+
+- `StructuredAddress` → добавить `city_district: string`
+- `CanonicalAddressPayload` → добавить `city_district: string | null`
+
+**StructuredAddressBlock:** Добавить поле "Район города" между "Город" и "Населённый пункт" в FULL_LAYOUT. Manual-only (без autocomplete trigger).
+
+**GrpAddressEnricher:** Вместо фильтрации city district → сохранять в `city_district`.
+
+**Formatter:** `formatStructuredAddressForView` — city_district не включать в компактный view (по ТЗ). Использовать только в edit mode и при необходимости в полном адресе.
+
+**PersonFieldsForm:** Поле city_district автоматически появится через StructuredAddressBlock.
+
+**Файлы:**
+
+- `src/lib/address/types.ts` — добавить city_district
+- `src/lib/address/utils.ts` — обновить emptyAddress
+- `src/components/shared/StructuredAddressBlock.tsx` — добавить в layout
+- `src/lib/address/GrpAddressEnricher.ts` — сохранять вместо фильтрации
+- `src/lib/address/AddressNormalizationService.ts` — включить в payload
+- `src/lib/address/formatStructuredAddress.ts` — НЕ менять compact view
+
+---
+
+### Шаг 6: PATCH 2.6E — Resolver / tokens / compatibility
+
+- Resolver: приоритет `passport_number_full`, fallback compose из old fields
+- `source_trace` для паспорта показывает источник
+- Matrix update: добавить `person.passport_number_full`, отметить old keys deprecated
+- Signer context: passport из unified field
+
+**Файлы:**
+
+- `src/utils/aiDocumentSnapshotResolver.ts`
+- `docs/token_matrix.md`
+- `.lovable/plan.md`
+
+---
+
+### Шаг 7: PATCH 2.6F — Verify / Proof
+
+- SQL proof: новые колонки существуют
+- Code proof: resolver, forms, formatter обновлены
+- UI proof: edit/view person card, address district, compact address
+- Legacy proof: existing flows не сломаны
+
+---
+
+## STOP-guards
+
+- Не ломать billing/template flows
+- Не ломать Telegram/email editors
+- Не удалять old passport fields без dependency audit proof
+- Не делать отдельный address preview block
 - Не создавать новый picker component
-- `extraTokenGroups` deprecated — не использовать в новых интеграциях
+- Old `passport_series`/`passport_number` колонки в БД: удалять только после proof что active prod usage = 0
 
-### Gate
-- Без утверждённой master token matrix (PATCH 2.5) нельзя переходить к финальной нормализации 4 DOCX шаблонов
+## Файлы, которые меняются
 
-### Canonical Standard (4 уровня)
-1. **internal id:** UUID (fields_registry.id)
-2. **canonical key:** e.g. `meeting.notice.date` (fields_registry.key, UNIQUE globally)
-3. **system token:** `{{meeting.notice.date}}` (хранится в тексте/шаблонах)
-4. **UI token:** `[Дата направления извещения]` (показывается в редакторе)
 
-### Порядок выполнения
-1. ~~PATCH 2.2~~ ✅
-2. PATCH 2.4
-3. PATCH 2.3
-4. PATCH 2.1
-5. PATCH 2.5 (gate)
-6. PATCH 2.6
+| Файл                                                                | Патч   | Что                                           |
+| ------------------------------------------------------------------- | ------ | --------------------------------------------- |
+| SQL migration                                                       | 2.6A   | snapshot columns в ai_generated_documents     |
+| SQL migration                                                       | 2.6B   | passport_number_full в legal_details_persons  |
+| `src/lib/persons/passportNormalizer.ts`                             | 2.6B   | Новый: нормализатор паспорта                  |
+| `src/components/ai-requisites/PersonFieldsForm.tsx`                 | 2.6C   | Unified passport field                        |
+| `src/components/ai-requisites/PersonRecordSheet.tsx`                | 2.6C   | View mode unified passport                    |
+| `src/hooks/usePersonDuplicateCheck.ts`                              | 2.6C   | Duplicate check по unified field              |
+| `src/lib/address/types.ts`                                          | 2.6D   | city_district в модели                        |
+| `src/lib/address/utils.ts`                                          | 2.6D   | emptyAddress + formatFullAddress              |
+| `src/components/shared/StructuredAddressBlock.tsx`                  | 2.6D   | Поле "Район города"                           |
+| `src/lib/address/GrpAddressEnricher.ts`                             | 2.6D   | Сохранять city_district                       |
+| `src/lib/address/AddressNormalizationService.ts`                    | 2.6D   | city_district в payload                       |
+| `src/utils/aiDocumentSnapshotResolver.ts`                           | 2.6A,E | manifest, trace, unified passport             |
+| Edge functions (ai-generate-document, ai-generate-document-package) | 2.6A   | Snapshot enrichment                           |
+| `docs/token_matrix.md`                                              | 2.6E   | person.passport_number_full + deprecated keys |
+| `.lovable/plan.md`                                                  | 2.6F   | Status update                                 |
+
+
+## Что НЕ меняется
+
+- `generate-from-template` (billing)
+- Telegram/email editors
+- `client_legal_details` schema
+- RLS policies
+- Формат сохранённых `{{token}}` строк
+- Existing `legal_details.*` registry entries
