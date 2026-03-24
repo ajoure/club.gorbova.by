@@ -25,7 +25,58 @@
 
 ---
 
-### PATCH 2.4 — Package roles + arrays: НЕ НАЧАТ
+### PATCH 2.4 — Package roles + defaults + arrays: ВЫПОЛНЕН
+
+**Reuse audit (registry-first):**
+- `package.notice.method` → **skip** (exists as `meeting.notice.method`)
+- `package.meeting.location.full` → **skip** (exists as `meeting.location.full`)
+- `package.review.location.full` → **skip** (exists as `meeting.review.location.full`)
+- `package.review.from` → **skip** (exists as `meeting.review.start`)
+- `package.candidates.deadline` → **skip** (exists as `meeting.candidates.deadline`)
+- `package.report_year` → **skip** (exists as `meeting.report_year`)
+
+**Что сделано:**
+
+**A. Missing meeting defaults (3 записи):**
+- `meeting.review.to` — Окончание рассмотрения вопросов
+- `meeting.review.break_from` — Начало перерыва
+- `meeting.review.break_to` — Окончание перерыва
+
+**B. Scalar package-role tokens (4 записи, entity_type='package'):**
+- `package.signer.full_name` — ФИО подписанта (source_strategy: package_role, role: signer)
+- `package.signer.position` — Должность подписанта
+- `package.chairperson.full_name` — ФИО председателя
+- `package.secretary.full_name` — ФИО секретаря
+
+**C. Array/loop tokens (4 записи):**
+- `package.participants` (entity_type='package', data_type='array') — item_schema: full_name✱, share_percent✱, votes_count
+- `package.registered_persons` (entity_type='package') — item_schema: full_name✱, registration_time, representative, share_percent
+- `agenda.items` (entity_type='agenda') — item_schema: number✱, title✱, speaker, decision_text, votes_for, votes_against, votes_abstained
+- `decision.items` (entity_type='decision') — item_schema: agenda_number✱, text✱, result
+
+**D. tokenRegistry.ts обновлён:**
+- `loadPackageFields()` — возвращает `{ roles, arrays }` с разделением по source_strategy
+- `loadAgendaFields()`, `loadDecisionFields()` — новые loaders
+- Кэши: `_packageRolesCache`, `_packageArraysCache`, `_agendaFieldsCache`, `_decisionFieldsCache`
+- `tokenStringToLabel()` — рефакторинг, поддерживает все кэши
+- `getDocumentTokenGroups()` — 4 новые группы: «Роли в пакете», «Списки пакета», «Повестка дня», «Решения»
+- `ArrayTokenResolverContract` type + JSDoc resolver contract
+
+**E. Resolver contract (задокументирован в tokenRegistry.ts):**
+- Registry: data_type='array', options.source_strategy='loop', options.item_schema=[...]
+- Source: resolver собирает из entity_person_links + persons / package metadata
+- Payload: plain objects matching item_schema keys
+- DOCX loop: `{#package.participants}{full_name} — {share_percent}%{/package.participants}`
+- Validation: required fields checked at generation, warnings in token_manifest_snapshot
+
+**DoD:**
+- [x] Registry entries add-only (11 новых, 0 удалённых/изменённых)
+- [x] Scalar roles и arrays разделены (разные groups в picker)
+- [x] Existing legal_details.* не затронуты
+- [x] Existing Telegram/email picker не затронут
+- [x] Resolver contract задокументирован (JSDoc + type)
+- [x] Loop syntax для DOCX зафиксирован
+- [x] Package tokens доступны для будущего tokenContext="documents:annual_meeting"
 
 ### PATCH 2.3 — Context-based token source adapter: НЕ НАЧАТ
 
