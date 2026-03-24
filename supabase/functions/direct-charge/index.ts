@@ -642,20 +642,16 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .maybeSingle();
 
-      const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-      const contactUrl = buildContactUrl({ appBaseUrl, email: buyerProfile?.email, mode: 'search' });
-
       await supabase.functions.invoke('telegram-notify-admins', {
         body: {
           message: buildAdminNotifyMessage({
             operation_type: 'trial',
             client_name: buyerProfile?.full_name,
-            contact_url: contactUrl,
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,
             order_number: order.order_number,
-            source_label: 'Прямое списание',
+            source_label: 'Оплата через checkout bePaid',
           }),
         },
       }).catch(console.error);
