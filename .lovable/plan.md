@@ -2,16 +2,14 @@
 
 &nbsp;
 
-1. **Overlay лучше править не через AlertDialogContent, а через AlertDialogOverlay или локальный wrapper-variant.**
-  Если в проекте overlay стилизован централизованно, нужно сделать локальное, точечное переопределение именно для этого confirm dialog, чтобы не повлиять на другие alert dialogs.
-2. **На mobile в flex-col-reverse проверьте реальный визуальный порядок.**
-  Важно, чтобы итогово главным действием визуально оставалось **«Сохранить и выйти»**, а destructive не оказывался первым из-за особенностей DOM/stack order.
-3. **Для destructive-кнопки добавьте не только text-destructive, но и спокойный hover/focus state.**
-  Чтобы она оставалась заметно опасной по смыслу, но не спорила визуально с primary. Нужен мягкий hover без яркой заливки.
-4. **Для primary-кнопки с loading оставить фиксированную ширину не меньше min-w-[160px], как вы указали, и проверить одинаковую высоту всех трех кнопок.**
-  Это важно для аккуратного ритма в footer.
-5. **В DoD добавьте proof, что reopen dialog не изменился побочно.**
-  Поскольку рядом есть второе модальное окно, нужно отдельно показать, что патч затронул только confirm dialog выхода, а reopen flow визуально и логически не сломан.
+1. **overlayClassName обязательно делать строго add-only и с дефолтным поведением 1:1.**
+  Если prop не передан, AlertDialogOverlay должен рендериться точно как сейчас, без изменений для остальных dialog.
+2. **В alert-dialog.tsx пропустить overlayClassName через cn(...), а не вставлять сырым классом.**
+  То есть базовый класс overlay + overlayClassName, чтобы не потерять анимации, fixed inset, z-index и существующие data-state классы.
+3. **В DoD добавить proof, что reopen dialog остался на дефолтном overlay.**
+  Не только “не затронут”, а именно показать, что у него остался прежний bg-black/80, а у confirm dialog стал bg-black/40.
+4. **Проверить все остальные использования AlertDialogContent на типизацию после расширения prop.**
+  Особенно если есть обертки/реэкспорты, чтобы add-only правка не дала TS-регрессий.
 
 &nbsp;
 
@@ -21,82 +19,71 @@
 
 &nbsp;
 
-PATCH 1.2.1 — UI polish окна выхода из corporate wizard
+PATCH 1.2.2 — Локальное облегчение overlay confirm dialog
 
-## Scope
+## Проблема
 
-Только визуальные правки confirm dialog закрытия (строки 379-407 в `CorporateWizard.tsx`). Логика `handleSaveAndClose`, `handleExitWithoutSave`, `flushSave` не затрагивается.
+`AlertDialogContent` на строке 33 рендерит `<AlertDialogOverlay />` без возможности передать `className`. Overlay всегда `bg-black/80`.
 
----
+## Решение
 
-## Что меняется
+**Add-only правка в `alert-dialog.tsx**`: расширить `AlertDialogContent` опциональным prop `overlayClassName`, пробрасываемым в `AlertDialogOverlay`.
 
-**Файл:** `src/components/corporate/CorporateWizard.tsx` (строки 379-407)
+### Файл: `src/components/ui/alert-dialog.tsx` (строки 28-43)
 
-### 1. Overlay — сделать легче
+Добавить `overlayClassName` в деструктуризацию props `AlertDialogContent`:
 
-Добавить кастомный класс на `AlertDialogContent`: уменьшить overlay через обёртку `AlertDialog` или переопределить overlay opacity на `bg-black/40` вместо стандартного `bg-black/80`.
-
-### 2. Контент — компактнее
-
-- `AlertDialogContent` → добавить `max-w-md` (вместо default `max-w-lg`), `p-5` (вместо `p-6`), `gap-3` (вместо `gap-4`)
-- Убрать лишний воздух между header и footer
-
-### 3. Текст — короче
-
-- Заголовок: `Выйти из мастера?` (уже есть ✓)
-- Описание: заменить «У вас есть активная черновая сессия. Что вы хотите сделать?» → `У вас есть несохранённые данные. Что сделать с черновиком?`
-
-### 4. Иерархия кнопок
-
-Текущий порядок: `Остаться` (cancel) → `Выйти без сохранения` (outline) → `Сохранить и выйти` (primary action)
-
-Новый порядок и стили:
-
-```
-Выйти без сохранения          Остаться    Сохранить и выйти
-(ghost + text-destructive)    (outline)   (primary/default)
+```tsx
+const AlertDialogContent = React.forwardRef<
+  React.ElementRef<typeof AlertDialogPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content> & {
+    overlayClassName?: string;
+  }
+>(({ className, overlayClassName, ...props }, ref) => (
+  <AlertDialogPortal>
+    <AlertDialogOverlay className={overlayClassName} />
+    <AlertDialogPrimitive.Content
+      ref={ref}
+      className={cn(
+        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+        className,
+      )}
+      {...props}
+    />
+  </AlertDialogPortal>
+));
 ```
 
-- **«Выйти без сохранения»** → `variant="ghost"` + `className="text-destructive hover:text-destructive"` — визуально приглушённая, но destructive по смыслу
-- **«Остаться»** → `variant="outline"` — secondary action
-- **«Сохранить и выйти»** → `AlertDialogAction` (primary) — остаётся как есть, это главное безопасное действие
+### Файл: `src/components/corporate/CorporateWizard.tsx`
 
-На desktop: destructive слева, outline + primary справа (стандартный паттерн «опасное действие — в стороне от безопасных»).
+В confirm dialog `AlertDialogContent` добавить:
 
-### 5. Footer layout
+```tsx
+<AlertDialogContent
+  className="max-w-md p-5 gap-3"
+  overlayClassName="bg-black/40"
+>
+```
 
-- `AlertDialogFooter` → `className="flex-col-reverse sm:flex-row sm:justify-between gap-2"` — destructive action слева, safe actions справа
-- На mobile: stack вертикально, primary сверху (первый визуальный фокус)
+## Что НЕ меняется
 
-### 6. Loading state
-
-- При `closeSaving`: все кнопки `disabled`, у primary — `Loader2` spinner (уже есть)
-- Добавить `min-w-[160px]` на primary кнопку чтобы при появлении spinner ширина не прыгала
-
----
+- Reopen dialog (не использует `overlayClassName` → остаётся `bg-black/80` по умолчанию)
+- Логика close protection, flushSave, draft persistence
+- Кнопки, тексты, spacing из PATCH 1.2.1
+- Все остальные `AlertDialogContent` в проекте — без `overlayClassName` работают как раньше
 
 ## Файлы
 
 
-| Файл                                           | Что                                                              |
-| ---------------------------------------------- | ---------------------------------------------------------------- |
-| `src/components/corporate/CorporateWizard.tsx` | Строки 379-407: стили AlertDialog, текст, порядок и стили кнопок |
+| Файл                                           | Что                                                       |
+| ---------------------------------------------- | --------------------------------------------------------- |
+| `src/components/ui/alert-dialog.tsx`           | Add-only: `overlayClassName` prop на `AlertDialogContent` |
+| `src/components/corporate/CorporateWizard.tsx` | Передать `overlayClassName="bg-black/40"`                 |
 
-
-## Что НЕ меняется
-
-- Логика close protection, flushSave, reopen
-- Draft persistence, saveStatus
-- Step компоненты, rule engine, edge functions
-- Reopen dialog (строки 410-435) — не трогаем в этом патче
 
 ## DoD
 
-- Overlay легче (40% вместо 80%)
-- Dialog компактнее (max-w-md, меньше padding)
-- Destructive — ghost/приглушённая, Primary — доминирующая
-- Текст короче и понятнее
-- Layout не ломается на узких экранах
-- Loading state стабильный (ширина кнопки не прыгает)
-- Логика PATCH 1.2 не затронута
+- Overlay confirm dialog: `bg-black/40` вместо `bg-black/80`
+- Reopen dialog не затронут (proof)
+- Другие alert dialogs не затронуты
+- Логика PATCH 1.2 сохранена
