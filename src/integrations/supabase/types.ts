@@ -1986,6 +1986,7 @@ export type Database = {
           is_active: boolean | null
           name: string
           placeholders: Json | null
+          template_notes: string | null
           template_path: string
           template_scope: string
           updated_at: string
@@ -1999,6 +2000,7 @@ export type Database = {
           is_active?: boolean | null
           name: string
           placeholders?: Json | null
+          template_notes?: string | null
           template_path: string
           template_scope?: string
           updated_at?: string
@@ -2012,6 +2014,7 @@ export type Database = {
           is_active?: boolean | null
           name?: string
           placeholders?: Json | null
+          template_notes?: string | null
           template_path?: string
           template_scope?: string
           updated_at?: string
