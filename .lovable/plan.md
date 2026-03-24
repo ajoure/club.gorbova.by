@@ -1,65 +1,69 @@
-# PATCH 1+2: Canonical Token Standard + Reuse Existing Picker
+# PATCH 2.1–2.6: Завершение архитектуры токенов
 
-## Статус: ВЫПОЛНЕНО
+## Статус
 
-### Что сделано
+### PATCH 2.2 — Duplicate guard + UNIQUE(key): ВЫПОЛНЕН
 
-#### 1. fields_registry — seed новых entity_types (39 записей)
-- `person` (12 записей): full_name, initials, birth_date, personal_number, passport_*, phone, email, address
-- `entity_person` (6 записей): role_label, position, share_percent, acts_on_basis, start_date, is_primary
-- `document` (3 записи): number, date, date_short
-- `meeting` (12 записей): date, time, location.full, notice.date, notice.method, registration.*, review.*, report_year, candidates.deadline
-- `entity` (6 записей): name, settlement_display, director_short, address.legal.full, settlement.type.short, settlement.name
-- Existing `legal_details.*` (47 записей) и `product` (2 записи) — НЕ тронуты
+**Dry-run proof:**
+- SQL: `SELECT key, COUNT(*) FROM fields_registry GROUP BY key HAVING COUNT(*) > 1` → **0 дублей**
+- Безопасно введён глобальный UNIQUE constraint
 
-#### 2. tokenRegistry.ts — расширен
-- Добавлены 5 новых loader-функций: loadPersonFields, loadEntityPersonFields, loadDocumentFields, loadMeetingFields, loadEntityFields
-- Добавлены соответствующие кэши и setter-функции
-- tokenStringToLabel() обновлён для поиска по всем новым кэшам
-- Добавлена helper-функция getDocumentTokenGroups() для UI
-- Универсальный loadFieldsByEntityType() для DRY
-- JSDoc обновлён: задокументировано правило registry-first и 4 уровня представления токена
+**Что сделано:**
+1. **SQL migration:** `ALTER TABLE public.fields_registry ADD CONSTRAINT fields_registry_key_unique UNIQUE (key)` — canonical key уникален по всей системе
+2. **`src/lib/tokens/tokenDuplicateGuard.ts`** — новый service:
+   - `checkTokenDuplicate(key, label, entityType)` — обязательный вызов перед любым INSERT
+   - 3 уровня: exact key (block), exact token (block), fuzzy label Levenshtein<3 (block + require explicit reuse decision)
+   - Применяется к: admin UI, seed/migration, программное создание
+   - Export: `normalizeLabel`, `levenshteinDistance` для тестирования
 
-#### 3. TokenizedRichInput.tsx — расширен
-- Добавлен prop `extraTokenGroups?: Array<{ heading: string; tokens: TokenDef[] }>`
-- В picker dropdown после существующих групп рендерятся дополнительные группы
-- Существующие вызовы (Telegram/email) не затронуты — у них нет extraTokenGroups
+**DoD:**
+- [x] duplicate_keys = 0 (dry-run proof)
+- [x] UNIQUE(key) constraint в БД
+- [x] Guard service с 3 уровнями проверки
+- [x] Fuzzy match не автосоздаёт — требует explicit decision
+- [x] JSDoc с registry-first policy
 
-#### 4. Compatibility layer в edge functions
-- ai-generate-document: canonical key aliases добавлены параллельно с ad-hoc
-- ai-generate-document-package: аналогично
-- Старые DOCX шаблоны с ad-hoc ключами продолжают работать
-- Новые шаблоны могут использовать canonical keys (e.g. {{person.full_name}}, {{entity.name}})
+---
 
-### Canonical Naming Standard
+### PATCH 2.4 — Package roles + arrays: НЕ НАЧАТ
 
-4 уровня представления:
-1. **internal id**: UUID (fields_registry.id)
-2. **canonical key**: e.g. `meeting.notice.date` (fields_registry.key)
-3. **system token**: `{{meeting.notice.date}}` (хранится в тексте/шаблонах)
-4. **UI token**: `[Дата направления извещения]` (показывается в редакторе)
+### PATCH 2.3 — Context-based token source adapter: НЕ НАЧАТ
 
-### Файлы изменены
-- `src/lib/tokens/tokenRegistry.ts` — полная переработка с новыми loaders
-- `src/components/admin/TokenizedRichInput.tsx` — +prop extraTokenGroups, +рендер
-- `supabase/functions/ai-generate-document/index.ts` — +canonical key aliases
-- `supabase/functions/ai-generate-document-package/index.ts` — +canonical key aliases
-- `fields_registry` — +39 записей (add-only)
+### PATCH 2.1 — End-to-end proof: НЕ НАЧАТ
 
-### Что НЕ менялось
-- Existing `legal_details.*` записи в fields_registry
-- Existing `LEGAL_DETAILS_FIELD_MAP`
-- Existing `token-resolver.ts`
-- Existing DOCX шаблоны
-- Existing Telegram/email использование TokenizedRichInput
-- `generate-from-template` (protected billing flow)
+### PATCH 2.5 — Master token matrix (gate): НЕ НАЧАТ
 
-### Следующие шаги (PATCH 3+)
-- Token catalog service layer (registry + computed + package + loop)
-- Package roles namespace (package.signer.*, package.chairperson.*)
-- Loops/arrays support (package.participants[], agenda.items[])
-- Draft sessions + snapshots
-- Schema-driven forms + legal warnings
-- Multi-role model
-- 4 шаблона годового собрания на canonical standard
-- Deprecation plan для legacy ad-hoc tokens
+### PATCH 2.6 — Snapshot + deprecation: НЕ НАЧАТ
+
+---
+
+## Утверждённые правила
+
+### Reusable rule (обязательно для всех будущих функций)
+1. Сначала искать existing key в global registry
+2. Использовать existing square-bracket picker
+3. Не создавать новый локальный список токенов без proof, что reuse невозможен
+
+### STOP-guards
+- Не ломать existing Telegram/email token flows
+- Не менять формат уже сохранённых `{{system.token}}`
+- Не менять billing/template flows (`generate-from-template`)
+- Не создавать новый picker component
+- `extraTokenGroups` deprecated — не использовать в новых интеграциях
+
+### Gate
+- Без утверждённой master token matrix (PATCH 2.5) нельзя переходить к финальной нормализации 4 DOCX шаблонов
+
+### Canonical Standard (4 уровня)
+1. **internal id:** UUID (fields_registry.id)
+2. **canonical key:** e.g. `meeting.notice.date` (fields_registry.key, UNIQUE globally)
+3. **system token:** `{{meeting.notice.date}}` (хранится в тексте/шаблонах)
+4. **UI token:** `[Дата направления извещения]` (показывается в редакторе)
+
+### Порядок выполнения
+1. ~~PATCH 2.2~~ ✅
+2. PATCH 2.4
+3. PATCH 2.3
+4. PATCH 2.1
+5. PATCH 2.5 (gate)
+6. PATCH 2.6
