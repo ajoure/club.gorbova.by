@@ -51,8 +51,8 @@ export function CorporateStep3Params({ session, onAutoSave }: Props) {
   const [meetingDate, setMeetingDate] = useState(existingParams.meeting?.date || '');
   const [meetingTime, setMeetingTime] = useState(existingParams.meeting?.time || '');
   const [meetingLocation, setMeetingLocation] = useState(existingParams.meeting?.location || '');
-  const [meetingFormat, setMeetingFormat] = useState(existingParams.meeting?.format || 'in_person');
-  const [votingForm, setVotingForm] = useState(existingParams.meeting?.voting_form || 'open');
+  const [meetingFormat, setMeetingFormat] = useState<string>(existingParams.meeting?.format || 'in_person');
+  const [votingForm, setVotingForm] = useState<string>(existingParams.meeting?.voting_form || 'open');
   const [chairName, setChairName] = useState(existingParams.chair?.name || '');
   const [secretaryName, setSecretaryName] = useState(existingParams.secretary?.name || '');
 
