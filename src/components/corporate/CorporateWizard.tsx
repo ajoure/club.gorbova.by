@@ -14,6 +14,7 @@ import {
 import {
   AlertDialog,
   AlertDialogContent,
+  AlertDialogOverlay,
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogDescription,
