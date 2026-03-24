@@ -5,11 +5,12 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Search, Loader2, Settings, Upload, PenLine, Package } from "lucide-react";
+import { FileText, Search, Loader2, Settings, Upload, PenLine, Package, Building2 } from "lucide-react";
 import { GenerateAiDocumentDialog } from "./GenerateAiDocumentDialog";
 import { GenerateAiDocumentPackageDialog } from "./GenerateAiDocumentPackageDialog";
 import { AiDocumentTemplatesManager } from "./AiDocumentTemplatesManager";
 import { AiDocumentPackagesManager } from "./AiDocumentPackagesManager";
+import { CorporateWizard } from "@/components/corporate/CorporateWizard";
 import type { DocumentTemplate } from "@/hooks/useDocumentTemplates";
 import type { DocumentPackageTemplate } from "@/hooks/useDocumentPackages";
 
