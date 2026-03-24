@@ -650,7 +650,6 @@ Deno.serve(async (req) => {
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,
-            order_number: order.order_number,
             source_label: 'Оплата через checkout bePaid',
           }),
         },
