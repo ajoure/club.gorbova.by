@@ -2542,12 +2542,21 @@ Deno.serve(async (req) => {
           .eq('user_id', linkOrder.user_id)
           .maybeSingle();
 
-        const notifyMessage = `💳 Оплата по ссылке (подписка bePaid)\n\n` +
-          `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-          `📧 Email: ${maskEmail(customerProfile?.email || linkOrder.customer_email)}\n` +
-          `\n💵 Сумма: ${paymentAmount.toFixed(2)} BYN\n` +
-          `🆔 Заказ: ${linkOrder.order_number || 'N/A'}\n` +
-          `📎 bePaid sub: ${subscriptionId}`;
+        const appBaseUrl2 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+        const contactUrl2 = buildContactUrl({ appBaseUrl: appBaseUrl2, email: customerProfile?.email || linkOrder.customer_email, mode: 'search' });
+
+        const notifyMessage = buildAdminNotifyMessage({
+          operation_type: 'link_payment',
+          client_name: customerProfile?.full_name,
+          contact_url: contactUrl2,
+          email: customerProfile?.email || linkOrder.customer_email,
+          telegram_username: customerProfile?.telegram_username,
+          amount: paymentAmount,
+          currency: 'BYN',
+          order_number: linkOrder.order_number,
+          bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+          source_label: 'Оплата по ссылке',
+        });
 
         await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
