@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
