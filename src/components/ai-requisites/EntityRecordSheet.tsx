@@ -164,6 +164,7 @@ export function EntityRecordSheet({
   onOpenExisting,
 }: EntityRecordSheetProps) {
   const duplicateCheck = useEntityDuplicateCheck();
+  const { refreshSingle, isRefreshing } = useGrpRefresh();
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [pendingData, setPendingData] = useState<Partial<ClientLegalDetails> | null>(null);
   const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
@@ -318,64 +319,94 @@ export function EntityRecordSheet({
           </CardContent>
         </Card>
 
-        {/* Section 2: Registry data (GRP) — read-only */}
-        {hasGrpData && (
-          <Card>
-            <CardHeader className="pb-2">
+        {/* Section 2: Registry data (GRP) */}
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
               <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
                 <ClipboardList className="w-4 h-4" />
                 Данные реестра
               </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {entity.grp_registration_date && (
-                <InfoRow label="Дата регистрации" value={entity.grp_registration_date} />
+              {unp && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs gap-1"
+                  disabled={isRefreshing}
+                  onClick={() => entity && refreshSingle(entity)}
+                >
+                  {isRefreshing ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  Обновить из реестра
+                </Button>
               )}
-              {entity.grp_status_name && (
-                <>
-                  {entity.grp_registration_date && <Separator />}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-muted-foreground shrink-0">Статус</span>
-                    <GrpStatusBadge status={entity.grp_status_name} />
-                  </div>
-                </>
-              )}
-              {entity.grp_tax_office_name && (
-                <>
-                  <Separator />
-                  <InfoRow label="ИМНС" value={entity.grp_tax_office_name} />
-                </>
-              )}
-              {entity.grp_short_name && (
-                <>
-                  <Separator />
-                  <InfoRow label="Краткое название" value={entity.grp_short_name} />
-                </>
-              )}
-              {entity.grp_liquidation_date && (
-                <>
-                  <Separator />
-                  <InfoRow label="Дата ликвидации" value={entity.grp_liquidation_date} />
-                </>
-              )}
-              {entity.grp_liquidation_reason && (
-                <>
-                  <Separator />
-                  <InfoRow label="Причина ликвидации" value={entity.grp_liquidation_reason} />
-                </>
-              )}
-              {entity.grp_last_fetched_at && (
-                <>
-                  <Separator />
-                  <InfoRow
-                    label="Обновлено"
-                    value={format(new Date(entity.grp_last_fetched_at), "dd MMM yyyy HH:mm", { locale: ru })}
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!hasGrpData ? (
+              <p className="text-sm text-muted-foreground">
+                {unp ? "Нажмите «Обновить из реестра» для загрузки данных" : "Нет УНП для поиска"}
+              </p>
+            ) : (
+              <>
+                {entity.grp_registration_date && (
+                  <InfoRow label="Дата регистрации" value={entity.grp_registration_date} />
+                )}
+                {entity.grp_status_name && (
+                  <>
+                    {entity.grp_registration_date && <Separator />}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-muted-foreground shrink-0">Статус</span>
+                      <GrpStatusBadge status={entity.grp_status_name} />
+                    </div>
+                  </>
+                )}
+                {entity.grp_tax_office_name && (
+                  <>
+                    <Separator />
+                    <InfoRow label="ИМНС" value={entity.grp_tax_office_name} />
+                  </>
+                )}
+                {entity.grp_tax_office_code && (
+                  <>
+                    <Separator />
+                    <InfoRow label="Код ИМНС" value={entity.grp_tax_office_code} mono />
+                  </>
+                )}
+                {entity.grp_short_name && (
+                  <>
+                    <Separator />
+                    <InfoRow label="Краткое название" value={entity.grp_short_name} />
+                  </>
+                )}
+                {entity.grp_liquidation_date && (
+                  <>
+                    <Separator />
+                    <InfoRow label="Дата ликвидации" value={entity.grp_liquidation_date} />
+                  </>
+                )}
+                {entity.grp_liquidation_reason && (
+                  <>
+                    <Separator />
+                    <InfoRow label="Причина ликвидации" value={entity.grp_liquidation_reason} />
+                  </>
+                )}
+                {entity.grp_last_fetched_at && (
+                  <>
+                    <Separator />
+                    <InfoRow
+                      label="Обновлено"
+                      value={format(new Date(entity.grp_last_fetched_at), "dd MMM yyyy HH:mm", { locale: ru })}
+                    />
+                  </>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Section 3: Address */}
         {addressLines.length > 0 && (
