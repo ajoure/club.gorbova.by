@@ -443,6 +443,38 @@ Deno.serve(async (req: Request) => {
               }
             }
           }
+
+          // INV-22: Propagate terminal provider states → auto_renew=false
+          if (['expired', 'canceled', 'failed', 'redirecting'].includes(state)) {
+            const existingTerminal = existingMap.get(sub.id);
+            if (existingTerminal?.subscription_v2_id) {
+              const { data: linkedSubTerminal } = await serviceClient
+                .from("subscriptions_v2")
+                .select("id, auto_renew")
+                .eq("id", existingTerminal.subscription_v2_id)
+                .eq("auto_renew", true) // STOP-guard: skip if already false
+                .maybeSingle();
+              if (linkedSubTerminal) {
+                await serviceClient
+                  .from("subscriptions_v2")
+                  .update({ auto_renew: false, updated_at: new Date().toISOString() })
+                  .eq("id", linkedSubTerminal.id);
+                await serviceClient.from("audit_logs").insert({
+                  actor_type: "system",
+                  actor_user_id: null,
+                  actor_label: "admin-bepaid-backfill-subscriptions",
+                  action: "billing.inv22.autorenew_disabled_from_provider_state",
+                  meta: {
+                    subscription_v2_id: linkedSubTerminal.id,
+                    provider_subscription_id: sub.id,
+                    ps_state: state,
+                    reason: "terminal_provider_state",
+                  },
+                });
+                result.terminal_auto_renew_disabled = (result.terminal_auto_renew_disabled || 0) + 1;
+              }
+            }
+          }
         }
       } catch (e) {
         result.errors.push({ sbs_id: sub.id, reason: String(e).slice(0, 100) });
