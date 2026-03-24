@@ -5389,7 +5389,7 @@ ${userName}, к сожалению, не удалось провести опл�
         // Get customer profile for notification
         const { data: customerProfile } = await supabase
           .from('profiles')
-          .select('full_name, email, phone, telegram_username')
+          .select('full_name, email, telegram_username')
           .eq('user_id', order.user_id)
           .maybeSingle();
         
@@ -5400,14 +5400,22 @@ ${userName}, к сожалению, не удалось провести опл�
           .eq('meta->>legacy_order_id', internalOrderId)
           .maybeSingle();
 
-        const telegramNotifyMessage = `${paymentType}\n\n` +
-          `👤 <b>Клиент:</b> ${customerProfile?.full_name || meta.customer_first_name || 'Не указано'}\n` +
-          `📧 Email: ${maskEmail(customerProfile?.email || order.customer_email)}\n` +
-          (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-          `\n📦 <b>Продукт:</b> ${legacyProductName}\n` +
-          `📋 Тариф: ${legacyTariffName}\n` +
-          `💵 Сумма: ${amountFormatted} ${order.currency}\n` +
-          `🆔 Заказ: ${legacyOrderV2?.order_number || internalOrderId}`;
+        const appBaseUrl5 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+        const contactUrl5 = buildContactUrl({ appBaseUrl: appBaseUrl5, email: customerProfile?.email || order.customer_email, mode: 'search' });
+
+        const telegramNotifyMessage = buildAdminNotifyMessage({
+          operation_type: meta.is_trial ? 'trial' : 'payment',
+          client_name: customerProfile?.full_name || meta.customer_first_name,
+          contact_url: contactUrl5,
+          email: customerProfile?.email || order.customer_email,
+          telegram_username: customerProfile?.telegram_username,
+          product_name: legacyProductName,
+          tariff_name: legacyTariffName || undefined,
+          amount: amountFormatted,
+          currency: order.currency,
+          order_number: legacyOrderV2?.order_number || internalOrderId,
+          source_label: 'Webhook bePaid',
+        });
 
         const notifyResponse = await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
