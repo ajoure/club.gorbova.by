@@ -2,75 +2,71 @@
 
 &nbsp;
 
-1. **Не привязывать share_percent только к role_type='founder'.**
-  Это можно использовать как helper, но не как обязательное условие. В текущих связях роль участника может быть не размечена идеально. Нужно:
+1. **Защиту от закрытия сделать не только при sessionId, а при sessionId || dirty || pendingPatch.**
+  Иначе пользователь может потерять только что введенные данные до создания/обновления session. Условие блокировки закрытия должно учитывать:
   &nbsp;
-  - сначала предлагать linked persons текущего юрлица;
-  - если у link есть доля — подставлять;
-  - если доли нет — оставлять пустой и требовать ручного подтверждения.
-    Иначе есть риск ложного автозаполнения.
+  - активную session,
+  - несохраненные изменения,
+  - отложенный debounce patch.
   &nbsp;
-2. **Quick-create участника не должен ограничиваться только ФИО.**
-  Минимум сразу заложить:
+2. **Reopen flow не брать “первый попавшийся non-cancelled draft”.**
+  Нужно выбирать:
   &nbsp;
-  - ФИО,
-  - тип лица,
-  - при необходимости паспорт/идентификационные данные позже.
-    Для PATCH 1.1 можно оставить минимальный create, но в плане явно указать, что это временный режим и дальше карточка лица должна дозаполняться.
+  - последний updated_at desc,
+  - только статусы из рабочего набора (draft, charter_pending, params_pending, preview, confirmed),
+  - желательно по текущему корпоративному сценарию, если он будет расширяться дальше.
+    Иначе можно открыть не тот черновик.
   &nbsp;
-3. **По датам разделить inline-warning и final-blocking явно в архитектуре.**
-  Сейчас в плане написано: на Step 3 не блокировать, на Step 5 блокировать. Это правильно, но нужно зафиксировать технически:
+3. **metadata.current_step сохранять через merge, а не overwrite.**
+  Сейчас в плане есть риск затереть другие metadata поля. Нужно явно писать add-only merge:
   &nbsp;
-  - либо validateSession(..., context: 'edit' | 'confirm'),
-  - либо отдельные softValidation / hardValidation.
-    Иначе одна и та же функция начнет давать конфликтующее поведение.
+  - старый metadata
+  - current_step
+  - возможные будущие поля reopen context / original filename / UI flags.
   &nbsp;
-4. **Step 3 должен включать не только дату извещения и [review.date](http://review.date)_from, но и место/режим ознакомления.**
-  Потому что в извещении и перечне документов важны:
+4. **flushSave() должен быть обязательным не только на Next/Back/Close, но и перед Confirm на Step 5.**
+  Иначе пользователь может подтвердить пакет, пока последний patch еще не ушел в БД.
+5. **При “Сохранить и выйти” нужен await полного завершения save перед закрытием UI.**
+  Не просто вызвать flushSave(), а дождаться результата.
+  При ошибке сохранения:
   &nbsp;
-  - где ознакомиться,
-  - с какого по какое число,
-  - при необходимости режим ознакомления.
-    Это уже ближе к будущим документам и лучше заложить сейчас, чтобы не переделывать структуру.
+  - не закрывать wizard,
+  - показать ошибку,
+  - оставить пользователя внутри формы.
   &nbsp;
-5. **Для председателя и секретаря лучше не ограничиваться только picker.**
-  Нужен режим:
+6. **Нужен отдельный сценарий для “Выйти без сохранения”.**
+  Сейчас это должно не просто закрывать Sheet, а явно:
   &nbsp;
-  - выбрать из linked persons,
-  - выбрать из всех persons,
-  - quick-create,
-  - fallback ручной ввод с warning “лицо не создано в реквизитах”.
-    Потому что в реальном кейсе секретарь собрания может не быть заранее заведенным лицом.
+  - либо помечать draft как cancelled,
+  - либо, если session еще не создана, просто закрывать без записи.
+    Это нужно прописать в плане, чтобы не зависли “мусорные” черновики.
   &nbsp;
-6. **getDefaultAgenda() сделать зависимым не только от charterRules, но и от procedure_mode.**
-  Для sole_participant_decision вопросы должны формулироваться как для решения единственного участника, а не просто копией годового собрания. Это важно и по логике будущих шаблонов, и по терминологии.
-7. **В UX-статусе устава показать отдельно:**
+7. **Сохранение шага должно происходить после успешного flush/save, а не до него.**
+  Иначе можно получить ситуацию, когда UI уже перешел на новый step, а в БД остался старый. Нужен порядок:
   &nbsp;
-  - файл загружен,
-  - текст сохранен,
-  - текст извлечен,
-  - правила подтверждены,
-  - применяется закон по умолчанию.
-    Сейчас в плане это почти есть, но text saved и text extracted лучше не смешивать, потому что на скринах у вас как раз был кейс “текст сохранен, но логика не перешла дальше”.
+  - flush текущих данных,
+  - update current_step,
+  - только потом переход UI.
   &nbsp;
-8. **В Preview добавить источник данных для участников и адреса.**
-  Минимум бейджами:
+8. **Save indicator должен показывать источник состояния, а не быть декоративным.**
+  Минимальные состояния:
   &nbsp;
-  - из реквизитов,
-  - из linked persons,
-  - введено вручную.
-    Это поможет потом проверять, что пакет собран на корректной основе.
+  - dirty
+  - saving
+  - saved
+  - error
+  - restored draft
+    Последнее полезно при reopen, чтобы пользователь видел, что он работает с восстановленным черновиком.
   &nbsp;
-9. **В DoD добавить proof re-open draft.**
-  Нужно проверить не только сохранение, но и повторное открытие:
+9. **Step 2 и Step 3 все равно требуют явного proof по persist, даже если их “не трогаем”.**
+  В DoD добавить отдельную проверку:
   &nbsp;
-  - загруженный/вставленный устав виден после reload,
-  - выбранные участники сохраняются,
-  - адрес и даты сохраняются,
-  - повестка не теряется.
+  - загруженный/вставленный устав восстанавливается после reopen;
+  - участники, даты, адрес, повестка восстанавливаются после reopen.
+    Иначе будет закрыт PATCH по оболочке, но не по сути.
   &nbsp;
-10. **Сразу зафиксировать мост к следующему патчу по парсингу устава.**
-  В конце отчета нужен явный раздел:
+10. **Wider layout делать через общий shell-стандарт, а не ad-hoc width only.**
+  Поддерживаю max-w-[1200px], но нужно сохранить:
 
 &nbsp;
 
@@ -78,176 +74,158 @@
 
 &nbsp;
 
-- что уже готово для extraction,
-- какие поля будут извлекаться следующими: участники, доли, кворум, способ извещения, орган созыва.
-  Чтобы это не потерялось между PATCH 1.1 и следующим спринтом.
+- нормальный sticky header/footer,
+- корректный scroll body,
+- отсутствие клиппинга кнопок внизу,
+- стабильную работу на меньших экранах.
+  То есть не просто “шире”, а полноценный рабочий shell.
 
 &nbsp;
 
 &nbsp;
 
-В таком виде план уже можно отдавать в работу как **PATCH 1.1**.
+&nbsp;
+
+11. **В DoD добавить proof reopen именно после hard reload страницы.**
+  Не только закрыть/открыть внутри одной сессии, а:
 
 &nbsp;
 
-PATCH 1.1 — Корректировка corporate wizard
+&nbsp;
 
-## Scope
+&nbsp;
 
-Fix-only / add-only поверх PATCH 1. Не переписываем wizard с нуля. Существующие flows не затрагиваются.
+- заполнить,
+- перезагрузить страницу,
+- снова открыть модуль,
+- выбрать “Продолжить черновик”,
+- увидеть восстановленный step и данные.
 
----
+&nbsp;
 
-## 1. Fix загрузки файла устава
+&nbsp;
 
-**Файл:** `src/components/corporate/CharterIntakeStep.tsx`
+&nbsp;
 
-**Проблема:** `filePath` содержит оригинальное имя файла с пробелами/спецсимволами → Supabase Storage отклоняет key.
+12. **Сразу зафиксировать, что после PATCH 1.2 следующий приоритет — не косметика, а Sprint 2 шаблонов.**
+  Чтобы не застрять на endless UX-fixes. После стабилизации draft-flow следующий обязательный шаг:
 
-**Решение:**
+&nbsp;
 
-- Sanitize filename: `Date.now() + '_' + slug(name)` (транслитерация + замена спецсимволов)
-- Сохранять оригинальное имя в `metadata.original_filename`
-- После upload обновлять session: `charter_file_path`, `charter_raw_text`, `charter_extraction_status`
-- Добавить явный UX-статус загрузки: файл загружен ✓ / текст извлечён ✓ / текст не извлечён ⚠
+&nbsp;
 
----
+&nbsp;
 
-## 2. Fix state machine подтверждения правил устава
+- пакет нормативных шаблонов,
+- правила их применения,
+- подключение к manifest.
 
-**Файл:** `src/components/corporate/CharterIntakeStep.tsx`, `src/lib/corporate/corporateRuleEngine.ts`
+&nbsp;
 
-**Проблема:** Warning «правила устава не подтверждены» показывается даже после ручного подтверждения. Причина: `rules_basis` остаётся `'law_default'` после `confirmCharterRules`.
+&nbsp;
 
-**Решение:**
+PATCH 1.2 — Stability / Draft Persistence / Wider Wizard
 
-- В `useCorporateDraftSession.confirmCharterRules` уже корректно устанавливается `rules_basis: 'charter_confirmed'` и `charter_extraction_status: 'confirmed'`. Нужно убедиться что `CharterIntakeStep.handleConfirmRules` вызывает `onConfirmRules` с правильными параметрами, а session refetch корректно обновляет UI.
-- В `CharterIntakeStep` добавить явный блок статуса extraction pipeline:
-  - `none` → «Устав не загружен»
-  - `pending` → «Файл загружен, текст не извлечён»
-  - `extracted` → «Текст извлечён, правила требуют подтверждения»
-  - `confirmed` → «Правила подтверждены» (зелёный)
-  - `failed` → «Ошибка извлечения»
-- В `validateSession` (rule engine): проверять `charter_extraction_status === 'confirmed'` вместо только `rulesBasis`, чтобы warning корректно убирался
+## Проблемы
 
----
+1. **Sheet закрывается** при клике вне wizard или Esc — `onOpenChange` передаётся напрямую без защиты
+2. **Draft не персистится** на всех шагах — Step 1 создаёт session, но Steps 2-5 сохраняют данные только через `autoSave` (debounced 1.5s) без flush при переходах
+3. **Reset при закрытии** — `useEffect` в строках 61-66 сбрасывает `step=0, sessionId=null` при каждом `!open`
+4. **Нет reopen flow** — при повторном открытии всегда начинается с Step 0
+5. **Нет индикатора сохранения** — пользователь не видит статус autosave
+6. **Wizard узкий** — `sm:max-w-2xl` (~672px), не использует `SHEET_SHELL_CLASS`
 
-## 3. Участники: picker из существующих физлиц + quick-create
+## Изменения
 
-**Файл:** `src/components/corporate/CorporateStep3Params.tsx` (основные изменения)
+### 1. `CorporateWizard.tsx` — основные доработки
 
-**Текущее:** Ручные text inputs для ФИО участника.
+**Защита от закрытия:**
 
-**Решение:**
+- `Sheet onOpenChange` → обёртка: если `sessionId` существует, показать AlertDialog (Сохранить и выйти / Выйти без сохранения / Остаться) вместо прямого закрытия
+- `SheetContent` добавить `onInteractOutside={(e) => e.preventDefault()}` и `onEscapeKeyDown={(e) => e.preventDefault()}` для блокировки случайного закрытия
 
-- Добавить props: `session.legal_details_id` для загрузки linked persons
-- Использовать `useAiPersons()` для получения всех физлиц
-- Использовать `useEntityPersonLinks(legalDetailsId)` для получения связанных лиц
-- В UI участника: заменить Input на **PersonPicker** (reuse `src/components/ai-requisites/PersonPicker.tsx`) + кнопка «Добавить нового»
-- При выборе из picker: автозаполнение `name`, `person_id`, `type`
-- Для linked persons с role_type='founder': автозаполнение `share_percent` из link
-- **Quick-create**: модальное окно с минимальным набором полей (ФИО) → `useAiPersons().create` → auto-link через `useEntityPersonLinks().create` с role_type='founder' → добавить в список участников
-- Ручной ввод ФИО оставить как fallback (toggle «Ввести вручную»)
+**Wider layout:**
 
----
+- Заменить `className="w-full sm:max-w-2xl overflow-y-auto flex flex-col"` на кастомный класс: `w-full sm:max-w-5xl lg:max-w-[1200px]` + элементы из `SHEET_SHELL_CLASS` (rounded corners, position overrides)
 
-## 4. Место проведения по умолчанию из адреса юрлица
+**Reopen flow:**
 
-**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
+- При `open && !sessionId` → проверить `sessions` из hook (уже загружаются) на наличие non-cancelled draft
+- Если есть — показать диалог «Продолжить черновик [company, date] / Создать новый»
+- При продолжении: `setSessionId(existing.id)`, восстановить step из `metadata.current_step`
 
-- При инициализации step, если `meetingLocation` пустое:
-  - Загрузить entity по `session.legal_details_id` (уже доступно через `useAiEntities`)
-  - Извлечь адрес из `leg_address_structured` / `ent_address_structured` через `formatStructuredAddressForView()`
-  - Подставить в `meetingLocation`
-- Показать label «Подставлено из реквизитов юрлица» (Badge), которая исчезает при ручном редактировании
+**Persist step:**
 
----
+- При каждом `setStep` → вызывать `autoSave(sessionId, { metadata: { current_step: newStep } })`
+- При reopen → читать `session.metadata.current_step` и устанавливать начальный step
 
-## 5. Даты по умолчанию
+**Flush on navigation:**
 
-**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
+- `handleNext` / `handleBack` → перед сменой step вызывать `flushSave()` (новый метод из hook)
+- При закрытии с «Сохранить и выйти» → `flushSave()` перед close
 
-- При инициализации, если даты пустые:
-  - `meetingDate`: предложить дату = 31 марта (report_year + 1) или ближайший рабочий день до дедлайна
-  - `notice.date`: meetingDate минус `charter_rules.notice_days_min` (или 30 дней law default)
-  - `review.date_from`: meetingDate минус `LAW_REVIEW_DAYS_MIN` (20 дней)
-- Показать Badge «По умолчанию (общее правило закона)» рядом с предзаполненными датами
-- Если дата уже просрочена: warning inline (amber), но НЕ блокировка ввода на этом шаге
-- В `validateSession`: сделать `MEETING_AFTER_DEADLINE` non-blocking warning вместо blocking error. Blocking только на Step 5.
-- Добавить поля notice date и review date_from в UI Step 3 (сейчас отсутствуют)
+**Save status indicator:**
 
----
+- В header рядом с badge шага показывать: «Сохранено» (зелёная точка) / «Сохраняется...» (spinner) / «Ошибка» (красная) / «Есть несохранённые» (amber)
+- Состояние берётся из нового `saveStatus` из hook
 
-## 6. Председатель и секретарь: picker
+### 2. `useCorporateDraftSession.ts` — расширения
 
-**Файл:** `src/components/corporate/CorporateStep3Params.tsx`
+**flushSave(sessionId):**
 
-- Заменить текстовые Input для chairman/secretary на **PersonPicker** (reuse)
-- При выборе: сохранять `person_id` + `name` в `corporate_params.chair` / `secretary`
-- Добавить кнопку quick-create аналогично участникам
-- Ручной ввод как fallback
+- Отменяет текущий debounce timer
+- Выполняет немедленный `updateMutation.mutateAsync` с накопленным patch
+- Нужен `pendingPatches` ref для накопления между debounce
 
----
+**saveStatus state:**
 
-## 7. Повестка дня по умолчанию
+- Новый `useState<'idle' | 'saving' | 'saved' | 'error' | 'dirty'>` 
+- Обновляется в autoSave (→ dirty), при mutation start (→ saving), success (→ saved), error (→ error)
+- Возвращается из hook
 
-**Файл:** `src/components/corporate/CorporateStep3Params.tsx`, `src/lib/corporate/corporateRuleEngine.ts`
+**autoSave расширить:**
 
-- Добавить функцию `getDefaultAgenda(mode, charterRules)` в rule engine:
-  - Для `annual_meeting`:
-    1. «Утверждение годового отчёта»
-    2. «Утверждение годовой бухгалтерской отчётности»
-    3. «Распределение прибыли и убытков»
-    4. (conditional) «Избрание совета директоров» если `has_board`
-    5. (conditional) «Избрание ревизора» если `has_auditor`
-  - Для `sole_participant_decision`: аналогичный набор без процедурных вопросов
-- При инициализации Step 3: если agenda пуста — предзаполнить из `getDefaultAgenda()`
-- Пользователь может редактировать/удалять/добавлять
+- Накапливать patches в ref (shallow merge)
+- При fire debounce → отправлять merged patch и очищать ref
+
+### 3. `CharterIntakeStep.tsx` — минимальные фиксы
+
+- Убедиться что `onUpdate` вызывается после upload и после confirm rules
+- Статусы extraction pipeline уже реализованы в PATCH 1.1 — не трогаем
+
+### 4. Остальные step-компоненты
+
+- Не трогаем внутреннюю логику
+- Автосохранение Step 3 уже работает через `onAutoSave`
+- Step 2 сохраняет через `onUpdate` (immediate)
+- Step 4/5 — read-only, не требуют autosave
 
 ---
 
-## 8. UX-статус по уставу
-
-**Файл:** `src/components/corporate/CharterIntakeStep.tsx`, `src/components/corporate/CorporateStep4Preview.tsx`
-
-- В Step 2: добавить status bar с pipeline состояний (5 бейджей)
-- В Step 4 Preview: показать текущий статус устава + rules_basis
-- Цветовая индикация: зелёный (confirmed), amber (pending/extracted), серый (none), красный (failed)
-
----
-
-## Полный список файлов
-
-### Изменяемые
+## Файлы
 
 
-| Файл                                                 | Что                                                                                                                  |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `src/components/corporate/CharterIntakeStep.tsx`     | Fix upload (sanitize key), extraction status UX, fix confirm flow                                                    |
-| `src/components/corporate/CorporateStep3Params.tsx`  | PersonPicker для участников/председателя/секретаря, default address/dates/agenda, quick-create, notice/review fields |
-| `src/components/corporate/CorporateStep4Preview.tsx` | Charter status block                                                                                                 |
-| `src/components/corporate/CorporateWizard.tsx`       | Pass legal_details_id to Step 3                                                                                      |
-| `src/lib/corporate/corporateRuleEngine.ts`           | `getDefaultAgenda()`, fix deadline validation severity                                                               |
-| `src/hooks/useCorporateDraftSession.ts`              | Ensure confirmCharterRules properly sets all fields                                                                  |
+| Файл                                           | Что                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `src/components/corporate/CorporateWizard.tsx` | Защита закрытия, reopen flow, wider layout, step persist, save indicator, flush on nav, confirm dialog |
+| `src/hooks/useCorporateDraftSession.ts`        | `flushSave()`, `saveStatus`, accumulated patch ref                                                     |
 
 
-### Что НЕ меняется
+## Что НЕ меняется
 
-- Edge functions
-- `document_templates` / `document_package_templates`
-- Existing generation flows
-- `PersonPicker.tsx` (reuse as-is)
-- DB schema (no migrations)
+- Step компоненты (1-5) — внутренняя логика не трогается
+- Edge functions, шаблоны, rule engine
+- `sheet.tsx`, `sheetShell.ts`
+- Существующие flows генерации
 
 ## DoD
 
-- Upload устава работает стабильно (sanitized key)
-- Статус устава: 5 состояний с визуальной индикацией
-- Warning «правила не подтверждены» исчезает после подтверждения
-- Участники выбираются из PersonPicker (existing persons + linked)
-- Quick-create нового физлица + auto-link к юрлицу
-- Адрес подставляется из реквизитов юрлица
-- Даты предзаполняются по закону, warning при просрочке без блокировки ввода
-- Председатель/секретарь через PersonPicker
-- Повестка предзаполняется базовым набором
-- Existing flows не сломаны, build clean
+- Outside click / Esc не закрывают wizard при активной session
+- Confirm dialog при закрытии: Сохранить / Выйти / Остаться
+- Draft session обновляется в БД при переходах Next/Back
+- flushSave при закрытии
+- Save status indicator в header
+- Reopen: продолжить черновик / создать новый
+- Step persist и восстановление при reopen
+- Wizard шире: ~1200px на desktop
+- Build clean
