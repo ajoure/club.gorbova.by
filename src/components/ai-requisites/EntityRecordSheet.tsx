@@ -59,6 +59,7 @@ import type { CanonicalAddressPayload } from "@/lib/address/types";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
 import { EntityPersonLinksBlock } from "./EntityPersonLinksBlock";
 import { toast } from "sonner";
+import { useGrpRefresh } from "@/hooks/useGrpRefresh";
 
 /* ── GRP status badge ── */
 
