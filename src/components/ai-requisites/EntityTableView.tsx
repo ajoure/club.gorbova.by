@@ -76,6 +76,11 @@ export function EntityTableView({
 }: EntityTableViewProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const { isAdmin } = useRbac();
+  const { bulkDryRun, bulkExecute, isBulkRunning, bulkProgress } = useGrpRefresh();
+  const [showBulkDialog, setShowBulkDialog] = useState(false);
+  const [dryRunResult, setDryRunResult] = useState<BulkDryRunResult | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkRefreshResult | null>(null);
 
   const filtered = useMemo(() => {
     let list = allEntities;
@@ -99,6 +104,20 @@ export function EntityTableView({
     });
   }, [allEntities, filter, search]);
 
+  const handleBulkDryRun = useCallback(() => {
+    const activeEntities = allEntities.filter((e) => e.status === "active");
+    const result = bulkDryRun(activeEntities);
+    setDryRunResult(result);
+    setBulkResult(null);
+    setShowBulkDialog(true);
+  }, [allEntities, bulkDryRun]);
+
+  const handleBulkExecute = useCallback(async () => {
+    if (!dryRunResult) return;
+    const result = await bulkExecute(dryRunResult.candidates);
+    setBulkResult(result);
+  }, [dryRunResult, bulkExecute]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[200px]">
@@ -112,11 +131,84 @@ export function EntityTableView({
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-lg font-semibold">Юрлица / ИП</h2>
-        <Button onClick={onCreateNew} size="sm">
-          <Plus className="h-4 w-4 mr-1" />
-          Добавить
-        </Button>
+        <div className="flex items-center gap-2">
+          {isAdmin && allEntities.length > 0 && (
+            <Button onClick={handleBulkDryRun} variant="outline" size="sm" disabled={isBulkRunning}>
+              {isBulkRunning ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-1" />
+              )}
+              {isBulkRunning && bulkProgress
+                ? `${bulkProgress.current}/${bulkProgress.total}`
+                : "Обновить реестр"}
+            </Button>
+          )}
+          <Button onClick={onCreateNew} size="sm">
+            <Plus className="h-4 w-4 mr-1" />
+            Добавить
+          </Button>
+        </div>
       </div>
+
+      {/* Bulk refresh dry-run dialog */}
+      <AlertDialog open={showBulkDialog} onOpenChange={setShowBulkDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Обновление данных реестра МНС</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {!bulkResult ? (
+                  <>
+                    <p>Результат проверки:</p>
+                    <ul className="text-sm space-y-1 list-disc pl-4">
+                      <li>Всего записей: {dryRunResult?.total ?? 0}</li>
+                      <li>С УНП: {dryRunResult?.withUnp ?? 0}</li>
+                      <li>Без данных реестра: {dryRunResult?.missingGrp ?? 0}</li>
+                      <li>Устаревшие (30+ дней): {dryRunResult?.stale ?? 0}</li>
+                      <li className="font-medium">Будет обновлено: {dryRunResult?.toUpdate ?? 0}</li>
+                    </ul>
+                    {(dryRunResult?.toUpdate ?? 0) === 0 && (
+                      <p className="text-muted-foreground">Все записи актуальны, обновление не требуется.</p>
+                    )}
+                    {isBulkRunning && bulkProgress && (
+                      <p className="text-primary">
+                        Обработка: {bulkProgress.current} из {bulkProgress.total}...
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p>Результат обновления:</p>
+                    <ul className="text-sm space-y-1 list-disc pl-4">
+                      <li>Обновлено: {bulkResult.updated}</li>
+                      <li>Пропущено: {bulkResult.skipped}</li>
+                      <li>Ошибок: {bulkResult.failed}</li>
+                    </ul>
+                    {bulkResult.errors.length > 0 && (
+                      <div className="text-xs text-destructive mt-2 max-h-32 overflow-y-auto">
+                        {bulkResult.errors.map((e, i) => (
+                          <div key={i}>{e}</div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkRunning}>
+              {bulkResult ? "Закрыть" : "Отмена"}
+            </AlertDialogCancel>
+            {!bulkResult && (dryRunResult?.toUpdate ?? 0) > 0 && (
+              <AlertDialogAction onClick={handleBulkExecute} disabled={isBulkRunning}>
+                {isBulkRunning ? "Обновление..." : "Обновить"}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Search + Filters */}
       <div className="flex flex-col sm:flex-row gap-2">
