@@ -39,13 +39,12 @@ interface TemplateDefinition {
 }
 
 export const ANNUAL_MEETING_TEMPLATES: TemplateDefinition[] = [
-  { code: 'corp_order_meeting', title: 'Решение/приказ о проведении годового общего собрания участников', category: 'system_generated' },
+  { code: 'corp_order_meeting', title: 'Решение (приказ) о проведении годового общего собрания участников', category: 'system_generated' },
   { code: 'corp_notice', title: 'Извещение участнику о проведении годового общего собрания', category: 'system_generated' },
   { code: 'corp_notice_journal', title: 'Журнал направления извещений участникам', category: 'system_generated' },
   { code: 'corp_review_list', title: 'Перечень документов, предоставляемых для ознакомления', category: 'system_generated' },
   { code: 'corp_draft_decisions', title: 'Проекты решений по вопросам повестки дня', category: 'system_generated' },
   { code: 'corp_registration_list', title: 'Список лиц, зарегистрированных для участия в собрании', category: 'system_generated' },
-  { code: 'corp_ballot', title: 'Бюллетень (карточка) для голосования', category: 'system_generated' },
   { code: 'corp_protocol', title: 'Протокол годового общего собрания участников', category: 'system_generated' },
   { code: 'corp_notification_decisions', title: 'Уведомление участникам о принятых решениях', category: 'system_generated' },
 ];
@@ -56,6 +55,7 @@ export const SOLE_PARTICIPANT_TEMPLATES: TemplateDefinition[] = [
 ];
 
 export const CONDITIONAL_TEMPLATES: TemplateDefinition[] = [
+  { code: 'corp_ballot', title: 'Бюллетень (карточка) для голосования', category: 'conditional_generated', condition: 'voting_form_secret_or_charter' },
   { code: 'corp_board_candidates', title: 'Сведения о кандидатах в совет директоров (наблюдательный совет)', category: 'conditional_generated', condition: 'has_board' },
   { code: 'corp_board_consent', title: 'Согласие кандидата в совет директоров (наблюдательный совет)', category: 'conditional_generated', condition: 'has_board' },
   { code: 'corp_auditor_candidates', title: 'Сведения о кандидате в ревизоры', category: 'conditional_generated', condition: 'has_auditor' },
