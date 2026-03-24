@@ -285,6 +285,56 @@ serve(async (req) => {
       tokenData["link.share_percent"] = snap.share_percent != null ? String(snap.share_percent) : "";
     }
 
+    // ── Compatibility layer: canonical registry keys ──
+    // New DOCX templates can use canonical keys (e.g. {{person.full_name}})
+    // while old templates continue using ad-hoc keys (e.g. {{person_full_name}})
+    // Entity tokens → reuse existing legal_details.* registry keys
+    if (entity) {
+      tokenData["legal_details.leg_name"] = tokenData.entity_name || "";
+      tokenData["legal_details.leg_unp"] = tokenData.entity_unp || "";
+      tokenData["legal_details.ent_unp"] = tokenData.entity_unp || "";
+      tokenData["legal_details.leg_address"] = tokenData.entity_address || "";
+      tokenData["legal_details.bank_name"] = tokenData.entity_bank || "";
+      tokenData["legal_details.bank_code"] = tokenData.entity_bank_code || "";
+      tokenData["legal_details.bank_account"] = tokenData.entity_account || "";
+      tokenData["legal_details.phone"] = tokenData.entity_phone || "";
+      tokenData["legal_details.email"] = tokenData.entity_email || "";
+      tokenData["legal_details.leg_director_name"] = tokenData.entity_director || "";
+      tokenData["legal_details.leg_director_position"] = tokenData.entity_director_position || "";
+      tokenData["legal_details.leg_acts_on_basis"] = tokenData.entity_acts_on_basis || "";
+      tokenData["legal_details.leg_org_form"] = tokenData.entity_org_form || "";
+      // Computed entity tokens
+      tokenData["entity.name"] = tokenData.entity_name || "";
+      tokenData["entity.director_short"] = tokenData.entity_director_short || "";
+      tokenData["entity.address.legal.full"] = tokenData.entity_address || "";
+    }
+    // Person tokens → new canonical namespace
+    if (person) {
+      tokenData["person.full_name"] = tokenData.person_full_name || "";
+      tokenData["person.initials"] = tokenData.person_short_name || "";
+      tokenData["person.personal_number"] = tokenData.person_personal_number || "";
+      tokenData["person.birth_date"] = tokenData.person_birth_date || "";
+      tokenData["person.passport_series"] = tokenData.person_passport_series || "";
+      tokenData["person.passport_number"] = tokenData.person_passport_number || "";
+      tokenData["person.passport_issued_by"] = tokenData.person_passport_issued_by || "";
+      tokenData["person.passport_issued_date"] = tokenData.person_passport_issued_date || "";
+      tokenData["person.passport_valid_until"] = tokenData.person_passport_valid_until || "";
+      tokenData["person.phone"] = tokenData.person_phone || "";
+      tokenData["person.email"] = tokenData.person_email || "";
+      tokenData["person.address"] = tokenData.person_address || "";
+    }
+    // Link tokens → entity_person namespace
+    if (link) {
+      tokenData["entity_person.role_label"] = tokenData["link.role_label"] || "";
+      tokenData["entity_person.position"] = tokenData["link.position"] || "";
+      tokenData["entity_person.acts_on_basis"] = tokenData["link.acts_on_basis"] || "";
+      tokenData["entity_person.share_percent"] = tokenData["link.share_percent"] || "";
+    }
+    // Document tokens
+    tokenData["document.number"] = tokenData.document_number || "";
+    tokenData["document.date"] = tokenData.document_date || "";
+    tokenData["document.date_short"] = tokenData.document_date_short || "";
+
     // 7. Detect missing tokens
     const placeholders: string[] = Array.isArray(template.placeholders) ? template.placeholders : [];
     const missingTokens = placeholders

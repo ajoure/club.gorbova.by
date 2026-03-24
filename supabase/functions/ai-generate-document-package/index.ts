@@ -131,6 +131,51 @@ function buildTokenData(
     tokenData["link.share_percent"] = link.share_percent != null ? String(link.share_percent) : "";
   }
 
+  // ── Compatibility layer: canonical registry keys ──
+  // New DOCX templates can use canonical keys (e.g. {{person.full_name}})
+  // while old templates continue using ad-hoc keys (e.g. {{person_full_name}})
+  if (entity) {
+    tokenData["legal_details.leg_name"] = tokenData.entity_name || "";
+    tokenData["legal_details.leg_unp"] = tokenData.entity_unp || "";
+    tokenData["legal_details.ent_unp"] = tokenData.entity_unp || "";
+    tokenData["legal_details.leg_address"] = tokenData.entity_address || "";
+    tokenData["legal_details.bank_name"] = tokenData.entity_bank || "";
+    tokenData["legal_details.bank_code"] = tokenData.entity_bank_code || "";
+    tokenData["legal_details.bank_account"] = tokenData.entity_account || "";
+    tokenData["legal_details.phone"] = tokenData.entity_phone || "";
+    tokenData["legal_details.email"] = tokenData.entity_email || "";
+    tokenData["legal_details.leg_director_name"] = tokenData.entity_director || "";
+    tokenData["legal_details.leg_director_position"] = tokenData.entity_director_position || "";
+    tokenData["legal_details.leg_acts_on_basis"] = tokenData.entity_acts_on_basis || "";
+    tokenData["legal_details.leg_org_form"] = tokenData.entity_org_form || "";
+    tokenData["entity.name"] = tokenData.entity_name || "";
+    tokenData["entity.director_short"] = tokenData.entity_director_short || "";
+    tokenData["entity.address.legal.full"] = tokenData.entity_address || "";
+  }
+  if (person) {
+    tokenData["person.full_name"] = tokenData.person_full_name || "";
+    tokenData["person.initials"] = tokenData.person_short_name || "";
+    tokenData["person.personal_number"] = tokenData.person_personal_number || "";
+    tokenData["person.birth_date"] = tokenData.person_birth_date || "";
+    tokenData["person.passport_series"] = tokenData.person_passport_series || "";
+    tokenData["person.passport_number"] = tokenData.person_passport_number || "";
+    tokenData["person.passport_issued_by"] = tokenData.person_passport_issued_by || "";
+    tokenData["person.passport_issued_date"] = tokenData.person_passport_issued_date || "";
+    tokenData["person.passport_valid_until"] = tokenData.person_passport_valid_until || "";
+    tokenData["person.phone"] = tokenData.person_phone || "";
+    tokenData["person.email"] = tokenData.person_email || "";
+    tokenData["person.address"] = tokenData.person_address || "";
+  }
+  if (link) {
+    tokenData["entity_person.role_label"] = (link.role_label as string) || "";
+    tokenData["entity_person.position"] = (link.position_label as string) || "";
+    tokenData["entity_person.acts_on_basis"] = (link.acts_on_basis as string) || "";
+    tokenData["entity_person.share_percent"] = link.share_percent != null ? String(link.share_percent) : "";
+  }
+  tokenData["document.number"] = tokenData.document_number || "";
+  tokenData["document.date"] = tokenData.document_date || "";
+  tokenData["document.date_short"] = tokenData.document_date_short || "";
+
   return tokenData;
 }
 
