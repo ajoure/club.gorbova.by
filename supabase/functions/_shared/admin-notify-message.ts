@@ -167,8 +167,6 @@ export function buildAdminNotifyMessage(params: AdminNotifyMessageParams): strin
     amount,
     currency,
     next_charge_at,
-    bepaid_subscription_id,
-    bepaid_payment_id,
     source_label,
     admin_label,
   } = params;
