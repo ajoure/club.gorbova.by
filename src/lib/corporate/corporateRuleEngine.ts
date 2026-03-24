@@ -72,6 +72,33 @@ export const EXTERNALLY_PROVIDED_DOCUMENTS: TemplateDefinition[] = [
   { code: 'ext_auditor_conclusion', title: 'Заключение ревизора / ревизионной комиссии', category: 'externally_provided' },
 ];
 
+// ─── Required Data Mapping (business-level, NOT technical placeholders) ────
+
+const TEMPLATE_REQUIRED_DATA: Record<string, string[]> = {
+  corp_order_meeting: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full'],
+  corp_notice: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full', 'meeting.notice.date'],
+  corp_notice_journal: ['entity.name', 'meeting.notice.date'],
+  corp_review_list: ['entity.name'],
+  corp_draft_decisions: ['entity.name'],
+  corp_registration_list: ['entity.name', 'meeting.date'],
+  corp_protocol: ['entity.name', 'meeting.date', 'meeting.time', 'meeting.location.full'],
+  corp_notification_decisions: ['entity.name', 'meeting.date'],
+  corp_sole_decision: ['entity.name'],
+  corp_sole_appendices: ['entity.name'],
+  corp_ballot: ['entity.name', 'meeting.date'],
+  corp_board_candidates: ['entity.name'],
+  corp_board_consent: ['entity.name'],
+  corp_auditor_candidates: ['entity.name'],
+  corp_auditor_consent: ['entity.name'],
+  corp_audit_commission: ['entity.name'],
+  corp_agenda_change_notice: ['entity.name', 'meeting.date'],
+  corp_charter_amendments: ['entity.name'],
+};
+
+function getRequiredDataForTemplate(code: string): string[] {
+  return TEMPLATE_REQUIRED_DATA[code] || [];
+}
+
 // ─── Core Functions ───────────────────────────────────────────────
 
 export function determineProcedureMode(participants: Participant[]): ProcedureMode {
