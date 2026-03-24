@@ -1650,7 +1650,6 @@ Deno.serve(async (req) => {
                 message: notifyMessage,
                 source: 'bepaid_subscription_webhook',
                 order_id: orderV2Id,
-                order_number: orderV2?.order_number,
               }),
             }
           );
