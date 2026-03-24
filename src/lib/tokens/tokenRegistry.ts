@@ -292,41 +292,26 @@ export function setDecisionFieldsCache(fields: TokenDef[]) {
  * Returns null if token is unknown (UNMAPPED).
  */
 export function tokenStringToLabel(tokenString: string): string | null {
-  // Check contact tokens
-  const contact = CONTACT_TOKENS.find((t) => t.tokenString === tokenString);
-  if (contact) return contact.label;
+  const allCaches: TokenDef[][] = [
+    CONTACT_TOKENS,
+    DATETIME_TOKENS,
+    _productFieldsCache,
+    _legalDetailsFieldsCache,
+    _personFieldsCache,
+    _entityPersonFieldsCache,
+    _documentFieldsCache,
+    _meetingFieldsCache,
+    _entityFieldsCache,
+    _packageRolesCache,
+    _packageArraysCache,
+    _agendaFieldsCache,
+    _decisionFieldsCache,
+  ];
 
-  // Check datetime tokens
-  const datetime = DATETIME_TOKENS.find((t) => t.tokenString === tokenString);
-  if (datetime) return datetime.label;
-
-  // Check product custom fields cache
-  const product = _productFieldsCache.find((t) => t.tokenString === tokenString);
-  if (product) return product.label;
-
-  // Check legal_details fields cache
-  const legal = _legalDetailsFieldsCache.find((t) => t.tokenString === tokenString);
-  if (legal) return legal.label;
-
-  // Check person fields cache
-  const person = _personFieldsCache.find((t) => t.tokenString === tokenString);
-  if (person) return person.label;
-
-  // Check entity_person fields cache
-  const entityPerson = _entityPersonFieldsCache.find((t) => t.tokenString === tokenString);
-  if (entityPerson) return entityPerson.label;
-
-  // Check document fields cache
-  const doc = _documentFieldsCache.find((t) => t.tokenString === tokenString);
-  if (doc) return doc.label;
-
-  // Check meeting fields cache
-  const meeting = _meetingFieldsCache.find((t) => t.tokenString === tokenString);
-  if (meeting) return meeting.label;
-
-  // Check entity computed fields cache
-  const entity = _entityFieldsCache.find((t) => t.tokenString === tokenString);
-  if (entity) return entity.label;
+  for (const cache of allCaches) {
+    const found = cache.find((t) => t.tokenString === tokenString);
+    if (found) return found.label;
+  }
 
   return null; // UNMAPPED
 }
@@ -350,8 +335,14 @@ export function extractShortUuid(tokenString: string): string {
 }
 
 /**
- * Document token group definitions for use with TokenizedRichInput extraTokenGroups.
+ * Document token group definitions for use with TokenizedRichInput.
  * Returns configured groups from cached registry data.
+ * 
+ * Groups are split into:
+ * - Scalar entity/person/meeting/document groups
+ * - Package roles (scalar, role-context)
+ * - Package arrays/loops (participants, registered_persons)
+ * - Agenda/Decision arrays
  */
 export function getDocumentTokenGroups(): Array<{ heading: string; tokens: TokenDef[] }> {
   const groups: Array<{ heading: string; tokens: TokenDef[] }> = [];
@@ -371,6 +362,62 @@ export function getDocumentTokenGroups(): Array<{ heading: string; tokens: Token
   if (_documentFieldsCache.length > 0) {
     groups.push({ heading: "Документ", tokens: _documentFieldsCache });
   }
+  // Package roles (scalar)
+  if (_packageRolesCache.length > 0) {
+    groups.push({ heading: "Роли в пакете", tokens: _packageRolesCache });
+  }
+  // Package arrays/loops
+  if (_packageArraysCache.length > 0) {
+    groups.push({ heading: "Списки пакета (массивы)", tokens: _packageArraysCache });
+  }
+  // Agenda
+  if (_agendaFieldsCache.length > 0) {
+    groups.push({ heading: "Повестка дня", tokens: _agendaFieldsCache });
+  }
+  // Decisions
+  if (_decisionFieldsCache.length > 0) {
+    groups.push({ heading: "Решения", tokens: _decisionFieldsCache });
+  }
 
   return groups;
 }
+
+/**
+ * Resolver contract for array/loop tokens.
+ * 
+ * REGISTRY: Array tokens are stored in fields_registry with data_type='array'
+ * and options.source_strategy='loop'. The item_schema in options defines
+ * the expected shape of each array element.
+ * 
+ * SOURCE: The resolver collects array data from the relevant source tables:
+ * - package.participants → legal_details_entity_person_links + legal_details_persons
+ * - package.registered_persons → same source, filtered by registration status
+ * - agenda.items → package metadata or dedicated agenda table
+ * - decision.items → derived from agenda items with voting results
+ * 
+ * PAYLOAD: Each array element is a plain object matching item_schema keys.
+ * Example: { full_name: "Иванов И.И.", share_percent: 50, votes_count: 100 }
+ * 
+ * DOCXTEMPLATER LOOP SYNTAX:
+ * {#package.participants}
+ *   {full_name} — {share_percent}%
+ * {/package.participants}
+ * 
+ * VALIDATION: Required fields from item_schema are checked at generation time.
+ * Missing required fields generate warnings in token_manifest_snapshot.
+ * 
+ * @see PATCH 2.5 master token matrix for full mapping
+ */
+export type ArrayTokenResolverContract = {
+  /** Canonical key of the array token (e.g. "package.participants") */
+  key: string;
+  /** Source strategy from options */
+  sourceStrategy: "loop";
+  /** Schema of each item in the array */
+  itemSchema: Array<{
+    key: string;
+    label: string;
+    type: string;
+    required: boolean;
+  }>;
+};
