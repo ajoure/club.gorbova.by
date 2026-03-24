@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayWarsaw } from '../_shared/timezone.ts';
+import { buildAdminNotifyMessage, buildContactUrl, maskEmail } from '../_shared/admin-notify-message.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
