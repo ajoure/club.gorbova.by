@@ -311,7 +311,10 @@ export function EntityRecordSheet({
               {entity.grp_status_name && (
                 <>
                   {entity.grp_registration_date && <Separator />}
-                  <InfoRow label="Статус" value={entity.grp_status_name} />
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-muted-foreground shrink-0">Статус</span>
+                    <GrpStatusBadge status={entity.grp_status_name} />
+                  </div>
                 </>
               )}
               {entity.grp_tax_office_name && (
