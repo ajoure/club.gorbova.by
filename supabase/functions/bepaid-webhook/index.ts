@@ -2547,8 +2547,6 @@ Deno.serve(async (req) => {
           tariff_name: linkTariffName,
           amount: paymentAmount,
           currency: 'BYN',
-          bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-          bepaid_payment_id: transactionUid || undefined,
           source_label: 'Оплата по ссылке bePaid',
         });
 
