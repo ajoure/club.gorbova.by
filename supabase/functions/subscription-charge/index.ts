@@ -1686,7 +1686,7 @@ async function chargeSubscription(
           amount,
           currency,
           next_charge_at: nextChargeDate.toISOString(),
-          bepaid_payment_id: bepaidUid || undefined,
+          
           source_label: 'Подписка bePaid (автосписание)',
         });
 

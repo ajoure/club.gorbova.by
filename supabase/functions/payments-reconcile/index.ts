@@ -601,7 +601,7 @@ async function fixOrderAndCreateSubscription(
         tariff_name: tariffData?.name,
         amount: order.final_price,
         currency: order.currency || 'BYN',
-        bepaid_payment_id: item?.bepaid_uid || undefined,
+        
         source_label: 'Платёж восстановлен',
       });
 

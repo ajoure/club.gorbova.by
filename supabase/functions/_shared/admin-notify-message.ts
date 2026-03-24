@@ -210,15 +210,6 @@ export function buildAdminNotifyMessage(params: AdminNotifyMessageParams): strin
     }
   }
 
-  // ID block: priority bepaid_subscription_id > bepaid_payment_id, never both
-  if (bepaid_subscription_id) {
-    const compactId = formatCompactId(bepaid_subscription_id, 'SBS');
-    lines.push(`📎 ID подписки: <code>${escapeHtml(compactId)}</code>`);
-  } else if (bepaid_payment_id) {
-    const compactId = formatCompactId(bepaid_payment_id, 'PAY');
-    lines.push(`📎 ID платежа: <code>${escapeHtml(compactId)}</code>`);
-  }
-
   if (source_label) {
     lines.push(`📎 Источник: ${escapeHtml(source_label)}`);
   }

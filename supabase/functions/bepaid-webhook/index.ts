@@ -5404,7 +5404,7 @@ ${userName}, к сожалению, не удалось провести опл�
           tariff_name: legacyTariffName || undefined,
           amount: amountFormatted,
           currency: order.currency,
-          bepaid_payment_id: transactionUid || undefined,
+          
           source_label: 'Оплата через checkout bePaid',
         });
 
