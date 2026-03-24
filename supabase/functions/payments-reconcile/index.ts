@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -592,13 +592,9 @@ async function fixOrderAndCreateSubscription(
         .eq("id", order.tariff_id)
         .single();
 
-      const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-      const contactUrl = buildContactUrl({ appBaseUrl, email: profile?.email || order.customer_email, mode: 'search' });
-
       const adminMessage = buildAdminNotifyMessage({
         operation_type: 'reconciled_payment',
         client_name: profile?.full_name,
-        contact_url: contactUrl,
         email: profile?.email || order.customer_email,
         telegram_username: profile?.telegram_username,
         product_name: product?.name,
@@ -606,7 +602,7 @@ async function fixOrderAndCreateSubscription(
         amount: order.final_price,
         currency: order.currency || 'BYN',
         order_number: order.order_number,
-        source_label: 'Reconcile',
+        source_label: 'Платёж восстановлен',
       });
 
       const { data: notifyData, error: notifyError } = await supabase.functions.invoke("telegram-notify-admins", {

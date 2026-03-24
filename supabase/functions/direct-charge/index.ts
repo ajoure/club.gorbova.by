@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveUserIds } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -642,20 +642,16 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .maybeSingle();
 
-      const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-      const contactUrl = buildContactUrl({ appBaseUrl, email: buyerProfile?.email, mode: 'search' });
-
       await supabase.functions.invoke('telegram-notify-admins', {
         body: {
           message: buildAdminNotifyMessage({
             operation_type: 'trial',
             client_name: buyerProfile?.full_name,
-            contact_url: contactUrl,
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,
             order_number: order.order_number,
-            source_label: 'Прямое списание',
+            source_label: 'Оплата через checkout bePaid',
           }),
         },
       }).catch(console.error);
@@ -1129,22 +1125,18 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .maybeSingle();
 
-      const appBaseUrl2 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-      const contactUrl2 = buildContactUrl({ appBaseUrl: appBaseUrl2, email: buyerProfile?.email, mode: 'search' });
-
       await supabase.functions.invoke('telegram-notify-admins', {
         body: {
           message: buildAdminNotifyMessage({
             operation_type: isTrial ? 'trial' : 'payment',
             client_name: buyerProfile?.full_name,
-            contact_url: contactUrl2,
             email: buyerProfile?.email,
             product_name: product.name,
             tariff_name: tariff.name,
             amount,
             currency: product.currency,
             order_number: order.order_number,
-            source_label: 'Прямое списание',
+            source_label: 'Оплата через checkout bePaid',
           }),
         },
       }).catch(console.error);

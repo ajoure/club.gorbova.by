@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayWarsaw } from '../_shared/timezone.ts';
-import { buildAdminNotifyMessage, buildContactUrl, maskEmail } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-message.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1623,13 +1623,9 @@ Deno.serve(async (req) => {
             .eq('user_id', subV2.user_id)
             .maybeSingle();
 
-          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
-
           const notifyMessage = buildAdminNotifyMessage({
             operation_type: 'bepaid_subscription_payment',
             client_name: customerProfile?.full_name,
-            contact_url: contactUrl,
             email: customerProfile?.email,
             telegram_username: customerProfile?.telegram_username,
             product_name: subV2.products_v2?.name,
@@ -1639,7 +1635,7 @@ Deno.serve(async (req) => {
             order_number: orderV2?.order_number,
             next_charge_at: renewAt.toISOString(),
             bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-            source_label: 'Webhook bePaid / subscription',
+            source_label: 'Подписка bePaid (автосписание)',
           });
             
           const notifyResp = await fetch(
@@ -2533,20 +2529,30 @@ Deno.serve(async (req) => {
           .eq('user_id', linkOrder.user_id)
           .maybeSingle();
 
-        const appBaseUrl2 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-        const contactUrl2 = buildContactUrl({ appBaseUrl: appBaseUrl2, email: customerProfile?.email || linkOrder.customer_email, mode: 'search' });
+        // Lookup product and tariff names for link-payment notification
+        let linkProductName: string | undefined;
+        let linkTariffName: string | undefined;
+        if (linkOrder.product_id) {
+          const { data: lp } = await supabase.from('products_v2').select('name').eq('id', linkOrder.product_id).maybeSingle();
+          linkProductName = lp?.name || undefined;
+        }
+        if (linkOrder.tariff_id) {
+          const { data: lt } = await supabase.from('tariffs').select('name').eq('id', linkOrder.tariff_id).maybeSingle();
+          linkTariffName = lt?.name || undefined;
+        }
 
         const notifyMessage = buildAdminNotifyMessage({
           operation_type: 'link_payment',
           client_name: customerProfile?.full_name,
-          contact_url: contactUrl2,
           email: customerProfile?.email || linkOrder.customer_email,
           telegram_username: customerProfile?.telegram_username,
+          product_name: linkProductName,
+          tariff_name: linkTariffName,
           amount: paymentAmount,
           currency: 'BYN',
           order_number: linkOrder.order_number,
           bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-          source_label: 'Оплата по ссылке',
+          source_label: 'Оплата по ссылке bePaid',
         });
 
         await fetch(
@@ -3142,7 +3148,17 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
       }
 
-      // 8. Admin notification
+      // 8. Admin notification - lookup product/tariff names
+      let linkV2ProductName: string | undefined;
+      let linkV2TariffName: string | undefined;
+      if (linkOrderV2.product_id) {
+        const { data: lp2 } = await supabase.from('products_v2').select('name').eq('id', linkOrderV2.product_id).maybeSingle();
+        linkV2ProductName = lp2?.name || undefined;
+      }
+      if (linkOrderV2.tariff_id) {
+        const { data: lt2 } = await supabase.from('tariffs').select('name').eq('id', linkOrderV2.tariff_id).maybeSingle();
+        linkV2TariffName = lt2?.name || undefined;
+      }
       try {
         await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
@@ -3153,12 +3169,13 @@ Deno.serve(async (req) => {
               message: buildAdminNotifyMessage({
                 operation_type: 'link_payment',
                 client_name: linkProfile.full_name,
-                contact_url: buildContactUrl({ appBaseUrl: Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '', email: linkProfile.email || linkOrderV2.customer_email, mode: 'search' }),
                 email: linkProfile.email || linkOrderV2.customer_email,
+                product_name: linkV2ProductName,
+                tariff_name: linkV2TariffName,
                 amount: linkPaymentAmount,
                 currency: 'BYN',
                 order_number: linkOrderV2.order_number,
-                source_label: 'Оплата по ссылке',
+                source_label: 'Оплата по ссылке bePaid',
               }),
               source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
             }),
@@ -4197,13 +4214,9 @@ Deno.serve(async (req) => {
               .eq('user_id', notifyOrderData.user_id)
               .single();
 
-            const appBaseUrl4 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-            const contactUrl4 = buildContactUrl({ appBaseUrl: appBaseUrl4, email: customerProfile?.email || notifyOrderData.customer_email, mode: 'search' });
-
             const notifyMessage = buildAdminNotifyMessage({
               operation_type: notifyOrderData.is_trial ? 'trial' : 'payment',
               client_name: customerProfile?.full_name,
-              contact_url: contactUrl4,
               email: customerProfile?.email || notifyOrderData.customer_email,
               telegram_username: customerProfile?.telegram_username,
               product_name: (notifyOrderData.products_v2 as any)?.name,
@@ -4211,7 +4224,7 @@ Deno.serve(async (req) => {
               amount: paymentV2.amount,
               currency: paymentV2.currency,
               order_number: notifyOrderData.order_number,
-              source_label: 'Webhook bePaid',
+              source_label: 'Оплата через checkout bePaid',
             });
 
             // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
@@ -5391,13 +5404,9 @@ ${userName}, к сожалению, не удалось провести опл�
           .eq('meta->>legacy_order_id', internalOrderId)
           .maybeSingle();
 
-        const appBaseUrl5 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-        const contactUrl5 = buildContactUrl({ appBaseUrl: appBaseUrl5, email: customerProfile?.email || order.customer_email, mode: 'search' });
-
         const telegramNotifyMessage = buildAdminNotifyMessage({
           operation_type: meta.is_trial ? 'trial' : 'payment',
           client_name: customerProfile?.full_name || meta.customer_first_name,
-          contact_url: contactUrl5,
           email: customerProfile?.email || order.customer_email,
           telegram_username: customerProfile?.telegram_username,
           product_name: legacyProductName,
@@ -5405,7 +5414,7 @@ ${userName}, к сожалению, не удалось провести опл�
           amount: amountFormatted,
           currency: order.currency,
           order_number: legacyOrderV2?.order_number || internalOrderId,
-          source_label: 'Webhook bePaid',
+          source_label: 'Оплата через checkout bePaid',
         });
 
         const notifyResponse = await fetch(

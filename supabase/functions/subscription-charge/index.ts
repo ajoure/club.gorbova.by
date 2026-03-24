@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 
 const corsHeaders = {
@@ -1665,20 +1665,16 @@ async function chargeSubscription(
           .eq('user_id', user_id)
           .single();
 
-        const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-        const contactUrl = buildContactUrl({ appBaseUrl, email: profile?.email, mode: 'search' });
-
         const adminMessage = buildAdminNotifyMessage({
           operation_type: 'subscription_renewal',
           client_name: profile?.full_name,
-          contact_url: contactUrl,
           email: profile?.email,
           telegram_username: profile?.telegram_username,
           tariff_name: tariff.name,
           amount,
           currency,
           order_number: id,
-          source_label: 'Автосписание',
+          source_label: 'Подписка bePaid (автосписание)',
         });
 
         const { data: notifyData, error: notifyError } = await supabase.functions.invoke('telegram-notify-admins', {

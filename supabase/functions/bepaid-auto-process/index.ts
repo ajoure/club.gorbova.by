@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -907,13 +907,9 @@ Deno.serve(async (req) => {
               .eq('id', mapping.tariff_id)
               .single();
 
-            const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-            const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email || item.customer_email, mode: 'search' });
-
             const notifyMessage = buildAdminNotifyMessage({
               operation_type: 'auto_payment',
               client_name: customerProfile?.full_name || item.card_holder,
-              contact_url: contactUrl,
               email: customerProfile?.email || item.customer_email,
               telegram_username: customerProfile?.telegram_username,
               product_name: productInfo?.name,

@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
@@ -451,13 +451,9 @@ Deno.serve(async (req) => {
             .eq('user_id', user_id)
             .single();
 
-          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
-
           const notifyMessage = buildAdminNotifyMessage({
             operation_type: 'manual_charge',
             client_name: customerProfile?.full_name,
-            contact_url: contactUrl,
             email: customerProfile?.email,
             telegram_username: customerProfile?.telegram_username,
             product_name: product?.name,
@@ -465,7 +461,7 @@ Deno.serve(async (req) => {
             amount: amount / 100,
             currency: 'BYN',
             order_number: orderNumber,
-            source_label: 'Ручное списание',
+            source_label: 'Ручное списание админом',
             admin_label: user.email,
           });
 
