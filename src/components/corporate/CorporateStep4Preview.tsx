@@ -1,9 +1,9 @@
 /**
- * CorporateStep4Preview — Step 4: Package manifest preview + warnings.
- * Now includes charter status block and data source indicators.
+ * CorporateStep4Preview — Step 4: Package manifest preview + availability.
+ * PATCH 2.1: Shows template availability status from resolver.
  */
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,6 +16,8 @@ import {
   Scale,
   Clock,
   BookOpen,
+  PackageCheck,
+  Loader2,
 } from "lucide-react";
 import type {
   CorporateDraftSession,
@@ -23,12 +25,19 @@ import type {
   CharterRules,
   PackageManifestItem,
   CharterExtractionStatus,
+  TemplateAvailability,
 } from "@/lib/corporate/corporateTypes";
 import {
   calculatePackageManifest,
   calculateQuorum,
   validateSession,
 } from "@/lib/corporate/corporateRuleEngine";
+import {
+  resolveManifestTemplates,
+  validateTemplateAvailability,
+  type TemplateResolutionResult,
+  type TemplateValidationResult,
+} from "@/lib/corporate/corporateTemplateResolver";
 
 interface Props {
   session: CorporateDraftSession;
@@ -53,9 +62,32 @@ export function CorporateStep4Preview({ session }: Props) {
     return calculateQuorum(params.participants, charterRules);
   }, [params.participants, charterRules]);
 
-  const systemGenerated = manifest.filter(m => m.category === 'system_generated');
-  const conditionalGenerated = manifest.filter(m => m.category === 'conditional_generated');
-  const externallyProvided = manifest.filter(m => m.category === 'externally_provided');
+  // ── Resolver state ──────────────────────────────────────────────
+  const [resolution, setResolution] = useState<TemplateResolutionResult | null>(null);
+  const [templateValidation, setTemplateValidation] = useState<TemplateValidationResult | null>(null);
+  const [resolving, setResolving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResolving(true);
+
+    resolveManifestTemplates(manifest).then(result => {
+      if (cancelled) return;
+      setResolution(result);
+      setTemplateValidation(validateTemplateAvailability(result));
+      setResolving(false);
+    }).catch(() => {
+      if (!cancelled) setResolving(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [manifest]);
+
+  const displayItems = resolution?.items || manifest;
+
+  const systemGenerated = displayItems.filter(m => m.category === 'system_generated');
+  const conditionalGenerated = displayItems.filter(m => m.category === 'conditional_generated');
+  const externallyProvided = displayItems.filter(m => m.category === 'externally_provided');
 
   const extractionStatus = (session.charter_extraction_status || 'none') as CharterExtractionStatus;
 
@@ -149,6 +181,49 @@ export function CorporateStep4Preview({ session }: Props) {
             <Badge variant={quorum.has_quorum ? 'default' : 'destructive'} className="text-xs">
               {quorum.has_quorum ? 'Есть кворум' : 'Нет кворума'}
             </Badge>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Template availability summary */}
+      {templateValidation && !resolving && (
+        <>
+          {templateValidation.blocking.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-semibold text-destructive flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4" />
+                Недоступные шаблоны
+              </h4>
+              {templateValidation.blocking.map((issue, i) => (
+                <GlassCard key={i} className="p-3 border-red-200 bg-red-50/50 dark:bg-red-950/20">
+                  <p className="text-sm text-red-700 dark:text-red-400">{issue.message}</p>
+                </GlassCard>
+              ))}
+            </div>
+          )}
+          {templateValidation.warnings.length > 0 && (
+            <GlassCard className="p-3 border-amber-200 bg-amber-50/50 dark:bg-amber-950/20">
+              <div className="flex items-start gap-2">
+                <Clock className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    Шаблоны, ожидающие Sprint 3
+                  </p>
+                  <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
+                    {templateValidation.warnings.length} шабл. подготовлены, но требуют поддержки массивов для активации
+                  </p>
+                </div>
+              </div>
+            </GlassCard>
+          )}
+        </>
+      )}
+
+      {resolving && (
+        <GlassCard className="p-3">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Проверка доступности шаблонов…</span>
           </div>
         </GlassCard>
       )}
@@ -247,14 +322,56 @@ function ManifestRow({ item }: { item: PackageManifestItem }) {
           <p className={`text-sm ${item.included ? 'font-medium' : 'text-muted-foreground line-through'}`}>
             {item.title}
           </p>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex flex-wrap items-center gap-2 mt-1">
             <span className="text-xs text-muted-foreground">{item.reason}</span>
             <Badge variant="outline" className="text-[10px] px-1.5 py-0">
               {basisLabel}
             </Badge>
+            <AvailabilityBadge availability={item.availability} runtimeStatus={item.runtime_status} />
           </div>
         </div>
       </div>
     </GlassCard>
   );
+}
+
+function AvailabilityBadge({ availability, runtimeStatus }: {
+  availability?: TemplateAvailability;
+  runtimeStatus?: string;
+}) {
+  if (!availability) return null;
+
+  switch (availability) {
+    case 'available':
+      return (
+        <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-green-300 text-green-700 dark:text-green-400">
+          <PackageCheck className="h-3 w-3 mr-0.5" />
+          готов
+        </Badge>
+      );
+    case 'pending_sprint3':
+      return (
+        <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-300 text-amber-700 dark:text-amber-400">
+          <Clock className="h-3 w-3 mr-0.5" />
+          Sprint 3
+        </Badge>
+      );
+    case 'missing_db_record':
+    case 'inactive_template':
+    case 'missing_template_path':
+    case 'missing_storage_file':
+      return (
+        <Badge variant="destructive" className="text-[10px] px-1.5 py-0">
+          <X className="h-3 w-3 mr-0.5" />
+          {availability === 'missing_db_record' ? 'нет в БД' :
+           availability === 'inactive_template' ? 'деактивирован' :
+           availability === 'missing_template_path' ? 'нет пути' :
+           'нет файла'}
+        </Badge>
+      );
+    case 'not_applicable':
+      return null; // External docs — no badge needed
+    default:
+      return null;
+  }
 }
