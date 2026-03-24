@@ -5394,13 +5394,9 @@ ${userName}, к сожалению, не удалось провести опл�
           .eq('meta->>legacy_order_id', internalOrderId)
           .maybeSingle();
 
-        const appBaseUrl5 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-        const contactUrl5 = buildContactUrl({ appBaseUrl: appBaseUrl5, email: customerProfile?.email || order.customer_email, mode: 'search' });
-
         const telegramNotifyMessage = buildAdminNotifyMessage({
           operation_type: meta.is_trial ? 'trial' : 'payment',
           client_name: customerProfile?.full_name || meta.customer_first_name,
-          contact_url: contactUrl5,
           email: customerProfile?.email || order.customer_email,
           telegram_username: customerProfile?.telegram_username,
           product_name: legacyProductName,
@@ -5408,7 +5404,7 @@ ${userName}, к сожалению, не удалось провести опл�
           amount: amountFormatted,
           currency: order.currency,
           order_number: legacyOrderV2?.order_number || internalOrderId,
-          source_label: 'Webhook bePaid',
+          source_label: 'Оплата через checkout bePaid',
         });
 
         const notifyResponse = await fetch(
