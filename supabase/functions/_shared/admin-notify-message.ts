@@ -13,7 +13,7 @@
  * - Helper does NOT build URLs — accepts ready contact_url
  * - Domain is NOT hardcoded
  * - order_number removed from notifications
- * - ID priority: bepaid_subscription_id > bepaid_payment_id (never both)
+ * - IDs removed from payment notifications for visual clarity
  */
 
 // =====================================================================
