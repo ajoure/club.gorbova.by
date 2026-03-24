@@ -127,12 +127,10 @@ export function formatDate(dateInput: string | Date | null | undefined): string 
 /**
  * Build client line: clickable link or plain text.
  */
-export function buildClientLine(name: string | null | undefined, contactUrl: string | null | undefined): string {
+export function buildClientLine(name: string | null | undefined, _contactUrl?: string | null | undefined): string {
   const safeName = escapeHtml(name || 'Не указано');
-  if (contactUrl) {
-    return `<a href="${escapeHtml(contactUrl)}">${safeName}</a>`;
-  }
-  return safeName;
+  // Always render as <code> for copy-friendly display, no HTML links
+  return `<code>${safeName}</code>`;
 }
 
 /**

@@ -188,6 +188,8 @@ Deno.serve(async (req) => {
             chat_id: admin.telegram_user_id,
             text: message,
             parse_mode,
+            disable_web_page_preview: true,
+            link_preview_options: { is_disabled: true },
           }),
         });
 
