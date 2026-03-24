@@ -10,6 +10,11 @@
  *   city_district  → "Район города"
  *   district       → "Район" (административный район области)
  *   settlement / address_line_2 — kept in types for backend compat, removed from UI
+ *
+ * Mini-PATCH: Address UX Polish
+ *   - Reordered layouts: street/house first, administrative context below
+ *   - Apartment parser fallback after Google select (not in GRP/enrichment path)
+ *   - Soft city normalization on blur (BY only, known cities)
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -22,6 +27,7 @@ import { GooglePlacesAdapter } from '@/lib/address/adapters/GooglePlacesAdapter'
 import type { StructuredAddress } from '@/lib/address/types';
 import { AUTOCOMPLETE_FIELDS } from '@/lib/address/types';
 import { buildAutocompleteQuery, emptyAddress } from '@/lib/address/utils';
+import { parseStreetInput } from '@/lib/address/parseStreetInput';
 import { cn } from '@/lib/utils';
 
 export interface StructuredAddressBlockProps {
@@ -43,31 +49,21 @@ interface FieldConfig {
 }
 
 /**
- * Full layout — ordered per approved spec:
- * 1. Страна
- * 2. Область / Регион (col-span-2)
- * 3. Район
- * 4. Населённый пункт (city backend) (col-span-2)
- * 5. Район города
- * 6. Индекс
- * 7. Улица (col-span-2)
- * 8. Дом
- * 9. Корпус
- * 10. Квартира
- *
- * settlement and address_line_2 removed from UI (backend compat preserved in types).
+ * Full layout — reordered per mini-PATCH spec:
+ * Street/house/building/apartment first (most frequently edited),
+ * administrative context below.
  */
 const FULL_LAYOUT: FieldConfig[] = [
+  { key: 'street', label: 'Улица', placeholder: 'ул. Ленина', colSpan: 'col-span-2' },
+  { key: 'house', label: 'Дом', placeholder: '19' },
+  { key: 'building', label: 'Корпус', placeholder: '' },
+  { key: 'apartment', label: 'Помещение', placeholder: '' },
   { key: 'country_name', label: 'Страна', placeholder: '' },
   { key: 'region', label: 'Область / Регион', placeholder: '', colSpan: 'col-span-2' },
   { key: 'district', label: 'Район', placeholder: '' },
   { key: 'city', label: 'Населённый пункт', placeholder: 'г. Минск', colSpan: 'col-span-2' },
   { key: 'city_district', label: 'Район города', placeholder: 'Фрунзенский' },
   { key: 'postal_code', label: 'Индекс', placeholder: '220000' },
-  { key: 'street', label: 'Улица', placeholder: 'ул. Ленина', colSpan: 'col-span-2' },
-  { key: 'house', label: 'Дом', placeholder: '19' },
-  { key: 'building', label: 'Корпус', placeholder: '' },
-  { key: 'apartment', label: 'Помещение', placeholder: '' },
 ];
 
 const COMPACT_LAYOUT: FieldConfig[] = [
@@ -82,6 +78,29 @@ const COMPACT_LAYOUT: FieldConfig[] = [
 ];
 
 const DROPDOWN_Z_INDEX = 9999;
+
+/** Known BY cities for soft normalization on blur */
+const KNOWN_BY_CITIES: Record<string, string> = {
+  'минск': 'г. Минск',
+  'брест': 'г. Брест',
+  'гомель': 'г. Гомель',
+  'гродно': 'г. Гродно',
+  'витебск': 'г. Витебск',
+  'могилёв': 'г. Могилёв',
+  'могилев': 'г. Могилёв',
+};
+
+/** Check if address is Belarusian */
+function isByAddress(addr: StructuredAddress): boolean {
+  if (addr.country_code?.toUpperCase() === 'BY') return true;
+  if (addr.country_name && /беларус/i.test(addr.country_name)) return true;
+  return false;
+}
+
+/** Check if city value already has a type prefix */
+function hasCityPrefix(val: string): boolean {
+  return /^(г\.|аг\.|д\.|п\.|г\.п\.|город|гор\.|пос\.)\s/i.test(val);
+}
 
 export function StructuredAddressBlock({
   value,
@@ -206,6 +225,24 @@ export function StructuredAddressBlock({
     [value, onChange, isReady, fetchPredictions]
   );
 
+  /**
+   * Soft city normalization on blur — BY only, known cities only.
+   * "Минск" → "г. Минск" on blur. Never during typing.
+   */
+  const handleCityBlur = useCallback(() => {
+    const city = value.city?.trim();
+    if (!city) return;
+    if (!isByAddress(value)) return;
+    if (hasCityPrefix(city)) return;
+    // Only single-word bare city names
+    if (city.includes(' ')) return;
+
+    const normalized = KNOWN_BY_CITIES[city.toLowerCase()];
+    if (normalized && normalized !== city) {
+      onChange({ ...value, city: normalized });
+    }
+  }, [value, onChange]);
+
   const handleSelect = useCallback(
     async (prediction: (typeof predictions)[0]) => {
       isSelectingRef.current = true;
@@ -223,6 +260,26 @@ export function StructuredAddressBlock({
             lat: details.lat,
             lng: details.lng,
           };
+
+          // Apartment parser fallback: only if Google didn't provide apartment
+          // and the description or street contains apartment-like patterns.
+          // NOT used in GRP/UNP enrichment path (that sets address directly).
+          if (!merged.apartment && prediction.description) {
+            const streetForParse = merged.street
+              ? `${merged.street} ${merged.house || ''}`.trim()
+              : prediction.description;
+            const parsed2 = parseStreetInput(streetForParse);
+            if (parsed2.apartment) {
+              merged.apartment = parsed2.apartment;
+              if (parsed2.house && !merged.house) {
+                merged.house = parsed2.house;
+              }
+              if (parsed2.street && !merged.street) {
+                merged.street = parsed2.street;
+              }
+            }
+          }
+
           onChange(merged);
         }
       } catch (err) {
@@ -261,9 +318,14 @@ export function StructuredAddressBlock({
     [isOpen, predictions, highlightIndex, handleSelect, clearPredictions]
   );
 
-  const handleBlur = useCallback(() => {
-    // Intentionally do not close on blur: portal dropdown selection must survive mouse transition
-  }, []);
+  const handleBlur = useCallback(
+    (field: keyof StructuredAddress) => {
+      if (field === 'city') {
+        handleCityBlur();
+      }
+    },
+    [handleCityBlur]
+  );
 
   const handleLabelCopy = useCallback((fieldKey: keyof StructuredAddress) => {
     const fieldEntry = fieldIds?.get(fieldKey);
@@ -380,7 +442,7 @@ export function StructuredAddressBlock({
                 value={(value[field.key] as string) ?? ''}
                 onChange={(e) => handleFieldChange(field.key, e.target.value)}
                 onKeyDown={handleKeyDown}
-                onBlur={handleBlur}
+                onBlur={() => handleBlur(field.key)}
                 onFocus={() => setActiveField(field.key)}
                 disabled={disabled}
                 placeholder={field.placeholder}
