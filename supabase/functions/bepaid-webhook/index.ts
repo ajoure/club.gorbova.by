@@ -3148,7 +3148,17 @@ Deno.serve(async (req) => {
         console.error('[WEBHOOK-LINK] grant-access error (non-fatal):', grantErr);
       }
 
-      // 8. Admin notification
+      // 8. Admin notification - lookup product/tariff names
+      let linkV2ProductName: string | undefined;
+      let linkV2TariffName: string | undefined;
+      if (linkOrderV2.product_id) {
+        const { data: lp2 } = await supabase.from('products_v2').select('name').eq('id', linkOrderV2.product_id).maybeSingle();
+        linkV2ProductName = lp2?.name || undefined;
+      }
+      if (linkOrderV2.tariff_id) {
+        const { data: lt2 } = await supabase.from('tariffs').select('name').eq('id', linkOrderV2.tariff_id).maybeSingle();
+        linkV2TariffName = lt2?.name || undefined;
+      }
       try {
         await fetch(
           `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
