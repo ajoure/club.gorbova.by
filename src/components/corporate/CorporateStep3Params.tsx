@@ -222,15 +222,14 @@ export function CorporateStep3Params({ session, onAutoSave }: Props) {
     try {
       const newPerson = await createPerson({ full_name: quickCreateName.trim(), is_active: true });
       // Auto-link to entity if available
-      if (legalDetailsId && linkProfileId) {
+      if (legalDetailsId && personsProfileId) {
         try {
-          // Find founder role from catalog — use first available role
           await createLink({
             person_id: newPerson.id,
             legal_details_id: legalDetailsId,
-            role_catalog_id: links[0]?.role_catalog_id || '', // will be resolved
+            role_catalog_id: links[0]?.role_catalog_id || '',
             role_type: 'founder',
-            profile_id: linkProfileId,
+            profile_id: personsProfileId,
           });
         } catch {
           // Link creation may fail if catalog not ready — that's OK
