@@ -167,7 +167,8 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
           template_path: filePath,
           placeholders,
           is_active: form.is_active,
-        });
+          template_notes: form.template_notes || null,
+        } as any);
       } else if (mode === "edit" && editId) {
         const updates: Partial<DocumentTemplate> & { id: string } = {
           id: editId,
@@ -184,6 +185,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
           const filePath = await uploadTemplateFile(form.file, code);
           (updates as any).template_path = filePath;
         }
+        (updates as any).template_notes = form.template_notes || null;
         await updateTemplate(updates);
       }
       setMode("list");
