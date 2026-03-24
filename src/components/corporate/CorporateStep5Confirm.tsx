@@ -1,5 +1,6 @@
 /**
  * CorporateStep5Confirm — Step 5: Final summary + confirm.
+ * Uses 'confirm' validation context for blocking errors.
  */
 
 import { useMemo, useState } from "react";
@@ -34,8 +35,9 @@ export function CorporateStep5Confirm({ session, onConfirm, onClose }: Props) {
     [session.procedure_mode, charterRules, params, session.rules_basis]
   );
 
+  // Use 'confirm' context — deadline violations become blocking here
   const validation = useMemo(
-    () => validateSession(session.procedure_mode, params, charterRules, session.report_year, session.rules_basis),
+    () => validateSession(session.procedure_mode, params, charterRules, session.report_year, session.rules_basis, 'confirm'),
     [session.procedure_mode, params, charterRules, session.report_year, session.rules_basis]
   );
 
@@ -113,7 +115,7 @@ export function CorporateStep5Confirm({ session, onConfirm, onClose }: Props) {
         </div>
       </GlassCard>
 
-      {/* Blocking errors warning */}
+      {/* Blocking errors */}
       {hasBlockingErrors && (
         <GlassCard className="p-3 border-red-200 bg-red-50/50 dark:bg-red-950/20">
           <div className="flex items-start gap-2">
@@ -122,15 +124,39 @@ export function CorporateStep5Confirm({ session, onConfirm, onClose }: Props) {
               <p className="text-sm font-medium text-red-700 dark:text-red-400">
                 Есть блокирующие ошибки ({validation.blocking_errors.length})
               </p>
-              <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                Вернитесь к предыдущим шагам для исправления. Подтверждение невозможно.
+              <ul className="text-xs text-red-600 dark:text-red-400 mt-1 space-y-1">
+                {validation.blocking_errors.map((err, i) => (
+                  <li key={i}>• {err.message}</li>
+                ))}
+              </ul>
+              <p className="text-xs text-red-600 dark:text-red-400 mt-2">
+                Вернитесь к предыдущим шагам для исправления.
               </p>
             </div>
           </div>
         </GlassCard>
       )}
 
-      {/* Info about next steps */}
+      {/* Warnings */}
+      {validation.non_blocking_warnings.length > 0 && (
+        <GlassCard className="p-3 border-amber-200 bg-amber-50/50 dark:bg-amber-950/20">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                Предупреждения ({validation.non_blocking_warnings.length})
+              </p>
+              <ul className="text-xs text-amber-600 dark:text-amber-400 mt-1 space-y-1">
+                {validation.non_blocking_warnings.map((w, i) => (
+                  <li key={i}>• {w.message}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Info */}
       <GlassCard className="p-3 border-blue-200 bg-blue-50/50 dark:bg-blue-950/20">
         <p className="text-sm text-blue-700 dark:text-blue-400">
           После подтверждения сессия будет сохранена со статусом «Подтверждён».
@@ -138,7 +164,6 @@ export function CorporateStep5Confirm({ session, onConfirm, onClose }: Props) {
         </p>
       </GlassCard>
 
-      {/* Confirm button */}
       <Button
         className="w-full"
         size="lg"

@@ -2,7 +2,7 @@
  * Corporate Rule Engine
  * 
  * Pure functions for procedure mode detection, quorum calculation,
- * package manifest building, and session validation.
+ * package manifest building, session validation, and default agenda.
  * 
  * Designed as shared-ready for future server-side use.
  */
@@ -18,6 +18,7 @@ import type {
   ValidationIssue,
   DocumentCategory,
   LegalBasis,
+  AgendaItem,
 } from './corporateTypes';
 
 import {
@@ -34,7 +35,7 @@ interface TemplateDefinition {
   code: string;
   title: string;
   category: DocumentCategory;
-  condition?: string; // governance field to check
+  condition?: string;
 }
 
 export const ANNUAL_MEETING_TEMPLATES: TemplateDefinition[] = [
@@ -64,7 +65,6 @@ export const CONDITIONAL_TEMPLATES: TemplateDefinition[] = [
   { code: 'corp_charter_amendments', title: 'Проект изменений в устав / новая редакция устава', category: 'conditional_generated' },
 ];
 
-/** Внешние документы, которые система учитывает, но не создаёт */
 export const EXTERNALLY_PROVIDED_DOCUMENTS: TemplateDefinition[] = [
   { code: 'ext_annual_report', title: 'Годовой отчёт', category: 'externally_provided' },
   { code: 'ext_balance_sheet', title: 'Годовой бухгалтерский баланс', category: 'externally_provided' },
@@ -74,19 +74,11 @@ export const EXTERNALLY_PROVIDED_DOCUMENTS: TemplateDefinition[] = [
 
 // ─── Core Functions ───────────────────────────────────────────────
 
-/**
- * Определяет procedure_mode по подтверждённому составу участников.
- * 1 участник → sole_participant_decision
- * >1 участник → annual_meeting
- */
 export function determineProcedureMode(participants: Participant[]): ProcedureMode {
   if (participants.length === 1) return 'sole_participant_decision';
   return 'annual_meeting';
 }
 
-/**
- * Расчёт кворума по долям/голосам присутствующих участников.
- */
 export function calculateQuorum(
   participants: Participant[],
   charterRules: Partial<CharterRules>
@@ -96,7 +88,7 @@ export function calculateQuorum(
   const presentShares = participants
     .filter(p => p.attendance === 'present' || p.attendance === 'absentee_vote')
     .reduce((sum, p) => sum + p.share_percent, 0);
-  
+
   const actualPercent = totalShares > 0 ? (presentShares / totalShares) * 100 : 0;
 
   return {
@@ -108,9 +100,89 @@ export function calculateQuorum(
   };
 }
 
+// ─── Default Agenda ───────────────────────────────────────────────
+
 /**
- * Рассчитывает состав пакета документов.
+ * Возвращает предзаполненную повестку дня в зависимости от procedure_mode и charter rules.
  */
+export function getDefaultAgenda(
+  mode: ProcedureMode,
+  charterRules: Partial<CharterRules>
+): AgendaItem[] {
+  const rules = { ...DEFAULT_CHARTER_RULES, ...charterRules };
+  const items: AgendaItem[] = [];
+  let n = 1;
+
+  if (mode === 'sole_participant_decision') {
+    items.push({ number: n++, title: 'Утверждение годового отчёта' });
+    items.push({ number: n++, title: 'Утверждение годовой бухгалтерской отчётности' });
+    items.push({ number: n++, title: 'Распределение прибыли и убытков' });
+    if (rules.has_auditor) {
+      items.push({ number: n++, title: 'Назначение ревизора' });
+    }
+    if (rules.has_audit_commission) {
+      items.push({ number: n++, title: 'Формирование ревизионной комиссии' });
+    }
+  } else {
+    items.push({ number: n++, title: 'Утверждение годового отчёта' });
+    items.push({ number: n++, title: 'Утверждение годовой бухгалтерской отчётности' });
+    items.push({ number: n++, title: 'Распределение прибыли и убытков' });
+    if (rules.has_board) {
+      items.push({ number: n++, title: 'Избрание членов совета директоров (наблюдательного совета)' });
+    }
+    if (rules.has_auditor) {
+      items.push({ number: n++, title: 'Избрание ревизора' });
+    }
+    if (rules.has_audit_commission) {
+      items.push({ number: n++, title: 'Избрание членов ревизионной комиссии' });
+    }
+  }
+
+  return items;
+}
+
+// ─── Smart Date Defaults ──────────────────────────────────────────
+
+/**
+ * Рассчитывает даты по умолчанию для собрания.
+ */
+export function getDefaultDates(
+  reportYear: number,
+  charterRules: Partial<CharterRules>
+): { meetingDate: string; noticeDate: string; reviewDateFrom: string } {
+  const rules = { ...DEFAULT_CHARTER_RULES, ...charterRules };
+
+  // Meeting: 31 марта (report_year+1) — или сегодня + 35 дней если deadline прошёл
+  const deadlineDate = new Date(reportYear + 1, LAW_ANNUAL_MEETING_DEADLINE_MONTH - 1, LAW_ANNUAL_MEETING_DEADLINE_DAY);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  let meetingDateObj: Date;
+  if (deadlineDate > today) {
+    // Use 2 weeks before deadline as a reasonable default
+    meetingDateObj = new Date(deadlineDate);
+    meetingDateObj.setDate(meetingDateObj.getDate() - 14);
+    if (meetingDateObj < today) meetingDateObj = new Date(today.getTime() + 35 * 86400000);
+  } else {
+    // Deadline already passed, suggest ~35 days from now
+    meetingDateObj = new Date(today.getTime() + 35 * 86400000);
+  }
+
+  const noticeDays = rules.notice_days_min || LAW_NOTICE_DAYS_MIN;
+  const noticeDateObj = new Date(meetingDateObj.getTime() - noticeDays * 86400000);
+  const reviewDateObj = new Date(meetingDateObj.getTime() - LAW_REVIEW_DAYS_MIN * 86400000);
+
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+
+  return {
+    meetingDate: fmt(meetingDateObj),
+    noticeDate: fmt(noticeDateObj),
+    reviewDateFrom: fmt(reviewDateObj),
+  };
+}
+
+// ─── Package Manifest ─────────────────────────────────────────────
+
 export function calculatePackageManifest(
   mode: ProcedureMode,
   charterRules: Partial<CharterRules>,
@@ -119,10 +191,8 @@ export function calculatePackageManifest(
 ): PackageManifestItem[] {
   const rules = { ...DEFAULT_CHARTER_RULES, ...charterRules };
   const manifest: PackageManifestItem[] = [];
-
   const legalBasis: LegalBasis = rulesBasis === 'mixed' ? 'charter_confirmed' : rulesBasis;
 
-  // Base templates by mode
   const baseTemplates = mode === 'sole_participant_decision'
     ? SOLE_PARTICIPANT_TEMPLATES
     : ANNUAL_MEETING_TEMPLATES;
@@ -142,38 +212,28 @@ export function calculatePackageManifest(
     });
   }
 
-  // Conditional templates
   for (const tpl of CONDITIONAL_TEMPLATES) {
     let included = false;
     let reason = '';
 
     if (tpl.condition === 'has_board') {
       included = rules.has_board;
-      reason = included
-        ? 'Совет директоров предусмотрен уставом'
-        : 'Совет директоров не предусмотрен';
+      reason = included ? 'Совет директоров предусмотрен уставом' : 'Совет директоров не предусмотрен';
     } else if (tpl.condition === 'has_auditor') {
       included = rules.has_auditor;
-      reason = included
-        ? 'Ревизор предусмотрен уставом'
-        : 'Ревизор не предусмотрен';
+      reason = included ? 'Ревизор предусмотрен уставом' : 'Ревизор не предусмотрен';
     } else if (tpl.condition === 'has_audit_commission') {
       included = rules.has_audit_commission;
-      reason = included
-        ? 'Ревизионная комиссия предусмотрена уставом'
-        : 'Ревизионная комиссия не предусмотрена';
+      reason = included ? 'Ревизионная комиссия предусмотрена уставом' : 'Ревизионная комиссия не предусмотрена';
     } else if (tpl.code === 'corp_charter_amendments') {
       const hasCharterQuestion = params.agenda?.some(a => a.requires_charter_change);
       included = !!hasCharterQuestion;
-      reason = included
-        ? 'В повестке есть вопрос об изменении устава'
-        : 'Вопрос об изменении устава отсутствует в повестке';
+      reason = included ? 'В повестке есть вопрос об изменении устава' : 'Вопрос об изменении устава отсутствует в повестке';
     } else if (tpl.code === 'corp_agenda_change_notice') {
-      included = false; // only when agenda changes after initial notice
+      included = false;
       reason = 'Включается при изменении повестки после первичного извещения';
     }
 
-    // Skip conditional docs for sole_participant mode
     if (mode === 'sole_participant_decision' && tpl.condition) {
       included = false;
       reason = 'Не применяется для решения единственного участника';
@@ -191,7 +251,6 @@ export function calculatePackageManifest(
     });
   }
 
-  // External documents (never generated, always listed)
   for (const doc of EXTERNALLY_PROVIDED_DOCUMENTS) {
     let included = true;
     let reason = 'Учитывается как внешний документ';
@@ -219,51 +278,57 @@ export function calculatePackageManifest(
   return manifest;
 }
 
-/**
- * Валидация сессии: blocking errors + non-blocking warnings.
- */
+// ─── Validation ───────────────────────────────────────────────────
+
+export type ValidationContext = 'edit' | 'confirm';
+
 export function validateSession(
   mode: ProcedureMode,
   params: Partial<CorporateParams>,
   charterRules: Partial<CharterRules>,
   reportYear: number,
-  rulesBasis: 'charter_confirmed' | 'law_default' | 'mixed'
+  rulesBasis: 'charter_confirmed' | 'law_default' | 'mixed',
+  context: ValidationContext = 'confirm'
 ): ValidationResult {
   const rules = { ...DEFAULT_CHARTER_RULES, ...charterRules };
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
 
-  // 1. Check meeting deadline (31 марта следующего года)
+  // 1. Meeting deadline — blocking only on confirm
   if (mode === 'annual_meeting' && params.meeting?.date) {
     const meetingDate = new Date(params.meeting.date);
     const deadline = new Date(reportYear + 1, LAW_ANNUAL_MEETING_DEADLINE_MONTH - 1, LAW_ANNUAL_MEETING_DEADLINE_DAY);
     if (meetingDate > deadline) {
-      errors.push({
+      const issue: ValidationIssue = {
         code: 'MEETING_AFTER_DEADLINE',
         message: `Годовое собрание должно быть проведено не позднее ${LAW_ANNUAL_MEETING_DEADLINE_DAY}.0${LAW_ANNUAL_MEETING_DEADLINE_MONTH}.${reportYear + 1}`,
         field: 'meeting.date',
-        blocking: true,
-      });
+        blocking: context === 'confirm',
+      };
+      if (context === 'confirm') errors.push(issue);
+      else warnings.push(issue);
     }
   }
 
-  // 2. Check notice period
+  // 2. Notice period
   if (mode === 'annual_meeting' && params.notice?.date && params.meeting?.date) {
     const noticeDate = new Date(params.notice.date);
     const meetingDate = new Date(params.meeting.date);
     const diffDays = Math.floor((meetingDate.getTime() - noticeDate.getTime()) / (1000 * 60 * 60 * 24));
     const minDays = rules.notice_days_min || LAW_NOTICE_DAYS_MIN;
     if (diffDays < minDays) {
-      errors.push({
+      const issue: ValidationIssue = {
         code: 'NOTICE_TOO_LATE',
         message: `Извещение должно быть направлено не менее чем за ${minDays} дней до собрания (сейчас: ${diffDays} дней)`,
         field: 'notice.date',
-        blocking: true,
-      });
+        blocking: context === 'confirm',
+      };
+      if (context === 'confirm') errors.push(issue);
+      else warnings.push(issue);
     }
   }
 
-  // 3. Check review period
+  // 3. Review period
   if (mode === 'annual_meeting' && params.review?.date_from && params.meeting?.date) {
     const reviewFrom = new Date(params.review.date_from);
     const meetingDate = new Date(params.meeting.date);
@@ -278,7 +343,7 @@ export function validateSession(
     }
   }
 
-  // 4. Check quorum
+  // 4. Quorum
   if (mode === 'annual_meeting' && params.participants && params.participants.length > 0) {
     const quorum = calculateQuorum(params.participants, charterRules);
     if (!quorum.has_quorum) {
@@ -291,7 +356,7 @@ export function validateSession(
     }
   }
 
-  // 5. No participants at all
+  // 5. No participants
   if (!params.participants || params.participants.length === 0) {
     errors.push({
       code: 'NO_PARTICIPANTS',
@@ -311,7 +376,7 @@ export function validateSession(
     });
   }
 
-  // 7. Charter not confirmed → warning
+  // 7. Charter not confirmed — only if charter_extraction_status is not confirmed
   if (rulesBasis === 'law_default') {
     warnings.push({
       code: 'NO_CHARTER',
@@ -320,7 +385,7 @@ export function validateSession(
     });
   }
 
-  // 8. Meeting format validation
+  // 8. Meeting format
   if (params.meeting?.format && rules.allowed_meeting_formats.length > 0) {
     if (!rules.allowed_meeting_formats.includes(params.meeting.format)) {
       errors.push({
@@ -332,7 +397,7 @@ export function validateSession(
     }
   }
 
-  // 9. Voting form validation
+  // 9. Voting form
   if (params.meeting?.voting_form && rules.allowed_voting_forms.length > 0) {
     const vf = params.meeting.voting_form;
     if (vf !== 'mixed' && !rules.allowed_voting_forms.includes(vf as 'open' | 'secret')) {

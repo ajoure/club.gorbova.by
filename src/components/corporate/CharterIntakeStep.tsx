@@ -1,10 +1,8 @@
 /**
  * CharterIntakeStep — Step 2: Charter upload/text/manual + confirmation.
  * 
- * Three equal modes:
- * - Upload (DOCX/PDF/Image)
- * - Text (paste charter text)
- * - Manual (answer structured questions about charter rules)
+ * Three equal modes: Upload, Text, Manual.
+ * Includes extraction pipeline status bar.
  */
 
 import { useState, useCallback } from "react";
@@ -23,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, PenLine, AlertTriangle, Check, Loader2 } from "lucide-react";
+import { Upload, FileText, PenLine, AlertTriangle, Check, Loader2, X, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractTextFromFile } from "@/utils/fileExtractor";
@@ -31,6 +29,7 @@ import type {
   CorporateDraftSession,
   CharterRules,
   CharterSourceType,
+  CharterExtractionStatus,
 } from "@/lib/corporate/corporateTypes";
 import { DEFAULT_CHARTER_RULES } from "@/lib/corporate/corporateTypes";
 
@@ -41,13 +40,84 @@ interface Props {
   onNext: () => void;
 }
 
+/** Sanitize filename for Supabase storage key */
+function sanitizeStorageKey(filename: string): string {
+  const ext = filename.lastIndexOf('.') > 0 ? filename.slice(filename.lastIndexOf('.')) : '';
+  const base = filename.slice(0, filename.length - ext.length);
+  const slug = base
+    .toLowerCase()
+    .replace(/[а-яё]/gi, (c) => {
+      const map: Record<string, string> = {
+        а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'j',
+        к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',
+        х:'h',ц:'ts',ч:'ch',ш:'sh',щ:'sch',ы:'y',э:'e',ю:'yu',я:'ya',
+        ъ:'',ь:''
+      };
+      return map[c.toLowerCase()] || c;
+    })
+    .replace(/[^a-z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .slice(0, 60);
+  return `${Date.now()}_${slug}${ext}`;
+}
+
+/** Pipeline status display */
+function ExtractionStatusBar({ status }: { status: CharterExtractionStatus | null }) {
+  const steps: { key: CharterExtractionStatus; label: string }[] = [
+    { key: 'none', label: 'Устав не загружен' },
+    { key: 'pending', label: 'Файл загружен' },
+    { key: 'extracted', label: 'Текст извлечён' },
+    { key: 'confirmed', label: 'Правила подтверждены' },
+  ];
+
+  const currentStatus = status || 'none';
+  const isFailed = currentStatus === 'failed';
+  const currentIdx = isFailed ? 1 : steps.findIndex(s => s.key === currentStatus);
+
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {steps.map((step, idx) => {
+        let variant: 'default' | 'secondary' | 'outline' | 'destructive' = 'outline';
+        let icon = null;
+
+        if (isFailed && idx === 1) {
+          variant = 'destructive';
+          icon = <X className="h-3 w-3 mr-1" />;
+        } else if (idx < currentIdx) {
+          variant = 'default';
+          icon = <Check className="h-3 w-3 mr-1" />;
+        } else if (idx === currentIdx && !isFailed) {
+          variant = currentStatus === 'confirmed' ? 'default' : 'secondary';
+          icon = currentStatus === 'confirmed' ? <Check className="h-3 w-3 mr-1" /> : <Clock className="h-3 w-3 mr-1" />;
+        }
+
+        return (
+          <Badge key={step.key} variant={variant} className="text-[10px] px-2 py-0.5">
+            {icon}
+            {step.label}
+          </Badge>
+        );
+      })}
+      {isFailed && (
+        <Badge variant="destructive" className="text-[10px] px-2 py-0.5">
+          <X className="h-3 w-3 mr-1" />
+          Ошибка извлечения
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }: Props) {
-  const [tab, setTab] = useState<string>(session.charter_source_type === 'text' ? 'text' : session.charter_source_type === 'manual' ? 'manual' : 'upload');
+  const [tab, setTab] = useState<string>(
+    session.charter_source_type === 'text' ? 'text'
+    : session.charter_source_type === 'manual' ? 'manual'
+    : 'upload'
+  );
   const [charterText, setCharterText] = useState(session.charter_raw_text || "");
   const [isUploading, setIsUploading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
 
-  // Manual rules state
   const existingRules = session.confirmed_charter_rules as Partial<CharterRules> ?? {};
   const [rules, setRules] = useState<CharterRules>({
     ...DEFAULT_CHARTER_RULES,
@@ -55,34 +125,34 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
   });
 
   const isCharterConfirmed = session.charter_extraction_status === 'confirmed';
+  const extractionStatus = (session.charter_extraction_status || 'none') as CharterExtractionStatus;
 
-  // File upload handler
+  // File upload handler — sanitized key
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
     try {
-      // Determine source type
       let sourceType: CharterSourceType = 'upload_docx';
       if (file.type === 'application/pdf') sourceType = 'upload_pdf';
       else if (file.type.startsWith('image/')) sourceType = 'upload_image';
 
-      // Upload to charter-documents bucket
-      const filePath = `${session.profile_id}/${session.id}/${file.name}`;
+      const safeFilename = sanitizeStorageKey(file.name);
+      const filePath = `${session.profile_id}/${session.id}/${safeFilename}`;
+
       const { error: uploadError } = await supabase.storage
         .from('charter-documents')
         .upload(filePath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
-      // Try to extract text
       let rawText = '';
       try {
         const extracted = await extractTextFromFile(file);
         rawText = extracted?.text || '';
       } catch {
-        // extraction may fail for images/PDFs — that's OK
+        // extraction may fail for images/PDFs
       }
 
       await onUpdate({
@@ -91,6 +161,10 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
         charter_raw_text: rawText || null,
         charter_extraction_status: rawText ? 'extracted' : 'pending',
         status: 'charter_pending',
+        metadata: {
+          ...(session.metadata || {}),
+          original_filename: file.name,
+        },
       });
 
       if (rawText) {
@@ -117,12 +191,11 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
     toast.success("Текст устава сохранён");
   };
 
-  // Confirm rules
+  // Confirm rules — correctly transitions state
   const handleConfirmRules = async () => {
     setIsConfirming(true);
     try {
-      const confirmedBy = tab === 'manual' ? 'manual' : (session.charter_source_type?.startsWith('upload') ? 'manual' : 'manual');
-      await onConfirmRules(rules as unknown as Record<string, unknown>, confirmedBy);
+      await onConfirmRules(rules as unknown as Record<string, unknown>, 'manual');
       toast.success("Правила устава подтверждены");
       onNext();
     } catch (err: any) {
@@ -132,7 +205,7 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
     }
   };
 
-  // Skip charter (use law defaults)
+  // Skip charter (law defaults)
   const handleSkip = async () => {
     setIsConfirming(true);
     try {
@@ -146,6 +219,8 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
     }
   };
 
+  const originalFilename = (session.metadata as any)?.original_filename;
+
   return (
     <div className="space-y-6">
       <div>
@@ -154,6 +229,9 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
           Загрузите устав или заполните ключевые правила вручную. Это необходимо для корректного определения состава документов.
         </p>
       </div>
+
+      {/* Extraction pipeline status */}
+      <ExtractionStatusBar status={extractionStatus} />
 
       {isCharterConfirmed && (
         <GlassCard className="p-3 border-green-200 bg-green-50/50 dark:bg-green-950/20">
@@ -183,7 +261,6 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
           </TabsTrigger>
         </TabsList>
 
-        {/* Upload tab */}
         <TabsContent value="upload" className="space-y-4">
           <div>
             <Label>Загрузите файл устава (DOCX, PDF или изображение)</Label>
@@ -203,12 +280,11 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
           </div>
           {session.charter_file_path && (
             <p className="text-sm text-muted-foreground">
-              Файл загружен: {session.charter_file_path.split('/').pop()}
+              Файл загружен: {originalFilename || session.charter_file_path.split('/').pop()}
             </p>
           )}
         </TabsContent>
 
-        {/* Text tab */}
         <TabsContent value="text" className="space-y-4">
           <div>
             <Label>Вставьте текст устава</Label>
@@ -228,7 +304,6 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
           </Button>
         </TabsContent>
 
-        {/* Manual tab */}
         <TabsContent value="manual" className="space-y-4">
           <GlassCard className="p-3 border-amber-200 bg-amber-50/50 dark:bg-amber-950/20">
             <div className="flex items-start gap-2">
@@ -241,7 +316,7 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
         </TabsContent>
       </Tabs>
 
-      {/* Charter rules confirmation form (shown for all tabs) */}
+      {/* Charter rules form */}
       <div className="space-y-4 border-t pt-4">
         <h4 className="text-sm font-semibold">Ключевые правила устава</h4>
 
@@ -252,9 +327,7 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
               value={rules.convening_authority}
               onValueChange={(v) => setRules({ ...rules, convening_authority: v as any })}
             >
-              <SelectTrigger className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="director">Руководитель</SelectItem>
                 <SelectItem value="board">Совет директоров</SelectItem>
@@ -280,9 +353,7 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
               value={rules.notice_method}
               onValueChange={(v) => setRules({ ...rules, notice_method: v })}
             >
-              <SelectTrigger className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="registered_mail">Заказное письмо</SelectItem>
                 <SelectItem value="courier">Курьер</SelectItem>
@@ -308,48 +379,26 @@ export function CharterIntakeStep({ session, onUpdate, onConfirmRules, onNext }:
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <Label className="text-xs">Совет директоров (наблюдательный совет)</Label>
-            <Switch
-              checked={rules.has_board}
-              onCheckedChange={(v) => setRules({ ...rules, has_board: v })}
-            />
+            <Switch checked={rules.has_board} onCheckedChange={(v) => setRules({ ...rules, has_board: v })} />
           </div>
           <div className="flex items-center justify-between">
             <Label className="text-xs">Ревизор</Label>
-            <Switch
-              checked={rules.has_auditor}
-              onCheckedChange={(v) => setRules({ ...rules, has_auditor: v })}
-            />
+            <Switch checked={rules.has_auditor} onCheckedChange={(v) => setRules({ ...rules, has_auditor: v })} />
           </div>
           <div className="flex items-center justify-between">
             <Label className="text-xs">Ревизионная комиссия</Label>
-            <Switch
-              checked={rules.has_audit_commission}
-              onCheckedChange={(v) => setRules({ ...rules, has_audit_commission: v })}
-            />
+            <Switch checked={rules.has_audit_commission} onCheckedChange={(v) => setRules({ ...rules, has_audit_commission: v })} />
           </div>
         </div>
       </div>
 
       {/* Actions */}
       <div className="flex gap-3">
-        <Button
-          onClick={handleConfirmRules}
-          disabled={isConfirming}
-          className="flex-1"
-        >
-          {isConfirming ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Check className="h-4 w-4 mr-2" />
-          )}
+        <Button onClick={handleConfirmRules} disabled={isConfirming} className="flex-1">
+          {isConfirming ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Check className="h-4 w-4 mr-2" />}
           Подтвердить правила
         </Button>
-        <Button
-          variant="ghost"
-          onClick={handleSkip}
-          disabled={isConfirming}
-          className="text-muted-foreground"
-        >
+        <Button variant="ghost" onClick={handleSkip} disabled={isConfirming} className="text-muted-foreground">
           Пропустить
         </Button>
       </div>
