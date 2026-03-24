@@ -302,6 +302,12 @@ interface TokenizedRichInputProps {
   className?: string;
   /** Show alignment buttons (L/C/R) in bubble toolbar. Default false — safe for Telegram. */
   allowAlign?: boolean;
+  /** Additional token groups to show in picker (e.g. for document editors).
+   *  Existing groups (Contact, DateTime, Product) are always shown. */
+  extraTokenGroups?: Array<{
+    heading: string;
+    tokens: import("@/lib/tokens/tokenRegistry").TokenDef[];
+  }>;
 }
 
 export function TokenizedRichInput({
@@ -313,6 +319,7 @@ export function TokenizedRichInput({
   disabled = false,
   className,
   allowAlign = false,
+  extraTokenGroups,
 }: TokenizedRichInputProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerOpenRef = useRef(false);
@@ -841,6 +848,19 @@ export function TokenizedRichInput({
                   ))}
                 </CommandGroup>
               )}
+              {extraTokenGroups?.map((group) => (
+                group.tokens.length > 0 && (
+                  <CommandGroup heading={group.heading} key={group.heading}>
+                    {group.tokens.map((t) => (
+                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                        onSelect={() => handleTokenSelect(t)}>
+                        <span className="flex-1 truncate">{t.label}</span>
+                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )
+              ))}
             </CommandList>
           </Command>
         </div>,

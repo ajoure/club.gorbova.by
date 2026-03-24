@@ -1,13 +1,28 @@
 /**
  * Unified Token Registry — единый источник правды для UI-лейблов токенов.
  * 
- * Четыре группы:
+ * Registry-first rule:
+ * Before creating any new token, search existing key in fields_registry.
+ * If key exists — reuse 1:1. Only create new if truly missing.
+ * 
+ * Four levels of representation:
+ * 1. internal id: UUID (fields_registry.id)
+ * 2. canonical key: e.g. "meeting.notice.date" (fields_registry.key)
+ * 3. system token: "{{meeting.notice.date}}" (stored in templates/text)
+ * 4. UI token: "[Дата направления извещения]" (shown in editor chips)
+ * 
+ * Groups:
  * 1. CONTACT_TOKENS — 1:1 с resolveContactTokens() в edge functions
  * 2. DATETIME_TOKENS — 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
  * 3. Product custom fields — динамически из fields_registry (UUID-based legacy)
  * 4. Legal details fields — динамически из fields_registry (public_id-based canonical)
+ * 5. Person fields — динамически из fields_registry (entity_type='person')
+ * 6. Entity-person link fields — динамически из fields_registry (entity_type='entity_person')
+ * 7. Document fields — динамически из fields_registry (entity_type='document')
+ * 8. Meeting fields — динамически из fields_registry (entity_type='meeting')
+ * 9. Entity computed fields — динамически из fields_registry (entity_type='entity')
  * 
- * SoT хранения: {{first_name}}, {{today}}, {{cf.product.<uuid>}}, {{cf.legal_details.<FLD-XXXXXX>}}
+ * SoT хранения: {{canonical.key}}, e.g. {{meeting.date}}
  * UI показывает label, хранит tokenString.
  */
 
@@ -17,7 +32,7 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product" | "legal_details";
+  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity";
   badge: string;
   searchKeywords: string;
 }
@@ -55,6 +70,38 @@ const DATA_TYPE_BADGES: Record<string, string> = {
   select: "Список",
   multiselect: "Мульти",
 };
+
+/** Extract search_keywords from options JSONB */
+function extractSearchKeywords(f: { label: string; key: string; options?: unknown }): string {
+  const opts = f.options as Record<string, unknown> | null;
+  const kw = opts?.search_keywords as string | undefined;
+  return kw ? `${f.label} ${kw}` : `${f.label} ${f.key}`;
+}
+
+/** Generic loader for fields_registry by entity_type */
+async function loadFieldsByEntityType(
+  entityType: string,
+  group: TokenDef["group"],
+): Promise<TokenDef[]> {
+  const { data, error } = await supabase
+    .from("fields_registry")
+    .select("id, entity_type, key, label, data_type, public_id, options")
+    .eq("entity_type", entityType)
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return [];
+
+  return data.map((f) => ({
+    key: f.id,
+    label: f.label,
+    // Canonical token: use the registry key directly (e.g. {{person.full_name}})
+    tokenString: `{{${f.key}}}`,
+    group,
+    badge: DATA_TYPE_BADGES[f.data_type] ?? f.data_type,
+    searchKeywords: extractSearchKeywords(f),
+  }));
+}
 
 /** Load product custom fields from fields_registry (dynamic, UUID-based legacy) */
 export async function loadProductFields(): Promise<TokenDef[]> {
@@ -100,9 +147,39 @@ export async function loadLegalDetailsFields(): Promise<TokenDef[]> {
     }));
 }
 
-// Internal cache for product fields (populated by react-query in components)
+/** Load person fields — entity_type = 'person' */
+export async function loadPersonFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("person", "person");
+}
+
+/** Load entity_person link fields — entity_type = 'entity_person' */
+export async function loadEntityPersonFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("entity_person", "entity_person");
+}
+
+/** Load document fields — entity_type = 'document' */
+export async function loadDocumentFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("document", "document");
+}
+
+/** Load meeting fields — entity_type = 'meeting' */
+export async function loadMeetingFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("meeting", "meeting");
+}
+
+/** Load entity computed fields — entity_type = 'entity' */
+export async function loadEntityFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("entity", "entity");
+}
+
+// Internal caches (populated by react-query in components)
 let _productFieldsCache: TokenDef[] = [];
 let _legalDetailsFieldsCache: TokenDef[] = [];
+let _personFieldsCache: TokenDef[] = [];
+let _entityPersonFieldsCache: TokenDef[] = [];
+let _documentFieldsCache: TokenDef[] = [];
+let _meetingFieldsCache: TokenDef[] = [];
+let _entityFieldsCache: TokenDef[] = [];
 
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
@@ -110,6 +187,26 @@ export function setProductFieldsCache(fields: TokenDef[]) {
 
 export function setLegalDetailsFieldsCache(fields: TokenDef[]) {
   _legalDetailsFieldsCache = fields;
+}
+
+export function setPersonFieldsCache(fields: TokenDef[]) {
+  _personFieldsCache = fields;
+}
+
+export function setEntityPersonFieldsCache(fields: TokenDef[]) {
+  _entityPersonFieldsCache = fields;
+}
+
+export function setDocumentFieldsCache(fields: TokenDef[]) {
+  _documentFieldsCache = fields;
+}
+
+export function setMeetingFieldsCache(fields: TokenDef[]) {
+  _meetingFieldsCache = fields;
+}
+
+export function setEntityFieldsCache(fields: TokenDef[]) {
+  _entityFieldsCache = fields;
 }
 
 /**
@@ -134,6 +231,26 @@ export function tokenStringToLabel(tokenString: string): string | null {
   const legal = _legalDetailsFieldsCache.find((t) => t.tokenString === tokenString);
   if (legal) return legal.label;
 
+  // Check person fields cache
+  const person = _personFieldsCache.find((t) => t.tokenString === tokenString);
+  if (person) return person.label;
+
+  // Check entity_person fields cache
+  const entityPerson = _entityPersonFieldsCache.find((t) => t.tokenString === tokenString);
+  if (entityPerson) return entityPerson.label;
+
+  // Check document fields cache
+  const doc = _documentFieldsCache.find((t) => t.tokenString === tokenString);
+  if (doc) return doc.label;
+
+  // Check meeting fields cache
+  const meeting = _meetingFieldsCache.find((t) => t.tokenString === tokenString);
+  if (meeting) return meeting.label;
+
+  // Check entity computed fields cache
+  const entity = _entityFieldsCache.find((t) => t.tokenString === tokenString);
+  if (entity) return entity.label;
+
   return null; // UNMAPPED
 }
 
@@ -153,4 +270,30 @@ export function extractShortUuid(tokenString: string): string {
     return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
   }
   return tokenString.replace(/\{\{|\}\}/g, "");
+}
+
+/**
+ * Document token group definitions for use with TokenizedRichInput extraTokenGroups.
+ * Returns configured groups from cached registry data.
+ */
+export function getDocumentTokenGroups(): Array<{ heading: string; tokens: TokenDef[] }> {
+  const groups: Array<{ heading: string; tokens: TokenDef[] }> = [];
+  
+  if (_entityFieldsCache.length > 0) {
+    groups.push({ heading: "Юрлицо (вычисляемые)", tokens: _entityFieldsCache });
+  }
+  if (_personFieldsCache.length > 0) {
+    groups.push({ heading: "Физлицо", tokens: _personFieldsCache });
+  }
+  if (_entityPersonFieldsCache.length > 0) {
+    groups.push({ heading: "Связь лицо ↔ юрлицо", tokens: _entityPersonFieldsCache });
+  }
+  if (_meetingFieldsCache.length > 0) {
+    groups.push({ heading: "Собрание", tokens: _meetingFieldsCache });
+  }
+  if (_documentFieldsCache.length > 0) {
+    groups.push({ heading: "Документ", tokens: _documentFieldsCache });
+  }
+
+  return groups;
 }
