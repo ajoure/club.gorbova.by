@@ -12,8 +12,11 @@ export function getPersonDisplayName(person: PersonRow): string {
 
 export function getPersonDocumentSummary(person: PersonRow): string {
   if (person.personal_number) return person.personal_number;
+  const p = person as any;
+  if (p.passport_number_full) return p.passport_number_full;
+  // Legacy fallback
   if (person.passport_series && person.passport_number) {
-    return `${person.passport_series} ${person.passport_number}`;
+    return `${person.passport_series}${person.passport_number}`;
   }
   if (person.passport_number) return person.passport_number;
   return '—';

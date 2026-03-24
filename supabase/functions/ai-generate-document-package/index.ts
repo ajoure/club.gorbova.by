@@ -95,10 +95,14 @@ function buildTokenData(
   }
 
   if (person) {
+    const passportFull = (person.passport_number_full as string) || 
+      (((person.passport_series as string) || '') + ((person.passport_number as string) || '')).trim() || '';
     tokenData.person_full_name = (person.full_name as string) || "";
     tokenData.person_short_name = fullNameToInitials((person.full_name as string) || "");
     tokenData.person_personal_number = (person.personal_number as string) || "";
     tokenData.person_birth_date = (person.birth_date as string) || "";
+    tokenData.person_passport_full = passportFull;
+    // Legacy split aliases (deprecated, kept for backward compat)
     tokenData.person_passport_series = (person.passport_series as string) || "";
     tokenData.person_passport_number = (person.passport_number as string) || "";
     tokenData.person_passport_issued_by = (person.passport_issued_by as string) || "";
@@ -110,9 +114,13 @@ function buildTokenData(
   }
 
   if (signerPerson) {
+    const signerPassportFull = (signerPerson.passport_number_full as string) || 
+      (((signerPerson.passport_series as string) || '') + ((signerPerson.passport_number as string) || '')).trim() || '';
     tokenData["signer.full_name"] = (signerPerson.full_name as string) || "";
     tokenData["signer.short_name"] = fullNameToInitials((signerPerson.full_name as string) || "");
     tokenData["signer.personal_number"] = (signerPerson.personal_number as string) || "";
+    tokenData["signer.passport_full"] = signerPassportFull;
+    // Legacy split aliases (deprecated)
     tokenData["signer.passport_series"] = (signerPerson.passport_series as string) || "";
     tokenData["signer.passport_number"] = (signerPerson.passport_number as string) || "";
     tokenData["signer.passport_issued_by"] = (signerPerson.passport_issued_by as string) || "";
@@ -157,6 +165,8 @@ function buildTokenData(
     tokenData["person.initials"] = tokenData.person_short_name || "";
     tokenData["person.personal_number"] = tokenData.person_personal_number || "";
     tokenData["person.birth_date"] = tokenData.person_birth_date || "";
+    tokenData["person.passport_full"] = tokenData.person_passport_full || "";
+    // Legacy canonical aliases (deprecated)
     tokenData["person.passport_series"] = tokenData.person_passport_series || "";
     tokenData["person.passport_number"] = tokenData.person_passport_number || "";
     tokenData["person.passport_issued_by"] = tokenData.person_passport_issued_by || "";

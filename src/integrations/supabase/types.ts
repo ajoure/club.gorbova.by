@@ -348,16 +348,24 @@ export type Database = {
           package_template_id: string | null
           person_id: string | null
           profile_id: string
+          registry_version: string | null
+          resolver_version: string | null
           signer_link_id: string | null
           signer_person_id: string | null
           snapshot: Json
+          source_trace: Json | null
           status: string
           storage_bucket: string
+          template_code: string | null
           template_id: string | null
           template_name: string
           template_source_path: string | null
+          template_tokens_snapshot: Json | null
+          template_version: string | null
           title: string
+          token_manifest_snapshot: Json | null
           updated_at: string
+          warnings_snapshot: Json | null
         }
         Insert: {
           created_at?: string
@@ -376,16 +384,24 @@ export type Database = {
           package_template_id?: string | null
           person_id?: string | null
           profile_id: string
+          registry_version?: string | null
+          resolver_version?: string | null
           signer_link_id?: string | null
           signer_person_id?: string | null
           snapshot?: Json
+          source_trace?: Json | null
           status?: string
           storage_bucket?: string
+          template_code?: string | null
           template_id?: string | null
           template_name: string
           template_source_path?: string | null
+          template_tokens_snapshot?: Json | null
+          template_version?: string | null
           title: string
+          token_manifest_snapshot?: Json | null
           updated_at?: string
+          warnings_snapshot?: Json | null
         }
         Update: {
           created_at?: string
@@ -404,16 +420,24 @@ export type Database = {
           package_template_id?: string | null
           person_id?: string | null
           profile_id?: string
+          registry_version?: string | null
+          resolver_version?: string | null
           signer_link_id?: string | null
           signer_person_id?: string | null
           snapshot?: Json
+          source_trace?: Json | null
           status?: string
           storage_bucket?: string
+          template_code?: string | null
           template_id?: string | null
           template_name?: string
           template_source_path?: string | null
+          template_tokens_snapshot?: Json | null
+          template_version?: string | null
           title?: string
+          token_manifest_snapshot?: Json | null
           updated_at?: string
+          warnings_snapshot?: Json | null
         }
         Relationships: [
           {
@@ -4166,6 +4190,7 @@ export type Database = {
           passport_issued_by: string | null
           passport_issued_date: string | null
           passport_number: string | null
+          passport_number_full: string | null
           passport_series: string | null
           passport_valid_until: string | null
           personal_number: string | null
@@ -4185,6 +4210,7 @@ export type Database = {
           passport_issued_by?: string | null
           passport_issued_date?: string | null
           passport_number?: string | null
+          passport_number_full?: string | null
           passport_series?: string | null
           passport_valid_until?: string | null
           personal_number?: string | null
@@ -4204,6 +4230,7 @@ export type Database = {
           passport_issued_by?: string | null
           passport_issued_date?: string | null
           passport_number?: string | null
+          passport_number_full?: string | null
           passport_series?: string | null
           passport_valid_until?: string | null
           personal_number?: string | null

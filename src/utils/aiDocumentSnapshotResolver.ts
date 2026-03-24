@@ -95,10 +95,13 @@ export function resolvePreviewTokens(
   // Person tokens
   if (person) {
     const p = person as Record<string, string>;
+    const passportFull = p.passport_number_full || ((p.passport_series || '') + (p.passport_number || '')).trim() || '';
     tokenMap["person_full_name"] = { value: p.full_name || "", source: "Физлицо", label: "ФИО" };
     tokenMap["person_short_name"] = { value: fullNameToInitials(p.full_name || ""), source: "Физлицо", label: "ФИО (кратко)" };
     tokenMap["person_personal_number"] = { value: p.personal_number || "", source: "Физлицо", label: "Личный номер" };
     tokenMap["person_birth_date"] = { value: p.birth_date || "", source: "Физлицо", label: "Дата рождения" };
+    tokenMap["person_passport_full"] = { value: passportFull, source: "Физлицо", label: "Серия и номер паспорта" };
+    // Legacy split aliases (deprecated)
     tokenMap["person_passport_series"] = { value: p.passport_series || "", source: "Физлицо", label: "Серия паспорта" };
     tokenMap["person_passport_number"] = { value: p.passport_number || "", source: "Физлицо", label: "Номер паспорта" };
     tokenMap["person_passport_issued_by"] = { value: p.passport_issued_by || "", source: "Физлицо", label: "Выдан" };
@@ -112,9 +115,12 @@ export function resolvePreviewTokens(
   // Signer tokens
   if (signerPerson) {
     const s = signerPerson as Record<string, string>;
+    const signerPassportFull = s.passport_number_full || ((s.passport_series || '') + (s.passport_number || '')).trim() || '';
     tokenMap["signer.full_name"] = { value: s.full_name || "", source: "Подписант", label: "ФИО подписанта" };
     tokenMap["signer.short_name"] = { value: fullNameToInitials(s.full_name || ""), source: "Подписант", label: "Подписант (кратко)" };
     tokenMap["signer.personal_number"] = { value: s.personal_number || "", source: "Подписант", label: "Личный номер" };
+    tokenMap["signer.passport_full"] = { value: signerPassportFull, source: "Подписант", label: "Серия и номер паспорта" };
+    // Legacy split aliases (deprecated)
     tokenMap["signer.passport_series"] = { value: s.passport_series || "", source: "Подписант", label: "Серия паспорта" };
     tokenMap["signer.passport_number"] = { value: s.passport_number || "", source: "Подписант", label: "Номер паспорта" };
     tokenMap["signer.passport_issued_by"] = { value: s.passport_issued_by || "", source: "Подписант", label: "Выдан" };

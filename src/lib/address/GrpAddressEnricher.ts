@@ -144,11 +144,11 @@ export async function enrichAddressViaGoogle(
         // ===== SAFE MERGE =====
         // GRP fields have absolute priority. Google only fills empty gaps.
         // IMPORTANT: For Minsk, Google returns city districts (Центральный, Фрунзенский)
-        // as sublocality/settlement — we must NOT save those as settlement.
+        // as sublocality/settlement — save them to city_district instead.
         const cityForCheck = preliminary.city || googleParsed.city || '';
         const isMsk = /минск/i.test(cityForCheck.replace(/^(г\.|город)\s*/i, '').trim());
 
-        // Filter out city-district values from settlement and district
+        // Filter out city-district values from settlement and district, save to city_district
         const CITY_DISTRICT_PATTERNS = [
           'центральн', 'ленинск', 'октябрьск', 'фрунзенск', 'московск',
           'первомайск', 'советск', 'заводск', 'партизанск', 'железнодорожн',
@@ -156,14 +156,18 @@ export async function enrichAddressViaGoogle(
         const looksLikeCityDistrict = (v: string) =>
           /район/i.test(v) && CITY_DISTRICT_PATTERNS.some(p => v.toLowerCase().includes(p));
 
+        // Extract city_district from settlement or district
+        let extractedCityDistrict = preliminary.city_district || '';
         let mergedSettlement = preliminary.settlement || googleParsed.settlement || '';
         if (mergedSettlement && looksLikeCityDistrict(mergedSettlement)) {
-          mergedSettlement = ''; // Don't save city districts as settlement
+          if (!extractedCityDistrict) extractedCityDistrict = mergedSettlement;
+          mergedSettlement = '';
         }
 
         let mergedDistrict = preliminary.district || googleParsed.district || '';
         if (isMsk && mergedDistrict && looksLikeCityDistrict(mergedDistrict)) {
-          mergedDistrict = ''; // For Minsk, skip city-internal districts
+          if (!extractedCityDistrict) extractedCityDistrict = mergedDistrict;
+          mergedDistrict = '';
         }
 
         const merged: StructuredAddress = {
@@ -174,6 +178,7 @@ export async function enrichAddressViaGoogle(
           building: preliminary.building || googleParsed.building || '',
           settlement: mergedSettlement,
           apartment: preliminary.apartment || googleParsed.apartment || '',
+          city_district: extractedCityDistrict,
           // Google fills only empty meta-fields
           district: mergedDistrict,
           region: preliminary.region || googleParsed.region || '',

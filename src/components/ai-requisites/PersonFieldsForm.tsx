@@ -14,6 +14,7 @@ import { Loader2, User, FileText, MapPin, Phone, Info } from 'lucide-react';
 import { StructuredAddressBlock } from '@/components/shared/StructuredAddressBlock';
 import { CopyablePlainLabel } from '@/components/ui/CopyablePlainLabel';
 import { useLegalDetailsFields } from '@/hooks/useLegalDetailsFields';
+import { normalizePassport } from '@/lib/persons/passportNormalizer';
 import type { StructuredAddress } from '@/lib/address/types';
 import { emptyAddress } from '@/lib/address/utils';
 import type { CanonicalAddressPayload } from '@/lib/address/types';
@@ -35,6 +36,7 @@ function parseAddress(structured: unknown): StructuredAddress {
     building: s.building || '',
     apartment: s.apartment || '',
     city: s.city || '',
+    city_district: s.city_district || '',
     region: s.region || '',
     district: s.district || '',
     settlement: s.settlement || '',
@@ -55,6 +57,7 @@ function addressToStructured(addr: StructuredAddress): CanonicalAddressPayload {
     region: addr.region || null,
     district: addr.district || null,
     city: addr.city || null,
+    city_district: addr.city_district || null,
     settlement: addr.settlement || null,
     street: addr.street || null,
     house: addr.house || null,
@@ -75,8 +78,7 @@ const PERSON_FIELD_KEYS: Record<string, string> = {
   full_name: 'ind_full_name',
   birth_date: 'ind_birth_date',
   personal_number: 'ind_personal_number',
-  passport_series: 'ind_passport_series',
-  passport_number: 'ind_passport_number',
+  passport_number_full: 'ind_passport_number',
   passport_issued_by: 'ind_passport_issued_by',
   passport_issued_date: 'ind_passport_issued_date',
   passport_valid_until: 'ind_passport_valid_until',
@@ -90,8 +92,20 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
   const [fullName, setFullName] = useState(initialData?.full_name || '');
   const [birthDate, setBirthDate] = useState(initialData?.birth_date || '');
   const [personalNumber, setPersonalNumber] = useState(initialData?.personal_number || '');
-  const [passportSeries, setPassportSeries] = useState(initialData?.passport_series || '');
-  const [passportNumber, setPassportNumber] = useState(initialData?.passport_number || '');
+  
+  // Unified passport field — prefer passport_number_full, fallback to composed series+number
+  const initialPassport = (() => {
+    const d = initialData as any;
+    if (d?.passport_number_full) return d.passport_number_full;
+    const series = d?.passport_series || '';
+    const number = d?.passport_number || '';
+    if (series || number) return `${series}${number}`.trim();
+    return '';
+  })();
+  const [passportFull, setPassportFull] = useState(initialPassport);
+  const [passportHint, setPassportHint] = useState('');
+  const [passportError, setPassportError] = useState('');
+
   const [passportIssuedBy, setPassportIssuedBy] = useState(initialData?.passport_issued_by || '');
   const [passportIssuedDate, setPassportIssuedDate] = useState(initialData?.passport_issued_date || '');
   const [passportValidUntil, setPassportValidUntil] = useState(initialData?.passport_valid_until || '');
@@ -104,16 +118,50 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
   /** Get publicId for a person field from registry */
   const pid = (formField: string) => fieldsMap.get(PERSON_FIELD_KEYS[formField])?.publicId;
 
+  const handlePassportBlur = useCallback(() => {
+    if (!passportFull.trim()) {
+      setPassportHint('');
+      setPassportError('');
+      return;
+    }
+    const result = normalizePassport(passportFull);
+    if (result.success && result.normalized) {
+      setPassportFull(result.normalized);
+      if (result.normalized !== result.original) {
+        setPassportHint(`Сохранено как: ${result.normalized}`);
+      } else {
+        setPassportHint('');
+      }
+      setPassportError('');
+    } else {
+      setPassportError('Допустимы только латинские буквы (A-Z) и цифры (0-9)');
+      setPassportHint('');
+    }
+  }, [passportFull]);
+
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim()) return;
+
+    // Validate passport before submit
+    if (passportFull.trim()) {
+      const result = normalizePassport(passportFull);
+      if (!result.success) {
+        setPassportError('Допустимы только латинские буквы (A-Z) и цифры (0-9)');
+        return;
+      }
+    }
+
+    const normalizedPassport = passportFull.trim() ? normalizePassport(passportFull).normalized : null;
 
     const data: Record<string, any> = {
       full_name: fullName.trim(),
       birth_date: birthDate || null,
       personal_number: personalNumber || null,
-      passport_series: passportSeries || null,
-      passport_number: passportNumber || null,
+      passport_number_full: normalizedPassport,
+      // Keep legacy fields in sync for backward compatibility during transition
+      passport_series: null,
+      passport_number: null,
       passport_issued_by: passportIssuedBy || null,
       passport_issued_date: passportIssuedDate || null,
       passport_valid_until: passportValidUntil || null,
@@ -125,7 +173,7 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
     };
 
     await onSubmit(data);
-  }, [fullName, birthDate, personalNumber, passportSeries, passportNumber, passportIssuedBy, passportIssuedDate, passportValidUntil, phone, email, notes, isActive, address, onSubmit]);
+  }, [fullName, birthDate, personalNumber, passportFull, passportIssuedBy, passportIssuedDate, passportValidUntil, phone, email, notes, isActive, address, onSubmit]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -164,15 +212,29 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <CopyablePlainLabel htmlFor="pf-passport-series" label="Серия" publicId={pid('passport_series')} />
-              <Input id="pf-passport-series" value={passportSeries} onChange={(e) => setPassportSeries(e.target.value)} placeholder="AB" />
-            </div>
-            <div>
-              <CopyablePlainLabel htmlFor="pf-passport-number" label="Номер" publicId={pid('passport_number')} />
-              <Input id="pf-passport-number" value={passportNumber} onChange={(e) => setPassportNumber(e.target.value)} placeholder="1234567" />
-            </div>
+          <div>
+            <CopyablePlainLabel htmlFor="pf-passport-full" label="Серия и номер паспорта" publicId={pid('passport_number_full')} />
+            <Input
+              id="pf-passport-full"
+              value={passportFull}
+              onChange={(e) => {
+                setPassportFull(e.target.value);
+                setPassportError('');
+                setPassportHint('');
+              }}
+              onBlur={handlePassportBlur}
+              placeholder="MP4187696"
+              className={passportError ? 'border-destructive' : ''}
+            />
+            {passportHint && (
+              <p className="text-xs text-primary mt-1">{passportHint}</p>
+            )}
+            {passportError && (
+              <p className="text-xs text-destructive mt-1">{passportError}</p>
+            )}
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Только латинские буквы и цифры, без пробелов. Например: MP4187696
+            </p>
           </div>
           <div>
             <CopyablePlainLabel htmlFor="pf-passport-issued-by" label="Кем выдан" publicId={pid('passport_issued_by')} />
@@ -251,7 +313,7 @@ export function PersonFieldsForm({ initialData, onSubmit, isSubmitting }: Person
       </Card>
 
       <div className="pt-2">
-        <Button type="submit" className="w-full" disabled={isSubmitting || !fullName.trim()}>
+        <Button type="submit" className="w-full" disabled={isSubmitting || !fullName.trim() || !!passportError}>
           {isSubmitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
           Сохранить
         </Button>

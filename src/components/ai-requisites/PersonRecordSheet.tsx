@@ -96,8 +96,7 @@ export function PersonRecordSheet({
 
     const checkInput = {
       personal_number: data.personal_number,
-      passport_series: data.passport_series,
-      passport_number: data.passport_number,
+      passport_number_full: data.passport_number_full,
       full_name: data.full_name,
       birth_date: data.birth_date,
     };
@@ -185,7 +184,10 @@ export function PersonRecordSheet({
         </Card>
 
         {/* Passport */}
-        {(person.passport_series || person.passport_number || person.passport_issued_by) && (
+        {(() => {
+          const passportFull = (person as any).passport_number_full || 
+            ((person.passport_series || '') + (person.passport_number || '')).trim() || null;
+          return (passportFull || person.passport_issued_by) ? (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm text-muted-foreground flex items-center gap-2">
@@ -194,14 +196,14 @@ export function PersonRecordSheet({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {person.passport_series && <InfoRow label="Серия" value={person.passport_series} />}
-              {person.passport_number && (<>{person.passport_series && <Separator />}<InfoRow label="Номер" value={person.passport_number} copyable mono /></>)}
-              {person.passport_issued_by && (<><Separator /><InfoRow label="Кем выдан" value={person.passport_issued_by} /></>)}
+              {passportFull && <InfoRow label="Серия и номер" value={passportFull} copyable mono />}
+              {person.passport_issued_by && (<>{passportFull && <Separator />}<InfoRow label="Кем выдан" value={person.passport_issued_by} /></>)}
               {person.passport_issued_date && (<><Separator /><InfoRow label="Дата выдачи" value={person.passport_issued_date} /></>)}
               {person.passport_valid_until && (<><Separator /><InfoRow label="Срок действия" value={person.passport_valid_until} /></>)}
             </CardContent>
           </Card>
-        )}
+          ) : null;
+        })()}
 
         {/* Address */}
         {addressLines.length > 0 && (
@@ -412,7 +414,7 @@ export function PersonRecordSheet({
           candidates={duplicateCheck.candidates.map((c) => ({
             id: c.id,
             label: c.full_name || 'Без имени',
-            sublabel: c.personal_number ? `ЛН: ${c.personal_number}` : c.passport_number ? `Паспорт: ${c.passport_series || ''} ${c.passport_number}` : undefined,
+            sublabel: c.personal_number ? `ЛН: ${c.personal_number}` : (c as any).passport_number_full ? `Паспорт: ${(c as any).passport_number_full}` : undefined,
             isArchived: !c.is_active,
           }))}
           onOpenExisting={handleOpenExisting}
