@@ -1,300 +1,171 @@
 # да, согласен, с учетом правок:
 
-1. **Убрать из PATCH 2.6 отдельный live preview адреса полностью**  
-По текущему edit mode он дублирует уже существующий structured UI и не даёт новой пользы.  
-Оставить только:
-  - structured address fields,
-  - автозаполнение Google,
-  - добавление/сохранение `район города`,
-  - compact postal view в режиме просмотра.
-2. **Паспорт делать одним полем** `passport_number_full` **как основной SoT для физлица**  
-Формат хранения строго:
-  - только `A-Z0-9`
-  - без пробелов
-  - без дефисов
-  - пример: `MP4187696`
-3. **Нормализацию паспорта уточнить**
-  - uppercase
-  - убрать пробелы/дефисы/невидимые символы
-  - финальный regex: `^[A-Z0-9]+$`
-  - разрешить только **безопасную автонормализацию визуально совпадающих кириллических букв серии в латиницу**  
-  пример: `МП 4187696` → `MP4187696`
-  - если строка не может быть безопасно нормализована — validation error, без сохранения мусора
-4. **Старые** `passport_series` **/** `passport_number` **не хранить как мусор**
-  - сначала dry-run dependency audit;
-  - если active prod usage = 0 и данные тестовые — удалить в этом же PATCH:
-    - DB fields
-    - form bindings
-    - view bindings
-    - duplicate check split logic
-    - registry split keys
-    - legacy aliases по split passport
-  - если активные зависимости есть — controlled migration, затем удаление
-5. **Address model доработать так, чтобы появился именно** `район города`**, а не дублировался** `район`
-  - `district` оставить как административный район/район области
-  - добавить отдельное поле `city_district`
-  - не смешивать их
-6. **Исправить текущую семантическую путаницу адреса**  
-По скрину видно риск, что `Фрунзенский район` сейчас попадает не в то поле.  
-В PATCH 2.6 обязательно:
-  - проверить, куда сейчас сохраняется городской район;
-  - если он сейчас попадает в `settlement`/другое неподходящее поле — сделать migration/backfill в `city_district`;
-  - настроить enricher/normalizer так, чтобы городской район больше не терялся и не записывался в неверное поле.
-7. **Edit mode адреса**
-  - добавить и показывать отдельное поле `Район города`
-  - подключить save/load cycle
-  - если Google/autocomplete умеет его вытаскивать — reuse existing mapping
-  - если не умеет — поле должно оставаться доступным для ручного ввода
-8. **View mode адреса**
-  - оставить compact postal address
-  - `район города` не выводить в основной компактный блок, если это перегружает карточку
-  - formatter компактного адреса не менять лишнего
-9. **Snapshot / deprecation часть PATCH 2.6 поддерживаю**  
-Обязательно сохранить:
-  - `token_manifest_snapshot`
-  - `template_tokens_snapshot`
-  - `source_trace`
-  - `template_id`
-  - `template_code`
-  - `template_version`
-  - `registry_version`
-  - `resolver_version`
-  - `warnings_snapshot`
-10. **Passport resolver/update**
-  - resolver приоритетно берёт `passport_number_full`
-  - split passport logic использовать только как временный fallback, если cleanup не завершён
-  - после safe cleanup split fallback удалить
-11. **Duplicate check**
-  - перевести на unified passport field
-  - split comparison убрать после cleanup
-12. **Matrix / token registry**
-  - добавить `person.passport_number_full`
-  - `person.passport_series` и `person.passport_number` пометить как delete candidate / deprecated
-  - signer passport mapping тоже перевести на unified field
-13. **DoD PATCH 2.6 дополнить**
-  - в edit mode физлица одно поле паспорта
-  - копирование даёт одно слово без пробелов
-  - `city_district` сохраняется и загружается
-  - городской район не теряется и не попадает в неверное поле
-  - view mode остаётся компактным
-  - split passport поля удалены, если dry-run доказал безопасность удаления; иначе показан dependency report и выполнен controlled migration.
-  - &nbsp;
-  - PATCH 2.6 — Snapshot / Passport / Address / Deprecation
+1. `city` **не удалять и не заводить второй SoT.**  
+Правильный вариант: existing backend `city` оставить как storage field, в UI переименовать в **«Населённый пункт»**. Отдельное параллельное поле `settlement` в UI убрать, чтобы не было дубля. Для DOCX оставить семантический computed placeholder `settlement_display`, который формируется отдельно из типа и названия населённого пункта; это уже соответствует ранее зафиксированной логике истории/шаблонов.
+2. `settlement_display` **и UI-поле не смешивать.**  
+В плане нужно явно разделить:
+  - UI / backend storage: existing `city` → «Населённый пункт»;
+  - DOCX token: `{{settlement_display}}` как вычисляемое значение для `г. Минск`, `аг. Ратомка`, `п. ...`, `д. ...`.  
+  Иначе снова появится риск двойного хранения.
+3. **Snapshot-архитектуру не раздувать новой сущностью, если колонки уже есть.**  
+Раз в аудите зафиксировано, что snapshot-колонки уже добавлены в `ai_generated_documents`, в PATCH 2.6 не создавать параллельную таблицу/новый контур без отдельного обоснования. Делаем enrichment текущей модели, а не вторую систему истории.
+4. **Паспорт: запретить кириллицу на двух уровнях.**  
+В плане нужно явно записать:
+  - input-level guard: кириллица сразу подсвечивается и блокирует сохранение;
+  - paste/save-level guard: пробелы/дефисы можно убрать, но кириллицу не транслитерировать и не сохранять.  
+  Никакой silent replacement `МП -> MP` быть не должно.
+5. **Адрес: зафиксировать mapping полей без двусмысленности.**  
+В плане нужно прямо записать:
+  - `city` = населённый пункт с типом (`г. Минск`);
+  - `city_district` = район города (`Фрунзенский район`);
+  - `district` = район области / региона (`Минский район`).  
+  И отдельно потребовать backfill, если `Фрунзенский район` уже ошибочно попал в `settlement/city`.
+6. `Доп. строка` **убрать только из UI, не ломая backend compat.**  
+В плане стоит уточнить: если поле уже есть в типах/данных, не делать destructive delete без audit; сначала убрать из формы и formatter usage, затем cleanup по proof.
+7. **Нормализацию и адресные преобразования держать в сервисах/adapters, не размазывать по UI.**  
+Это соответствует общему стандарту: бизнес-логика должна быть в service layer, а интеграционные преобразования — в adapters; изменения проходят diagnose → plan → dry run → execute → verify, без пропуска стадий.
+8. **Не потерять уже утверждённые правовые проверки для пакета ГОСУ.**  
+В PATCH 2.6 это не главный scope, но в плане нужно явно записать, что existing validation warnings по годовому собранию сохраняются: дата годового собрания — не позднее 31 марта, извещение — не менее чем за 30 дней, документы для ознакомления — не менее чем за 20 дней.
+9. **Документы в электронном виде должны сохранять состав реквизитов и оформление аналогично бумажным.**  
+Это важно для части snapshot/template generation: при доработке шаблонов и истории не ломать состав реквизитов и внешний формуляр документа.
+10. **В финальном отчёте по PATCH 2.6 обязателен отдельный proof-блок по address bug.**  
+Не только “поле добавлено”, а конкретно:
+  - было: `Фрунзенский район` попадал в населённый пункт;
+  - стало: `г. Минск` в населённом пункте, `Фрунзенский район` в `Район города`, `Минский район` в `Район`.
+11. **В финальном отчёте по PATCH 2.6 обязателен отдельный proof-блок по passport bug.**  
+Проверить минимум 3 сценария:
+  - ввод `MP4187696` → сохраняется;
+  - paste `MP 4187696` → нормализуется в `MP4187696`;
+  - ввод/paste `МП4187696` → красная ошибка, сохранение запрещено.
+12. **Не трогать protected flow** `IndividualDetailsForm` **без отдельного патча.**  
+Если это другая сущность/другой домен, не смешивать её с person card PATCH 2.6. Сначала закрыть person card flow, потом отдельно решать legal-details form, если понадобится.
+13. PATCH 2.6 — Corrected Implementation Plan
 
-## Обзор текущего состояния
+## Current State (from audit)
 
-**Snapshot:** Таблица `ai_generated_documents` уже хранит `snapshot` (JSONB) и `missing_tokens`, но без структурированных полей (`token_manifest_snapshot`, `template_tokens_snapshot`, `source_trace`, версионирование). Отдельной таблицы `document_generation_snapshots` нет.
+1. **Passport normalizer** (`passportNormalizer.ts`): Currently does **silent Cyrillic→Latin transliteration** (МП→MP). User requires: **reject Cyrillic, no transliteration**.
+2. **Address layout** (`StructuredAddressBlock.tsx`): Has both `city` ("Город") and `settlement` ("Населённый пункт") as separate fields + `address_line_2` ("Доп. строка"). User requires: rename `city` to "Населённый пункт", remove `settlement` from UI, remove `address_line_2` from UI.
+3. **GooglePlacesAdapter**: Maps `sublocality` → `settlement`. Should map to `city_district` instead.
+4. **Snapshot columns**: Already added in migration `20260324180250`. DB work done.
+5. `**passport_number_full**`: Already added in same migration. DB work done.
+6. **Legacy `passport_series`/`passport_number**`: Still referenced in 14 files. `IndividualDetailsForm.tsx` (separate legal-details form, NOT person card) uses `ind_passport_series`/`ind_passport_number` — this is a different entity type, protected flow, not touched.
 
-**Passport:** В БД (`legal_details_persons`) — два отдельных поля `passport_series` и `passport_number`. Используются в 18 файлах: UI формы, view, resolver, duplicate check, edge functions. Поля `passport_number_full` не существует.
+## Changes
 
-**Address:** `StructuredAddress` НЕ содержит `city_district`. В `StructuredAddressBlock` поле "Район" = `district` (административный район области). Городской район (Фрунзенский, Центральный) сейчас **фильтруется** в enricher и formatter как мусор — не сохраняется. View mode уже использует `formatStructuredAddressForView` с двухстрочным форматом.
+### 1. Fix passport normalizer — reject Cyrillic (PATCH 2.6B correction)
 
----
+**File:** `src/lib/persons/passportNormalizer.ts`
 
-## Порядок выполнения
+- Remove `CYRILLIC_TO_LATIN` map entirely
+- Remove transliteration step
+- Keep only: trim → uppercase → remove spaces/hyphens → validate `^[A-Z0-9]+$`
+- If input contains Cyrillic after cleanup → `success: false`
+- Add helper `containsCyrillic(input)` for real-time UI validation
 
-### Шаг 1: Dry-run audit (read-only)
+### 2. Fix passport UI validation messages (PATCH 2.6C)
 
-Перед любыми изменениями — полный аудит зависимостей:
+**File:** `src/components/ai-requisites/PersonFieldsForm.tsx`
 
-**Passport fields audit:**
+- Update `handlePassportBlur` error: "Используйте латиницу. Серия и номер паспорта вводятся только английскими буквами и цифрами, без пробелов."
+- Add real-time Cyrillic detection on `onChange` — if Cyrillic detected, show red border + inline error immediately (not just on blur)
+- On paste: strip spaces/hyphens (normalization), but if Cyrillic remains → error, don't save
 
-- `passport_series` / `passport_number` используются в: `PersonFieldsForm`, `PersonRecordSheet`, `PersonsTableView`, `usePersonDuplicateCheck`, `aiDocumentSnapshotResolver`, `personDisplayUtils`, edge functions (`ai-generate-document`, `ai-generate-document-package`)
-- Активные prod-данные: проверить через `SELECT count(*) FROM legal_details_persons WHERE passport_series IS NOT NULL OR passport_number IS NOT NULL`
+### 3. Address layout overhaul (PATCH 2.6D)
 
-**City district audit:**
+**File:** `src/components/shared/StructuredAddressBlock.tsx`
 
-- `city_district` не существует ни в `StructuredAddress`, ни в `CanonicalAddressPayload`, ни в БД
-- Нужно добавить новое поле
+FULL_LAYOUT changes:
 
-**Snapshot audit:**
+- `city` label: "Город" → "Населённый пункт", placeholder: "г. Минск"
+- Remove `settlement` row
+- Remove `address_line_2` row
+- Reorder to match spec:
 
-- `ai_generated_documents.snapshot` — flat JSONB без структуры
-- Нет `source_trace`, `token_manifest`, `template_tokens`, версий
-
-**Deliverable:** Dependency report с решением: hard cleanup или controlled migration для passport fields.
-
----
-
-### Шаг 2: PATCH 2.6A — Snapshot strategy
-
-**Миграция БД** — добавить колонки в `ai_generated_documents`:
-
-```sql
-ALTER TABLE ai_generated_documents ADD COLUMN IF NOT EXISTS
-  token_manifest_snapshot jsonb,
-  template_tokens_snapshot jsonb,
-  source_trace jsonb,
-  template_code text,
-  template_version text,
-  registry_version text,
-  resolver_version text,
-  warnings_snapshot jsonb;
+```text
+1. Страна (country_name)
+2. Область / Регион (region)          col-span-2
+3. Район (district)
+4. Населённый пункт (city)            col-span-2
+5. Район города (city_district)
+6. Индекс (postal_code)
+7. Улица (street)                     col-span-2
+8. Дом (house)
+9. Корпус (building)
+10. Квартира (apartment)
 ```
 
-Existing `snapshot` колонка = `placeholder_data_snapshot` (rename не нужен, add-only).
+COMPACT_LAYOUT: rename `city` label to "Населённый пункт".
 
-**Edge functions** (`ai-generate-document`, `ai-generate-document-package`):
+`handleFieldChange`: Remove `settlement` clearing logic. Keep `city` clearing logic (now semantically = населённый пункт).
 
-- Собирать `token_manifest_snapshot` из resolver (requested/found/missing/legacy)
-- Собирать `template_tokens_snapshot` из docxtemplater parsed tags
-- Добавить `source_trace` per-key
-- Записывать версии при insert
+### 4. GooglePlacesAdapter — map sublocality to city_district
 
-**Legacy deprecation:**
+**File:** `src/lib/address/adapters/GooglePlacesAdapter.ts`
 
-- Phase A: dual resolve уже работает в `aiDocumentSnapshotResolver.ts`
-- Phase B: добавить `console.warn` если legacy token resolved
-- Phase C: отдельный endpoint/query для admin deprecation report (шаблон → legacy tokens → canonical replacement → статус)
+- Change: `sublocality_level_1 / sublocality / neighborhood` → map to `city_district` instead of `settlement`
+- This ensures city districts from Google go to the correct field
 
-**Файлы:**
+### 5. Address types cleanup
 
-- `supabase/migrations/new` — ALTER TABLE
-- `supabase/functions/ai-generate-document/index.ts` — snapshot enrichment
-- `supabase/functions/ai-generate-document-package/index.ts` — snapshot enrichment
-- `src/utils/aiDocumentSnapshotResolver.ts` — добавить manifest/trace collection
+**File:** `src/lib/address/types.ts`
 
----
+- Keep `settlement` in the type (backend compat) but remove from `AUTOCOMPLETE_FIELDS`
+- Remove `address_line_2` from `MANUAL_ONLY_FIELDS`
 
-### Шаг 3: PATCH 2.6B — Unified passport field
+**File:** `src/lib/address/utils.ts`
 
-**Миграция БД:**
+- `emptyAddress()`: keep `settlement` and `address_line_2` as empty strings (backend compat)
+- `formatFullAddress()`: skip `settlement` if same as `city`
+- `buildAutocompleteQuery()`: remove `settlement` case
 
-```sql
-ALTER TABLE legal_details_persons
-  ADD COLUMN IF NOT EXISTS passport_number_full text;
-```
+### 6. Address normalization service
 
-**Нормализатор** — новый `src/lib/persons/passportNormalizer.ts`:
+**File:** `src/lib/address/AddressNormalizationService.ts`
 
-- `normalizePassport(input: string): { normalized: string; success: boolean }`
-- trim → uppercase → remove spaces/hyphens/invisible chars → retain only A-Z0-9
-- Транслитерация кириллицы (М→M, П→P, etc.) для безопасной нормализации
-- Regex validation: `^[A-Z0-9]+$`
+- `payloadToStructuredAddress()`: keep mapping `settlement` but it won't show in UI
 
-**Data migration** (через insert tool, не через миграцию):
+### 7. Formatter — no changes needed
 
-```sql
-UPDATE legal_details_persons
-SET passport_number_full = UPPER(REGEXP_REPLACE(
-  COALESCE(passport_series, '') || COALESCE(passport_number, ''),
-  '[^A-Z0-9]', '', 'gi'
-))
-WHERE passport_number_full IS NULL
-  AND (passport_series IS NOT NULL OR passport_number IS NOT NULL);
-```
+`formatStructuredAddress.ts` already handles `city` as locality with prefix detection (`г.`, `д.`, `п.`). The `settlement` field fallback in formatter can stay for backward compat with old data.
 
-**Registry:** Добавить `person.passport_number_full` в `fields_registry`. Отметить `person.passport_series` и `person.passport_number` как deprecated.
+### 8. PersonFieldsForm address mapping
 
----
+**File:** `src/components/ai-requisites/PersonFieldsForm.tsx`
 
-### Шаг 4: PATCH 2.6C — Person card passport UI
+- `parseAddress()`: keep `settlement` mapping for old data compat
+- `addressToStructured()`: keep `settlement` in payload
 
-**Edit mode** (`PersonFieldsForm.tsx`):
+### 9. Snapshot enrichment in edge function (PATCH 2.6A)
 
-- Заменить два поля (Серия + Номер) на одно: "Серия и номер паспорта"
-- Helper text: "Только латинские буквы и цифры, без пробелов. Например: MP4187696"
-- При blur/save: нормализация через `normalizePassport()`
-- Если успешно → hint "Сохранено как: MP4187696"
-- Если неуспешно → validation error, не сохранять
+**File:** `supabase/functions/ai-generate-document-package/index.ts`
 
-**View mode** (`PersonRecordSheet.tsx`):
+- On document generation, populate `token_manifest_snapshot`, `source_trace`, `warnings_snapshot` into the insert
 
-- Одна строка "Серия и номер паспорта: MP4187696"
-- Copy копирует слитное значение
+### 10. Resolver + matrix updates (PATCH 2.6E)
 
-**Duplicate check** (`usePersonDuplicateCheck.ts`):
+**File:** `src/utils/aiDocumentSnapshotResolver.ts` — already uses `passport_number_full` with fallback. No changes needed.
 
-- Tier 2: перейти на `passport_number_full` вместо `passport_series` + `passport_number`
+**File:** `docs/token_matrix.md` — update address semantics note: `city` = населённый пункт
 
 ---
 
-### Шаг 5: PATCH 2.6D — Address city_district
+## What does NOT change
 
-**Новое поле в модели:**
-
-- `StructuredAddress` → добавить `city_district: string`
-- `CanonicalAddressPayload` → добавить `city_district: string | null`
-
-**StructuredAddressBlock:** Добавить поле "Район города" между "Город" и "Населённый пункт" в FULL_LAYOUT. Manual-only (без autocomplete trigger).
-
-**GrpAddressEnricher:** Вместо фильтрации city district → сохранять в `city_district`.
-
-**Formatter:** `formatStructuredAddressForView` — city_district не включать в компактный view (по ТЗ). Использовать только в edit mode и при необходимости в полном адресе.
-
-**PersonFieldsForm:** Поле city_district автоматически появится через StructuredAddressBlock.
-
-**Файлы:**
-
-- `src/lib/address/types.ts` — добавить city_district
-- `src/lib/address/utils.ts` — обновить emptyAddress
-- `src/components/shared/StructuredAddressBlock.tsx` — добавить в layout
-- `src/lib/address/GrpAddressEnricher.ts` — сохранять вместо фильтрации
-- `src/lib/address/AddressNormalizationService.ts` — включить в payload
-- `src/lib/address/formatStructuredAddress.ts` — НЕ менять compact view
-
----
-
-### Шаг 6: PATCH 2.6E — Resolver / tokens / compatibility
-
-- Resolver: приоритет `passport_number_full`, fallback compose из old fields
-- `source_trace` для паспорта показывает источник
-- Matrix update: добавить `person.passport_number_full`, отметить old keys deprecated
-- Signer context: passport из unified field
-
-**Файлы:**
-
-- `src/utils/aiDocumentSnapshotResolver.ts`
-- `docs/token_matrix.md`
-- `.lovable/plan.md`
-
----
-
-### Шаг 7: PATCH 2.6F — Verify / Proof
-
-- SQL proof: новые колонки существуют
-- Code proof: resolver, forms, formatter обновлены
-- UI proof: edit/view person card, address district, compact address
-- Legacy proof: existing flows не сломаны
-
----
-
-## STOP-guards
-
-- Не ломать billing/template flows
-- Не ломать Telegram/email editors
-- Не удалять old passport fields без dependency audit proof
-- Не делать отдельный address preview block
-- Не создавать новый picker component
-- Old `passport_series`/`passport_number` колонки в БД: удалять только после proof что active prod usage = 0
-
-## Файлы, которые меняются
-
-
-| Файл                                                                | Патч   | Что                                           |
-| ------------------------------------------------------------------- | ------ | --------------------------------------------- |
-| SQL migration                                                       | 2.6A   | snapshot columns в ai_generated_documents     |
-| SQL migration                                                       | 2.6B   | passport_number_full в legal_details_persons  |
-| `src/lib/persons/passportNormalizer.ts`                             | 2.6B   | Новый: нормализатор паспорта                  |
-| `src/components/ai-requisites/PersonFieldsForm.tsx`                 | 2.6C   | Unified passport field                        |
-| `src/components/ai-requisites/PersonRecordSheet.tsx`                | 2.6C   | View mode unified passport                    |
-| `src/hooks/usePersonDuplicateCheck.ts`                              | 2.6C   | Duplicate check по unified field              |
-| `src/lib/address/types.ts`                                          | 2.6D   | city_district в модели                        |
-| `src/lib/address/utils.ts`                                          | 2.6D   | emptyAddress + formatFullAddress              |
-| `src/components/shared/StructuredAddressBlock.tsx`                  | 2.6D   | Поле "Район города"                           |
-| `src/lib/address/GrpAddressEnricher.ts`                             | 2.6D   | Сохранять city_district                       |
-| `src/lib/address/AddressNormalizationService.ts`                    | 2.6D   | city_district в payload                       |
-| `src/utils/aiDocumentSnapshotResolver.ts`                           | 2.6A,E | manifest, trace, unified passport             |
-| Edge functions (ai-generate-document, ai-generate-document-package) | 2.6A   | Snapshot enrichment                           |
-| `docs/token_matrix.md`                                              | 2.6E   | person.passport_number_full + deprecated keys |
-| `.lovable/plan.md`                                                  | 2.6F   | Status update                                 |
-
-
-## Что НЕ меняется
-
-- `generate-from-template` (billing)
+- Backend `city` column — not deleted
+- `settlement` field in TS types — kept for compat
+- `IndividualDetailsForm.tsx` (legal-details, separate from person card) — protected flow
+- `generate-from-template` edge function — protected billing flow  
 - Telegram/email editors
-- `client_legal_details` schema
 - RLS policies
-- Формат сохранённых `{{token}}` строк
 - Existing `legal_details.*` registry entries
+
+## Mapping proof: city → Населённый пункт
+
+
+| Before                | After                                    |
+| --------------------- | ---------------------------------------- |
+| Backend field `city`  | **Not changed** — same DB column         |
+| UI label "Город"      | → "Населённый пункт"                     |
+| UI field `settlement` | **Removed from UI** — no parallel SoT    |
+| Stored value          | `г. Минск`, `п. Ратомка`, `д. Шабановка` |
+| Google `sublocality`  | → `city_district` (was `settlement`)     |
