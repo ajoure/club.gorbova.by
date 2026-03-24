@@ -3159,7 +3159,16 @@ Deno.serve(async (req) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
             body: JSON.stringify({
-              message: `💳 Оплата по ссылке\n\n👤 <b>Клиент:</b> ${linkProfile.full_name || 'Не указано'}\n📧 Email: ${maskEmail(linkProfile.email || linkOrderV2.customer_email)}\n\n💵 Сумма: ${linkPaymentAmount.toFixed(2)} BYN\n🆔 Заказ: ${linkOrderV2.order_number || 'N/A'}`,
+              message: buildAdminNotifyMessage({
+                operation_type: 'link_payment',
+                client_name: linkProfile.full_name,
+                contact_url: buildContactUrl({ appBaseUrl: Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '', email: linkProfile.email || linkOrderV2.customer_email, mode: 'search' }),
+                email: linkProfile.email || linkOrderV2.customer_email,
+                amount: linkPaymentAmount,
+                currency: 'BYN',
+                order_number: linkOrderV2.order_number,
+                source_label: 'Оплата по ссылке',
+              }),
               source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
             }),
           }
