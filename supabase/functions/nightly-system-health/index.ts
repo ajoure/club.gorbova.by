@@ -315,13 +315,30 @@ serve(async (req) => {
       body: { run_id: runId },
     });
 
-    const invariantsResult: NightlyReport = invariantsResponse.data || {
-      success: false,
-      run_at: new Date().toISOString(),
-      duration_ms: 0,
-      invariants: [],
-      summary: { total_checks: 0, passed: 0, failed: 0 }
-    };
+    const rawInvariants = invariantsResponse.data;
+    const invariantsResult: NightlyReport = (() => {
+      if (!rawInvariants || typeof rawInvariants !== 'object') {
+        console.warn('[NIGHTLY] invariants response empty or not JSON, using fallback');
+        return {
+          success: false,
+          run_at: new Date().toISOString(),
+          duration_ms: 0,
+          invariants: [],
+          summary: { total_checks: 0, passed: 0, failed: 0 }
+        };
+      }
+      // Normalize: if summary is missing, build it from passed/failed fields
+      if (!rawInvariants.summary) {
+        const passed = typeof rawInvariants.passed === 'number' ? rawInvariants.passed : 0;
+        const failed = typeof rawInvariants.failed === 'number' ? rawInvariants.failed : 0;
+        rawInvariants.summary = { total_checks: passed + failed, passed, failed };
+        console.log(`[NIGHTLY] Normalized missing summary: ${JSON.stringify(rawInvariants.summary)}`);
+      }
+      if (!Array.isArray(rawInvariants.invariants)) {
+        rawInvariants.invariants = [];
+      }
+      return rawInvariants as NightlyReport;
+    })();
 
     // === INV-SITE-1: Published pages with empty or malformed blocks ===
     const { data: publishedPages, error: siteCheckError } = await supabase
