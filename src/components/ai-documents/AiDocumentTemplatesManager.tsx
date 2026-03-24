@@ -52,6 +52,8 @@ interface TemplateForm {
   parsedPlaceholders: string[];
   isParsing: boolean;
   parseError: string | null;
+  /** Tokenized notes/instructions for the template — uses {{canonical.key}} tokens */
+  template_notes: string;
 }
 
 const emptyForm: TemplateForm = {
@@ -63,6 +65,7 @@ const emptyForm: TemplateForm = {
   parsedPlaceholders: [],
   isParsing: false,
   parseError: null,
+  template_notes: "",
 };
 
 function generateCode(): string {
