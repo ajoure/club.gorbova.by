@@ -132,6 +132,41 @@ export function AiDocumentsGenerateView() {
           </GlassCard>
         ) : (
           <div className="space-y-6">
+            {/* Corporate documents section */}
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
+                <Building2 className="h-4 w-4" />
+                Корпоративные документы
+              </h3>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <GlassCard className="flex flex-col">
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="p-2 rounded-lg bg-primary/10 shrink-0">
+                      <Building2 className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-semibold leading-tight truncate">Годовое собрание ООО/ОДО</h3>
+                      <div className="flex gap-1.5 mt-1">
+                        <Badge variant="outline" className="text-xs">Корпоративный</Badge>
+                        <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">Новое</Badge>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2 flex-1">
+                    Полный пакет документов для годового собрания участников или решения единственного участника
+                  </p>
+                  <Button
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => setCorporateWizardOpen(true)}
+                  >
+                    <PenLine className="h-4 w-4 mr-2" />
+                    Начать
+                  </Button>
+                </GlassCard>
+              </div>
+            </div>
+
             {/* Package cards */}
             {hasPackages && (
               <div>
