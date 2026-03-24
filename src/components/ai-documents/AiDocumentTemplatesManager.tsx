@@ -20,6 +20,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { extractDocxPlaceholders } from "@/utils/extractDocxPlaceholders";
+import { TokenizedRichInput } from "@/components/admin/TokenizedRichInput";
 import {
   Upload,
   Pencil,
@@ -51,6 +52,8 @@ interface TemplateForm {
   parsedPlaceholders: string[];
   isParsing: boolean;
   parseError: string | null;
+  /** Tokenized notes/instructions for the template — uses {{canonical.key}} tokens */
+  template_notes: string;
 }
 
 const emptyForm: TemplateForm = {
@@ -62,6 +65,7 @@ const emptyForm: TemplateForm = {
   parsedPlaceholders: [],
   isParsing: false,
   parseError: null,
+  template_notes: "",
 };
 
 function generateCode(): string {
@@ -135,6 +139,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       parsedPlaceholders: Array.isArray(t.placeholders) ? t.placeholders : [],
       isParsing: false,
       parseError: null,
+      template_notes: (t as any).template_notes || "",
     });
     setMode("edit");
   };
@@ -335,12 +340,25 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                       placeholder="Например: Счёт-акт для ИП"
                     />
                   </div>
-                  <div className="space-y-1.5">
+                   <div className="space-y-1.5">
                     <Label className="text-sm">Описание</Label>
                     <Input
                       value={form.description}
                       onChange={(e) => setForm({ ...form, description: e.target.value })}
                       placeholder="Краткое описание назначения шаблона"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">Инструкции к шаблону</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Заметки о токенах и особенностях заполнения. Нажмите [ для вставки токена.
+                    </p>
+                    <TokenizedRichInput
+                      value={form.template_notes}
+                      onChange={(v) => setForm({ ...form, template_notes: v })}
+                      placeholder="Например: В этом шаблоне используется [Дата собрания] и [ФИО подписанта]..."
+                      rows={3}
+                      tokenContext="documents:annual_meeting"
                     />
                   </div>
                   <div className="flex items-center justify-between">

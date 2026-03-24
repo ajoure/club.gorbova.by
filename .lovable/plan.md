@@ -111,7 +111,26 @@
 - [x] Existing Telegram/email flows не изменились
 - [x] Новый picker component не создан
 
-### PATCH 2.1 — End-to-end proof: НЕ НАЧАТ
+### PATCH 2.1 — End-to-end proof: ВЫПОЛНЕН
+
+**Где встроен:** `AiDocumentTemplatesManager.tsx` — поле «Инструкции к шаблону» в create/edit форме шаблона документа.
+
+**Что сделано:**
+1. Добавлено поле `template_notes` (tokenized) в форму создания/редактирования AI-шаблона
+2. Используется `TokenizedRichInput` с `tokenContext="documents:annual_meeting"`
+3. Picker при `[` показывает все document groups: Contact, DateTime, Product, Реквизиты, Юрлицо, Физлицо, Связи, Собрание, Документ, Роли в пакете, Списки пакета, Повестка дня, Решения
+4. SoT: `{{meeting.date}}`, UI: chip `[Дата собрания]`
+5. Reload → chip восстанавливается через `tokenStringToLabel()`
+
+**Production context:** Поле «Инструкции к шаблону» — реальная бизнес-потребность для документирования токенов и инструкций по заполнению шаблона.
+
+**DoD:**
+- [x] `[` открывает picker
+- [x] Доступны все группы для tokenContext="documents:annual_meeting"
+- [x] Выбор [Дата собрания] сохраняет {{meeting.date}} в SoT
+- [x] После reload UI label/chip восстанавливается
+- [x] Existing Telegram/email editors не затронуты
+- [x] Новый picker component не создан
 
 ### PATCH 2.5 — Master token matrix (gate): НЕ НАЧАТ
 
