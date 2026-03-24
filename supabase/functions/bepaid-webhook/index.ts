@@ -1803,7 +1803,8 @@ Deno.serve(async (req) => {
             auto_renew: false,
             meta: {
               ...(subV2.meta || {}),
-              [`bepaid_${subscriptionState}_at`]: now.toISOString(),
+              bepaid_terminal_at: now.toISOString(),
+              bepaid_terminal_state: subscriptionState,
             },
           })
           .eq('id', subscriptionV2Id);
