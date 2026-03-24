@@ -144,13 +144,15 @@
 
 **Артефакт:** `docs/token_matrix.md`
 
-**Содержание:**
+**Содержание (v2):**
 - Reuse 1:1 блок: 59 existing keys reused (47 legal_details + 12 meeting)
-- New add-only блок: 38 новых ключей
-- Full matrix: 97 записей по 15+ колонкам
-- Колонки: canonical_key, ui_label, entity_type, scalar_array, token_context, resolver_scope, status, doc1–doc4 usage, legacy_alias
+- New add-only блок: 39 новых ключей (person=12, исправлено с 38)
+- Full matrix: 98 записей (59+39) по 13 колонкам
+- Колонки: canonical_key, entity_type, ui_label, scalar_array, source, token_context, resolver_scope, status, doc1–doc4 usage, legacy_alias
+- entity_type и source присутствуют в каждой строке
 - status: reused / new / legacy-only / legacy+canonical
-- legacy_alias: конкретные ad-hoc token names (entity_name, entity_address, director_name, etc.)
+- Legacy aliases: 64 полных mapping (34 legacy+canonical, 30 legacy-only)
+- Источники: aiDocumentSnapshotResolver.ts + 4 edge functions
 - Doc usage: manual classification для 4 документов годового собрания
 
 **Gate conditions:**
