@@ -46,8 +46,6 @@ export interface AdminNotifyMessageParams {
   currency?: string | null;
 
   next_charge_at?: string | null;
-  bepaid_subscription_id?: string | null;
-  bepaid_payment_id?: string | null;
 
   source_label?: string | null;
   admin_label?: string | null;
