@@ -378,7 +378,7 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
 
       {/* ─── Close Confirm Dialog ──────────────────────────────── */}
       <AlertDialog open={showCloseConfirm} onOpenChange={setShowCloseConfirm}>
-        <AlertDialogContent className="max-w-md p-5 gap-3">
+        <AlertDialogContent className="max-w-md p-5 gap-3" overlayClassName="bg-black/40">
           <AlertDialogHeader className="gap-1.5">
             <AlertDialogTitle>Выйти из мастера?</AlertDialogTitle>
             <AlertDialogDescription>
