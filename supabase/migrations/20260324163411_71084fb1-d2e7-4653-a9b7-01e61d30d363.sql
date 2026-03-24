@@ -1,0 +1,1 @@
+ALTER TABLE public.fields_registry ADD CONSTRAINT fields_registry_key_unique UNIQUE (key);
