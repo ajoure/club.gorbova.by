@@ -4221,7 +4221,7 @@ Deno.serve(async (req) => {
               tariff_name: (notifyOrderData.tariffs as any)?.name,
               amount: paymentV2.amount,
               currency: paymentV2.currency,
-              order_number: notifyOrderData.order_number,
+              bepaid_payment_id: transactionUid || undefined,
               source_label: 'Оплата через checkout bePaid',
             });
 
@@ -4239,7 +4239,6 @@ Deno.serve(async (req) => {
                     message: notifyMessage,
                     source: 'bepaid_webhook',
                     order_id: notifyOrderData.id,
-                    order_number: notifyOrderData.order_number,
                     payment_id: paymentV2.id,
                   }),
                 }
