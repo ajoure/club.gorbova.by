@@ -4216,7 +4216,6 @@ Deno.serve(async (req) => {
               tariff_name: (notifyOrderData.tariffs as any)?.name,
               amount: paymentV2.amount,
               currency: paymentV2.currency,
-              bepaid_payment_id: transactionUid || undefined,
               source_label: 'Оплата через checkout bePaid',
             });
 
