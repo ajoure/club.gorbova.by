@@ -502,6 +502,7 @@ Deno.serve(async (req: Request) => {
         missing_ids: result.missing_ids.slice(0, 20),
         errors: result.errors.slice(0, 20),
         duration_ms: result.duration_ms,
+        terminal_auto_renew_disabled: result.terminal_auto_renew_disabled || 0,
       },
     });
 
