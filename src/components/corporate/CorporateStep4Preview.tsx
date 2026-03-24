@@ -34,6 +34,7 @@ import {
 } from "@/lib/corporate/corporateRuleEngine";
 import {
   resolveManifestTemplates,
+  verifyStorageFiles,
   validateTemplateAvailability,
   type TemplateResolutionResult,
   type TemplateValidationResult,
@@ -71,14 +72,31 @@ export function CorporateStep4Preview({ session }: Props) {
     let cancelled = false;
     setResolving(true);
 
-    resolveManifestTemplates(manifest).then(result => {
-      if (cancelled) return;
-      setResolution(result);
-      setTemplateValidation(validateTemplateAvailability(result));
-      setResolving(false);
-    }).catch(() => {
-      if (!cancelled) setResolving(false);
-    });
+    resolveManifestTemplates(manifest)
+      .then(result => {
+        if (cancelled) return;
+        // Storage verification — проверяем реальное наличие файлов
+        return verifyStorageFiles(result.items)
+          .then(verifiedItems => {
+            if (cancelled) return;
+            const verifiedResult = { ...result, items: verifiedItems };
+            setResolution(verifiedResult);
+            setTemplateValidation(validateTemplateAvailability(verifiedResult));
+          })
+          .catch(storageErr => {
+            // Partial failure: storage check failed, but DB resolve succeeded
+            console.warn('[CorporateStep4Preview] Storage verification failed, using DB-only results:', storageErr);
+            if (cancelled) return;
+            setResolution(result);
+            setTemplateValidation(validateTemplateAvailability(result));
+          });
+      })
+      .catch(() => {
+        // Full failure: even DB resolve failed
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
 
     return () => { cancelled = true; };
   }, [manifest]);

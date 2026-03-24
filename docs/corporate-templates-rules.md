@@ -26,10 +26,14 @@
 ```
 corporate_wizard (UI)
   → calculatePackageManifest()     # rule engine формирует manifest
-  → resolveManifestTemplates()     # resolver проверяет DB + storage
-  → validateTemplateAvailability() # validation layer
+  → resolveManifestTemplates()     # resolver проверяет DB (record, is_active, template_path)
+  → verifyStorageFiles()           # проверяет фактическое наличие файлов в storage bucket
+  → validateTemplateAvailability() # validation layer (blocking / non-blocking / informational)
   → edge function (Sprint 3)      # генерация DOCX
 ```
+
+> **Примечание:** `verifyStorageFiles()` использует `supabase.storage.list('templates')` для preview-time проверки.
+> При значительном росте числа шаблонов может потребоваться более точная проверка по конкретным путям.
 
 ### Visibility policy: почему corporate templates скрыты из AI-менеджера
 
