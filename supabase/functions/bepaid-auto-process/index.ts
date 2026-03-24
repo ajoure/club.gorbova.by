@@ -889,7 +889,7 @@ Deno.serve(async (req) => {
             // Get customer profile for notification
             const { data: customerProfile } = await supabase
               .from('profiles')
-              .select('full_name, email, phone, telegram_username')
+              .select('full_name, email, telegram_username')
               .eq('id', profileId)
               .single();
 
@@ -907,16 +907,22 @@ Deno.serve(async (req) => {
               .eq('id', mapping.tariff_id)
               .single();
 
-            const notifyMessage = `💰 Новая оплата (авто)\n\n` +
-              `👤 <b>Клиент:</b> ${customerProfile?.full_name || item.card_holder || 'Не указано'}\n` +
-              `📧 Email: ${customerProfile?.email || item.customer_email || 'Не указан'}\n` +
-              `📱 Телефон: ${customerProfile?.phone || item.customer_phone || 'Не указан'}\n` +
-              (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-              `\n📦 <b>Продукт:</b> ${productInfo?.name || 'N/A'}\n` +
-              `📋 Тариф: ${tariffInfo?.name || 'N/A'}\n` +
-              `💵 Сумма: ${finalAmount} ${item.currency || 'BYN'}\n` +
-              `🆔 Заказ: ${newOrder.order_number}\n` +
-              `📎 Источник: auto-process`;
+            const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+            const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email || item.customer_email, mode: 'search' });
+
+            const notifyMessage = buildAdminNotifyMessage({
+              operation_type: 'auto_payment',
+              client_name: customerProfile?.full_name || item.card_holder,
+              contact_url: contactUrl,
+              email: customerProfile?.email || item.customer_email,
+              telegram_username: customerProfile?.telegram_username,
+              product_name: productInfo?.name,
+              tariff_name: tariffInfo?.name,
+              amount: finalAmount,
+              currency: item.currency || 'BYN',
+              order_number: newOrder.order_number,
+              source_label: 'Автообработка',
+            });
 
             await supabase.functions.invoke('telegram-notify-admins', {
               body: { message: notifyMessage },

@@ -1129,15 +1129,23 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
         .maybeSingle();
 
+      const appBaseUrl2 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+      const contactUrl2 = buildContactUrl({ appBaseUrl: appBaseUrl2, email: buyerProfile?.email, mode: 'search' });
+
       await supabase.functions.invoke('telegram-notify-admins', {
         body: {
-          message: `💰 Новая покупка!\n\n` +
-            `👤 ${buyerProfile?.full_name || buyerProfile?.email || 'Неизвестно'}\n` +
-            `📧 ${buyerProfile?.email || 'N/A'}\n` +
-            `📦 ${product.name}\n` +
-            `🏷️ ${tariff.name}\n` +
-            `💵 ${amount} ${product.currency}\n` +
-            `🔢 Заказ: ${order.order_number}`,
+          message: buildAdminNotifyMessage({
+            operation_type: isTrial ? 'trial' : 'payment',
+            client_name: buyerProfile?.full_name,
+            contact_url: contactUrl2,
+            email: buyerProfile?.email,
+            product_name: product.name,
+            tariff_name: tariff.name,
+            amount,
+            currency: product.currency,
+            order_number: order.order_number,
+            source_label: 'Прямое списание',
+          }),
         },
       }).catch(console.error);
 
