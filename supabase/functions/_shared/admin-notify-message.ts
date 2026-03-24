@@ -6,7 +6,7 @@
  * - Empty fields are NOT rendered (line is hidden completely)
  * - All values are HTML-escaped
  * - parse_mode = HTML always
- * - bepaid_subscription_id and bepaid_payment_id wrapped in <code> with compact format
+ * - Client name wrapped in <code> for copy-friendly display
  * - Product fallback: "не указан"; tariff: hidden if empty
  * - Phone removed from all notifications (PII)
  * - admin_label only for manual/admin-triggered operations
