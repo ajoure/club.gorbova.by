@@ -1628,25 +1628,28 @@ Deno.serve(async (req) => {
           // Full admin notification (same detail level as regular checkout)
           const { data: customerProfile } = await supabase
             .from('profiles')
-            .select('full_name, email, phone, telegram_username')
+            .select('full_name, email, telegram_username')
             .eq('user_id', subV2.user_id)
             .maybeSingle();
 
-          const productName = subV2.products_v2?.name || 'Подписка';
-          const tariffName = subV2.tariffs?.name || '';
-          const amountFormatted = paymentAmount.toFixed(2);
-          const paymentType = '💰 Оплата через подписку bePaid';
-          
-          const notifyMessage = `${paymentType}\n\n` +
-            `👤 <b>Клиент:</b> ${customerProfile?.full_name || 'Не указано'}\n` +
-            `📧 Email: ${maskEmail(customerProfile?.email)}\n` +
-            (customerProfile?.telegram_username ? `💬 Telegram: @${customerProfile.telegram_username}\n` : '') +
-            `\n📦 <b>Продукт:</b> ${productName}\n` +
-            `📋 Тариф: ${tariffName}\n` +
-            `💵 Сумма: ${amountFormatted} BYN\n` +
-            `🆔 Заказ: ${orderV2?.order_number || 'N/A'}\n` +
-            `🔄 Следующее списание: ${renewAt.toLocaleDateString('ru-RU')}\n` +
-            `📎 bePaid sub: ${subscriptionId}`;
+          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
+          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
+
+          const notifyMessage = buildAdminNotifyMessage({
+            operation_type: 'bepaid_subscription_payment',
+            client_name: customerProfile?.full_name,
+            contact_url: contactUrl,
+            email: customerProfile?.email,
+            telegram_username: customerProfile?.telegram_username,
+            product_name: subV2.products_v2?.name,
+            tariff_name: subV2.tariffs?.name,
+            amount: paymentAmount,
+            currency: 'BYN',
+            order_number: orderV2?.order_number,
+            next_charge_at: renewAt.toISOString(),
+            bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+            source_label: 'Webhook bePaid / subscription',
+          });
             
           const notifyResp = await fetch(
             `${Deno.env.get('SUPABASE_URL')}/functions/v1/telegram-notify-admins`,
