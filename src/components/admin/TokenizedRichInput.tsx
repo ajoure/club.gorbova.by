@@ -37,7 +37,10 @@ import {
   setProductFieldsCache,
   tokenStringToLabel,
   extractShortUuid,
+  loadTokensForContext,
+  getTokenGroupsForContext,
   type TokenDef,
+  type TokenContext,
 } from "@/lib/tokens/tokenRegistry";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";

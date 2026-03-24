@@ -421,3 +421,111 @@ export type ArrayTokenResolverContract = {
     required: boolean;
   }>;
 };
+
+// ─── Context-based token source adapter ────────────────────────────
+
+/**
+ * Token context determines which token groups are available in the picker.
+ * 
+ * - "messages" — Contact + DateTime + Product (default, Telegram/email)
+ * - "documents" — messages + LegalDetails + Entity + Person + EntityPerson + Document + Meeting
+ * - "documents:annual_meeting" — documents + Package roles + Package arrays + Agenda + Decision
+ * 
+ * New integrations MUST use tokenContext. Do NOT use extraTokenGroups for new features.
+ */
+export type TokenContext = "messages" | "documents" | "documents:annual_meeting";
+
+/**
+ * Load and cache all token groups required by a given context.
+ * Returns groups ready for picker rendering.
+ * 
+ * Call this once on component mount, results are cached in module-level variables.
+ */
+export async function loadTokensForContext(context: TokenContext): Promise<void> {
+  // "messages" context: product fields only (contact/datetime are static)
+  const productPromise = loadProductFields().then(setProductFieldsCache);
+  
+  if (context === "messages") {
+    await productPromise;
+    return;
+  }
+
+  // "documents" context: add legal_details, entity, person, entity_person, document, meeting
+  const promises: Promise<void>[] = [
+    productPromise,
+    loadLegalDetailsFields().then(setLegalDetailsFieldsCache),
+    loadEntityFields().then(setEntityFieldsCache),
+    loadPersonFields().then(setPersonFieldsCache),
+    loadEntityPersonFields().then(setEntityPersonFieldsCache),
+    loadDocumentFields().then(setDocumentFieldsCache),
+    loadMeetingFields().then(setMeetingFieldsCache),
+  ];
+
+  if (context === "documents:annual_meeting") {
+    // Add package roles, package arrays, agenda, decision
+    promises.push(
+      loadPackageFields().then(({ roles, arrays }) => {
+        setPackageRolesCache(roles);
+        setPackageArraysCache(arrays);
+      }),
+      loadAgendaFields().then(setAgendaFieldsCache),
+      loadDecisionFields().then(setDecisionFieldsCache),
+    );
+  }
+
+  await Promise.all(promises);
+}
+
+/**
+ * Get token groups for a given context from cached data.
+ * Call loadTokensForContext() first to populate caches.
+ */
+export function getTokenGroupsForContext(context: TokenContext): Array<{ heading: string; tokens: TokenDef[] }> {
+  const groups: Array<{ heading: string; tokens: TokenDef[] }> = [];
+
+  // All contexts get Contact + DateTime (static, always available)
+  // Product fields
+  if (_productFieldsCache.length > 0) {
+    groups.push({ heading: "Продукт", tokens: _productFieldsCache });
+  }
+
+  if (context === "messages") return groups;
+
+  // "documents" and "documents:annual_meeting"
+  if (_legalDetailsFieldsCache.length > 0) {
+    groups.push({ heading: "Реквизиты", tokens: _legalDetailsFieldsCache });
+  }
+  if (_entityFieldsCache.length > 0) {
+    groups.push({ heading: "Юрлицо (вычисляемые)", tokens: _entityFieldsCache });
+  }
+  if (_personFieldsCache.length > 0) {
+    groups.push({ heading: "Физлицо", tokens: _personFieldsCache });
+  }
+  if (_entityPersonFieldsCache.length > 0) {
+    groups.push({ heading: "Связь лицо ↔ юрлицо", tokens: _entityPersonFieldsCache });
+  }
+  if (_meetingFieldsCache.length > 0) {
+    groups.push({ heading: "Собрание", tokens: _meetingFieldsCache });
+  }
+  if (_documentFieldsCache.length > 0) {
+    groups.push({ heading: "Документ", tokens: _documentFieldsCache });
+  }
+
+  if (context !== "documents:annual_meeting") return groups;
+
+  // Annual meeting specific
+  if (_packageRolesCache.length > 0) {
+    groups.push({ heading: "Роли в пакете", tokens: _packageRolesCache });
+  }
+  if (_packageArraysCache.length > 0) {
+    groups.push({ heading: "Списки пакета (массивы)", tokens: _packageArraysCache });
+  }
+  if (_agendaFieldsCache.length > 0) {
+    groups.push({ heading: "Повестка дня", tokens: _agendaFieldsCache });
+  }
+  if (_decisionFieldsCache.length > 0) {
+    groups.push({ heading: "Решения", tokens: _decisionFieldsCache });
+  }
+
+  return groups;
+}
