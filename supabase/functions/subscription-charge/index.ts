@@ -1665,15 +1665,28 @@ async function chargeSubscription(
           .eq('user_id', user_id)
           .single();
 
+        // Lookup product name from context (add-only, no heavy JOIN)
+        let subProductName: string | undefined;
+        if (product_id) {
+          const { data: subProduct } = await supabase
+            .from('products_v2')
+            .select('name')
+            .eq('id', product_id)
+            .maybeSingle();
+          subProductName = subProduct?.name || undefined;
+        }
+
         const adminMessage = buildAdminNotifyMessage({
           operation_type: 'subscription_renewal',
           client_name: profile?.full_name,
           email: profile?.email,
           telegram_username: profile?.telegram_username,
+          product_name: subProductName,
           tariff_name: tariff.name,
           amount,
           currency,
-          order_number: id,
+          next_charge_at: nextChargeDate.toISOString(),
+          bepaid_payment_id: bepaidUid || undefined,
           source_label: 'Подписка bePaid (автосписание)',
         });
 

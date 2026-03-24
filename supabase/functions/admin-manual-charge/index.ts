@@ -460,7 +460,7 @@ Deno.serve(async (req) => {
             tariff_name: tariff?.name,
             amount: amount / 100,
             currency: 'BYN',
-            order_number: orderNumber,
+            bepaid_payment_id: chargeResult.uid || undefined,
             source_label: 'Ручное списание админом',
             admin_label: user.email,
           });
@@ -471,7 +471,6 @@ Deno.serve(async (req) => {
               parse_mode: 'HTML',
               source: 'admin_manual_charge',
               order_id: order.id,
-              order_number: orderNumber,
               payment_id: payment.id,
             },
           });

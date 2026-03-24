@@ -1632,9 +1632,9 @@ Deno.serve(async (req) => {
             tariff_name: subV2.tariffs?.name,
             amount: paymentAmount,
             currency: 'BYN',
-            order_number: orderV2?.order_number,
             next_charge_at: renewAt.toISOString(),
             bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+            bepaid_payment_id: transactionUid || undefined,
             source_label: 'Подписка bePaid (автосписание)',
           });
             
@@ -1650,7 +1650,6 @@ Deno.serve(async (req) => {
                 message: notifyMessage,
                 source: 'bepaid_subscription_webhook',
                 order_id: orderV2Id,
-                order_number: orderV2?.order_number,
               }),
             }
           );
@@ -2550,8 +2549,8 @@ Deno.serve(async (req) => {
           tariff_name: linkTariffName,
           amount: paymentAmount,
           currency: 'BYN',
-          order_number: linkOrder.order_number,
           bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
+          bepaid_payment_id: transactionUid || undefined,
           source_label: 'Оплата по ссылке bePaid',
         });
 
@@ -2567,7 +2566,6 @@ Deno.serve(async (req) => {
               message: notifyMessage,
               source: 'bepaid_link_order_webhook',
               order_id: linkOrder.id,
-              order_number: linkOrder.order_number,
             }),
           }
         );
@@ -3174,10 +3172,10 @@ Deno.serve(async (req) => {
                 tariff_name: linkV2TariffName,
                 amount: linkPaymentAmount,
                 currency: 'BYN',
-                order_number: linkOrderV2.order_number,
+                bepaid_payment_id: transactionUid || undefined,
                 source_label: 'Оплата по ссылке bePaid',
               }),
-              source: 'bepaid_link_webhook', order_id: linkOrderV2.id, order_number: linkOrderV2.order_number,
+              source: 'bepaid_link_webhook', order_id: linkOrderV2.id,
             }),
           }
         );
@@ -4223,7 +4221,7 @@ Deno.serve(async (req) => {
               tariff_name: (notifyOrderData.tariffs as any)?.name,
               amount: paymentV2.amount,
               currency: paymentV2.currency,
-              order_number: notifyOrderData.order_number,
+              bepaid_payment_id: transactionUid || undefined,
               source_label: 'Оплата через checkout bePaid',
             });
 
@@ -4241,7 +4239,6 @@ Deno.serve(async (req) => {
                     message: notifyMessage,
                     source: 'bepaid_webhook',
                     order_id: notifyOrderData.id,
-                    order_number: notifyOrderData.order_number,
                     payment_id: paymentV2.id,
                   }),
                 }
@@ -5413,7 +5410,7 @@ ${userName}, к сожалению, не удалось провести опл�
           tariff_name: legacyTariffName || undefined,
           amount: amountFormatted,
           currency: order.currency,
-          order_number: legacyOrderV2?.order_number || internalOrderId,
+          bepaid_payment_id: transactionUid || undefined,
           source_label: 'Оплата через checkout bePaid',
         });
 
@@ -5429,7 +5426,6 @@ ${userName}, к сожалению, не удалось провести опл�
               message: telegramNotifyMessage,
               source: 'bepaid_webhook_legacy',
               order_id: legacyOrderV2?.id || internalOrderId,
-              order_number: legacyOrderV2?.order_number,
             }),
           }
         );

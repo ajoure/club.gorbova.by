@@ -601,7 +601,7 @@ async function fixOrderAndCreateSubscription(
         tariff_name: tariffData?.name,
         amount: order.final_price,
         currency: order.currency || 'BYN',
-        order_number: order.order_number,
+        bepaid_payment_id: item?.bepaid_uid || undefined,
         source_label: 'Платёж восстановлен',
       });
 
@@ -611,7 +611,6 @@ async function fixOrderAndCreateSubscription(
           parse_mode: 'HTML',
           source: 'payments_reconcile_fix',
           order_id: order.id,
-          order_number: order.order_number,
         },
       });
 
