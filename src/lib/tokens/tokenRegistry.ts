@@ -32,7 +32,7 @@ export interface TokenDef {
   key: string;
   label: string;
   tokenString: string;
-  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity";
+  group: "contact" | "datetime" | "product" | "legal_details" | "person" | "entity_person" | "document" | "meeting" | "entity" | "package_role" | "package_default" | "package_array" | "agenda" | "decision";
   badge: string;
   searchKeywords: string;
 }
@@ -172,6 +172,63 @@ export async function loadEntityFields(): Promise<TokenDef[]> {
   return loadFieldsByEntityType("entity", "entity");
 }
 
+/**
+ * Load package fields from fields_registry.
+ * Splits into three sub-groups:
+ * - package_role: scalar role tokens (signer, chairperson, secretary)
+ * - package_default: scalar package-level defaults (already covered by meeting.*)
+ * - package_array: array/loop tokens (participants, registered_persons)
+ */
+export async function loadPackageFields(): Promise<{
+  roles: TokenDef[];
+  arrays: TokenDef[];
+}> {
+  const { data, error } = await supabase
+    .from("fields_registry")
+    .select("id, entity_type, key, label, data_type, public_id, options")
+    .eq("entity_type", "package")
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return { roles: [], arrays: [] };
+
+  const roles: TokenDef[] = [];
+  const arrays: TokenDef[] = [];
+
+  for (const f of data) {
+    const opts = f.options as Record<string, unknown> | null;
+    const strategy = opts?.source_strategy as string | undefined;
+    const isArray = f.data_type === "array" || strategy === "loop";
+
+    const def: TokenDef = {
+      key: f.id,
+      label: f.label,
+      tokenString: `{{${f.key}}}`,
+      group: isArray ? "package_array" : "package_role",
+      badge: isArray ? "Массив" : (DATA_TYPE_BADGES[f.data_type] ?? f.data_type),
+      searchKeywords: extractSearchKeywords(f),
+    };
+
+    if (isArray) {
+      arrays.push(def);
+    } else {
+      roles.push(def);
+    }
+  }
+
+  return { roles, arrays };
+}
+
+/** Load agenda fields — entity_type = 'agenda' */
+export async function loadAgendaFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("agenda", "agenda");
+}
+
+/** Load decision fields — entity_type = 'decision' */
+export async function loadDecisionFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("decision", "decision");
+}
+
 // Internal caches (populated by react-query in components)
 let _productFieldsCache: TokenDef[] = [];
 let _legalDetailsFieldsCache: TokenDef[] = [];
@@ -180,6 +237,10 @@ let _entityPersonFieldsCache: TokenDef[] = [];
 let _documentFieldsCache: TokenDef[] = [];
 let _meetingFieldsCache: TokenDef[] = [];
 let _entityFieldsCache: TokenDef[] = [];
+let _packageRolesCache: TokenDef[] = [];
+let _packageArraysCache: TokenDef[] = [];
+let _agendaFieldsCache: TokenDef[] = [];
+let _decisionFieldsCache: TokenDef[] = [];
 
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
@@ -209,47 +270,48 @@ export function setEntityFieldsCache(fields: TokenDef[]) {
   _entityFieldsCache = fields;
 }
 
+export function setPackageRolesCache(fields: TokenDef[]) {
+  _packageRolesCache = fields;
+}
+
+export function setPackageArraysCache(fields: TokenDef[]) {
+  _packageArraysCache = fields;
+}
+
+export function setAgendaFieldsCache(fields: TokenDef[]) {
+  _agendaFieldsCache = fields;
+}
+
+export function setDecisionFieldsCache(fields: TokenDef[]) {
+  _decisionFieldsCache = fields;
+}
+
 /**
  * Runtime lookup: tokenString → label.
  * Used to render chips from saved SoT strings.
  * Returns null if token is unknown (UNMAPPED).
  */
 export function tokenStringToLabel(tokenString: string): string | null {
-  // Check contact tokens
-  const contact = CONTACT_TOKENS.find((t) => t.tokenString === tokenString);
-  if (contact) return contact.label;
+  const allCaches: TokenDef[][] = [
+    CONTACT_TOKENS,
+    DATETIME_TOKENS,
+    _productFieldsCache,
+    _legalDetailsFieldsCache,
+    _personFieldsCache,
+    _entityPersonFieldsCache,
+    _documentFieldsCache,
+    _meetingFieldsCache,
+    _entityFieldsCache,
+    _packageRolesCache,
+    _packageArraysCache,
+    _agendaFieldsCache,
+    _decisionFieldsCache,
+  ];
 
-  // Check datetime tokens
-  const datetime = DATETIME_TOKENS.find((t) => t.tokenString === tokenString);
-  if (datetime) return datetime.label;
-
-  // Check product custom fields cache
-  const product = _productFieldsCache.find((t) => t.tokenString === tokenString);
-  if (product) return product.label;
-
-  // Check legal_details fields cache
-  const legal = _legalDetailsFieldsCache.find((t) => t.tokenString === tokenString);
-  if (legal) return legal.label;
-
-  // Check person fields cache
-  const person = _personFieldsCache.find((t) => t.tokenString === tokenString);
-  if (person) return person.label;
-
-  // Check entity_person fields cache
-  const entityPerson = _entityPersonFieldsCache.find((t) => t.tokenString === tokenString);
-  if (entityPerson) return entityPerson.label;
-
-  // Check document fields cache
-  const doc = _documentFieldsCache.find((t) => t.tokenString === tokenString);
-  if (doc) return doc.label;
-
-  // Check meeting fields cache
-  const meeting = _meetingFieldsCache.find((t) => t.tokenString === tokenString);
-  if (meeting) return meeting.label;
-
-  // Check entity computed fields cache
-  const entity = _entityFieldsCache.find((t) => t.tokenString === tokenString);
-  if (entity) return entity.label;
+  for (const cache of allCaches) {
+    const found = cache.find((t) => t.tokenString === tokenString);
+    if (found) return found.label;
+  }
 
   return null; // UNMAPPED
 }
@@ -273,8 +335,14 @@ export function extractShortUuid(tokenString: string): string {
 }
 
 /**
- * Document token group definitions for use with TokenizedRichInput extraTokenGroups.
+ * Document token group definitions for use with TokenizedRichInput.
  * Returns configured groups from cached registry data.
+ * 
+ * Groups are split into:
+ * - Scalar entity/person/meeting/document groups
+ * - Package roles (scalar, role-context)
+ * - Package arrays/loops (participants, registered_persons)
+ * - Agenda/Decision arrays
  */
 export function getDocumentTokenGroups(): Array<{ heading: string; tokens: TokenDef[] }> {
   const groups: Array<{ heading: string; tokens: TokenDef[] }> = [];
@@ -294,6 +362,62 @@ export function getDocumentTokenGroups(): Array<{ heading: string; tokens: Token
   if (_documentFieldsCache.length > 0) {
     groups.push({ heading: "Документ", tokens: _documentFieldsCache });
   }
+  // Package roles (scalar)
+  if (_packageRolesCache.length > 0) {
+    groups.push({ heading: "Роли в пакете", tokens: _packageRolesCache });
+  }
+  // Package arrays/loops
+  if (_packageArraysCache.length > 0) {
+    groups.push({ heading: "Списки пакета (массивы)", tokens: _packageArraysCache });
+  }
+  // Agenda
+  if (_agendaFieldsCache.length > 0) {
+    groups.push({ heading: "Повестка дня", tokens: _agendaFieldsCache });
+  }
+  // Decisions
+  if (_decisionFieldsCache.length > 0) {
+    groups.push({ heading: "Решения", tokens: _decisionFieldsCache });
+  }
 
   return groups;
 }
+
+/**
+ * Resolver contract for array/loop tokens.
+ * 
+ * REGISTRY: Array tokens are stored in fields_registry with data_type='array'
+ * and options.source_strategy='loop'. The item_schema in options defines
+ * the expected shape of each array element.
+ * 
+ * SOURCE: The resolver collects array data from the relevant source tables:
+ * - package.participants → legal_details_entity_person_links + legal_details_persons
+ * - package.registered_persons → same source, filtered by registration status
+ * - agenda.items → package metadata or dedicated agenda table
+ * - decision.items → derived from agenda items with voting results
+ * 
+ * PAYLOAD: Each array element is a plain object matching item_schema keys.
+ * Example: { full_name: "Иванов И.И.", share_percent: 50, votes_count: 100 }
+ * 
+ * DOCXTEMPLATER LOOP SYNTAX:
+ * {#package.participants}
+ *   {full_name} — {share_percent}%
+ * {/package.participants}
+ * 
+ * VALIDATION: Required fields from item_schema are checked at generation time.
+ * Missing required fields generate warnings in token_manifest_snapshot.
+ * 
+ * @see PATCH 2.5 master token matrix for full mapping
+ */
+export type ArrayTokenResolverContract = {
+  /** Canonical key of the array token (e.g. "package.participants") */
+  key: string;
+  /** Source strategy from options */
+  sourceStrategy: "loop";
+  /** Schema of each item in the array */
+  itemSchema: Array<{
+    key: string;
+    label: string;
+    type: string;
+    required: boolean;
+  }>;
+};
