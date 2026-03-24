@@ -1,195 +1,172 @@
-# PATCH 2.1–2.6: Завершение архитектуры токенов
+# да, согласен, с учетом правок:
 
-## Статус
+&nbsp;
 
-### PATCH 2.2 — Duplicate guard + UNIQUE(key): ВЫПОЛНЕН
+1. **PATCH 2.1**
+  Считать закрытым только после **реального UI-proof**, не только code/sql proof:
+  &nbsp;
+  - сохранить в template_notes токен {{[meeting.date](http://meeting.date)}};
+  - переоткрыть форму;
+  - подтвердить, что отображается корректный chip/label [Дата собрания].
+    Это обязательный runtime-proof перед финальным закрытием PATCH 2.1.
+  &nbsp;
+2. **PATCH 2.5 — totals исправить строго и явно**
+  Если person = 12, тогда:
+  &nbsp;
+  - new add-only = **39**, не 38;
+  - total registry = **98**, не 97.
+    В matrix и в summary все totals должны совпадать без расхождений.
+  &nbsp;
+3. **docs/token_[matrix.md](http://matrix.md)**
+  Поддерживаю правки:
+  &nbsp;
+  - добавить entity_type в каждую строку;
+  - добавить отдельную колонку source;
+  - оставить resolver_scope отдельно;
+  - расширить legacy_alias до полного списка всех legacy ad-hoc ключей.
+  &nbsp;
+4. **Legacy aliases**
+  Делай не просто список, а **явный mapping**:
+  &nbsp;
+  - legacy_alias
+  - canonical_key
+  - status
+    Для ключей, где одновременно живут canonical и legacy, статус должен быть legacy+canonical.
+  &nbsp;
+5. **Reuse block**
+  Расширить блок reuse не только для package.*, но и для всего annual meeting scope:
+  &nbsp;
+  - какие existing meeting.* были reused 1:1;
+  - какие legal_details.* reused 1:1;
+  - почему новый key не создавался.
+  &nbsp;
+6. **Gate перед PATCH 2.6**
+  Открывать PATCH 2.6 только если:
+  &nbsp;
+  - totals в matrix сходятся;
+  - entity_type и source добавлены;
+  - все legacy aliases задокументированы;
+  - doc1–doc4 usage сверены с реальными DOCX;
+  - matrix утверждена.
+  &nbsp;
+7. **PATCH 2.6 scope**
+  Подтверждаю состав snapshot schema:
+  &nbsp;
+  - placeholder_data_snapshot
+  - token_manifest_snapshot
+  - template_tokens_snapshot
+  - template_id
+  - template_code
+  - template_version
+  - registry_version
+  - resolver_version
+  - warnings_snapshot
+  - source_trace
+  &nbsp;
 
-**Dry-run proof:**
-- SQL: `SELECT key, COUNT(*) FROM fields_registry GROUP BY key HAVING COUNT(*) > 1` → **0 дублей**
-- Безопасно введён глобальный UNIQUE constraint
+&nbsp;
 
-**Что сделано:**
-1. **SQL migration:** `ALTER TABLE public.fields_registry ADD CONSTRAINT fields_registry_key_unique UNIQUE (key)` — canonical key уникален по всей системе
-2. **`src/lib/tokens/tokenDuplicateGuard.ts`** — новый service:
-   - `checkTokenDuplicate(key, label, entityType)` — обязательный вызов перед любым INSERT
-   - 3 уровня: exact key (block), exact token (block), fuzzy label Levenshtein<3 (block + require explicit reuse decision)
-   - Применяется к: admin UI, seed/migration, программное создание
-   - Export: `normalizeLabel`, `levenshteinDistance` для тестирования
+&nbsp;
 
-**DoD:**
-- [x] duplicate_keys = 0 (dry-run proof)
-- [x] UNIQUE(key) constraint в БД
-- [x] Guard service с 3 уровнями проверки
-- [x] Fuzzy match не автосоздаёт — требует explicit decision
-- [x] JSDoc с registry-first policy
+После исправления matrix и прохождения gate можно запускать **PATCH 2.6**.
 
----
+&nbsp;
 
-### PATCH 2.4 — Package roles + defaults + arrays: ВЫПОЛНЕН
+PATCH 2.5 fixes + PATCH 2.1 final proof + pre-PATCH 2.6 gate
 
-**Reuse audit (registry-first):**
-- `package.notice.method` → **skip** (exists as `meeting.notice.method`)
-- `package.meeting.location.full` → **skip** (exists as `meeting.location.full`)
-- `package.review.location.full` → **skip** (exists as `meeting.review.location.full`)
-- `package.review.from` → **skip** (exists as `meeting.review.start`)
-- `package.candidates.deadline` → **skip** (exists as `meeting.candidates.deadline`)
-- `package.report_year` → **skip** (exists as `meeting.report_year`)
+## 1. PATCH 2.1 — Final proof status
 
-**Что сделано:**
+**SQL proof:** Migration `20260324170019` adds `template_notes text` to `document_templates`. Column exists.
 
-**A. Missing meeting defaults (3 записи):**
-- `meeting.review.to` — Окончание рассмотрения вопросов
-- `meeting.review.break_from` — Начало перерыва
-- `meeting.review.break_to` — Окончание перерыва
+**Code proof:** `AiDocumentTemplatesManager.tsx` lines 170 and 188 — `template_notes` is included in both `createTemplate()` and `updateTemplate()` calls. Existing templates without this field get `NULL` (safe).
 
-**B. Scalar package-role tokens (4 записи, entity_type='package'):**
-- `package.signer.full_name` — ФИО подписанта (source_strategy: package_role, role: signer)
-- `package.signer.position` — Должность подписанта
-- `package.chairperson.full_name` — ФИО председателя
-- `package.secretary.full_name` — ФИО секретаря
+**UI proof:** Requires manual verification — save a template with `{{meeting.date}}` in `template_notes`, reopen form, confirm chip `[Дата собрания]` restores. This is a runtime check to be performed after PATCH 2.5 fixes are applied.
 
-**C. Array/loop tokens (4 записи):**
-- `package.participants` (entity_type='package', data_type='array') — item_schema: full_name✱, share_percent✱, votes_count
-- `package.registered_persons` (entity_type='package') — item_schema: full_name✱, registration_time, representative, share_percent
-- `agenda.items` (entity_type='agenda') — item_schema: number✱, title✱, speaker, decision_text, votes_for, votes_against, votes_abstained
-- `decision.items` (entity_type='decision') — item_schema: agenda_number✱, text✱, result
-
-**D. tokenRegistry.ts обновлён:**
-- `loadPackageFields()` — возвращает `{ roles, arrays }` с разделением по source_strategy
-- `loadAgendaFields()`, `loadDecisionFields()` — новые loaders
-- Кэши: `_packageRolesCache`, `_packageArraysCache`, `_agendaFieldsCache`, `_decisionFieldsCache`
-- `tokenStringToLabel()` — рефакторинг, поддерживает все кэши
-- `getDocumentTokenGroups()` — 4 новые группы: «Роли в пакете», «Списки пакета», «Повестка дня», «Решения»
-- `ArrayTokenResolverContract` type + JSDoc resolver contract
-
-**E. Resolver contract (задокументирован в tokenRegistry.ts):**
-- Registry: data_type='array', options.source_strategy='loop', options.item_schema=[...]
-- Source: resolver собирает из entity_person_links + persons / package metadata
-- Payload: plain objects matching item_schema keys
-- DOCX loop: `{#package.participants}{full_name} — {share_percent}%{/package.participants}`
-- Validation: required fields checked at generation, warnings in token_manifest_snapshot
-
-**DoD:**
-- [x] Registry entries add-only (11 новых, 0 удалённых/изменённых)
-- [x] Scalar roles и arrays разделены (разные groups в picker)
-- [x] Existing legal_details.* не затронуты
-- [x] Existing Telegram/email picker не затронут
-- [x] Resolver contract задокументирован (JSDoc + type)
-- [x] Loop syntax для DOCX зафиксирован
-- [x] Package tokens доступны для будущего tokenContext="documents:annual_meeting"
-
-### PATCH 2.3 — Context-based token source adapter: ВЫПОЛНЕН
-
-**Что сделано:**
-
-**A. TokenContext type + getTokenGroupsForContext() в tokenRegistry.ts:**
-- `TokenContext = "messages" | "documents" | "documents:annual_meeting"`
-- `loadTokensForContext(context)` — загружает все нужные кэши параллельно (Promise.all)
-- `getTokenGroupsForContext(context)` — возвращает группы из кэшей по контексту
-- "messages" → Product
-- "documents" → + LegalDetails, Entity, Person, EntityPerson, Meeting, Document
-- "documents:annual_meeting" → + Package roles, Package arrays, Agenda, Decisions
-
-**B. TokenizedRichInput обновлён:**
-- Новый prop `tokenContext?: TokenContext` — финальный standard для всех новых интеграций
-- При `tokenContext` — useQuery загружает `loadTokensForContext()` и рендерит `contextGroups`
-- При отсутствии `tokenContext` — legacy path (только productFields)
-- `extraTokenGroups` помечен `@deprecated` в JSDoc, оставлен для backward compat
-- Existing Telegram/email editors не затронуты (не передают tokenContext)
-
-**C. Picker rendering:**
-- Contact + DateTime — всегда показываются (static)
-- Context groups — рендерятся только при tokenContext
-- Product (legacy) — рендерится только БЕЗ tokenContext
-- extraTokenGroups — рендерится всегда (backward compat)
-
-**DoD:**
-- [x] tokenContext — финальный standard
-- [x] extraTokenGroups deprecated, не используется в новых интеграциях
-- [x] Contexts зафиксированы: messages, documents, documents:annual_meeting
-- [x] Package/agenda/decision группы доступны через tokenContext="documents:annual_meeting"
-- [x] Existing Telegram/email flows не изменились
-- [x] Новый picker component не создан
-
-### PATCH 2.1 — End-to-end proof: ВЫПОЛНЕН
-
-**Где встроен:** `AiDocumentTemplatesManager.tsx` — поле «Инструкции к шаблону» в create/edit форме шаблона документа.
-
-**Что сделано:**
-1. Добавлено поле `template_notes` (tokenized) в форму создания/редактирования AI-шаблона
-2. Используется `TokenizedRichInput` с `tokenContext="documents:annual_meeting"`
-3. Picker при `[` показывает все document groups: Contact, DateTime, Product, Реквизиты, Юрлицо, Физлицо, Связи, Собрание, Документ, Роли в пакете, Списки пакета, Повестка дня, Решения
-4. SoT: `{{meeting.date}}`, UI: chip `[Дата собрания]`
-5. Reload → chip восстанавливается через `tokenStringToLabel()`
-
-**Persistence proof (PATCH 2.1 fix):**
-- SQL migration: `ALTER TABLE public.document_templates ADD COLUMN IF NOT EXISTS template_notes text`
-- `handleSave` → create и update включают `template_notes`
-- Existing шаблоны без template_notes: NULL допустим, поломки нет
-- Full cycle: `[` → picker → `{{meeting.date}}` → save to DB → reload → chip restored
-
-**Production context:** Поле «Инструкции к шаблону» — реальная бизнес-потребность для документирования токенов и инструкций по заполнению шаблона.
-
-**DoD:**
-- [x] `[` открывает picker
-- [x] Доступны все группы для tokenContext="documents:annual_meeting"
-- [x] Выбор [Дата собрания] сохраняет {{meeting.date}} в SoT
-- [x] template_notes сохраняется в БД (create + update)
-- [x] После reload UI label/chip восстанавливается
-- [x] Existing шаблоны без template_notes не ломаются
-- [x] Existing Telegram/email editors не затронуты
-- [x] Новый picker component не создан
-
-### PATCH 2.5 — Master token matrix (gate): ВЫПОЛНЕН
-
-**Артефакт:** `docs/token_matrix.md`
-
-**Содержание:**
-- Reuse 1:1 блок: 59 existing keys reused (47 legal_details + 12 meeting)
-- New add-only блок: 38 новых ключей
-- Full matrix: 97 записей по 15+ колонкам
-- Колонки: canonical_key, ui_label, entity_type, scalar_array, token_context, resolver_scope, status, doc1–doc4 usage, legacy_alias
-- status: reused / new / legacy-only / legacy+canonical
-- legacy_alias: конкретные ad-hoc token names (entity_name, entity_address, director_name, etc.)
-- Doc usage: manual classification для 4 документов годового собрания
-
-**Gate conditions:**
-- [ ] Matrix утверждена владельцем
-- [ ] Legacy aliases проверены
-- [ ] Doc usage проверен на соответствие реальным DOCX
-- [ ] После утверждения → можно переходить к PATCH 2.6
-
-### PATCH 2.6 — Snapshot + deprecation: НЕ НАЧАТ
+**Verdict:** PATCH 2.1 code-complete. UI proof is a manual runtime step.
 
 ---
 
-## Утверждённые правила
+## 2. PATCH 2.5 — Matrix fixes (4 issues)
 
-### Reusable rule (обязательно для всех будущих функций)
-1. Сначала искать existing key в global registry
-2. Использовать existing square-bracket picker
-3. Не создавать новый локальный список токенов без proof, что reuse невозможен
+### A. Person count: 12, not 11
 
-### STOP-guards
-- Не ломать existing Telegram/email token flows
-- Не менять формат уже сохранённых `{{system.token}}`
-- Не менять billing/template flows (`generate-from-template`)
-- Не создавать новый picker component
-- `extraTokenGroups` deprecated — не использовать в новых интеграциях
+Line 34 and line 112 of `token_matrix.md` say "11 записей" but list 12 keys:
+`full_name, initials, address, birth_date, email, phone, personal_number, passport_series, passport_number, passport_issued_by, passport_issued_date, passport_valid_until`
 
-### Gate
-- Без утверждённой master token matrix (PATCH 2.5) нельзя переходить к финальной нормализации 4 DOCX шаблонов
+**Fix:** Change "11" → "12" in both places. Update totals: New add-only = 39 (not 38), Total = 98 (not 97).
 
-### Canonical Standard (4 уровня)
-1. **internal id:** UUID (fields_registry.id)
-2. **canonical key:** e.g. `meeting.notice.date` (fields_registry.key, UNIQUE globally)
-3. **system token:** `{{meeting.notice.date}}` (хранится в тексте/шаблонах)
-4. **UI token:** `[Дата направления извещения]` (показывается в редакторе)
+### B. Add `entity_type` column to every row in full matrix
 
-### Порядок выполнения
-1. ~~PATCH 2.2~~ ✅
-2. PATCH 2.4
-3. PATCH 2.3
-4. PATCH 2.1
-5. PATCH 2.5 (gate)
-6. PATCH 2.6
+Currently `entity_type` is only in section headers. Add it as an explicit column in every table row for machine readability.
+
+### C. Add `source` column separate from `resolver_scope`
+
+New column `source` with values: `client_legal_details.column`, `persons.column`, `entity_person_links.column`, `computed`, `package_role`, `loop`, `manual`, `system`.
+
+### D. Complete legacy_alias list
+
+Current matrix lists only 6 aliases. Full audit of `aiDocumentSnapshotResolver.ts` + edge functions reveals **50+ legacy ad-hoc keys**:
+
+**Document (3):** `document_number`, `document_date`, `document_date_short`
+
+**Entity (14):** `entity_name`, `entity_short_name`, `entity_unp`, `entity_address`, `entity_bank`, `entity_bank_code`, `entity_account`, `entity_phone`, `entity_email`, `entity_director`, `entity_director_short`, `entity_director_position`, `entity_acts_on_basis`, `entity_org_form`
+
+**Client aliases (7):** `client_name`, `client_address`, `client_unp`, `client_phone`, `client_email`, `client_bank`, `client_account`
+
+**Person (12):** `person_full_name`, `person_short_name`, `person_personal_number`, `person_birth_date`, `person_passport_series`, `person_passport_number`, `person_passport_issued_by`, `person_passport_issued_date`, `person_passport_valid_until`, `person_phone`, `person_email`, `person_address`
+
+**Signer (11):** `signer.full_name`, `signer.short_name`, `signer.personal_number`, `signer.passport_series`, `signer.passport_number`, `signer.passport_issued_by`, `signer.passport_issued_date`, `signer.passport_valid_until`, `signer.phone`, `signer.email`, `signer.address`
+
+**Link (4):** `link.role_label`, `link.position`, `link.acts_on_basis`, `link.share_percent`
+
+Each legacy alias will be mapped to its canonical replacement in the matrix.
+
+### E. Reuse 1:1 mapping expansion
+
+Add full reuse mapping not just for `package.*` but for all annual meeting scope reuses — specifically the 12 existing `meeting.*` keys reused without new creation.
+
+### F. Add `status` column verification
+
+Ensure `legacy+canonical` status is applied to keys that have both a canonical registry entry AND active legacy aliases in edge functions (e.g., `entity.name` has legacy `entity_name`).
+
+---
+
+## 3. Pre-PATCH 2.6 gate checklist
+
+After matrix fixes:
+
+- Totals verified: reused + new = total (no arithmetic gaps)
+- `entity_type` column present in every row
+- `source` column present in every row
+- All 50+ legacy aliases documented with canonical replacement
+- doc1–doc4 usage matches real DOCX templates
+- Matrix approved → gate open for PATCH 2.6
+
+---
+
+## 4. PATCH 2.6 scope confirmation
+
+Snapshot schema fields (all required):
+
+- `placeholder_data_snapshot` — resolved `{key: value}`
+- `token_manifest_snapshot` — requested/found/missing
+- `template_tokens_snapshot` — tokens extracted from DOCX
+- `template_id`, `template_code`
+- `template_version`, `registry_version`, `resolver_version`
+- `warnings_snapshot`
+- `source_trace` — per-key `{source, table, column}`
+
+---
+
+## Files to change
+
+
+| File                   | What                                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `docs/token_matrix.md` | Fix person count, add entity_type/source columns, expand legacy_alias to 50+, fix totals, expand reuse mapping |
+
+
+## What does NOT change
+
+- No code changes — matrix-only fix
+- Existing editors, billing flows, RLS untouched
