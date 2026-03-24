@@ -1623,13 +1623,9 @@ Deno.serve(async (req) => {
             .eq('user_id', subV2.user_id)
             .maybeSingle();
 
-          const appBaseUrl = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-          const contactUrl = buildContactUrl({ appBaseUrl, email: customerProfile?.email, mode: 'search' });
-
           const notifyMessage = buildAdminNotifyMessage({
             operation_type: 'bepaid_subscription_payment',
             client_name: customerProfile?.full_name,
-            contact_url: contactUrl,
             email: customerProfile?.email,
             telegram_username: customerProfile?.telegram_username,
             product_name: subV2.products_v2?.name,
@@ -1639,7 +1635,7 @@ Deno.serve(async (req) => {
             order_number: orderV2?.order_number,
             next_charge_at: renewAt.toISOString(),
             bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-            source_label: 'Webhook bePaid / subscription',
+            source_label: 'Подписка bePaid (автосписание)',
           });
             
           const notifyResp = await fetch(
