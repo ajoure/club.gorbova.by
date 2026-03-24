@@ -4204,13 +4204,9 @@ Deno.serve(async (req) => {
               .eq('user_id', notifyOrderData.user_id)
               .single();
 
-            const appBaseUrl4 = Deno.env.get('APP_URL') || Deno.env.get('SITE_URL') || '';
-            const contactUrl4 = buildContactUrl({ appBaseUrl: appBaseUrl4, email: customerProfile?.email || notifyOrderData.customer_email, mode: 'search' });
-
             const notifyMessage = buildAdminNotifyMessage({
               operation_type: notifyOrderData.is_trial ? 'trial' : 'payment',
               client_name: customerProfile?.full_name,
-              contact_url: contactUrl4,
               email: customerProfile?.email || notifyOrderData.customer_email,
               telegram_username: customerProfile?.telegram_username,
               product_name: (notifyOrderData.products_v2 as any)?.name,
@@ -4218,7 +4214,7 @@ Deno.serve(async (req) => {
               amount: paymentV2.amount,
               currency: paymentV2.currency,
               order_number: notifyOrderData.order_number,
-              source_label: 'Webhook bePaid',
+              source_label: 'Оплата через checkout bePaid',
             });
 
             // Use fetch instead of supabase.functions.invoke (cross-function invoke has issues)
