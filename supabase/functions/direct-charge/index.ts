@@ -1134,7 +1134,7 @@ Deno.serve(async (req) => {
             tariff_name: tariff.name,
             amount,
             currency: product.currency,
-            bepaid_payment_id: txUid || undefined,
+            
             source_label: 'Оплата через checkout bePaid',
           }),
         },

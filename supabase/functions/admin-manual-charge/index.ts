@@ -460,7 +460,7 @@ Deno.serve(async (req) => {
             tariff_name: tariff?.name,
             amount: amount / 100,
             currency: 'BYN',
-            bepaid_payment_id: chargeResult.uid || undefined,
+            
             source_label: 'Ручное списание админом',
             admin_label: user.email,
           });

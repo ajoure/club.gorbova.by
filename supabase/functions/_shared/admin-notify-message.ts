@@ -6,14 +6,14 @@
  * - Empty fields are NOT rendered (line is hidden completely)
  * - All values are HTML-escaped
  * - parse_mode = HTML always
- * - bepaid_subscription_id and bepaid_payment_id wrapped in <code> with compact format
+ * - Client name wrapped in <code> for copy-friendly display
  * - Product fallback: "не указан"; tariff: hidden if empty
  * - Phone removed from all notifications (PII)
  * - admin_label only for manual/admin-triggered operations
  * - Helper does NOT build URLs — accepts ready contact_url
  * - Domain is NOT hardcoded
  * - order_number removed from notifications
- * - ID priority: bepaid_subscription_id > bepaid_payment_id (never both)
+ * - IDs removed from payment notifications for visual clarity
  */
 
 // =====================================================================
@@ -46,8 +46,6 @@ export interface AdminNotifyMessageParams {
   currency?: string | null;
 
   next_charge_at?: string | null;
-  bepaid_subscription_id?: string | null;
-  bepaid_payment_id?: string | null;
 
   source_label?: string | null;
   admin_label?: string | null;
@@ -152,31 +150,6 @@ export function buildContactUrl(params: BuildContactUrlParams): string | null {
   return `${baseUrl}/admin/contacts?search=${encodeURIComponent(email)}`;
 }
 
-/**
- * Format compact ID for Telegram display.
- * 
- * Strips known prefixes (sbs_, trn_, uid_) and shows:
- * {PREFIX} {first6}…{last4}
- * 
- * If value is short (≤12 chars after prefix strip) — show it fully.
- * 
- * Examples:
- *   formatCompactId('sbs_5fa286120bb17a89', 'SBS') → 'SBS 5fa286…7a89'
- *   formatCompactId('trn_18b56b8f50b44240', 'PAY') → 'PAY 18b56b…4240'
- *   formatCompactId('12345', 'PAY') → 'PAY 12345'
- */
-export function formatCompactId(value: string, prefix: 'SBS' | 'PAY'): string {
-  // Strip known raw prefixes to avoid ugly hybrid like "PAY trn_18b5…4240"
-  const stripped = value.replace(/^(sbs_|trn_|uid_)/i, '');
-  
-  if (stripped.length <= 12) {
-    return `${prefix} ${stripped}`;
-  }
-  
-  const first6 = stripped.substring(0, 6);
-  const last4 = stripped.substring(stripped.length - 4);
-  return `${prefix} ${first6}…${last4}`;
-}
 
 // =====================================================================
 // Main builder
@@ -194,8 +167,6 @@ export function buildAdminNotifyMessage(params: AdminNotifyMessageParams): strin
     amount,
     currency,
     next_charge_at,
-    bepaid_subscription_id,
-    bepaid_payment_id,
     source_label,
     admin_label,
   } = params;
@@ -237,15 +208,6 @@ export function buildAdminNotifyMessage(params: AdminNotifyMessageParams): strin
     if (formattedDate) {
       lines.push(`🔄 Следующее списание: ${escapeHtml(formattedDate)}`);
     }
-  }
-
-  // ID block: priority bepaid_subscription_id > bepaid_payment_id, never both
-  if (bepaid_subscription_id) {
-    const compactId = formatCompactId(bepaid_subscription_id, 'SBS');
-    lines.push(`📎 ID подписки: <code>${escapeHtml(compactId)}</code>`);
-  } else if (bepaid_payment_id) {
-    const compactId = formatCompactId(bepaid_payment_id, 'PAY');
-    lines.push(`📎 ID платежа: <code>${escapeHtml(compactId)}</code>`);
   }
 
   if (source_label) {

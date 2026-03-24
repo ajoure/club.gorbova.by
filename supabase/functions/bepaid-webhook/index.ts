@@ -1633,8 +1633,6 @@ Deno.serve(async (req) => {
             amount: paymentAmount,
             currency: 'BYN',
             next_charge_at: renewAt.toISOString(),
-            bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-            bepaid_payment_id: transactionUid || undefined,
             source_label: 'Подписка bePaid (автосписание)',
           });
             
@@ -2549,8 +2547,6 @@ Deno.serve(async (req) => {
           tariff_name: linkTariffName,
           amount: paymentAmount,
           currency: 'BYN',
-          bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-          bepaid_payment_id: transactionUid || undefined,
           source_label: 'Оплата по ссылке bePaid',
         });
 
@@ -3172,7 +3168,6 @@ Deno.serve(async (req) => {
                 tariff_name: linkV2TariffName,
                 amount: linkPaymentAmount,
                 currency: 'BYN',
-                bepaid_payment_id: transactionUid || undefined,
                 source_label: 'Оплата по ссылке bePaid',
               }),
               source: 'bepaid_link_webhook', order_id: linkOrderV2.id,
@@ -4221,7 +4216,6 @@ Deno.serve(async (req) => {
               tariff_name: (notifyOrderData.tariffs as any)?.name,
               amount: paymentV2.amount,
               currency: paymentV2.currency,
-              bepaid_payment_id: transactionUid || undefined,
               source_label: 'Оплата через checkout bePaid',
             });
 
@@ -5410,7 +5404,7 @@ ${userName}, к сожалению, не удалось провести опл�
           tariff_name: legacyTariffName || undefined,
           amount: amountFormatted,
           currency: order.currency,
-          bepaid_payment_id: transactionUid || undefined,
+          
           source_label: 'Оплата через checkout bePaid',
         });
 

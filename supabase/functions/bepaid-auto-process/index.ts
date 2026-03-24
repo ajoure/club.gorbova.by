@@ -916,7 +916,7 @@ Deno.serve(async (req) => {
               tariff_name: tariffInfo?.name,
               amount: finalAmount,
               currency: item.currency || 'BYN',
-              bepaid_payment_id: item.bepaid_uid || undefined,
+              
               source_label: 'Автообработка',
             });
 
