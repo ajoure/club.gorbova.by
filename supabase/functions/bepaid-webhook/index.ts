@@ -5410,7 +5410,7 @@ ${userName}, к сожалению, не удалось провести опл�
           tariff_name: legacyTariffName || undefined,
           amount: amountFormatted,
           currency: order.currency,
-          order_number: legacyOrderV2?.order_number || internalOrderId,
+          bepaid_payment_id: transactionUid || undefined,
           source_label: 'Оплата через checkout bePaid',
         });
 
@@ -5426,7 +5426,6 @@ ${userName}, к сожалению, не удалось провести опл�
               message: telegramNotifyMessage,
               source: 'bepaid_webhook_legacy',
               order_id: legacyOrderV2?.id || internalOrderId,
-              order_number: legacyOrderV2?.order_number,
             }),
           }
         );
