@@ -1633,8 +1633,6 @@ Deno.serve(async (req) => {
             amount: paymentAmount,
             currency: 'BYN',
             next_charge_at: renewAt.toISOString(),
-            bepaid_subscription_id: subscriptionId ? String(subscriptionId) : undefined,
-            bepaid_payment_id: transactionUid || undefined,
             source_label: 'Подписка bePaid (автосписание)',
           });
             
