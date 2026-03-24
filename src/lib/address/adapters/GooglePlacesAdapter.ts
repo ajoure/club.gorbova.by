@@ -12,6 +12,7 @@
  */
 
 import type { StructuredAddress } from '../types';
+import { stripApartmentPrefix } from '../parseStreetInput';
 
 interface AddressComponent {
   longText?: string;
@@ -78,9 +79,9 @@ export class GooglePlacesAdapter {
     const postalCode = findByType(components, 'postal_code');
     if (postalCode) result.postal_code = getText(postalCode, 'long');
 
-    // Apartment / subpremise
+    // Apartment / subpremise — strip prefix to avoid "кв. кв. 4" duplication
     const subpremise = findByType(components, 'subpremise');
-    if (subpremise) result.apartment = getText(subpremise, 'long');
+    if (subpremise) result.apartment = stripApartmentPrefix(getText(subpremise, 'long'));
 
     return result;
   }
