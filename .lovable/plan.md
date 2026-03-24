@@ -1,62 +1,151 @@
-# Исправь и подтверди скринами  в симуляции:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-# Исправление багов в квест-уроках (по фидбеку Натальи Новиковой)
+1. PATCH-3 (webhook) — правка про “хардкод canceled” обязательна и точнее  
 
-Три бага, выявленных реальным пользователем:
+  - В твоём тексте: «обновить state в provider_subscriptions … вместо хардкода 'canceled' (строка 1796)».
+  - Уточнение: не только provider_subscriptions, но и audit meta (если там фиксированное значение), и любые поля где сейчас пишется 'canceled' как константа. Должно всегда писаться фактическое subscriptionState.
+  - DoD: показать diff/фрагмент кода до/после по этому месту.
+2. &nbsp;
+3. PATCH-2 (backfill) — STOP-guard по “не трогать доступы” добавить явно  
 
-## Баг 1: При переключении вкладки — скролл прыгает вверх
+  - В UPDATE на subscriptions_v2 обновлять только auto_renew (+ updated_at).
+  - DoD: в отчёте приложить select до/после по 3 подпискам: access_end_at идентичен.
+4. &nbsp;
+5. PATCH-1 (data fix) — нужен “dry-run execute” формат  
 
-**Причина**: `useLessonProgressState` при возврате на вкладку вызывает рефетч данных. Хотя `loading` не сбрасывается в `true` при повторном фетче (строка 57: `if (!hasLoadedOnceRef.current)`), сам `setRecord(data)` вызывает ре-рендер `KvestLessonView`, который зависит от `state` в десятках `useMemo`/`useCallback`. Это провоцирует перестройку DOM, и `ScrollToTop` не успевает восстановить позицию.
+  - Не просто “dry-run SQL список”, а два шага:  
 
-Дополнительно: `ScrollToTop` использует только 2 вложенных `requestAnimationFrame` для восстановления — этого недостаточно, если React ре-рендер происходит асинхронно после rAF.
+    - Dry-run: SELECT (как у тебя) + count.
+    - Execute: UPDATE + RETURNING (sub_v2_id, old_auto_renew, new_auto_renew, ps_state) или отдельный SELECT после.
+  - &nbsp;
+  - DoD: повторный dry-run = 0 строк.
+6. &nbsp;
+7. PATCH-2 — existingMap / идентификаторы  
 
-**Исправление**:
+  - В meta provider_subscription_id: [sub.id](http://sub.id) — убедиться, что это provider_[subscriptions.id](http://subscriptions.id), а не внешний uid. Если нужен внешний — добавить отдельным полем provider_subscription_uid из raw/bePaid.
+  - DoD: meta должна однозначно ссылаться на запись provider_subscriptions.
+8. &nbsp;
+9. Итоговый отчёт (одним артефактом)  
 
-1. В `useLessonProgressState.tsx` — при background refetch (`hasLoadedOnceRef.current === true`) сравнивать новый `state_json` с текущим по JSON-строке. Если одинаковый — не вызывать `setRecord`, избегая лишних ре-рендеров.
-2. В `ScrollToTop.tsx` — усилить восстановление при tab return: добавить 3-й fallback через `setTimeout(300ms)` после двух rAF, чтобы поймать React async ре-рендеры.
+  - В конце один блок “VERIFY” с 4 проверками из твоего списка + скрин/вывод audit_logs по action billing.inv22.autorenew_disabled_from_provider_state (минимум 3 строки).
+10. &nbsp;
 
-## Баг 2: Скачут буквы при вводе в поля таблицы
+&nbsp;
 
-**Причина**: В `DiagnosticTableBlock` — `updateLocalRow` корректно использует `setLocalRows` (локальное состояние), а коммит в parent идёт через `debouncedCommit(300ms)`. Но когда parent (`KvestLessonView`) получает новые rows через `onRowsChange` → `updateState`, это обновляет `state`, что пересоздаёт `pointARows`/`pointAV2Rows` через `useMemo`, и `DiagnosticTableBlock` получает новый `rows` prop. 
+&nbsp;
 
-В `useEffect` на строке 244-262:
+Текст для [Lovable.dev](http://Lovable.dev) можно отправлять как есть, добавив эти 5 правок как “обязательные”.
 
-```ts
-useEffect(() => {
-  if (rows.length > 0) {
-    setLocalRows(rows);  // ← перезаписывает localRows из props!
-    initDoneRef.current = true;
-    return;
-  }
+&nbsp;
+
+INV-22: Проталкивание terminal provider states в subscriptions_v2
+
+## Три патча
+
+### PATCH-1: Data fix (единоразовый)
+
+**Dry-run** — SQL-отчёт всех затронутых строк:
+
+```sql
+SELECT s.id as sub_v2_id, s.user_id, ps.state as ps_state, 
+       s.auto_renew, s.status, s.access_end_at
+FROM subscriptions_v2 s
+JOIN provider_subscriptions ps ON ps.subscription_v2_id = s.id
+WHERE s.auto_renew = true
+  AND s.status IN ('active','trial')
+  AND ps.state IN ('expired','canceled','failed','redirecting')
 ```
 
-Это заменяет `localRows` на props-значение при КАЖДОМ изменении `rows`, сбрасывая курсор.
+**Execute** — для каждой найденной строки:
 
-**Исправление**:
-В `DiagnosticTableBlock.tsx` — после инициализации (`initDoneRef.current === true`) НЕ синхронизировать `localRows` из props, если изменение было инициировано пользовательским вводом. Добавить ref-флаг `userEditingRef`, который ставится в `true` при `updateLocalRow` и сбрасывается после коммита. Если `userEditingRef.current === true`, пропускать sync из props.
+- `subscriptions_v2.auto_renew = false`, `updated_at = now()`
+- НЕ трогаем `access_end_at`, entitlements, гранты
+- `audit_logs`: action=`billing.inv22.autorenew_disabled_from_provider_state`, actor_type=`system`, actor_label=`inv22-fix`, meta с sub_v2_id, ps_state, reason
 
-## Баг 3: Неудобная навигация к клиентам при повторном просмотре видео
+**DoD**: повторный dry-run → 0 строк.
 
-**Описание**: Пользователь хочет пересмотреть видео, но для этого нужно: снять галочку "выполнено" → пролистать обратно → посмотреть видео → снова пролистать до нужного клиента. Нет быстрого способа перемещаться по уже заполненным клиентам.
+---
 
-**Исправление**:
-В `KvestLessonView.tsx` — для завершённых видео-блоков (`video_unskippable`, `video`) убрать `pointer-events-none` из `isReadOnly` обёртки. Видео должно оставаться интерактивным даже после завершения шага, чтобы пользователь мог пересматривать без сброса прогресса. Также: для `diagnostic_table` блоков, которые уже завершены, убрать `opacity-80` — это создаёт ощущение "неактивности", хотя кнопка "Редактировать" доступна.
+### PATCH-2: Backfill propagation
+
+**Файл**: `supabase/functions/admin-bepaid-backfill-subscriptions/index.ts`
+
+После строки 445 (конец блока `if (state === "active")`) добавить зеркальный блок:
+
+```
+if (['expired','canceled','failed','redirecting'].includes(state)) {
+  const existing = existingMap.get(sub.id);
+  if (existing?.subscription_v2_id) {
+    const { data: linkedSub } = await serviceClient
+      .from("subscriptions_v2")
+      .select("id, auto_renew")
+      .eq("id", existing.subscription_v2_id)
+      .eq("auto_renew", true)  // STOP-guard
+      .maybeSingle();
+    if (linkedSub) {
+      await serviceClient.from("subscriptions_v2")
+        .update({ auto_renew: false, updated_at: new Date().toISOString() })
+        .eq("id", linkedSub.id);
+      await serviceClient.from("audit_logs").insert({
+        actor_type: 'system', actor_user_id: null,
+        actor_label: 'admin-bepaid-backfill-subscriptions',
+        action: 'billing.inv22.autorenew_disabled_from_provider_state',
+        meta: { subscription_v2_id: linkedSub.id,
+                provider_subscription_id: sub.id,
+                ps_state: state, reason: 'terminal_provider_state' }
+      });
+      result.terminal_auto_renew_disabled = (result.terminal_auto_renew_disabled || 0) + 1;
+    }
+  }
+}
+```
+
+Счётчик `terminal_auto_renew_disabled` добавляется в итоговый audit log meta.
+
+---
+
+### PATCH-3: Webhook — расширить terminal states
+
+**Файл**: `supabase/functions/bepaid-webhook/index.ts`, строка 1788
+
+Текущее условие:
+
+```ts
+} else if (subscriptionState === 'canceled' || subscriptionState === 'expired') {
+```
+
+Заменить на:
+
+```ts
+} else if (['canceled','expired','failed','redirecting'].includes(subscriptionState)) {
+```
+
+Остальная логика блока (auto_renew=false, audit_log) уже корректна — она не трогает access_end_at и entitlements. Только обновить `state` в provider_subscriptions на фактический `subscriptionState` вместо хардкода `'canceled'` (строка 1796).
+
+---
+
+## P0 ограничения (контрольный чеклист)
+
+- ❌ Создание/удаление entitlements
+- ❌ Изменение access_end_at
+- ❌ Массовые UPDATE без dry-run
+- ❌ Даунгрейд auto_renew=false → true
 
 ## Файлы
 
 
-| Действие | Файл                                                                 | Что                                                                    |
-| -------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Edit     | `src/hooks/useLessonProgressState.tsx`                               | Skip setRecord if state_json unchanged on refetch                      |
-| Edit     | `src/components/layout/ScrollToTop.tsx`                              | Add setTimeout fallback for tab-return restore                         |
-| Edit     | `src/components/admin/lesson-editor/blocks/DiagnosticTableBlock.tsx` | Guard localRows sync from props during user editing                    |
-| Edit     | `src/components/lesson/KvestLessonView.tsx`                          | Keep video blocks interactive when completed; remove excessive opacity |
+| Действие      | Файл                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| Data fix      | SQL UPDATE через insert tool (с dry-run до и после)                                                   |
+| Edit          | `supabase/functions/admin-bepaid-backfill-subscriptions/index.ts` — terminal state → auto_renew=false |
+| Edit + Deploy | `supabase/functions/bepaid-webhook/index.ts` — добавить failed/redirecting                            |
 
 
-## Что НЕ меняется
+## Verify (после всех патчей)
 
-- Edge functions — без изменений
-- Billing, auth, admin — без изменений
-- SequentialFormBlock — уже имеет правильный паттерн (local state + commit on blur)
+1. SQL: 0 строк с ps.state terminal + s.auto_renew=true
+2. audit_logs: записи с action `billing.inv22.autorenew_disabled_from_provider_state`
+3. access_end_at: выборка до/после по 3 примерам — не изменился
+4. Негативный тест: ps.state=active → auto_renew не тронут
