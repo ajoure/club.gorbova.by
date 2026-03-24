@@ -2,247 +2,167 @@
 
 &nbsp;
 
-1. **Не использовать новое значение template_scope='corporate', пока не доказано, что текущие queries его видят.**
-  По аудиту раньше использовались ai / both. Если сейчас фронт и хуки фильтруют только ai/both, то templates с corporate просто не появятся.
-  Нужно либо:
+1. **Resolver не должен резолвить только included items.**
+  Нужно уметь проверять весь manifest, но в UI отдельно показывать:
   &nbsp;
-  - использовать уже поддерживаемый scope,
-  - либо add-only сначала расширить фильтры/типизацию под corporate и дать proof.
-    Без этого Sprint 2 можно “сделать”, но UI его не увидит.
+  - для included — runtime critical status;
+  - для excluded — informational status.
+    Иначе будет сложно диагностировать, почему шаблон не попал в пакет и существует ли он вообще.
   &nbsp;
-2. **Пакеты document_package_templates нельзя создавать с абстрактным profile_id без доказанной модели владения.**
-  Нужно явно зафиксировать:
+2. **В resolveManifestTemplates() обязательно разделить типы недоступности:**
   &nbsp;
-  - это глобальные системные пакеты,
-  - или пакеты конкретного профиля/аккаунта.
-    Если таблица tenant-scoped, нужен безопасный способ seed/ownership. Иначе потом пакеты не будут видны нужному пользователю.
+  - missing_db_record
+  - inactive_template
+  - missing_template_path
+  - missing_storage_file
+  - pending_sprint3
+    Не сводить всё к одному missing, иначе диагностика будет слабой.
   &nbsp;
-3. **В Sprint 2 не ограничиваться только storage + DB insert. Нужно хранить исходники шаблонов в репозитории как source of truth.**
-  Нужен add-only артефакт уровня:
+3. **Проверку storage делать реально, а не только по template_path.**
+  Наличие пути в БД не равно наличию файла в bucket. Нужен фактический proof, что файл существует в storage и доступен для генерации.
+4. **runtime_status брать из corporateTemplateSpec, но не дублировать бизнес-решение в двух местах.**
+  Rule engine должен использовать spec как source of truth, а не иметь параллельную логику статусов. Иначе позже статусы разъедутся.
+5. **В PackageManifestItem лучше добавить ещё spec_category / source_category, если category и availability начнут смешиваться.**
+  Сейчас важно не потерять разделение:
   &nbsp;
-  - docs/templates/corporate/... или
-  - assets/corporate-templates/...
-    Чтобы шаблоны были версионируемы, проверяемы и воспроизводимы, а не существовали только в storage.
+  - system_generated
+  - conditional_generated
+  - externally_provided
+    Availability — это отдельная ось, не замена категории.
   &nbsp;
-4. **По каждому шаблону нужен не просто template_notes, а отдельный machine-readable manifest/spec.**
-  Для каждого code зафиксировать:
+6. **Step 4 Preview должен показывать не только availability, но и “готов к runtime сейчас / подготовлен на Sprint 3”.**
+  Это важнее простого pending, потому что пользователю и нам нужно понимать: шаблон существует, но пока не активируется из-за loops/arrays.
+7. **Validation layer должен уметь возвращать blocking/non-blocking результат.**
+  Пример:
   &nbsp;
-  - category
-  - always/conditional/external
-  - legal_basis
-  - required_data
-  - conditional_requirements
-  - doc_type
-  - sort_order_default
-    Это лучше сделать отдельным config/spec файлом, а не только markdown-документацией.
+  - active template missing → blocking
+  - pending_sprint3 template in excluded state → non-blocking
+  - externally_provided → informational only
+    Это лучше сразу заложить, чтобы потом не переделывать под генерацию.
   &nbsp;
-5. **required_data в corporateRuleEngine.ts не выводить “из placeholders автоматически”, если это недоказуемо.**
-  Placeholders и required business data — не одно и то же.
-  Нужно разделить:
+8. **Документацию manifest-driven architecture нужно дополнить разделом “почему corporate templates скрыты из AI manager”.**
+  Не просто “by design”, а коротко зафиксировать:
   &nbsp;
-  - технические placeholders в DOCX,
-  - бизнес-обязательность данных для применения шаблона.
-    Иначе можно получить ложные required fields.
+  - отдельный corporate flow;
+  - templates не пользовательские универсальные, а системные нормативные;
+  - редактирование/использование идет не через generic AI templates UI.
   &nbsp;
-6. **В annual_meeting пакете бюллетень (corp_ballot) не должен быть always required без явного условия.**
-  Он зависит от выбранной формы голосования/процедуры. Его лучше сразу перевести в conditional_generated, а не в базовое обязательное ядро, если не доказано, что он нужен всегда.
-7. **corp_order_meeting нужно назвать нейтральнее на уровне архитектуры.**
-  Не “приказ” как единственный вариант, а что-то вроде:
+9. **В proof matrix добавить колонку used_now.**
+  Нужна итоговая матрица:
   &nbsp;
-  - corp_meeting_convocation_act
-  - или оставить текущий code, но в notes явно указать:
-    это шаблон-обертка, который может быть решением/приказом/иным актом в зависимости от модели созыва.
-    Потому что по уставу и корпоративной структуре это не всегда именно приказ директора.
+  - code
+  - db_template_id
+  - template_path
+  - storage_exists
+  - runtime_status
+  - availability
+  - used_now
+    Это даст полную картину без догадок.
   &nbsp;
-8. **Условные шаблоны по совету директоров / ревизору / комиссии сразу связать с charter_confirmed или manual confirmed rules.**
-  Не допускать, чтобы они включались просто по свободному выбору без подтвержденной правовой основы.
-9. **Для DOCX-шаблонов сразу зафиксировать, какие из них реально можно подключить в Sprint 2, а какие только подготовить “в storage, но не включать в runtime package”.**
-  Особенно для loop-heavy документов:
-  &nbsp;
-  - журнал извещений,
-  - registration list,
-  - ballot,
-  - protocol,
-  - проекты решений.
-    Если runtime arrays еще нет, нужно явно разделить:
-  - готов к runtime сейчас
-  - подготовлен, но activation only after Sprint 3.
-  &nbsp;
-10. **Нужен отдельный proof по терминологии и naming rules в самих DOCX.**
-  Не только в docs и DB metadata, а именно в тексте шаблонов:
+10. **В DoD добавить proof, что corporateTemplateSpec.ts перестал быть orphaned.**
+  То есть явно показать импорт и фактическое использование в runtime flow / preview.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
-
-- участники, не учредители;
-- решение единственного участника, не протокол;
-- корректные заголовки видов документов.
+В таком виде PATCH 2.1 можно отдавать в работу.
 
 &nbsp;
 
-&nbsp;
+PATCH 2.1 — Интеграционное завершение Sprint 2
 
-&nbsp;
+## Текущее состояние
 
-11. **externally_provided не должны создаваться как templates, если система их не генерирует.**
-  Их нужно держать в manifest/docs/rules, но не обязательно заводить как DOCX-шаблоны в document_templates, если они только учитываются и не формируются системой.
-  Это важно, чтобы не размыть границу между “генерируемым” и “внешним”.
-12. **В DoD добавить матрицу “manifest constant → DB template → storage file → package item”.**
-  Иначе будет сложно доказать, что связка реально полная и без дыр.
+1. **18 DOCX** в storage и `document_templates` (scope=`corporate`)
+2. `**corporateTemplateSpec.ts**` создан, но **нигде не импортируется**
+3. `**calculatePackageManifest()**` возвращает manifest с `template_code` строками, но **никто не резолвит** их в реальные DB-записи / storage paths
+4. **DB package templates** не созданы (document_package_templates пусто для corporate)
+5. **AI-менеджер** фильтрует `scope === 'ai' || 'both'` — corporate templates intentionally невидимы
+6. **Нет validation layer** — если template missing/inactive/file broken, система узнает об этом только при генерации
 
-&nbsp;
+## Архитектурное решение
 
-&nbsp;
+**Вариант A: manifest-driven only** (рекомендуемый).
 
-Если это принять, то Sprint 2 уже можно запускать.
+Обоснование:
 
-&nbsp;
+- `document_package_templates` — tenant-scoped (требует profile_id), а corporate пакеты — системные
+- Состав пакета определяется динамически через charter rules / params — статический DB package не может это выразить
+- `calculatePackageManifest()` уже делает эту работу корректно
 
-Sprint 2 — Нормативные шаблоны корпоративных документов + правила применения
+DB packages НЕ создаются. Это явно документируется.
 
-## Анализ текущего состояния
+## Что нужно сделать
 
-**Что уже есть:**
+### 1. Template Resolver — связка manifest → DB → storage
 
-- Manifest constants в `corporateRuleEngine.ts` (строки 41-73): 9 annual_meeting + 2 sole_participant + 7 conditional + 4 externally_provided
-- `document_templates` таблица с полями: code, name, document_type, template_path, template_scope, placeholders, template_notes, is_active
-- Storage bucket `documents-templates` для DOCX-файлов
-- `document_package_templates` + `document_package_template_items` для пакетов
-- Token matrix в `docs/token_matrix.md` с 98 токенами
-- docxtemplater в edge functions с `{{}}` delimiters и `paragraphLoop: true`
+Новый файл: `src/lib/corporate/corporateTemplateResolver.ts`
 
-**Что нужно сделать:**
-Создать DOCX-файлы → загрузить в storage → вставить записи в `document_templates` → создать 2 пакета в `document_package_templates` → обновить docs
+```
+resolveManifestTemplates(manifest: PackageManifestItem[])
+  → для каждого included item с category != externally_provided:
+    → запрос document_templates по code + template_scope='corporate'
+    → проверка is_active, template_path
+    → проверка runtime_status из TEMPLATE_SPECS
+    → возврат enriched manifest с db_template_id, template_path, availability status
+```
 
-## Объём работ
+Также: `validateTemplateAvailability()` — проверка до генерации, что все нужные templates доступны.
 
-Sprint 2 состоит из 3 частей:
+### 2. Подключить resolver в CorporateStep4Preview
 
-### Часть A: Генерация DOCX-шаблонов (11 core + 7 conditional = 18 шаблонов)
+Вызвать `resolveManifestTemplates()` и показать для каждого item:
 
-Каждый DOCX создаётся через `docx-js` (Node.js) с форматированием по `docs/corporate-document-formatting.md`:
+- ✅ шаблон доступен
+- ⚠️ шаблон pending_sprint3
+- ❌ шаблон отсутствует / inactive
 
-- A4, поля 20/20/30/10 мм (1134/1134/1701/567 DXA)
-- Times New Roman 14pt
-- Абзацный отступ 12.5 мм
-- Название вида документа ПРОПИСНЫМИ по центру
+### 3. Подключить corporateTemplateSpec в rule engine
 
-**Шаблоны annual_meeting (9):**
+Импортировать `getTemplateSpec()` в `corporateRuleEngine.ts` → добавить `runtime_status` в `PackageManifestItem`.
 
+### 4. Документировать manifest-driven architecture
 
-| code                          | Вид документа                        | Ключевые токены                                                                                               |
-| ----------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `corp_order_meeting`          | РЕШЕНИЕ о проведении собрания        | entity.name, meeting.date, meeting.time, meeting.location.full, agenda.items                                  |
-| `corp_notice`                 | ИЗВЕЩЕНИЕ участнику                  | entity.name, meeting.date, person.full_name, agenda.items, meeting.review.*                                   |
-| `corp_notice_journal`         | ЖУРНАЛ направления извещений         | entity.name, package.participants (loop), meeting.notice.date                                                 |
-| `corp_review_list`            | ПЕРЕЧЕНЬ документов для ознакомления | entity.name, meeting.review.*                                                                                 |
-| `corp_draft_decisions`        | ПРОЕКТЫ РЕШЕНИЙ                      | entity.name, agenda.items (loop), decision.items (loop)                                                       |
-| `corp_registration_list`      | СПИСОК зарегистрированных лиц        | entity.name, package.registered_persons (loop)                                                                |
-| `corp_ballot`                 | БЮЛЛЕТЕНЬ для голосования            | entity.name, person.full_name, agenda.items (loop)                                                            |
-| `corp_protocol`               | ПРОТОКОЛ собрания                    | entity.name, meeting.*, agenda.items (loop), package.participants, package.chairperson.*, package.secretary.* |
-| `corp_notification_decisions` | УВЕДОМЛЕНИЕ о решениях               | entity.name, person.full_name, decision.items (loop)                                                          |
+Обновить `docs/corporate-templates-rules.md`:
 
+- явный раздел "Почему НЕ DB packages"
+- описание flow: wizard → manifest → resolver → edge function
+- visibility policy: corporate templates скрыты от AI-менеджера by design
 
-**Шаблоны sole_participant_decision (2):**
+### 5. Расширить corporateTypes
 
+Добавить в `PackageManifestItem`:
 
-| code                   | Вид документа                                |
-| ---------------------- | -------------------------------------------- |
-| `corp_sole_decision`   | РЕШЕНИЕ единственного участника              |
-| `corp_sole_appendices` | Приложения к решению единственного участника |
-
-
-**Условные шаблоны (7):**
-`corp_board_candidates`, `corp_board_consent`, `corp_auditor_candidates`, `corp_auditor_consent`, `corp_audit_commission`, `corp_agenda_change_notice`, `corp_charter_amendments`
-
-Для loop-полей (agenda.items, package.participants) шаблоны будут использовать docxtemplater loop syntax: `{#agenda.items}...{/agenda.items}`. В текущем Sprint 2 шаблоны **создаются с loop-разметкой**, но полноценная runtime-подстановка массивов — GAP на Sprint 3.
-
-### Часть B: Вставка записей в БД
-
-**18 записей в `document_templates`:**
-
-- `template_scope = 'corporate'`
-- `document_type` по виду: 'решение', 'извещение', 'протокол', 'журнал', 'перечень', 'бюллетень', 'уведомление', 'список', 'проекты'
-- `template_notes` с описанием назначения и условий применения
-- `placeholders` — массив используемых токенов
-- `is_active = true`
-
-**2 записи в `document_package_templates**` (нужен profile_id, будет seed-скрипт):
-
-- `annual_meeting` — 9 items
-- `sole_participant_decision` — 2 items
-
-**Связки в `document_package_template_items**` с sort_order и is_required.
-
-### Часть C: Документация + маппинг manifest ↔ templates
-
-**Новый файл `docs/corporate-templates-rules.md`:**
-
-- Полная таблица: code → когда включается → когда исключается → legal_basis → required_data → category
-- Разделение system_generated / externally_provided / conditional_generated
-- GAP на Sprint 3
-
-**Обновление `corporateRuleEngine.ts`:**
-
-- Добавить `required_data` и `missing_data` в manifest builder на основе реальных placeholders шаблонов
-- Верифицировать 1:1 mapping manifest codes ↔ DB template codes
-
-## Технический подход
-
-### Генерация DOCX
-
-Скрипт на Node.js через `code--exec` с `docx-js`:
-
-1. Генерировать каждый шаблон с правильным форматированием
-2. Встроить `{{placeholder}}` токены в текст
-3. Для loop-полей использовать `{#array}...{/array}` синтаксис docxtemplater
-4. Сохранить в `/tmp/` → загрузить в storage `documents-templates/templates/corp_*`
-5. Валидировать каждый DOCX
-
-### Вставка данных
-
-Через `supabase--insert` tool для записей в `document_templates`.
-Пакеты создаются отдельно через тот же инструмент.
+- `runtime_status?: 'active' | 'pending_sprint3'`
+- `db_template_id?: string`
+- `template_path?: string`
+- `availability?: 'available' | 'pending' | 'missing' | 'inactive'`
 
 ## Файлы
 
 
-| Файл / артефакт                                           | Что                               |
-| --------------------------------------------------------- | --------------------------------- |
-| 18 DOCX файлов в storage `documents-templates/templates/` | Шаблоны                           |
-| `document_templates` (18 INSERT)                          | Записи шаблонов                   |
-| `document_package_templates` (2 INSERT)                   | Пакеты                            |
-| `document_package_template_items` (11 INSERT)             | Связки                            |
-| `docs/corporate-templates-rules.md` (NEW)                 | Правила применения                |
-| `src/lib/corporate/corporateRuleEngine.ts`                | Добавить required_data в manifest |
+| Файл                                                   | Что                                                  |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| `src/lib/corporate/corporateTemplateResolver.ts` (NEW) | Resolver: manifest code → DB template → availability |
+| `src/lib/corporate/corporateRuleEngine.ts`             | Import spec, add runtime_status to manifest items    |
+| `src/lib/corporate/corporateTypes.ts`                  | Extend PackageManifestItem                           |
+| `src/components/corporate/CorporateStep4Preview.tsx`   | Show template availability status                    |
+| `docs/corporate-templates-rules.md`                    | Architecture decision + flow documentation           |
 
 
 ## Что НЕ меняется
 
-- Edge functions
-- Corporate wizard UI
-- Draft persistence / reopen flow
-- Token registry / resolver
-- Existing billing/ai templates
-
-## GAP на Sprint 3
-
-- Runtime подстановка массивов (loops) в edge function
-- Генерация DOCX из corporate wizard (connect wizard → edge function)
-- Conditional sections в docxtemplater (if/else blocks)
-- Preview rendered DOCX перед финализацией
+- DOCX шаблоны, storage, DB records
+- Edge functions, wizard close/draft/reopen logic
+- AI-менеджер шаблонов (corporate остаётся скрытым — by design)
+- document_package_templates (не создаются — by design)
 
 ## DoD
 
-- 18 DOCX-шаблонов загружены в storage
-- 18 записей в document_templates с template_scope='corporate'
-- 2 пакета в document_package_templates
-- 11 связок в document_package_template_items
-- Manifest constants 1:1 с реальными template codes
-- docs/corporate-templates-rules.md с полной таблицей правил
-- Терминология: участники, решение единственного участника
-- externally_provided не заведены как system_generated
+- Resolver проверяет все included manifest items против DB
+- Step 4 показывает availability каждого шаблона
+- runtime_status из spec подключён к manifest
+- Документация явно фиксирует manifest-driven architecture
+- Proof: матрица code → DB → storage → availability
 - Build clean
