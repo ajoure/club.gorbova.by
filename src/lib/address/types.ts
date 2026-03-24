@@ -58,7 +58,6 @@ export const AUTOCOMPLETE_FIELDS: (keyof StructuredAddress)[] = [
   'street',
   'house',
   'city',
-  'settlement',
   'region',
   'district',
   'postal_code',
@@ -69,5 +68,5 @@ export const AUTOCOMPLETE_FIELDS: (keyof StructuredAddress)[] = [
 export const MANUAL_ONLY_FIELDS: (keyof StructuredAddress)[] = [
   'building',
   'apartment',
-  'address_line_2',
+  'city_district',
 ];

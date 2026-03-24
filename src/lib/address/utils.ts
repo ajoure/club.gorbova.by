@@ -129,10 +129,6 @@ export function buildAutocompleteQuery(
     case 'city':
       push('country_name');
       break;
-    case 'settlement':
-      push('city');
-      push('country_name');
-      break;
     case 'house':
       push('street');
       push('city');
