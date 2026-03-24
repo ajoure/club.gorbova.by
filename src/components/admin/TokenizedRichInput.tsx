@@ -865,7 +865,22 @@ export function TokenizedRichInput({
                   </CommandItem>
                 ))}
               </CommandGroup>
-              {productFields.length > 0 && (
+              {/* Context-based groups (when tokenContext is provided) */}
+              {tokenContext && contextGroups.map((group) => (
+                group.tokens.length > 0 && (
+                  <CommandGroup heading={group.heading} key={group.heading}>
+                    {group.tokens.map((t) => (
+                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                        onSelect={() => handleTokenSelect(t)}>
+                        <span className="flex-1 truncate">{t.label}</span>
+                        <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )
+              ))}
+              {/* Legacy: product fields (when no tokenContext) */}
+              {!tokenContext && productFields.length > 0 && (
                 <CommandGroup heading="Продукт">
                   {productFields.map((t) => (
                     <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
@@ -876,6 +891,7 @@ export function TokenizedRichInput({
                   ))}
                 </CommandGroup>
               )}
+              {/* @deprecated: extraTokenGroups for backward compat only */}
               {extraTokenGroups?.map((group) => (
                 group.tokens.length > 0 && (
                   <CommandGroup heading={group.heading} key={group.heading}>
