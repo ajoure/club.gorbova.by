@@ -353,17 +353,31 @@ export function TokenizedRichInput({
 
   const closePicker = useCallback(() => setPickerOpen(false), []);
 
-  // Load product fields for registry
+  // Load token groups based on context (or just product fields for legacy)
+  const effectiveContext = tokenContext ?? "messages";
+  const { data: contextGroups = [] } = useQuery({
+    queryKey: ["token-context-groups", effectiveContext],
+    queryFn: async () => {
+      await loadTokensForContext(effectiveContext);
+      return getTokenGroupsForContext(effectiveContext);
+    },
+    staleTime: 60_000,
+  });
+
+  // For backward compat: also load product fields when no tokenContext (legacy path)
   const { data: productFields = [] } = useQuery({
     queryKey: ["token-registry-product-fields"],
     queryFn: loadProductFields,
     staleTime: 60_000,
+    enabled: !tokenContext,
   });
 
-  // Update cache when product fields load
+  // Update cache when product fields load (legacy path)
   useEffect(() => {
-    setProductFieldsCache(productFields);
-  }, [productFields]);
+    if (!tokenContext) {
+      setProductFieldsCache(productFields);
+    }
+  }, [productFields, tokenContext]);
 
   // Build extensions list
   const extensions = useMemo(() => {
