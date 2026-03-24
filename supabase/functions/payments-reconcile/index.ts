@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildAdminNotifyMessage, buildContactUrl } from '../_shared/admin-notify-message.ts';
+import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 
