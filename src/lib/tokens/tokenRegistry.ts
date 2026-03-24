@@ -172,6 +172,63 @@ export async function loadEntityFields(): Promise<TokenDef[]> {
   return loadFieldsByEntityType("entity", "entity");
 }
 
+/**
+ * Load package fields from fields_registry.
+ * Splits into three sub-groups:
+ * - package_role: scalar role tokens (signer, chairperson, secretary)
+ * - package_default: scalar package-level defaults (already covered by meeting.*)
+ * - package_array: array/loop tokens (participants, registered_persons)
+ */
+export async function loadPackageFields(): Promise<{
+  roles: TokenDef[];
+  arrays: TokenDef[];
+}> {
+  const { data, error } = await supabase
+    .from("fields_registry")
+    .select("id, entity_type, key, label, data_type, public_id, options")
+    .eq("entity_type", "package")
+    .is("archived_at", null)
+    .order("display_order");
+
+  if (error || !data) return { roles: [], arrays: [] };
+
+  const roles: TokenDef[] = [];
+  const arrays: TokenDef[] = [];
+
+  for (const f of data) {
+    const opts = f.options as Record<string, unknown> | null;
+    const strategy = opts?.source_strategy as string | undefined;
+    const isArray = f.data_type === "array" || strategy === "loop";
+
+    const def: TokenDef = {
+      key: f.id,
+      label: f.label,
+      tokenString: `{{${f.key}}}`,
+      group: isArray ? "package_array" : "package_role",
+      badge: isArray ? "Массив" : (DATA_TYPE_BADGES[f.data_type] ?? f.data_type),
+      searchKeywords: extractSearchKeywords(f),
+    };
+
+    if (isArray) {
+      arrays.push(def);
+    } else {
+      roles.push(def);
+    }
+  }
+
+  return { roles, arrays };
+}
+
+/** Load agenda fields — entity_type = 'agenda' */
+export async function loadAgendaFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("agenda", "agenda");
+}
+
+/** Load decision fields — entity_type = 'decision' */
+export async function loadDecisionFields(): Promise<TokenDef[]> {
+  return loadFieldsByEntityType("decision", "decision");
+}
+
 // Internal caches (populated by react-query in components)
 let _productFieldsCache: TokenDef[] = [];
 let _legalDetailsFieldsCache: TokenDef[] = [];
@@ -180,6 +237,10 @@ let _entityPersonFieldsCache: TokenDef[] = [];
 let _documentFieldsCache: TokenDef[] = [];
 let _meetingFieldsCache: TokenDef[] = [];
 let _entityFieldsCache: TokenDef[] = [];
+let _packageRolesCache: TokenDef[] = [];
+let _packageArraysCache: TokenDef[] = [];
+let _agendaFieldsCache: TokenDef[] = [];
+let _decisionFieldsCache: TokenDef[] = [];
 
 export function setProductFieldsCache(fields: TokenDef[]) {
   _productFieldsCache = fields;
@@ -207,6 +268,22 @@ export function setMeetingFieldsCache(fields: TokenDef[]) {
 
 export function setEntityFieldsCache(fields: TokenDef[]) {
   _entityFieldsCache = fields;
+}
+
+export function setPackageRolesCache(fields: TokenDef[]) {
+  _packageRolesCache = fields;
+}
+
+export function setPackageArraysCache(fields: TokenDef[]) {
+  _packageArraysCache = fields;
+}
+
+export function setAgendaFieldsCache(fields: TokenDef[]) {
+  _agendaFieldsCache = fields;
+}
+
+export function setDecisionFieldsCache(fields: TokenDef[]) {
+  _decisionFieldsCache = fields;
 }
 
 /**
