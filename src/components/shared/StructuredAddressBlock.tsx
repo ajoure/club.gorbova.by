@@ -72,6 +72,8 @@ const COMPACT_LAYOUT: FieldConfig[] = [
   { key: 'building', label: 'Корпус', placeholder: '' },
   { key: 'apartment', label: 'Помещение', placeholder: '' },
   { key: 'city', label: 'Населённый пункт', placeholder: 'г. Минск' },
+  { key: 'district', label: 'Район', placeholder: '' },
+  { key: 'city_district', label: 'Район города', placeholder: 'Фрунзенский' },
   { key: 'region', label: 'Область', placeholder: '' },
   { key: 'postal_code', label: 'Индекс', placeholder: '' },
   { key: 'country_name', label: 'Страна', placeholder: '' },
