@@ -1,15 +1,15 @@
 /**
  * useCorporateDraftSession — CRUD hook for corporate_draft_sessions table.
  * 
- * Provides: create, update (debounced auto-save), delete, list active, get single.
- * Includes audit logging for critical actions.
+ * Provides: create, update (debounced auto-save with flush), delete, list active, get single.
+ * Includes audit logging for critical actions, save status tracking, and accumulated patch support.
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   CorporateDraftSession,
   ProcedureMode,
@@ -17,6 +17,8 @@ import type {
 } from "@/lib/corporate/corporateTypes";
 
 const QUERY_KEY = "corporate-draft-sessions";
+
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'dirty';
 
 // Audit helper (non-blocking, best-effort)
 async function logAudit(action: string, userId: string | undefined, meta: Record<string, unknown>) {
@@ -32,10 +34,17 @@ async function logAudit(action: string, userId: string | undefined, meta: Record
   }
 }
 
+/** Statuses considered "resumable" for reopen flow */
+const RESUMABLE_STATUSES: DraftSessionStatus[] = [
+  'draft', 'charter_pending', 'params_pending', 'preview',
+];
+
 export function useCorporateDraftSession() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const debounceTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map());
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
   // Resolve profileId
   const { data: profile } = useQuery({
@@ -136,6 +145,7 @@ export function useCorporateDraftSession() {
       auditAction?: string;
       auditMeta?: Record<string, unknown>;
     }) => {
+      setSaveStatus('saving');
       const { data, error } = await supabase
         .from("corporate_draft_sessions" as any)
         .update({
@@ -157,24 +167,75 @@ export function useCorporateDraftSession() {
       return data as unknown as CorporateDraftSession;
     },
     onSuccess: () => {
+      setSaveStatus('saved');
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+    },
+    onError: () => {
+      setSaveStatus('error');
     },
   });
 
-  // Debounced auto-save
+  // Debounced auto-save with patch accumulation
   const autoSave = useCallback(
     (sessionId: string, patch: Record<string, unknown>) => {
-      const existing = debounceTimers.current.get(sessionId);
-      if (existing) clearTimeout(existing);
+      // Accumulate patches
+      const existing = pendingPatches.current.get(sessionId) ?? {};
+      // Deep merge metadata to avoid overwrite
+      const merged = { ...existing };
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'metadata' && typeof value === 'object' && value !== null && typeof merged.metadata === 'object' && merged.metadata !== null) {
+          merged.metadata = { ...(merged.metadata as Record<string, unknown>), ...(value as Record<string, unknown>) };
+        } else {
+          merged[key] = value;
+        }
+      }
+      pendingPatches.current.set(sessionId, merged);
+      setSaveStatus('dirty');
+
+      const existingTimer = debounceTimers.current.get(sessionId);
+      if (existingTimer) clearTimeout(existingTimer);
 
       const timer = setTimeout(() => {
-        updateMutation.mutate({ id: sessionId, patch });
+        const accumulatedPatch = pendingPatches.current.get(sessionId);
+        if (accumulatedPatch && Object.keys(accumulatedPatch).length > 0) {
+          pendingPatches.current.delete(sessionId);
+          updateMutation.mutate({ id: sessionId, patch: accumulatedPatch });
+        }
         debounceTimers.current.delete(sessionId);
       }, 1500);
 
       debounceTimers.current.set(sessionId, timer);
     },
     [updateMutation]
+  );
+
+  // Flush save — immediate save of accumulated patches, returns promise
+  const flushSave = useCallback(
+    async (sessionId: string): Promise<void> => {
+      // Cancel any pending debounce
+      const existingTimer = debounceTimers.current.get(sessionId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        debounceTimers.current.delete(sessionId);
+      }
+
+      const accumulatedPatch = pendingPatches.current.get(sessionId);
+      if (accumulatedPatch && Object.keys(accumulatedPatch).length > 0) {
+        pendingPatches.current.delete(sessionId);
+        await updateMutation.mutateAsync({ id: sessionId, patch: accumulatedPatch });
+      }
+    },
+    [updateMutation]
+  );
+
+  // Check if there are pending (unsaved) patches
+  const hasPendingPatches = useCallback(
+    (sessionId: string | null): boolean => {
+      if (!sessionId) return false;
+      const patch = pendingPatches.current.get(sessionId);
+      return !!patch && Object.keys(patch).length > 0;
+    },
+    []
   );
 
   // Delete (cancel) session
@@ -188,7 +249,6 @@ export function useCorporateDraftSession() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
-      toast.success("Сессия отменена");
     },
   });
 
@@ -250,6 +310,11 @@ export function useCorporateDraftSession() {
     [updateMutation]
   );
 
+  // Find the latest resumable draft session
+  const latestResumableDraft = sessions.find(
+    (s) => RESUMABLE_STATUSES.includes(s.status)
+  ) ?? null;
+
   return {
     profileId,
     sessions,
@@ -260,9 +325,14 @@ export function useCorporateDraftSession() {
     updateSession: updateMutation.mutateAsync,
     isUpdating: updateMutation.isPending,
     autoSave,
-    deleteSession: deleteMutation.mutate,
+    flushSave,
+    hasPendingPatches,
+    saveStatus,
+    setSaveStatus,
+    deleteSession: deleteMutation.mutateAsync,
     confirmCharterRules,
     changeProcedureMode,
     confirmPackage,
+    latestResumableDraft,
   };
 }
