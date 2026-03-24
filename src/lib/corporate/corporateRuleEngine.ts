@@ -19,7 +19,10 @@ import type {
   DocumentCategory,
   LegalBasis,
   AgendaItem,
+  TemplateRuntimeStatus,
 } from './corporateTypes';
+
+import { getTemplateSpec } from './corporateTemplateSpec';
 
 import {
   DEFAULT_CHARTER_RULES,
