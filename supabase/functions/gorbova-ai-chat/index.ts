@@ -10,7 +10,7 @@ const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.
 const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats', 'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024; // 10MB
-const MAX_TEXT_CHARS = 20000;
+const MAX_TEXT_CHARS = 100000;
 
 interface RequestBody {
   mode: 'chat' | 'prompt';
