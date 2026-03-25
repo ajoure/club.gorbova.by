@@ -22,6 +22,7 @@ import { DomainHomePage } from "./components/layout/DomainRouter";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Auth = lazy(() => import("./pages/Auth"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
