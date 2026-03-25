@@ -399,8 +399,10 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
               У вас есть несохранённые данные. Что сделать с черновиком?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-2">
-            {/* Destructive zone — left on desktop, bottom on mobile */}
+          {/* Footer: fully override base AlertDialogFooter classes to prevent
+              flex-col-reverse / sm:space-x-2 / sm:justify-end inheritance */}
+          <AlertDialogFooter className="!flex !flex-col gap-2 sm:!flex-row sm:!items-center sm:!justify-between !space-x-0 pt-2">
+            {/* Destructive zone — left on desktop, last on mobile */}
             <Button
               variant="ghost"
               className="h-9 w-full sm:w-auto text-destructive hover:text-destructive hover:bg-destructive/10 text-sm order-3 sm:order-1"
@@ -409,15 +411,15 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
             >
               Выйти без сохранения
             </Button>
-            {/* Safe actions zone — right on desktop, top on mobile */}
+            {/* Safe actions zone — right on desktop, first on mobile */}
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto order-1 sm:order-2">
-              <AlertDialogCancel disabled={closeSaving} className="mt-0 h-9 w-full sm:w-auto">
+              <AlertDialogCancel disabled={closeSaving} className="!mt-0 h-9 w-full sm:w-auto text-sm">
                 Остаться
               </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleSaveAndClose}
                 disabled={closeSaving}
-                className="h-9 w-full sm:w-auto"
+                className="h-9 w-full sm:w-auto text-sm"
               >
                 {closeSaving ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

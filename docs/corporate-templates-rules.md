@@ -434,46 +434,78 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 ## Machine-readable manifest parity proof (S3-CLOSE-5)
 
 **Артефакт**: `/mnt/documents/manifest_parity_proof.json`
+**Тип**: proof-only, НЕ является source of truth.
+**SoT**: frontend rule engine (`corporateRuleEngine.ts`), server manifest module (`corporate-manifest.ts`), activation matrix (этот файл).
 
 **Метод**: Code-level comparison logic из `calculatePackageManifest()` (frontend) и `calculateServerManifest()` (server), прогон через 6 сценариев с идентичными входами.
 
-| # | Сценарий | frontend_count | server_count | match | diffs |
-|---|---|---|---|---|---|
-| 1 | annual_meeting + law_default | 22 | 22 | ✅ true | 0 |
-| 2 | annual_meeting + charter_confirmed + has_board | 22 | 22 | ✅ true | 0 |
-| 3 | annual_meeting + has_auditor + has_audit_commission | 22 | 22 | ✅ true | 0 |
-| 4 | annual_meeting + charter_change | 22 | 22 | ✅ true | 0 |
-| 5 | sole_participant_decision + law_default | 14 | 14 | ✅ true | 0 |
-| 6 | annual_meeting + secret_voting | 22 | 22 | ✅ true | 0 |
+| # | Сценарий | frontend_count | server_count | included_match | excluded_match | full_order_match | diffs |
+|---|---|---|---|---|---|---|---|
+| 1 | annual_meeting + law_default | 22 | 22 | ✅ | ✅ | ✅ | 0 |
+| 2 | annual_meeting + charter_confirmed + has_board | 22 | 22 | ✅ | ✅ | ✅ | 0 |
+| 3 | annual_meeting + has_auditor + has_audit_commission | 22 | 22 | ✅ | ✅ | ✅ | 0 |
+| 4 | annual_meeting + charter_change | 22 | 22 | ✅ | ✅ | ✅ | 0 |
+| 5 | sole_participant_decision + law_default | 14 | 14 | ✅ | ✅ | ✅ | 0 |
+| 6 | annual_meeting + secret_voting | 22 | 22 | ✅ | ✅ | ✅ | 0 |
 
-**runtime_status sync**: all_match=true, frontend_sot_count=18, server_fallback_count=18, drifts=[]
+**Итог**: all_match=true, total_diffs=0, included_match=true, excluded_match=true, full_order_match=true
 
 ---
 
-## Runtime status sync verification (S3-CLOSE-5)
+## 3-way runtime status sync verification (S3-CLOSE-5)
 
-| template_code | frontend (corporateTemplateSpec.ts) | server (DEFAULT_RUNTIME_STATUS) | sync_ok |
-|---|---|---|---|
-| corp_order_meeting | active | active | ✅ |
-| corp_notice | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_notice_journal | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_review_list | active | active | ✅ |
-| corp_draft_decisions | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_registration_list | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_protocol | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_notification_decisions | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_sole_decision | active | active | ✅ |
-| corp_sole_appendices | active | active | ✅ |
-| corp_ballot | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_board_candidates | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_board_consent | active | active | ✅ |
-| corp_auditor_candidates | active | active | ✅ |
-| corp_auditor_consent | active | active | ✅ |
-| corp_audit_commission | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_agenda_change_notice | pending_sprint3 | pending_sprint3 | ✅ |
-| corp_charter_amendments | active | active | ✅ |
+Сверка 3 источников: `corporateTemplateSpec.ts`, `corporate-manifest.ts::DEFAULT_RUNTIME_STATUS`, docs activation matrix.
 
-**Итог**: 18/18 sync_ok, 0 drifts.
+### Блок 1: 18 corporate templates — runtime sync
+
+| # | template_code | frontend (spec) | server (fallback) | docs matrix | order_match | sync_ok |
+|---|---|---|---|---|---|---|
+| 1 | corp_order_meeting | active | active | active | ✅ | ✅ |
+| 2 | corp_notice | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 3 | corp_notice_journal | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 4 | corp_review_list | active | active | active | ✅ | ✅ |
+| 5 | corp_draft_decisions | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 6 | corp_registration_list | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 7 | corp_protocol | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 8 | corp_notification_decisions | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 9 | corp_sole_decision | active | active | active | ✅ | ✅ |
+| 10 | corp_sole_appendices | active | active | active | ✅ | ✅ |
+| 11 | corp_ballot | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 12 | corp_board_candidates | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 13 | corp_board_consent | active | active | active | ✅ | ✅ |
+| 14 | corp_auditor_candidates | active | active | active | ✅ | ✅ |
+| 15 | corp_auditor_consent | active | active | active | ✅ | ✅ |
+| 16 | corp_audit_commission | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 17 | corp_agenda_change_notice | pending_sprint3 | pending_sprint3 | pending_sprint3 | ✅ | ✅ |
+| 18 | corp_charter_amendments | active | active | active | ✅ | ✅ |
+
+**3-way sync checked only for 18 corporate templates.**
+
+**Итог**: 18/18 sync_ok, 0 drifts, order_match=true (docs matrix order = frontend spec order = server fallback order).
+
+### Блок 2: 4 externally_provided — N/A by design
+
+| template_code | notes |
+|---|---|
+| ext_annual_report | Внешний документ, runtime_status N/A |
+| ext_balance_sheet | Внешний документ, runtime_status N/A |
+| ext_audit_report | Внешний документ, runtime_status N/A |
+| ext_auditor_conclusion | Условный, runtime_status N/A |
+
+**4 externally_provided excluded from runtime sync by design.**
+
+---
+
+## Sprint 3 Closeout Proof Summary (S3-CLOSE-5)
+
+- UI proof: 3 viewport screenshots required (375/768/1189) — see Part A
+- Manifest parity artifact: `/mnt/documents/manifest_parity_proof.json`
+- 6 scenarios checked, all_match=true, diffs=[]
+- included_match=true, excluded_match=true
+- full_order_match=true
+- docs matrix order matches spec/server fallback
+- runtime_status_sync_ok for 18/18 corporate templates
+- 4 externally_provided: N/A by design
 
 ---
 
@@ -486,9 +518,9 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 5. ✅ **Error-doc traceability** — upload/signed_url failures записываются в ai_generated_documents
 6. ✅ **Storage blocker fix** — transliteration Cyrillic→ASCII
 7. ✅ **Manifest parity proof** — machine-readable, 6 сценариев, 0 расхождений (artifact: manifest_parity_proof.json)
-8. ✅ **runtime_status sync** — verified 18/18, 0 drifts
+8. ✅ **runtime_status 3-way sync** — verified 18/18 across spec + server fallback + docs matrix, 0 drifts
 9. ✅ **2 шаблона proven end-to-end** — corp_order_meeting, corp_review_list
-10. ✅ **UI exit dialog fix** — кнопки выровнены, destructive визуально secondary
+10. ✅ **UI exit dialog fix** — кнопки выровнены, destructive визуально secondary, !important overrides для предотвращения inheritance
 
 ## Не закрыто в Sprint 3
 
@@ -512,7 +544,14 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 
 ---
 
-## PATCH S4-ACTIVE-PROOF — End-to-end proof оставшихся active templates
+## PATCH S4-ACTIVE-PROOF — Операционный backlog
+
+### Жёсткие правила
+
+- Без `confirmed` test sessions статус менять **запрещено**
+- signed URL без записи в `ai_generated_documents` **не считается proof**
+- Запись в batch без download **не считается proof**
+- Нужен **полный chain целиком**, без пропусков
 
 ### Предусловия: создание test sessions
 
@@ -525,25 +564,20 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 | 3 | annual_meeting + has_auditor | annual_meeting | charter_confirmed, has_auditor=true | corp_auditor_candidates, corp_auditor_consent + core |
 | 4 | annual_meeting + charter_change | annual_meeting | law_default, agenda с charter_change | corp_charter_amendments + core |
 
-### Per-template proof chain
+### Per-template операционные требования
 
-Для каждого шаблона из списка:
-- `corp_sole_decision`
-- `corp_sole_appendices`
-- `corp_board_consent`
-- `corp_auditor_candidates`
-- `corp_auditor_consent`
-- `corp_charter_amendments`
+| template_code | required_session_type | required_manifest_condition | expected_runtime_status_before | expected_final_status_after |
+|---|---|---|---|---|
+| corp_sole_decision | sole_participant_decision | base template, always included | active | active (proven) |
+| corp_sole_appendices | sole_participant_decision | base template, always included | active | active (proven) |
+| corp_board_consent | annual_meeting + has_board | charter_confirmed + has_board=true | active | active (proven) |
+| corp_auditor_candidates | annual_meeting + has_auditor | charter_confirmed + has_auditor=true | active | active (proven) |
+| corp_auditor_consent | annual_meeting + has_auditor | charter_confirmed + has_auditor=true | active | active (proven) |
+| corp_charter_amendments | annual_meeting + charter_change | agenda.requires_charter_change=true | active | active (proven) |
 
-Обязательная цепочка:
-1. session confirmed → manifest includes template
-2. pre-flight passed
-3. render success
-4. upload success
-5. row in `ai_generated_documents`
-6. signed URL / download available
-7. batch linked correctly
-8. snapshot/meta present
+### Обязательная proof chain (полная, без пропусков)
+
+`confirmed session → manifest include → pre-flight pass → render → upload → ai_generated_documents row → signed URL → history batch`
 
 ### Формат proof
 
