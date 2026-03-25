@@ -1,48 +1,52 @@
 
 
-# Исправление серых полей по бокам HTML-блока
+# Локальный override для #root на публичных сайтах
 
-## Scope — 2 файла, без изменения глобального App.css
+## Статус предыдущих правок
+Правки 1 и 3 из плана уже применены:
+- HtmlSection.tsx — убраны `py-6 px-6` и `max-w-4xl mx-auto`
+- HtmlIframePreview.tsx — `padding: 0` в fallback body
 
-### 1. `src/components/site-renderer/blocks/HtmlSection.tsx`
+## Оставшаяся проблема
+`#root { max-width: 1280px; padding: 2rem; }` в App.css ограничивает публичные сайты. DomainRouter рендерит SitePageRenderer напрямую внутри `#root`, без промежуточной обёртки.
 
-Убрать `py-6 px-6` и `max-w-4xl mx-auto`. Ширину контролирует BlockWrapper.
+## Решение — route-scoped override (без изменения App.css)
+
+### Файл: `src/components/layout/DomainRouter.tsx`
+
+Обернуть SitePageRenderer в div с классом, который сбрасывает ограничения `#root`:
 
 ```tsx
-// Было:
-<section className="py-6 px-6">
-  <div className="max-w-4xl mx-auto">
-    <HtmlIframePreview html={code} />
+// Строка ~82
+return (
+  <div className="site-public-layout">
+    <SitePageRenderer ... />
   </div>
-</section>
-
-// Станет:
-<section>
-  <HtmlIframePreview html={code} />
-</section>
+);
 ```
 
-### 2. `src/components/shared/HtmlIframePreview.tsx`
+### Файл: `src/index.css` (или создать отдельный CSS)
 
-В `buildSrcdoc` fallback-обертке: `padding: 0` вместо `padding: 16px`.
+Добавить scoped override:
 
 ```css
-/* Было: */
-body { margin: 0; padding: 16px; font-family: ... }
-/* Станет: */
-body { margin: 0; padding: 0; font-family: ... }
+/* Route-scoped override: публичные сайты не ограничены #root constraints */
+#root:has(.site-public-layout) {
+  max-width: none;
+  padding: 0;
+  text-align: left;
+}
 ```
 
-**Compatibility rule:** Это изменение касается только fallback-обертки (когда входной HTML не содержит `</body>`). Полноценный HTML с собственным `</body>` вставляется as-is — без изменений. Другие потребители (`HtmlBlockEditor`, `HtmlRawBlock`) используют тот же компонент, но они рендерят в рамках admin-контейнеров с собственными border/overflow — padding iframe-body для них не критичен.
+`:has()` поддерживается во всех современных браузерах (Chrome 105+, Safari 15.4+, Firefox 121+).
 
-### 3. `src/App.css` — НЕ МЕНЯЕМ
+## Безопасность
+- App.css не меняется
+- Override срабатывает только когда внутри `#root` есть `.site-public-layout`
+- Админка и все остальные страницы сохраняют `max-width: 1280px; padding: 2rem`
 
-`#root { max-width: 1280px; padding: 2rem; }` остается без изменений. Это shared/global слой. Для публичных сайтов ограничение `#root` не является причиной проблемы — основные ограничители были `max-w-4xl` в HtmlSection и `padding: 16px` в iframe body. Если после правок 1-2 проблема останется — потребуется отдельный route-scoped override с DRY RUN.
-
-## Verify checklist
-
-- HTML block на публичном сайте без серых полей по бокам
-- `fullWidth` / `maxWidth` из BlockWrapper продолжают управлять шириной
-- Fallback iframe wrapper без внутренних отступов
-- Админка: `HtmlBlockEditor` и `HtmlRawBlock` рендерятся корректно (в обёртках с `border rounded-lg overflow-hidden`)
+## Verify
+- HTML block на публичном сайте без серых полей
+- Админка сохраняет текущий layout
+- Работает на мобильных и планшетах
 
