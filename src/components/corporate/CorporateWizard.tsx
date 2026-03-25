@@ -346,6 +346,7 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                 session={session}
                 sessionId={sessionId}
                 flushSave={flushSave}
+                updateSession={updateSession}
                 onClose={() => {
                   setStep(0);
                   setSessionId(null);
