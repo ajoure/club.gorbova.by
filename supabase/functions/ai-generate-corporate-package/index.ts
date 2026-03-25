@@ -541,7 +541,8 @@ serve(async (req) => {
           .from("documents-templates")
           .download(dbTemplate.template_path as string);
         if (dlErr || !tplFile) {
-          errorCount++;
+          const dlErrMsg = `Download failed: ${dlErr?.message || 'No file returned'}`;
+          console.error(`[CORP-GEN] Template download error for ${item.template_code}:`, dlErr);
           await supabase.from("ai_generated_documents").insert({
             profile_id: profileId,
             template_id: dbTemplate.id,
