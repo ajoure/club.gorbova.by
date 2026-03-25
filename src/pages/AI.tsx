@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"; // cache-bust-v2
+import { useState, useCallback, useMemo } from "react";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
@@ -15,144 +15,27 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useToast } from "@/hooks/use-toast";
+import { useRbac } from "@/hooks/useRbac";
+import { useAiChat, type ChatScenario } from "@/hooks/useAiChat";
+import { useAiUserPrompts, type AiUserPrompt } from "@/hooks/useAiUserPrompts";
+import { ChatMessageBubble } from "@/components/ai-chat/ChatMessage";
+import { ChatScenarioLauncher } from "@/components/ai-chat/ChatScenarioLauncher";
+import { PromptRunFlow } from "@/components/ai-chat/PromptRunFlow";
+import { PromptCard } from "@/components/ai-chat/PromptCard";
+import { PromptFormDialog } from "@/components/ai-chat/PromptFormDialog";
 import { 
   Bot, 
   PlayCircle, 
   Copy, 
   Send, 
   Clock,
-  Target,
-  TrendingUp,
-  Users,
   FileText,
   MessageSquare,
-  Lightbulb,
-  Zap,
-  Building2
+  Building2,
+  Users,
+  Plus,
+  Loader2,
 } from "lucide-react";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-}
-
-interface Tutorial {
-  id: string;
-  title: string;
-  description: string;
-  duration: string;
-  category: string;
-}
-
-interface Prompt {
-  id: string;
-  title: string;
-  description: string;
-  promptText: string;
-  category: string;
-  icon: React.ReactNode;
-}
-
-// Mock data
-const initialMessages: ChatMessage[] = [
-  {
-    id: "1",
-    role: "assistant",
-    content: "Привет! 👋 Я gorbova AI — твой персональный помощник в бизнесе и налогах. Чем могу помочь сегодня?",
-    timestamp: new Date(),
-  },
-  {
-    id: "2",
-    role: "assistant", 
-    content: "Я могу помочь тебе с:\n• Составлением бизнес-планов\n• Анализом финансов\n• Налоговыми вопросами\n• Маркетинговыми стратегиями\n\nПросто напиши свой вопрос!",
-    timestamp: new Date(),
-  },
-];
-
-const tutorials: Tutorial[] = [
-  {
-    id: "1",
-    title: "Как писать эффективные промпты",
-    description: "Основы промпт-инжиниринга для получения качественных ответов от AI",
-    duration: "15 мин",
-    category: "Основы",
-  },
-  {
-    id: "2",
-    title: "AI для маркетинга",
-    description: "Используй нейросети для создания контента, анализа аудитории и автоматизации",
-    duration: "25 мин",
-    category: "Маркетинг",
-  },
-  {
-    id: "3",
-    title: "Автоматизация рутины с AI",
-    description: "Как делегировать повторяющиеся задачи искусственному интеллекту",
-    duration: "20 мин",
-    category: "Продуктивность",
-  },
-  {
-    id: "4",
-    title: "AI-ассистент для финансов",
-    description: "Анализ данных, прогнозирование и финансовое планирование с помощью AI",
-    duration: "30 мин",
-    category: "Финансы",
-  },
-];
-
-const prompts: Prompt[] = [
-  {
-    id: "1",
-    title: "План продаж на месяц",
-    description: "Структурированный план достижения целей по продажам",
-    promptText: "Создай детальный план продаж на месяц для [тип бизнеса]. Включи: цели по выручке, ключевые метрики, еженедельные задачи, потенциальные риски и способы их минимизации. Формат: таблица с разбивкой по неделям.",
-    category: "Продажи",
-    icon: <Target className="h-5 w-5" />,
-  },
-  {
-    id: "2",
-    title: "Анализ конкурентов",
-    description: "Глубокий анализ конкурентной среды",
-    promptText: "Проведи анализ конкурентов для [ниша/бизнес]. Определи 5 главных конкурентов, их сильные и слабые стороны, ценовую политику, УТП, каналы продвижения. Дай рекомендации, как выделиться на их фоне.",
-    category: "Маркетинг",
-    icon: <TrendingUp className="h-5 w-5" />,
-  },
-  {
-    id: "3",
-    title: "Скрипт холодного звонка",
-    description: "Эффективный скрипт для первого контакта с клиентом",
-    promptText: "Напиши скрипт холодного звонка для [продукт/услуга]. Включи: приветствие, выявление боли, презентацию решения, работу с возражениями (минимум 5), призыв к действию. Тон: дружелюбный, но профессиональный.",
-    category: "Продажи",
-    icon: <Users className="h-5 w-5" />,
-  },
-  {
-    id: "4",
-    title: "Контент-план на неделю",
-    description: "Готовый план публикаций для соцсетей",
-    promptText: "Создай контент-план на неделю для [ниша] в Instagram. Для каждого дня: тема поста, формат (рилс/карусель/сторис), текст, 10 хештегов, лучшее время публикации. Цель: вовлечение и продажи.",
-    category: "Контент",
-    icon: <FileText className="h-5 w-5" />,
-  },
-  {
-    id: "5",
-    title: "Ответ на негативный отзыв",
-    description: "Профессиональный ответ на претензию клиента",
-    promptText: "Напиши профессиональный ответ на негативный отзыв клиента: '[текст отзыва]'. Ответ должен: признать проблему, выразить сочувствие, предложить решение, сохранить репутацию компании. Тон: спокойный, уважительный.",
-    category: "Сервис",
-    icon: <MessageSquare className="h-5 w-5" />,
-  },
-  {
-    id: "6",
-    title: "Идеи для продукта",
-    description: "Генерация идей для развития бизнеса",
-    promptText: "Предложи 10 идей для нового продукта/услуги в нише [ниша]. Для каждой идеи укажи: суть, целевую аудиторию, конкурентное преимущество, примерные затраты на запуск, потенциал монетизации.",
-    category: "Стратегия",
-    icon: <Lightbulb className="h-5 w-5" />,
-  },
-];
 
 /* ─── Конфигурация секций и подменю ─── */
 
@@ -173,6 +56,7 @@ interface SubMenuItem {
   activeGradient: string;
   borderColor: string;
   iconColor: string;
+  adminOnly?: boolean;
 }
 
 const AI_SUB_TABS: SubMenuItem[] = [
@@ -202,6 +86,7 @@ const AI_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-amber-500/20 to-orange-500/15",
     borderColor: "border-amber-400/20",
     iconColor: "text-amber-600",
+    adminOnly: true,
   },
 ];
 
@@ -254,12 +139,21 @@ const DEFAULT_SUB: Record<Section, SubTab> = {
 };
 
 const AI = () => {
-  const { toast } = useToast();
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const rbac = useRbac();
+  const isAdminUser = rbac.isAdmin || rbac.isSuperAdmin;
+  
   const [inputValue, setInputValue] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<Section>("ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
+  const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
+
+  // Chat
+  const aiChat = useAiChat();
+
+  // Admin prompts
+  const adminPrompts = useAiUserPrompts();
+  const [editingPrompt, setEditingPrompt] = useState<AiUserPrompt | null>(null);
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
 
   // Entity management state — unified shell
   const [recordSheetOpen, setRecordSheetOpen] = useState(false);
@@ -268,13 +162,11 @@ const AI = () => {
   const aiEntities = useAiEntities();
   const aiPersons = useAiPersons();
 
-  // Derive entity from query data (stale-proof per state-management-standard)
   const recordSheetEntity = useMemo(
     () => aiEntities.allEntities.find(e => e.id === recordSheetEntityId) ?? null,
     [aiEntities.allEntities, recordSheetEntityId]
   );
 
-  // Person management state
   const [personSheetOpen, setPersonSheetOpen] = useState(false);
   const [personSheetMode, setPersonSheetMode] = useState<RecordSheetMode>("view");
   const [personSheetPersonId, setPersonSheetPersonId] = useState<string | null>(null);
@@ -311,7 +203,6 @@ const AI = () => {
     setRecordSheetOpen(true);
   }, []);
 
-  // Person handlers
   const handleOpenCreatePersonSheet = useCallback(() => {
     setPersonSheetPersonId(null);
     setPersonSheetMode("create");
@@ -339,38 +230,11 @@ const AI = () => {
     await aiPersons.updatePerson({ id: personSheetPerson.id, ...data } as any);
   }, [aiPersons, personSheetPerson]);
 
+  // Chat handlers
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: "user",
-      content: inputValue,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
+    await aiChat.sendMessage(inputValue);
     setInputValue("");
-    setIsLoading(true);
-
-    setTimeout(() => {
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "Спасибо за вопрос! Функционал AI-чата находится в разработке. Скоро я смогу полноценно отвечать на твои вопросы. А пока воспользуйся вкладкой «Промпты» — там есть готовые шаблоны для работы с любой нейросетью! 🚀",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
-      setIsLoading(false);
-    }, 1500);
-  };
-
-  const handleCopyPrompt = (promptText: string, title: string) => {
-    navigator.clipboard.writeText(promptText);
-    toast({
-      title: "Скопировано!",
-      description: `Промпт «${title}» скопирован в буфер обмена`,
-    });
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -380,14 +244,77 @@ const AI = () => {
     }
   };
 
+  const handleScenarioSelect = (scenario: ChatScenario) => {
+    if (scenario.type === "file_analysis" || scenario.type === "document_review") {
+      setActiveScenario(scenario);
+    } else {
+      // Chat type: just send a system-level hint and focus
+      aiChat.sendMessage(`Используй сценарий: ${scenario.launcher_title}`, { promptId: scenario.id });
+    }
+  };
+
+  const handleScenarioSubmit = async (files: File[]) => {
+    if (!activeScenario) return;
+
+    // Extract text from files (Phase 1: client-side)
+    const fileNames = files.map(f => f.name);
+    let fileContents = "";
+    const images: Array<{ base64: string; filename: string; mimeType: string }> = [];
+
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        const base64 = await fileToBase64(file);
+        images.push({ base64, filename: file.name, mimeType: file.type });
+      } else {
+        try {
+          const text = await file.text();
+          fileContents += `\n--- ${file.name} ---\n${text}`;
+        } catch {
+          fileContents += `\n[FILE_PARSE_ERROR: ${file.name}]`;
+        }
+      }
+    }
+
+    await aiChat.sendMessage(
+      `Анализ файлов: ${fileNames.join(", ")}`,
+      {
+        promptId: activeScenario.id,
+        fileContents: fileContents || undefined,
+        fileNames,
+        images: images.length > 0 ? images : undefined,
+      }
+    );
+    setActiveScenario(null);
+  };
+
+  // Admin prompt handlers
+  const handleEditPrompt = (prompt: AiUserPrompt) => {
+    setEditingPrompt(prompt);
+    setPromptDialogOpen(true);
+  };
+
+  const handleCreatePrompt = () => {
+    setEditingPrompt(null);
+    setPromptDialogOpen(true);
+  };
+
+  const handleSavePrompt = async (data: Partial<AiUserPrompt>) => {
+    if (editingPrompt) {
+      await adminPrompts.updatePrompt(editingPrompt.id, data);
+    } else {
+      await adminPrompts.createPrompt(data);
+    }
+  };
+
   const handleSectionChange = (section: Section) => {
     setActiveSection(section);
     setActiveSubTab(DEFAULT_SUB[section]);
   };
 
-  const subTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+  // Filter sub-tabs by role
+  const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+  const subTabs = allSubTabs.filter(tab => !tab.adminOnly || isAdminUser);
 
-  /* ─── Главный таб (pill-bar) ─── */
   const sectionTabClass = (active: boolean) =>
     `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
       active
@@ -399,7 +326,7 @@ const AI = () => {
     <DashboardLayout>
       <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]">
 
-        {/* ── Главные табы (Gorbov AI / Документы) ── */}
+        {/* ── Главные табы ── */}
         <div className="px-1 py-0.5 shrink-0">
           <div
             role="tablist"
@@ -426,7 +353,7 @@ const AI = () => {
           </div>
         </div>
 
-        {/* ── Подменю (цветные glass pills) ── */}
+        {/* ── Подменю ── */}
         <div className="px-1 shrink-0">
           <div className="flex flex-wrap gap-1.5">
             {subTabs.map((tab) => {
@@ -464,31 +391,10 @@ const AI = () => {
           <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
             <ScrollArea className="flex-1 min-h-0 p-4">
               <div className="space-y-4">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-3 ${
-                        message.role === "user"
-                          ? "bg-primary text-primary-foreground rounded-br-md"
-                          : "bg-muted rounded-bl-md"
-                      }`}
-                    >
-                      {message.role === "assistant" && (
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className="p-1 rounded-full bg-primary/10">
-                            <Bot className="h-4 w-4 text-primary" />
-                          </div>
-                          <span className="text-xs font-medium text-primary">gorbova AI</span>
-                        </div>
-                      )}
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                    </div>
-                  </div>
+                {aiChat.messages.map((message) => (
+                  <ChatMessageBubble key={message.id} message={message} />
                 ))}
-                {isLoading && (
+                {aiChat.isLoading && (
                   <div className="flex justify-start">
                     <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -503,19 +409,36 @@ const AI = () => {
               </div>
             </ScrollArea>
 
+            {/* Scenario run flow */}
+            {activeScenario && (
+              <PromptRunFlow
+                scenario={activeScenario}
+                onSubmit={handleScenarioSubmit}
+                onCancel={() => setActiveScenario(null)}
+                isLoading={aiChat.isLoading}
+              />
+            )}
+
             <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
               <div className="flex gap-2">
+                <ChatScenarioLauncher
+                  scenarios={aiChat.scenarios}
+                  loading={aiChat.scenariosLoading}
+                  onFetch={aiChat.fetchScenarios}
+                  onSelect={handleScenarioSelect}
+                  disabled={aiChat.isLoading}
+                />
                 <Textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyPress}
                   placeholder="Напиши свой вопрос..."
                   className="min-h-[44px] max-h-[120px] resize-none"
-                  disabled={isLoading}
+                  disabled={aiChat.isLoading}
                 />
                 <Button
                   onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || isLoading}
+                  disabled={!inputValue.trim() || aiChat.isLoading}
                   size="icon"
                   className="h-[44px] w-[44px] shrink-0"
                 >
@@ -531,94 +454,89 @@ const AI = () => {
 
         {/* Tutorials */}
         {activeSubTab === "tutorials" && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {tutorials.map((tutorial) => (
-              <GlassCard key={tutorial.id} hover className="flex flex-col">
-                <div className="flex items-center justify-between mb-3">
-                  <Badge variant="secondary">{tutorial.category}</Badge>
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {tutorial.duration}
-                  </div>
-                </div>
-                <div className="flex items-start gap-3 mb-3">
-                  <div className="p-2 rounded-lg bg-primary/10 shrink-0">
-                    <PlayCircle className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold leading-tight">{tutorial.title}</h3>
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground mb-4 flex-1">
-                  {tutorial.description}
-                </p>
-                <Button variant="outline" className="w-full">
-                  <PlayCircle className="h-4 w-4 mr-2" />
-                  Смотреть
-                </Button>
-              </GlassCard>
-            ))}
-          </div>
+          <GlassCard className="p-6">
+            <div className="text-center text-muted-foreground">
+              <PlayCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <h3 className="font-semibold mb-1">Туториалы</h3>
+              <p className="text-sm">Раздел в разработке</p>
+            </div>
+          </GlassCard>
         )}
 
-        {/* Prompts */}
-        {activeSubTab === "prompts" && (
+        {/* Prompts — admin only */}
+        {activeSubTab === "prompts" && isAdminUser && (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {prompts.map((prompt) => (
-                <GlassCard key={prompt.id} className="flex flex-col">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                        {prompt.icon}
-                      </div>
-                      <Badge variant="outline">{prompt.category}</Badge>
-                    </div>
-                  </div>
-                  <h3 className="font-semibold mb-2">{prompt.title}</h3>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {prompt.description}
-                  </p>
-                  <div className="bg-muted/50 rounded-lg p-3 mb-4 flex-1">
-                    <p className="text-xs font-mono text-muted-foreground line-clamp-4">
-                      {prompt.promptText}
-                    </p>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => handleCopyPrompt(prompt.promptText, prompt.title)}
-                  >
-                    <Copy className="h-4 w-4 mr-2" />
-                    Копировать
-                  </Button>
-                </GlassCard>
-              ))}
-            </div>
-            
-            <GlassCard className="mt-6">
-              <div className="flex items-start gap-4">
-                <div className="p-3 rounded-xl bg-primary/10 shrink-0">
-                  <Zap className="h-6 w-6 text-primary" />
-                </div>
-                <div>
-                  <h3 className="font-semibold mb-1">Как использовать промпты?</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Скопируй промпт и вставь его в ChatGPT, Claude или другую нейросеть. 
-                    Замени текст в [квадратных скобках] на свои данные. 
-                    Чем точнее ты опишешь контекст, тем лучше будет результат!
-                  </p>
-                </div>
+            <div className="flex items-center justify-between px-1 mb-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={adminPrompts.filter === "active" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => adminPrompts.setFilter("active")}
+                >
+                  Активные
+                </Button>
+                <Button
+                  variant={adminPrompts.filter === "archived" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => adminPrompts.setFilter("archived")}
+                >
+                  Архив
+                </Button>
+                <Button
+                  variant={adminPrompts.filter === "all" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => adminPrompts.setFilter("all")}
+                >
+                  Все
+                </Button>
               </div>
-            </GlassCard>
+              <Button size="sm" onClick={handleCreatePrompt}>
+                <Plus className="h-4 w-4 mr-1" />
+                Создать
+              </Button>
+            </div>
+
+            {adminPrompts.loading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : adminPrompts.prompts.length === 0 ? (
+              <GlassCard className="text-center py-12">
+                <Copy className="h-10 w-10 mx-auto mb-3 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">Нет промптов</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={handleCreatePrompt}>
+                  Создать первый промпт
+                </Button>
+              </GlassCard>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {adminPrompts.prompts.map(prompt => (
+                  <PromptCard
+                    key={prompt.id}
+                    prompt={prompt}
+                    onEdit={handleEditPrompt}
+                    onArchive={adminPrompts.archivePrompt}
+                    onToggleVisible={(id, cur) => adminPrompts.toggleVisible(id, cur)}
+                  />
+                ))}
+              </div>
+            )}
+
+            <PromptFormDialog
+              open={promptDialogOpen}
+              onOpenChange={setPromptDialogOpen}
+              prompt={editingPrompt}
+              onSave={handleSavePrompt}
+              saving={adminPrompts.saving}
+            />
           </>
         )}
 
-        {/* Documents — generate + history */}
+        {/* Documents */}
         {activeSubTab === "generate" && <AiDocumentsGenerateView />}
         {activeSubTab === "history" && <AiDocumentsHistoryView />}
 
-        {/* Entities — table + sheet editor */}
+        {/* Entities */}
         {activeSubTab === "entities" && (
           <>
             <EntityTableView
@@ -647,7 +565,7 @@ const AI = () => {
           </>
         )}
 
-        {/* Persons — table + sheet */}
+        {/* Persons */}
         {activeSubTab === "persons" && (
           <>
             <PersonsTableView
@@ -679,3 +597,15 @@ const AI = () => {
 };
 
 export default AI;
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(",")[1] || "");
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
