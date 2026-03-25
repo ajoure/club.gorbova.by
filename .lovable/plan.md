@@ -2,313 +2,160 @@
 
 &nbsp;
 
-1. **Part A дополнить жёстким условием фиксации бага**
-  Если на одном из 3 viewport выявится дефект, в отчёте нужно явно указать:
+1. corp_sole_appendices не считать шаблоном с условием has_appendices. По текущей логике manifest он идёт в ветке sole_participant_decision как включаемый шаблон этой процедуры. Формулировку про возможный блокер has_appendices убрать, иначе это даст ложный критерий proof.
+2. В proof chain добавить отдельную обязательную проверку не только signed URL, но и факта, что в ai_generated_documents.template_code записан именно нужный template_code, а не просто создан какой-то документ в batch.
+3. Для каждого из 4 сценариев в отчёте фиксировать:
   &nbsp;
-  - bug_found: true
-  - имя отдельного патча: S3-UI-EXIT-DIALOG-FIX
-  - какой именно viewport его воспроизводит
-  - что proof-скрины “после фикса” и “до фикса” не смешиваются
+  - corporate_draft_session_id
+  - generation_batch_id
+  - список template_code, реально вошедших в batch
+  - какие шаблоны были included, но не попали в generation, если такое случится
   &nbsp;
-2. **Part A уточнить, что скрины должны быть именно из preview/UI, а не из кода**
-  В proof указать:
+4. Для сценариев has_board=true и has_auditor=true явно зафиксировать правило proof:
   &nbsp;
-  - источник: реальный UI preview
-  - viewport width
-  - шаги воспроизведения: открыть wizard → изменить поле → открыть exit dialog
-    Это нужно, чтобы скрины были доказательством UI-факта, а не просто верстки.
+  - rules_basis = charter_confirmed
+  - confirmed_charter_rules должны быть реально сохранены в session
+  - недостаточно только UI-отображения, нужен факт в corporate_draft_sessions
   &nbsp;
-3. **Part B добавить проверку parity не только по included, но и по excluded**
-  В artifact и в docs зафиксировать отдельно:
+5. Для charter_change добавить обязательную проверку, что в session/params вопрос повестки реально имеет requires_charter_change = true, а не только текстово выглядит как изменение устава.
+6. В финальном отчёте добавить отдельный итоговый блок:
   &nbsp;
-  - excluded_match
-  - список excluded templates в каждом сценарии
-    Потому что для manifest parity важно доказать и корректное исключение шаблонов, а не только включение.
+  - 6/6 proven либо
+  - точный список, какие из 6 не закрылись и на каком шаге сломались: manifest / pre-flight / render / upload / db_row / signed_url
   &nbsp;
-4. **Part B зафиксировать, что artifact — proof-only и не SoT**
-  В docs добавить явную строку:
+7. В docs/[corporate-templates-rules.md](http://corporate-templates-rules.md) добавить не просто S4-ACTIVE-PROOF Results block, а 2 блока:
   &nbsp;
-  - manifest_parity_proof.json — артефакт проверки
-  - не является source of truth
-  - SoT остаются: frontend rule engine, server manifest module, activation matrix docs
+  - S4-ACTIVE-PROOF execution results
+  - remaining blockers / not proven templates, если хоть один кейс не закрыт полностью
   &nbsp;
-5. **Part C добавить явную проверку порядка строк в docs matrix**
-  Нужна сверка не только статусов, но и порядка template_code:
+8. Поскольку патч proof-only, в DoD лучше заменить Build clean на более релевантный критерий:
   &nbsp;
-  - docs matrix order = frontend spec order = server fallback order
-    Иначе можно пропустить скрытый drift при совпадающих статусах.
+  - код не менялся или если код не менялся — build step N/A
+    Иначе получится формальный, но пустой пункт.
   &nbsp;
-6. **Part C уточнить, что 3-way sync делается только по 18 internal templates**
-  В финальном short proof block прямо написать:
-  &nbsp;
-  - 3-way sync checked only for 18 corporate templates
-  - 4 externally_provided excluded from runtime sync by design
-  &nbsp;
-7. **Part D сделать backlog-блок более операционным**
-  Для каждого remaining active template добавить не только required test session type, но и:
-  &nbsp;
-  - expected included template_code in manifest
-  - expected runtime_status before proof
-  - expected final status after proof
-    Это упростит следующий патч и уберет двусмысленность.
-  &nbsp;
-8. **Part D явно закрепить запрет на “частичный proof”**
-  Добавь формулировку:
-  &nbsp;
-  - signed URL без записи в ai_generated_documents не считается proof
-  - запись в batch без download не считается proof
-  - нужен полный chain целиком, без пропусков
-  &nbsp;
-9. **Part E расширить финальный short proof block**
-  Добавить туда ещё 2 строки:
-  &nbsp;
-  - excluded_match=true
-  - docs matrix order matches spec/server fallback
-    Тогда финальный блок будет действительно самодостаточным.
-  &nbsp;
-10. **Финальный DoD уточнить**
-  Перепиши пункты 4–7 так:
+9. В плане явно зафиксировать: runtime_status в этом патче не меняется, даже если proof неуспешен. Это только proof-сборка и документирование результатов.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+PATCH S4-ACTIVE-PROOF — confirmed test sessions + proof remaining active templates
 
-- по 6 сценариям: all_match=true, total_diffs=0, included_match=true, excluded_match=true, full_order_match=true
-- verified 3-way sync for 18 corporate templates
-- docs matrix order verified
-- 4 external docs marked N/A by design
+## Контекст
 
-&nbsp;
+Текущее состояние:
 
-&nbsp;
+- Все 18 DOCX-шаблонов зарегистрированы в DB (`document_templates`, `is_active=true`, `template_path` заполнен)
+- Успешно сгенерированы только 2 шаблона: `corp_order_meeting`, `corp_review_list` (annual_meeting + law_default)
+- 6 целевых шаблонов уже имеют `runtime_status: 'active'` в обоих файлах, но **без end-to-end proof**
+- Существующая сессия: `116c0a66...` (annual_meeting, law_default, status=generated) — использует `legal_details_id = 30347fc5...` (АЖУР инкам), `profile_id = a4b7c8c9...`
+- Persons хранятся в `legal_details_persons` без привязки к `legal_details_id` (привязка через `profile_id`)
 
-&nbsp;
+## Жёсткие правила
 
-11. **Отдельно зафиксировать, что в этом PATCH не трогаются server/frontend runtime maps**
-  В разделе “Жёсткие правила этого PATCH” добавь:
+- Не менять `corporateTemplateSpec.ts` и `corporate-manifest.ts` — шаблоны уже `active`
+- Не создавать новые таблицы/колонки/функции
+- Использовать существующий pipeline: session → edge function → storage → DB
+- Тест-сессии создаются через UI wizard (confirmed через фронтенд), а не через прямой SQL insert
+- Proof = реальный вызов edge function + проверка результатов в DB
 
-&nbsp;
+## План выполнения
 
-&nbsp;
+### Step 1. Создать 4 confirmed test sessions через UI
 
-&nbsp;
+Каждая сессия создаётся через Corporate Wizard в preview, заполняется нужными данными и доводится до статуса `confirmed`.
 
-- не менять corporateTemplateSpec.ts
-- не менять *shared/corporate-manifest.ts::DEFAULT*RUNTIME_STATUS
-- любые расхождения только документируются, но не исправляются в этом proof-only PATCH
+**Сессия 1: sole_participant_decision**
 
-&nbsp;
+- procedure_mode = `sole_participant_decision`
+- legal_details_id = существующая организация
+- 1 участник (единственный)
+- Ожидаемые шаблоны: `corp_sole_decision` (always), `corp_sole_appendices` (conditional — нужно включить appendices)
 
-&nbsp;
+**Сессия 2: annual_meeting + has_board=true**
 
-PATCH S3-CLOSE-5 (revised) — UI-fix + proof-only closeout
+- procedure_mode = `annual_meeting`
+- rules_basis = `charter_confirmed`
+- confirmed_charter_rules.has_board = true
+- Ожидаемые шаблоны: `corp_board_consent` (+ `corp_board_candidates`, но он `pending_sprint3`)
 
-## Жёсткие правила этого PATCH
+**Сессия 3: annual_meeting + has_auditor=true**
 
-- **Proof-only**: не менять `corporateTemplateSpec.ts`, не менять `_shared/corporate-manifest.ts::DEFAULT_RUNTIME_STATUS`
-- Любые расхождения только документируются, но не исправляются
-- Если при 3 viewport proof обнаружится UI-баг — оформляется отдельный **PATCH S3-UI-EXIT-DIALOG-FIX** с явной фиксацией: `bug_found: true`, viewport, описание
-- Локальные UI-правки — только в `CorporateWizard.tsx`, глобальный `alert-dialog.tsx` не трогать
+- procedure_mode = `annual_meeting`
+- rules_basis = `charter_confirmed`
+- confirmed_charter_rules.has_auditor = true
+- Ожидаемые шаблоны: `corp_auditor_candidates`, `corp_auditor_consent`
 
----
+**Сессия 4: annual_meeting + charter_change**
 
-## Part A. UI-fix exit dialog + 3 viewport proof
+- procedure_mode = `annual_meeting`
+- agenda содержит вопрос с `requires_charter_change = true`
+- Ожидаемые шаблоны: `corp_charter_amendments`
 
-### Текущее состояние кода (lines 402-430)
+### Step 2. Вызвать edge function для каждой сессии
 
-Footer уже имеет `flex-col gap-2 sm:flex-row sm:items-center sm:justify-between`. Кнопки имеют `h-9`. Но на скриншоте видно, что destructive-кнопка визуально проседает.
+Для каждой confirmed сессии вызвать `ai-generate-corporate-package` через UI (кнопка генерации) или через `supabase.functions.invoke`.
 
-### Root cause (по коду)
+### Step 3. Проверить proof chain по каждому шаблону
 
-`AlertDialogFooter` в `alert-dialog.tsx` задаёт `flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2`. CorporateWizard переопределяет className, но `sm:space-x-2` из базового компонента может наследоваться через merge. `AlertDialogCancel` имеет `mt-2 sm:mt-0` по умолчанию — уже переопределено `mt-0`.
-
-### Фикс
-
-- Убедиться, что footer className полностью переопределяет базовые классы (проверить cn merge)
-- Все 3 кнопки: `h-9 text-sm` — единая высота и размер шрифта
-- Destructive ghost: убрать любые padding/line-height отличия
-- На mobile: `flex-col w-full` строго столбцом
-- На desktop: `sm:flex-row sm:items-center` — baseline aligned
-
-### Proof (из реального UI preview)
-
-Шаги воспроизведения:
-
-1. Открыть Corporate Wizard в preview
-2. Изменить любое поле (чтобы появились unsaved changes)
-3. Нажать назад/закрыть → exit dialog
-
-Снять 3 скрина через browser tools:
-
-- **375px**: `no overflow / no wrap break / equal heights`
-- **768px**: `baseline aligned / no clipping`
-- **1189px**: `destructive visually secondary / primary dominant / no horizontal squeeze`
-
-Под каждым скрином подпись с подтверждением.
-
-Если баг найден:
-
-- `bug_found: true`
-- Отдельный патч `S3-UI-EXIT-DIALOG-FIX`
-- Скрины "до" и "после" не смешиваются
-
----
-
-## Part B. Machine-readable manifest parity artifact
-
-### Формат JSON — по каждому из 6 сценариев
+По каждому из 6 шаблонов выполнить SQL-проверку:
 
 ```text
-{
-  "scenario_name": "...",
-  "frontend_all": [...],          // все шаблоны (included + excluded)
-  "server_all": [...],
-  "frontend_included": [...],     // только included=true
-  "server_included": [...],
-  "frontend_excluded": [...],     // только included=false
-  "server_excluded": [...],
-  "frontend_count": N,
-  "server_count": N,
-  "included_match": true/false,
-  "excluded_match": true/false,
-  "full_order_match": true/false,
-  "runtime_status_match": true/false,
-  "required_data_match": true/false,
-  "diffs": []
-}
+Proof chain:
+1. manifest include    → calculateServerManifest возвращает included=true
+2. pre-flight pass     → шаблон не отфильтрован (есть в eligible)
+3. render              → DOCX создан без ошибки
+4. upload              → файл в storage bucket "documents"
+5. ai_generated_documents → строка со status='generated'
+6. generation_batch_id → привязка к batch
+7. signed URL          → выдан
+8. snapshot/meta       → source='corporate_wizard', corporate_draft_session_id, procedure_mode, report_year, resolver_version
 ```
 
-### Корень файла (self-contained metadata)
+### Step 4. Собрать финальный отчёт
 
-```text
-{
-  "generated_at": "ISO timestamp",
-  "source_files": [
-    "src/lib/corporate/corporateRuleEngine.ts",
-    "supabase/functions/_shared/corporate-manifest.ts"
-  ],
-  "total_scenarios": 6,
-  "all_match": true/false,
-  "total_diffs": 0,
-  "runtime_status_sync": { ... },
-  "note": "This artifact is proof-only, NOT source of truth. SoT: frontend rule engine, server manifest module, activation matrix in docs."
-}
-```
-
-### В docs добавить short proof block
-
-```text
-- manifest_parity_proof.json — артефакт проверки, не SoT
-- SoT: frontend rule engine, server manifest module, docs matrix
-- 6 scenarios checked
-- all_match=true, diffs=[]
-- included_match=true, excluded_match=true
-- frontend_count === server_count
-- full_order_match=true
-- docs matrix order matches spec/server fallback
-```
-
----
-
-## Part C. 3-way activation matrix sync
-
-### Три источника для сверки
-
-1. `corporateTemplateSpec.ts` — TEMPLATE_SPECS[].runtime_status
-2. `corporate-manifest.ts` — DEFAULT_RUNTIME_STATUS
-3. `docs/corporate-templates-rules.md` — activation matrix
-
-### Два отдельных блока в docs
-
-**Блок 1: 18 corporate templates — runtime sync**
+Таблица:
 
 
-| template_code | frontend | server fallback | docs matrix | order_match | sync_ok |
-| ------------- | -------- | --------------- | ----------- | ----------- | ------- |
+| template_code           | session_type          | manifest_include | pre-flight | render | upload | db_row | batch_id | signed_url | status_before | status_after       |
+| ----------------------- | --------------------- | ---------------- | ---------- | ------ | ------ | ------ | -------- | ---------- | ------------- | ------------------ |
+| corp_sole_decision      | sole_participant      | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
+| corp_sole_appendices    | sole_participant      | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
+| corp_board_consent      | annual+board          | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
+| corp_auditor_candidates | annual+auditor        | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
+| corp_auditor_consent    | annual+auditor        | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
+| corp_charter_amendments | annual+charter_change | ✓                | ✓          | ✓      | ✓      | ✓      | UUID     | ✓          | active        | active (confirmed) |
 
 
-Сверка не только статусов, но и **порядка** template_code во всех 3 источниках.
+### Step 5. Обновить docs
 
-**Блок 2: 4 externally_provided — N/A by design**
+В `docs/corporate-templates-rules.md` добавить блок `S4-ACTIVE-PROOF Results` с:
 
-Отдельно, не смешивать с runtime sync.
+- Proof table по всем 6 шаблонам
+- batch_id для каждого сценария
+- Дата проведения proof
+- Итог: `6/6 templates proven end-to-end`
 
-### Итоговая фиксация
+## Потенциальные блокеры
 
-- `3-way sync checked only for 18 corporate templates`
-- `4 externally_provided excluded from runtime sync by design`
-- `sync_ok: true/false`, `drifts: []`, `order_match: true/false`
-
----
-
-## Part D. PATCH S4-ACTIVE-PROOF — операционный backlog-блок
-
-Для каждого remaining active template:
-
-
-| template_code | required_session_type | required_manifest_condition | expected_runtime_status_before | expected_final_status_after |
-| ------------- | --------------------- | --------------------------- | ------------------------------ | --------------------------- |
-
-
-### 6 шаблонов
-
-- `corp_sole_decision` — sole_participant_decision
-- `corp_sole_appendices` — sole_participant_decision
-- `corp_board_consent` — annual_meeting + has_board=true
-- `corp_auditor_candidates` — annual_meeting + has_auditor=true
-- `corp_auditor_consent` — annual_meeting + has_auditor=true
-- `corp_charter_amendments` — annual_meeting + charter_change
-
-### Proof chain (полный, без пропусков)
-
-`confirmed session → manifest include → pre-flight pass → render → upload → ai_generated_documents row → signed URL → history batch`
-
-### Запрет на частичный proof
-
-- signed URL без записи в `ai_generated_documents` ≠ proof
-- запись в batch без download ≠ proof
-- без confirmed test sessions статус менять запрещено
-
----
-
-## Part E. Финальный short proof block в docs
-
-```text
-## Sprint 3 Closeout Proof Summary (S3-CLOSE-5)
-- UI proof: 3 viewport screenshots attached (375/768/1189)
-- Manifest parity artifact: /mnt/documents/manifest_parity_proof.json
-- 6 scenarios checked, all_match=true, diffs=[]
-- included_match=true, excluded_match=true
-- full_order_match=true
-- docs matrix order matches spec/server fallback
-- runtime_status_sync_ok for 18/18 corporate templates
-- 4 externally_provided: N/A by design
-```
-
----
+1. **corp_sole_appendices** — condition `has_appendices`. Нужно убедиться, что wizard позволяет включить appendices, иначе шаблон не попадёт в manifest. Если condition не реализован в UI — это блокер, который нужно задокументировать.
+2. **DOCX template files** — все 18 файлов зарегистрированы в DB с `template_path`, но нужно проверить, что физические `.docx` файлы реально существуют в storage bucket `documents-templates`. Если файла нет — pre-flight отфильтрует шаблон.
+3. **Wizard flow** — для `charter_confirmed` сценариев нужно пройти шаг подтверждения устава в wizard. Если wizard не позволяет задать `has_board=true` без загрузки устава — нужен manual confirmation через UI.
 
 ## Файлы
 
 
-| Файл                                           | Что делать                                                                                   |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `src/components/corporate/CorporateWizard.tsx` | UI-fix кнопок exit dialog (если proof покажет баг)                                           |
-| `docs/corporate-templates-rules.md`            | 3-way sync table, short proof block, S4 backlog block с операционными полями, excluded_match |
-| `/mnt/documents/manifest_parity_proof.json`    | Самодостаточный artifact с included + excluded + metadata                                    |
+| Файл                                | Что делать                             |
+| ----------------------------------- | -------------------------------------- |
+| `docs/corporate-templates-rules.md` | Добавить S4-ACTIVE-PROOF Results block |
+| Код не меняется                     | runtime_status уже active — proof-only |
 
 
----
+## DoD
 
-## Финальный DoD
-
-1. 3 viewport screenshots из реального UI preview, подписаны
-2. Под каждым: `no overflow / equal heights / baseline aligned`
-3. `/mnt/documents/manifest_parity_proof.json` создан и читается
-4. По 6 сценариям: `all_match=true`, `total_diffs=0`, `included_match=true`, `excluded_match=true`, `full_order_match=true`
-5. Verified 3-way sync for 18 corporate templates (spec + server fallback + docs matrix)
-6. Docs matrix order verified against spec/server fallback
-7. 4 external docs marked N/A by design
-8. `PATCH S4-ACTIVE-PROOF` добавлен как операционный backlog block с per-template requirements
-9. В этом PATCH **не менялись** `corporateTemplateSpec.ts` и `_shared/corporate-manifest.ts`
+1. Созданы 4 confirmed test sessions под 4 сценария
+2. Прогнаны все 6 remaining active templates через edge function
+3. По каждому шаблону есть полный proof chain (DB rows + batch + signed URL + snapshot)
+4. Финальный отчёт с таблицей proof по всем 6 шаблонам
+5. Build clean
+6. Отчёт на русском языке
