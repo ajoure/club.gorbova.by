@@ -88,7 +88,7 @@ export function useDocumentTemplates() {
     mutationFn: async (template: Omit<DocumentTemplate, "id" | "created_at" | "updated_at">) => {
       const { data, error } = await supabase
         .from("document_templates")
-        .insert(template)
+        .insert(template as any)
         .select()
         .single();
 
@@ -109,7 +109,7 @@ export function useDocumentTemplates() {
     mutationFn: async ({ id, ...updates }: Partial<DocumentTemplate> & { id: string }) => {
       const { data, error } = await supabase
         .from("document_templates")
-        .update(updates)
+        .update(updates as any)
         .eq("id", id)
         .select()
         .single();
