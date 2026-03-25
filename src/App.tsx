@@ -300,6 +300,8 @@ const App = () => {
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
+              {/* Public slug resolution layer — explicit static routes always take priority */}
+              <Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
               <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />
               </Routes>
             </div>
