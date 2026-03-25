@@ -1,194 +1,212 @@
+# да, согласен, с учетом правок:
 
+&nbsp;
 
-# Рабочий AI-модуль: admin-managed prompt system + chat-based user launcher
+1. **Blocked-response сохранять в БД в том же conversation_id, что и пользовательское сообщение**
+  &nbsp;
+  - Это нужно явно зафиксировать в реализации, чтобы safe-response не выпадал из истории диалога.
+  &nbsp;
+2. **Для parse_failed лучше использовать правило “нет ни одного файла с непустым извлеченным текстом”**
+  &nbsp;
+  - А не просто cleaned_text_length === 0, потому что image-only кейс может иметь 0 текста, но не быть ошибкой парсинга.
+  &nbsp;
+3. **В filled .xlsx DoD нужен proof именно на совпадение с извлеченными числами**
+  &nbsp;
+  - Не просто “analysis works”.
+  - Нужно подтвердить, что assistant опирается только на реально извлеченные значения из файла.
+  &nbsp;
+4. **Grep-proof по ai_prompt_packages сделать обязательным артефактом закрытия**
+  &nbsp;
+  - Должно быть подтверждение, что в gorbova-ai-chat/index.ts больше нет ни query, ни чтения ai_prompt_packages.
+  &nbsp;
+5. **Seed update оставить add-only по admin-настройкам**
+  &nbsp;
+  - Как и указано: не перетирать sort_order, launcher_order, is_active, is_archived, is_visible_in_chat.
+  - Это важно сохранить именно как обязательное правило миграции/апсерта.
+  &nbsp;
 
-## Обзор
+&nbsp;
 
-Единый AI-модуль `/ai`: админская библиотека промптов (вкладка «Промпты», только admin/superadmin) + пользовательский launcher сценариев внутри чата. Одна edge function, Gemini 2.5 Pro, единое пространство системных пакетов с ботом Олег. Phase 1 — non-streaming.
+&nbsp;
+
+P0 Patch: Anti-hallucination guards + context separation
+
+## Overview
+
+Prevent AI from fabricating financial data from empty/unreadable files. Remove Telegram bot context. Add server-side quality gate. Fix dangerous fallback strings in extractors. Handle blocked responses as normal chat messages saved to DB.
 
 ---
 
-## Шаг 1. Миграция — таблица `ai_user_prompts`
+## 1. Edge Function rewrite (`supabase/functions/gorbova-ai-chat/index.ts`)
 
-```sql
-CREATE TYPE prompt_type AS ENUM ('chat','file_analysis','document_review','text_transform');
+### P0-A: Remove `ai_prompt_packages` (lines 121-130)
 
-CREATE TABLE ai_user_prompts (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  code text NOT NULL UNIQUE,
-  title text NOT NULL,
-  description text,
-  prompt_text text NOT NULL,
-  type prompt_type NOT NULL DEFAULT 'chat',
-  category text,
-  icon text,
-  input_hint text,
-  response_format jsonb,
-  is_active boolean DEFAULT true,
-  is_archived boolean DEFAULT false,
-  sort_order int DEFAULT 0 CHECK (sort_order >= 0),
-  is_visible_in_chat boolean DEFAULT false,
-  launcher_title text,
-  launcher_description text,
-  launcher_order int DEFAULT 0 CHECK (launcher_order >= 0),
-  created_by uuid REFERENCES auth.users(id) DEFAULT auth.uid(),
-  updated_by uuid REFERENCES auth.users(id) DEFAULT auth.uid(),
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-ALTER TABLE ai_user_prompts ENABLE ROW LEVEL SECURITY;
+Delete the DB query entirely. Replace with hardcoded web-specific system prompt:
 
--- RLS: admin-only, раздельные policies
-CREATE POLICY "admin_select" ON ai_user_prompts FOR SELECT TO authenticated
-  USING (public.has_any_role(auth.uid(), ARRAY['admin','superadmin']::app_role[]));
-CREATE POLICY "admin_insert" ON ai_user_prompts FOR INSERT TO authenticated
-  WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin','superadmin']::app_role[]));
-CREATE POLICY "admin_update" ON ai_user_prompts FOR UPDATE TO authenticated
-  USING (public.has_any_role(auth.uid(), ARRAY['admin','superadmin']::app_role[]))
-  WITH CHECK (public.has_any_role(auth.uid(), ARRAY['admin','superadmin']::app_role[]));
-CREATE POLICY "admin_delete" ON ai_user_prompts FOR DELETE TO authenticated
-  USING (public.has_any_role(auth.uid(), ARRAY['admin','superadmin']::app_role[]));
+```text
+Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
+Отвечай на русском языке. Будь полезным, точным и структурированным.
 
--- updated_at
-CREATE TRIGGER set_ai_user_prompts_updated_at
-  BEFORE UPDATE ON ai_user_prompts FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
--- updated_by auto-fill
-CREATE OR REPLACE FUNCTION public.set_ai_user_prompts_updated_by()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-BEGIN NEW.updated_by = auth.uid(); RETURN NEW; END; $$;
-CREATE TRIGGER trg_set_updated_by BEFORE UPDATE ON ai_user_prompts
-  FOR EACH ROW EXECUTE FUNCTION public.set_ai_user_prompts_updated_by();
-
--- Validation: launcher_title required when visible; archive forces invisible; normalize whitespace
-CREATE OR REPLACE FUNCTION public.validate_ai_user_prompt_launcher()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.launcher_description IS NOT NULL AND trim(NEW.launcher_description) = '' THEN
-    NEW.launcher_description := NULL;
-  END IF;
-  IF NEW.is_archived = true THEN
-    NEW.is_visible_in_chat := false;
-  END IF;
-  IF NEW.is_visible_in_chat = true AND (NEW.launcher_title IS NULL OR trim(NEW.launcher_title) = '') THEN
-    RAISE EXCEPTION 'launcher_title required when is_visible_in_chat is true';
-  END IF;
-  RETURN NEW;
-END; $$;
-CREATE TRIGGER trg_validate_prompt BEFORE INSERT OR UPDATE ON ai_user_prompts
-  FOR EACH ROW EXECUTE FUNCTION public.validate_ai_user_prompt_launcher();
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+- Запрещено выдумывать, оценивать приблизительно, достраивать или предполагать числовые показатели, если они не извлечены из документа явно.
+- Нельзя делать выводы о значениях только потому, что документ «похож на баланс» или содержит типовую структуру формы.
+- Если данных нет — писать, что данных нет.
+- Если файл пустой или нечитабельный — сообщать о невозможности анализа.
+- Никогда не использовать «типовые», «примерные» или «ориентировочные» значения.
+- Если невозможно рассчитать коэффициент из-за отсутствия данных, указать: «Данные для расчёта отсутствуют».
 ```
 
-### RPC для launcher (secure, no prompt_text)
+### P0-B: Quality gate (after prompt load, before AI call)
 
-```sql
-CREATE OR REPLACE FUNCTION get_chat_scenarios()
-RETURNS TABLE (
-  id uuid, launcher_title text, launcher_description text,
-  type prompt_type, input_hint text, icon text, launcher_order int
-) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT id, launcher_title, launcher_description, type, input_hint, icon, launcher_order
-  FROM ai_user_prompts
-  WHERE is_active = true AND is_archived = false AND is_visible_in_chat = true
-    AND launcher_title IS NOT NULL AND trim(launcher_title) <> ''
-  ORDER BY launcher_order NULLS LAST, created_at;
-$$;
-REVOKE ALL ON FUNCTION get_chat_scenarios() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION get_chat_scenarios() TO authenticated;
+Add `assessExtractQuality(text)` helper:
+
+- Strip markers: `[PARSE_EMPTY: ...]`, `[Изображение: ...]`, `[PDF документ: ...]`, `[Не удалось извлечь...]`
+- Count digits (`/\d/g`), separators (`|`, `\n`)
+- Return `"empty"` if cleaned < 20 chars OR 0 digits; `"low"` if cleaned < 100 AND < 5 digits; else `"ok"`
+
+Gate logic (runs after prompt loaded, before building AI messages):
+
+- Only blocks if `promptData?.type` is `file_analysis` or `document_review`
+- `quality === "empty" || "low"` AND `images.length === 0` → blocked response
+- Images present → allow through (multimodal OCR)
+- `mode === "chat"` (free upload) → always allow through
+
+**Blocked response** — HTTP 200, saved to DB:
+
+```json
+{
+  "content": "Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате.",
+  "conversation_id": "...",
+  "blocked": true,
+  "metadata": {
+    "blocked": true,
+    "extract_quality": "empty",
+    "original_text_length": 42,
+    "cleaned_text_length": 0,
+    "extracted_text_length": 0,
+    "parse_failed": true,
+    "analysis_blocked_reason": "insufficient_data",
+    "images_present": false
+  }
+}
+```
+
+Both user message and blocked assistant message are saved to `ai_chat_messages` before returning.
+
+### P0-D: Anti-hallucination suffix after scenario `prompt_text`
+
+Append after every scenario instruction:
+
+```text
+--- ОБЯЗАТЕЛЬНЫЕ ОГРАНИЧЕНИЯ ---
+Если в содержимом файлов нет явных числовых данных — НЕ рассчитывай коэффициенты,
+НЕ подставляй примерные значения, НЕ реконструируй данные по структуре формы.
+Вместо этого ответь: «В загруженном документе не обнаружены данные, достаточные для расчёта показателей.»
+```
+
+### P0-E: Extended metadata (always written)
+
+- `extract_quality: "ok" | "low" | "empty"` — quality after cleaning
+- `original_text_length: number` — raw fileContents length
+- `cleaned_text_length: number` — length after stripping markers
+- `extracted_text_length: number` — same as cleaned (alias for clarity)
+- `images_present: boolean`
+- `parse_failed: boolean` — true if all files returned empty text
+- `blocked: boolean` — true if quality gate blocked the call
+- `analysis_blocked_reason: string | null`
+
+### Execution order in the function
+
+1. Auth
+2. Parse body
+3. File guards (MIME, extension, size, count)
+4. Initialize metadata + startTime
+5. Truncate fileContents
+6. Load prompt by `prompt_id` → get `promptData.type`
+7. `assessExtractQuality()` + gate (only for file_analysis/document_review without images)
+8. Build system prompt (hardcoded, no `ai_prompt_packages`)
+9. Inject scenario prompt_text + anti-hallucination suffix
+10. Build AI messages + call model
+11. Save to DB + return
+
+---
+
+## 2. File extraction fixes (`src/utils/fileExtractor.ts`)
+
+### P0-C: Remove dangerous fallback strings
+
+`**extractFromExcel**` — both fallback cases (lines 104-108, 111-115): return `text: ""` instead of placeholder strings.
+
+`**extractFromWord**` — error catch (lines 67-71): return `text: ""` instead of `[Не удалось извлечь...]`.
+
+`**extractAllFilesContent**` — when extracted text is empty after trim, push `[PARSE_EMPTY: filename]` marker:
+
+```typescript
+if (extracted && extracted.text && extracted.text.trim().length > 0) {
+  textParts.push(`--- Содержимое файла: ... ---\n${extracted.text}\n--- Конец файла ---`);
+} else {
+  textParts.push(`[PARSE_EMPTY: ${file.name}]`);
+}
+```
+
+**PDF fallback** (line 141): change to `[PARSE_EMPTY: ${file.name}]` when no base64 successfully read.
+
+---
+
+## 3. Frontend handling (`src/hooks/useAiChat.ts`)
+
+**Blocked response rendering**: After `supabase.functions.invoke`, check `data?.blocked === true`:
+
+- Skip error toast
+- Add assistant message with `data.content` as normal chat message
+- Store `data.metadata` on the message
+
+**Extend `AiChatMetadata**`:
+
+```typescript
+extract_quality?: "ok" | "low" | "empty";
+extracted_text_length?: number;
+original_text_length?: number;
+cleaned_text_length?: number;
+parse_failed?: boolean;
+blocked?: boolean;
+analysis_blocked_reason?: string;
+images_present?: boolean;
 ```
 
 ---
 
-## Шаг 2. Edge Function: `gorbova-ai-chat/index.ts`
+## 4. Seed update (P0-F)
 
-Non-streaming Phase 1. Единая точка входа.
+Idempotent `ON CONFLICT (code) DO UPDATE` with full `prompt_text` replacement. Update fields: `title`, `description`, `prompt_text`, `type`, `input_hint`, `launcher_title`, `launcher_description`. Do not overwrite `sort_order`, `launcher_order`, `is_active`, `is_archived`, `is_visible_in_chat` — leave those to admin control.
 
-- JWT auth → `supabase.auth.getUser()`
-- System context: `ai_prompt_packages` (enabled=true) — единое пространство с Олегом
-- Если `prompt_id`: серверная загрузка + guard (`is_active AND NOT is_archived AND is_visible_in_chat`). Reject → 403.
-- Серверные guards: max 5 files, 10MB total, 20k chars, MIME+extension allowlist
-- Model: `google/gemini-2.5-pro`, images → multimodal content parts (OCR модель)
-- `response_format` → инструкция в промпт, не runtime parser
-- Errors: 429 → «Слишком много запросов»; 402 → «Исчерпан лимит»
-- Свободная загрузка файла без сценария = chat mode, НЕ автоматический запуск analysis
-- Metadata JSONB: `{prompt_id, prompt_title_snapshot, launcher_title_snapshot, scenario_type, file_names, parse_errors, processing_time_ms}`
+The updated `prompt_text` must include:
 
-**Phase 1 compromise**: file extraction на клиенте, сервер считает недоверенным.
-**Release gate**: если system context от Олега даёт нерелевантные ответы — блокировка до `used_in_web_chat` флага.
-**Admin CRUD**: только из authenticated admin/superadmin сеанса; пустой `auth.uid()` = ошибка.
-
----
-
-## Шаг 3. Вкладка «Промпты» — admin only
-
-- Видимость: `useRbac().isAdmin || useRbac().isSuperAdmin`
-- `useAiUserPrompts()` — CRUD. Фильтры: активные/скрытые/архив, visible_in_chat
-- `PromptCard.tsx` — бейджи, действия: Редактировать / Архивировать / Toggle visible
-- `PromptFormDialog.tsx` — все поля + `response_format` textarea с JSON валидацией + launcher preview
-- Удалить: мок-карточки (lines 50-155), handleCopyPrompt
-- Empty / loading / error states
-
----
-
-## Шаг 4. Чат — user launcher
-
-- Sparkles кнопка → DropdownMenu «Возможности помощника» из `get_chat_scenarios()` RPC
-- Нет сценариев → кнопка скрыта
-- `file_analysis` → inline mini-flow: `input_hint` + FileDropZone + «Анализировать»
-- `chat` → системная строка + фокус на ввод
-- Бейдж: `launcher_title_snapshot`, fallback → `prompt_title_snapshot`
-- `react-markdown` для ответов; FileDropZone attach; loading/error states
-- Свободный чат без prompt_id = обычный AI-ассистент
-
----
-
-## Шаг 5. Seed (idempotent ON CONFLICT DO UPDATE)
-
-```sql
-INSERT INTO ai_user_prompts (code, title, launcher_title, ..., is_visible_in_chat)
-VALUES ('balance_analysis', 'Анализ показателей хоз. деятельности по балансу',
-        'Анализ баланса компании', ..., true)
-ON CONFLICT (code) DO UPDATE SET title=EXCLUDED.title, prompt_text=EXCLUDED.prompt_text, ...;
+```text
+Если в загруженном файле нет явных числовых данных баланса (активы, пассивы, капитал, выручка),
+НЕ выполняй расчёт коэффициентов. Ответь: «Данные для анализа не обнаружены в загруженном документе.»
 ```
 
 ---
 
-## Файлы
+## Files
 
-| Файл | Действие |
-|---|---|
-| Migration: table + enum + RPC + triggers | Создать |
-| `supabase/functions/gorbova-ai-chat/index.ts` | Создать |
-| `src/hooks/useAiUserPrompts.ts` | Создать |
-| `src/hooks/useAiChat.ts` | Создать |
-| `src/components/ai-chat/PromptCard.tsx` | Создать |
-| `src/components/ai-chat/PromptFormDialog.tsx` | Создать |
-| `src/components/ai-chat/ChatMessage.tsx` | Создать |
-| `src/components/ai-chat/ChatScenarioLauncher.tsx` | Создать |
-| `src/components/ai-chat/PromptRunFlow.tsx` | Создать |
-| `src/pages/AI.tsx` | Переработать |
-| `supabase/functions.registry.txt` | Добавить |
-| Seed: balance_analysis | Insert tool (ON CONFLICT DO UPDATE) |
+
+| File                                          | Patches                           |
+| --------------------------------------------- | --------------------------------- |
+| `supabase/functions/gorbova-ai-chat/index.ts` | P0-A, P0-B, P0-D, P0-E            |
+| `src/utils/fileExtractor.ts`                  | P0-C                              |
+| `src/hooks/useAiChat.ts`                      | Blocked response + metadata types |
+| Seed: `balance_analysis`                      | P0-F                              |
+
 
 ## DoD
 
-**Security**: (1) нет вкладки «Промпты» для user; (2) `prompt_text` не в network; (3) RLS блокирует CRUD; (4) EF отклоняет hidden/inactive prompt_id; (5) серверные file guards.
-
-**Admin**: создание → редактирование → toggle visible → архивация автоматически убирает из launcher. Нет хардкода.
-
-**Scenario (баланс)**: launcher → файл → structured ответ + disclaimer. Плохой файл → ошибка + `parse_errors`. Бейдж + metadata.
-
-**Launcher UI**: есть сценарии → кнопка видна; нет → скрыта. Пользователь не видит prompt_text.
-
-**Prompt_id proof**: пользователь подставляет произвольный id → EF reject 403.
-
-**Free file upload**: файл без сценария = chat mode, не auto-analysis.
-
-## Phase 1 ограничения
-
-- Non-streaming
-- Все enabled пакеты из `ai_prompt_packages` (release gate)
-- Нет tenant/role фильтрации
-- File extraction на клиенте
-- `response_format` = инструкция, не parser
-
+1. Empty `.xlsx` → safe message, no fabricated numbers, saved to DB with `blocked: true`
+2. Second empty `.xlsx` → same
+3. Image-only upload → not blocked, multimodal processes it, `images_present: true`
+4. Free chat with empty file → no block, no fabricated analysis
+5. Filled `.xlsx` → analysis works with actually extracted numbers
+6. No `ai_prompt_packages` query in edge function (grep proof)
+7. Blocked response renders as normal assistant message, not error toast
+8. `metadata` contains `extract_quality`, `parse_failed`, `blocked`, `analysis_blocked_reason`, `images_present`, `original_text_length`, `cleaned_text_length`
