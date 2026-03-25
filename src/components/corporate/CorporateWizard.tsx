@@ -425,25 +425,25 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                  )}
                  Сохранить и выйти
                </Button>
-               <Button
-                 variant="outline"
-                 size="sm"
-                 className="h-9 w-full border-transparent bg-transparent px-3 py-0 text-sm leading-none text-destructive shadow-none hover:border-transparent hover:bg-destructive/10 hover:text-destructive"
-                 onClick={handleExitWithoutSave}
-                 disabled={closeSaving}
-               >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full border-destructive/20 bg-background px-3 py-0 text-sm leading-none text-destructive hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                  onClick={handleExitWithoutSave}
+                  disabled={closeSaving}
+                >
                  Выйти без сохранения
                </Button>
              </div>
 
              <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-3">
-               <Button
-                 variant="outline"
-                 size="sm"
-                 className="h-9 shrink-0 self-center border-transparent bg-transparent px-3 py-0 text-sm leading-none text-destructive shadow-none hover:border-transparent hover:bg-destructive/10 hover:text-destructive"
-                 onClick={handleExitWithoutSave}
-                 disabled={closeSaving}
-               >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 self-center border-destructive/20 bg-background px-3 py-0 text-sm leading-none text-destructive hover:border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+                  onClick={handleExitWithoutSave}
+                  disabled={closeSaving}
+                >
                  Выйти без сохранения
                </Button>
 
