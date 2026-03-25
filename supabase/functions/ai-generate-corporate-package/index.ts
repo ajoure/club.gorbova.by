@@ -1,13 +1,20 @@
 /**
- * ai-generate-corporate-package — Edge Function (Sprint 3)
+ * ai-generate-corporate-package — Edge Function (Sprint 3, PATCH S3-FIX-1)
  * 
  * Adapter over existing generation pipeline for corporate wizard.
  * Reuses: auth, profile resolution, docxtemplater, storage, ai_generated_documents, batches.
  * New: reads corporate_draft_sessions, builds 3-layer payload, server-side pre-flight.
  * 
+ * PATCH S3-FIX-1 corrections:
+ *   Fix #1: status='generating' set AFTER server-side pre-flight OK
+ *   Fix #2: manifest recalculated on server from params/rules (not from saved JSON)
+ *   Fix #3: person_id lookup from Layer B for chair/secretary/participants/candidates
+ *   Fix #5: enhanced snapshot with array summary, boolean flags, person_id refs
+ *   Fix #7: Server SoT vs Draft JSON documented
+ * 
  * Status flow (source of truth — this function, NOT frontend):
- *   confirmed → generating → generated
- *                          ↘ confirmed (rollback on error)
+ *   confirmed → [pre-flight OK] → generating → generated
+ *                                             ↘ confirmed (rollback on error)
  */
 
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
@@ -23,17 +30,9 @@ import {
   entityName,
   sanitizeFileName,
 } from '../_shared/docx-helpers.ts';
+import { calculateServerManifest, type ManifestItem } from '../_shared/corporate-manifest.ts';
 
 // ─── Types ────────────────────────────────────────────────────────
-
-interface ManifestItem {
-  template_code: string;
-  title: string;
-  included: boolean;
-  category: string;
-  runtime_status?: string;
-  availability?: string;
-}
 
 interface GenerationResult {
   template_code: string;
@@ -45,12 +44,88 @@ interface GenerationResult {
   error?: string;
 }
 
+interface PersonRecord {
+  id: string;
+  full_name: string | null;
+}
+
+// ─── Person ID Lookup (Layer B) ───────────────────────────────────
+
+/**
+ * Batch-fetch persons from legal_details_persons by IDs.
+ * Returns map: person_id → full_name.
+ * Rule: person_id → lookup from B, fallback to name only if person_id absent.
+ */
+async function batchFetchPersons(
+  supabase: ReturnType<typeof createClient>,
+  personIds: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const uniqueIds = [...new Set(personIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return map;
+
+  const { data } = await supabase
+    .from('legal_details_persons')
+    .select('id, full_name')
+    .in('id', uniqueIds);
+
+  if (data) {
+    for (const p of data as PersonRecord[]) {
+      if (p.full_name) map.set(p.id, p.full_name);
+    }
+  }
+  return map;
+}
+
+/**
+ * Collect all person_id references from corporate_params for batch lookup.
+ */
+function collectPersonIds(params: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const chair = params.chair as Record<string, unknown> | undefined;
+  const secretary = params.secretary as Record<string, unknown> | undefined;
+  if (chair?.person_id) ids.push(chair.person_id as string);
+  if (secretary?.person_id) ids.push(secretary.person_id as string);
+
+  const participants = (params.participants || []) as Record<string, unknown>[];
+  for (const p of participants) {
+    if (p.person_id) ids.push(p.person_id as string);
+  }
+
+  const candidates = (params.candidates || {}) as Record<string, unknown>;
+  const boardCandidates = (candidates.board || []) as Record<string, unknown>[];
+  for (const c of boardCandidates) {
+    if (c.person_id) ids.push(c.person_id as string);
+  }
+  const auditorCandidates = (candidates.auditor || []) as Record<string, unknown>[];
+  for (const c of auditorCandidates) {
+    if (c.person_id) ids.push(c.person_id as string);
+  }
+
+  return ids;
+}
+
+/**
+ * Resolve name: person_id lookup from Layer B, fallback to inline name.
+ */
+function resolveName(
+  personMap: Map<string, string>,
+  ref: Record<string, unknown> | undefined,
+): string {
+  if (!ref) return '';
+  if (ref.person_id && personMap.has(ref.person_id as string)) {
+    return personMap.get(ref.person_id as string)!;
+  }
+  return (ref.name as string) || '';
+}
+
 // ─── Payload Builder ──────────────────────────────────────────────
 
 function buildCorporateScalarPayload(
   entity: Record<string, unknown> | null,
   session: Record<string, unknown>,
   params: Record<string, unknown>,
+  personMap: Map<string, string>,
 ): Record<string, string> {
   const now = new Date();
   const docNumber = generateDocumentNumber("CORP");
@@ -65,7 +140,7 @@ function buildCorporateScalarPayload(
     data["legal_details.leg_unp"] = ((entity.ent_unp || entity.leg_unp || "") as string);
     data["legal_details.leg_org_form"] = (entity.leg_org_form as string) || "";
     data["legal_details.leg_acts_on_basis"] = (entity.leg_acts_on_basis || entity.ent_acts_on_basis || "") as string;
-    // Legacy compatibility aliases (ad-hoc keys existing templates may use)
+    // Legacy compatibility aliases
     data["entity_name"] = data["legal_details.leg_name"];
     data["entity_director"] = data["legal_details.leg_director_name"];
     data["entity_director_short"] = fullNameToInitials(data["legal_details.leg_director_name"]);
@@ -96,11 +171,13 @@ function buildCorporateScalarPayload(
   data["meeting.review.location.full"] = (review.location as string) || "";
   data["meeting.review.start"] = (review.date_from as string) || "";
 
-  // Chair/Secretary from Layer D (person refs)
+  // Chair/Secretary — person_id lookup from Layer B, fallback to name
   const chair = (params.chair || {}) as Record<string, unknown>;
   const secretary = (params.secretary || {}) as Record<string, unknown>;
-  data["package.chairperson.full_name"] = (chair.name as string) || "";
-  data["package.secretary.full_name"] = (secretary.name as string) || "";
+  const chairName = resolveName(personMap, chair);
+  const secretaryName = resolveName(personMap, secretary);
+  data["package.chairperson.full_name"] = chairName;
+  data["package.secretary.full_name"] = secretaryName;
 
   // Document metadata
   data["document.date"] = dateToRussianFormat(now);
@@ -116,27 +193,36 @@ function buildCorporateScalarPayload(
 function buildCorporateArrayPayload(
   params: Record<string, unknown>,
   scalarData: Record<string, string>,
+  personMap: Map<string, string>,
 ): Record<string, unknown[]> {
   const arrays: Record<string, unknown[]> = {};
 
   // package.participants — canonical key from fields_registry
+  // person_id lookup from Layer B, fallback to inline name
   const participants = (params.participants || []) as Record<string, unknown>[];
-  arrays["package.participants"] = participants.map((p, i) => ({
-    full_name: (p.name as string) || "",
-    share_percent: p.share_percent != null ? String(p.share_percent) : "",
-    votes_count: p.vote_count != null ? String(p.vote_count) : "", // canonical key from registry
-    representative_name: (p.representative as Record<string, unknown>)?.name || "",
-  }));
+  arrays["package.participants"] = participants.map((p) => {
+    const name = resolveName(personMap, p);
+    return {
+      full_name: name,
+      share_percent: p.share_percent != null ? String(p.share_percent) : "",
+      // Canonical key: votes_count (registry SoT). Internal model uses vote_count.
+      votes_count: p.vote_count != null ? String(p.vote_count) : "",
+      representative_name: (p.representative as Record<string, unknown>)?.name || "",
+    };
+  });
 
   // package.registered_persons — filtered by attendance (Sprint 3 operational approximation)
   arrays["package.registered_persons"] = participants
     .filter(p => (p.attendance as string) !== "absent")
-    .map((p, i) => ({
-      full_name: (p.name as string) || "",
-      share_percent: p.share_percent != null ? String(p.share_percent) : "",
-      registration_time: scalarData["meeting.time"] || "",
-      representative: (p.representative as Record<string, unknown>)?.name || "",
-    }));
+    .map((p) => {
+      const name = resolveName(personMap, p);
+      return {
+        full_name: name,
+        share_percent: p.share_percent != null ? String(p.share_percent) : "",
+        registration_time: scalarData["meeting.time"] || "",
+        representative: (p.representative as Record<string, unknown>)?.name || "",
+      };
+    });
 
   // agenda.items — canonical key from fields_registry
   const agenda = (params.agenda || []) as Record<string, unknown>[];
@@ -148,6 +234,7 @@ function buildCorporateArrayPayload(
 
   // decision.items — DERIVED from agenda (Sprint 3 temporary fallback)
   // Source: D.agenda. No separate params.decisions in Sprint 3.
+  // decision.items is a derived-only model: if decisions not filled, fallback text is used.
   arrays["decision.items"] = agenda.map((a, i) => ({
     number: a.number != null ? String(a.number) : String(i + 1),
     question: (a.title as string) || "",
@@ -155,24 +242,25 @@ function buildCorporateArrayPayload(
   }));
 
   // package.board_candidates — canonical key from fields_registry
+  // person_id lookup from Layer B, fallback to inline name
   const candidates = (params.candidates || {}) as Record<string, unknown>;
   const boardCandidates = (candidates.board || []) as Record<string, unknown>[];
   arrays["package.board_candidates"] = boardCandidates.map(c => ({
-    full_name: (c.name as string) || "",
+    full_name: resolveName(personMap, c),
     info: "",
   }));
 
   // package.commission_members — canonical key from fields_registry
   const auditorCandidates = (candidates.auditor || []) as Record<string, unknown>[];
   arrays["package.commission_members"] = auditorCandidates.map(c => ({
-    full_name: (c.name as string) || "",
+    full_name: resolveName(personMap, c),
     info: "",
   }));
 
   return arrays;
 }
 
-function buildBooleanFlags(params: Record<string, unknown>, session: Record<string, unknown>): Record<string, boolean> {
+function buildBooleanFlags(params: Record<string, unknown>): Record<string, boolean> {
   const governance = (params.governance || {}) as Record<string, unknown>;
   const meeting = (params.meeting || {}) as Record<string, unknown>;
   const agenda = (params.agenda || []) as Record<string, unknown>[];
@@ -186,6 +274,49 @@ function buildBooleanFlags(params: Record<string, unknown>, session: Record<stri
   };
 }
 
+// ─── Enhanced Snapshot Builder (Layer F) ──────────────────────────
+
+function buildEnhancedSnapshot(
+  scalarData: Record<string, string>,
+  arrayData: Record<string, unknown[]>,
+  booleanFlags: Record<string, boolean>,
+  session: Record<string, unknown>,
+  params: Record<string, unknown>,
+  templateCode: string,
+  manifestSnapshot: unknown[],
+): Record<string, unknown> {
+  // Scalar keys: only non-empty, actually used
+  const usedScalarKeys = Object.keys(scalarData).filter(k => scalarData[k] !== "");
+
+  // Array summary: keys + lengths (NOT data itself — no PD duplication)
+  const arraySummary: Record<string, number> = {};
+  for (const [key, arr] of Object.entries(arrayData)) {
+    arraySummary[key] = arr.length;
+  }
+
+  // Person_id refs (not names — those are from Layer B)
+  const chair = (params.chair || {}) as Record<string, unknown>;
+  const secretary = (params.secretary || {}) as Record<string, unknown>;
+
+  return {
+    used_scalar_keys: usedScalarKeys,
+    array_summary: arraySummary,
+    boolean_flags: booleanFlags,
+    procedure_mode: session.procedure_mode,
+    report_year: session.report_year,
+    refs: {
+      legal_details_id: session.legal_details_id || null,
+      corporate_draft_session_id: session.id,
+      chair_person_id: chair.person_id || null,
+      secretary_person_id: secretary.person_id || null,
+    },
+    manifest_snapshot_for_template: manifestSnapshot.find(
+      (m: unknown) => (m as Record<string, unknown>).code === templateCode
+    ) || null,
+    resolver_version: "sprint3_fix1",
+  };
+}
+
 // ─── Server-side Pre-flight ───────────────────────────────────────
 
 async function serverSidePreFlight(
@@ -194,7 +325,7 @@ async function serverSidePreFlight(
 ): Promise<{ eligible: ManifestItem[]; templateMap: Map<string, Record<string, unknown>>; issues: string[] }> {
   const issues: string[] = [];
 
-  // Filter: included + not external + active runtime
+  // Filter: included + not external + active runtime + available
   const candidates = manifest.filter(m =>
     m.included &&
     m.category !== 'externally_provided' &&
@@ -247,7 +378,7 @@ async function serverSidePreFlight(
       issues.push(`Template ${item.template_code} storage file missing: ${dbRecord.template_path}`);
       continue;
     }
-    // availability = available
+    // availability = available — passed all checks
     eligible.push(item);
     templateMap.set(item.template_code, dbRecord);
   }
@@ -291,13 +422,21 @@ serve(async (req) => {
     if (session.profile_id !== profileId) return errorResponse("Access denied", 403);
     if (session.status !== "confirmed") return errorResponse(`Invalid session status: ${session.status}. Expected 'confirmed'.`, 400);
 
-    // ── Set status = generating (source of truth is THIS function) ──
-    await supabase.from("corporate_draft_sessions").update({ status: "generating", updated_by: userId }).eq("id", corporate_draft_session_id);
+    // ── DO NOT set status='generating' here — Fix #1: only after pre-flight OK ──
 
     try {
       const params = (session.corporate_params || {}) as Record<string, unknown>;
       const charterRules = (session.confirmed_charter_rules || {}) as Record<string, unknown>;
-      const manifest = (session.package_manifest || []) as ManifestItem[];
+
+      // ── Fix #2: Server-side manifest recalculation (NOT from saved JSON) ──
+      // Source of truth for generation = server-recalculated manifest.
+      // Saved package_manifest in session is draft/debug artifact only.
+      const manifest = calculateServerManifest(
+        session.procedure_mode as 'annual_meeting' | 'sole_participant_decision',
+        charterRules,
+        params as { meeting?: { voting_form?: string }; agenda?: { requires_charter_change?: boolean }[]; governance?: { has_board?: boolean; has_auditor?: boolean; has_audit_commission?: boolean } },
+        (session.rules_basis as 'charter_confirmed' | 'law_default' | 'mixed') || 'law_default',
+      );
 
       // ── Fetch entity (Layer A) ──
       let entity: Record<string, unknown> | null = null;
@@ -310,8 +449,7 @@ serve(async (req) => {
       const { eligible, templateMap, issues: preFlightIssues } = await serverSidePreFlight(supabase, manifest);
 
       if (eligible.length === 0) {
-        // Rollback to confirmed
-        await supabase.from("corporate_draft_sessions").update({ status: "confirmed", updated_by: userId }).eq("id", corporate_draft_session_id);
+        // Do NOT set 'generating' — session stays 'confirmed'
         return jsonResponse({
           success: false,
           error: "No eligible templates for generation",
@@ -319,10 +457,28 @@ serve(async (req) => {
         }, 400);
       }
 
-      // ── Build payload (3 layers) ──
-      const scalarData = buildCorporateScalarPayload(entity, session, params);
-      const arrayData = buildCorporateArrayPayload(params, scalarData);
-      const booleanFlags = buildBooleanFlags(params, session);
+      // ── Fix #1: NOW set status='generating' — AFTER successful pre-flight ──
+      await supabase.from("corporate_draft_sessions").update({
+        status: "generating",
+        updated_by: userId,
+      }).eq("id", corporate_draft_session_id);
+
+      // ── Fix #3: Batch-fetch all persons from Layer B by person_id ──
+      const allPersonIds = collectPersonIds(params);
+      const personMap = await batchFetchPersons(supabase, allPersonIds);
+
+      // ── Build payload (3 layers, data from A/B/C/D, computed E) ──
+      const scalarData = buildCorporateScalarPayload(entity, session, params, personMap);
+      const arrayData = buildCorporateArrayPayload(params, scalarData, personMap);
+      const booleanFlags = buildBooleanFlags(params);
+
+      // ── Manifest snapshot for Layer F ──
+      const manifestSnapshotData = manifest.map((m: ManifestItem) => ({
+        code: m.template_code,
+        included: m.included,
+        runtime_status: m.runtime_status,
+        category: m.category,
+      }));
 
       // ── Create batch (reuse pattern) ──
       const batchNumber = generateDocumentNumber("CORP-PKG");
@@ -338,12 +494,7 @@ serve(async (req) => {
             corporate_draft_session_id,
             procedure_mode: session.procedure_mode,
             report_year: session.report_year,
-            manifest_snapshot: manifest.map((m: ManifestItem) => ({
-              code: m.template_code,
-              included: m.included,
-              runtime_status: m.runtime_status,
-              category: m.category,
-            })),
+            manifest_snapshot: manifestSnapshotData,
             pre_flight_issues: preFlightIssues,
           },
           created_by: userId,
@@ -351,6 +502,7 @@ serve(async (req) => {
         .select()
         .single();
       if (batchErr || !batch) {
+        // Rollback to confirmed since generation didn't actually start
         await supabase.from("corporate_draft_sessions").update({ status: "confirmed", updated_by: userId }).eq("id", corporate_draft_session_id);
         return errorResponse("Failed to create batch", 500);
       }
@@ -372,7 +524,6 @@ serve(async (req) => {
           ...scalarData,
           ...booleanFlags,
         };
-        // Add arrays
         for (const [key, arr] of Object.entries(arrayData)) {
           renderData[key] = arr;
         }
@@ -456,12 +607,11 @@ serve(async (req) => {
           .from("documents")
           .createSignedUrl(filePath, 86400);
 
-        // Build snapshot (Layer F) — only actually used data, filtered per plan correction #3
-        const usedScalarKeys = Object.keys(scalarData).filter(k => scalarData[k] !== "");
-        const filteredSnapshot: Record<string, unknown> = {};
-        for (const k of usedScalarKeys) {
-          filteredSnapshot[k] = scalarData[k];
-        }
+        // Build enhanced snapshot (Layer F) — Fix #5
+        const enhancedSnapshot = buildEnhancedSnapshot(
+          scalarData, arrayData, booleanFlags, session, params,
+          item.template_code, manifestSnapshotData,
+        );
 
         // Save record in ai_generated_documents (reuse pattern)
         const { data: savedDoc } = await supabase
@@ -479,7 +629,7 @@ serve(async (req) => {
             file_path: filePath,
             file_name: fileName,
             storage_bucket: "documents",
-            snapshot: filteredSnapshot,
+            snapshot: enhancedSnapshot,
             missing_tokens: [],
             generation_batch_id: batch.id,
             created_by: userId,
@@ -490,11 +640,12 @@ serve(async (req) => {
               report_year: session.report_year,
               data_source_layers: {
                 A: session.legal_details_id ? "client_legal_details" : null,
+                B: "legal_details_persons (batch lookup)",
                 D: "corporate_draft_sessions",
                 E: "computed",
               },
               warnings: preFlightIssues,
-              resolver_version: "sprint3_v1",
+              resolver_version: "sprint3_fix1",
             },
           })
           .select()
