@@ -22,6 +22,7 @@ import { DomainHomePage } from "./components/layout/DomainRouter";
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Auth = lazy(() => import("./pages/Auth"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
 
 // Lazy-loaded pages - code splitting for bundle optimization
 const Accountant = lazy(() => import("./pages/Accountant"));
@@ -299,6 +300,8 @@ const App = () => {
               <Route path="/admin/amocrm" element={<Navigate to="/admin/integrations/crm" replace />} />
               <Route path="/admin/duplicates" element={<Navigate to="/admin/contacts/duplicates" replace />} />
               
+              {/* Public slug resolution layer — explicit static routes always take priority */}
+              <Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
               <Route path="*" element={<LazyRoute><NotFound /></LazyRoute>} />
               </Routes>
             </div>
