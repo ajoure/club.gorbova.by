@@ -474,6 +474,28 @@ const AI = () => {
           </GlassCard>
         )}
 
+        {/* Analysis History */}
+        {activeSubTab === "analysis-history" && (
+          <AnalysisHistoryView
+            onOpen={async (convId) => {
+              await aiChat.loadConversation(convId);
+              setActiveSubTab("chat");
+            }}
+            onResume={async (convId) => {
+              const ctx = await aiChat.resumeConversation(convId);
+              if (ctx?.scenario_type) {
+                const matchingScenario = aiChat.scenarios.find(
+                  s => s.type === ctx.scenario_type
+                );
+                if (matchingScenario) {
+                  // Don't auto-open upload, just restore context
+                }
+              }
+              setActiveSubTab("chat");
+            }}
+          />
+        )}
+
         {/* Prompts — admin only */}
         {activeSubTab === "prompts" && isAdminUser && (
           <>
