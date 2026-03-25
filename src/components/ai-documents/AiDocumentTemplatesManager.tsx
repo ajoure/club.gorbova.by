@@ -488,5 +488,18 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
         </div>
       </SheetContent>
     </Sheet>
+
+    {/* Corporate Template Editor Dialog */}
+    {editorTemplate && (
+      <CorporateTemplateEditorDialog
+        open={!!editorTemplate}
+        onOpenChange={(open) => { if (!open) setEditorTemplate(null); }}
+        templateId={editorTemplate.id}
+        templateName={editorTemplate.name}
+        templatePath={editorTemplate.template_path}
+        templateStatus={(editorTemplate as any).template_status || "in_development"}
+      />
+    )}
+    </>
   );
 }
