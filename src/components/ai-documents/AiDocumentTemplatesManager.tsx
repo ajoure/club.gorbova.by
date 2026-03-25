@@ -33,8 +33,10 @@ import {
   CheckCircle2,
   ArrowLeft,
   Tag,
+  Code2,
 } from "lucide-react";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { CorporateTemplateEditorDialog } from "@/components/corporate-editor/CorporateTemplateEditorDialog";
 
 interface Props {
   open: boolean;
