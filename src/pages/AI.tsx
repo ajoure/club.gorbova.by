@@ -24,6 +24,7 @@ import { ChatScenarioLauncher } from "@/components/ai-chat/ChatScenarioLauncher"
 import { PromptRunFlow } from "@/components/ai-chat/PromptRunFlow";
 import { PromptCard } from "@/components/ai-chat/PromptCard";
 import { PromptFormDialog } from "@/components/ai-chat/PromptFormDialog";
+import { AnalysisHistoryView } from "@/components/ai-chat/AnalysisHistoryView";
 import { 
   Bot, 
   PlayCircle, 
