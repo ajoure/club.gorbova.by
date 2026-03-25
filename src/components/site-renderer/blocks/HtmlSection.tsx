@@ -21,10 +21,8 @@ export function HtmlSection({ content }: HtmlSectionProps) {
   if (!code) return null;
 
   return (
-    <section className="py-6 px-6">
-      <div className="max-w-4xl mx-auto">
-        <HtmlIframePreview html={code} />
-      </div>
+    <section>
+      <HtmlIframePreview html={code} />
     </section>
   );
 }
