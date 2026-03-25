@@ -1,52 +1,35 @@
 
 
-# Локальный override для #root на публичных сайтах
+# Добавить URL страницы под полем Slug (как в тренингах)
 
-## Статус предыдущих правок
-Правки 1 и 3 из плана уже применены:
-- HtmlSection.tsx — убраны `py-6 px-6` и `max-w-4xl mx-auto`
-- HtmlIframePreview.tsx — `padding: 0` в fallback body
+## Что делаем
 
-## Оставшаяся проблема
-`#root { max-width: 1280px; padding: 2rem; }` в App.css ограничивает публичные сайты. DomainRouter рендерит SitePageRenderer напрямую внутри `#root`, без промежуточной обёртки.
+По аналогии с тренингами (где под slug показывается `URL: gorbova.club/training/{slug}`), добавить подсказку с URL под полем Slug в настройках сайта.
 
-## Решение — route-scoped override (без изменения App.css)
+Для сайтов URL формируется из привязанных доменов. Если домен привязан — показать `URL: {domain}`. Если нет — показать подсказку что URL появится после привязки домена.
 
-### Файл: `src/components/layout/DomainRouter.tsx`
+## Файл: `src/components/admin/site-builder/SiteSettingsPanel.tsx`
 
-Обернуть SitePageRenderer в div с классом, который сбрасывает ограничения `#root`:
+Под полем Slug (строка 50) добавить текст с URL:
 
 ```tsx
-// Строка ~82
-return (
-  <div className="site-public-layout">
-    <SitePageRenderer ... />
-  </div>
-);
+<div className="space-y-2">
+  <Label>Адрес страницы</Label>
+  <Input
+    value={slug}
+    onChange={(e) => onSlugChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+  />
+  {bindings.length > 0 ? (
+    <p className="text-xs text-muted-foreground">
+      URL: {bindings[0].domain}/<strong>{slug || "..."}</strong>
+    </p>
+  ) : (
+    <p className="text-xs text-muted-foreground">
+      Привяжите домен, чтобы увидеть URL страницы
+    </p>
+  )}
+</div>
 ```
 
-### Файл: `src/index.css` (или создать отдельный CSS)
-
-Добавить scoped override:
-
-```css
-/* Route-scoped override: публичные сайты не ограничены #root constraints */
-#root:has(.site-public-layout) {
-  max-width: none;
-  padding: 0;
-  text-align: left;
-}
-```
-
-`:has()` поддерживается во всех современных браузерах (Chrome 105+, Safari 15.4+, Firefox 121+).
-
-## Безопасность
-- App.css не меняется
-- Override срабатывает только когда внутри `#root` есть `.site-public-layout`
-- Админка и все остальные страницы сохраняют `max-width: 1280px; padding: 2rem`
-
-## Verify
-- HTML block на публичном сайте без серых полей
-- Админка сохраняет текущий layout
-- Работает на мобильных и планшетах
+Также переименовать Label с «Slug» на «Адрес страницы» для единообразия с тренингами.
 
