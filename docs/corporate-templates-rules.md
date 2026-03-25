@@ -179,6 +179,14 @@ Corporate templates используют `template_scope = 'corporate'`, кот�
 - `manifest_snapshot` — полный manifest на момент генерации
 - `pre_flight_issues`
 
+В `meta` каждого document:
+- `source: 'corporate_wizard'`
+- `corporate_draft_session_id`
+- `procedure_mode`, `report_year`
+- `data_source_layers` — откуда данные (A/B/D/E)
+- `warnings`, `resolver_version`
+- При ошибке: `error_stage` (template_download / storage_upload / signed_url)
+
 ---
 
 ## Token compatibility (Proof no second token system)
@@ -218,21 +226,35 @@ Per-participant generation — GAP Sprint 4.
 
 | Понятие | Что означает | Источник | Когда меняется |
 |---|---|---|---|
-| `runtime_status` | Доказанная готовность шаблона к runtime-рендеру (render OK, file uploaded, DB record created, generation flow без ошибки) | `document_templates.meta.runtime_status` (DB SoT) → передаётся как `runtimeStatusOverrides` в `calculateServerManifest()` | Только после полного proof-пакета по шаблону |
+| `runtime_status` | Доказанная готовность шаблона к runtime-рендеру (render OK, file uploaded, DB record created, generation flow без ошибки) | `corporateTemplateSpec.ts` (primary SoT) + `DEFAULT_RUNTIME_STATUS` в `corporate-manifest.ts` (synchronized fallback) | Только после полного proof-пакета по шаблону |
 | `availability` | Доступность шаблона: DB active + template_path + storage file | Проверяется в `serverSidePreFlight()` при каждой генерации | Может меняться в любой момент (удалён файл, деактивирован шаблон) |
 
 **Правила:**
 - `runtime_status = 'active'` НЕ означает availability — шаблон может быть active, но файл удалён из storage
 - `availability = 'available'` НЕ означает runtime_status active — шаблон может быть доступен, но не прошёл proof
 - Для генерации нужны ОБА: `runtime_status === 'active'` AND `availability === 'available'`
-- Изменение `runtime_status` с `pending_sprint3` на `active` допускается ТОЛЬКО после proof: render OK → file uploaded → DB record created → template в generation flow без ошибки
+- Изменение `runtime_status` с `pending_sprint3` на `active` допускается ТОЛЬКО после proof: render OK → file uploaded → DB record created → download works
 
-### Синхронизация runtime_status
+### Временное правило синхронизации runtime_status (до появления DB-колонки)
 
-SoT для runtime_status — `document_templates.meta.runtime_status` в БД.
-Edge function читает из DB и передаёт как `runtimeStatusOverrides` в `calculateServerManifest()`.
-Frontend `corporateTemplateSpec.ts` содержит fallback-значения, которые должны быть синхронны с DB.
-`DEFAULT_RUNTIME_STATUS` в `_shared/corporate-manifest.ts` — last-resort fallback, если DB не ответила.
+**До добавления `document_templates.runtime_status` колонки в БД** действует следующее жёсткое правило:
+
+1. **Primary SoT**: `src/lib/corporate/corporateTemplateSpec.ts` → `runtime_status` field
+2. **Synchronized fallback**: `supabase/functions/_shared/corporate-manifest.ts` → `DEFAULT_RUNTIME_STATUS` map
+3. **Правило изменения**: любое изменение статуса шаблона допускается **только одной задачей в двух файлах одновременно**
+4. **Запрет**: менять статус в одном файле без синхронного изменения во втором
+5. **Верификация**: в финальном отчёте обязателен proof sync без расхождений
+
+### Запрет массового перевода статусов
+
+`pending_sprint3 → active` допускается **только по каждому шаблону отдельно**, после полного proof:
+1. render OK
+2. upload OK  
+3. record in `ai_generated_documents` created
+4. download OK
+5. UI/history OK
+
+Без всех 5 пунктов статус не менять.
 
 ---
 
@@ -241,7 +263,7 @@ Frontend `corporateTemplateSpec.ts` содержит fallback-значения, 
 Шаблон генерируется **только если**:
 1. `included = true` (manifest rule engine)
 2. `category !== 'externally_provided'`
-3. `runtime_status === 'active'` (from DB via runtimeStatusOverrides)
+3. `runtime_status === 'active'` (from DEFAULT_RUNTIME_STATUS or overrides)
 4. `availability === 'available'` (server pre-flight: DB active + template_path + storage file)
 
 ---
@@ -251,6 +273,21 @@ Frontend `corporateTemplateSpec.ts` содержит fallback-значения, 
 - ✅ «участники» (не «учредители»)
 - ✅ «Решение единственного участника» (не «протокол единственного участника»)
 - ✅ Подписант в corp_sole_decision — «Единственный участник» (не «Председатель»)
+
+---
+
+## Почему Sprint 3 ещё не закрыт без successful end-to-end generation
+
+Наличие template records + storage files + pre-flight pass **не равно** закрытию Sprint 3.
+
+Для закрытия необходимо:
+1. Хотя бы один corporate batch end-to-end (render + upload + DB record + download) — **✅ ВЫПОЛНЕНО 2026-03-25**
+2. Error-doc трассировка при upload failure — **✅ ВЫПОЛНЕНО** (batch `fa63000b` содержит raw error proof)
+3. Proof manifest 1:1 по 6 кейсам
+4. UI-proof history integration
+5. Runtime activation matrix по фактическому proof для каждого шаблона
+
+Без этих доказательств спринт открыт, даже если вся архитектура на месте.
 
 ---
 
@@ -267,55 +304,57 @@ Frontend `corporateTemplateSpec.ts` содержит fallback-значения, 
 
 ---
 
-## Proof-пакет Sprint 3 (PATCH S3-PROOF-CLOSE)
+## Proof-пакет Sprint 3 (PATCH S3-CLOSE-3)
 
-### Proof 2.1: Server manifest vs Frontend preview
+### Raw upload error proof
 
-`calculateServerManifest()` и `calculatePackageManifest()` используют идентичные:
-- Шаблонные массивы (ANNUAL_MEETING_TEMPLATES, SOLE_PARTICIPANT_TEMPLATES, CONDITIONAL_TEMPLATES)
-- Условия включения (has_board, has_auditor, voting_form, charter_change)
-- required_data маппинг
-- legal_basis логику
-- Порядок документов
+**Batch `fa63000b`** (2026-03-25): upload failed с raw error:
+```
+Upload failed: Invalid key: ai-generated/.../CORP-PKG-260325-034_1_Решение_приказ_о_проведении_...docx
+```
+**Причина**: `sanitizeFileName()` допускал кириллицу в storage keys, а Supabase Storage требует ASCII-only keys.
+**Исправление**: добавлена транслитерация кириллица→ASCII в `_shared/docx-helpers.ts`.
+**Результат**: error-doc записи созданы с `error_stage: 'storage_upload'` и raw error message → трассировка не потеряна. ✅
 
-Подтверждено: сервер корректно пересчитывает manifest из params/rules.
+### Proof: End-to-end generation success
 
-### Proof 2.2: Negative pre-flight guard
+**Batch `2222f7ff`** (2026-03-25, после fix):
+- `corp_order_meeting`: render OK → upload OK → DB record `7f7940c2` → signed URL OK ✅
+- `corp_review_list`: render OK → upload OK → DB record `37a7d8f7` → signed URL OK ✅
+- Batch status: `generated` ✅
+- Session status: `generated` ✅
+
+### Proof: meta/snapshot содержит обязательные поля
+
+Для каждого документа из batch `2222f7ff`:
+- `meta.source = 'corporate_wizard'` ✅
+- `meta.corporate_draft_session_id = '116c0a66...'` ✅
+- `meta.procedure_mode = 'annual_meeting'` ✅
+- `meta.report_year = '2025'` ✅
+- `meta.resolver_version = 'sprint3_fix1'` ✅
+- `snapshot.procedure_mode`, `snapshot.report_year`, `snapshot.resolver_version` ✅
+
+### Proof: Negative pre-flight guard
 
 **Сценарий 1**: Все eligible templates имеют `runtime_status = 'pending_sprint3'` → 0 eligible → response: `"No eligible templates"`, session остаётся `confirmed`. ✅
 
-**Сценарий 2**: Edge function вызвана с `session_id = 116c0a66...`, templates active но upload failed → session откатилась в `confirmed`, batch status = `error`. ✅ Подтверждено SQL: session.status = 'confirmed' после ошибки.
+**Сценарий 2**: Upload failed → session откатилась в `confirmed`, batch status = `error`, error-doc records созданы с raw error. ✅
 
-### Proof 2.3: History UI integration
+### Proof: Draft session не хранит постоянные реквизиты
 
-Batch создан с `meta.source = 'corporate_wizard'`, `generation_batch_id` присвоен. `AiDocumentsHistoryView` использует `generation_batch_id` для grouping — совместимо. UI-proof пока невозможен (нет успешной генерации из-за storage permissions), но архитектурно корректно.
+SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `leg_unp`, `passport_*`, `ind_full_name`, `phone`. Содержит: `person_id` ссылки, `agenda`, `chair`, `secretary`, `participants`. Реквизиты берутся из `client_legal_details` по `legal_details_id`. ✅
 
-### Proof 2.4: Draft session не хранит постоянные реквизиты
+### Proof: Server manifest vs Frontend preview (manifest parity)
 
-SQL proof на 5 сессиях: `corporate_params` не содержит `leg_name`, `leg_address`, `leg_unp`, `passport_*`, `ind_full_name`, `phone`. Содержит: `person_id` ссылки, `agenda`, `chair`, `secretary`, `participants`. Реквизиты берутся из `client_legal_details` по `legal_details_id`. ✅
+`calculateServerManifest()` (corporate-manifest.ts) и `calculatePackageManifest()` (corporateRuleEngine.ts) используют **идентичные**:
+- Шаблонные массивы: `ANNUAL_MEETING_TEMPLATES` (8), `SOLE_PARTICIPANT_TEMPLATES` (2), `CONDITIONAL_TEMPLATES` (8), `EXTERNALLY_PROVIDED_DOCUMENTS` (4)
+- Порядок: одинаковый (определяется порядком в массивах)
+- Условия включения: `has_board`, `has_auditor`, `has_audit_commission`, `voting_form === 'secret'`, `requires_charter_change`
+- `legal_basis` логика: `law_default` по умолчанию, `charter_confirmed` при подтверждённом уставе
+- `required_data` маппинг: идентичный `TEMPLATE_REQUIRED_DATA`
+- `runtime_status`: resolveRuntimeStatus() с одним и тем же DEFAULT_RUNTIME_STATUS
 
-### Proof 2.5: Runtime activation matrix
-
-| Template | DB active | template_path | runtime_status | Proof status |
-|---|---|---|---|---|
-| corp_order_meeting | ✅ | ✅ | active | pre-flight passed |
-| corp_review_list | ✅ | ✅ | active | pre-flight passed |
-| corp_sole_decision | ✅ | ✅ | active | not tested (sole mode) |
-| corp_sole_appendices | ✅ | ✅ | active | not tested (sole mode) |
-| corp_board_consent | ✅ | ✅ | active | not tested (conditional) |
-| corp_auditor_candidates | ✅ | ✅ | active | not tested (conditional) |
-| corp_auditor_consent | ✅ | ✅ | active | not tested (conditional) |
-| corp_charter_amendments | ✅ | ✅ | active | not tested (conditional) |
-| corp_notice | ✅ | ✅ | pending_sprint3 | excluded from generation ✅ |
-| corp_notice_journal | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_draft_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_registration_list | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_protocol | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_notification_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_ballot | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_board_candidates | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_audit_commission | ✅ | ✅ | pending_sprint3 | excluded ✅ |
-| corp_agenda_change_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+**Machine-readable proof**: manifest_snapshot сохраняется в `ai_document_generation_batches.meta.manifest_snapshot` при каждой генерации. Для batch `2222f7ff` snapshot содержит 2 eligible шаблона с `runtime_status: 'active'` и `included: true`, что совпадает с frontend preview.
 
 ### Proof: No second token system
 
@@ -324,3 +363,36 @@ SQL proof на 5 сессиях: `corporate_params` не содержит `leg_n
 - ✅ Нет corporate-only token namespace
 - ✅ Arrays/loops через fields_registry + docxtemplater + add-only adapter
 - ✅ `votes_count` — canonical key в payload, маппинг из internal `vote_count`
+
+### Runtime activation matrix
+
+| Template | DB active | Storage | runtime_status | End-to-end proof | Download proof |
+|---|---|---|---|---|---|
+| corp_order_meeting | ✅ | ✅ | **active** | ✅ batch `2222f7ff` | ✅ signed URL works |
+| corp_review_list | ✅ | ✅ | **active** | ✅ batch `2222f7ff` | ✅ signed URL works |
+| corp_sole_decision | ✅ | ✅ | active | not tested (sole mode) | — |
+| corp_sole_appendices | ✅ | ✅ | active | not tested (conditional) | — |
+| corp_board_consent | ✅ | ✅ | active | not tested (conditional) | — |
+| corp_auditor_candidates | ✅ | ✅ | active | not tested (conditional) | — |
+| corp_auditor_consent | ✅ | ✅ | active | not tested (conditional) | — |
+| corp_charter_amendments | ✅ | ✅ | active | not tested (conditional) | — |
+| corp_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_notice_journal | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_draft_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_registration_list | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_protocol | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_notification_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_ballot | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_board_candidates | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_audit_commission | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+| corp_agenda_change_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+
+---
+
+## Остаточные GAP после S3-CLOSE-3
+
+1. **9 шаблонов остаются `pending_sprint3`** — требуют loop-поддержки и поштучного proof для activation
+2. **6 шаблонов `active` не протестированы end-to-end** — sole_decision, board_consent, auditor_candidates, auditor_consent, charter_amendments, sole_appendices (требуют соответствующих сессий)
+3. **UI-proof history integration** — batch виден в UI, но полный UI-proof (grouping, download из браузера) требует проверки с учётки пользователя
+4. **DB column `runtime_status`** — временное правило sync работает, но полноценный SoT через DB ещё не реализован
+5. **Manifest parity machine-readable proof** — snapshot сохраняется в batch.meta, но формальное JSON-сравнение по 6 кейсам ещё не выполнено (требует 6 разных сессий)

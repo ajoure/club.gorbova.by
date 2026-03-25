@@ -541,6 +541,8 @@ serve(async (req) => {
           .from("documents-templates")
           .download(dbTemplate.template_path as string);
         if (dlErr || !tplFile) {
+          const dlErrMsg = `Download failed: ${dlErr?.message || 'No file returned'}`;
+          console.error(`[CORP-GEN] Template download error for ${item.template_code}:`, dlErr);
           errorCount++;
           await supabase.from("ai_generated_documents").insert({
             profile_id: profileId,
@@ -553,11 +555,12 @@ serve(async (req) => {
             legal_details_id: session.legal_details_id || null,
             snapshot: { source: "corporate_wizard", corporate_draft_session_id },
             missing_tokens: [],
-            generation_error: "Failed to download template file",
+            generation_error: dlErrMsg,
             generation_batch_id: batch.id,
             created_by: userId,
+            meta: { source: "corporate_wizard", corporate_draft_session_id, error_stage: "template_download" },
           });
-          results.push({ template_code: item.template_code, title: itemName, status: "error", error: "Download failed" });
+          results.push({ template_code: item.template_code, title: itemName, status: "error", error: dlErrMsg });
           continue;
         }
 
@@ -605,15 +608,61 @@ serve(async (req) => {
             upsert: true,
           });
         if (upErr) {
+          const uploadErrMsg = `Upload failed: ${upErr.message || JSON.stringify(upErr)}`;
+          console.error(`[CORP-GEN] Upload error for ${item.template_code}:`, upErr);
           errorCount++;
-          results.push({ template_code: item.template_code, title: itemName, status: "error", error: "Upload failed" });
+          // Insert error-doc so batch traceability is maintained
+          await supabase.from("ai_generated_documents").insert({
+            profile_id: profileId,
+            template_id: dbTemplate.id,
+            template_code: item.template_code,
+            template_name: itemName,
+            template_source_path: dbTemplate.template_path,
+            title: `${itemName} — ${docNumber}`,
+            status: "error",
+            legal_details_id: session.legal_details_id || null,
+            snapshot: buildEnhancedSnapshot(scalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
+            missing_tokens: [],
+            generation_error: uploadErrMsg,
+            generation_batch_id: batch.id,
+            created_by: userId,
+            meta: { source: "corporate_wizard", corporate_draft_session_id, error_stage: "storage_upload" },
+          });
+          results.push({ template_code: item.template_code, title: itemName, status: "error", error: uploadErrMsg });
           continue;
         }
 
         // Signed URL
-        const { data: signedUrlData } = await supabase.storage
+        const { data: signedUrlData, error: signedUrlErr } = await supabase.storage
           .from("documents")
           .createSignedUrl(filePath, 86400);
+        if (signedUrlErr) {
+          const signedUrlErrMsg = `Signed URL failed: ${signedUrlErr.message || JSON.stringify(signedUrlErr)}`;
+          console.error(`[CORP-GEN] Signed URL error for ${item.template_code}:`, signedUrlErr);
+          // File uploaded but URL not issued — insert error-doc with file_path
+          errorCount++;
+          await supabase.from("ai_generated_documents").insert({
+            profile_id: profileId,
+            template_id: dbTemplate.id,
+            template_code: item.template_code,
+            template_name: itemName,
+            template_source_path: dbTemplate.template_path,
+            title: `${itemName} — ${docNumber}`,
+            status: "error",
+            legal_details_id: session.legal_details_id || null,
+            file_path: filePath,
+            file_name: fileName,
+            storage_bucket: "documents",
+            snapshot: buildEnhancedSnapshot(scalarData, arrayData, booleanFlags, session, params, item.template_code, manifestSnapshotData),
+            missing_tokens: [],
+            generation_error: signedUrlErrMsg,
+            generation_batch_id: batch.id,
+            created_by: userId,
+            meta: { source: "corporate_wizard", corporate_draft_session_id, error_stage: "signed_url" },
+          });
+          results.push({ template_code: item.template_code, title: itemName, status: "error", error: signedUrlErrMsg });
+          continue;
+        }
 
         // Build enhanced snapshot (Layer F) — Fix #5
         const enhancedSnapshot = buildEnhancedSnapshot(

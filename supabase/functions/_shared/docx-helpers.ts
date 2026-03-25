@@ -50,5 +50,13 @@ export function entityName(entity: Record<string, unknown>): string {
 }
 
 export function sanitizeFileName(name: string): string {
-  return name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9_\-. ]/g, "").trim().replace(/\s+/g, "_").slice(0, 60);
+  // Transliterate Cyrillic to ASCII for storage key compatibility
+  const cyr = 'абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ';
+  const lat = 'abvgdeejzijklmnoprstufhcchshsh_y_eyyaABVGDEEJZIJKLMNOPRSTUFHCChShSh_Y_EYYa';
+  const map: Record<string, string> = {};
+  const latParts = ['a','b','v','g','d','e','e','zh','z','i','j','k','l','m','n','o','p','r','s','t','u','f','h','c','ch','sh','sh','_','y','_','e','yu','ya',
+    'A','B','V','G','D','E','E','Zh','Z','I','J','K','L','M','N','O','P','R','S','T','U','F','H','C','Ch','Sh','Sh','_','Y','_','E','Yu','Ya'];
+  for (let i = 0; i < cyr.length; i++) map[cyr[i]] = latParts[i];
+  const transliterated = name.split('').map(c => map[c] || c).join('');
+  return transliterated.replace(/[^a-zA-Z0-9_\-. ]/g, "").trim().replace(/\s+/g, "_").slice(0, 60);
 }
