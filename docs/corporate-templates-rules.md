@@ -593,6 +593,58 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 
 ---
 
+## S4-ACTIVE-PROOF execution results
+
+**Дата проведения:** 2026-03-25
+**Цель:** End-to-end proof для 6 active шаблонов, ранее не имевших подтверждённой генерации.
+
+### Тест-сессии
+
+| # | Сценарий | session_id | procedure_mode | rules_basis | charter_rules proof | batch_id | batch_status | docs total |
+|---|---|---|---|---|---|---|---|---|
+| 1 | sole_participant_decision | `6ffef13a-727a-435c-9eec-b2abb7c4586b` | sole_participant_decision | law_default | N/A | `a763614c-31fd-4512-bed3-4a47921bbc72` | generated | 2 |
+| 2 | annual_meeting + has_board=true | `e5a8b669-8100-49de-861a-5d0d38ffb543` | annual_meeting | charter_confirmed | confirmed_charter_rules.has_board=true, сохранено в session | `84c7b249-3027-4865-b827-69a86742aefd` | generated | 3 |
+| 3 | annual_meeting + has_auditor=true | `09c54d32-d12b-472d-b710-1b494b36748b` | annual_meeting | charter_confirmed | confirmed_charter_rules.has_auditor=true, сохранено в session | `4678d09b-7c62-423e-8443-3b641a7c97ca` | generated | 4 |
+| 4 | annual_meeting + charter_change | `c1c983fb-9a5c-430e-9f36-b76b947ee8b3` | annual_meeting | charter_confirmed | agenda[3].requires_charter_change=true, сохранено в session | `4aedddb3-df64-4e06-8cd7-5e19a785c882` | generated | 3 |
+
+### Proof chain по каждому целевому шаблону
+
+| template_code | session_type | manifest_include | pre-flight | render | upload | db_row (template_code match) | batch_id | signed_url | meta.source | meta.session_id | meta.procedure_mode | meta.report_year | snapshot.resolver_version | status_before | status_after |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| corp_sole_decision | sole_participant | ✓ | ✓ | ✓ | ✓ | ✓ | `a763614c...` | ✓ | corporate_wizard | `6ffef13a...` | sole_participant_decision | 2025 | sprint3_fix1 | active | active (proven) |
+| corp_sole_appendices | sole_participant | ✓ | ✓ | ✓ | ✓ | ✓ | `a763614c...` | ✓ | corporate_wizard | `6ffef13a...` | sole_participant_decision | 2025 | sprint3_fix1 | active | active (proven) |
+| corp_board_consent | annual+board | ✓ | ✓ | ✓ | ✓ | ✓ | `84c7b249...` | ✓ | corporate_wizard | `e5a8b669...` | annual_meeting | 2025 | sprint3_fix1 | active | active (proven) |
+| corp_auditor_candidates | annual+auditor | ✓ | ✓ | ✓ | ✓ | ✓ | `4678d09b...` | ✓ | corporate_wizard | `09c54d32...` | annual_meeting | 2025 | sprint3_fix1 | active | active (proven) |
+| corp_auditor_consent | annual+auditor | ✓ | ✓ | ✓ | ✓ | ✓ | `4678d09b...` | ✓ | corporate_wizard | `09c54d32...` | annual_meeting | 2025 | sprint3_fix1 | active | active (proven) |
+| corp_charter_amendments | annual+charter_change | ✓ | ✓ | ✓ | ✓ | ✓ | `4aedddb3...` | ✓ | corporate_wizard | `c1c983fb...` | annual_meeting | 2025 | sprint3_fix1 | active | active (proven) |
+
+### Шаблоны included но не целевые (сопутствующие, уже ранее доказанные)
+
+В batch 2, 3, 4 также были сгенерированы `corp_order_meeting` и `corp_review_list` — ранее доказаны в Sprint 3 (batch `2222f7ff...`).
+
+### Шаблоны included но не вошедшие в generation
+
+Для сессии 2 (has_board): `corp_board_candidates` — included=true в manifest, но runtime_status=`pending_sprint3`, отфильтрован pre-flight (ожидаемо, Sprint 4 loop-dependent).
+
+### Итог
+
+**6/6 proven end-to-end** — все 6 целевых шаблонов прошли полный proof chain.
+
+### runtime_status
+
+В данном патче runtime_status **не менялся** — все 6 шаблонов уже имели статус `active` до proof. Патч является proof-only сборкой.
+
+---
+
+## Remaining blockers / not proven templates
+
+**Нет блокеров.** Все 6 целевых шаблонов полностью доказаны.
+
+Оставшиеся `pending_sprint3` шаблоны (10 штук) запланированы на PATCH S4-LOOPS-PROOF:
+- corp_notice, corp_notice_journal, corp_draft_decisions, corp_registration_list, corp_protocol, corp_notification_decisions, corp_ballot, corp_board_candidates, corp_audit_commission, corp_agenda_change_notice
+
+---
+
 ## PATCH-остатки / Новые баги (S3-CLOSE-5)
 
 Новых багов не обнаружено.
