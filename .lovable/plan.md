@@ -2,77 +2,72 @@
 
 &nbsp;
 
-1. **Part A переименовать из proof-only в fix+proof**
-  По скрину DoD не выполнен: кнопка **«Выйти без сохранения»** визуально кривая, выбивается по высоте/базовой линии и ломает композицию. Это уже не proof-only, а отдельный **UI-fix внутри этого PATCH**. Нужно сначала исправить layout, потом снять 3 proof-скрина.
-2. **Явно зафиксировать root cause и способ исправления**
-  В PATCH добавить:
+1. **Part A дополнить жёстким условием фиксации бага**
+  Если на одном из 3 viewport выявится дефект, в отчёте нужно явно указать:
   &nbsp;
-  - все 3 кнопки должны иметь **одинаковую высоту**;
-  - у destructive-кнопки убрать стиль/классы, которые меняют line-height, padding, font-size, border-radius или vertical-align относительно остальных;
-  - footer собрать в **две зоны**:
-    &nbsp;
-    - зона safe actions: Сохранить и выйти + Остаться
-    - зона destructive: Выйти без сохранения
-    &nbsp;
-  - на desktop destructive-кнопка должна быть **отдельно**, но не визуально “проваливаться” по оси Y;
-  - на mobile все 3 кнопки идут **строго столбцом** с одинаковой шириной w-full.
+  - bug_found: true
+  - имя отдельного патча: S3-UI-EXIT-DIALOG-FIX
+  - какой именно viewport его воспроизводит
+  - что proof-скрины “после фикса” и “до фикса” не смешиваются
   &nbsp;
-3. **Добавить строгий DoD по кнопкам**
-  Не просто “no overflow”, а:
+2. **Part A уточнить, что скрины должны быть именно из preview/UI, а не из кода**
+  В proof указать:
   &nbsp;
-  - одинаковая высота всех 3 кнопок;
-  - одинаковое вертикальное выравнивание текста;
-  - destructive не выходит за baseline соседних кнопок;
-  - нет сжатия текста и нет обрезки на 375 / 768 / 1189 px;
-  - primary visually dominant, destructive visually secondary.
+  - источник: реальный UI preview
+  - viewport width
+  - шаги воспроизведения: открыть wizard → изменить поле → открыть exit dialog
+    Это нужно, чтобы скрины были доказательством UI-факта, а не просто верстки.
   &nbsp;
-4. **Part A: proof делать после фикса**
-  Для каждого viewport приложить:
+3. **Part B добавить проверку parity не только по included, но и по excluded**
+  В artifact и в docs зафиксировать отдельно:
   &nbsp;
-  - screenshot;
-  - краткую подпись: mobile/tablet/desktop;
-  - подтверждение: equal heights / no overflow / no wrap glitch / baseline aligned.
+  - excluded_match
+  - список excluded templates в каждом сценарии
+    Потому что для manifest parity важно доказать и корректное исключение шаблонов, а не только включение.
   &nbsp;
-5. **Part B: artifact сохранить не только в /mnt/documents, но и дать copyable summary в docs**
-  В docs/[corporate-templates-rules.md](http://corporate-templates-rules.md) добавить краткий блок:
+4. **Part B зафиксировать, что artifact — proof-only и не SoT**
+  В docs добавить явную строку:
   &nbsp;
-  - 6 scenarios checked;
-  - match=true for all;
-  - diffs=[].
-    Сам json-артефакт оставить как machine-readable proof.
+  - manifest_parity_proof.json — артефакт проверки
+  - не является source of truth
+  - SoT остаются: frontend rule engine, server manifest module, activation matrix docs
   &nbsp;
-6. **Part B: в artifact добавить еще 2 поля**
-  Помимо текущего списка добавить:
+5. **Part C добавить явную проверку порядка строк в docs matrix**
+  Нужна сверка не только статусов, но и порядка template_code:
   &nbsp;
-  - frontend_count
-  - server_count
-    Чтобы сразу видеть совпадение не только по содержимому, но и по количеству.
+  - docs matrix order = frontend spec order = server fallback order
+    Иначе можно пропустить скрытый drift при совпадающих статусах.
   &nbsp;
-7. **Part C: activation matrix должна сверяться сразу с двумя файлами**
-  Проверять не только corporateTemplateSpec.ts, но и серверный fallback в _shared/corporate-manifest.ts, чтобы не пропустить drift. В docs явно отметить:
+6. **Part C уточнить, что 3-way sync делается только по 18 internal templates**
+  В финальном short proof block прямо написать:
   &nbsp;
-  - frontend runtime_status
-  - server fallback runtime_status
-  - sync_ok: true/false
+  - 3-way sync checked only for 18 corporate templates
+  - 4 externally_provided excluded from runtime sync by design
   &nbsp;
-8. **Part D расширить**
-  В PATCH S4-ACTIVE-PROOF добавить не только test sessions, но и требование:
+7. **Part D сделать backlog-блок более операционным**
+  Для каждого remaining active template добавить не только required test session type, но и:
   &nbsp;
-  - каждая test session должна быть сохранена в статусе confirmed;
-  - для каждой должен быть указан ожидаемый список active templates до запуска;
-  - после запуска приложить proof chain:
-    session -> manifest -> pre-flight -> batch -> ai_generated_documents -> signed url.
+  - expected included template_code in manifest
+  - expected runtime_status before proof
+  - expected final status after proof
+    Это упростит следующий патч и уберет двусмысленность.
   &nbsp;
-9. **Добавить отдельный mini-proof по history UI**
-  Раз уж закрывается S3 closeout, в этом PATCH нужно хотя бы потребовать:
+8. **Part D явно закрепить запрет на “частичный proof”**
+  Добавь формулировку:
   &nbsp;
-  - 1 screenshot списка batch в History;
-  - 1 screenshot раскрытого corporate batch;
-  - 1 proof скачивания документа из UI.
-    Иначе пункт про history снова останется “partial”.
+  - signed URL без записи в ai_generated_documents не считается proof
+  - запись в batch без download не считается proof
+  - нужен полный chain целиком, без пропусков
   &nbsp;
-10. **Файлы**
-  В список файлов добавить:
+9. **Part E расширить финальный short proof block**
+  Добавить туда ещё 2 строки:
+  &nbsp;
+  - excluded_match=true
+  - docs matrix order matches spec/server fallback
+    Тогда финальный блок будет действительно самодостаточным.
+  &nbsp;
+10. **Финальный DoD уточнить**
+  Перепиши пункты 4–7 так:
 
 &nbsp;
 
@@ -80,9 +75,10 @@
 
 &nbsp;
 
-- src/components/corporate/CorporateWizard.tsx — **UI-fix exit dialog before proof**
-- docs/[corporate-templates-rules.md](http://corporate-templates-rules.md)
-- /mnt/documents/manifest_parity_proof.json
+- по 6 сценариям: all_match=true, total_diffs=0, included_match=true, excluded_match=true, full_order_match=true
+- verified 3-way sync for 18 corporate templates
+- docs matrix order verified
+- 4 external docs marked N/A by design
 
 &nbsp;
 
@@ -90,8 +86,8 @@
 
 &nbsp;
 
-11. **Итоговый статус PATCH**
-  В конце плана явно разделить:
+11. **Отдельно зафиксировать, что в этом PATCH не трогаются server/frontend runtime maps**
+  В разделе “Жёсткие правила этого PATCH” добавь:
 
 &nbsp;
 
@@ -99,108 +95,220 @@
 
 &nbsp;
 
-- UI fix
-- UI proof
-- manifest proof artifact
-- activation matrix verification
-- next PATCH definition
+- не менять corporateTemplateSpec.ts
+- не менять *shared/corporate-manifest.ts::DEFAULT*RUNTIME_STATUS
+- любые расхождения только документируются, но не исправляются в этом proof-only PATCH
 
 &nbsp;
 
 &nbsp;
 
-Чтобы подрядчик не попытался снова выдать только proof без исправления самой кнопки.
+PATCH S3-CLOSE-5 (revised) — UI-fix + proof-only closeout
 
-&nbsp;
+## Жёсткие правила этого PATCH
 
-PATCH S3-CLOSE-5 — UI-proof + Manifest proof artifact + Activation matrix + Next PATCH
-
-## Part A. UI-proof Exit Dialog (3 viewport)
-
-**Task**: Use browser tools to capture screenshots of the exit dialog at 3 viewport sizes.
-
-**Method**:
-
-1. Navigate to Corporate Wizard in preview
-2. Trigger exit dialog (click back/close with unsaved data)
-3. Screenshot at mobile (375px), tablet (768px), desktop (1189px)
-4. Verify: no overflow, no text overlap, destructive button low-prominence, primary action dominant
-
-**File changes**: None. This is proof-only. If a layout bug is found, it becomes a separate PATCH.
+- **Proof-only**: не менять `corporateTemplateSpec.ts`, не менять `_shared/corporate-manifest.ts::DEFAULT_RUNTIME_STATUS`
+- Любые расхождения только документируются, но не исправляются
+- Если при 3 viewport proof обнаружится UI-баг — оформляется отдельный **PATCH S3-UI-EXIT-DIALOG-FIX** с явной фиксацией: `bug_found: true`, viewport, описание
+- Локальные UI-правки — только в `CorporateWizard.tsx`, глобальный `alert-dialog.tsx` не трогать
 
 ---
 
-## Part B. Machine-readable manifest parity proof artifact
+## Part A. UI-fix exit dialog + 3 viewport proof
 
-**Task**: Generate a JSON artifact with 6 scenario comparisons showing actual template lists from both functions.
+### Текущее состояние кода (lines 402-430)
 
-**Method**: Write a comparison script that imports both `calculatePackageManifest` (frontend) and `calculateServerManifest` (server) logic, runs 6 scenarios, outputs per-scenario JSON with:
+Footer уже имеет `flex-col gap-2 sm:flex-row sm:items-center sm:justify-between`. Кнопки имеют `h-9`. Но на скриншоте видно, что destructive-кнопка визуально проседает.
 
-- `scenario_name`
-- `frontend_included[]` (template_code, legal_basis, category, runtime_status)
-- `server_included[]` (same fields)
-- `match: true/false`
-- `diffs: []`
+### Root cause (по коду)
 
-Save to `/mnt/documents/manifest_parity_proof.json`.
+`AlertDialogFooter` в `alert-dialog.tsx` задаёт `flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2`. CorporateWizard переопределяет className, но `sm:space-x-2` из базового компонента может наследоваться через merge. `AlertDialogCancel` имеет `mt-2 sm:mt-0` по умолчанию — уже переопределено `mt-0`.
 
-Since both functions cannot be imported in the same runtime (frontend vs Deno), the proof will be done by code-level comparison: extract the template arrays and conditional logic from both files, run them through identical input params, compare outputs programmatically.
+### Фикс
 
-**6 scenarios**:
+- Убедиться, что footer className полностью переопределяет базовые классы (проверить cn merge)
+- Все 3 кнопки: `h-9 text-sm` — единая высота и размер шрифта
+- Destructive ghost: убрать любые padding/line-height отличия
+- На mobile: `flex-col w-full` строго столбцом
+- На desktop: `sm:flex-row sm:items-center` — baseline aligned
 
-1. `annual_meeting` + `law_default`
-2. `annual_meeting` + `charter_confirmed` + `has_board=true`
-3. `annual_meeting` + `has_auditor=true` + `has_audit_commission=true`
-4. `annual_meeting` + `charter_change` in agenda
-5. `sole_participant_decision` + `law_default`
-6. `annual_meeting` + `secret` voting
+### Proof (из реального UI preview)
 
-**Output**: Artifact file with full per-scenario data.
+Шаги воспроизведения:
 
----
+1. Открыть Corporate Wizard в preview
+2. Изменить любое поле (чтобы появились unsaved changes)
+3. Нажать назад/закрыть → exit dialog
 
-## Part C. Full activation matrix in docs
+Снять 3 скрина через browser tools:
 
-**Task**: Ensure `docs/corporate-templates-rules.md` contains the complete 18+4 template matrix (already present at lines 376-421). Verify it matches current `corporateTemplateSpec.ts` statuses exactly.
+- **375px**: `no overflow / no wrap break / equal heights`
+- **768px**: `baseline aligned / no clipping`
+- **1189px**: `destructive visually secondary / primary dominant / no horizontal squeeze`
 
-**File changes**: Minor update to `docs/corporate-templates-rules.md` if any discrepancy found.
+Под каждым скрином подпись с подтверждением.
 
----
+Если баг найден:
 
-## Part D. PATCH S4-ACTIVE-PROOF — Next patch for remaining active templates
-
-**Task**: Define a separate follow-up PATCH in docs for Sprint 4 that covers:
-
-1. **Create test sessions** for missing scenarios:
-  - `sole_participant_decision` (confirmed)
-  - `annual_meeting` + `charter_confirmed` + `has_board=true` (confirmed)
-  - `annual_meeting` + `charter_confirmed` + `has_auditor=true` (confirmed)
-  - `annual_meeting` + `charter_change` in agenda (confirmed)
-2. **Per-template end-to-end proof** for:
-  - `corp_sole_decision`
-  - `corp_sole_appendices`
-  - `corp_board_consent`
-  - `corp_auditor_candidates`
-  - `corp_auditor_consent`
-  - `corp_charter_amendments`
-3. **Per-template proof chain**: manifest includes → pre-flight → render → upload → DB record → signed URL → batch linked → snapshot present
-
-**File changes**: Add section to `docs/corporate-templates-rules.md` under Sprint 4 GAPs.
+- `bug_found: true`
+- Отдельный патч `S3-UI-EXIT-DIALOG-FIX`
+- Скрины "до" и "после" не смешиваются
 
 ---
 
-## Files
+## Part B. Machine-readable manifest parity artifact
+
+### Формат JSON — по каждому из 6 сценариев
+
+```text
+{
+  "scenario_name": "...",
+  "frontend_all": [...],          // все шаблоны (included + excluded)
+  "server_all": [...],
+  "frontend_included": [...],     // только included=true
+  "server_included": [...],
+  "frontend_excluded": [...],     // только included=false
+  "server_excluded": [...],
+  "frontend_count": N,
+  "server_count": N,
+  "included_match": true/false,
+  "excluded_match": true/false,
+  "full_order_match": true/false,
+  "runtime_status_match": true/false,
+  "required_data_match": true/false,
+  "diffs": []
+}
+```
+
+### Корень файла (self-contained metadata)
+
+```text
+{
+  "generated_at": "ISO timestamp",
+  "source_files": [
+    "src/lib/corporate/corporateRuleEngine.ts",
+    "supabase/functions/_shared/corporate-manifest.ts"
+  ],
+  "total_scenarios": 6,
+  "all_match": true/false,
+  "total_diffs": 0,
+  "runtime_status_sync": { ... },
+  "note": "This artifact is proof-only, NOT source of truth. SoT: frontend rule engine, server manifest module, activation matrix in docs."
+}
+```
+
+### В docs добавить short proof block
+
+```text
+- manifest_parity_proof.json — артефакт проверки, не SoT
+- SoT: frontend rule engine, server manifest module, docs matrix
+- 6 scenarios checked
+- all_match=true, diffs=[]
+- included_match=true, excluded_match=true
+- frontend_count === server_count
+- full_order_match=true
+- docs matrix order matches spec/server fallback
+```
+
+---
+
+## Part C. 3-way activation matrix sync
+
+### Три источника для сверки
+
+1. `corporateTemplateSpec.ts` — TEMPLATE_SPECS[].runtime_status
+2. `corporate-manifest.ts` — DEFAULT_RUNTIME_STATUS
+3. `docs/corporate-templates-rules.md` — activation matrix
+
+### Два отдельных блока в docs
+
+**Блок 1: 18 corporate templates — runtime sync**
 
 
-| File                                        | Change                                                         |
-| ------------------------------------------- | -------------------------------------------------------------- |
-| `docs/corporate-templates-rules.md`         | Add PATCH S4-ACTIVE-PROOF definition, verify activation matrix |
-| `/mnt/documents/manifest_parity_proof.json` | New artifact: machine-readable proof                           |
+| template_code | frontend | server fallback | docs matrix | order_match | sync_ok |
+| ------------- | -------- | --------------- | ----------- | ----------- | ------- |
 
 
-## DoD
+Сверка не только статусов, но и **порядка** template_code во всех 3 источниках.
 
-1. 3 viewport screenshots of exit dialog (mobile/tablet/desktop) — no overflow
-2. Machine-readable manifest parity artifact with 6 scenarios, match=true
-3. Activation matrix verified complete in docs (all 18+4)
-4. PATCH S4-ACTIVE-PROOF defined with test session requirements and per-template proof chain
+**Блок 2: 4 externally_provided — N/A by design**
+
+Отдельно, не смешивать с runtime sync.
+
+### Итоговая фиксация
+
+- `3-way sync checked only for 18 corporate templates`
+- `4 externally_provided excluded from runtime sync by design`
+- `sync_ok: true/false`, `drifts: []`, `order_match: true/false`
+
+---
+
+## Part D. PATCH S4-ACTIVE-PROOF — операционный backlog-блок
+
+Для каждого remaining active template:
+
+
+| template_code | required_session_type | required_manifest_condition | expected_runtime_status_before | expected_final_status_after |
+| ------------- | --------------------- | --------------------------- | ------------------------------ | --------------------------- |
+
+
+### 6 шаблонов
+
+- `corp_sole_decision` — sole_participant_decision
+- `corp_sole_appendices` — sole_participant_decision
+- `corp_board_consent` — annual_meeting + has_board=true
+- `corp_auditor_candidates` — annual_meeting + has_auditor=true
+- `corp_auditor_consent` — annual_meeting + has_auditor=true
+- `corp_charter_amendments` — annual_meeting + charter_change
+
+### Proof chain (полный, без пропусков)
+
+`confirmed session → manifest include → pre-flight pass → render → upload → ai_generated_documents row → signed URL → history batch`
+
+### Запрет на частичный proof
+
+- signed URL без записи в `ai_generated_documents` ≠ proof
+- запись в batch без download ≠ proof
+- без confirmed test sessions статус менять запрещено
+
+---
+
+## Part E. Финальный short proof block в docs
+
+```text
+## Sprint 3 Closeout Proof Summary (S3-CLOSE-5)
+- UI proof: 3 viewport screenshots attached (375/768/1189)
+- Manifest parity artifact: /mnt/documents/manifest_parity_proof.json
+- 6 scenarios checked, all_match=true, diffs=[]
+- included_match=true, excluded_match=true
+- full_order_match=true
+- docs matrix order matches spec/server fallback
+- runtime_status_sync_ok for 18/18 corporate templates
+- 4 externally_provided: N/A by design
+```
+
+---
+
+## Файлы
+
+
+| Файл                                           | Что делать                                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `src/components/corporate/CorporateWizard.tsx` | UI-fix кнопок exit dialog (если proof покажет баг)                                           |
+| `docs/corporate-templates-rules.md`            | 3-way sync table, short proof block, S4 backlog block с операционными полями, excluded_match |
+| `/mnt/documents/manifest_parity_proof.json`    | Самодостаточный artifact с included + excluded + metadata                                    |
+
+
+---
+
+## Финальный DoD
+
+1. 3 viewport screenshots из реального UI preview, подписаны
+2. Под каждым: `no overflow / equal heights / baseline aligned`
+3. `/mnt/documents/manifest_parity_proof.json` создан и читается
+4. По 6 сценариям: `all_match=true`, `total_diffs=0`, `included_match=true`, `excluded_match=true`, `full_order_match=true`
+5. Verified 3-way sync for 18 corporate templates (spec + server fallback + docs matrix)
+6. Docs matrix order verified against spec/server fallback
+7. 4 external docs marked N/A by design
+8. `PATCH S4-ACTIVE-PROOF` добавлен как операционный backlog block с per-template requirements
+9. В этом PATCH **не менялись** `corporateTemplateSpec.ts` и `_shared/corporate-manifest.ts`
