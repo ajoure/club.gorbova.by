@@ -24,23 +24,12 @@ import { useState, useRef, useEffect } from "react";
 import { Code } from "lucide-react";
 
 const SANDBOX_POLICY =
-  "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
+  "allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
-/** Wrap user HTML in a full document with auto-resize script */
+/** Wrap user HTML in a full document (no scripts for security) */
 export function buildSrcdoc(html: string): string {
-  const resizeScript = `
-<script>
-  function postHeight() {
-    window.parent.postMessage({ type: 'iframe-resize', height: document.body.scrollHeight + 20 }, '*');
-  }
-  window.addEventListener('load', postHeight);
-  window.addEventListener('resize', postHeight);
-  new ResizeObserver(postHeight).observe(document.body);
-  setTimeout(postHeight, 300);
-</script>`;
-
   if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${resizeScript}</body>`);
+    return html;
   }
 
   return `<!DOCTYPE html>
@@ -53,7 +42,6 @@ export function buildSrcdoc(html: string): string {
 </head>
 <body>
 ${html}
-${resizeScript}
 </body>
 </html>`;
 }
@@ -72,17 +60,6 @@ export function HtmlIframePreview({
   minHeight = 100,
 }: HtmlIframePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
-
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.data?.type === "iframe-resize" && typeof e.data.height === "number") {
-        setHeight(Math.max(minHeight, e.data.height));
-      }
-    };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [minHeight]);
 
   if (!html.trim()) {
     return (
@@ -98,7 +75,7 @@ export function HtmlIframePreview({
       ref={iframeRef}
       srcDoc={buildSrcdoc(html)}
       sandbox={SANDBOX_POLICY}
-      style={{ width: "100%", height: `${height}px`, border: "none", overflow: "hidden" }}
+      style={{ width: "100%", height: "500px", border: "none", overflow: "auto" }}
       title="HTML Preview"
     />
   );
