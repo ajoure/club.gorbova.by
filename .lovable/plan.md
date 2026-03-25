@@ -1,33 +1,48 @@
 
-# S4-INTERNAL-TEMPLATE-EDITOR — Phase 1: corp_order_meeting
 
-## Статус: ✅ Phase 1 выполнена
+# Исправление серых полей по бокам HTML-блока
 
-## Что сделано
+## Scope — 2 файла, без изменения глобального App.css
 
-### Миграция БД
-- `template_status TEXT DEFAULT 'in_development'` — статус шаблона
-- `editor_mvp_enabled BOOLEAN DEFAULT false` — флаг доступности редактора
-- `editor_draft_content JSONB DEFAULT NULL` — staging-only draft (не SoT для runtime)
-- `corp_order_meeting` → `editor_mvp_enabled = true`, `template_status = 'draft'`
-- `corp_review_list`, `corp_notice`, `corp_notice_journal`, `corp_sole_decision` → `template_status = 'draft'`
+### 1. `src/components/site-renderer/blocks/HtmlSection.tsx`
 
-### Созданные файлы
-- `src/lib/corporate/templateEditorMapper.ts` — маппинг token ↔ UI label
-- `src/lib/corporate/templateEditorTestData.ts` — тестовые данные для preview
-- `src/hooks/useCorporateTemplateEditor.ts` — хук: DOCX → draft → save/load
-- `src/components/corporate-editor/CorporateTemplateEditorDialog.tsx` — fullscreen dialog
-- `src/components/corporate-editor/EditorModeView.tsx` — режим редактирования с подсветкой
-- `src/components/corporate-editor/PreviewModeView.tsx` — raw preview + editor preview
+Убрать `py-6 px-6` и `max-w-4xl mx-auto`. Ширину контролирует BlockWrapper.
 
-### Изменённые файлы
-- `src/hooks/useDocumentTemplates.tsx` — расширен DocumentTemplate interface
-- `src/components/ai-documents/AiDocumentTemplatesManager.tsx` — кнопка "Редактор" + dialog
+```tsx
+// Было:
+<section className="py-6 px-6">
+  <div className="max-w-4xl mx-auto">
+    <HtmlIframePreview html={code} />
+  </div>
+</section>
 
-## Backlog
-1. ~~S4-INTERNAL-TEMPLATE-EDITOR Phase 1~~ ✅
-2. S4-INTERNAL-TEMPLATE-EDITOR Phase 2 — еще 4 документа + repeat blocks
-3. S4-PASSPORT-TOKENS — паспортные поля в fields_registry
-4. S4-EDITOR-DRAFT-TO-DOCX-EXPORT — export draft → DOCX runtime
-5. S4-PASSPORT-TO-RUNTIME — паспортные данные в edge function payload
-6. S4-DOCX-TO-RUNTIME-PROOF — runtime activation
+// Станет:
+<section>
+  <HtmlIframePreview html={code} />
+</section>
+```
+
+### 2. `src/components/shared/HtmlIframePreview.tsx`
+
+В `buildSrcdoc` fallback-обертке: `padding: 0` вместо `padding: 16px`.
+
+```css
+/* Было: */
+body { margin: 0; padding: 16px; font-family: ... }
+/* Станет: */
+body { margin: 0; padding: 0; font-family: ... }
+```
+
+**Compatibility rule:** Это изменение касается только fallback-обертки (когда входной HTML не содержит `</body>`). Полноценный HTML с собственным `</body>` вставляется as-is — без изменений. Другие потребители (`HtmlBlockEditor`, `HtmlRawBlock`) используют тот же компонент, но они рендерят в рамках admin-контейнеров с собственными border/overflow — padding iframe-body для них не критичен.
+
+### 3. `src/App.css` — НЕ МЕНЯЕМ
+
+`#root { max-width: 1280px; padding: 2rem; }` остается без изменений. Это shared/global слой. Для публичных сайтов ограничение `#root` не является причиной проблемы — основные ограничители были `max-w-4xl` в HtmlSection и `padding: 16px` в iframe body. Если после правок 1-2 проблема останется — потребуется отдельный route-scoped override с DRY RUN.
+
+## Verify checklist
+
+- HTML block на публичном сайте без серых полей по бокам
+- `fullWidth` / `maxWidth` из BlockWrapper продолжают управлять шириной
+- Fallback iframe wrapper без внутренних отступов
+- Админка: `HtmlBlockEditor` и `HtmlRawBlock` рендерятся корректно (в обёртках с `border rounded-lg overflow-hidden`)
+
