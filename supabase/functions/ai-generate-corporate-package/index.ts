@@ -543,6 +543,7 @@ serve(async (req) => {
         if (dlErr || !tplFile) {
           const dlErrMsg = `Download failed: ${dlErr?.message || 'No file returned'}`;
           console.error(`[CORP-GEN] Template download error for ${item.template_code}:`, dlErr);
+          errorCount++;
           await supabase.from("ai_generated_documents").insert({
             profile_id: profileId,
             template_id: dbTemplate.id,
@@ -554,11 +555,12 @@ serve(async (req) => {
             legal_details_id: session.legal_details_id || null,
             snapshot: { source: "corporate_wizard", corporate_draft_session_id },
             missing_tokens: [],
-            generation_error: "Failed to download template file",
+            generation_error: dlErrMsg,
             generation_batch_id: batch.id,
             created_by: userId,
+            meta: { source: "corporate_wizard", corporate_draft_session_id, error_stage: "template_download" },
           });
-          results.push({ template_code: item.template_code, title: itemName, status: "error", error: "Download failed" });
+          results.push({ template_code: item.template_code, title: itemName, status: "error", error: dlErrMsg });
           continue;
         }
 
