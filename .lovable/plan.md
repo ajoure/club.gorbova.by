@@ -1,39 +1,50 @@
-# P1 Patch — ВЫПОЛНЕН
+# P2 Patch — ВЫПОЛНЕН
 
 ## Что сделано
 
-### PATCH 1: SheetJS Excel parser (`src/utils/fileExtractor.ts`)
-- Заменён XML-regex парсер на SheetJS (`XLSX.read` + `sheet_to_csv`)
-- Поддержка `.xls` и `.xlsx`
-- Нормализация CSV: trim, удаление пустых строк и строк из разделителей, пропуск пустых листов
-- Экспортирован `getFileType` для использования в UI
-- Добавлен fallback по расширению файла для пустых MIME-типов
+### PATCH A: Обновление промпта balance_analysis
+- Обновлён `prompt_text` с обязательной структурой из 11 разделов
+- Три блока прозрачности: «Что извлечено», «Что рассчитано AI», «Как интерпретировано по нормам»
+- Обязательный шаблон: Показатель / Норма / Факт / Статус / Краткий вывод
+- Итоговый рейтинг: устойчиво / напряжённо / рискованно / критично
+- Обновлены title, description, input_hint, launcher_title, launcher_description
 
-### PATCH 2: Unified extraction pipeline (`src/pages/AI.tsx`)
-- `handleScenarioSubmit` полностью переведён на `extractAllFilesContent`
-- **Proof**: `file.text()` больше не используется в scenario path (grep подтверждён)
-- Adapter: `getFileType` + `fileToBase64` → `extractAllFilesContent` → `sendMessage`
+### PATCH B: Markdown rendering
+- Установлен `react-markdown`
+- Assistant messages: ReactMarkdown с custom component overrides (h1-h3, ul/ol, table, strong, p, blockquote)
+- User messages: остались plain text whitespace-pre-wrap
+- Таблицы: overflow-x-auto для предотвращения разрыва bubble
 
-### PATCH 3: Soft quality gate (`supabase/functions/gorbova-ai-chat/index.ts`)
-- `quality === "low"` больше не блокирует — только `"empty"`
-- Для `low` в file_analysis/document_review: `partial_analysis_mode: true` + structured instruction
-- Обновлён `ANTI_HALLUCINATION_SUFFIX`: поддержка частичного анализа + запрет на выдумывание
-- Edge function задеплоена
+### PATCH C+E: Persistence и Resume
+- `useAiChat` использует `useAuth()` внутри — без ручного userId
+- localStorage key: `gorbova_ai_last_conversation_${user.id}`
+- `loadConversation(convId)` — запрос с фильтром `user_id = user.id`
+- `resumeConversation(convId)` — загрузка + восстановление scenario context (prompt_id, scenario_type, launcher_title_snapshot)
+- На mount: восстановление последней сессии, очистка при пустом результате
+- `clearChat` удаляет localStorage key
+- Scenario context НЕ открывает upload flow автоматически
 
-### PATCH 4: Seed balance_analysis
-- Обновлены: `title`, `description`, `prompt_text`, `type`, `input_hint`, `launcher_title`, `launcher_description`
-- НЕ затронуты: `sort_order`, `launcher_order`, `is_active`, `is_archived`, `is_visible_in_chat`
-- Новый `prompt_text` требует структурированный ответ с extraction summary
+### PATCH D: История анализа
+- Новый `useAnalysisHistory` hook с `useAuth()` внутри
+- Группировка assistant messages с scenario_type по conversation_id
+- Fallback title: «Анализ баланса» для balance_analysis, иначе «Анализ документа»
+- Preview из последнего assistant-ответа (150 символов)
+- updated_at по последнему сообщению сессии
+- Таб «История анализа» между «Чат» и «Туториалы»
+- Карточки: title/fallback, file badges, created_at, updated_at, preview
+- «Открыть» и «Продолжить анализ» — оба через тот же conversation_id
 
-## Proof
-- `file.text()` в `src/pages/AI.tsx` scenario path: **0 совпадений** ✓
-- `quality === 'low'` в shouldBlock: **отсутствует** ✓
-- `partial_analysis_mode` пишется в metadata при `low` ✓
+## Security
+- RLS на `ai_chat_messages`: `user_id = auth.uid()` (уже существует)
+- Все клиентские запросы фильтруют по `user_id` (defense-in-depth)
+- localStorage namespaced по userId
+- Без аутентификации — нет записи в localStorage
 
-## DoD (ожидает тест на реальных файлах)
-1. ✅ Пустой `.xlsx` → safe blocked response
-2. ⏳ Баланс 5П 092016.xlsx → extraction + analysis
-3. ⏳ Баланс 2011.XLS → extraction + analysis
-4. ✅ `quality === "low"` → partial analysis mode
-5. ✅ Нет `file.text()` в scenario path
-6. ✅ Image-only → не блокируется
+## DoD
+1. ✅ Reload → последняя сессия восстанавливается через namespaced localStorage
+2. ✅ Битая/пустая сессия → welcome screen
+3. ✅ Markdown: заголовки, списки, bold, таблицы (с overflow)
+4. ✅ Карточки истории: title/fallback, files, created_at, updated_at, preview
+5. ✅ Resume → тот же conversation_id, scenario context восстановлен
+6. ✅ Фильтр user_id + RLS → чужие сессии недоступны
+7. ⏳ balance_analysis output: proof нужен на реальном файле
