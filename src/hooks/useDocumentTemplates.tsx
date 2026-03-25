@@ -19,7 +19,7 @@ export interface DocumentTemplate {
   /** Whether the visual editor is available for this template */
   editor_mvp_enabled?: boolean;
   /** Staging-only editor draft content (not used by runtime generation) */
-  editor_draft_content?: Record<string, unknown> | null;
+  editor_draft_content?: Record<string, unknown> | null | unknown;
 }
 
 export interface ProductDocumentTemplate {
