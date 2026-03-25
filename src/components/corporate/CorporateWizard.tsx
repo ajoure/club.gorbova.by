@@ -399,23 +399,12 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
               У вас есть несохранённые данные. Что сделать с черновиком?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-between gap-2">
-            <Button
-              variant="ghost"
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={handleExitWithoutSave}
-              disabled={closeSaving}
-            >
-              Выйти без сохранения
-            </Button>
+          <AlertDialogFooter className="flex flex-col gap-2 sm:gap-2">
             <div className="flex flex-col sm:flex-row gap-2">
-              <AlertDialogCancel disabled={closeSaving} className="mt-0">
-                Остаться
-              </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleSaveAndClose}
                 disabled={closeSaving}
-                className="min-w-[160px]"
+                className="w-full sm:w-auto sm:flex-1 order-1"
               >
                 {closeSaving ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -424,7 +413,19 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                 )}
                 Сохранить и выйти
               </AlertDialogAction>
+              <AlertDialogCancel disabled={closeSaving} className="mt-0 w-full sm:w-auto sm:flex-1 order-2">
+                Остаться
+              </AlertDialogCancel>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10 w-full text-xs order-3"
+              onClick={handleExitWithoutSave}
+              disabled={closeSaving}
+            >
+              Выйти без сохранения
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
