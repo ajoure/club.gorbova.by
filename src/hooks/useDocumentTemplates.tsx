@@ -14,6 +14,12 @@ export interface DocumentTemplate {
   template_scope: string;
   created_at: string;
   updated_at: string;
+  /** Template lifecycle status: draft | approved | in_development */
+  template_status?: string;
+  /** Whether the visual editor is available for this template */
+  editor_mvp_enabled?: boolean;
+  /** Staging-only editor draft content (not used by runtime generation) */
+  editor_draft_content?: Record<string, unknown> | null | unknown;
 }
 
 export interface ProductDocumentTemplate {
@@ -82,7 +88,7 @@ export function useDocumentTemplates() {
     mutationFn: async (template: Omit<DocumentTemplate, "id" | "created_at" | "updated_at">) => {
       const { data, error } = await supabase
         .from("document_templates")
-        .insert(template)
+        .insert(template as any)
         .select()
         .single();
 
@@ -103,7 +109,7 @@ export function useDocumentTemplates() {
     mutationFn: async ({ id, ...updates }: Partial<DocumentTemplate> & { id: string }) => {
       const { data, error } = await supabase
         .from("document_templates")
-        .update(updates)
+        .update(updates as any)
         .eq("id", id)
         .select()
         .single();

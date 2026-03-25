@@ -33,8 +33,10 @@ import {
   CheckCircle2,
   ArrowLeft,
   Tag,
+  Code2,
 } from "lucide-react";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
+import { CorporateTemplateEditorDialog } from "@/components/corporate-editor/CorporateTemplateEditorDialog";
 
 interface Props {
   open: boolean;
@@ -89,6 +91,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
   const [editId, setEditId] = useState<string | null>(null);
   const [editTemplatePath, setEditTemplatePath] = useState<string>("");
   const [form, setForm] = useState<TemplateForm>(emptyForm);
+  const [editorTemplate, setEditorTemplate] = useState<DocumentTemplate | null>(null);
 
   const aiTemplates = templates.filter(
     (t) => t.template_scope === "ai" || t.template_scope === "both"
@@ -236,6 +239,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       : "Измените параметры шаблона или загрузите обновлённый файл";
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Fixed Header */}
@@ -300,6 +304,16 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                                   неактивен
                                 </Badge>
                               )}
+                              {(t as any).template_status && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {(t as any).template_status === "draft" ? "черновик" : (t as any).template_status === "approved" ? "утверждён" : "в разработке"}
+                                </Badge>
+                              )}
+                              {(t as any).editor_draft_content && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  есть draft
+                                </Badge>
+                              )}
                               {Array.isArray(t.placeholders) && t.placeholders.length > 0 && (
                                 <span className="text-[10px] text-muted-foreground">
                                   {t.placeholders.length} токенов
@@ -308,6 +322,11 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
+                            {(t as any).editor_mvp_enabled && (
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditorTemplate(t)} title="Редактор шаблона">
+                                <Code2 className="h-3.5 w-3.5 text-primary" />
+                              </Button>
+                            )}
                             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(t)} title="Редактировать">
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -470,5 +489,18 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
         </div>
       </SheetContent>
     </Sheet>
+
+    {/* Corporate Template Editor Dialog */}
+    {editorTemplate && (
+      <CorporateTemplateEditorDialog
+        open={!!editorTemplate}
+        onOpenChange={(open) => { if (!open) setEditorTemplate(null); }}
+        templateId={editorTemplate.id}
+        templateName={editorTemplate.name}
+        templatePath={editorTemplate.template_path}
+        templateStatus={(editorTemplate as any).template_status || "in_development"}
+      />
+    )}
+    </>
   );
 }
