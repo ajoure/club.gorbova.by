@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
@@ -256,32 +257,32 @@ const AI = () => {
   const handleScenarioSubmit = async (files: File[]) => {
     if (!activeScenario) return;
 
-    // Extract text from files (Phase 1: client-side)
-    const fileNames = files.map(f => f.name);
-    let fileContents = "";
-    const images: Array<{ base64: string; filename: string; mimeType: string }> = [];
-
-    for (const file of files) {
-      if (file.type.startsWith("image/")) {
-        const base64 = await fileToBase64(file);
-        images.push({ base64, filename: file.name, mimeType: file.type });
-      } else {
-        try {
-          const text = await file.text();
-          fileContents += `\n--- ${file.name} ---\n${text}`;
-        } catch {
-          fileContents += `\n[FILE_PARSE_ERROR: ${file.name}]`;
+    // Build adapter for unified extraction pipeline
+    const fileEntries = await Promise.all(
+      files.map(async (file) => {
+        const type = getFileType(file);
+        let preview: string | undefined;
+        if (type === "image") {
+          preview = await fileToBase64(file);
         }
-      }
-    }
+        return { file, type, preview };
+      })
+    );
+
+    const { textContent, images } = await extractAllFilesContent(fileEntries);
 
     await aiChat.sendMessage(
-      `Анализ файлов: ${fileNames.join(", ")}`,
+      `Анализ файлов: ${files.map((f) => f.name).join(", ")}`,
       {
         promptId: activeScenario.id,
-        fileContents: fileContents || undefined,
-        fileNames,
-        images: images.length > 0 ? images : undefined,
+        fileContents: textContent || undefined,
+        fileNames: files.map((f) => f.name),
+        images: images.length > 0
+          ? images.map((img) => ({
+              ...img,
+              mimeType: files.find((f) => f.name === img.filename)?.type || "image/jpeg",
+            }))
+          : undefined,
       }
     );
     setActiveScenario(null);
