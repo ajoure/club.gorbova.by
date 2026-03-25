@@ -107,6 +107,10 @@ Deno.serve(async (req) => {
         });
       }
     }
+    // 4. Initialize metadata and timing
+    const metadata: Record<string, any> = {};
+    const startTime = Date.now();
+
     let processedFileContents = fileContents || '';
     if (processedFileContents && processedFileContents.length > MAX_TEXT_CHARS) {
       processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
@@ -114,7 +118,7 @@ Deno.serve(async (req) => {
       metadata.original_length = fileContents!.length;
     }
 
-    // 4. Load system context from ai_prompt_packages
+    // 5. Load system context from ai_prompt_packages
     const { data: packages } = await serviceClient
       .from('ai_prompt_packages')
       .select('content')
@@ -125,10 +129,8 @@ Deno.serve(async (req) => {
       systemPrompt += '\n\n' + packages.map((p: any) => p.content).join('\n\n');
     }
 
-    // 5. Load prompt if prompt_id provided
+    // 6. Load prompt if prompt_id provided
     let promptData: any = null;
-    const metadata: Record<string, any> = {};
-    const startTime = Date.now();
 
     if (prompt_id && mode === 'prompt') {
       const { data: prompt, error: promptError } = await serviceClient
