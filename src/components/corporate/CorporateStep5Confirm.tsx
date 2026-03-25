@@ -104,7 +104,7 @@ export function CorporateStep5Confirm({ session, sessionId, flushSave, updateSes
     } catch (err) {
       setPreFlightError("Ошибка при запуске генерации");
     }
-  }, [sessionId, flushSave, refresh, generateCorporatePackage, onSessionRefresh]);
+  }, [sessionId, session.status, flushSave, refresh, updateSession, generateCorporatePackage, onSessionRefresh]);
 
   return (
     <div className="space-y-6">
