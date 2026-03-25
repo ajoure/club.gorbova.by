@@ -43,11 +43,20 @@ export function SiteSettingsPanel({
             <Input value={title} onChange={(e) => onTitleChange(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label>Slug</Label>
+            <Label>Адрес страницы</Label>
             <Input
               value={slug}
               onChange={(e) => onSlugChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
             />
+            {bindings.length > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                URL: {bindings[0].domain}/<strong>{slug || "..."}</strong>
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Привяжите домен, чтобы увидеть URL страницы
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
