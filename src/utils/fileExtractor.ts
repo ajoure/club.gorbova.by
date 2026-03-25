@@ -1,4 +1,5 @@
 import mammoth from "mammoth";
+import * as XLSX from "xlsx";
 
 export interface ExtractedContent {
   text: string;
@@ -29,7 +30,7 @@ export async function extractTextFromFile(file: File): Promise<ExtractedContent 
   return null;
 }
 
-function getFileType(file: File): ExtractedContent["type"] {
+export function getFileType(file: File): ExtractedContent["type"] {
   if (file.type.startsWith("image/")) return "image";
   if (file.type === "application/pdf") return "pdf";
   if (
@@ -40,6 +41,10 @@ function getFileType(file: File): ExtractedContent["type"] {
     file.type === "application/vnd.ms-excel" ||
     file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   ) return "excel";
+  // Fallback: check extension for files with empty/generic MIME
+  const ext = file.name.toLowerCase().split(".").pop();
+  if (ext === "xls" || ext === "xlsx") return "excel";
+  if (ext === "doc" || ext === "docx") return "word";
   return "text";
 }
 
@@ -54,7 +59,6 @@ async function extractFromWord(file: File): Promise<ExtractedContent> {
     };
   } catch (error) {
     console.error("Failed to extract Word content:", error);
-    // P0-C: Return empty text instead of dangerous placeholder
     return {
       text: "",
       type: "word",
@@ -66,38 +70,31 @@ async function extractFromWord(file: File): Promise<ExtractedContent> {
 async function extractFromExcel(file: File): Promise<ExtractedContent> {
   try {
     const arrayBuffer = await file.arrayBuffer();
-    
-    // Try to find text content in Excel file (works for xlsx which is XML-based)
-    const decoder = new TextDecoder("utf-8", { fatal: false });
-    const text = decoder.decode(arrayBuffer);
-    
-    // Extract text between XML tags for xlsx format
-    const textContent: string[] = [];
-    const regex = /<t[^>]*>([^<]+)<\/t>/g;
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      if (match[1].trim()) {
-        textContent.push(match[1].trim());
+    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
+    const parts: string[] = [];
+
+    for (const name of workbook.SheetNames) {
+      const sheet = workbook.Sheets[name];
+      if (!sheet) continue;
+
+      const csv = XLSX.utils.sheet_to_csv(sheet);
+      const lines = csv
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l.replace(/[,;|\s]/g, "").length > 0);
+
+      if (lines.length > 0) {
+        parts.push(`--- Лист: ${name} ---\n${lines.join("\n")}`);
       }
     }
-    
-    if (textContent.length > 0) {
-      return {
-        text: textContent.join(" | "),
-        type: "excel",
-        filename: file.name,
-      };
-    }
-    
-    // P0-C: Return empty text instead of dangerous placeholder
+
     return {
-      text: "",
+      text: parts.join("\n\n"),
       type: "excel",
       filename: file.name,
     };
   } catch (error) {
     console.error("Failed to extract Excel content:", error);
-    // P0-C: Return empty text instead of dangerous placeholder
     return {
       text: "",
       type: "excel",
@@ -123,14 +120,12 @@ export async function extractAllFilesContent(
       textParts.push(`[Изображение: ${file.name}]`);
     } else if (type === "word" || type === "excel") {
       const extracted = await extractTextFromFile(file);
-      // P0-C: Use PARSE_EMPTY marker when extraction returns empty
       if (extracted && extracted.text && extracted.text.trim().length > 0) {
         textParts.push(`--- Содержимое файла: ${file.name} ---\n${extracted.text}\n--- Конец файла ---`);
       } else {
         textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     } else if (type === "pdf") {
-      // Try to get base64 of PDF for AI analysis
       try {
         const reader = new FileReader();
         const base64 = await new Promise<string>((resolve, reject) => {
@@ -142,7 +137,6 @@ export async function extractAllFilesContent(
         textParts.push(`[Изображение: ${file.name}]`);
       } catch (e) {
         console.error("Failed to read PDF as base64:", e);
-        // P0-C: Use PARSE_EMPTY marker instead of content-like placeholder
         textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     }

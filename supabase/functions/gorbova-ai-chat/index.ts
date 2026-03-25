@@ -12,7 +12,6 @@ const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
 
-// P0-A: Hardcoded web-specific system prompt, independent from Telegram bot Oleg
 const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
 Отвечай на русском языке. Будь полезным, точным и структурированным.
 
@@ -24,13 +23,24 @@ const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный
 - Никогда не использовать «типовые», «примерные» или «ориентировочные» значения.
 - Если невозможно рассчитать коэффициент из-за отсутствия данных, указать: «Данные для расчёта отсутствуют».`;
 
-// P0-D: Anti-hallucination suffix appended after every scenario prompt_text
 const ANTI_HALLUCINATION_SUFFIX = `
 
 --- ОБЯЗАТЕЛЬНЫЕ ОГРАНИЧЕНИЯ ---
-Если в содержимом файлов нет явных числовых данных — НЕ рассчитывай коэффициенты,
-НЕ подставляй примерные значения, НЕ реконструируй данные по структуре формы.
-Вместо этого ответь: «В загруженном документе не обнаружены данные, достаточные для расчёта показателей.»`;
+- Если в содержимом файлов нет явных числовых данных — НЕ рассчитывай коэффициенты, НЕ подставляй примерные значения, НЕ реконструируй данные по структуре формы.
+- Нельзя делать выводы о значениях только потому, что документ «похож на баланс».
+- Если данные извлечены частично — анализируй ТОЛЬКО извлечённые показатели, для остальных укажи: «Данные для расчёта отсутствуют».
+- В начале ответа кратко перечисли, какие данные обнаружены в документе.`;
+
+const PARTIAL_ANALYSIS_INSTRUCTION = `
+
+ВАЖНО: Из документа удалось извлечь ограниченный объём данных.
+Построй ответ по структуре:
+1. Что удалось извлечь из документа
+2. Чего не хватает для полного анализа
+3. Анализ по имеющимся данным (только реально извлечённые показатели)
+4. Ограничения выводов
+5. Что загрузить для более точного анализа
+НЕ выдумывай отсутствующие данные. Для показателей без данных пиши: «Не рассчитывается: данные отсутствуют».`;
 
 const BLOCKED_SCENARIOS = ['file_analysis', 'document_review'];
 
@@ -53,9 +63,7 @@ function validateMimeType(mime: string): boolean {
   return ALLOWED_MIME_PREFIXES.some(prefix => mime.startsWith(prefix));
 }
 
-// P0-B: Quality assessment for extracted text content
 function assessExtractQuality(text: string): { quality: 'ok' | 'low' | 'empty'; cleanedLength: number } {
-  // Strip all markers that are not real content
   const cleaned = text
     .replace(/\[(PARSE_EMPTY|Изображение|PDF документ|FILE_PARSE_ERROR|Не удалось извлечь)[^\]]*\]/g, '')
     .trim();
@@ -190,20 +198,18 @@ Deno.serve(async (req) => {
       metadata.scenario_type = prompt.type;
     }
 
-    // 7. P0-B: Quality gate (after prompt load, before AI call)
+    // 7. Quality gate — block ONLY on empty (not low)
     const qualityResult = assessExtractQuality(processedFileContents);
     metadata.extract_quality = qualityResult.quality;
     metadata.cleaned_text_length = qualityResult.cleanedLength;
     metadata.extracted_text_length = qualityResult.cleanedLength;
 
-    // parse_failed = true only if files were provided but none had extractable text
     const filesWereProvided = !!(fileNames && fileNames.length > 0);
     metadata.parse_failed = filesWereProvided && !hasImages && qualityResult.quality === 'empty';
 
-    // Block only for file_analysis/document_review scenarios without images
     const scenarioType = promptData?.type;
     const shouldBlock = BLOCKED_SCENARIOS.includes(scenarioType)
-      && (qualityResult.quality === 'empty' || qualityResult.quality === 'low')
+      && qualityResult.quality === 'empty'
       && !hasImages;
 
     if (shouldBlock) {
@@ -212,11 +218,8 @@ Deno.serve(async (req) => {
       metadata.analysis_blocked_reason = 'insufficient_data';
       metadata.processing_time_ms = Date.now() - startTime;
 
-      const blockedContent = qualityResult.quality === 'empty'
-        ? 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате (Excel, PDF, фото).'
-        : 'Извлечено слишком мало данных для полноценного анализа. Проверьте, что файл содержит бухгалтерские показатели, или загрузите более чёткий документ.';
+      const blockedContent = 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате (Excel, PDF, фото).';
 
-      // Save user message
       const lastUserMsg = messages[messages.length - 1];
       if (lastUserMsg) {
         await serviceClient.from('ai_chat_messages').insert({
@@ -228,7 +231,6 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Save blocked assistant response
       await serviceClient.from('ai_chat_messages').insert({
         conversation_id: convId,
         user_id: user.id,
@@ -250,10 +252,10 @@ Deno.serve(async (req) => {
     // Not blocked
     metadata.blocked = false;
 
-    // 8. Build system prompt (P0-A: hardcoded, no ai_prompt_packages)
+    // 8. Build system prompt
     let systemPrompt = WEB_SYSTEM_PROMPT;
 
-    // 9. Inject scenario prompt_text + anti-hallucination suffix (P0-D)
+    // 9. Inject scenario prompt_text + anti-hallucination suffix
     if (promptData) {
       systemPrompt += '\n\n--- ИНСТРУКЦИЯ СЦЕНАРИЯ ---\n' + promptData.prompt_text;
 
@@ -262,6 +264,12 @@ Deno.serve(async (req) => {
       }
 
       systemPrompt += ANTI_HALLUCINATION_SUFFIX;
+
+      // Partial analysis mode for low quality in file scenarios
+      if (qualityResult.quality === 'low' && BLOCKED_SCENARIOS.includes(scenarioType)) {
+        metadata.partial_analysis_mode = true;
+        systemPrompt += PARTIAL_ANALYSIS_INSTRUCTION;
+      }
     }
 
     // 10. Build messages for AI
@@ -279,7 +287,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Add images as multimodal content
     if (hasImages) {
       const lastUserIdx = aiMessages.length - 1;
       if (lastUserIdx >= 0 && aiMessages[lastUserIdx].role === 'user') {
@@ -339,7 +346,7 @@ Deno.serve(async (req) => {
     const aiResult = await aiResponse.json();
     const assistantContent = aiResult.choices?.[0]?.message?.content || 'Нет ответа от AI';
 
-    // 12. Save messages to ai_chat_messages
+    // 12. Save messages
     const convId = conversation_id || crypto.randomUUID();
     metadata.processing_time_ms = Date.now() - startTime;
 
