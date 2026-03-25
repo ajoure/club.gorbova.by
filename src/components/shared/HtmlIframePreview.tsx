@@ -36,23 +36,11 @@ const SANDBOX_POLICY =
 /** Maximum iframe height in px to prevent runaway content */
 const MAX_IFRAME_HEIGHT = 15000;
 
-/** Wrap admin HTML in a full document with auto-resize script */
-export function buildSrcdoc(html: string): string {
-  if (/<\/body>/i.test(html)) {
-    return html;
-  }
+/** Unique marker to prevent double injection of resize script */
+const RESIZE_MARKER = "data-lovable-resize-v1";
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <base target="_blank">
-  <style>body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>
-</head>
-<body>
-${html}
-<script>
+/** Auto-resize script injected into every iframe srcdoc */
+const RESIZE_SCRIPT = `<script ${RESIZE_MARKER}>
 (function() {
   var timers = [];
   var observer = null;
@@ -65,13 +53,6 @@ ${html}
     parent.postMessage({ type: 'iframe-resize', height: h }, '*');
   }
 
-  /*
-   * Staged height synchronization — not duplicate calls.
-   * Stage 1 (immediate): captures initial layout height.
-   * Stage 2 (50ms): catches synchronous reflows after images/fonts start loading.
-   * Stage 3 (300ms): catches late layout shifts from webfonts, lazy images, async CSS.
-   * Removing any stage re-introduces specific late-layout bugs.
-   */
   function scheduleStagedSync() {
     post();
     timers.push(setTimeout(post, 50));
@@ -94,7 +75,46 @@ ${html}
 
   scheduleStagedSync();
 })();
-</script>
+<\/script>`;
+
+/**
+ * Wrap or augment admin HTML with auto-resize script.
+ *
+ * Three branches:
+ * 1. Already processed (contains marker) → return as-is
+ * 2. Full document with </body> → inject script before </body>, add <base> if missing
+ * 3. Fragment / malformed → wrap in full document template
+ */
+export function buildSrcdoc(html: string): string {
+  // Branch 1: idempotency — already processed
+  if (html.includes(RESIZE_MARKER)) {
+    return html;
+  }
+
+  // Branch 2: full HTML document with closing body tag
+  if (/<\/body>/i.test(html)) {
+    let result = html.replace(/<\/body>/i, `${RESIZE_SCRIPT}\n</body>`);
+
+    // Inject <base target="_blank"> only if no <base> tag exists at all
+    if (!/<base[\s>]/i.test(result)) {
+      result = result.replace(/<\/head>/i, `  <base target="_blank">\n</head>`);
+    }
+
+    return result;
+  }
+
+  // Branch 3: fragment or malformed — wrap in full document
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base target="_blank">
+  <style>body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>
+</head>
+<body>
+${html}
+${RESIZE_SCRIPT}
 </body>
 </html>`;
 }
