@@ -178,6 +178,7 @@ export function calculateServerManifest(
     governance?: { has_board?: boolean; has_auditor?: boolean; has_audit_commission?: boolean };
   },
   rulesBasis: RulesBasis = 'law_default',
+  runtimeStatusOverrides?: Record<string, TemplateRuntimeStatus>,
 ): ManifestItem[] {
   const rules = { ...DEFAULT_CHARTER_RULES, ...charterRules };
   const manifest: ManifestItem[] = [];
@@ -200,7 +201,7 @@ export function calculateServerManifest(
       category: tpl.category,
       required_data: TEMPLATE_REQUIRED_DATA[tpl.code] || [],
       missing_data: [],
-      runtime_status: RUNTIME_STATUS_MAP[tpl.code] || 'active',
+      runtime_status: resolveRuntimeStatus(tpl.code, runtimeStatusOverrides),
     });
   }
 
@@ -257,7 +258,7 @@ export function calculateServerManifest(
       category: tpl.category,
       required_data: TEMPLATE_REQUIRED_DATA[tpl.code] || [],
       missing_data: [],
-      runtime_status: RUNTIME_STATUS_MAP[tpl.code] || 'active',
+      runtime_status: resolveRuntimeStatus(tpl.code, runtimeStatusOverrides),
     });
   }
 
