@@ -399,12 +399,25 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
               У вас есть несохранённые данные. Что сделать с черновиком?
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter className="flex flex-col gap-2 sm:gap-2">
-            <div className="flex flex-col sm:flex-row gap-2">
+          <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-2">
+            {/* Destructive zone — left on desktop, bottom on mobile */}
+            <Button
+              variant="ghost"
+              className="h-9 w-full sm:w-auto text-destructive hover:text-destructive hover:bg-destructive/10 text-sm order-3 sm:order-1"
+              onClick={handleExitWithoutSave}
+              disabled={closeSaving}
+            >
+              Выйти без сохранения
+            </Button>
+            {/* Safe actions zone — right on desktop, top on mobile */}
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto order-1 sm:order-2">
+              <AlertDialogCancel disabled={closeSaving} className="mt-0 h-9 w-full sm:w-auto">
+                Остаться
+              </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleSaveAndClose}
                 disabled={closeSaving}
-                className="w-full sm:w-auto sm:flex-1 order-1"
+                className="h-9 w-full sm:w-auto"
               >
                 {closeSaving ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -413,19 +426,7 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                 )}
                 Сохранить и выйти
               </AlertDialogAction>
-              <AlertDialogCancel disabled={closeSaving} className="mt-0 w-full sm:w-auto sm:flex-1 order-2">
-                Остаться
-              </AlertDialogCancel>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive hover:bg-destructive/10 w-full text-xs order-3"
-              onClick={handleExitWithoutSave}
-              disabled={closeSaving}
-            >
-              Выйти без сохранения
-            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
