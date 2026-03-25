@@ -27,11 +27,12 @@ interface Props {
   session: CorporateDraftSession;
   sessionId: string;
   flushSave: (sessionId: string) => Promise<void>;
+  updateSession: (params: { id: string; patch: Record<string, unknown> }) => Promise<unknown>;
   onClose: () => void;
   onSessionRefresh: () => void;
 }
 
-export function CorporateStep5Confirm({ session, sessionId, flushSave, onClose, onSessionRefresh }: Props) {
+export function CorporateStep5Confirm({ session, sessionId, flushSave, updateSession, onClose, onSessionRefresh }: Props) {
   const [preFlightError, setPreFlightError] = useState<string | null>(null);
 
   const params = (session.corporate_params || {}) as Partial<CorporateParams>;
@@ -90,7 +91,12 @@ export function CorporateStep5Confirm({ session, sessionId, flushSave, onClose, 
         return;
       }
 
-      // 8-9. Invoke edge function (it sets status=generating, NOT us)
+      // 8. Set session status to 'confirmed' before calling edge function
+      if (session.status !== 'confirmed' && session.status !== 'generated' && session.status !== 'generating') {
+        await updateSession({ id: sessionId, patch: { status: 'confirmed' } });
+      }
+
+      // 9. Invoke edge function (it sets status=generating, NOT us)
       await generateCorporatePackage(sessionId);
 
       // Refresh session to get new status
