@@ -30,7 +30,7 @@ import {
   entityName,
   sanitizeFileName,
 } from '../_shared/docx-helpers.ts';
-import { calculateServerManifest, type ManifestItem } from '../_shared/corporate-manifest.ts';
+import { calculateServerManifest, type ManifestItem, type TemplateRuntimeStatus } from '../_shared/corporate-manifest.ts';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -428,6 +428,23 @@ serve(async (req) => {
       const params = (session.corporate_params || {}) as Record<string, unknown>;
       const charterRules = (session.confirmed_charter_rules || {}) as Record<string, unknown>;
 
+      // ── Build runtimeStatusOverrides from DB (SoT for runtime_status) ──
+      // runtime_status is NOT derived from is_active/template_path (that's availability).
+      // It's a proven readiness flag. DB stores it; we query and pass as overrides.
+      const { data: corpTemplates } = await supabase
+        .from('document_templates')
+        .select('code, meta')
+        .eq('template_scope', 'corporate');
+      const runtimeStatusOverrides: Record<string, TemplateRuntimeStatus> = {};
+      if (corpTemplates) {
+        for (const t of corpTemplates) {
+          const meta = (t.meta || {}) as Record<string, unknown>;
+          if (meta.runtime_status === 'active' || meta.runtime_status === 'pending_sprint3') {
+            runtimeStatusOverrides[t.code as string] = meta.runtime_status as TemplateRuntimeStatus;
+          }
+        }
+      }
+
       // ── Fix #2: Server-side manifest recalculation (NOT from saved JSON) ──
       // Source of truth for generation = server-recalculated manifest.
       // Saved package_manifest in session is draft/debug artifact only.
@@ -436,6 +453,7 @@ serve(async (req) => {
         charterRules,
         params as { meeting?: { voting_form?: string }; agenda?: { requires_charter_change?: boolean }[]; governance?: { has_board?: boolean; has_auditor?: boolean; has_audit_commission?: boolean } },
         (session.rules_basis as 'charter_confirmed' | 'law_default' | 'mixed') || 'law_default',
+        Object.keys(runtimeStatusOverrides).length > 0 ? runtimeStatusOverrides : undefined,
       );
 
       // ── Fetch entity (Layer A) ──
