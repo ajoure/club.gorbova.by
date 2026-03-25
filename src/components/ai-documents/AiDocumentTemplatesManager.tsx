@@ -91,6 +91,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
   const [editId, setEditId] = useState<string | null>(null);
   const [editTemplatePath, setEditTemplatePath] = useState<string>("");
   const [form, setForm] = useState<TemplateForm>(emptyForm);
+  const [editorTemplate, setEditorTemplate] = useState<DocumentTemplate | null>(null);
 
   const aiTemplates = templates.filter(
     (t) => t.template_scope === "ai" || t.template_scope === "both"
