@@ -1,7 +1,7 @@
 /**
  * CorporateWizard — 5-step Sheet wizard for corporate document packages.
  * 
- * PATCH 1.2: close protection, draft persistence, reopen flow, wider layout, save indicator.
+ * Sprint 3: Added generation flow, status blocking, session refresh.
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -32,6 +32,7 @@ import { CorporateStep4Preview } from "./CorporateStep4Preview";
 import { CorporateStep5Confirm } from "./CorporateStep5Confirm";
 import type { CorporateDraftSession } from "@/lib/corporate/corporateTypes";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface CorporateWizardProps {
   open: boolean;
@@ -92,6 +93,7 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
   const [showReopenChoice, setShowReopenChoice] = useState(false);
   const [closeSaving, setCloseSaving] = useState(false);
   const hasCheckedReopen = useRef(false);
+  const queryClient = useQueryClient();
 
   const {
     profileId,
@@ -113,6 +115,14 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
   } = useCorporateDraftSession();
 
   const { data: session, isLoading: isLoadingSession } = useSession(sessionId);
+
+  // Sprint 3: Check if session is in generating/generated status for navigation blocking
+  const isGeneratingOrGenerated = session?.status === 'generating' || session?.status === 'generated';
+
+  // Refresh session data (called after generation completes)
+  const handleSessionRefresh = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["corporate-draft-sessions"] });
+  }, [queryClient]);
 
   // ─── Reopen flow: check for existing draft on open ────────────
   useEffect(() => {
@@ -331,21 +341,18 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
               <CorporateStep4Preview session={session} />
             )}
 
-            {step === 4 && session && (
+            {step === 4 && session && sessionId && (
               <CorporateStep5Confirm
                 session={session}
-                onConfirm={async (manifest) => {
-                  if (sessionId) {
-                    await flushSave(sessionId);
-                  }
-                  await confirmPackage(session.id, manifest);
-                }}
+                sessionId={sessionId}
+                flushSave={flushSave}
                 onClose={() => {
                   setStep(0);
                   setSessionId(null);
                   setSaveStatus('idle');
                   onOpenChange(false);
                 }}
+                onSessionRefresh={handleSessionRefresh}
               />
             )}
 
@@ -359,17 +366,24 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
           {/* ─── Fixed Footer Navigation ─────────────────────── */}
           {step > 0 && (
             <div className="flex justify-between px-4 sm:px-6 py-4 border-t shrink-0">
-              <Button variant="outline" onClick={handleBack} disabled={step === 0}>
+              <Button
+                variant="outline"
+                onClick={handleBack}
+                disabled={step === 0 || isGeneratingOrGenerated}
+              >
                 <ArrowLeft className="h-4 w-4 mr-2" />
                 Назад
               </Button>
               {step < STEPS.length - 1 ? (
-                <Button onClick={handleNext}>
+                <Button
+                  onClick={handleNext}
+                  disabled={isGeneratingOrGenerated}
+                >
                   Далее
                   <ArrowRight className="h-4 w-4 ml-2" />
                 </Button>
               ) : (
-                <div /> // confirm button is inside Step5
+                <div /> // confirm/generate button is inside Step5
               )}
             </div>
           )}
