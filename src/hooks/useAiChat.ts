@@ -76,16 +76,16 @@ export function useAiChat() {
     const savedId = localStorage.getItem(key);
     if (!savedId) return;
 
-    loadConversation(savedId).then((loaded) => {
-      if (!loaded) {
+    loadConversation(savedId).then((result) => {
+      if (!result.loaded) {
         // Invalid/empty conversation — clean up
         localStorage.removeItem(key);
       }
     });
   }, [user?.id]);
 
-  const loadConversation = useCallback(async (convId: string): Promise<boolean> => {
-    if (!user?.id) return false;
+  const loadConversation = useCallback(async (convId: string): Promise<{ loaded: boolean; scenarioContext: ScenarioContext | null }> => {
+    if (!user?.id) return { loaded: false, scenarioContext: null };
 
     try {
       const { data, error } = await supabase
@@ -95,7 +95,7 @@ export function useAiChat() {
         .eq("user_id", user.id)
         .order("created_at", { ascending: true });
 
-      if (error || !data || data.length === 0) return false;
+      if (error || !data || data.length === 0) return { loaded: false, scenarioContext: null };
 
       const loaded: ChatMessage[] = data.map((row: any) => ({
         id: row.id,
@@ -109,32 +109,34 @@ export function useAiChat() {
       setConversationId(convId);
 
       // Extract scenario context from last assistant message
+      let freshContext: ScenarioContext | null = null;
       const lastAssistant = [...loaded].reverse().find(m => m.role === "assistant" && m.metadata?.scenario_type);
       if (lastAssistant?.metadata) {
-        setActiveScenarioContext({
+        freshContext = {
           prompt_id: lastAssistant.metadata.prompt_id,
           scenario_type: lastAssistant.metadata.scenario_type,
           launcher_title_snapshot: lastAssistant.metadata.launcher_title_snapshot,
-        });
+        };
+        setActiveScenarioContext(freshContext);
       }
 
-      return true;
+      return { loaded: true, scenarioContext: freshContext };
     } catch {
-      return false;
+      return { loaded: false, scenarioContext: null };
     }
   }, [user?.id]);
 
   const resumeConversation = useCallback(async (convId: string): Promise<ScenarioContext | null> => {
-    const loaded = await loadConversation(convId);
-    if (!loaded) return null;
+    const result = await loadConversation(convId);
+    if (!result.loaded) return null;
 
-    // Save to localStorage
+    // Save to localStorage — this is the key difference from loadConversation
     if (user?.id) {
       localStorage.setItem(getStorageKey(user.id), convId);
     }
 
-    return activeScenarioContext;
-  }, [loadConversation, user?.id, activeScenarioContext]);
+    return result.scenarioContext;
+  }, [loadConversation, user?.id]);
 
   const fetchScenarios = useCallback(async () => {
     setScenariosLoading(true);
