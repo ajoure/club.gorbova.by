@@ -2,156 +2,181 @@
 
 &nbsp;
 
-1. **В Fix #2 серверный manifest должен быть 1:1 совместим с фронтовым rule layer.**
-  Не просто “похожа логика”, а один и тот же набор правил включения/исключения документов. Если выносите в _shared/corporate-manifest.ts, нужно явно потребовать:
+1. **Исправить формулировку Этапа 1 про runtime_status.**
+  Нельзя подменять runtime_status данными из document_[templates.is](http://templates.is)_active и template_path.
+  Это разные сущности:
   &nbsp;
-  - одинаковые conditions,
-  - одинаковые required_data,
-  - одинаковые legal_basis,
-  - одинаковый порядок документов.
-    Нельзя допустить расхождение между preview на фронте и generation на сервере.
+  - runtime_status = доказанная готовность шаблона к runtime-рендеру,
+  - is_active/template_path/storage = доступность шаблона.
+    Поэтому в патче нужно требовать **единый SoT для runtime_status**, а не выводить его из БД-доступности.
   &nbsp;
-2. **В Fix #3 lookup по person_id нужно сделать не только для chair/secretary/participants, но и для кандидатов, если там уже есть ссылки.**
-  Иначе часть payload будет правильно собираться из слоя B, а часть останется на name из draft session.
-  Правило должно быть единым:
-  person_id -> lookup из B, fallback на name только если ссылка отсутствует.
-3. **В Fix #5 snapshot нужно хранить минимально достаточный, но воспроизводимый.**
-  Поддерживаю отказ от полного хранения arrays с ПД, но в DoD надо добавить:
+2. **Лучшее решение по sync:**
+  не “документировать ручную синхронизацию”, а вынести runtime-status spec в **один shared source**, который используют и frontend, и server.
+  То есть:
   &nbsp;
-  - список использованных scalar keys,
-  - список использованных array keys,
-  - длины массивов,
-  - boolean flags,
-  - procedure_mode,
-  - report_year,
-  - refs (person_id, legal_details_id, corporate_draft_session_id),
-  - manifest_snapshot,
-  - runtime_status/template code на момент генерации.
-    То есть snapshot должен позволять понять, **что и почему отрендерилось**, даже без хранения всех персональных данных повторно.
+  - либо общий shared-модуль вне src/ и вне UI-слоя,
+  - либо generated artifact/json, читаемый обоими слоями.
+    Ручная двойная поддержка corporateTemplateSpec.ts + RUNTIME_STATUS_MAP — слабое место, это надо убрать.
   &nbsp;
-4. **Fix #6 сформулировать аккуратнее: не активировать даже scalar-only шаблоны “по умолчанию”, если они входят в единый corporate flow и требуют server proof.**
-  Лучше записать:
+3. **В Proof 2.1 сравнивать не только included/excluded, но и:**
   &nbsp;
-  - допускается partial activation только там, где есть фактический proof render/storage/DB;
-  - без proof статус не менять, даже если шаблон кажется scalar-only.
+  - legal_basis,
+  - required_data,
+  - runtime_status,
+  - порядок документов.
+    Иначе proof будет неполным.
   &nbsp;
-5. **В документации по Fix #7 отдельно добавить раздел “Server SoT vs Draft JSON”.**
-  Нужно явно зафиксировать:
+4. **В Negative pre-flight proof нужен минимум 2 сценария, а не один:**
   &nbsp;
-  - сохранённый package_manifest в session — это draft/debug artifact;
-  - source of truth для generation — server-side recalculated manifest;
-  - draft session не является окончательным источником template eligibility.
+  - 0 eligible templates,
+  - missing storage file или inactive template.
+    В обоих случаях отдельно подтвердить:
+  - generation не запускается,
+  - batch не становится generated,
+  - session остаётся/возвращается в confirmed.
   &nbsp;
-6. **В DoD добавить proof, что server-side pre-flight реально блокирует generation при битом template state.**
-  Нужен хотя бы один негативный сценарий:
+5. **В History proof добавить именно UI-факт grouped batch, а не только SQL.**
+  Нужен пруф:
   &nbsp;
-  - inactive template / missing template_path / missing storage file
-  - generation не стартует
-  - session не уходит в generated
-  - status корректно остаётся/возвращается в confirmed
+  - batch виден в истории,
+  - раскрывается,
+  - документы скачиваются,
+  - grouping по generation_batch_id не ломается.
   &nbsp;
-7. **Зафиксировать, что _shared/corporate-manifest.ts — pure/shared module без UI-зависимостей.**
-  Чтобы потом его можно было использовать и в edge, и потенциально в фронте без дублирования логики.
+6. **В Draft proof проверить не только отсутствие leg_* и passport_*, но и отсутствие дублирования ФИО/контактов как постоянного SoT.**
+  Допустимы:
+  &nbsp;
+  - procedural refs,
+  - временные значения для ручного fallback.
+    Недопустимо:
+  - хранить постоянные реквизиты как основной источник вместо ссылок на A/B/C слои.
+  &nbsp;
+7. **В Runtime activation matrix добавить жёсткое правило изменения статуса:**
+  pending_sprint3 -> active только после полного proof-пакета по каждому шаблону:
+  &nbsp;
+  - render OK,
+  - file uploaded,
+  - DB record created,
+  - template реально участвует в generation flow без ошибки.
+    Без всех 4 пунктов статус не менять.
+  &nbsp;
+8. **В DoD добавить отдельный пункт Proof no second token system**
+  Чтобы закрыть sprint окончательно, в финальном отчёте должно быть доказано:
+  &nbsp;
+  - не создан новый registry,
+  - не создан новый placeholder format,
+  - не появился отдельный corporate-only token namespace,
+  - loops идут через существующий fields_registry + docxtemplater.
+  &nbsp;
+9. **В docs добавить отдельный раздел:**
+  runtime_status ≠ template availability.
+  Это нужно зафиксировать явно, чтобы потом никто не смешал capability и availability.
+10. **Если хотите минимальный безопасный вариант патча:**
+  сделать этот патч в 2 части:
 
 &nbsp;
 
 &nbsp;
 
-В таком виде патч корректный и его можно брать в работу.
+&nbsp;
+
+- сначала **sync/SoT для runtime_status**,
+- потом **proof-close пакет** без дальнейших архитектурных изменений.
+  Так будет чище и легче доказать закрытие.
 
 &nbsp;
 
-PATCH S3-FIX-1 — Корректирующий патч Sprint 3
+&nbsp;
 
-## Выявленные проблемы и исправления
+В таком виде план хороший, но без этих правок остаётся риск смешать runtime_status и availability, а это сейчас главный архитектурный узкий момент.
 
-### 1. Status flow: `generating` ставится до server-side pre-flight
+&nbsp;
 
-**Текущий код** (строка 295): edge function ставит `generating` сразу после проверки `status === 'confirmed'`, ДО pre-flight.
+PATCH S3-PROOF-CLOSE — Финальная проверка и закрытие Sprint 3
 
-**Исправление**: перенести `status='generating'` на строку после успешного `serverSidePreFlight()` (после строки 310), перед циклом генерации. Если pre-flight вернул 0 eligible — откат в `confirmed` без промежуточного `generating`.
+## Проблема
 
-### 2. Сервер использует `session.package_manifest` вместо пересчёта
+Sprint 3 архитектурно корректен, но для закрытия нужен доказуемый proof-пакет по 5 направлениям. Также выявлена одна техническая проблема: `RUNTIME_STATUS_MAP` в `_shared/corporate-manifest.ts` — hardcoded копия, которая может разойтись с `corporateTemplateSpec.ts` (frontend SoT).
 
-**Текущий код** (строка 300): `const manifest = session.package_manifest as ManifestItem[]` — берёт сохранённый манифест.
+---
 
-**Исправление**: импортировать `calculatePackageManifest` logic server-side (inline pure function, т.к. edge function не может импортировать из `src/`). Пересобирать manifest из `corporate_params` + `confirmed_charter_rules` + `procedure_mode` + `rules_basis` на сервере перед pre-flight. Логику `calculatePackageManifest` вынести в `_shared/corporate-manifest.ts` как переиспользуемый модуль.
+## Этап 1. Синхронизация RUNTIME_STATUS_MAP (единственное code-change)
 
-### 3. Chair/secretary/participants берут `name` из params, а не lookup по person_id из слоя B
+**Проблема**: `corporate-manifest.ts` строки 67-86 содержат hardcoded `RUNTIME_STATUS_MAP`, который дублирует `corporateTemplateSpec.ts`. При изменении статуса шаблона на фронте (например, `pending_sprint3 → active`) сервер не узнает об этом — manifest расходится.
 
-**Текущий код**:
+**Решение**: Добавить в `corporate-manifest.ts` параметр `runtimeStatusOverrides?: Record<string, string>` в `calculateServerManifest()`, который edge function заполняет из DB-запроса к `document_templates` (поле `is_active` + `template_path`). Это делает server manifest независимым от hardcoded map и 1:1 совместимым с фактическим состоянием шаблонов.
 
-- Строка 102: `chair.name` из `corporate_params`
-- Строка 125: `p.name` из `corporate_params.participants[]`
+Альтернативно (проще): при каждом обновлении `corporateTemplateSpec.ts` обновлять `RUNTIME_STATUS_MAP` в `corporate-manifest.ts`. Документировать это правило в `docs/corporate-templates-rules.md`.
 
-**Факт**: Step 3 уже сохраняет `person_id` для chair, secretary и каждого participant. Но edge function читает `name` из draft session вместо lookup.
+**Файлы**: `supabase/functions/_shared/corporate-manifest.ts`, `docs/corporate-templates-rules.md`
 
-**Исправление**: в edge function добавить batch-fetch `legal_details_persons` по всем `person_id` из params (chair, secretary, participants). Строить `full_name` из слоя B. Fallback на `params.*.name` только если `person_id` отсутствует (ручной ввод без привязки).
+---
 
-### 4. `vote_count` vs `votes_count` — несогласованность canonical key
+## Этап 2. Proof-пакет (без code changes — только проверки и документация)
 
-**Текущий код**:
+### 2.1 Proof: Server manifest vs Frontend preview (1:1 совместимость)
 
-- `corporateTypes.ts` → `Participant.vote_count`
-- `CorporateStep3Params.tsx` → `vote_count`
-- Edge function payload → `votes_count` (строка 127)
-- `tokenRegistry.ts` → `votes_count` в примере
+Сравнить `calculateServerManifest()` и `calculatePackageManifest()` на 6 кейсах:
 
-**Исправление**: registry item_schema — SoT. Ключ в payload = `votes_count`. Маппинг в edge function уже правильный (`votes_count: p.vote_count`). Нужно: добавить комментарий в edge function, объясняющий маппинг; убедиться что DOCX шаблоны используют `votes_count`. Тип `Participant` в types оставить как есть (это internal model key, не payload key).
+- `annual_meeting` + `law_default`
+- `annual_meeting` + `charter_confirmed` + `has_board=true`
+- `annual_meeting` + `has_auditor=true` + `has_audit_commission=true`
+- `annual_meeting` + `charter_change` в agenda
+- `sole_participant_decision` + `law_default`
+- `annual_meeting` + `secret` voting
 
-### 5. Snapshot недостаточно полный (слой F)
+Для каждого: запустить обе функции с одинаковыми параметрами, сравнить состав, порядок, included/excluded.
 
-**Текущий код** (строки 460-464): фильтруются только non-empty scalar keys. Нет arrays, нет boolean flags, нет manifest_snapshot per-document.
+**Метод проверки**: SQL-запрос к `ai_document_generation_batches.meta.manifest_snapshot` для реальных генераций, сравнить с фронтовым manifest.
 
-**Исправление**: в snapshot per-document включить:
+### 2.2 Proof: Negative pre-flight guard
 
-- Использованные scalar fields (уже есть)
-- Использованные array keys + длины массивов (не сами данные — чтобы не дублировать ПД)
-- Boolean flags
-- `procedure_mode`, `report_year`
-- Ссылки на person_id для chair/secretary (не ФИО — это из слоя B)
+Invoke edge function с сессией, у которой:
 
-### 6. Runtime activation (Этап 6) — не выполнен
+- Все templates `pending_sprint3` (ни одного active) → ожидание: `"No eligible templates"`, session остается `confirmed`
+- Или template с `is_active=false` в DB → ожидание: template excluded из eligible
 
-Это требует реального тестирования с шаблонами. В рамках этого патча: обновить `corporateTemplateSpec.ts` для тех шаблонов, которые используют только scalar tokens (без loops) — они могут быть переведены в `active` сразу. Для loop-dependent шаблонов — нужен proof после deploy.
+**Метод**: `supabase--curl_edge_functions` с тестовой session_id.
 
-### 7. Документация не обновлена
+### 2.3 Proof: History UI integration
 
-Обновить `docs/corporate-templates-rules.md` с:
+Проверить, что `AiDocumentsHistoryView` корректно отображает corporate batches:
 
-- Generation flow
-- 6-слойная SoT модель
-- Per-packet scope ограничение
-- Token compatibility
-- Proof no second token system section
+- Batch с `source='corporate_wizard'` в meta появляется во вкладке «История»
+- Grouping по `generation_batch_id` работает
+- Download links функционируют
+
+**Метод**: SQL-запрос к `ai_document_generation_batches` + `ai_generated_documents` с `meta->>'source' = 'corporate_wizard'`, затем UI-screenshot.
+
+### 2.4 Proof: Draft session не хранит постоянные реквизиты
+
+SQL-запрос к `corporate_draft_sessions.corporate_params` — показать, что:
+
+- Нет полей `leg_name`, `leg_address`, `leg_unp`, `passport_*`
+- Есть только `person_id` ссылки, agenda, meeting details, candidates
+- Реквизиты берутся из `client_legal_details` по `legal_details_id`
+
+### 2.5 Proof: Runtime activation matrix
+
+Для каждого из 10 `pending_sprint3` шаблонов: проверить, есть ли в `document_templates` запись с `code=X`, `is_active=true`, `template_path` IS NOT NULL, и файл в storage. Только после этого менять `runtime_status` в `corporateTemplateSpec.ts` и `RUNTIME_STATUS_MAP`.
 
 ---
 
 ## Файлы
 
 
-| Файл                                                        | Изменение                                                                               |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `supabase/functions/ai-generate-corporate-package/index.ts` | Fix #1 (status flow), #2 (server manifest recalc), #3 (person_id lookup), #5 (snapshot) |
-| `supabase/functions/_shared/corporate-manifest.ts` (NEW)    | Server-side manifest calculation (pure function extracted from rule engine)             |
-| `docs/corporate-templates-rules.md`                         | Fix #7 — full update                                                                    |
-| `src/lib/corporate/corporateTemplateSpec.ts`                | Fix #6 — partial activation where provable                                              |
+| Файл                                               | Изменение                                                             |
+| -------------------------------------------------- | --------------------------------------------------------------------- |
+| `supabase/functions/_shared/corporate-manifest.ts` | Sync RUNTIME_STATUS_MAP или добавить override param                   |
+| `docs/corporate-templates-rules.md`                | Добавить правило синхронизации runtime_status между frontend и server |
 
 
-## Не изменяется
+## DoD
 
-- `CorporateStep5Confirm.tsx` — frontend корректен (не ставит status)
-- `CorporateWizard.tsx` — frontend корректен
-- `corporateTypes.ts` — `vote_count` internal model key остаётся
-- `_shared/docx-helpers.ts` — без изменений
-- Миграция — не нужна
-
-## DoD патча
-
-1. `generating` ставится только после server pre-flight OK
-2. Manifest пересчитывается на сервере из params/rules, а не из сохранённого JSON
-3. Chair/secretary/participants ФИО берётся из `legal_details_persons` по `person_id`, fallback на `name` только при отсутствии person_id
-4. `votes_count` единый canonical key в payload (маппинг из `vote_count` задокументирован)
-5. Snapshot включает array summary + boolean flags + person_id refs
-6. Документация обновлена
+1. `RUNTIME_STATUS_MAP` синхронизирован с `corporateTemplateSpec.ts` или parametrized
+2. Proof manifest 1:1 на 6 кейсах задокументирован
+3. Negative pre-flight proof — session не уходит в generated при отсутствии eligible templates
+4. History UI proof — corporate batch отображается корректно
+5. Draft session proof — нет дублирования постоянных реквизитов
+6. Runtime activation matrix — поштучный статус каждого шаблона
 7. Build clean
