@@ -77,3 +77,4 @@ erip-reconcile-pending
 grp-lookup
 public-checkout
 ai-generate-corporate-package
+gorbova-ai-chat
