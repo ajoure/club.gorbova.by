@@ -2,181 +2,142 @@
 
 &nbsp;
 
-1. **Исправить формулировку Этапа 1 про runtime_status.**
-  Нельзя подменять runtime_status данными из document_[templates.is](http://templates.is)_active и template_path.
-  Это разные сущности:
+1. В PATCH явно добавь, что сначала нужен **raw proof upload error** из edge function: точный текст ошибки storage upload / signed URL / insert, а не предположение. Пока нет raw error, нельзя утверждать, что проблема была «транзиентной».
+2. В подпункте про error-doc insert расширь объем:
   &nbsp;
-  - runtime_status = доказанная готовность шаблона к runtime-рендеру,
-  - is_active/template_path/storage = доступность шаблона.
-    Поэтому в патче нужно требовать **единый SoT для runtime_status**, а не выводить его из БД-доступности.
+  - запись в ai_generated_documents нужна не только при download/render error,
+  - но и при **upload failure**,
+  - и при **signed URL failure** тоже, если файл загружен, но ссылка не выдана.
+    Иначе batch снова теряет трассировку.
   &nbsp;
-2. **Лучшее решение по sync:**
-  не “документировать ручную синхронизацию”, а вынести runtime-status spec в **один shared source**, который используют и frontend, и server.
-  То есть:
+3. В manifest parity proof добавь обязательный **machine-readable proof**:
   &nbsp;
-  - либо общий shared-модуль вне src/ и вне UI-слоя,
-  - либо generated artifact/json, читаемый обоими слоями.
-    Ручная двойная поддержка corporateTemplateSpec.ts + RUNTIME_STATUS_MAP — слабое место, это надо убрать.
+  - для 6 кейсов сохранить server manifest и frontend manifest в JSON,
+  - сравнить 1:1 по template_code, included, reason, legal_basis, category, required_data, runtime_status, порядку.
+    Не только текстовое описание в docs.
   &nbsp;
-3. **В Proof 2.1 сравнивать не только included/excluded, но и:**
+4. Временное правило SoT по runtime_status сформулируй жестче:
   &nbsp;
-  - legal_basis,
-  - required_data,
-  - runtime_status,
-  - порядок документов.
-    Иначе proof будет неполным.
+  - **до появления DB-колонки** frontend corporateTemplateSpec.ts = primary SoT,
+  - server DEFAULT_RUNTIME_STATUS = synchronized fallback,
+  - любое изменение статуса шаблона допустимо **только одной задачей в двух файлах одновременно**,
+  - в финальном отчёте обязателен proof sync без расхождений.
   &nbsp;
-4. **В Negative pre-flight proof нужен минимум 2 сценария, а не один:**
+5. В runtime activation matrix добавь запрет на массовый перевод статусов:
   &nbsp;
-  - 0 eligible templates,
-  - missing storage file или inactive template.
-    В обоих случаях отдельно подтвердить:
-  - generation не запускается,
-  - batch не становится generated,
-  - session остаётся/возвращается в confirmed.
+  - pending_sprint3 → active только **по каждому шаблону отдельно**,
+  - proof для каждого: render ok → upload ok → record in DB → download ok → UI/history ok.
+    Без полного цикла статус не менять.
   &nbsp;
-5. **В History proof добавить именно UI-факт grouped batch, а не только SQL.**
-  Нужен пруф:
+6. В DoD добавь отдельный UI-proof с основной админ-учётки Сергея:
   &nbsp;
-  - batch виден в истории,
-  - раскрывается,
-  - документы скачиваются,
-  - grouping по generation_batch_id не ломается.
+  - corporate batch виден в «Истории»,
+  - grouping не сломан,
+  - минимум один документ скачивается из UI,
+  - proof делать из основной учётки [7500084@gmail.com](mailto:7500084@gmail.com).
   &nbsp;
-6. **В Draft proof проверить не только отсутствие leg_* и passport_*, но и отсутствие дублирования ФИО/контактов как постоянного SoT.**
-  Допустимы:
+7. В docs добавь отдельный раздел:
+  **“Почему Sprint 3 ещё не закрыт без successful end-to-end generation”**
+  с фиксацией, что наличие template records + storage files + pre-flight pass **не равно** закрытию спринта.
+8. Не переводить в этом патче pending_sprint3 → active заранее по логике «DB active + file exists».
+  Это только availability, а не runtime proof.
+9. Добавь в план явную проверку, что после успешной генерации в batch.meta и/или document.meta реально есть:
   &nbsp;
-  - procedural refs,
-  - временные значения для ручного fallback.
-    Недопустимо:
-  - хранить постоянные реквизиты как основной источник вместо ссылок на A/B/C слои.
+  - source='corporate_wizard'
+  - corporate_draft_session_id
+  - procedure_mode
+  - report_year
+  - snapshot / resolver markers
+    Это часть обязательного proof history integration.
   &nbsp;
-7. **В Runtime activation matrix добавить жёсткое правило изменения статуса:**
-  pending_sprint3 -> active только после полного proof-пакета по каждому шаблону:
-  &nbsp;
-  - render OK,
-  - file uploaded,
-  - DB record created,
-  - template реально участвует в generation flow без ошибки.
-    Без всех 4 пунктов статус не менять.
-  &nbsp;
-8. **В DoD добавить отдельный пункт Proof no second token system**
-  Чтобы закрыть sprint окончательно, в финальном отчёте должно быть доказано:
-  &nbsp;
-  - не создан новый registry,
-  - не создан новый placeholder format,
-  - не появился отдельный corporate-only token namespace,
-  - loops идут через существующий fields_registry + docxtemplater.
-  &nbsp;
-9. **В docs добавить отдельный раздел:**
-  runtime_status ≠ template availability.
-  Это нужно зафиксировать явно, чтобы потом никто не смешал capability и availability.
-10. **Если хотите минимальный безопасный вариант патча:**
-  сделать этот патч в 2 части:
+10. В финальном отчёте по PATCH требуй отдельный блок:
+  **“Остаточные GAP после S3-CLOSE-3”**, если хотя бы один шаблон останется pending_sprint3 или upload/download proof не будет закрыт.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+PATCH S3-CLOSE-3 — Финальное закрытие Sprint 3
 
-- сначала **sync/SoT для runtime_status**,
-- потом **proof-close пакет** без дальнейших архитектурных изменений.
-  Так будет чище и легче доказать закрытие.
+## Текущее состояние (по результатам инспекции)
 
-&nbsp;
+**Что работает:**
 
-&nbsp;
+- Все 18 corporate templates: DB records (`is_active=true`, `template_path` set) + storage files exist
+- Edge function architecture: status flow, server manifest, person lookup, pre-flight — всё на месте
+- `ai_generated_documents` и `ai_document_generation_batches` имеют все нужные колонки
+- Service role key bypasses RLS → upload не должен блокироваться политиками
 
-В таком виде план хороший, но без этих правок остаётся риск смешать runtime_status и availability, а это сейчас главный архитектурный узкий момент.
+**Найденная проблема — upload blocker:**
+Строка 600: upload path = `ai-generated/${profileId}/${fileName}`. Bucket `documents` is private. Service role key bypasses RLS, поэтому upload должен работать. Нужно протестировать edge function end-to-end, чтобы подтвердить или найти реальный blocker.
 
-&nbsp;
-
-PATCH S3-PROOF-CLOSE — Финальная проверка и закрытие Sprint 3
-
-## Проблема
-
-Sprint 3 архитектурно корректен, но для закрытия нужен доказуемый proof-пакет по 5 направлениям. Также выявлена одна техническая проблема: `RUNTIME_STATUS_MAP` в `_shared/corporate-manifest.ts` — hardcoded копия, которая может разойтись с `corporateTemplateSpec.ts` (frontend SoT).
+**Вторая проблема — runtime_status drift:**
+`corporateTemplateSpec.ts` содержит 10 шаблонов с `pending_sprint3`, но `DEFAULT_RUNTIME_STATUS` в `corporate-manifest.ts` — та же самая карта. При этом ВСЕ templates в DB active + storage present. Значит pre-flight пропускает только `active` шаблоны (строка 332: `m.runtime_status === 'active'`), а из 8 annual meeting templates только 2 (`corp_order_meeting`, `corp_review_list`) имеют `active` status. Это означает генерация максимум 2 документов, не 8.
 
 ---
 
-## Этап 1. Синхронизация RUNTIME_STATUS_MAP (единственное code-change)
+## Этапы
 
-**Проблема**: `corporate-manifest.ts` строки 67-86 содержат hardcoded `RUNTIME_STATUS_MAP`, который дублирует `corporateTemplateSpec.ts`. При изменении статуса шаблона на фронте (например, `pending_sprint3 → active`) сервер не узнает об этом — manifest расходится.
+### Этап 1. Deploy и тестирование edge function end-to-end
 
-**Решение**: Добавить в `corporate-manifest.ts` параметр `runtimeStatusOverrides?: Record<string, string>` в `calculateServerManifest()`, который edge function заполняет из DB-запроса к `document_templates` (поле `is_active` + `template_path`). Это делает server manifest независимым от hardcoded map и 1:1 совместимым с фактическим состоянием шаблонов.
+Deploy `ai-generate-corporate-package` и вызвать через `curl_edge_functions` с реальной session. Выявить и устранить blocker.
 
-Альтернативно (проще): при каждом обновлении `corporateTemplateSpec.ts` обновлять `RUNTIME_STATUS_MAP` в `corporate-manifest.ts`. Документировать это правило в `docs/corporate-templates-rules.md`.
+### Этап 2. Error-doc insert при upload failure
 
-**Файлы**: `supabase/functions/_shared/corporate-manifest.ts`, `docs/corporate-templates-rules.md`
+Строки 607-611: при upload failure создается `results.push(...)` но НЕ создается запись в `ai_generated_documents`. Это значит batch теряет трассировку. Добавить insert error-doc аналогично строкам 545-559 и 579-593.
 
----
+### Этап 3. Manifest parity proof (6 кейсов)
 
-## Этап 2. Proof-пакет (без code changes — только проверки и документация)
+Сравнить `calculateServerManifest()` и `calculatePackageManifest()` по правилам включения. Оба файла уже содержат идентичные template arrays и conditional logic. Нужно формально задокументировать 1:1 совместимость по:
 
-### 2.1 Proof: Server manifest vs Frontend preview (1:1 совместимость)
+- составу шаблонов
+- порядку
+- included/excluded conditions
+- legal_basis
+- required_data
 
-Сравнить `calculateServerManifest()` и `calculatePackageManifest()` на 6 кейсах:
+Зафиксировать в `docs/corporate-templates-rules.md`.
 
-- `annual_meeting` + `law_default`
-- `annual_meeting` + `charter_confirmed` + `has_board=true`
-- `annual_meeting` + `has_auditor=true` + `has_audit_commission=true`
-- `annual_meeting` + `charter_change` в agenda
-- `sole_participant_decision` + `law_default`
-- `annual_meeting` + `secret` voting
+### Этап 4. Временное правило SoT по runtime_status
 
-Для каждого: запустить обе функции с одинаковыми параметрами, сравнить состав, порядок, included/excluded.
+Frontend `corporateTemplateSpec.ts` = основной SoT. Server `DEFAULT_RUNTIME_STATUS` в `corporate-manifest.ts` = synchronized fallback. Документировать обязательное правило: любое изменение статуса должно делаться одновременно в обоих файлах до добавления DB-колонки.
 
-**Метод проверки**: SQL-запрос к `ai_document_generation_batches.meta.manifest_snapshot` для реальных генераций, сравнить с фронтовым manifest.
+### Этап 5. Runtime activation по proof
 
-### 2.2 Proof: Negative pre-flight guard
+После успешного end-to-end теста: для каждого шаблона, который прошёл render + upload + DB record + download, перевести `pending_sprint3 → active` одновременно в:
 
-Invoke edge function с сессией, у которой:
+- `corporateTemplateSpec.ts`
+- `corporate-manifest.ts` `DEFAULT_RUNTIME_STATUS`
 
-- Все templates `pending_sprint3` (ни одного active) → ожидание: `"No eligible templates"`, session остается `confirmed`
-- Или template с `is_active=false` в DB → ожидание: template excluded из eligible
+НЕ менять статус без полного proof (render OK + file uploaded + DB record + download works).
 
-**Метод**: `supabase--curl_edge_functions` с тестовой session_id.
+### Этап 6. Документация
 
-### 2.3 Proof: History UI integration
+Обновить `docs/corporate-templates-rules.md`:
 
-Проверить, что `AiDocumentsHistoryView` корректно отображает corporate batches:
-
-- Batch с `source='corporate_wizard'` в meta появляется во вкладке «История»
-- Grouping по `generation_batch_id` работает
-- Download links функционируют
-
-**Метод**: SQL-запрос к `ai_document_generation_batches` + `ai_generated_documents` с `meta->>'source' = 'corporate_wizard'`, затем UI-screenshot.
-
-### 2.4 Proof: Draft session не хранит постоянные реквизиты
-
-SQL-запрос к `corporate_draft_sessions.corporate_params` — показать, что:
-
-- Нет полей `leg_name`, `leg_address`, `leg_unp`, `passport_*`
-- Есть только `person_id` ссылки, agenda, meeting details, candidates
-- Реквизиты берутся из `client_legal_details` по `legal_details_id`
-
-### 2.5 Proof: Runtime activation matrix
-
-Для каждого из 10 `pending_sprint3` шаблонов: проверить, есть ли в `document_templates` запись с `code=X`, `is_active=true`, `template_path` IS NOT NULL, и файл в storage. Только после этого менять `runtime_status` в `corporateTemplateSpec.ts` и `RUNTIME_STATUS_MAP`.
+- Proof manifest 1:1 (6 кейсов)
+- Временное правило sync runtime_status
+- Runtime activation matrix (заполнить по факту)
 
 ---
 
 ## Файлы
 
 
-| Файл                                               | Изменение                                                             |
-| -------------------------------------------------- | --------------------------------------------------------------------- |
-| `supabase/functions/_shared/corporate-manifest.ts` | Sync RUNTIME_STATUS_MAP или добавить override param                   |
-| `docs/corporate-templates-rules.md`                | Добавить правило синхронизации runtime_status между frontend и server |
+| Файл                                                        | Изменение                                |
+| ----------------------------------------------------------- | ---------------------------------------- |
+| `supabase/functions/ai-generate-corporate-package/index.ts` | Error-doc insert при upload failure      |
+| `supabase/functions/_shared/corporate-manifest.ts`          | Sync runtime_status при activation       |
+| `src/lib/corporate/corporateTemplateSpec.ts`                | Sync runtime_status при activation       |
+| `docs/corporate-templates-rules.md`                         | Proof matrix, sync rule, manifest parity |
 
 
 ## DoD
 
-1. `RUNTIME_STATUS_MAP` синхронизирован с `corporateTemplateSpec.ts` или parametrized
-2. Proof manifest 1:1 на 6 кейсах задокументирован
-3. Negative pre-flight proof — session не уходит в generated при отсутствии eligible templates
-4. History UI proof — corporate batch отображается корректно
-5. Draft session proof — нет дублирования постоянных реквизитов
-6. Runtime activation matrix — поштучный статус каждого шаблона
+1. Edge function deployed и вызвана successfully
+2. Минимум 1 corporate batch end-to-end (render + upload + DB + download)
+3. Error-doc insert при upload failure (трассировка не теряется)
+4. Manifest parity proof задокументирован
+5. Runtime activation matrix заполнена по фактическому proof
+6. Временное правило sync runtime_status зафиксировано
 7. Build clean
