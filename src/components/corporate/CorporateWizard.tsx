@@ -401,28 +401,20 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
           </AlertDialogHeader>
            {/* Footer: plain div to fully bypass AlertDialogFooter/AlertDialogCancel
                class inheritance (flex-col-reverse, sm:space-x-2, mt-2, sm:mt-0) */}
-           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-2">
-             {/* Destructive zone — left on desktop, last on mobile (order-last / sm:order-first) */}
-             <Button
-               variant="ghost"
-               className="h-9 w-full sm:w-auto text-destructive hover:text-destructive hover:bg-destructive/10 text-sm order-last sm:order-first"
-               onClick={handleExitWithoutSave}
-               disabled={closeSaving}
-             >
-               Выйти без сохранения
-             </Button>
-             {/* Safe actions zone — right on desktop, first on mobile */}
-             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+           <div className="pt-2">
+             <div className="flex flex-col gap-2 sm:hidden">
                <Button
                  variant="outline"
-                 className="h-9 w-full sm:w-auto text-sm"
+                 size="sm"
+                 className="h-9 w-full px-3 py-0 text-sm leading-none"
                  onClick={() => setShowCloseConfirm(false)}
                  disabled={closeSaving}
                >
                  Остаться
                </Button>
                <Button
-                 className="h-9 w-full sm:w-auto text-sm"
+                 size="sm"
+                 className="h-9 w-full px-3 py-0 text-sm leading-none"
                  onClick={handleSaveAndClose}
                  disabled={closeSaving}
                >
@@ -433,6 +425,52 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                  )}
                  Сохранить и выйти
                </Button>
+               <Button
+                 variant="ghost"
+                 size="sm"
+                 className="h-9 w-full px-3 py-0 text-sm leading-none text-destructive hover:bg-destructive/10 hover:text-destructive"
+                 onClick={handleExitWithoutSave}
+                 disabled={closeSaving}
+               >
+                 Выйти без сохранения
+               </Button>
+             </div>
+
+             <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-3">
+               <Button
+                 variant="ghost"
+                 size="sm"
+                 className="h-9 shrink-0 self-center px-3 py-0 text-sm leading-none text-destructive hover:bg-destructive/10 hover:text-destructive"
+                 onClick={handleExitWithoutSave}
+                 disabled={closeSaving}
+               >
+                 Выйти без сохранения
+               </Button>
+
+               <div className="flex items-center gap-2">
+                 <Button
+                   variant="outline"
+                   size="sm"
+                   className="h-9 shrink-0 px-3 py-0 text-sm leading-none"
+                   onClick={() => setShowCloseConfirm(false)}
+                   disabled={closeSaving}
+                 >
+                   Остаться
+                 </Button>
+                 <Button
+                   size="sm"
+                   className="h-9 shrink-0 px-3 py-0 text-sm leading-none"
+                   onClick={handleSaveAndClose}
+                   disabled={closeSaving}
+                 >
+                   {closeSaving ? (
+                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                   ) : (
+                     <Save className="h-4 w-4 mr-2" />
+                   )}
+                   Сохранить и выйти
+                 </Button>
+               </div>
              </div>
            </div>
         </AlertDialogContent>
