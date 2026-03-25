@@ -443,7 +443,7 @@ serve(async (req) => {
         charterRules,
         params as { meeting?: { voting_form?: string }; agenda?: { requires_charter_change?: boolean }[]; governance?: { has_board?: boolean; has_auditor?: boolean; has_audit_commission?: boolean } },
         (session.rules_basis as 'charter_confirmed' | 'law_default' | 'mixed') || 'law_default',
-        Object.keys(runtimeStatusOverrides).length > 0 ? runtimeStatusOverrides : undefined,
+        runtimeStatusOverrides,
       );
 
       // ── Fetch entity (Layer A) ──
