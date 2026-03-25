@@ -6,16 +6,6 @@ export interface ExtractedContent {
   filename: string;
 }
 
-async function base64ToArrayBuffer(base64: string): Promise<ArrayBuffer> {
-  const base64Data = base64.includes(",") ? base64.split(",")[1] : base64;
-  const binaryString = atob(base64Data);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
 export async function extractTextFromFile(file: File): Promise<ExtractedContent | null> {
   const fileType = getFileType(file);
   
@@ -64,8 +54,9 @@ async function extractFromWord(file: File): Promise<ExtractedContent> {
     };
   } catch (error) {
     console.error("Failed to extract Word content:", error);
+    // P0-C: Return empty text instead of dangerous placeholder
     return {
-      text: `[Не удалось извлечь текст из файла: ${file.name}]`,
+      text: "",
       type: "word",
       filename: file.name,
     };
@@ -73,8 +64,6 @@ async function extractFromWord(file: File): Promise<ExtractedContent> {
 }
 
 async function extractFromExcel(file: File): Promise<ExtractedContent> {
-  // For Excel, we'll parse using a simple approach
-  // Since xlsx library is heavy, we'll use a basic text extraction
   try {
     const arrayBuffer = await file.arrayBuffer();
     
@@ -100,16 +89,17 @@ async function extractFromExcel(file: File): Promise<ExtractedContent> {
       };
     }
     
-    // If no content found through XML parsing, return a placeholder
+    // P0-C: Return empty text instead of dangerous placeholder
     return {
-      text: `[Таблица Excel: ${file.name}. Содержимое требует анализа через AI.]`,
+      text: "",
       type: "excel",
       filename: file.name,
     };
   } catch (error) {
     console.error("Failed to extract Excel content:", error);
+    // P0-C: Return empty text instead of dangerous placeholder
     return {
-      text: `[Не удалось извлечь текст из файла: ${file.name}]`,
+      text: "",
       type: "excel",
       filename: file.name,
     };
@@ -133,13 +123,13 @@ export async function extractAllFilesContent(
       textParts.push(`[Изображение: ${file.name}]`);
     } else if (type === "word" || type === "excel") {
       const extracted = await extractTextFromFile(file);
-      if (extracted && extracted.text) {
+      // P0-C: Use PARSE_EMPTY marker when extraction returns empty
+      if (extracted && extracted.text && extracted.text.trim().length > 0) {
         textParts.push(`--- Содержимое файла: ${file.name} ---\n${extracted.text}\n--- Конец файла ---`);
+      } else {
+        textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     } else if (type === "pdf") {
-      // PDF will be handled by AI vision if possible
-      textParts.push(`[PDF документ: ${file.name} - требуется визуальный анализ]`);
-      
       // Try to get base64 of PDF for AI analysis
       try {
         const reader = new FileReader();
@@ -149,8 +139,11 @@ export async function extractAllFilesContent(
           reader.readAsDataURL(file);
         });
         images.push({ base64, filename: file.name });
+        textParts.push(`[Изображение: ${file.name}]`);
       } catch (e) {
         console.error("Failed to read PDF as base64:", e);
+        // P0-C: Use PARSE_EMPTY marker instead of content-like placeholder
+        textParts.push(`[PARSE_EMPTY: ${file.name}]`);
       }
     }
   }

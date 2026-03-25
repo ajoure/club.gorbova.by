@@ -18,6 +18,15 @@ export interface AiChatMetadata {
   file_names?: string[];
   parse_errors?: string[];
   processing_time_ms?: number;
+  // P0-E: Extended metadata
+  extract_quality?: "ok" | "low" | "empty";
+  extracted_text_length?: number;
+  original_text_length?: number;
+  cleaned_text_length?: number;
+  parse_failed?: boolean;
+  blocked?: boolean;
+  analysis_blocked_reason?: string;
+  images_present?: boolean;
 }
 
 export interface ChatScenario {
@@ -99,7 +108,6 @@ export function useAiChat() {
       });
 
       if (error) {
-        // Check for specific status codes from edge function
         const errMsg = typeof error === "object" && "message" in error ? error.message : String(error);
         
         if (errMsg.includes("429") || errMsg.includes("Слишком много")) {
@@ -116,6 +124,7 @@ export function useAiChat() {
         setConversationId(data.conversation_id);
       }
 
+      // Handle both blocked and normal responses as assistant messages
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -127,7 +136,6 @@ export function useAiChat() {
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err) {
       console.error("Chat error:", err);
-      // Add error message to chat
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: "assistant",
