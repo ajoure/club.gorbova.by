@@ -426,9 +426,9 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                  Сохранить и выйти
                </Button>
                <Button
-                 variant="ghost"
+                 variant="outline"
                  size="sm"
-                 className="h-9 w-full px-3 py-0 text-sm leading-none text-destructive hover:bg-destructive/10 hover:text-destructive"
+                 className="h-9 w-full border-transparent bg-transparent px-3 py-0 text-sm leading-none text-destructive shadow-none hover:border-transparent hover:bg-destructive/10 hover:text-destructive"
                  onClick={handleExitWithoutSave}
                  disabled={closeSaving}
                >
@@ -438,9 +438,9 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
 
              <div className="hidden sm:flex sm:items-center sm:justify-between sm:gap-3">
                <Button
-                 variant="ghost"
+                 variant="outline"
                  size="sm"
-                 className="h-9 shrink-0 self-center px-3 py-0 text-sm leading-none text-destructive hover:bg-destructive/10 hover:text-destructive"
+                 className="h-9 shrink-0 self-center border-transparent bg-transparent px-3 py-0 text-sm leading-none text-destructive shadow-none hover:border-transparent hover:bg-destructive/10 hover:text-destructive"
                  onClick={handleExitWithoutSave}
                  disabled={closeSaving}
                >
