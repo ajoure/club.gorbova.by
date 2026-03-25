@@ -62,9 +62,11 @@ const DEFAULT_CHARTER_RULES: CharterRules = {
   allowed_voting_forms: ['open'],
 };
 
-// ─── Template runtime status map (mirrors corporateTemplateSpec.ts) ──
-
-const RUNTIME_STATUS_MAP: Record<string, TemplateRuntimeStatus> = {
+// ─── Default runtime status map (fallback only) ──
+// This is NOT the SoT — runtimeStatusOverrides from DB is the SoT.
+// This map is a fallback for cases when DB query fails or template not found.
+// Must be kept in sync with corporateTemplateSpec.ts as last resort.
+const DEFAULT_RUNTIME_STATUS: Record<string, TemplateRuntimeStatus> = {
   corp_order_meeting: 'active',
   corp_notice: 'pending_sprint3',
   corp_notice_journal: 'pending_sprint3',
@@ -84,6 +86,22 @@ const RUNTIME_STATUS_MAP: Record<string, TemplateRuntimeStatus> = {
   corp_agenda_change_notice: 'pending_sprint3',
   corp_charter_amendments: 'active',
 };
+
+/**
+ * Resolve runtime_status for a template code.
+ * Priority: runtimeStatusOverrides (from DB) > DEFAULT_RUNTIME_STATUS > 'pending_sprint3'
+ * 
+ * IMPORTANT: runtime_status ≠ template availability.
+ * - runtime_status = proven readiness for runtime rendering (active | pending_sprint3)
+ * - availability = DB active + template_path + storage file (checked by pre-flight)
+ */
+function resolveRuntimeStatus(
+  code: string,
+  overrides?: Record<string, TemplateRuntimeStatus>,
+): TemplateRuntimeStatus {
+  if (overrides && code in overrides) return overrides[code];
+  return DEFAULT_RUNTIME_STATUS[code] || 'pending_sprint3';
+}
 
 // ─── Template constants (same order as corporateRuleEngine.ts) ────
 
