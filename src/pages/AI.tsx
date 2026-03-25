@@ -42,7 +42,7 @@ import {
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "tutorials" | "prompts" | "generate" | "history" | "entities" | "persons";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "entities" | "persons";
 
 const SECTIONS = [
   { id: "ai" as const, label: "Gorbova AI", icon: Bot },
@@ -70,6 +70,15 @@ const AI_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-blue-500/20 to-indigo-500/15",
     borderColor: "border-blue-400/20",
     iconColor: "text-blue-500",
+  },
+  {
+    id: "analysis-history",
+    label: "История анализа",
+    icon: Clock,
+    gradient: "from-teal-500/10 to-cyan-500/8",
+    activeGradient: "from-teal-500/20 to-cyan-500/15",
+    borderColor: "border-teal-400/20",
+    iconColor: "text-teal-500",
   },
   {
     id: "tutorials",
