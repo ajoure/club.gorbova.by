@@ -630,7 +630,7 @@ serve(async (req) => {
             template_code: item.template_code,
             template_name: itemName,
             template_source_path: dbTemplate.template_path,
-            template_version: (dbTemplate.version as string) || null,
+            template_version: null,
             title: `${itemName} — ${docNumber}`,
             status: "generated",
             legal_details_id: session.legal_details_id || null,
