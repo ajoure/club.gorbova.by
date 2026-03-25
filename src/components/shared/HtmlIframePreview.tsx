@@ -11,8 +11,10 @@
  *
  * SECURITY BOUNDARY:
  *   sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
- *   - NO allow-same-origin → iframe cannot access parent DOM, cookies, localStorage
- *   - Scripts allowed only for internal resize postMessage
+ *   - allow-scripts: INTENTIONAL — required for internal resize postMessage mechanism.
+ *     Safe because allow-same-origin is excluded, so the iframe cannot access
+ *     parent DOM, cookies, localStorage, or any platform services.
+ *   - NO allow-same-origin → full cross-origin isolation maintained
  *   - Links open in new tab via <base target="_blank">
  *
  * ISOLATION INVARIANT:
@@ -23,10 +25,18 @@
 import { useState, useRef, useEffect } from "react";
 import { Code } from "lucide-react";
 
+/**
+ * allow-scripts is required for the internal resize postMessage mechanism.
+ * allow-same-origin is deliberately excluded — the iframe remains fully
+ * cross-origin isolated and cannot touch parent DOM/cookies/storage.
+ */
 const SANDBOX_POLICY =
-  "allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
+  "allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation";
 
-/** Wrap user HTML in a full document (no scripts for security) */
+/** Maximum iframe height in px to prevent runaway content */
+const MAX_IFRAME_HEIGHT = 15000;
+
+/** Wrap admin HTML in a full document with auto-resize script */
 export function buildSrcdoc(html: string): string {
   if (/<\/body>/i.test(html)) {
     return html;
@@ -42,6 +52,49 @@ export function buildSrcdoc(html: string): string {
 </head>
 <body>
 ${html}
+<script>
+(function() {
+  var timers = [];
+  var observer = null;
+
+  function post() {
+    var h = Math.max(
+      document.documentElement.scrollHeight,
+      document.body ? document.body.scrollHeight : 0
+    );
+    parent.postMessage({ type: 'iframe-resize', height: h }, '*');
+  }
+
+  /*
+   * Staged height synchronization — not duplicate calls.
+   * Stage 1 (immediate): captures initial layout height.
+   * Stage 2 (50ms): catches synchronous reflows after images/fonts start loading.
+   * Stage 3 (300ms): catches late layout shifts from webfonts, lazy images, async CSS.
+   * Removing any stage re-introduces specific late-layout bugs.
+   */
+  function scheduleStagedSync() {
+    post();
+    timers.push(setTimeout(post, 50));
+    timers.push(setTimeout(post, 300));
+  }
+
+  window.addEventListener('load', scheduleStagedSync);
+  window.addEventListener('resize', post);
+
+  if (typeof ResizeObserver !== 'undefined' && document.body) {
+    observer = new ResizeObserver(post);
+    observer.observe(document.body);
+  }
+
+  window.addEventListener('beforeunload', function() {
+    for (var i = 0; i < timers.length; i++) clearTimeout(timers[i]);
+    timers = [];
+    if (observer) { observer.disconnect(); observer = null; }
+  });
+
+  scheduleStagedSync();
+})();
+</script>
 </body>
 </html>`;
 }
@@ -60,6 +113,47 @@ export function HtmlIframePreview({
   minHeight = 100,
 }: HtmlIframePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(minHeight);
+
+  // Lifecycle boundary: reset height when html is cleared.
+  // This is NOT just a visual reset — it prevents stale height artifacts
+  // from a previous iframe leaking into the next content cycle.
+  useEffect(() => {
+    if (!html.trim()) {
+      setHeight(minHeight);
+    }
+  }, [html, minHeight]);
+
+  // Floor adjustment: if minHeight changes on a mounted block,
+  // ensure current height respects the new floor immediately.
+  useEffect(() => {
+    setHeight((prev) => Math.max(minHeight, prev));
+  }, [minHeight]);
+
+  // Message listener for iframe resize events
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      // Lifecycle guard: ignore messages if ref is null (unmounted or empty state)
+      if (!iframeRef.current) return;
+
+      // Multi-iframe isolation: only accept messages from our iframe
+      if (e.source !== iframeRef.current.contentWindow) return;
+
+      // Payload validation
+      if (e.data?.type !== 'iframe-resize') return;
+      const rawHeight = e.data.height;
+      if (typeof rawHeight !== 'number' || !Number.isFinite(rawHeight) || rawHeight < 0) return;
+
+      // Clamp: ceil to avoid fractional pixels, enforce floor and ceiling
+      const clamped = Math.max(minHeight, Math.min(Math.ceil(rawHeight), MAX_IFRAME_HEIGHT));
+
+      // Prevent redundant re-renders
+      setHeight((prev) => (prev === clamped ? prev : clamped));
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [minHeight]);
 
   if (!html.trim()) {
     return (
@@ -75,7 +169,7 @@ export function HtmlIframePreview({
       ref={iframeRef}
       srcDoc={buildSrcdoc(html)}
       sandbox={SANDBOX_POLICY}
-      style={{ width: "100%", height: "500px", border: "none", overflow: "auto" }}
+      style={{ width: "100%", height: `${height}px`, border: "none", overflow: "auto" }}
       title="HTML Preview"
     />
   );
