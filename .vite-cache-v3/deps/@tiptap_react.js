@@ -126,11 +126,11 @@ import {
   require_shim
 } from "./chunk-PU3CAANW.js";
 import {
-  require_jsx_runtime
-} from "./chunk-NZAIND7N.js";
-import {
   require_react_dom
 } from "./chunk-FKMA2RKD.js";
+import {
+  require_jsx_runtime
+} from "./chunk-NZAIND7N.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";
