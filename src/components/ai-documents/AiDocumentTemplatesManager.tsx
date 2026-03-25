@@ -303,6 +303,16 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                                   неактивен
                                 </Badge>
                               )}
+                              {(t as any).template_status && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {(t as any).template_status === "draft" ? "черновик" : (t as any).template_status === "approved" ? "утверждён" : "в разработке"}
+                                </Badge>
+                              )}
+                              {(t as any).editor_draft_content && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  есть draft
+                                </Badge>
+                              )}
                               {Array.isArray(t.placeholders) && t.placeholders.length > 0 && (
                                 <span className="text-[10px] text-muted-foreground">
                                   {t.placeholders.length} токенов
@@ -311,6 +321,11 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
+                            {(t as any).editor_mvp_enabled && (
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditorTemplate(t)} title="Редактор шаблона">
+                                <Code2 className="h-3.5 w-3.5 text-primary" />
+                              </Button>
+                            )}
                             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(t)} title="Редактировать">
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
