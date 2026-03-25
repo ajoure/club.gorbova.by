@@ -478,6 +478,7 @@ const AI = () => {
         {activeSubTab === "analysis-history" && (
           <AnalysisHistoryView
             onOpen={async (convId) => {
+              // Load conversation without persisting to localStorage
               await aiChat.loadConversation(convId);
               setActiveSubTab("chat");
             }}

@@ -42,6 +42,7 @@ export function useAnalysisHistory() {
         hasScenario: boolean;
         scenarioType?: string;
         launcherTitle?: string;
+        promptTitle?: string;
       }>();
 
       for (const row of data) {
@@ -57,6 +58,7 @@ export function useAnalysisHistory() {
           entry.hasScenario = true;
           entry.scenarioType = meta.scenario_type;
           entry.launcherTitle = meta.launcher_title_snapshot;
+          entry.promptTitle = meta.prompt_title_snapshot;
         }
       }
 
@@ -80,12 +82,18 @@ export function useAnalysisHistory() {
           }
         }
 
-        // Fallback title
-        let title = entry.launcherTitle || "";
+        // Fallback title: launcher_title_snapshot → prompt_title_snapshot → keyword check → generic
+        let title = entry.launcherTitle || entry.promptTitle || "";
         if (!title) {
-          title = entry.scenarioType === "balance_analysis"
-            ? "Анализ баланса"
-            : "Анализ документа";
+          title = "Анализ документа";
+        }
+        // If title exists but is generic, check for balance keywords
+        const lowerTitle = title.toLowerCase();
+        if (!entry.launcherTitle && !entry.promptTitle) {
+          // No snapshots — check if scenario metadata hints at balance
+          title = "Анализ документа";
+        } else if (lowerTitle.includes("баланс")) {
+          // Keep as-is, it already mentions balance
         }
 
         result.push({
