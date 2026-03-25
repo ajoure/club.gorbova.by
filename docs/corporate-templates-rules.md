@@ -263,3 +263,64 @@ Frontend `corporateTemplateSpec.ts` содержит fallback-значения, 
 | DOCX preview | В браузере |
 | Runtime activation | 9 шаблонов `pending_sprint3` — перевод по поштучному proof |
 | Registered persons | Полноценная модель регистрации (расширение `package.registered_persons`) |
+| DB column `runtime_status` | Добавить в `document_templates` для хранения SoT runtime_status в БД |
+
+---
+
+## Proof-пакет Sprint 3 (PATCH S3-PROOF-CLOSE)
+
+### Proof 2.1: Server manifest vs Frontend preview
+
+`calculateServerManifest()` и `calculatePackageManifest()` используют идентичные:
+- Шаблонные массивы (ANNUAL_MEETING_TEMPLATES, SOLE_PARTICIPANT_TEMPLATES, CONDITIONAL_TEMPLATES)
+- Условия включения (has_board, has_auditor, voting_form, charter_change)
+- required_data маппинг
+- legal_basis логику
+- Порядок документов
+
+Подтверждено: сервер корректно пересчитывает manifest из params/rules.
+
+### Proof 2.2: Negative pre-flight guard
+
+**Сценарий 1**: Все eligible templates имеют `runtime_status = 'pending_sprint3'` → 0 eligible → response: `"No eligible templates"`, session остаётся `confirmed`. ✅
+
+**Сценарий 2**: Edge function вызвана с `session_id = 116c0a66...`, templates active но upload failed → session откатилась в `confirmed`, batch status = `error`. ✅ Подтверждено SQL: session.status = 'confirmed' после ошибки.
+
+### Proof 2.3: History UI integration
+
+Batch создан с `meta.source = 'corporate_wizard'`, `generation_batch_id` присвоен. `AiDocumentsHistoryView` использует `generation_batch_id` для grouping — совместимо. UI-proof пока невозможен (нет успешной генерации из-за storage permissions), но архитектурно корректно.
+
+### Proof 2.4: Draft session не хранит постоянные реквизиты
+
+SQL proof на 5 сессиях: `corporate_params` не содержит `leg_name`, `leg_address`, `leg_unp`, `passport_*`, `ind_full_name`, `phone`. Содержит: `person_id` ссылки, `agenda`, `chair`, `secretary`, `participants`. Реквизиты берутся из `client_legal_details` по `legal_details_id`. ✅
+
+### Proof 2.5: Runtime activation matrix
+
+| Template | DB active | template_path | runtime_status | Proof status |
+|---|---|---|---|---|
+| corp_order_meeting | ✅ | ✅ | active | pre-flight passed |
+| corp_review_list | ✅ | ✅ | active | pre-flight passed |
+| corp_sole_decision | ✅ | ✅ | active | not tested (sole mode) |
+| corp_sole_appendices | ✅ | ✅ | active | not tested (sole mode) |
+| corp_board_consent | ✅ | ✅ | active | not tested (conditional) |
+| corp_auditor_candidates | ✅ | ✅ | active | not tested (conditional) |
+| corp_auditor_consent | ✅ | ✅ | active | not tested (conditional) |
+| corp_charter_amendments | ✅ | ✅ | active | not tested (conditional) |
+| corp_notice | ✅ | ✅ | pending_sprint3 | excluded from generation ✅ |
+| corp_notice_journal | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_draft_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_registration_list | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_protocol | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_notification_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_ballot | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_board_candidates | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_audit_commission | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+| corp_agenda_change_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ |
+
+### Proof: No second token system
+
+- ✅ Не создан новый registry
+- ✅ Не создан новый placeholder format
+- ✅ Нет corporate-only token namespace
+- ✅ Arrays/loops через fields_registry + docxtemplater + add-only adapter
+- ✅ `votes_count` — canonical key в payload, маппинг из internal `vote_count`
