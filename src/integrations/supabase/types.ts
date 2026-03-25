@@ -599,6 +599,78 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_user_prompts: {
+        Row: {
+          category: string | null
+          code: string
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          icon: string | null
+          id: string
+          input_hint: string | null
+          is_active: boolean | null
+          is_archived: boolean | null
+          is_visible_in_chat: boolean | null
+          launcher_description: string | null
+          launcher_order: number | null
+          launcher_title: string | null
+          prompt_text: string
+          response_format: Json | null
+          sort_order: number | null
+          title: string
+          type: Database["public"]["Enums"]["prompt_type"]
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          category?: string | null
+          code: string
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          input_hint?: string | null
+          is_active?: boolean | null
+          is_archived?: boolean | null
+          is_visible_in_chat?: boolean | null
+          launcher_description?: string | null
+          launcher_order?: number | null
+          launcher_title?: string | null
+          prompt_text: string
+          response_format?: Json | null
+          sort_order?: number | null
+          title: string
+          type?: Database["public"]["Enums"]["prompt_type"]
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          category?: string | null
+          code?: string
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          icon?: string | null
+          id?: string
+          input_hint?: string | null
+          is_active?: boolean | null
+          is_archived?: boolean | null
+          is_visible_in_chat?: boolean | null
+          launcher_description?: string | null
+          launcher_order?: number | null
+          launcher_title?: string | null
+          prompt_text?: string
+          response_format?: Json | null
+          sort_order?: number | null
+          title?: string
+          type?: Database["public"]["Enums"]["prompt_type"]
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       app_settings: {
         Row: {
           created_at: string
@@ -11459,6 +11531,18 @@ export type Database = {
           provider_payment_id: string
         }[]
       }
+      get_chat_scenarios: {
+        Args: never
+        Returns: {
+          icon: string
+          id: string
+          input_hint: string
+          launcher_description: string
+          launcher_order: number
+          launcher_title: string
+          type: Database["public"]["Enums"]["prompt_type"]
+        }[]
+      }
       get_club_business_stats: {
         Args: { p_club_id: string; p_period_days?: number }
         Returns: Json
@@ -11919,6 +12003,11 @@ export type Database = {
         | "stage2"
         | "stage3"
         | "regular"
+      prompt_type:
+        | "chat"
+        | "file_analysis"
+        | "document_review"
+        | "text_transform"
       subscription_status:
         | "active"
         | "trial"
@@ -12104,6 +12193,12 @@ export const Constants = {
         "stage2",
         "stage3",
         "regular",
+      ],
+      prompt_type: [
+        "chat",
+        "file_analysis",
+        "document_review",
+        "text_transform",
       ],
       subscription_status: [
         "active",
