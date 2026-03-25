@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
