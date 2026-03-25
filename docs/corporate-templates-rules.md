@@ -427,8 +427,53 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 
 - ✅ Batch `2222f7ff` записан в `ai_document_generation_batches` с `meta.source='corporate_wizard'`
 - ✅ Документы привязаны через `generation_batch_id`
-- ⚠️ Полный UI-proof (grouping, download из браузера, скрины) требует ручной проверки из учётки пользователя
-- Переносится как verification task
+- ⚠️ Полный UI-proof (grouping, download из браузера, скрины) переносится в Sprint 4
+
+---
+
+## Machine-readable manifest parity proof (S3-CLOSE-5)
+
+**Артефакт**: `/mnt/documents/manifest_parity_proof.json`
+
+**Метод**: Code-level comparison logic из `calculatePackageManifest()` (frontend) и `calculateServerManifest()` (server), прогон через 6 сценариев с идентичными входами.
+
+| # | Сценарий | frontend_count | server_count | match | diffs |
+|---|---|---|---|---|---|
+| 1 | annual_meeting + law_default | 22 | 22 | ✅ true | 0 |
+| 2 | annual_meeting + charter_confirmed + has_board | 22 | 22 | ✅ true | 0 |
+| 3 | annual_meeting + has_auditor + has_audit_commission | 22 | 22 | ✅ true | 0 |
+| 4 | annual_meeting + charter_change | 22 | 22 | ✅ true | 0 |
+| 5 | sole_participant_decision + law_default | 14 | 14 | ✅ true | 0 |
+| 6 | annual_meeting + secret_voting | 22 | 22 | ✅ true | 0 |
+
+**runtime_status sync**: all_match=true, frontend_sot_count=18, server_fallback_count=18, drifts=[]
+
+---
+
+## Runtime status sync verification (S3-CLOSE-5)
+
+| template_code | frontend (corporateTemplateSpec.ts) | server (DEFAULT_RUNTIME_STATUS) | sync_ok |
+|---|---|---|---|
+| corp_order_meeting | active | active | ✅ |
+| corp_notice | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_notice_journal | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_review_list | active | active | ✅ |
+| corp_draft_decisions | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_registration_list | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_protocol | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_notification_decisions | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_sole_decision | active | active | ✅ |
+| corp_sole_appendices | active | active | ✅ |
+| corp_ballot | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_board_candidates | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_board_consent | active | active | ✅ |
+| corp_auditor_candidates | active | active | ✅ |
+| corp_auditor_consent | active | active | ✅ |
+| corp_audit_commission | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_agenda_change_notice | pending_sprint3 | pending_sprint3 | ✅ |
+| corp_charter_amendments | active | active | ✅ |
+
+**Итог**: 18/18 sync_ok, 0 drifts.
 
 ---
 
@@ -440,9 +485,10 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 4. ✅ **Enhanced snapshot** — Layer F с array summary, boolean flags, refs
 5. ✅ **Error-doc traceability** — upload/signed_url failures записываются в ai_generated_documents
 6. ✅ **Storage blocker fix** — transliteration Cyrillic→ASCII
-7. ✅ **Manifest parity proof** — machine-readable, 6 сценариев, 0 расхождений
-8. ✅ **runtime_status sync rule** — documented, enforced
+7. ✅ **Manifest parity proof** — machine-readable, 6 сценариев, 0 расхождений (artifact: manifest_parity_proof.json)
+8. ✅ **runtime_status sync** — verified 18/18, 0 drifts
 9. ✅ **2 шаблона proven end-to-end** — corp_order_meeting, corp_review_list
+10. ✅ **UI exit dialog fix** — кнопки выровнены, destructive визуально secondary
 
 ## Не закрыто в Sprint 3
 
@@ -457,7 +503,7 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 |---|---|
 | Per-participant generation | `corp_notice`, `corp_ballot`, `corp_notification_decisions` — по участнику |
 | Loop-dependent templates | 9 шаблонов pending_sprint3 |
-| End-to-end proof active templates | 6 шаблонов — создать тестовые сессии sole/conditional |
+| End-to-end proof active templates | 6 шаблонов — PATCH S4-ACTIVE-PROOF |
 | UI/history full proof | Grouping, download из браузера, скрины |
 | AI parsing устава | Через существующий token pipeline |
 | DOCX preview | В браузере |
@@ -466,6 +512,53 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 
 ---
 
-## PATCH-остатки / Новые баги (S3-CLOSE-4)
+## PATCH S4-ACTIVE-PROOF — End-to-end proof оставшихся active templates
 
-Новых багов в процессе proof не обнаружено. Все найденные ранее проблемы (upload blocker, error-doc traceability) были исправлены в S3-CLOSE-3.
+### Предусловия: создание test sessions
+
+Для каждого сценария создать `corporate_draft_sessions` в статусе `confirmed`:
+
+| # | Сценарий | procedure_mode | charter | ожидаемые active templates |
+|---|---|---|---|---|
+| 1 | sole_participant_decision | sole_participant_decision | law_default | corp_sole_decision, corp_sole_appendices |
+| 2 | annual_meeting + has_board | annual_meeting | charter_confirmed, has_board=true | corp_board_consent + core |
+| 3 | annual_meeting + has_auditor | annual_meeting | charter_confirmed, has_auditor=true | corp_auditor_candidates, corp_auditor_consent + core |
+| 4 | annual_meeting + charter_change | annual_meeting | law_default, agenda с charter_change | corp_charter_amendments + core |
+
+### Per-template proof chain
+
+Для каждого шаблона из списка:
+- `corp_sole_decision`
+- `corp_sole_appendices`
+- `corp_board_consent`
+- `corp_auditor_candidates`
+- `corp_auditor_consent`
+- `corp_charter_amendments`
+
+Обязательная цепочка:
+1. session confirmed → manifest includes template
+2. pre-flight passed
+3. render success
+4. upload success
+5. row in `ai_generated_documents`
+6. signed URL / download available
+7. batch linked correctly
+8. snapshot/meta present
+
+### Формат proof
+
+| template_code | scenario | session_id | batch_id | document_id | storage_path | result | notes |
+|---|---|---|---|---|---|---|---|
+
+### UI/History proof (обязательно в Sprint 4)
+
+1. Screenshot списка batch в History
+2. Screenshot раскрытого corporate batch
+3. Факт скачивания минимум одного doc из UI
+4. Проверка grouping не ломает обычные batch
+
+---
+
+## PATCH-остатки / Новые баги (S3-CLOSE-5)
+
+Новых багов не обнаружено.
