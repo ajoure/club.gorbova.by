@@ -1,10 +1,46 @@
 import { Bot } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import ReactMarkdown from "react-markdown";
 import type { ChatMessage as ChatMessageType } from "@/hooks/useAiChat";
 
 interface ChatMessageProps {
   message: ChatMessageType;
 }
+
+const markdownComponents = {
+  h1: ({ children }: any) => (
+    <h1 className="text-lg font-bold mt-4 mb-2 pb-1 border-b border-border/40 first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }: any) => (
+    <h2 className="text-base font-semibold mt-3 mb-1.5 pb-0.5 border-b border-border/20 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }: any) => (
+    <h3 className="text-sm font-semibold mt-2 mb-1 first:mt-0">{children}</h3>
+  ),
+  p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }: any) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
+  ol: ({ children }: any) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
+  li: ({ children }: any) => <li className="text-sm">{children}</li>,
+  strong: ({ children }: any) => <strong className="font-semibold">{children}</strong>,
+  table: ({ children }: any) => (
+    <div className="overflow-x-auto my-2 -mx-1">
+      <table className="min-w-full text-xs border-collapse border border-border/40 rounded">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }: any) => <thead className="bg-muted/50">{children}</thead>,
+  th: ({ children }: any) => (
+    <th className="px-2 py-1.5 text-left font-semibold border border-border/30 whitespace-nowrap">{children}</th>
+  ),
+  td: ({ children }: any) => (
+    <td className="px-2 py-1 border border-border/30">{children}</td>
+  ),
+  hr: () => <hr className="my-3 border-border/30" />,
+  blockquote: ({ children }: any) => (
+    <blockquote className="border-l-2 border-primary/30 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>
+  ),
+};
 
 export function ChatMessageBubble({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
@@ -37,7 +73,15 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
             ))}
           </div>
         )}
-        <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+        {isUser ? (
+          <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+        ) : (
+          <div className="text-sm prose-sm max-w-none">
+            <ReactMarkdown components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
       </div>
     </div>
   );

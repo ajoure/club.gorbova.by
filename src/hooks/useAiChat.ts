@@ -1,6 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 
 export interface ChatMessage {
   id: string;
@@ -18,7 +19,6 @@ export interface AiChatMetadata {
   file_names?: string[];
   parse_errors?: string[];
   processing_time_ms?: number;
-  // P0-E: Extended metadata
   extract_quality?: "ok" | "low" | "empty";
   extracted_text_length?: number;
   original_text_length?: number;
@@ -39,6 +39,12 @@ export interface ChatScenario {
   launcher_order: number;
 }
 
+export interface ScenarioContext {
+  prompt_id?: string;
+  scenario_type?: string;
+  launcher_title_snapshot?: string;
+}
+
 const INITIAL_MESSAGE: ChatMessage = {
   id: "welcome",
   role: "assistant",
@@ -46,13 +52,89 @@ const INITIAL_MESSAGE: ChatMessage = {
   timestamp: new Date(),
 };
 
+function getStorageKey(userId: string) {
+  return `gorbova_ai_last_conversation_${userId}`;
+}
+
 export function useAiChat() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [scenarios, setScenarios] = useState<ChatScenario[]>([]);
   const [scenariosLoading, setScenariosLoading] = useState(false);
+  const [activeScenarioContext, setActiveScenarioContext] = useState<ScenarioContext | null>(null);
+  const initRef = useRef(false);
+
+  // On mount: restore last conversation from localStorage
+  useEffect(() => {
+    if (!user?.id || initRef.current) return;
+    initRef.current = true;
+
+    const key = getStorageKey(user.id);
+    const savedId = localStorage.getItem(key);
+    if (!savedId) return;
+
+    loadConversation(savedId).then((loaded) => {
+      if (!loaded) {
+        // Invalid/empty conversation — clean up
+        localStorage.removeItem(key);
+      }
+    });
+  }, [user?.id]);
+
+  const loadConversation = useCallback(async (convId: string): Promise<boolean> => {
+    if (!user?.id) return false;
+
+    try {
+      const { data, error } = await supabase
+        .from("ai_chat_messages")
+        .select("id, role, content, created_at, metadata")
+        .eq("conversation_id", convId)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+
+      if (error || !data || data.length === 0) return false;
+
+      const loaded: ChatMessage[] = data.map((row: any) => ({
+        id: row.id,
+        role: row.role as "user" | "assistant",
+        content: row.content,
+        timestamp: new Date(row.created_at),
+        metadata: row.metadata as AiChatMetadata | undefined,
+      }));
+
+      setMessages(loaded);
+      setConversationId(convId);
+
+      // Extract scenario context from last assistant message
+      const lastAssistant = [...loaded].reverse().find(m => m.role === "assistant" && m.metadata?.scenario_type);
+      if (lastAssistant?.metadata) {
+        setActiveScenarioContext({
+          prompt_id: lastAssistant.metadata.prompt_id,
+          scenario_type: lastAssistant.metadata.scenario_type,
+          launcher_title_snapshot: lastAssistant.metadata.launcher_title_snapshot,
+        });
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }, [user?.id]);
+
+  const resumeConversation = useCallback(async (convId: string): Promise<ScenarioContext | null> => {
+    const loaded = await loadConversation(convId);
+    if (!loaded) return null;
+
+    // Save to localStorage
+    if (user?.id) {
+      localStorage.setItem(getStorageKey(user.id), convId);
+    }
+
+    return activeScenarioContext;
+  }, [loadConversation, user?.id, activeScenarioContext]);
 
   const fetchScenarios = useCallback(async () => {
     setScenariosLoading(true);
@@ -122,9 +204,12 @@ export function useAiChat() {
 
       if (data?.conversation_id) {
         setConversationId(data.conversation_id);
+        // Persist to localStorage
+        if (user?.id) {
+          localStorage.setItem(getStorageKey(user.id), data.conversation_id);
+        }
       }
 
-      // Handle both blocked and normal responses as assistant messages
       const assistantMsg: ChatMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -132,6 +217,15 @@ export function useAiChat() {
         timestamp: new Date(),
         metadata: data?.metadata,
       };
+
+      // Update scenario context if present
+      if (data?.metadata?.scenario_type) {
+        setActiveScenarioContext({
+          prompt_id: data.metadata.prompt_id,
+          scenario_type: data.metadata.scenario_type,
+          launcher_title_snapshot: data.metadata.launcher_title_snapshot,
+        });
+      }
 
       setMessages(prev => [...prev, assistantMsg]);
     } catch (err) {
@@ -145,20 +239,28 @@ export function useAiChat() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, conversationId, toast]);
+  }, [messages, conversationId, toast, user?.id]);
 
   const clearChat = useCallback(() => {
     setMessages([INITIAL_MESSAGE]);
     setConversationId(null);
-  }, []);
+    setActiveScenarioContext(null);
+    if (user?.id) {
+      localStorage.removeItem(getStorageKey(user.id));
+    }
+  }, [user?.id]);
 
   return {
     messages,
     isLoading,
+    conversationId,
     scenarios,
     scenariosLoading,
+    activeScenarioContext,
     sendMessage,
     clearChat,
     fetchScenarios,
+    loadConversation,
+    resumeConversation,
   };
 }
