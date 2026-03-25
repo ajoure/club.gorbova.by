@@ -30,7 +30,7 @@ import {
   entityName,
   sanitizeFileName,
 } from '../_shared/docx-helpers.ts';
-import { calculateServerManifest, type ManifestItem } from '../_shared/corporate-manifest.ts';
+import { calculateServerManifest, type ManifestItem, type TemplateRuntimeStatus } from '../_shared/corporate-manifest.ts';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -340,7 +340,7 @@ async function serverSidePreFlight(
   const codes = candidates.map(m => m.template_code);
   const { data: dbTemplates, error: dbErr } = await supabase
     .from('document_templates')
-    .select('id, code, is_active, template_path, name, version, placeholders')
+    .select('id, code, is_active, template_path, name, placeholders')
     .eq('template_scope', 'corporate')
     .in('code', codes);
 
@@ -428,6 +428,13 @@ serve(async (req) => {
       const params = (session.corporate_params || {}) as Record<string, unknown>;
       const charterRules = (session.confirmed_charter_rules || {}) as Record<string, unknown>;
 
+      // ── runtimeStatusOverrides — currently uses DEFAULT_RUNTIME_STATUS (fallback) ──
+      // document_templates does not yet have a runtime_status column.
+      // When added, this block will query it and pass overrides.
+      // For now, calculateServerManifest uses DEFAULT_RUNTIME_STATUS map.
+      // runtime_status ≠ availability (availability is checked by pre-flight separately).
+      const runtimeStatusOverrides: Record<string, TemplateRuntimeStatus> | undefined = undefined;
+
       // ── Fix #2: Server-side manifest recalculation (NOT from saved JSON) ──
       // Source of truth for generation = server-recalculated manifest.
       // Saved package_manifest in session is draft/debug artifact only.
@@ -436,6 +443,7 @@ serve(async (req) => {
         charterRules,
         params as { meeting?: { voting_form?: string }; agenda?: { requires_charter_change?: boolean }[]; governance?: { has_board?: boolean; has_auditor?: boolean; has_audit_commission?: boolean } },
         (session.rules_basis as 'charter_confirmed' | 'law_default' | 'mixed') || 'law_default',
+        runtimeStatusOverrides,
       );
 
       // ── Fetch entity (Layer A) ──
@@ -622,7 +630,7 @@ serve(async (req) => {
             template_code: item.template_code,
             template_name: itemName,
             template_source_path: dbTemplate.template_path,
-            template_version: (dbTemplate.version as string) || null,
+            template_version: null,
             title: `${itemName} — ${docNumber}`,
             status: "generated",
             legal_details_id: session.legal_details_id || null,
