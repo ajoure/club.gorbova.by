@@ -10,7 +10,7 @@ const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.
 const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats', 'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024; // 10MB
-const MAX_TEXT_CHARS = 20000;
+const MAX_TEXT_CHARS = 100000;
 
 interface RequestBody {
   mode: 'chat' | 'prompt';
@@ -107,10 +107,11 @@ Deno.serve(async (req) => {
         });
       }
     }
-    if (fileContents && fileContents.length > MAX_TEXT_CHARS) {
-      return new Response(JSON.stringify({ error: `Текст файлов превышает ${MAX_TEXT_CHARS} символов` }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    let processedFileContents = fileContents || '';
+    if (processedFileContents && processedFileContents.length > MAX_TEXT_CHARS) {
+      processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
+      metadata.file_truncated = true;
+      metadata.original_length = fileContents!.length;
     }
 
     // 4. Load system context from ai_prompt_packages
@@ -164,8 +165,8 @@ Deno.serve(async (req) => {
     const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
 
     // Add file contents as context if present
-    if (fileContents) {
-      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${fileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
+    if (processedFileContents) {
+      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
       aiMessages.push({ role: 'user', content: fileContextMsg });
       metadata.file_names = fileNames || [];
     }
