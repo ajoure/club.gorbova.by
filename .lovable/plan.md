@@ -1,37 +1,33 @@
 
+# S4-INTERNAL-TEMPLATE-EDITOR — Phase 1: corp_order_meeting
 
-# Fix: Kinescope video player broken — SDK URL returns 404
+## Статус: ✅ Phase 1 выполнена
 
-## Problem
+## Что сделано
 
-User reports video in lesson "Формирование и анализ портфеля клиентов" shows as static image instead of playing.
+### Миграция БД
+- `template_status TEXT DEFAULT 'in_development'` — статус шаблона
+- `editor_mvp_enabled BOOLEAN DEFAULT false` — флаг доступности редактора
+- `editor_draft_content JSONB DEFAULT NULL` — staging-only draft (не SoT для runtime)
+- `corp_order_meeting` → `editor_mvp_enabled = true`, `template_status = 'draft'`
+- `corp_review_list`, `corp_notice`, `corp_notice_journal`, `corp_sole_decision` → `template_status = 'draft'`
 
-**Root cause:** The Kinescope IFrame Player SDK URL `https://player.kinescope.io/v1.0/iframe.player.js` returns **404 Not Found**. Kinescope deprecated/removed this versioned URL. The correct URL is `https://player.kinescope.io/latest/iframe.player.js` (confirmed working).
+### Созданные файлы
+- `src/lib/corporate/templateEditorMapper.ts` — маппинг token ↔ UI label
+- `src/lib/corporate/templateEditorTestData.ts` — тестовые данные для preview
+- `src/hooks/useCorporateTemplateEditor.ts` — хук: DOCX → draft → save/load
+- `src/components/corporate-editor/CorporateTemplateEditorDialog.tsx` — fullscreen dialog
+- `src/components/corporate-editor/EditorModeView.tsx` — режим редактирования с подсветкой
+- `src/components/corporate-editor/PreviewModeView.tsx` — raw preview + editor preview
 
-**Impact chain:**
-1. Script load fails → `scriptLoadPromise` rejects
-2. `onError` fires in VideoBlock → sets `apiError=true`, `useApiPlayer=false`
-3. Falls back to iframe embed with URL `https://kinescope.io/embed/{videoId}`
-4. If Kinescope also changed embed behavior, the fallback iframe may show a static preview/thumbnail instead of a playable video
+### Изменённые файлы
+- `src/hooks/useDocumentTemplates.tsx` — расширен DocumentTemplate interface
+- `src/components/ai-documents/AiDocumentTemplatesManager.tsx` — кнопка "Редактор" + dialog
 
-## Fix
-
-**File:** `src/hooks/useKinescopePlayer.ts`, line 58
-
-Change:
-```typescript
-script.src = "https://player.kinescope.io/v1.0/iframe.player.js";
-```
-To:
-```typescript
-script.src = "https://player.kinescope.io/latest/iframe.player.js";
-```
-
-One line change. No other files affected.
-
-## Technical details
-
-- The comment on line 57 says "Фиксированная версия SDK вместо /latest/ для стабильности" — this was an intentional pinning that backfired when Kinescope removed v1.0.
-- Using `/latest/` is the officially documented approach per Kinescope docs.
-- The fallback iframe path still works as a safety net if the API player fails for other reasons.
-
+## Backlog
+1. ~~S4-INTERNAL-TEMPLATE-EDITOR Phase 1~~ ✅
+2. S4-INTERNAL-TEMPLATE-EDITOR Phase 2 — еще 4 документа + repeat blocks
+3. S4-PASSPORT-TOKENS — паспортные поля в fields_registry
+4. S4-EDITOR-DRAFT-TO-DOCX-EXPORT — export draft → DOCX runtime
+5. S4-PASSPORT-TO-RUNTIME — паспортные данные в edge function payload
+6. S4-DOCX-TO-RUNTIME-PROOF — runtime activation
