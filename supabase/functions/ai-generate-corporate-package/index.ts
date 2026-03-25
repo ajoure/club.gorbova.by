@@ -428,22 +428,12 @@ serve(async (req) => {
       const params = (session.corporate_params || {}) as Record<string, unknown>;
       const charterRules = (session.confirmed_charter_rules || {}) as Record<string, unknown>;
 
-      // ── Build runtimeStatusOverrides from DB (SoT for runtime_status) ──
-      // runtime_status is NOT derived from is_active/template_path (that's availability).
-      // It's a proven readiness flag. DB stores it; we query and pass as overrides.
-      const { data: corpTemplates } = await supabase
-        .from('document_templates')
-        .select('code, meta')
-        .eq('template_scope', 'corporate');
-      const runtimeStatusOverrides: Record<string, TemplateRuntimeStatus> = {};
-      if (corpTemplates) {
-        for (const t of corpTemplates) {
-          const meta = (t.meta || {}) as Record<string, unknown>;
-          if (meta.runtime_status === 'active' || meta.runtime_status === 'pending_sprint3') {
-            runtimeStatusOverrides[t.code as string] = meta.runtime_status as TemplateRuntimeStatus;
-          }
-        }
-      }
+      // ── runtimeStatusOverrides — currently uses DEFAULT_RUNTIME_STATUS (fallback) ──
+      // document_templates does not yet have a runtime_status column.
+      // When added, this block will query it and pass overrides.
+      // For now, calculateServerManifest uses DEFAULT_RUNTIME_STATUS map.
+      // runtime_status ≠ availability (availability is checked by pre-flight separately).
+      const runtimeStatusOverrides: Record<string, TemplateRuntimeStatus> | undefined = undefined;
 
       // ── Fix #2: Server-side manifest recalculation (NOT from saved JSON) ──
       // Source of truth for generation = server-recalculated manifest.
