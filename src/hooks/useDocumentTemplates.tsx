@@ -14,6 +14,12 @@ export interface DocumentTemplate {
   template_scope: string;
   created_at: string;
   updated_at: string;
+  /** Template lifecycle status: draft | approved | in_development */
+  template_status?: string;
+  /** Whether the visual editor is available for this template */
+  editor_mvp_enabled?: boolean;
+  /** Staging-only editor draft content (not used by runtime generation) */
+  editor_draft_content?: Record<string, unknown> | null;
 }
 
 export interface ProductDocumentTemplate {
