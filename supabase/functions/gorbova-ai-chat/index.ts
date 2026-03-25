@@ -107,10 +107,11 @@ Deno.serve(async (req) => {
         });
       }
     }
-    if (fileContents && fileContents.length > MAX_TEXT_CHARS) {
-      return new Response(JSON.stringify({ error: `Текст файлов превышает ${MAX_TEXT_CHARS} символов` }), {
-        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    let processedFileContents = fileContents || '';
+    if (processedFileContents && processedFileContents.length > MAX_TEXT_CHARS) {
+      processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
+      metadata.file_truncated = true;
+      metadata.original_length = fileContents!.length;
     }
 
     // 4. Load system context from ai_prompt_packages
