@@ -1,35 +1,59 @@
 
 
-# Добавить URL страницы под полем Slug (как в тренингах)
+# Fix: Site pages accessible by slug URL
 
-## Что делаем
+## DRY RUN — Single-segment route audit
 
-По аналогии с тренингами (где под slug показывается `URL: gorbova.club/training/{slug}`), добавить подсказку с URL под полем Slug в настройках сайта.
+All existing single-segment routes in App.tsx:
 
-Для сайтов URL формируется из привязанных доменов. Если домен привязан — показать `URL: {domain}`. Если нет — показать подсказку что URL появится после привязки домена.
-
-## Файл: `src/components/admin/site-builder/SiteSettingsPanel.tsx`
-
-Под полем Slug (строка 50) добавить текст с URL:
-
-```tsx
-<div className="space-y-2">
-  <Label>Адрес страницы</Label>
-  <Input
-    value={slug}
-    onChange={(e) => onSlugChange(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-  />
-  {bindings.length > 0 ? (
-    <p className="text-xs text-muted-foreground">
-      URL: {bindings[0].domain}/<strong>{slug || "..."}</strong>
-    </p>
-  ) : (
-    <p className="text-xs text-muted-foreground">
-      Привяжите домен, чтобы увидеть URL страницы
-    </p>
-  )}
-</div>
+```text
+/auth, /pricing, /order-payment, /offer, /pay, /privacy, /consent,
+/contacts, /help, /consultation, /course-accountant, /close-year,
+/business-training, /club, /banned, /products, /dashboard, /money,
+/ai, /knowledge, /purchases, /accountant, /business, /audits,
+/self-development, /support, /docs, /library, /settings, /admin
 ```
 
-Также переименовать Label с «Slug» на «Адрес страницы» для единообразия с тренингами.
+All static. React Router v6 ranks static segments higher than dynamic `:slug`, so no collisions.
+
+## Compatibility rules
+
+1. **Explicit routes keep priority** — `/:slug` never shadows existing static routes
+2. **`*` remains last fallback** — `/:slug` placed before `*`, after all explicit routes
+3. **Legacy DomainRouter untouched** — host-based resolution on `/` path unaffected
+4. **ID-driven invariant** — slug is only for public URL resolution; all internal refs use UUID
+5. **Future-proof constraint** — `/:slug` is strictly a public resolution layer, not a default routing mechanism. New system/utility pages must be added as explicit static routes, never rely on slug resolution
+
+## Changes
+
+### 1. New file: `src/pages/SitePageBySlug.tsx`
+
+Thin resolution layer — component only extracts slug from params and delegates to service. No route-level business logic.
+
+- `useParams` → slug
+- `SiteRenderService.resolveBySlug(slug)` (filters `status = 'published'`)
+- Found → `SitePageRenderer` in `<div className="site-public-layout">`
+- Not found → `NotFound`
+- Loading → spinner
+
+### 2. File: `src/App.tsx`
+
+Add lazy import:
+```tsx
+const SitePageBySlug = lazy(() => import("./pages/SitePageBySlug"));
+```
+
+Add route before `*` catch-all:
+```tsx
+<Route path="/:slug" element={<LazyRoute><SitePageBySlug /></LazyRoute>} />
+```
+
+## Verify checklist
+
+1. Existing explicit routes (`/auth`, `/dashboard`, `/admin/sites`, etc.) open normally
+2. Non-existent slug → NotFound
+3. Unpublished page by slug → NotFound
+4. Published page by slug → renders with full-width layout
+5. Legacy DomainRouter host-based rendering — no regression
+6. Slug used only as public resolution attribute; all internal navigation/linking remains UUID-driven
 
