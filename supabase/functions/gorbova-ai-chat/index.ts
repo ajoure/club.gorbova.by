@@ -9,8 +9,30 @@ const corsHeaders = {
 const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp'];
 const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats', 'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILES = 5;
-const MAX_TOTAL_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
+
+// P0-A: Hardcoded web-specific system prompt, independent from Telegram bot Oleg
+const WEB_SYSTEM_PROMPT = `Ты — gorbova AI, профессиональный бизнес-ассистент для предпринимателей.
+Отвечай на русском языке. Будь полезным, точным и структурированным.
+
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+- Запрещено выдумывать, оценивать приблизительно, достраивать или предполагать числовые показатели, если они не извлечены из документа явно.
+- Нельзя делать выводы о значениях только потому, что документ «похож на баланс» или содержит типовую структуру формы.
+- Если данных нет — писать, что данных нет.
+- Если файл пустой или нечитабельный — сообщать о невозможности анализа.
+- Никогда не использовать «типовые», «примерные» или «ориентировочные» значения.
+- Если невозможно рассчитать коэффициент из-за отсутствия данных, указать: «Данные для расчёта отсутствуют».`;
+
+// P0-D: Anti-hallucination suffix appended after every scenario prompt_text
+const ANTI_HALLUCINATION_SUFFIX = `
+
+--- ОБЯЗАТЕЛЬНЫЕ ОГРАНИЧЕНИЯ ---
+Если в содержимом файлов нет явных числовых данных — НЕ рассчитывай коэффициенты,
+НЕ подставляй примерные значения, НЕ реконструируй данные по структуре формы.
+Вместо этого ответь: «В загруженном документе не обнаружены данные, достаточные для расчёта показателей.»`;
+
+const BLOCKED_SCENARIOS = ['file_analysis', 'document_review'];
 
 interface RequestBody {
   mode: 'chat' | 'prompt';
@@ -29,6 +51,25 @@ function validateFileExtension(filename: string): boolean {
 
 function validateMimeType(mime: string): boolean {
   return ALLOWED_MIME_PREFIXES.some(prefix => mime.startsWith(prefix));
+}
+
+// P0-B: Quality assessment for extracted text content
+function assessExtractQuality(text: string): { quality: 'ok' | 'low' | 'empty'; cleanedLength: number } {
+  // Strip all markers that are not real content
+  const cleaned = text
+    .replace(/\[(PARSE_EMPTY|Изображение|PDF документ|FILE_PARSE_ERROR|Не удалось извлечь)[^\]]*\]/g, '')
+    .trim();
+
+  const cleanedLength = cleaned.length;
+  const digits = (cleaned.match(/\d/g) || []).length;
+
+  if (cleanedLength < 20 || digits === 0) {
+    return { quality: 'empty', cleanedLength };
+  }
+  if (cleanedLength < 100 && digits < 5) {
+    return { quality: 'low', cleanedLength };
+  }
+  return { quality: 'ok', cleanedLength };
 }
 
 Deno.serve(async (req) => {
@@ -59,6 +100,7 @@ Deno.serve(async (req) => {
       });
     }
 
+    // 2. Parse body
     const body: RequestBody = await req.json();
     const { mode, messages, prompt_id, fileContents, images, fileNames, conversation_id } = body;
 
@@ -67,9 +109,6 @@ Deno.serve(async (req) => {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    // 2. Service client for DB reads
-    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
 
     // 3. File guards
     if (fileNames && fileNames.length > MAX_FILES) {
@@ -99,7 +138,7 @@ Deno.serve(async (req) => {
             status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-        totalBytes += (img.base64.length * 3) / 4; // approximate decoded size
+        totalBytes += (img.base64.length * 3) / 4;
       }
       if (totalBytes > MAX_TOTAL_BYTES) {
         return new Response(JSON.stringify({ error: 'Суммарный размер файлов превышает 10MB' }), {
@@ -107,29 +146,25 @@ Deno.serve(async (req) => {
         });
       }
     }
+
     // 4. Initialize metadata and timing
     const metadata: Record<string, any> = {};
     const startTime = Date.now();
+    const hasImages = !!(images && images.length > 0);
+    metadata.images_present = hasImages;
 
+    // 5. Truncate fileContents
     let processedFileContents = fileContents || '';
+    const originalTextLength = processedFileContents.length;
+    metadata.original_text_length = originalTextLength;
+
     if (processedFileContents && processedFileContents.length > MAX_TEXT_CHARS) {
       processedFileContents = processedFileContents.substring(0, MAX_TEXT_CHARS);
       metadata.file_truncated = true;
-      metadata.original_length = fileContents!.length;
-    }
-
-    // 5. Load system context from ai_prompt_packages
-    const { data: packages } = await serviceClient
-      .from('ai_prompt_packages')
-      .select('content')
-      .eq('enabled', true);
-
-    let systemPrompt = 'Ты — gorbova AI, профессиональный бизнес-ассистент. Отвечай на русском языке. Будь полезным, точным и структурированным.';
-    if (packages && packages.length > 0) {
-      systemPrompt += '\n\n' + packages.map((p: any) => p.content).join('\n\n');
     }
 
     // 6. Load prompt if prompt_id provided
+    const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
     let promptData: any = null;
 
     if (prompt_id && mode === 'prompt') {
@@ -153,27 +188,91 @@ Deno.serve(async (req) => {
       metadata.prompt_title_snapshot = prompt.title;
       metadata.launcher_title_snapshot = prompt.launcher_title;
       metadata.scenario_type = prompt.type;
-
-      // Add prompt instructions to system prompt
-      systemPrompt += '\n\n--- ИНСТРУКЦИЯ СЦЕНАРИЯ ---\n' + prompt.prompt_text;
-
-      // Add response_format as instruction if present
-      if (prompt.response_format) {
-        systemPrompt += '\n\nФормат ответа (следуй этой структуре):\n' + JSON.stringify(prompt.response_format, null, 2);
-      }
     }
 
-    // 6. Build messages for AI
+    // 7. P0-B: Quality gate (after prompt load, before AI call)
+    const qualityResult = assessExtractQuality(processedFileContents);
+    metadata.extract_quality = qualityResult.quality;
+    metadata.cleaned_text_length = qualityResult.cleanedLength;
+    metadata.extracted_text_length = qualityResult.cleanedLength;
+
+    // parse_failed = true only if files were provided but none had extractable text
+    const filesWereProvided = !!(fileNames && fileNames.length > 0);
+    metadata.parse_failed = filesWereProvided && !hasImages && qualityResult.quality === 'empty';
+
+    // Block only for file_analysis/document_review scenarios without images
+    const scenarioType = promptData?.type;
+    const shouldBlock = BLOCKED_SCENARIOS.includes(scenarioType)
+      && (qualityResult.quality === 'empty' || qualityResult.quality === 'low')
+      && !hasImages;
+
+    if (shouldBlock) {
+      const convId = conversation_id || crypto.randomUUID();
+      metadata.blocked = true;
+      metadata.analysis_blocked_reason = 'insufficient_data';
+      metadata.processing_time_ms = Date.now() - startTime;
+
+      const blockedContent = qualityResult.quality === 'empty'
+        ? 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате (Excel, PDF, фото).'
+        : 'Извлечено слишком мало данных для полноценного анализа. Проверьте, что файл содержит бухгалтерские показатели, или загрузите более чёткий документ.';
+
+      // Save user message
+      const lastUserMsg = messages[messages.length - 1];
+      if (lastUserMsg) {
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId,
+          user_id: user.id,
+          role: 'user',
+          content: lastUserMsg.content,
+          metadata: fileNames ? { file_names: fileNames } : null,
+        });
+      }
+
+      // Save blocked assistant response
+      await serviceClient.from('ai_chat_messages').insert({
+        conversation_id: convId,
+        user_id: user.id,
+        role: 'assistant',
+        content: blockedContent,
+        metadata,
+      });
+
+      return new Response(JSON.stringify({
+        content: blockedContent,
+        conversation_id: convId,
+        blocked: true,
+        metadata,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Not blocked
+    metadata.blocked = false;
+
+    // 8. Build system prompt (P0-A: hardcoded, no ai_prompt_packages)
+    let systemPrompt = WEB_SYSTEM_PROMPT;
+
+    // 9. Inject scenario prompt_text + anti-hallucination suffix (P0-D)
+    if (promptData) {
+      systemPrompt += '\n\n--- ИНСТРУКЦИЯ СЦЕНАРИЯ ---\n' + promptData.prompt_text;
+
+      if (promptData.response_format) {
+        systemPrompt += '\n\nФормат ответа (следуй этой структуре):\n' + JSON.stringify(promptData.response_format, null, 2);
+      }
+
+      systemPrompt += ANTI_HALLUCINATION_SUFFIX;
+    }
+
+    // 10. Build messages for AI
     const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
 
-    // Add file contents as context if present
     if (processedFileContents) {
       const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
       aiMessages.push({ role: 'user', content: fileContextMsg });
       metadata.file_names = fileNames || [];
     }
 
-    // Add conversation messages
     for (const msg of messages) {
       if (msg.role === 'user' || msg.role === 'assistant') {
         aiMessages.push({ role: msg.role, content: msg.content });
@@ -181,13 +280,13 @@ Deno.serve(async (req) => {
     }
 
     // Add images as multimodal content
-    if (images && images.length > 0) {
+    if (hasImages) {
       const lastUserIdx = aiMessages.length - 1;
       if (lastUserIdx >= 0 && aiMessages[lastUserIdx].role === 'user') {
         const textContent = aiMessages[lastUserIdx].content;
         aiMessages[lastUserIdx].content = [
           { type: 'text', text: textContent },
-          ...images.map(img => ({
+          ...images!.map(img => ({
             type: 'image_url',
             image_url: {
               url: `data:${img.mimeType || 'image/jpeg'};base64,${img.base64}`,
@@ -197,7 +296,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 7. Call Lovable AI Gateway
+    // 11. Call Lovable AI Gateway
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       return new Response(JSON.stringify({ error: 'AI сервис не настроен' }), {
@@ -240,11 +339,10 @@ Deno.serve(async (req) => {
     const aiResult = await aiResponse.json();
     const assistantContent = aiResult.choices?.[0]?.message?.content || 'Нет ответа от AI';
 
-    // 8. Save messages to ai_chat_messages
+    // 12. Save messages to ai_chat_messages
     const convId = conversation_id || crypto.randomUUID();
     metadata.processing_time_ms = Date.now() - startTime;
 
-    // Save user message (last one)
     const lastUserMsg = messages[messages.length - 1];
     if (lastUserMsg) {
       await serviceClient.from('ai_chat_messages').insert({
@@ -256,7 +354,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Save assistant response
     await serviceClient.from('ai_chat_messages').insert({
       conversation_id: convId,
       user_id: user.id,
