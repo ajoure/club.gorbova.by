@@ -239,6 +239,7 @@ export function AiDocumentTemplatesManager({ open, onOpenChange }: Props) {
       : "Измените параметры шаблона или загрузите обновлённый файл";
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={SHEET_SHELL_CLASS}>
         {/* Fixed Header */}
