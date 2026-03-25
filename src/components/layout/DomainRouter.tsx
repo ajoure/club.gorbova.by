@@ -80,10 +80,12 @@ export function DomainHomePage() {
   // Site builder page found → render it
   if (siteBuilderPage) {
     return (
-      <SitePageRenderer
-        blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
-        themeSettings={siteBuilderPage.theme_settings || {}}
-      />
+      <div className="site-public-layout">
+        <SitePageRenderer
+          blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
+          themeSettings={siteBuilderPage.theme_settings || {}}
+        />
+      </div>
     );
   }
 
