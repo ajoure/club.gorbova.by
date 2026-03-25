@@ -340,7 +340,7 @@ async function serverSidePreFlight(
   const codes = candidates.map(m => m.template_code);
   const { data: dbTemplates, error: dbErr } = await supabase
     .from('document_templates')
-    .select('id, code, is_active, template_path, name, version, placeholders')
+    .select('id, code, is_active, template_path, name, placeholders')
     .eq('template_scope', 'corporate')
     .in('code', codes);
 
