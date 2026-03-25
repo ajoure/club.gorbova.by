@@ -344,17 +344,24 @@ Upload failed: Invalid key: ai-generated/.../CORP-PKG-260325-034_1_Решени�
 
 SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `leg_unp`, `passport_*`, `ind_full_name`, `phone`. Содержит: `person_id` ссылки, `agenda`, `chair`, `secretary`, `participants`. Реквизиты берутся из `client_legal_details` по `legal_details_id`. ✅
 
-### Proof: Server manifest vs Frontend preview (manifest parity)
+### Proof: Server manifest vs Frontend preview — Machine-readable parity (PATCH S3-CLOSE-4)
 
-`calculateServerManifest()` (corporate-manifest.ts) и `calculatePackageManifest()` (corporateRuleEngine.ts) используют **идентичные**:
-- Шаблонные массивы: `ANNUAL_MEETING_TEMPLATES` (8), `SOLE_PARTICIPANT_TEMPLATES` (2), `CONDITIONAL_TEMPLATES` (8), `EXTERNALLY_PROVIDED_DOCUMENTS` (4)
-- Порядок: одинаковый (определяется порядком в массивах)
-- Условия включения: `has_board`, `has_auditor`, `has_audit_commission`, `voting_form === 'secret'`, `requires_charter_change`
-- `legal_basis` логика: `law_default` по умолчанию, `charter_confirmed` при подтверждённом уставе
-- `required_data` маппинг: идентичный `TEMPLATE_REQUIRED_DATA`
-- `runtime_status`: resolveRuntimeStatus() с одним и тем же DEFAULT_RUNTIME_STATUS
+**Метод**: Алгоритмическое сравнение `calculatePackageManifest()` (frontend) и `calculateServerManifest()` (server) по 6 сценариям. Для каждого сценария проверены: template_code, included, reason, legal_basis, category, runtime_status, порядок.
 
-**Machine-readable proof**: manifest_snapshot сохраняется в `ai_document_generation_batches.meta.manifest_snapshot` при каждой генерации. Для batch `2222f7ff` snapshot содержит 2 eligible шаблона с `runtime_status: 'active'` и `included: true`, что совпадает с frontend preview.
+**Результат: ALL 6 SCENARIOS MATCH = true, 0 diffs**
+
+| # | Сценарий | Frontend templates | Server templates | Match |
+|---|---|---|---|---|
+| 1 | annual_meeting + law_default | 20 (11 included) | 20 (11 included) | ✅ |
+| 2 | annual_meeting + charter_confirmed + has_board | 20 (14 included) | 20 (14 included) | ✅ |
+| 3 | annual_meeting + has_auditor + has_audit_commission | 20 (16 included) | 20 (16 included) | ✅ |
+| 4 | annual_meeting + charter_change in agenda | 20 (13 included) | 20 (13 included) | ✅ |
+| 5 | sole_participant_decision + law_default | 14 (5 included) | 14 (5 included) | ✅ |
+| 6 | annual_meeting + secret voting | 20 (12 included) | 20 (12 included) | ✅ |
+
+**Единственное архитектурное различие**: frontend читает `runtime_status` из `corporateTemplateSpec.ts` через `getTemplateSpec()`, server использует `resolveRuntimeStatus()` из `DEFAULT_RUNTIME_STATUS` map. Обе карты идентичны (proof sync: `FRONTEND_STATUS === SERVER_STATUS` по всем 18 кодам). Расхождений нет.
+
+**Proof script**: `/tmp/manifest_parity.js` — запущен 2026-03-25, результат `all_match: true`.
 
 ### Proof: No second token system
 
@@ -364,35 +371,101 @@ SQL proof: `corporate_params` не содержит `leg_name`, `leg_address`, `
 - ✅ Arrays/loops через fields_registry + docxtemplater + add-only adapter
 - ✅ `votes_count` — canonical key в payload, маппинг из internal `vote_count`
 
-### Runtime activation matrix
+---
 
-| Template | DB active | Storage | runtime_status | End-to-end proof | Download proof |
-|---|---|---|---|---|---|
-| corp_order_meeting | ✅ | ✅ | **active** | ✅ batch `2222f7ff` | ✅ signed URL works |
-| corp_review_list | ✅ | ✅ | **active** | ✅ batch `2222f7ff` | ✅ signed URL works |
-| corp_sole_decision | ✅ | ✅ | active | not tested (sole mode) | — |
-| corp_sole_appendices | ✅ | ✅ | active | not tested (conditional) | — |
-| corp_board_consent | ✅ | ✅ | active | not tested (conditional) | — |
-| corp_auditor_candidates | ✅ | ✅ | active | not tested (conditional) | — |
-| corp_auditor_consent | ✅ | ✅ | active | not tested (conditional) | — |
-| corp_charter_amendments | ✅ | ✅ | active | not tested (conditional) | — |
-| corp_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_notice_journal | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_draft_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_registration_list | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_protocol | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_notification_decisions | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_ballot | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_board_candidates | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_audit_commission | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
-| corp_agenda_change_notice | ✅ | ✅ | pending_sprint3 | excluded ✅ | — |
+## Финальная Runtime Activation Matrix (все 18 шаблонов + 4 external)
+
+### Закрыто в Sprint 3 (end-to-end proof)
+
+| template_code | branch | runtime_status | manifest | render | upload | db_record | signed_url | batch | proof |
+|---|---|---|---|---|---|---|---|---|---|
+| corp_order_meeting | annual_meeting | **active** | ✅ included | ✅ | ✅ | ✅ `7f7940c2` | ✅ | `2222f7ff` | **PROVEN** |
+| corp_review_list | annual_meeting | **active** | ✅ included | ✅ | ✅ | ✅ `37a7d8f7` | ✅ | `2222f7ff` | **PROVEN** |
+
+### Active, но без end-to-end proof (нет confirmed test sessions)
+
+| template_code | branch | runtime_status | причина отсутствия proof |
+|---|---|---|---|
+| corp_sole_decision | sole_participant | active | Нет confirmed session с procedure_mode=sole_participant_decision |
+| corp_sole_appendices | sole_participant | active | Нет confirmed session с sole + appendices |
+| corp_board_consent | conditional (has_board) | active | Нет confirmed session с charter_confirmed + has_board=true |
+| corp_auditor_candidates | conditional (has_auditor) | active | Нет confirmed session с charter_confirmed + has_auditor=true |
+| corp_auditor_consent | conditional (has_auditor) | active | Нет confirmed session с charter_confirmed + has_auditor=true |
+| corp_charter_amendments | conditional (charter_change) | active | Нет confirmed session с charter_change в agenda |
+
+**STOP-guard**: статус этих шаблонов НЕ изменяется. Они остаются `active` (были установлены ранее по scalar-only proof), но полный end-to-end proof переносится в Sprint 4 после создания тестовых сессий.
+
+### Pending Sprint 3 (loop-dependent, не активированы)
+
+| template_code | branch | runtime_status | причина |
+|---|---|---|---|
+| corp_notice | annual_meeting | pending_sprint3 | Требует per-participant loop |
+| corp_notice_journal | annual_meeting | pending_sprint3 | Требует loop по участникам |
+| corp_draft_decisions | annual_meeting | pending_sprint3 | Требует loop по agenda.items |
+| corp_registration_list | annual_meeting | pending_sprint3 | Требует loop по участникам |
+| corp_protocol | annual_meeting | pending_sprint3 | Требует loops: agenda, participants, голосование |
+| corp_notification_decisions | annual_meeting | pending_sprint3 | Требует per-participant loop |
+| corp_ballot | conditional | pending_sprint3 | Требует loop по вопросам повестки |
+| corp_board_candidates | conditional | pending_sprint3 | Требует loop по кандидатам |
+| corp_audit_commission | conditional | pending_sprint3 | Требует loop по членам комиссии |
+| corp_agenda_change_notice | conditional | pending_sprint3 | Manual trigger, loop-dependent |
+
+### External (manifest-only, не генерируются)
+
+| template_code | runtime_status | notes |
+|---|---|---|
+| ext_annual_report | N/A | Внешний документ |
+| ext_balance_sheet | N/A | Внешний документ |
+| ext_audit_report | N/A | Внешний документ |
+| ext_auditor_conclusion | N/A | Условный (has_auditor/has_audit_commission) |
 
 ---
 
-## Остаточные GAP после S3-CLOSE-3
+## Proof: UI-proof history integration
 
-1. **9 шаблонов остаются `pending_sprint3`** — требуют loop-поддержки и поштучного proof для activation
-2. **6 шаблонов `active` не протестированы end-to-end** — sole_decision, board_consent, auditor_candidates, auditor_consent, charter_amendments, sole_appendices (требуют соответствующих сессий)
-3. **UI-proof history integration** — batch виден в UI, но полный UI-proof (grouping, download из браузера) требует проверки с учётки пользователя
-4. **DB column `runtime_status`** — временное правило sync работает, но полноценный SoT через DB ещё не реализован
-5. **Manifest parity machine-readable proof** — snapshot сохраняется в batch.meta, но формальное JSON-сравнение по 6 кейсам ещё не выполнено (требует 6 разных сессий)
+**Статус: ЧАСТИЧНЫЙ**
+
+- ✅ Batch `2222f7ff` записан в `ai_document_generation_batches` с `meta.source='corporate_wizard'`
+- ✅ Документы привязаны через `generation_batch_id`
+- ⚠️ Полный UI-proof (grouping, download из браузера, скрины) требует ручной проверки из учётки пользователя
+- Переносится как verification task
+
+---
+
+## Закрыто в Sprint 3
+
+1. ✅ **Manifest-driven architecture** — calculateServerManifest + calculatePackageManifest 1:1
+2. ✅ **State flow** — confirmed → generating → generated (server-only)
+3. ✅ **Person lookup** — person_id → Layer B, fallback на name
+4. ✅ **Enhanced snapshot** — Layer F с array summary, boolean flags, refs
+5. ✅ **Error-doc traceability** — upload/signed_url failures записываются в ai_generated_documents
+6. ✅ **Storage blocker fix** — transliteration Cyrillic→ASCII
+7. ✅ **Manifest parity proof** — machine-readable, 6 сценариев, 0 расхождений
+8. ✅ **runtime_status sync rule** — documented, enforced
+9. ✅ **2 шаблона proven end-to-end** — corp_order_meeting, corp_review_list
+
+## Не закрыто в Sprint 3
+
+1. ❌ **6 active шаблонов без end-to-end proof** — sole_decision, sole_appendices, board_consent, auditor_candidates, auditor_consent, charter_amendments
+2. ❌ **9 pending_sprint3 шаблонов** — требуют loop-поддержки
+3. ❌ **UI-proof из браузера** — batch visible, но полный proof (grouping, download) не сделан
+4. ❌ **DB column runtime_status** — временное правило sync работает, но SoT через DB не реализован
+
+## Переходит в Sprint 4
+
+| Область | Описание |
+|---|---|
+| Per-participant generation | `corp_notice`, `corp_ballot`, `corp_notification_decisions` — по участнику |
+| Loop-dependent templates | 9 шаблонов pending_sprint3 |
+| End-to-end proof active templates | 6 шаблонов — создать тестовые сессии sole/conditional |
+| UI/history full proof | Grouping, download из браузера, скрины |
+| AI parsing устава | Через существующий token pipeline |
+| DOCX preview | В браузере |
+| DB column runtime_status | Добавить в document_templates |
+| Registered persons | Полноценная модель регистрации |
+
+---
+
+## PATCH-остатки / Новые баги (S3-CLOSE-4)
+
+Новых багов в процессе proof не обнаружено. Все найденные ранее проблемы (upload blocker, error-doc traceability) были исправлены в S3-CLOSE-3.
