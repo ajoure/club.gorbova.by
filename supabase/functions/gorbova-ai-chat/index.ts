@@ -165,8 +165,8 @@ Deno.serve(async (req) => {
     const aiMessages: any[] = [{ role: 'system', content: systemPrompt }];
 
     // Add file contents as context if present
-    if (fileContents) {
-      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${fileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
+    if (processedFileContents) {
+      const fileContextMsg = `--- СОДЕРЖИМОЕ ЗАГРУЖЕННЫХ ФАЙЛОВ ---\n${processedFileContents}\n--- КОНЕЦ ФАЙЛОВ ---`;
       aiMessages.push({ role: 'user', content: fileContextMsg });
       metadata.file_names = fileNames || [];
     }
