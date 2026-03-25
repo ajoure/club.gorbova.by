@@ -2121,6 +2121,8 @@ export type Database = {
           created_at: string
           description: string | null
           document_type: string
+          editor_draft_content: Json | null
+          editor_mvp_enabled: boolean
           id: string
           is_active: boolean | null
           name: string
@@ -2128,6 +2130,7 @@ export type Database = {
           template_notes: string | null
           template_path: string
           template_scope: string
+          template_status: string
           updated_at: string
         }
         Insert: {
@@ -2135,6 +2138,8 @@ export type Database = {
           created_at?: string
           description?: string | null
           document_type?: string
+          editor_draft_content?: Json | null
+          editor_mvp_enabled?: boolean
           id?: string
           is_active?: boolean | null
           name: string
@@ -2142,6 +2147,7 @@ export type Database = {
           template_notes?: string | null
           template_path: string
           template_scope?: string
+          template_status?: string
           updated_at?: string
         }
         Update: {
@@ -2149,6 +2155,8 @@ export type Database = {
           created_at?: string
           description?: string | null
           document_type?: string
+          editor_draft_content?: Json | null
+          editor_mvp_enabled?: boolean
           id?: string
           is_active?: boolean | null
           name?: string
@@ -2156,6 +2164,7 @@ export type Database = {
           template_notes?: string | null
           template_path?: string
           template_scope?: string
+          template_status?: string
           updated_at?: string
         }
         Relationships: []
