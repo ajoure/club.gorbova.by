@@ -1,10 +1,12 @@
-# Правила применения корпоративных шаблонов — Sprint 2
+# Правила применения корпоративных шаблонов — Sprint 3
 
 ## Источник данных
 
 - Machine-readable spec: `src/lib/corporate/corporateTemplateSpec.ts`
 - Manifest constants: `src/lib/corporate/corporateRuleEngine.ts`
+- Server manifest: `supabase/functions/_shared/corporate-manifest.ts`
 - Template resolver: `src/lib/corporate/corporateTemplateResolver.ts`
+- Resolver pipeline: `src/lib/corporate/useResolverPipeline.ts`
 - DOCX-исходники: `assets/corporate-templates/`
 - Storage: `documents-templates/templates/corp_*.docx`
 - DB: `document_templates` (template_scope = 'corporate')
@@ -21,28 +23,77 @@
 2. **Динамический состав** — набор документов зависит от подтверждённых правил устава (`charter_rules`), формы голосования, повестки дня и других параметров сессии. Статический DB package не может это выразить.
 3. **Rule engine уже решает эту задачу** — `calculatePackageManifest()` формирует состав пакета на лету.
 
-### Flow
+### Flow (Sprint 3)
 
 ```
 corporate_wizard (UI)
-  → calculatePackageManifest()     # rule engine формирует manifest
-  → resolveManifestTemplates()     # resolver проверяет DB (record, is_active, template_path)
-  → verifyStorageFiles()           # проверяет фактическое наличие файлов в storage bucket
-  → validateTemplateAvailability() # validation layer (blocking / non-blocking / informational)
-  → edge function (Sprint 3)      # генерация DOCX
+  → calculatePackageManifest()             # frontend rule engine (preview)
+  → resolveManifestTemplates()             # resolver: DB check
+  → verifyStorageFiles()                   # storage check
+  → validateTemplateAvailability()         # validation (blocking / non-blocking)
+  → flushSave session                      # save to DB
+  → invoke ai-generate-corporate-package   # edge function
+    ↓
+  [edge function — server SoT]
+  → fetch session (Layer D)
+  → calculateServerManifest()              # SERVER-SIDE manifest recalculation
+  → serverSidePreFlight()                  # resolve + verify + validate
+  → set status='generating' (ONLY after pre-flight OK)
+  → batchFetchPersons()                    # Layer B lookup by person_id
+  → buildPayload (3 layers: scalar/array/boolean)
+  → docxtemplater render per template
+  → upload to storage
+  → insert ai_generated_documents (with enhanced snapshot)
+  → insert/update batch
+  → set status='generated' or rollback to 'confirmed'
 ```
 
-> **Примечание:** `verifyStorageFiles()` использует `supabase.storage.list('templates')` для preview-time проверки.
-> При значительном росте числа шаблонов может потребоваться более точная проверка по конкретным путям.
+### Server SoT vs Draft JSON
+
+| Артефакт | Назначение | Source of truth? |
+|---|---|---|
+| `session.package_manifest` (DB JSON) | Draft/debug artifact для UI preview | **НЕТ** — не используется при generation |
+| `calculateServerManifest()` (edge function) | Server-side recalculation из params/rules | **ДА** — единственный SoT для generation |
+| Frontend `calculatePackageManifest()` | Preview в wizard UI | Только для отображения |
+
+**Правило**: draft session `package_manifest` — это сохранённый снимок для отладки. При generation edge function заново пересчитывает manifest из `corporate_params` + `confirmed_charter_rules` + `procedure_mode`.
+
+### Status flow (state machine)
+
+```text
+confirmed → [server pre-flight OK] → generating → generated
+                                                ↘ confirmed (rollback on error)
+```
+
+- `generating` ставится **только edge function** после успешного pre-flight
+- Frontend показывает локальный loading, но НЕ пишет status
+- При ошибке generation → откат в `confirmed`, не в `draft`/`preview`
+- При 0 eligible templates → session остаётся `confirmed` (generating не ставится)
 
 ### Visibility policy: почему corporate templates скрыты из AI-менеджера
 
 Corporate templates используют `template_scope = 'corporate'`, который **intentionally** не видим в generic AI templates UI (`scope = 'ai' | 'both'`).
 
-Причины:
-- Корпоративные шаблоны — системные нормативные документы, не пользовательские универсальные.
-- Редактирование и использование идёт исключительно через corporate wizard, не через generic AI documents flow.
-- Шаблоны содержат специфичную loop/conditional разметку для docxtemplater, не предназначенную для ручного редактирования.
+---
+
+## Слои хранения данных / Source of Truth
+
+| Слой | Таблица / источник | Что хранит | Правило |
+|---|---|---|---|
+| **A. Карточка юрлица** | `client_legal_details` | Реквизиты, адрес, директор, банк, УНП | Постоянный SoT. Не дублировать в draft session |
+| **B. Карточка физлица** | `legal_details_persons` | ФИО, паспорт, контакты | Постоянный SoT. Edge function делает batch lookup по person_id |
+| **C. Связь физлицо ↔ юрлицо** | `legal_details_entity_person_links` | Роли, доля, голоса, должность | SoT для ролей и параметров участия |
+| **D. Корпоративная процедура** | `corporate_draft_sessions` | procedure_mode, corporate_params (refs + procedural data), charter state, manifest, status | Только процедурный контекст и ссылки на A/B/C |
+| **E. Computed / derived** | Runtime (edge function) | settlement_display, boolean flags, decision.items, registered_persons | Вычисляется при генерации |
+| **F. Snapshot / история** | `ai_generated_documents` + batches | Что подставилось, из какого слоя, manifest, warnings | Обязательная фиксация |
+
+### Запрет дублирования
+
+В `corporate_draft_sessions.corporate_params` **запрещено** хранить как первичный ввод: реквизиты юрлица, паспортные данные, постоянные контакты. Используются ссылки (`person_id`, `legal_details_id`).
+
+### Person lookup rule
+
+**Единое правило**: `person_id` → lookup из Layer B (`legal_details_persons`), fallback на `name` только если `person_id` отсутствует. Применяется к: chair, secretary, participants, board_candidates, auditor_candidates.
 
 ---
 
@@ -75,53 +126,75 @@ Corporate templates используют `template_scope = 'corporate'`, кот�
 
 ---
 
-## Правила включения шаблонов
+## Payload builder: 3 слоя, сборка из 6 слоёв хранения
 
-### Annual Meeting (8 core + conditional)
+### 1. Canonical scalar fields
 
-| code | Когда включается | Когда исключается | legal_basis | Условие |
-|---|---|---|---|---|
-| corp_order_meeting | Всегда для annual_meeting | — | law_default | — |
-| corp_notice | Всегда для annual_meeting | — | law_default | — |
-| corp_notice_journal | Всегда для annual_meeting | — | law_default | — |
-| corp_review_list | Всегда для annual_meeting | — | law_default | — |
-| corp_draft_decisions | Всегда для annual_meeting | — | law_default | — |
-| corp_registration_list | Всегда для annual_meeting | — | law_default | — |
-| corp_protocol | Всегда для annual_meeting | — | law_default | — |
-| corp_notification_decisions | Всегда для annual_meeting | — | law_default | — |
-| corp_ballot | Тайное голосование или устав | Открытое голосование без требования устава | charter_confirmed | voting_form_secret_or_charter |
-| corp_board_candidates | Совет директоров по уставу | Устав не подтверждён или совет не предусмотрен | charter_confirmed | has_board |
-| corp_board_consent | Совет директоров по уставу | Устав не подтверждён или совет не предусмотрен | charter_confirmed | has_board |
-| corp_auditor_candidates | Ревизор по уставу | Устав не подтверждён или ревизор не предусмотрен | charter_confirmed | has_auditor |
-| corp_auditor_consent | Ревизор по уставу | Устав не подтверждён или ревизор не предусмотрен | charter_confirmed | has_auditor |
-| corp_audit_commission | Рев. комиссия по уставу | Устав не подтверждён или комиссия не предусмотрена | charter_confirmed | has_audit_commission |
-| corp_agenda_change_notice | Повестка изменена после извещения | — | user_selected | agenda_changed |
-| corp_charter_amendments | В повестке — изменение устава | — | user_selected | agenda_has_charter_change |
+Собирается из слоёв A, B, D:
+- Из A: `legal_details.leg_name`, `leg_director_name`, `leg_director_position`, `leg_address`, `leg_unp`, `leg_org_form`, `leg_acts_on_basis`
+- Из B (batch lookup по person_id): `package.chairperson.full_name`, `package.secretary.full_name`
+- Из D: `meeting.date`, `meeting.time`, `meeting.location.full`, `meeting.report_year`
 
-### Sole Participant Decision (1 core + 1 conditional)
+### 2. Canonical array fields (из fields_registry)
 
-| code | Когда включается | legal_basis |
+| Key | Source | Модель Sprint 3 |
 |---|---|---|
-| corp_sole_decision | Всегда для sole_participant | law_default |
-| corp_sole_appendices | При наличии приложений | user_selected |
+| `package.participants` | D.participants + B lookup | Финальная |
+| `package.registered_persons` | D.participants filtered | Operational approximation |
+| `agenda.items` | D.agenda | Финальная |
+| `decision.items` | Derived (E) из D.agenda | Temporary fallback |
+| `package.board_candidates` | D.candidates.board + B lookup | Финальная |
+| `package.commission_members` | D.candidates.auditor + B lookup | Финальная |
 
-### Externally Provided (manifest only, NO templates)
+**Canonical key**: `votes_count` в payload (маппинг из internal `vote_count`).
 
-| code | Когда учитывается | Примечание |
-|---|---|---|
-| ext_annual_report | Всегда | Готовится руководством |
-| ext_balance_sheet | Всегда | Готовится бухгалтерией |
-| ext_audit_report | Всегда | Готовится аудитором |
-| ext_auditor_conclusion | При наличии ревизора/комиссии | Условный внешний документ |
+### 3. Computed compatibility fields (слой E)
+
+- `settlement_display` → alias к `entity.settlement_display`, derived из `leg_address`
+- Boolean flags: `has_board`, `has_auditor`, `has_audit_commission`, `is_secret_vote`, `has_charter_changes`
+
+### settlement_display
+
+- Шаблон использует `{{settlement_display}}`
+- Runtime берёт значение из `entity.leg_address` (derived)
+- Новая запись в `fields_registry` **не создаётся**
+- Новый token format **не появляется**
 
 ---
 
-## Терминология (proof)
+## Enhanced Snapshot (Layer F)
 
-- ✅ «участники» (не «учредители») — во всех шаблонах
-- ✅ «Решение единственного участника» (не «протокол единственного участника»)
-- ✅ Подписант в corp_sole_decision — «Единственный участник» (не «Председатель»)
-- ✅ Вид документа прописными: РЕШЕНИЕ, ПРОТОКОЛ, ИЗВЕЩЕНИЕ, ЖУРНАЛ, ПЕРЕЧЕНЬ, БЮЛЛЕТЕНЬ, УВЕДОМЛЕНИЕ, СВЕДЕНИЯ, СОГЛАСИЕ
+Каждый `ai_generated_documents` record содержит в `snapshot`:
+
+- `used_scalar_keys` — список непустых scalar keys
+- `array_summary` — `{ key: length }` для каждого array (без данных — нет дублирования ПД)
+- `boolean_flags` — все boolean flags на момент генерации
+- `procedure_mode`, `report_year`
+- `refs` — `legal_details_id`, `corporate_draft_session_id`, `chair_person_id`, `secretary_person_id`
+- `manifest_snapshot_for_template` — runtime_status/included для данного шаблона
+- `resolver_version`
+
+В `meta` batch:
+- `source: 'corporate_wizard'`
+- `manifest_snapshot` — полный manifest на момент генерации
+- `pre_flight_issues`
+
+---
+
+## Token compatibility (Proof no second token system)
+
+- Не создан новый registry
+- Не создан новый placeholder format
+- Не появился corporate-only token namespace
+- Arrays/loops идут через `fields_registry` + docxtemplater engine + add-only adapter
+- Corporate templates совместимы с существующим visual picker
+
+---
+
+## Per-packet scope (Sprint 3)
+
+`corp_notice`, `corp_notification_decisions`, `corp_ballot` — один документ на пакет/сессию.
+Per-participant generation — GAP Sprint 4.
 
 ---
 
@@ -131,34 +204,38 @@ Corporate templates используют `template_scope = 'corporate'`, кот�
 |---|---|---|
 | `available` | Шаблон в БД, активен, файл указан, runtime active | — |
 | `pending_sprint3` | Шаблон в БД, но требует поддержки loops/arrays | non-blocking |
-| `missing_db_record` | Нет записи в document_templates | blocking (если active + included) |
-| `inactive_template` | Запись есть, но is_active = false | blocking (если active + included) |
-| `missing_template_path` | Запись есть, но template_path пуст | blocking (если active + included) |
-| `missing_storage_file` | Путь указан, но файла нет в storage | blocking (если active + included) |
+| `missing_db_record` | Нет записи в document_templates | blocking |
+| `inactive_template` | Запись есть, но is_active = false | blocking |
+| `missing_template_path` | Запись есть, но template_path пуст | blocking |
+| `missing_storage_file` | Путь указан, но файла нет в storage | blocking |
 | `not_applicable` | Внешний документ, не генерируется | informational |
 
 ---
 
-## Пакеты (ownership model)
+## Фильтр генерации (обязательный, runtime)
 
-Корпоративные пакеты НЕ хранятся в `document_package_templates` (таблица tenant-scoped, требует profile_id).
-
-Состав пакета определяется динамически через `corporateRuleEngine.ts → calculatePackageManifest()` на основе:
-- procedure_mode (annual_meeting / sole_participant_decision)
-- charter_rules (confirmed / law_default)
-- corporate_params (agenda, voting_form, etc.)
-
-Это архитектурно корректнее, чем статический пакет, т.к. состав зависит от подтверждённых правил устава.
+Шаблон генерируется **только если**:
+1. `included = true` (manifest rule engine)
+2. `category !== 'externally_provided'`
+3. `runtime_status === 'active'` (corporateTemplateSpec)
+4. `availability === 'available'` (server pre-flight: DB active + template_path + storage file)
 
 ---
 
-## GAP на Sprint 3
+## Терминология
+
+- ✅ «участники» (не «учредители»)
+- ✅ «Решение единственного участника» (не «протокол единственного участника»)
+- ✅ Подписант в corp_sole_decision — «Единственный участник» (не «Председатель»)
+
+---
+
+## GAP на Sprint 4
 
 | Область | Описание |
 |---|---|
-| Runtime loops | Подстановка массивов (agenda.items, participants) в edge function |
-| Conditional sections | if/else блоки в docxtemplater |
-| Preview | Предпросмотр сгенерированного DOCX |
-| Wizard → Edge Function | Передача параметров сессии в генератор |
-| Activation | 9 шаблонов помечены `pending_sprint3` — требуют array support |
-| Storage verification | `verifyStorageFiles()` — глубокая проверка при генерации |
+| Per-participant generation | `corp_notice`, `corp_ballot`, `corp_notification_decisions` — по участнику |
+| AI parsing устава | Через существующий token pipeline |
+| DOCX preview | В браузере |
+| Runtime activation | 9 шаблонов `pending_sprint3` — перевод по поштучному proof |
+| Registered persons | Полноценная модель регистрации (расширение `package.registered_persons`) |
