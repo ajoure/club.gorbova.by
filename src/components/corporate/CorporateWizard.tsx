@@ -416,7 +416,7 @@ export function CorporateWizard({ open, onOpenChange }: CorporateWizardProps) {
                <Button
                  variant="outline"
                  className="h-9 w-full sm:w-auto text-sm"
-                 onClick={() => setShowExitDialog(false)}
+                 onClick={() => setShowCloseConfirm(false)}
                  disabled={closeSaving}
                >
                  Остаться
