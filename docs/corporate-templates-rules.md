@@ -212,12 +212,36 @@ Per-participant generation — GAP Sprint 4.
 
 ---
 
+## runtime_status ≠ template availability
+
+**Это разные сущности, которые нельзя смешивать.**
+
+| Понятие | Что означает | Источник | Когда меняется |
+|---|---|---|---|
+| `runtime_status` | Доказанная готовность шаблона к runtime-рендеру (render OK, file uploaded, DB record created, generation flow без ошибки) | `document_templates.meta.runtime_status` (DB SoT) → передаётся как `runtimeStatusOverrides` в `calculateServerManifest()` | Только после полного proof-пакета по шаблону |
+| `availability` | Доступность шаблона: DB active + template_path + storage file | Проверяется в `serverSidePreFlight()` при каждой генерации | Может меняться в любой момент (удалён файл, деактивирован шаблон) |
+
+**Правила:**
+- `runtime_status = 'active'` НЕ означает availability — шаблон может быть active, но файл удалён из storage
+- `availability = 'available'` НЕ означает runtime_status active — шаблон может быть доступен, но не прошёл proof
+- Для генерации нужны ОБА: `runtime_status === 'active'` AND `availability === 'available'`
+- Изменение `runtime_status` с `pending_sprint3` на `active` допускается ТОЛЬКО после proof: render OK → file uploaded → DB record created → template в generation flow без ошибки
+
+### Синхронизация runtime_status
+
+SoT для runtime_status — `document_templates.meta.runtime_status` в БД.
+Edge function читает из DB и передаёт как `runtimeStatusOverrides` в `calculateServerManifest()`.
+Frontend `corporateTemplateSpec.ts` содержит fallback-значения, которые должны быть синхронны с DB.
+`DEFAULT_RUNTIME_STATUS` в `_shared/corporate-manifest.ts` — last-resort fallback, если DB не ответила.
+
+---
+
 ## Фильтр генерации (обязательный, runtime)
 
 Шаблон генерируется **только если**:
 1. `included = true` (manifest rule engine)
 2. `category !== 'externally_provided'`
-3. `runtime_status === 'active'` (corporateTemplateSpec)
+3. `runtime_status === 'active'` (from DB via runtimeStatusOverrides)
 4. `availability === 'available'` (server pre-flight: DB active + template_path + storage file)
 
 ---
