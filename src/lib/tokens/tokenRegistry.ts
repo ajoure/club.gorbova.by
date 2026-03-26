@@ -20,18 +20,20 @@
  *   Legacy exception: {{cf.product.<UUID>}} — legacy compatibility only,
  *   NOT a canonical format for new Class A token families.
  *
- * Groups:
- * 1. CONTACT_TOKENS — 1:1 с resolveContactTokens() в edge functions
- * 2. DATETIME_TOKENS — 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
- * 3. Product custom fields — динамически из fields_registry (UUID-based) [legacy compat]
- * 4. Legal details fields — динамически из fields_registry (public_id-based) [implemented]
- * 5. Person fields — динамически из fields_registry (entity_type='person')
- * 6. Entity-person link fields — динамически из fields_registry (entity_type='entity_person')
- * 7. Document fields — динамически из fields_registry (entity_type='document')
- * 8. Meeting fields — динамически из fields_registry (entity_type='meeting')
- * 9. Entity computed fields — динамически из fields_registry (entity_type='entity')
+ * Groups (with token class):
+ * 1. CONTACT_TOKENS — Class B, 1:1 с resolveContactTokens() в edge functions
+ * 2. DATETIME_TOKENS — Class B, 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
+ * 3. Product custom fields — Class A [legacy compat], UUID-based: {{cf.product.<UUID>}}
+ * 4. Legal details fields — Class A [implemented], public_id-based: {{cf.legal_details.FLD-000042}}
+ * 5. Person fields — Class B, metadata из fields_registry, token example: {{person.full_name}}
+ * 6. Entity-person link fields — Class B, metadata из fields_registry, token example: {{entity_person.position}}
+ * 7. Document fields — Class B, metadata из fields_registry, token example: {{document.number}}
+ * 8. Meeting fields — Class B, metadata из fields_registry, token example: {{meeting.date}}
+ * 9. Entity computed fields — Class B, metadata из fields_registry, token example: {{entity.name}}
  *
- * SoT хранения: {{canonical.key}}, e.g. {{meeting.date}}
+ * External token format (SoT):
+ *   Class A: {{cf.<entity_type>.<PUBLIC_ID>}} — example: {{cf.legal_details.FLD-000042}}
+ *   Class B: {{canonical.key}} — example: {{meeting.date}}
  * UI показывает label, хранит tokenString.
  */
 
