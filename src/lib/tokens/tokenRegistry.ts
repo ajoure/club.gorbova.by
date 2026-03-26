@@ -1,27 +1,36 @@
 /**
  * Unified Token Registry — единый источник правды для UI-лейблов токенов.
- * 
+ *
  * Registry-first rule:
  * Before creating any new token, search existing key in fields_registry.
  * If key exists — reuse 1:1. Only create new if truly missing.
- * 
- * Four levels of representation:
- * 1. internal id: UUID (fields_registry.id)
- * 2. canonical key: e.g. "meeting.notice.date" (fields_registry.key)
- * 3. system token: "{{meeting.notice.date}}" (stored in templates/text)
- * 4. UI token: "[Дата направления извещения]" (shown in editor chips)
- * 
+ *
+ * Dual-Class Token Model (see docs/TOKEN_ARCHITECTURE.md):
+ *
+ *   Class A — registry-backed data tokens.
+ *     Canonical format: {{cf.<entity_type>.<PUBLIC_ID>}}
+ *     Example: {{cf.legal_details.FLD-000042}}
+ *     Resolved via: public_id → fields_registry → DB column / field_values_v2
+ *
+ *   Class B — computed / domain / package tokens.
+ *     Format: {{canonical.key}}
+ *     Example: {{meeting.date}}
+ *     Resolved via: canonical key → resolver function
+ *
+ *   Legacy exception: {{cf.product.<UUID>}} — legacy compatibility only,
+ *   NOT a canonical format for new Class A token families.
+ *
  * Groups:
  * 1. CONTACT_TOKENS — 1:1 с resolveContactTokens() в edge functions
  * 2. DATETIME_TOKENS — 1:1 с resolveSystemTokens() в _shared/systemTokens.ts
- * 3. Product custom fields — динамически из fields_registry (UUID-based legacy)
- * 4. Legal details fields — динамически из fields_registry (public_id-based canonical)
+ * 3. Product custom fields — динамически из fields_registry (UUID-based) [legacy compat]
+ * 4. Legal details fields — динамически из fields_registry (public_id-based) [implemented]
  * 5. Person fields — динамически из fields_registry (entity_type='person')
  * 6. Entity-person link fields — динамически из fields_registry (entity_type='entity_person')
  * 7. Document fields — динамически из fields_registry (entity_type='document')
  * 8. Meeting fields — динамически из fields_registry (entity_type='meeting')
  * 9. Entity computed fields — динамически из fields_registry (entity_type='entity')
- * 
+ *
  * SoT хранения: {{canonical.key}}, e.g. {{meeting.date}}
  * UI показывает label, хранит tokenString.
  */
