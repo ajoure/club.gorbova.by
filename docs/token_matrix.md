@@ -8,6 +8,25 @@
 
 ---
 
+## Token Class Reference
+
+> Класс токена определяется механизмом резолвинга, не именем сущности. Подробнее: `docs/TOKEN_ARCHITECTURE.md`.
+
+| Token family | Class | Format example | Resolution | Status |
+|---|---|---|---|---|
+| `cf.legal_details.*` | A | `{{cf.legal_details.FLD-000042}}` | `public_id` → `fields_registry` → DB column | [implemented] |
+| `cf.product.*` | legacy exception | `{{cf.product.<UUID>}}` | UUID → `fields_registry` → `field_values_v2` | [legacy compat] — not a model for new Class A families |
+| `meeting.*` | B | `{{meeting.date}}` | canonical key → resolver | [implemented] |
+| `document.*` | B | `{{document.number}}` | canonical key → resolver | [implemented] |
+| `package.*` | B | `{{package.signer.full_name}}` | canonical key → resolver | [target] |
+| `person.*` | B (may evolve) | `{{person.full_name}}` | canonical key → resolver | [implemented] |
+
+- **Class A** canonical format: `{{cf.<entity_type>.<PUBLIC_ID>}}` — example: `{{cf.legal_details.FLD-000042}}`
+- **Class B** format: `{{canonical.key}}` — example: `{{meeting.date}}`
+- `cf.product` — legacy exception, NOT a template for new Class A token families
+
+---
+
 ## Reuse 1:1 (existing keys, новые ключи НЕ создавались)
 
 ### Package → Meeting reuse mapping
