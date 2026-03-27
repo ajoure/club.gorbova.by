@@ -379,6 +379,9 @@ const AI = () => {
         : "text-muted-foreground hover:text-foreground"
     }`;
 
+  /** Offset от верха viewport до контейнера чата (header + padding DashboardLayout) */
+  const AI_CONTAINER_OFFSET = '4.5rem';
+
   return (
     <DashboardLayout>
       <div
