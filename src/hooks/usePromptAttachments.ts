@@ -97,9 +97,8 @@ export function usePromptAttachments() {
         extractionStatus = "failed";
       }
 
-      // 2. Upload to Storage
-      const fileId = crypto.randomUUID();
-      const storagePath = `${promptId}/${fileId}_${file.name}`;
+      // 2. Upload to Storage (ASCII-only key, original name stays in DB)
+      const storagePath = `${promptId}/${buildSafeStorageFileName(file.name)}`;
 
       const { error: storageError } = await supabase.storage
         .from("prompt-attachments")
