@@ -123,7 +123,7 @@ export function PromptAttachmentsSection({
             return (
               <div
                 key={att.id}
-                className="flex items-center gap-3 p-2 rounded-md border bg-muted/30"
+                className="flex items-center gap-3 p-2 rounded-md border bg-muted overflow-hidden"
               >
                 <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="flex-1 min-w-0">

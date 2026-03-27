@@ -142,7 +142,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-muted/30 p-0">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden bg-background p-0">
         <DialogHeader className="px-6 pt-6 pb-2">
           <DialogTitle>{prompt ? "Редактировать промпт" : "Создать промпт"}</DialogTitle>
         </DialogHeader>
