@@ -367,6 +367,25 @@ Deno.serve(async (req) => {
     }
     console.log(`[bepaid-list-subs] PATCH P2.10: loaded ${subV2DetailsMap.size} v2 details for ${v2Ids.length} ids (batches: ${Math.ceil(v2Ids.length / V2_BATCH_SIZE)})`);
 
+    // PATCH-SV2-ORDER: Bulk-load orders by sv2.order_id for direct chain resolution
+    const sv2OrderIds = [...new Set(
+      [...subV2DetailsMap.values()].map(d => d.order_id).filter(Boolean) as string[]
+    )];
+    const v2OrderIdMap = new Map<string, { order_id: string; order_number: string | null }>();
+    if (sv2OrderIds.length > 0) {
+      for (let i = 0; i < sv2OrderIds.length; i += V2_BATCH_SIZE) {
+        const batch = sv2OrderIds.slice(i, i + V2_BATCH_SIZE);
+        const { data: v2Orders } = await supabase
+          .from('orders_v2')
+          .select('id, order_number')
+          .in('id', batch);
+        for (const o of v2Orders || []) {
+          v2OrderIdMap.set(o.id, { order_id: o.id, order_number: o.order_number });
+        }
+      }
+    }
+    console.log(`[bepaid-list-subs] PATCH-SV2-ORDER: loaded ${v2OrderIdMap.size} orders by sv2.order_id (requested: ${sv2OrderIds.length})`);
+
     // Get our DB subscriptions_v2 mappings
     const { data: dbSubs } = await supabase
       .from('subscriptions_v2')
