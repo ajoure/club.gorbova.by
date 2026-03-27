@@ -36,6 +36,7 @@ const routeToTitle: Record<string, string> = {
   '/admin/email': 'Email',
   '/admin/content': 'Контент',
   '/admin/fields': 'Поля',
+  '/admin/ai': 'Нейросеть',
 };
 
 // Map admin routes to help section anchors
@@ -65,6 +66,7 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/roles': 'roles',
   '/admin/fields': 'integrations-mapping',
   '/admin/audit': 'admin',
+  '/admin/ai': 'admin',
 };
 
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
