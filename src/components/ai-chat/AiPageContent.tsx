@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
 import { FileDropZone, type UploadedFile, processDroppedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
@@ -33,6 +33,7 @@ import {
   Send, 
   Clock,
   FileText,
+  FileStack,
   MessageSquare,
   Building2,
   Users,
@@ -44,7 +45,7 @@ import {
 /* ─── Конфигурация секций и подменю ─── */
 
 type Section = "ai" | "documents" | "requisites";
-type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "entities" | "persons";
+type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "templates" | "executors" | "entities" | "persons";
 
 const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
   { id: "ai", label: "Gorbova AI", icon: Bot },
@@ -122,6 +123,24 @@ const DOC_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-slate-500/20 to-gray-500/15",
     borderColor: "border-slate-400/20",
     iconColor: "text-slate-500",
+  },
+  {
+    id: "templates",
+    label: "Шаблоны документов",
+    icon: FileStack,
+    gradient: "from-orange-500/10 to-amber-500/8",
+    activeGradient: "from-orange-500/20 to-amber-500/15",
+    borderColor: "border-orange-400/20",
+    iconColor: "text-orange-500",
+  },
+  {
+    id: "executors",
+    label: "Исполнители",
+    icon: Building2,
+    gradient: "from-violet-500/10 to-purple-500/8",
+    activeGradient: "from-violet-500/20 to-purple-500/15",
+    borderColor: "border-violet-400/20",
+    iconColor: "text-violet-500",
   },
 ];
 
