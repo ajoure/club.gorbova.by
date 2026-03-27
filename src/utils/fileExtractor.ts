@@ -25,12 +25,14 @@ export function getFileType(file: File): ExtractedContent["type"] {
     file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
     file.type === "text/csv"
   ) return "excel";
+  if (file.type === "text/plain") return "text";
   // Fallback: check extension
   const ext = getExtension(file);
   if (ext === "rtf") return "word";
   if (ext === "csv") return "excel";
   if (ext === "xls" || ext === "xlsx") return "excel";
   if (ext === "doc" || ext === "docx") return "word";
+  if (ext === "txt") return "text";
   return "text";
 }
 
@@ -52,6 +54,10 @@ export async function extractTextFromFile(file: File): Promise<ExtractedContent 
       return extractAsPlainText(file, "excel");
     }
     return extractFromExcel(file);
+  }
+
+  if (fileType === "text") {
+    return extractAsPlainText(file, "text");
   }
 
   if (fileType === "image" || fileType === "pdf") {
