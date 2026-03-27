@@ -1,38 +1,54 @@
 
-
-# План: Исправить linkedOrderId — добавить путь через sv2.order_id
+# План: 3 PATCHа — recovery linkedSubId, ID платежа, SQL-контроль
 
 ## Статус: ВЫПОЛНЕНО
 
-## Проблема
+## Единственный файл: `supabase/functions/bepaid-list-subscriptions/index.ts`
+**Режим: PATCH-READ-ONLY** — никаких записей в БД.
 
-`linkedOrderId` вычислялся только через meta-поля (`orders_v2.meta->>'bepaid_subscription_id'`, `payments_v2.meta->>'bepaid_subscription_id'`). Реальная цепочка `provider_subscriptions.subscription_v2_id → subscriptions_v2.order_id → orders_v2` **не использовалась**. Результат: ~91 подписка с полной связкой в БД показывалась как «Не связана».
+---
 
-## Ограничения патча (PATCH-READ-ONLY)
+## PATCH-1 (P0): Recovery `linkedSubId` через `order_id` — ВЫПОЛНЕНО
 
-- **Add-only правка чтения.** Никакого data-backfill `orders_v2.meta.bepaid_subscription_id`.
-- `link_conflict`, `meta_order_id`, `sv2_order_id` — только поля ответа, НЕ запись в таблицы.
-- Никаких изменений UI-компонентов, бейджей, схемы БД.
-- Единственный файл: `supabase/functions/bepaid-list-subscriptions/index.ts`.
+### Реализовано
+- Helper `computeLinkage()` — единый расчёт linkedOrderId/linkedSubId (используется в pre-pass и `.map()`)
+- Pre-pass: собирает `missingOrderIds` (active contour, linkedOrderId!=null, linkedSubId==null)
+- Bulk query: `subscriptions_v2.select('id, order_id, user_id').in('order_id', missingOrderIds)`
+- `orderIdToSv2`: Map<order_id → sv2.id>, только 1:1 (STOP-guard: >1 → ambiguous)
+- Recovery в `.map()`: `linkedSubId = orderIdToSv2.get(linkedOrderId)` если active contour
 
-## Выполненные изменения
+### Результат
+- `deal_link_mismatch_before=2`, `sub_recovered_via_order=0`, `deal_link_mismatch_after=2`
+- Остаток 2 строки: bePaid подписки (`sbs_9482dac56fc8e66c` и 1 ещё), у которых есть `orders_v2.meta.bepaid_subscription_id` (→ linkedOrderId), но **нет subscriptions_v2 с этим order_id вообще**. Это не баг маппинга — это отсутствие sv2-записи для этих bePaid подписок. Recovery невозможен (нечего восстанавливать).
+- `linked_before=141`, `linked_after=218`, `recovered=77` (через sv2→order chain, существовавший ранее)
 
-### 1. `order_id` добавлен в select subscriptions_v2
-### 2. Bulk-загрузка orders по sv2.order_id (v2OrderIdMap)
-### 3. Новый SoT для linkedOrderId:
-- Приоритет 1: `subscriptions_v2.order_id` (через `provider_subscriptions.subscription_v2_id`)
-- Приоритет 2: `orders_v2.meta->>'bepaid_subscription_id'`
-- Приоритет 3: `payments_v2.meta->>'bepaid_subscription_id'`
+### Stats добавлены
+- `deal_link_mismatch_before`, `sub_recovered_via_order`, `deal_link_mismatch_after`, `ambiguous_order_to_sv2_count`
 
-### 4. STOP-guards:
-- Конфликт sv2 vs meta: если оба найдены и разные → sv2 побеждает, `link_conflict=true` в ответе
-- sv2OrderId есть, но order не найден → `chain_only_unresolved++`, `linkedOrderId=null`
+---
 
-### 5. Stats: `chain_only`, `meta_only`, `both`, `link_conflicts`, `chain_only_unresolved`, `linked_before`, `linked_after`, `recovered`
+## PATCH-2 (P1): Fallback «ID платежа» из `raw_data` — ВЫПОЛНЕНО
 
-### 6. `is_linked_full` = `!!(linkedUserId && linkedSubId && linkedOrderId)` — с новым SoT
+### Реализовано
+- Safe-extract из `provider_subscriptions.raw_data`:
+  - Приоритет 1: `last_transaction_uid` / `last_transaction.uid`
+  - Приоритет 2: `transactions[]` — только последняя по timestamp (`created_at`/`paid_at`/`processed_at`), никогда не `[0]` без timestamp
+- `payment_id_source` в ответе: `'payments_v2.order_id'` | `'payments_v2.meta'` | `'provider_raw'` | `'none'`
+- `provider_payment_id_raw` — что именно взято из raw (только если source=provider_raw)
+- STOP-guard: fallback НЕ влияет на `is_linked_full`
 
-## DoD
+---
 
-- PASS если `recovered ≈ chain_only - chain_only_unresolved` и `link_conflicts` зафиксирован
-- UI-proof: Галай и Дурова показывают зелёный бейдж «Связана»
+## PATCH-3 (P1): SQL-контроль «остатка дыр» — ВЫПОЛНЕНО
+
+### Stats добавлены (из уже загруженных данных)
+- `ps_active_no_sv2=21` — provider_subscriptions активного контура без subscription_v2_id
+- `sv2_pm_no_order=3` — subscriptions_v2 без order_id (из всех загруженных)
+- `sv2_order_not_in_map=0` — алиас chain_only_unresolved
+
+---
+
+## Не затрагивается
+- UI-компоненты, бейджи, фильтры
+- Другие edge functions
+- Схема БД, данные (никакого backfill)
