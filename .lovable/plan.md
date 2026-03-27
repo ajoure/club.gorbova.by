@@ -2,164 +2,190 @@
 
 &nbsp;
 
-1. **Не дублировать processFile-логику в AI.tsx**
+1. **PATCH 2 правильный: вынести общий helper из FileDropZone**
   &nbsp;
-  - Для drag & drop на GlassCard не писать отдельную третью обработку файлов.
-  - Лучше передавать всё в FileDropZone через chatFiles/setChatFiles, а сам FileDropZone в compact-режиме уже должен оставаться единым SoT для:
+  - Это лучший вариант, чем держать отдельную ручную обработку в AI.tsx.
+  - Оставить единый SoT через:
     &nbsp;
-    - валидации,
-    - preview,
-    - paste,
-    - удаления,
-    - лимитов.
+    - resolveFileType
+    - processDroppedFile
     &nbsp;
   &nbsp;
-2. **handleSendMessage должен использовать тот же extraction pipeline, что и scenario mode**
+2. **PATCH 2 нужно довести до полного удаления дублирования**
   &nbsp;
-  - Это ключевое требование.
-  - Логику извлечения не копировать “почти такую же”, а реально переиспользовать тот же кодовый путь, что и в handleScenarioSubmit.
-  &nbsp;
-3. **Для drag & drop на GlassCard нужен явный guard только на файловый drop**
-  &nbsp;
-  - Оставить проверку dataTransfer.types.includes('Files') как обязательную.
-  - Иначе можно сломать обычный drag текста/выделения.
-  &nbsp;
-4. **Hover overlay при drag нужен мягкий и временный**
-  &nbsp;
-  - Не должен ломать layout и не должен перекрывать input настолько, чтобы мешать клику.
-  - Лучше делать лёгкую визуальную подсветку контейнера, а не тяжелый полноэкранный слой.
-  &nbsp;
-5. **Paste ограничивать областью чата — правильно**
-  &nbsp;
-  - Не на всю страницу.
-  - Если FileDropZone внутри GlassCard уже умеет paste, это лучший путь.
-  &nbsp;
-6. **Компактный uploader обязательно должен поддерживать длинные имена без overflow**
-  &nbsp;
-  - Для списка файлов:
+  - В AI.tsx после фикса не должно остаться:
     &nbsp;
-    - truncate
-    - max-w
-    - min-w-0
+    - локального ACCEPTED_MIME
+    - отдельной size-validation
+    - отдельной preview-логики
     &nbsp;
-  - Иначе снова появится баг с вылезанием текста.
+  - Только вызов общего helper.
   &nbsp;
-7. **После отправки нужно очищать и состояние drag/paste**
+3. **PATCH 1 по расположению скрепки — правильный**
   &nbsp;
-  - Не только chatFiles и showUploader,
-  - но и любой локальный drag-hover state, если он будет добавлен.
+  - Вертикальный блок:
+    &nbsp;
+    - Анализ
+    - Скрепка
+    &nbsp;
+  - лучше для UX и не зажимает textarea.
   &nbsp;
-8. **Кнопка отправки и Enter должны работать по правилу “текст ИЛИ файлы”**
+4. **PATCH 3 по RTF — ок**
   &nbsp;
-  - Это нужно сохранить как обязательный UX-gate.
+  - RTF как plain text fallback допустим.
+  - Главное, чтобы он:
+    &nbsp;
+    - принимался в picker,
+    - попадал в список,
+    - проходил extraction pipeline,
+    - не ломал отправку.
+    &nbsp;
   &nbsp;
-9. **Автоскролл после отправки файлов — обязательный proof**
+5. **PATCH 4 по CSV — ок**
   &nbsp;
-  - Так как userSentMessageRef уже используется, надо подтвердить, что он срабатывает и для file-only отправки.
+  - Для .csv plain text read — правильный и достаточный путь.
+  - Не нужно тащить его через SheetJS.
   &nbsp;
-10. **DoD дополнить**
+6. **Нужно синхронно обновить оба места определения типа файла**
+  &nbsp;
+  - После патча .rtf / .csv должны быть добавлены и в:
+    &nbsp;
+    - FileDropZone
+    - fileExtractor.ts
+    &nbsp;
+  - Без расхождений между upload и extraction.
+  &nbsp;
+7. **PATCH 5 действительно закрывается PATCH 2**
+  &nbsp;
+  - После drop валидные файлы должны сразу появляться в chatFiles, а uploader должен открываться автоматически.
+  - Это и есть нужный UX-result.
+  &nbsp;
+8. **DoD стоит усилить**
+  &nbsp;
+  - Проверить отдельно:
+    &nbsp;
+    - .rtf file-only отправляется без текста;
+    - .csv file-only отправляется без текста;
+    - после drag & drop файл сразу виден в compact-списке;
+    - в AI.tsx больше нет дублирующей file-validation логики.
+    &nbsp;
+  &nbsp;
+9. **Единый extraction pipeline — обязательный gate**
+  &nbsp;
+  - И обычный чат, и scenario mode должны использовать один и тот же pipeline подготовки файлов.
+  - Это ключевой критерий закрытия патча.
+  &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: 5 патчей для загрузки файлов в чат AI
 
-- Сообщение без текста, только с файлами, уходит корректно.
-- После отправки файлов uploader закрывается и очищается.
-- Free chat с файлами использует тот же extraction pipeline, что и scenario mode.
-- Длинные имена файлов не ломают input-area.
+## PATCH 1: Перенести скрепку под кнопку «Анализ»
 
-&nbsp;
+**Файл: `src/pages/AI.tsx` (строки 605-642)**
 
-&nbsp;
+Текущая структура: `[Анализ] [Скрепка] [Textarea] [Send]` — всё в одном ряду.
 
-План: Загрузка файлов в обычный чат AI
+Новая структура:
 
-## Файлы для изменения
-
-### 1. `src/components/mns/FileDropZone.tsx` — добавить `compact` prop
-
-Новый опциональный prop `compact?: boolean`. В compact-режиме:
-
-- Убрать большую drop-зону (иконка Upload, текст «Перетащите файлы»)
-- Показать компактную строку: кнопка «Выбрать файлы» + подпись «до 20 МБ»
-- Список файлов — компактный: имя с `truncate max-w-[200px] min-w-0`, размер, крестик
-- Drag/drop/paste/processFile/лимиты — без изменений, FileDropZone остаётся единственным SoT
-
-### 2. `src/pages/AI.tsx` — основные изменения
-
-**Imports:** `FileDropZone`, `UploadedFile`, `Paperclip`
-
-**State:**
-
-```tsx
-const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
-const [showUploader, setShowUploader] = useState(false);
-const [isDragOverChat, setIsDragOverChat] = useState(false);
+```text
+[Анализ  ] [Textarea] [Send]
+[Скрепка ]
 ```
 
-**handleSendMessage (строка 289):**
+Обернуть `ChatScenarioLauncher` и кнопку `Paperclip` в `<div className="flex flex-col gap-1 shrink-0">`, убрав скрепку из основного ряда с textarea.
 
-- Условие: `if (!inputValue.trim() && chatFiles.length === 0) return`
-- Если `chatFiles.length > 0` → использовать **тот же extraction pipeline**, что в `handleScenarioSubmit` (строки 316-343): `getFileType` → `fileToBase64` → `extractAllFilesContent` → передать `fileContents`, `fileNames`, `images` в `aiChat.sendMessage`
-- Не копировать логику, а вынести общую helper-функцию `prepareFilesForSend(files: UploadedFile[])` прямо в AI.tsx (или вызывать те же утилиты напрямую)
-- После отправки: `setChatFiles([])`, `setShowUploader(false)`, `setIsDragOverChat(false)`
-- `userSentMessageRef.current = true` — уже на месте, работает и для file-only
+---
 
-**Кнопка отправки (строка 505):**
+## PATCH 2: Убрать дублирующую file-validation из AI.tsx
 
-- `disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading}`
+**Файл: `src/components/mns/FileDropZone.tsx**`
 
-**Input area (строки 486-515):**
+Вынести `getFileType` и `processFile` как экспортируемые утилиты:
 
-- Перед `<div className="flex gap-2">` — если `showUploader || chatFiles.length > 0`, рендерить `<FileDropZone compact maxSizeMB={20} maxFiles={5} files={chatFiles} onFilesChange={setChatFiles} />`
-- В `<div className="flex gap-2">` добавить кнопку-скрепку перед `ChatScenarioLauncher`:
-  ```
-  Paperclip icon, variant="ghost", size="icon"
-  Active state: text-primary bg-primary/10 когда showUploader === true
-  onClick: toggle showUploader
-  ```
+- `export function resolveFileType(file: File): UploadedFile["type"]` — текущая логика из внутреннего `getFileType` + новые типы (RTF, CSV)
+- `export async function processDroppedFile(file: File, maxSizeMB: number): Promise<UploadedFile | null>` — текущая логика из `processFile`
 
-**Drag & drop на GlassCard чата:**
+Внутри `FileDropZone` переключить на вызов этих же экспортированных функций (единый SoT).
 
-- `onDragOver`: guard `e.dataTransfer.types.includes('Files')`, `setIsDragOverChat(true)`
-- `onDragLeave`: `setIsDragOverChat(false)`
-- `onDrop`: собрать `Array.from(e.dataTransfer.files)`, добавить в `chatFiles` через тот же `processFile` из FileDropZone (передаём через `setChatFiles` + `onFilesChange`). Альтернативно — просто показать uploader и передать файлы в него.
-- Визуальный hover: лёгкий `ring-2 ring-primary/30` на GlassCard при `isDragOverChat`, убрать при leave/drop. Не overlay, не блокирует клики.
+**Файл: `src/pages/AI.tsx` (строки 394-441)**
 
-**Paste:** FileDropZone в compact-режиме внутри GlassCard уже обрабатывает paste. Дополнительной логики не нужно.
-
-## Extraction pipeline — единый путь
-
-Не копировать код из `handleScenarioSubmit`. Вынести общую функцию:
+Заменить `handleChatDrop` — убрать дублированный `ACCEPTED_MIME`, `MAX_SIZE`, ручную обработку. Вместо этого:
 
 ```tsx
-async function prepareFilesPayload(uploadedFiles: UploadedFile[]) {
-  const fileEntries = await Promise.all(
-    uploadedFiles.map(async (uf) => ({
-      file: uf.file,
-      type: uf.type,
-      preview: uf.type === "image" ? (uf.preview || await fileToBase64(uf.file)) : undefined,
-    }))
+const handleChatDrop = useCallback(async (e: React.DragEvent) => {
+  if (!e.dataTransfer.types.includes('Files')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  setIsDragOverChat(false);
+  const droppedFiles = Array.from(e.dataTransfer.files);
+  if (droppedFiles.length === 0) return;
+  setShowUploader(true);
+  const remaining = 5 - chatFiles.length;
+  if (remaining <= 0) return;
+  const processed = await Promise.all(
+    droppedFiles.slice(0, remaining).map(f => processDroppedFile(f, 20))
   );
-  return extractAllFilesContent(fileEntries);
-}
+  const valid = processed.filter((f): f is UploadedFile => f !== null);
+  if (valid.length > 0) setChatFiles(prev => [...prev, ...valid]);
+}, [chatFiles.length]);
 ```
 
-Использовать и в `handleSendMessage`, и в `handleScenarioSubmit`.
+Вся валидация MIME, размера, preview — через общий `processDroppedFile`. Дублирования нет.
+
+---
+
+## PATCH 3: Добавить поддержку RTF
+
+`**src/components/mns/FileDropZone.tsx`:**
+
+- В `ACCEPTED_TYPES` добавить: `"application/rtf": "word"`, `"text/rtf": "word"`
+- В `resolveFileType` fallback по расширению: `.rtf` → `"word"`
+- В `accept` атрибуты добавить `.rtf`
+- Обновить подпись: `PDF, JPG, PNG, Word, Excel, RTF, CSV`
+
+`**src/utils/fileExtractor.ts`:**
+
+- В `getFileType` добавить MIME `application/rtf`, `text/rtf` → `"word"`, fallback `.rtf` → `"word"`
+- В `extractTextFromFile`: перед вызовом `extractFromWord` проверить расширение `.rtf` — для RTF использовать `file.text()` как plain text fallback (mammoth не поддерживает RTF)
+
+---
+
+## PATCH 4: Добавить поддержку CSV
+
+`**src/components/mns/FileDropZone.tsx`:**
+
+- В `ACCEPTED_TYPES` добавить: `"text/csv": "excel"`
+- В `resolveFileType` fallback: `.csv` → `"excel"`
+- В `accept` атрибуты добавить `.csv`
+
+`**src/utils/fileExtractor.ts`:**
+
+- В `getFileType` добавить `"text/csv"` → `"excel"`, fallback `.csv` → `"excel"`
+- В `extractTextFromFile`: перед `extractFromExcel` проверить расширение `.csv` — читать через `file.text()` и вернуть как есть (plain text), без SheetJS
+
+---
+
+## PATCH 5: Drag & drop UX — файлы сразу видны
+
+Уже решается в PATCH 2: после вызова `processDroppedFile` валидные файлы сразу попадают в `chatFiles`, `showUploader` ставится в `true`, compact-список немедленно отображается.
+
+---
 
 ## Что не затрагивается
 
-- Edge function, useAiChat, PromptRunFlow, база данных, автоскролл
+Edge function, useAiChat, PromptRunFlow, база данных, автоскролл.
 
 ## DoD
 
-1. Скрепка с active-state рядом с полем ввода
-2. Compact uploader открывается/скрывается
-3. Drag & drop на GlassCard с guard на Files
-4. Отправка только с файлами (без текста) работает
-5. Длинные имена не ломают layout (truncate + min-w-0)
-6. После отправки chatFiles очищается, uploader скрывается
-7. Автоскролл работает после file-only отправки
-8. Единый extraction pipeline для chat и scenario mode
+1. Скрепка под кнопкой «Анализ», не в одном ряду с textarea
+2. Дублирующей file-validation в AI.tsx нет — единый SoT через `processDroppedFile`
+3. `.rtf` принимается, виден в списке, текст извлекается (plain text fallback)
+4. `.csv` принимается, виден в списке, текст извлекается (plain text read)
+5. Drag & drop добавляет файлы сразу в compact-список
+6. File-only message (без текста) уходит корректно
+7. Длинные имена не ломают layout (truncate + min-w-0)
+8. После отправки chatFiles очищается, uploader скрывается
+9. Единый extraction pipeline для chat и scenario mode
