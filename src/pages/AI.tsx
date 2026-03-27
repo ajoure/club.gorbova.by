@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
+import { FileDropZone, type UploadedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
@@ -37,6 +38,7 @@ import {
   Users,
   Plus,
   Loader2,
+  Paperclip,
 } from "lucide-react";
 
 /* ─── Конфигурация секций и подменю ─── */
