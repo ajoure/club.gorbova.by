@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
-import { FileDropZone, type UploadedFile } from "@/components/mns/FileDropZone";
+import { FileDropZone, type UploadedFile, processDroppedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
@@ -391,53 +391,21 @@ const AI = () => {
     setIsDragOverChat(false);
   }, []);
 
-  const handleChatDrop = useCallback((e: React.DragEvent) => {
+  const handleChatDrop = useCallback(async (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes('Files')) return;
     e.preventDefault();
     e.stopPropagation();
     setIsDragOverChat(false);
-    // Add files via FileDropZone's addFiles by updating state — 
-    // FileDropZone will handle validation through onFilesChange
     const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length > 0) {
-      setShowUploader(true);
-      // Process dropped files the same way FileDropZone does
-      const ACCEPTED_MIME: Record<string, UploadedFile["type"]> = {
-        "image/jpeg": "image",
-        "image/png": "image",
-        "image/webp": "image",
-        "application/pdf": "pdf",
-        "application/msword": "word",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word",
-        "application/vnd.ms-excel": "excel",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
-      };
-      const MAX_SIZE = 20 * 1024 * 1024;
-      const MAX_FILES = 5;
-      const remaining = MAX_FILES - chatFiles.length;
-      if (remaining <= 0) return;
-      
-      Promise.all(
-        droppedFiles.slice(0, remaining).map(async (file) => {
-          const ft = ACCEPTED_MIME[file.type] || (undefined as any);
-          if (!ft || file.size > MAX_SIZE) return null;
-          const uf: UploadedFile = { id: crypto.randomUUID(), file, type: ft };
-          if (ft === "image") {
-            uf.preview = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = (ev) => resolve(ev.target?.result as string);
-              reader.readAsDataURL(file);
-            });
-          }
-          return uf;
-        })
-      ).then((results) => {
-        const valid = results.filter((f): f is UploadedFile => f !== null);
-        if (valid.length > 0) {
-          setChatFiles((prev) => [...prev, ...valid]);
-        }
-      });
-    }
+    if (droppedFiles.length === 0) return;
+    setShowUploader(true);
+    const remaining = 5 - chatFiles.length;
+    if (remaining <= 0) return;
+    const processed = await Promise.all(
+      droppedFiles.slice(0, remaining).map(f => processDroppedFile(f, 20))
+    );
+    const valid = processed.filter((f): f is UploadedFile => f !== null);
+    if (valid.length > 0) setChatFiles(prev => [...prev, ...valid]);
   }, [chatFiles.length]);
 
   // Admin prompt handlers
@@ -603,26 +571,28 @@ const AI = () => {
               )}
 
               <div className="flex gap-2">
-                <ChatScenarioLauncher
-                  scenarios={aiChat.scenarios}
-                  loading={aiChat.scenariosLoading}
-                  onFetch={aiChat.fetchScenarios}
-                  onSelect={handleScenarioSelect}
-                  disabled={aiChat.isLoading}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowUploader((v) => !v)}
-                  className={cn(
-                    "h-[44px] w-[44px] shrink-0",
-                    showUploader && "text-primary bg-primary/10"
-                  )}
-                  disabled={aiChat.isLoading}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <ChatScenarioLauncher
+                    scenarios={aiChat.scenarios}
+                    loading={aiChat.scenariosLoading}
+                    onFetch={aiChat.fetchScenarios}
+                    onSelect={handleScenarioSelect}
+                    disabled={aiChat.isLoading}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowUploader((v) => !v)}
+                    className={cn(
+                      "h-[36px] w-[36px] mx-auto",
+                      (showUploader || chatFiles.length > 0) && "text-primary bg-primary/10"
+                    )}
+                    disabled={aiChat.isLoading}
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                </div>
                 <Textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
