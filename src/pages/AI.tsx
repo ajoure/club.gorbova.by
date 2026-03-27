@@ -158,6 +158,50 @@ const AI = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
   const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
 
+  // Auto-scroll refs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const isInitialLoadRef = useRef(true);
+  const isNearBottomRef = useRef(true);
+  const userSentMessageRef = useRef(false);
+  const prevMessageCountRef = useRef(0);
+
+  // Scroll listener — track if user is near bottom
+  useEffect(() => {
+    if (activeSubTab !== "chat") return;
+    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+    const handleScroll = () => {
+      isNearBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
+    };
+    viewport.addEventListener('scroll', handleScroll);
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, [activeSubTab]);
+
+  // Auto-scroll on new messages (only for chat tab)
+  useEffect(() => {
+    if (activeSubTab !== "chat") return;
+    const count = aiChat.messages.length;
+    if (count === prevMessageCountRef.current) return;
+    prevMessageCountRef.current = count;
+
+    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+
+    if (isInitialLoadRef.current) {
+      requestAnimationFrame(() => { viewport.scrollTop = viewport.scrollHeight; });
+      isInitialLoadRef.current = false;
+      return;
+    }
+
+    if (isNearBottomRef.current || userSentMessageRef.current) {
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      });
+      userSentMessageRef.current = false;
+    }
+  }, [aiChat.messages.length, activeSubTab]);
+
   // Chat
   const aiChat = useAiChat();
 
