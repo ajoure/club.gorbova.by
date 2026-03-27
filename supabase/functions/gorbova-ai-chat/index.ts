@@ -255,6 +255,45 @@ Deno.serve(async (req) => {
     // 8. Build system prompt
     let systemPrompt = WEB_SYSTEM_PROMPT;
 
+    // 8.1 Load and inject knowledge base from prompt attachments
+    let knowledgeContext = '';
+    if (promptData) {
+      const { data: kbAttachments } = await serviceClient
+        .from('ai_prompt_attachments')
+        .select('extracted_text, file_name')
+        .eq('prompt_id', promptData.id)
+        .in('extraction_status', ['ready', 'truncated'])
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: true });
+
+      if (kbAttachments?.length) {
+        const kbParts: string[] = [];
+        let totalKbChars = 0;
+        const KNOWLEDGE_LIMIT = 80000;
+
+        for (const att of kbAttachments) {
+          if (!att.extracted_text) continue;
+          if (totalKbChars + att.extracted_text.length > KNOWLEDGE_LIMIT) {
+            metadata.knowledge_truncated = true;
+            break;
+          }
+          kbParts.push(`--- Файл: ${att.file_name} ---\n${att.extracted_text}\n--- Конец файла ---`);
+          totalKbChars += att.extracted_text.length;
+        }
+
+        metadata.knowledge_files_used = kbParts.length;
+        metadata.knowledge_total_chars = totalKbChars;
+
+        if (kbParts.length) {
+          knowledgeContext = '\n\n--- БАЗА ЗНАНИЙ СЦЕНАРИЯ ---\n' + kbParts.join('\n\n') + '\n--- КОНЕЦ БАЗЫ ЗНАНИЙ ---';
+        }
+      }
+    }
+
+    if (knowledgeContext) {
+      systemPrompt += knowledgeContext;
+    }
+
     // 9. Inject scenario prompt_text + anti-hallucination suffix
     if (promptData) {
       systemPrompt += '\n\n--- ИНСТРУКЦИЯ СЦЕНАРИЯ ---\n' + promptData.prompt_text;
