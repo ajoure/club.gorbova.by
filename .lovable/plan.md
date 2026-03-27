@@ -2,190 +2,147 @@
 
 &nbsp;
 
-1. **PATCH 2 правильный: вынести общий helper из FileDropZone**
+1. **remark-gfm — обязательный фикс**
   &nbsp;
-  - Это лучший вариант, чем держать отдельную ручную обработку в AI.tsx.
-  - Оставить единый SoT через:
+  - Это действительно нужно, иначе markdown-таблицы останутся pipe-текстом.
+  - После подключения проверить именно на реальном ответе с таблицей.
+  &nbsp;
+2. **Кнопку “Копировать” делать только для assistant-сообщений**
+  &nbsp;
+  - Это правильно.
+  - Для user-сообщений не нужна.
+  &nbsp;
+3. **Кнопку “Копировать” лучше ставить под bubble, но внутри assistant-блока**
+  &nbsp;
+  - Чтобы она визуально относилась к ответу.
+  - И не ломала выравнивание user/assistant сообщений.
+  &nbsp;
+4. **Для таблиц нужен overflow-safe контейнер**
+  &nbsp;
+  - Это уже учтено, оставить обязательно.
+  - Широкие таблицы должны скроллиться внутри bubble, а не ломать layout чата.
+  &nbsp;
+5. **Добавить tr в markdown components — правильно**
+  &nbsp;
+  - Для zebra-style строк это нужно.
+  - Хорошо, что это включено в план.
+  &nbsp;
+6. **Отдельный useEffect([activeSubTab]) для возврата на “Чат” — правильный путь**
+  &nbsp;
+  - Это чинит конкретный баг с тем, что messages.length не меняется и старый effect не срабатывает.
+  - Оставить именно отдельным эффектом.
+  &nbsp;
+7. **Новый чат должен сбрасывать не только UI, но и scroll refs**
+  &nbsp;
+  - Это уже указано:
     &nbsp;
-    - resolveFileType
-    - processDroppedFile
+    - prevMessageCountRef.current = 0
+    - isInitialLoadRef.current = true
     &nbsp;
+  - Это важно, чтобы новая сессия открывалась корректно.
   &nbsp;
-2. **PATCH 2 нужно довести до полного удаления дублирования**
+8. **Новый чат должен очищать и file-related state**
   &nbsp;
-  - В AI.tsx после фикса не должно остаться:
+  - Тоже уже учтено:
     &nbsp;
-    - локального ACCEPTED_MIME
-    - отдельной size-validation
-    - отдельной preview-логики
+    - setChatFiles([])
+    - setShowUploader(false)
     &nbsp;
-  - Только вызов общего helper.
+  - Это обязательный reset.
   &nbsp;
-3. **PATCH 1 по расположению скрепки — правильный**
+9. **После Новый чат не должно быть автоподнятия старой сессии**
   &nbsp;
-  - Вертикальный блок:
-    &nbsp;
-    - Анализ
-    - Скрепка
-    &nbsp;
-  - лучше для UX и не зажимает textarea.
+  - Это критичный DoD.
+  - Раз clearChat уже чистит localStorage, этого достаточно, но proof обязателен.
   &nbsp;
-4. **PATCH 3 по RTF — ок**
-  &nbsp;
-  - RTF как plain text fallback допустим.
-  - Главное, чтобы он:
-    &nbsp;
-    - принимался в picker,
-    - попадал в список,
-    - проходил extraction pipeline,
-    - не ломал отправку.
-    &nbsp;
-  &nbsp;
-5. **PATCH 4 по CSV — ок**
-  &nbsp;
-  - Для .csv plain text read — правильный и достаточный путь.
-  - Не нужно тащить его через SheetJS.
-  &nbsp;
-6. **Нужно синхронно обновить оба места определения типа файла**
-  &nbsp;
-  - После патча .rtf / .csv должны быть добавлены и в:
-    &nbsp;
-    - FileDropZone
-    - fileExtractor.ts
-    &nbsp;
-  - Без расхождений между upload и extraction.
-  &nbsp;
-7. **PATCH 5 действительно закрывается PATCH 2**
-  &nbsp;
-  - После drop валидные файлы должны сразу появляться в chatFiles, а uploader должен открываться автоматически.
-  - Это и есть нужный UX-result.
-  &nbsp;
-8. **DoD стоит усилить**
-  &nbsp;
-  - Проверить отдельно:
-    &nbsp;
-    - .rtf file-only отправляется без текста;
-    - .csv file-only отправляется без текста;
-    - после drag & drop файл сразу виден в compact-списке;
-    - в AI.tsx больше нет дублирующей file-validation логики.
-    &nbsp;
-  &nbsp;
-9. **Единый extraction pipeline — обязательный gate**
-  &nbsp;
-  - И обычный чат, и scenario mode должны использовать один и тот же pipeline подготовки файлов.
-  - Это ключевой критерий закрытия патча.
-  &nbsp;
+10. **DoD стоит дополнить одним proof-пунктом**
 
 &nbsp;
 
 &nbsp;
 
-План: 5 патчей для загрузки файлов в чат AI
+&nbsp;
 
-## PATCH 1: Перенести скрепку под кнопку «Анализ»
+- После возврата с вкладки “История анализа” на “Чат” действительно виден низ переписки, а не середина/верх.
 
-**Файл: `src/pages/AI.tsx` (строки 605-642)**
+&nbsp;
 
-Текущая структура: `[Анализ] [Скрепка] [Textarea] [Send]` — всё в одном ряду.
+&nbsp;
 
-Новая структура:
+План выглядит правильным.
 
-```text
-[Анализ  ] [Textarea] [Send]
-[Скрепка ]
-```
+&nbsp;
 
-Обернуть `ChatScenarioLauncher` и кнопку `Paperclip` в `<div className="flex flex-col gap-1 shrink-0">`, убрав скрепку из основного ряда с textarea.
+План: remark-gfm, кнопка «Копировать», скролл при возврате, кнопка «Новый чат»
 
----
+## Файлы для изменения
 
-## PATCH 2: Убрать дублирующую file-validation из AI.tsx
+### 1. `src/components/ai-chat/ChatMessage.tsx`
 
-**Файл: `src/components/mns/FileDropZone.tsx**`
+**remark-gfm:**
 
-Вынести `getFileType` и `processFile` как экспортируемые утилиты:
+- Добавить `import remarkGfm from "remark-gfm"`
+- Передать `remarkPlugins={[remarkGfm]}` в `<ReactMarkdown>`
 
-- `export function resolveFileType(file: File): UploadedFile["type"]` — текущая логика из внутреннего `getFileType` + новые типы (RTF, CSV)
-- `export async function processDroppedFile(file: File, maxSizeMB: number): Promise<UploadedFile | null>` — текущая логика из `processFile`
+**Кнопка «Копировать» (только для assistant):**
 
-Внутри `FileDropZone` переключить на вызов этих же экспортированных функций (единый SoT).
+- Добавить `useState` для `copied`, иконки `Copy`/`Check`
+- Под bubble ассистента — кнопка `variant="ghost"` `size="sm"` с `navigator.clipboard.writeText(message.content)`
+- После копирования иконка `Check` на 2 секунды, затем обратно `Copy`
 
-**Файл: `src/pages/AI.tsx` (строки 394-441)**
+**Улучшение стилей таблиц:**
 
-Заменить `handleChatDrop` — убрать дублированный `ACCEPTED_MIME`, `MAX_SIZE`, ручную обработку. Вместо этого:
+- Обёртка таблицы: `rounded-lg overflow-hidden`
+- Чередование строк: `even:bg-muted/30` на `tr`
+- Добавить `tr` в components для чередования
+
+### 2. `package.json`
+
+- Добавить зависимость `remark-gfm`
+
+### 3. `src/pages/AI.tsx`
+
+**Скролл при возврате на вкладку «Чат»:**
+
+- Новый `useEffect` с зависимостью `[activeSubTab]`:
 
 ```tsx
-const handleChatDrop = useCallback(async (e: React.DragEvent) => {
-  if (!e.dataTransfer.types.includes('Files')) return;
-  e.preventDefault();
-  e.stopPropagation();
-  setIsDragOverChat(false);
-  const droppedFiles = Array.from(e.dataTransfer.files);
-  if (droppedFiles.length === 0) return;
-  setShowUploader(true);
-  const remaining = 5 - chatFiles.length;
-  if (remaining <= 0) return;
-  const processed = await Promise.all(
-    droppedFiles.slice(0, remaining).map(f => processDroppedFile(f, 20))
-  );
-  const valid = processed.filter((f): f is UploadedFile => f !== null);
-  if (valid.length > 0) setChatFiles(prev => [...prev, ...valid]);
-}, [chatFiles.length]);
+useEffect(() => {
+  if (activeSubTab !== "chat") return;
+  const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]');
+  if (!viewport) return;
+  requestAnimationFrame(() => { viewport.scrollTop = viewport.scrollHeight; });
+}, [activeSubTab]);
 ```
 
-Вся валидация MIME, размера, preview — через общий `processDroppedFile`. Дублирования нет.
+**Кнопка «Новый чат»:**
 
----
+- Добавить в верхнюю часть GlassCard чата (между началом карточки и ScrollArea) — тонкий header:
 
-## PATCH 3: Добавить поддержку RTF
+```tsx
+<div className="flex items-center justify-between px-4 py-2 border-b border-border/30">
+  <span className="text-xs text-muted-foreground">Чат</span>
+  <Button variant="ghost" size="sm" onClick={handleNewChat}>
+    <Plus className="h-3.5 w-3.5 mr-1" /> Новый чат
+  </Button>
+</div>
+```
 
-`**src/components/mns/FileDropZone.tsx`:**
+- `handleNewChat`: вызывает `aiChat.clearChat()`, сбрасывает `prevMessageCountRef.current = 0`, `isInitialLoadRef.current = true`, `setActiveScenario(null)`, `setChatFiles([])`, `setShowUploader(false)`
 
-- В `ACCEPTED_TYPES` добавить: `"application/rtf": "word"`, `"text/rtf": "word"`
-- В `resolveFileType` fallback по расширению: `.rtf` → `"word"`
-- В `accept` атрибуты добавить `.rtf`
-- Обновить подпись: `PDF, JPG, PNG, Word, Excel, RTF, CSV`
+### 4. `src/hooks/useAiChat.ts`
 
-`**src/utils/fileExtractor.ts`:**
-
-- В `getFileType` добавить MIME `application/rtf`, `text/rtf` → `"word"`, fallback `.rtf` → `"word"`
-- В `extractTextFromFile`: перед вызовом `extractFromWord` проверить расширение `.rtf` — для RTF использовать `file.text()` как plain text fallback (mammoth не поддерживает RTF)
-
----
-
-## PATCH 4: Добавить поддержку CSV
-
-`**src/components/mns/FileDropZone.tsx`:**
-
-- В `ACCEPTED_TYPES` добавить: `"text/csv": "excel"`
-- В `resolveFileType` fallback: `.csv` → `"excel"`
-- В `accept` атрибуты добавить `.csv`
-
-`**src/utils/fileExtractor.ts`:**
-
-- В `getFileType` добавить `"text/csv"` → `"excel"`, fallback `.csv` → `"excel"`
-- В `extractTextFromFile`: перед `extractFromExcel` проверить расширение `.csv` — читать через `file.text()` и вернуть как есть (plain text), без SheetJS
-
----
-
-## PATCH 5: Drag & drop UX — файлы сразу видны
-
-Уже решается в PATCH 2: после вызова `processDroppedFile` валидные файлы сразу попадают в `chatFiles`, `showUploader` ставится в `true`, compact-список немедленно отображается.
-
----
+- `clearChat` уже сбрасывает messages, conversationId, activeScenarioContext и localStorage — этого достаточно. Изменений не нужно.
 
 ## Что не затрагивается
 
-Edge function, useAiChat, PromptRunFlow, база данных, автоскролл.
+Edge function, FileDropZone, fileExtractor, база данных.
 
 ## DoD
 
-1. Скрепка под кнопкой «Анализ», не в одном ряду с textarea
-2. Дублирующей file-validation в AI.tsx нет — единый SoT через `processDroppedFile`
-3. `.rtf` принимается, виден в списке, текст извлекается (plain text fallback)
-4. `.csv` принимается, виден в списке, текст извлекается (plain text read)
-5. Drag & drop добавляет файлы сразу в compact-список
-6. File-only message (без текста) уходит корректно
-7. Длинные имена не ломают layout (truncate + min-w-0)
-8. После отправки chatFiles очищается, uploader скрывается
-9. Единый extraction pipeline для chat и scenario mode
+1. GFM-таблицы (`| ... |`) рендерятся как HTML-таблицы с заголовками и границами
+2. Кнопка «Копировать» под ответами ассистента работает, иконка меняется на Check на 2 сек
+3. При возврате на вкладку «Чат» скролл всегда внизу
+4. Кнопка «Новый чат» очищает историю, сбрасывает session state
+5. После «Новый чат» + reload — старая сессия не восстанавливается
+6. Широкие таблицы скроллятся горизонтально внутри bubble
