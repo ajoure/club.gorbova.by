@@ -369,7 +369,8 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       ? inputValue
       : `Анализ файлов: ${chatFiles.map((f) => f.file.name).join(", ")}`;
 
-    await aiChat.sendMessage(text, fileOpts);
+    const promptId = aiChat.activeScenarioContext?.prompt_id;
+    await aiChat.sendMessage(text, { ...fileOpts, promptId });
     setInputValue("");
     setChatFiles([]);
     setShowUploader(false);
