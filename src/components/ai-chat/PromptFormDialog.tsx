@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { usePromptAttachments } from "@/hooks/usePromptAttachments";
 import { PromptAttachmentsSection } from "./PromptAttachmentsSection";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
