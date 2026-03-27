@@ -118,11 +118,9 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "training", label: "Тренинги", path: "/admin/training-modules", icon: "GraduationCap", order: 5, permission: "content.view" },
       { id: "consents", label: "Согласия", path: "/admin/consents", icon: "ClipboardCheck", order: 6, permission: "users.view" },
       { id: "sites", label: "Конструктор сайтов", path: "/admin/sites", icon: "PanelTop", order: 7, permission: "content.edit" },
-      { id: "executors", label: "Исполнители", path: "/admin/executors", icon: "Building2", order: 8, permission: "roles.view" },
-      { id: "templates", label: "Шаблоны документов", path: "/admin/document-templates", icon: "FileStack", order: 9, permission: "roles.view" },
-      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 10 },
-      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 11, permission: "news.view" },
-      { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 12, permission: "roles.view" },
+      { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 8 },
+      { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 9, permission: "news.view" },
+      { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 10, permission: "roles.view" },
       // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
   },
@@ -135,6 +133,8 @@ const DEPRECATED_ITEM_IDS = new Set([
   "payment-diagnostics",    // → /admin/payments/diagnostics
   "telegram-diagnostics",   // Scope creep - removed, consolidated into AutoRenewals
   "kb-import",              // Duplicate - available via Import button in /admin/training-modules
+  "executors",              // → /admin/ai → Документы → Исполнители
+  "templates",              // → /admin/ai → Документы → Шаблоны документов
 ]);
 
 // Remove duplicate items across all groups (keeps first occurrence)
