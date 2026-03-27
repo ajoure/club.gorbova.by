@@ -325,6 +325,10 @@ export function BepaidSubscriptionsTabContent() {
   const [emergencyUnlinkConfirm, setEmergencyUnlinkConfirm] = useState("");
   const [targetEmergencyUnlinkId, setTargetEmergencyUnlinkId] = useState<string | null>(null);
   
+  // Per-row cancel in bePaid
+  const [cancelSingleId, setCancelSingleId] = useState<string | null>(null);
+  const [showCancelSingleDialog, setShowCancelSingleDialog] = useState(false);
+  
   const [refreshingSnapshotIds, setRefreshingSnapshotIds] = useState<Set<string>>(new Set());
   
   // PATCH P2.5: Sync pending state
@@ -1100,6 +1104,18 @@ export function BepaidSubscriptionsTabContent() {
                   <ExternalLink className="h-3 w-3 mr-2" />
                   Открыть в bePaid
                 </DropdownMenuItem>
+                {['active', 'trial', 'past_due', 'pending', 'failed_attempt'].includes(sub.snapshot_state || sub.status) && (
+                  <DropdownMenuItem 
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => {
+                      setCancelSingleId(sub.id);
+                      setShowCancelSingleDialog(true);
+                    }}
+                  >
+                    <Ban className="h-3 w-3 mr-2" />
+                    Отменить в bePaid
+                  </DropdownMenuItem>
+                )}
                 {!sub.is_orphan && (
                   <>
                     <DropdownMenuSeparator />
@@ -1745,6 +1761,52 @@ export function BepaidSubscriptionsTabContent() {
                 <Ban className="h-4 w-4 mr-2" />
               )}
               Отменить {selectedIds.size}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Per-row cancel single subscription in bePaid */}
+      <AlertDialog open={showCancelSingleDialog} onOpenChange={(open) => {
+        if (!open) setCancelSingleId(null);
+        setShowCancelSingleDialog(open);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Ban className="h-5 w-5 text-destructive" />
+              Отменить подписку в bePaid?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>
+                  Подписка <code className="bg-muted px-1 rounded text-xs">{cancelSingleId}</code> будет отменена на стороне платёжного провайдера.
+                </p>
+                <p className="text-amber-600">
+                  ⚠️ Списания прекратятся. Доступ сохранится до конца оплаченного периода.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelMutation.isPending}>Назад</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (cancelSingleId) {
+                  cancelMutation.mutate([cancelSingleId]);
+                  setShowCancelSingleDialog(false);
+                  setCancelSingleId(null);
+                }
+              }}
+              disabled={cancelMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {cancelMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Ban className="h-4 w-4 mr-2" />
+              )}
+              Отменить подписку
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
