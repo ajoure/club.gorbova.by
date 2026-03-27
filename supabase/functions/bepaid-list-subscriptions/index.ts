@@ -393,6 +393,10 @@ Deno.serve(async (req) => {
     }
     console.log(`[bepaid-list-subs] PATCH-SV2-ORDER: loaded ${v2OrderIdMap.size} orders by sv2.order_id (requested: ${sv2OrderIds.length})`);
 
+    // PATCH-3: Track sv2 loaded stats for gap analysis
+    let sv2LoadedTotal = subV2DetailsMap.size;
+    let sv2LoadedNoOrder = [...subV2DetailsMap.values()].filter(d => !d.order_id).length;
+
     // Get our DB subscriptions_v2 mappings
     const { data: dbSubs } = await supabase
       .from('subscriptions_v2')
