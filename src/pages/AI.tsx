@@ -288,6 +288,7 @@ const AI = () => {
   // Chat handlers
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
+    userSentMessageRef.current = true;
     await aiChat.sendMessage(inputValue);
     setInputValue("");
   };
@@ -310,6 +311,7 @@ const AI = () => {
 
   const handleScenarioSubmit = async (files: File[]) => {
     if (!activeScenario) return;
+    userSentMessageRef.current = true;
 
     // Build adapter for unified extraction pipeline
     const fileEntries = await Promise.all(
@@ -379,7 +381,10 @@ const AI = () => {
 
   return (
     <DashboardLayout>
-      <div className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]">
+      <div
+        className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]"
+        style={{ height: 'calc(100dvh - 4.5rem)', maxHeight: 'calc(100dvh - 4.5rem)' }}
+      >
 
         {/* ── Главные табы ── */}
         <div className="px-1 py-0.5 shrink-0">
@@ -444,7 +449,7 @@ const AI = () => {
         {/* Chat */}
         {activeSubTab === "chat" && (
           <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
-            <ScrollArea className="flex-1 min-h-0 p-4">
+            <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0 p-4">
               <div className="space-y-4">
                 {aiChat.messages.map((message) => (
                   <ChatMessageBubble key={message.id} message={message} />
@@ -461,6 +466,7 @@ const AI = () => {
                     </div>
                   </div>
                 )}
+                <div ref={messagesEndRef} />
               </div>
             </ScrollArea>
 
@@ -522,11 +528,14 @@ const AI = () => {
         {activeSubTab === "analysis-history" && (
           <AnalysisHistoryView
             onOpen={async (convId) => {
-              // Load conversation without persisting to localStorage
+              isInitialLoadRef.current = true;
+              prevMessageCountRef.current = 0;
               await aiChat.loadConversation(convId);
               setActiveSubTab("chat");
             }}
             onResume={async (convId) => {
+              isInitialLoadRef.current = true;
+              prevMessageCountRef.current = 0;
               const ctx = await aiChat.resumeConversation(convId);
               if (ctx?.scenario_type) {
                 const matchingScenario = aiChat.scenarios.find(
