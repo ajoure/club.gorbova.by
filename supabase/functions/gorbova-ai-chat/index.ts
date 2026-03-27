@@ -87,6 +87,12 @@ function assessExtractQuality(text: string): { quality: 'ok' | 'low' | 'empty'; 
   return { quality: 'ok', cleanedLength };
 }
 
+const NON_CONTENT_MARKER_PATTERN = /\[(PARSE_EMPTY|UNSUPPORTED_FORMAT|Изображение|PDF документ|FILE_PARSE_ERROR|Не удалось извлечь)[^\]]*\]/g;
+
+function stripNonContentMarkers(text: string): string {
+  return (text || '').replace(NON_CONTENT_MARKER_PATTERN, '').trim();
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
