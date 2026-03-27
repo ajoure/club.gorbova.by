@@ -237,7 +237,7 @@ export default function BepaidSubscriptionsList() {
               <span>Всего: <strong>{stats.total}</strong></span>
               <span className="text-emerald-600">Активных: {stats.active}</span>
               <span className="text-blue-600">Trial: {stats.trial}</span>
-              <span className="text-red-600">Сирот: {stats.orphans}</span>
+              <span className="text-red-600">Не связ.: {stats.not_linked}</span>
             </CardDescription>
           </div>
           <Button 
