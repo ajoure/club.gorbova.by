@@ -2,217 +2,127 @@
 
 &nbsp;
 
-1. **RLS роль проверить по фактическому enum проекта**
+1. **Главное не забыто**
+  Базовые пункты из исходного плана сохранены:
   &nbsp;
-  - Ранее в проекте уже подтверждалось, что используется superadmin, а не super_admin.
-  - В плане для ai_prompt_attachments нужно использовать ту же фактическую роль, что и в остальных таблицах/политиках проекта, без расхождения.
+  - фикс Invalid key через safe storage filename;
+  - сохранение оригинального имени в file_name;
+  - перестройка PromptFormDialog на Card-секции;
+  - PromptAttachmentsSection без изменений;
+  - без правок edge function / БД / extractor / других диалогов.
   &nbsp;
-2. **Для file_type лучше сразу ограничить допустимые значения**
+2. **Нужно явно зафиксировать proof по загрузке**
+  В DoD уже есть результат, но в плане лучше прямо потребовать:
   &nbsp;
-  - Даже если без enum, минимум нужен check/контроль на значения:
-    &nbsp;
-    - word
-    - excel
-    - text
-    &nbsp;
-  - Иначе потом легко появятся мусорные типы.
+  - proof успешной загрузки .rtf с длинным кириллическим именем;
+  - proof file_path в Storage в ASCII-only виде;
+  - proof строки в ai_prompt_attachments с оригинальным file_name.
   &nbsp;
-3. **deleteAttachment с partial failure лучше не делать “молча”**
+3. **Нужно явно проверить не только upload, но и повторное открытие**
+  У тебя это есть в DoD пунктом про reload диалога, это правильно.
+  Стоит уточнить: после закрытия/открытия PromptFormDialog вложение должно подтягиваться из БД, а не держаться только в локальном state.
+4. **Нужно явно сохранить текущую логику ext**
+  В helper уже сохраняется расширение, это хорошо.
+  Но стоит добавить правило:
   &nbsp;
-  - Логировать — да, но ещё возвращать понятный результат в UI:
-    &nbsp;
-    - файл удалён из Storage / не удалён,
-    - запись удалена / не удалена.
-    &nbsp;
-  - Иначе админ не поймёт, остался ли мусор.
+  - если extension пустой или после очистки стал пустым, файл всё равно должен грузиться без ext, а не падать.
   &nbsp;
-4. **В PromptFormDialog секцию вложений делать только в edit-mode — правильно**
+5. **По Card-дизайну план полный**
+  Разделение на:
   &nbsp;
-  - Подсказка “сначала сохраните промпт” обязательна.
-  - Это хороший UX и не требует временных черновых prompt_id.
+  - Основные параметры
+  - Текст промпта
+  - База знаний
+  - Настройки запуска и отображения
+  - Формат ответа
+    выглядит правильно и лучше исходного общего блока.
   &nbsp;
-5. **TXT-путь в extractor — правильный минимальный фикс**
+6. **Нужно не забыть визуальную совместимость секции файлов**
+  В плане стоит явно потребовать:
   &nbsp;
-  - Это соответствует правилу: сначала расширяем существующий extractor, а не создаём новый.
+  - PromptAttachmentsSection не ломает ширину диалога;
+  - длинные имена файлов внутри секции режутся через truncate, без overflow.
   &nbsp;
-6. **В edge function выборка по статусам ready и truncated — правильная**
+7. **Удаление лучше уточнить как 2-step proof**
+  В DoD есть “Storage + БД”, это верно.
+  Но лучше прямо потребовать:
   &nbsp;
-  - Это чище, чем исключать empty/failed.
-  - Оставить именно так.
+  - после удаления запись исчезла из списка;
+  - после refresh не возвращается;
+  - файла больше нет в bucket.
   &nbsp;
-7. **Metadata по knowledge base — хорошая правка**
+8. **Scope выдержан правильно**
+  Важно, что он не утащил в патч лишнее:
   &nbsp;
-  - knowledge_files_used
-  - knowledge_total_chars
-  - knowledge_truncated
-    Это полезно и для proof, и для диагностики.
+  - не трогает другие диалоги;
+  - не трогает edge function;
+  - не трогает таблицы/RLS без необходимости.
+    Это соответствует начальному плану.
   &nbsp;
-8. **Порядок сортировки в knowledge base зафиксирован правильно**
-  &nbsp;
-  - sort_order, потом created_at.
-  - Это делает инъекцию детерминированной.
-  &nbsp;
-9. **DoD хороший, но нужен ещё один proof**
-  &nbsp;
-  - Проверить TXT отдельно:
-    &nbsp;
-    - загрузили .txt,
-    - текст извлёкся,
-    - AI отвечает по его содержимому.
-    &nbsp;
-  - Раз TXT добавляется именно в этом патче, это нужно подтвердить отдельно.
-  &nbsp;
-10. **Главный принцип соблюдён**
 
 &nbsp;
 
 &nbsp;
 
+Итог:
+
+из начального плана критично ничего не потеряно. План хороший. Я бы только добавил явные **proof-требования по upload / reload / delete** и guard для случая **пустого extension**.
+
 &nbsp;
 
-- Используется существующий extractTextFromFile(),
-- существующая gorbova-ai-chat,
-- новые сущности только там, где реально необходимо:
-  &nbsp;
-  - таблица,
-  - bucket,
-  - thin CRUD hook,
-  - UI секция.
-  &nbsp;
+План: Фикс загрузки файлов + Card-дизайн PromptFormDialog
 
- 
+## 1. `src/hooks/usePromptAttachments.ts` — ASCII-only Storage path
 
-План: Файлы-вложения к промптам (база знаний) — Phase 1
+**Root cause:** строка 86 — `const storagePath = \`{promptId}/{fileId}_{file.name}` — кириллица и спецсимволы в ключе Storage.
 
-## Scope
-
-**Форматы:** DOCX, XLSX, XLS, CSV, RTF, TXT. PDF — Phase 2.
-
-## Изменения
-
-### 1. `src/utils/fileExtractor.ts` — поддержка TXT
-
-Сейчас `extractTextFromFile()` возвращает `null` для TXT-файлов (тип `"text"` не обрабатывается). Добавить ветку:
+**Фикс:** вынести helper-функцию и использовать только ASCII в ключе:
 
 ```typescript
-if (fileType === "text") {
-  return extractAsPlainText(file, "text");
+function buildSafeStorageFileName(fileName: string): string {
+  const ext = fileName.includes(".")
+    ? `.${fileName.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")}`
+    : "";
+  return `${Date.now()}_${crypto.randomUUID()}${ext}`;
 }
 ```
 
-Также добавить `"text"` в `getFileType` для `.txt` / `text/plain`.
-
-### 2. Миграция БД — таблица + Storage bucket
-
-**Таблица `ai_prompt_attachments`:**
-
-
-| Поле              | Тип                                                 |
-| ----------------- | --------------------------------------------------- |
-| id                | uuid PK                                             |
-| prompt_id         | uuid FK → ai_user_prompts ON DELETE CASCADE         |
-| file_name         | text NOT NULL                                       |
-| file_path         | text NOT NULL                                       |
-| file_type         | text NOT NULL (word/excel/text)                     |
-| file_size         | bigint NOT NULL                                     |
-| extracted_text    | text                                                |
-| extracted_chars   | int default 0                                       |
-| extraction_status | text default 'ready' (ready/empty/failed/truncated) |
-| sort_order        | int default 0                                       |
-| created_at        | timestamptz default now()                           |
-
-
-RLS: SELECT/INSERT/UPDATE/DELETE — только `has_role_v2(auth.uid(), 'admin') OR has_role_v2(auth.uid(), 'super_admin')`.
-
-**Storage bucket `prompt-attachments**` — приватный. RLS аналогично.
-
-### 3. `src/hooks/usePromptAttachments.ts` — thin CRUD хук
-
-- `fetchAttachments(promptId)` — SELECT по prompt_id
-- `uploadAttachment(promptId, file)`:
-  1. `extractTextFromFile(file)` — существующий extractor
-  2. Upload в Storage: `prompt-attachments/{promptId}/{uuid}_{filename}`
-  3. INSERT в ai_prompt_attachments; текст > 100k → обрезка + status `truncated`; пустой текст → `empty`
-- `deleteAttachment(id, filePath)`:
-  1. Удалить файл из Storage
-  2. Удалить запись из БД
-  3. Partial failure — логировать, не бросать
-- Никакой extraction-логики внутри хука
-
-### 4. `src/components/ai-chat/PromptFormDialog.tsx` — секция «База знаний»
-
-После поля «Текст промпта» (строка ~174):
-
-- Заголовок «База знаний (файлы)»
-- **Если prompt === null (создание):** подсказка «Сначала сохраните промпт, затем можно добавить файлы базы знаний»
-- **Если prompt !== null (редактирование):**
-  - Кнопка загрузки: accept `.docx,.xlsx,.xls,.csv,.rtf,.txt`
-  - Список файлов: имя, тип, размер, extracted_chars
-  - extraction_status: цветной индикатор + текстовый label (Готов / Пусто / Ошибка / Обрезан)
-  - Кнопка удаления на каждом файле
-
-### 5. `supabase/functions/gorbova-ai-chat/index.ts` — инжекция knowledge base
-
-После загрузки `promptData` (строка 194), перед quality gate (строка 201):
+Строка 86 станет:
 
 ```typescript
-let knowledgeContext = '';
-if (promptData) {
-  const { data: attachments } = await serviceClient
-    .from('ai_prompt_attachments')
-    .select('extracted_text, file_name')
-    .eq('prompt_id', promptData.id)
-    .in('extraction_status', ['ready', 'truncated'])
-    .order('sort_order', { ascending: true })
-    .order('created_at', { ascending: true });
-
-  if (attachments?.length) {
-    const parts = [];
-    let totalChars = 0;
-    const KNOWLEDGE_LIMIT = 80000;
-
-    for (const att of attachments) {
-      if (!att.extracted_text) continue;
-      if (totalChars + att.extracted_text.length > KNOWLEDGE_LIMIT) {
-        metadata.knowledge_truncated = true;
-        break;
-      }
-      parts.push(`--- Файл: ${att.file_name} ---\n${att.extracted_text}\n--- Конец файла ---`);
-      totalChars += att.extracted_text.length;
-    }
-
-    metadata.knowledge_files_used = parts.length;
-    metadata.knowledge_total_chars = totalChars;
-
-    if (parts.length) {
-      knowledgeContext = '\n\n--- БАЗА ЗНАНИЙ СЦЕНАРИЯ ---\n' + parts.join('\n\n') + '\n--- КОНЕЦ БАЗЫ ЗНАНИЙ ---';
-    }
-  }
-}
+const storagePath = `${promptId}/${buildSafeStorageFileName(file.name)}`;
 ```
 
-**Порядок инжекции в system prompt (строка 256):**
+Оригинальное имя файла сохраняется в `file_name` в БД (строка 106) — без изменений.
 
-1. `WEB_SYSTEM_PROMPT`
-2. `knowledgeContext`
-3. `--- ИНСТРУКЦИЯ СЦЕНАРИЯ ---` + `prompt_text`
-4. `response_format`
-5. `ANTI_HALLUCINATION_SUFFIX`
-6. `PARTIAL_ANALYSIS_INSTRUCTION` (если applicable)
+## 2. `src/components/ai-chat/PromptFormDialog.tsx` — Card-секции
 
-### 6. Что не меняется
+Переструктурировать форму по паттерну EntityRecordSheet (Card → CardHeader → CardContent):
 
-- `useAiUserPrompts.ts`, `useAiChat.ts` — без изменений
-- Telegram-бот, `ai_prompt_packages` — не затрагиваются
-- Таблица `ai_user_prompts` — без изменений
+- **Card «Основные параметры»** — slug, тип, название, описание
+- **Card «Текст промпта»** — textarea prompt_text
+- **Card «База знаний (файлы)»** — PromptAttachmentsSection (уже есть)
+- **Card «Настройки запуска и отображения»** — категория, иконка, подсказка для ввода, launcher title/description/order, sort_order, переключатели active/visible
+- **Card «Формат ответа»** (отдельная под-секция) — response_format JSON textarea
+
+Каждая секция: белый фон, `CardHeader` с иконкой и заголовком `text-sm text-muted-foreground`, `CardContent` с полями через `Separator`.
+
+## 3. `src/components/ai-chat/PromptAttachmentsSection.tsx` — без изменений
+
+Компонент уже корректный. Обёртка Card будет в PromptFormDialog.
+
+## Что не меняется
+
+- Таблица `ai_prompt_attachments`, RLS, Storage bucket — не трогаем
+- Edge function — не трогаем
+- `fileExtractor.ts` — не трогаем
+- Другие диалоги проекта — отдельный будущий UI-pass
 
 ## DoD
 
-1. Админ загружает DOCX/XLSX/CSV/RTF/TXT в форме промпта — файл в Storage, текст извлечён
-2. extraction_status и extracted_chars корректно отображаются (цвет + label)
-3. При создании промпта (prompt === null) секция файлов показывает подсказку «сначала сохраните»
-4. Edge function подгружает ai_prompt_attachments и инжектит в system prompt между базовым промптом и инструкцией сценария
-5. AI отвечает по содержимому вложенного файла (proof: загрузили конкретный документ → задали вопрос по фрагменту → AI ответил по нему)
-6. Удаление файла удаляет и запись из БД, и файл из Storage
-7. Суммарный knowledge context ≤ 80k символов; metadata содержит knowledge_files_used и knowledge_total_chars
-8. RLS: только admin/super_admin имеют доступ к ai_prompt_attachments
+1. Файл с кириллическим длинным именем `.rtf` загружается без toast-ошибки
+2. В Storage путь ASCII-only (`{promptId}/{timestamp}_{uuid}.rtf`)
+3. В БД `file_name` содержит оригинальное имя
+4. После reload диалога вложение остаётся в списке
+5. Удаление файла работает корректно (Storage + БД)
+6. PromptFormDialog использует Card-секции как в EntityRecordSheet
