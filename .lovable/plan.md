@@ -2,103 +2,96 @@
 
 &nbsp;
 
-1. В AiPageContent.tsx для templates и executors обязательно использовать Suspense с fallback того же контейнерного типа, чтобы не было пустого экрана и скачка layout при lazy-load.
-2. В AdminDocumentTemplates.tsx и AdminExecutors.tsx сделать именно механический extraction 1:1: без изменения внутренних hooks, query keys, table state, modal state, handlers и mutation-логики.
-3. В AiPageContent.tsx проверить, что тип SubTab реально расширен значениями "templates" и "executors", и добавить импорт FileStack, иначе будут типовые и runtime-ошибки.
-4. В useAdminMenuSettings.tsx удаление executors и templates из DEFAULT_MENU и добавление их в DEPRECATED_ITEM_IDS выполнить одновременно в одном патче. Это обязательно, чтобы mergeMenuSettings не возвращал старые пункты после reload.
-5. В DoD добавить отдельную проверку: /admin/ai → Документы → Шаблоны документов и /admin/ai → Документы → Исполнители не создают двойной AdminLayout и не ломают scroll/sticky header.
+1. В AdminDocumentTemplates.tsx при embedded=true убрать не только H1/description, но и лишний верхний вертикальный зазор над TabsList, чтобы строка внутренних вкладок поднималась вплотную к общему блоку sub-tabs /admin/ai → Документы. Нужен единый верхний offset, без второй «ступеньки».
+2. Кнопку Добавить шаблон во встроенном режиме оформить не как обычную page-action вне контекста, а как CTA той же строки управления, на одном baseline с TabsList, справа, без лишнего внешнего контейнера и без увеличения высоты строки.
+3. В AdminExecutors.tsx при embedded=true убрать не только stats-card’ы, но и любые дополнительные page-level section wrappers, которые создают ощущение отдельной страницы внутри вкладки. Должна остаться только верхняя строка управления + стандартная таблица.
+4. Для ExecutorsContent во встроенном режиме кнопку Добавить выровнять по той же схеме, что и в шаблонах: справа в верхней строке управления, на одном уровне с контентом вкладки, без отдельного hero/header блока.
+5. В обоих компонентах embedded=true не должен ломать standalone-маршруты визуально и по spacing. Нужен явный split:
+  &nbsp;
+  - embedded=false → текущее page-layout поведение 1:1
+  - embedded=true → компактный tab-layout без page-header/summary
+  &nbsp;
+6. В AiPageContent.tsx передавать embedded только для render внутри /admin/ai. Standalone routes /admin/document-templates и /admin/executors оставить на default embedded=false без дополнительных изменений.
+7. DoD дополнить:
+  &nbsp;
+  - во вкладке Шаблоны документов нет дублирующего page-title и нет лишнего верхнего gap;
+  - во вкладке Исполнители таблица начинается сразу после компактной строки управления;
+  - обе встроенные вкладки визуально выглядят как часть одной admin-AI страницы, а не как вложенные отдельные страницы;
+  - standalone страницы визуально не изменились 1:1.
+  &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План: Перенести «Шаблоны документов» и «Исполнители» в секцию «Документы» на /admin/ai
+План: Убрать дублирующие заголовки и метрики, унифицировать layout вкладок «Шаблоны документов» и «Исполнители» внутри /admin/ai
 
-## Изменяемые файлы (4 файла, только extraction + add-only)
+## Подход
+
+Добавить prop `embedded?: boolean` в оба content-компонента. Когда `embedded=true` (из AiPageContent), скрывать заголовки, метрики и менять layout. Standalone-маршруты продолжают работать как есть (`embedded` по умолчанию `false`).
+
+## Изменяемые файлы
 
 ### 1. `src/pages/admin/AdminDocumentTemplates.tsx`
 
-- Выделить content (строки 187–467, всё между `<AdminLayout>` и `</AdminLayout>`) в `export function DocumentTemplatesContent()`
-- Вся логика (state, hooks, handlers, dialogs) остаётся внутри `DocumentTemplatesContent`
-- Default export становится thin wrapper:
+`DocumentTemplatesContent` получает prop `embedded?: boolean`.
+
+Когда `embedded=true`:
+
+- **Убрать** блок H1 + description (строки 187-193)
+- **Убрать** `container mx-auto py-6 space-y-6` обёртку → заменить на `space-y-2`
+- **Перестроить** строку вкладок: `TabsList` + кнопка «Добавить шаблон» в одном `flex` row:
   ```tsx
-  export default function AdminDocumentTemplates() {
-    return <AdminLayout><DocumentTemplatesContent /></AdminLayout>;
-  }
+  <div className="flex items-center justify-between gap-2">
+    <TabsList>...</TabsList>
+    <Button size="sm" onClick={handleOpenDialog}>
+      <Plus /> Добавить шаблон
+    </Button>
+  </div>
   ```
+- Когда `embedded=false` (default) — всё как сейчас, standalone не ломается
 
 ### 2. `src/pages/admin/AdminExecutors.tsx`
 
-- Выделить content (строки 359–847, всё между `<AdminLayout>` и `</AdminLayout>`) в `export function ExecutorsContent()`
-- Вся логика остаётся внутри `ExecutorsContent`
-- Default export становится thin wrapper:
+`ExecutorsContent` получает prop `embedded?: boolean`.
+
+Когда `embedded=true`:
+
+- **Убрать** блок H1 + description (строки 360-366)
+- **Убрать** stats-карточки «Всего / Активных / По умолчанию» (строки 376-406)
+- **Убрать** `space-y-6` → заменить на `space-y-2`
+- Кнопка «Добавить» переносится в верхнюю строку управления:
   ```tsx
-  export default function AdminExecutors() {
-    return <AdminLayout><ExecutorsContent /></AdminLayout>;
-  }
+  <div className="flex items-center justify-end gap-2">
+    {canEdit && <Button size="sm" onClick={handleOpenDialog}>
+      <Plus /> Добавить
+    </Button>}
+  </div>
   ```
+- Badge «По умолчанию» в строке таблицы **уже есть** (строки 434-438) — ничего добавлять не нужно
+- Когда `embedded=false` — всё остаётся как есть
 
 ### 3. `src/components/ai-chat/AiPageContent.tsx`
 
-- Расширить тип `SubTab`: добавить `"templates" | "executors"`
-- Add-only в конец `DOC_SUB_TABS`:
-  ```ts
-  { id: "templates", label: "Шаблоны документов", icon: FileStack, ... }
-  { id: "executors", label: "Исполнители", icon: Building2, ... }
-  ```
-- `DEFAULT_SUB.documents = "generate"` — без изменений
-- Lazy-импорт content-компонентов (не default page!):
-  ```ts
-  const DocumentTemplatesContent = lazy(() =>
-    import("@/pages/admin/AdminDocumentTemplates").then(m => ({ default: m.DocumentTemplatesContent }))
-  );
-  const ExecutorsContent = lazy(() =>
-    import("@/pages/admin/AdminExecutors").then(m => ({ default: m.ExecutorsContent }))
-  );
-  ```
-- В рендере секции documents (после строки 795) добавить:
-  ```tsx
-  {activeSubTab === "templates" && (
-    <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-      <DocumentTemplatesContent />
-    </Suspense>
-  )}
-  {activeSubTab === "executors" && (
-    <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-      <ExecutorsContent />
-    </Suspense>
-  )}
-  ```
-- Добавить `Suspense` и `FileStack` в импорты (lazy уже есть в React)
-- Guard-эффекты (строки 460-485) уже покрывают невалидный subtab — дополнительных правок не нужно
+Передать `embedded` prop при рендере:
 
-### 4. `src/hooks/useAdminMenuSettings.tsx`
-
-- Удалить из `DEFAULT_MENU` → `service.items` строки 121-122:
-  ```
-  { id: "executors", ... }
-  { id: "templates", ... }
-  ```
-- Добавить оба id в `DEPRECATED_ITEM_IDS` (строка 132-138):
-  ```ts
-  "executors",   // → /admin/ai → Документы → Исполнители
-  "templates",   // → /admin/ai → Документы → Шаблоны документов
-  ```
+```tsx
+<LazyDocumentTemplatesContent embedded />
+<LazyExecutorsContent embedded />
+```
 
 ## Что НЕ меняется
 
-- `AdminLayout.tsx`, `App.tsx` (маршруты `/admin/document-templates` и `/admin/executors` остаются)
+- Бизнес-логика, hooks, handlers, модалки, mutation logic
+- Standalone маршруты `/admin/document-templates` и `/admin/executors`
+- `AdminLayout.tsx`, `App.tsx`, `useAdminMenuSettings.tsx`
 - БД, RLS, edge functions
-- `DEFAULT_SUB.documents`, существующие `generate` и `history` sub-tabs
-- Бизнес-логика, query hooks, mutation handlers внутри обоих компонентов
 
 ## DoD
 
-1. `/admin/ai` → «Документы» показывает 4 sub-tabs: Создать документ, История, Шаблоны документов, Исполнители
-2. Sub-tabs рендерят тот же UI что и standalone-страницы
-3. Sidebar больше не показывает «Шаблоны документов» и «Исполнители»
-4. Standalone routes `/admin/document-templates` и `/admin/executors` работают 1:1
-5. На `/ai` секция «Документы» скрыта (adminOnly)
-6. `mergeMenuSettings` вычищает удалённые пункты из сохранённых настроек через `DEPRECATED_ITEM_IDS`
-7. templates и executors внутри /admin/ai не ломают sticky header и scroll контейнер
-8. Если раньше был активен старый/битый subtab в секции documents, guard автоматически сбрасывает на generate
+1. Во вкладке «Шаблоны документов» нет дублирующего H1/description
+2. Кнопка «Добавить шаблон» находится в строке внутренних вкладок справа
+3. Во вкладке «Исполнители» нет summary-card'ов
+4. Исполнитель по умолчанию помечен badge в строке таблицы (уже есть)
+5. Обе вкладки визуально выровнены: минимальные отступы сверху, CTA справа в управляющей строке
+6. Standalone маршруты визуально и функционально не изменились
