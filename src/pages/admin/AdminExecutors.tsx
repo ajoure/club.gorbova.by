@@ -109,7 +109,7 @@ function generateActsOnBasisText(type: string, basis: string, details: string): 
   return basis;
 }
 
-export default function AdminExecutors() {
+export function ExecutorsContent() {
   const { executors, isLoading: executorsLoading, createExecutor, updateExecutor, deleteExecutor, setDefault: setDefaultExecutor, isCreating, isUpdating } = useExecutors();
   const { canWrite, isSuperAdmin } = usePermissions();
   
@@ -355,7 +355,7 @@ export default function AdminExecutors() {
   const defaultExecutor = executors?.find(e => e.is_default);
 
   return (
-    <AdminLayout>
+    <>
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -843,6 +843,14 @@ export default function AdminExecutors() {
         liquidationDate={grpLookup.data?.data?.liquidation_date}
         onConfirm={handleGrpConfirm}
       />
+    </>
+  );
+}
+
+export default function AdminExecutors() {
+  return (
+    <AdminLayout>
+      <ExecutorsContent />
     </AdminLayout>
   );
 }

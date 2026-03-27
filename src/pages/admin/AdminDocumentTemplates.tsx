@@ -38,7 +38,7 @@ const defaultFormData: TemplateFormData = {
   is_active: true,
 };
 
-export default function AdminDocumentTemplates() {
+export function DocumentTemplatesContent() {
   const { templates, isLoading, createTemplate, updateTemplate, deleteTemplate, uploadTemplateFile, isCreating, isUpdating } = useDocumentTemplates();
   
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -183,288 +183,294 @@ export default function AdminDocumentTemplates() {
   };
 
   return (
-    <AdminLayout>
-      <div className="container mx-auto py-6 space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h1 className="text-2xl font-bold">Шаблоны документов</h1>
-            <p className="text-muted-foreground">
-              Управление шаблонами для автоматической генерации документов
-            </p>
-          </div>
-          <Button onClick={() => handleOpenDialog()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Добавить шаблон
-          </Button>
+    <div className="container mx-auto py-6 space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">Шаблоны документов</h1>
+          <p className="text-muted-foreground">
+            Управление шаблонами для автоматической генерации документов
+          </p>
         </div>
+        <Button onClick={() => handleOpenDialog()}>
+          <Plus className="h-4 w-4 mr-2" />
+          Добавить шаблон
+        </Button>
+      </div>
 
-        <Tabs defaultValue="templates" className="space-y-4">
-          <TabsList className="flex-wrap h-auto">
-            <TabsTrigger value="templates">Шаблоны</TabsTrigger>
-            <TabsTrigger value="rules" className="flex items-center gap-1">
-              <Settings className="h-3.5 w-3.5" />
-              Правила генерации
-            </TabsTrigger>
-            <TabsTrigger value="log" className="flex items-center gap-1">
-              <FileCheck className="h-3.5 w-3.5" />
-              Журнал документов
-            </TabsTrigger>
-            <TabsTrigger value="placeholders">Плейсхолдеры</TabsTrigger>
-          </TabsList>
+      <Tabs defaultValue="templates" className="space-y-4">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="templates">Шаблоны</TabsTrigger>
+          <TabsTrigger value="rules" className="flex items-center gap-1">
+            <Settings className="h-3.5 w-3.5" />
+            Правила генерации
+          </TabsTrigger>
+          <TabsTrigger value="log" className="flex items-center gap-1">
+            <FileCheck className="h-3.5 w-3.5" />
+            Журнал документов
+          </TabsTrigger>
+          <TabsTrigger value="placeholders">Плейсхолдеры</TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="templates">
-            <Card>
-              <CardHeader>
-                <CardTitle>Загруженные шаблоны</CardTitle>
-                <CardDescription>
-                  Word-документы с плейсхолдерами для автоматической подстановки данных
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="space-y-2">
-                    {[1, 2, 3].map(i => (
-                      <Skeleton key={i} className="h-16 w-full" />
-                    ))}
-                  </div>
-                ) : templates.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                    <p>Шаблоны не найдены</p>
-                    <p className="text-sm">Загрузите первый шаблон документа</p>
-                  </div>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Название</TableHead>
-                        <TableHead>Код</TableHead>
-                        <TableHead>Тип</TableHead>
-                        <TableHead>Статус</TableHead>
-                        <TableHead>Обновлён</TableHead>
-                        <TableHead className="text-right">Действия</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {templates.map(template => (
-                        <TableRow key={template.id}>
-                          <TableCell className="font-medium">
-                            {template.name}
-                            {template.description && (
-                              <p className="text-sm text-muted-foreground truncate max-w-[200px]">
-                                {template.description}
-                              </p>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <code className="text-xs bg-muted px-2 py-1 rounded">
-                              {template.code}
-                            </code>
-                          </TableCell>
-                          <TableCell>{getDocumentTypeBadge(template.document_type)}</TableCell>
-                          <TableCell>
-                            <Badge variant={template.is_active ? "default" : "secondary"}>
-                              {template.is_active ? "Активен" : "Неактивен"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {format(new Date(template.updated_at), "dd.MM.yyyy HH:mm", { locale: ru })}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => downloadTemplate(template)}
-                              >
-                                <Download className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleOpenDialog(template)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setDeleteId(template.id)}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="rules">
-            <DocumentRulesTab />
-          </TabsContent>
-
-          <TabsContent value="log">
-            <DocumentLogTab />
-          </TabsContent>
-
-          <TabsContent value="placeholders">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Info className="h-5 w-5" />
-                  Доступные плейсхолдеры
-                </CardTitle>
-                <CardDescription>
-                  Используйте эти плейсхолдеры в Word-шаблоне для автоматической подстановки данных
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[400px]">
-                  <div className="grid gap-2">
-                    {INVOICE_ACT_PLACEHOLDERS.map(placeholder => (
-                      <div
-                        key={placeholder.key}
-                        className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                      >
-                        <div>
-                          <code className="text-sm font-mono bg-primary/10 text-primary px-2 py-1 rounded">
-                            {placeholder.key}
-                          </code>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {placeholder.description}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => copyPlaceholder(placeholder.key)}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-
-        {/* Create/Edit Dialog */}
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>
-                {editingId ? "Редактировать шаблон" : "Новый шаблон"}
-              </DialogTitle>
-              <DialogDescription>
-                Загрузите Word-документ с плейсхолдерами
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Название *</Label>
-                <Input
-                  id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  placeholder="Счёт-акт на услуги"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="code">Код *</Label>
-                <Input
-                  id="code"
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "_") })}
-                  placeholder="invoice_act_v1"
-                  disabled={!!editingId}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Уникальный код для идентификации шаблона
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="description">Описание</Label>
-                <Textarea
-                  id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Описание шаблона"
-                  rows={2}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="file">
-                  Файл шаблона (.docx) {!editingId && "*"}
-                </Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="file"
-                    type="file"
-                    accept=".docx"
-                    onChange={handleFileChange}
-                    className="cursor-pointer"
-                  />
+        <TabsContent value="templates">
+          <Card>
+            <CardHeader>
+              <CardTitle>Загруженные шаблоны</CardTitle>
+              <CardDescription>
+                Word-документы с плейсхолдерами для автоматической подстановки данных
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map(i => (
+                    <Skeleton key={i} className="h-16 w-full" />
+                  ))}
                 </div>
-                {selectedFile && (
-                  <p className="text-sm text-muted-foreground">
-                    Выбран: {selectedFile.name}
-                  </p>
-                )}
-              </div>
+              ) : templates.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Шаблоны не найдены</p>
+                  <p className="text-sm">Загрузите первый шаблон документа</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Название</TableHead>
+                      <TableHead>Код</TableHead>
+                      <TableHead>Тип</TableHead>
+                      <TableHead>Статус</TableHead>
+                      <TableHead>Обновлён</TableHead>
+                      <TableHead className="text-right">Действия</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {templates.map(template => (
+                      <TableRow key={template.id}>
+                        <TableCell className="font-medium">
+                          {template.name}
+                          {template.description && (
+                            <p className="text-sm text-muted-foreground truncate max-w-[200px]">
+                              {template.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <code className="text-xs bg-muted px-2 py-1 rounded">
+                            {template.code}
+                          </code>
+                        </TableCell>
+                        <TableCell>{getDocumentTypeBadge(template.document_type)}</TableCell>
+                        <TableCell>
+                          <Badge variant={template.is_active ? "default" : "secondary"}>
+                            {template.is_active ? "Активен" : "Неактивен"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {format(new Date(template.updated_at), "dd.MM.yyyy HH:mm", { locale: ru })}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => downloadTemplate(template)}
+                            >
+                              <Download className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleOpenDialog(template)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setDeleteId(template.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-              <div className="flex items-center justify-between">
-                <Label htmlFor="is_active">Активен</Label>
-                <Switch
-                  id="is_active"
-                  checked={formData.is_active}
-                  onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
-                />
-              </div>
+        <TabsContent value="rules">
+          <DocumentRulesTab />
+        </TabsContent>
+
+        <TabsContent value="log">
+          <DocumentLogTab />
+        </TabsContent>
+
+        <TabsContent value="placeholders">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Info className="h-5 w-5" />
+                Доступные плейсхолдеры
+              </CardTitle>
+              <CardDescription>
+                Используйте эти плейсхолдеры в Word-шаблоне для автоматической подстановки данных
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[400px]">
+                <div className="grid gap-2">
+                  {INVOICE_ACT_PLACEHOLDERS.map(placeholder => (
+                    <div
+                      key={placeholder.key}
+                      className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                    >
+                      <div>
+                        <code className="text-sm font-mono bg-primary/10 text-primary px-2 py-1 rounded">
+                          {placeholder.key}
+                        </code>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          {placeholder.description}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => copyPlaceholder(placeholder.key)}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* Create/Edit Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {editingId ? "Редактировать шаблон" : "Новый шаблон"}
+            </DialogTitle>
+            <DialogDescription>
+              Загрузите Word-документ с плейсхолдерами
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Название *</Label>
+              <Input
+                id="name"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Счёт-акт на услуги"
+              />
             </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={handleCloseDialog}>
-                Отмена
-              </Button>
-              <Button
-                onClick={handleSubmit}
-                disabled={isCreating || isUpdating || uploading}
-              >
-                {uploading ? "Загрузка..." : editingId ? "Сохранить" : "Создать"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <div className="space-y-2">
+              <Label htmlFor="code">Код *</Label>
+              <Input
+                id="code"
+                value={formData.code}
+                onChange={(e) => setFormData({ ...formData, code: e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "_") })}
+                placeholder="invoice_act_v1"
+                disabled={!!editingId}
+              />
+              <p className="text-xs text-muted-foreground">
+                Уникальный код для идентификации шаблона
+              </p>
+            </div>
 
-        {/* Delete Confirmation */}
-        <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Удалить шаблон?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Это действие нельзя отменить. Шаблон будет удалён безвозвратно.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Отмена</AlertDialogCancel>
-              <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
-                Удалить
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Описание</Label>
+              <Textarea
+                id="description"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Описание шаблона"
+                rows={2}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="file">
+                Файл шаблона (.docx) {!editingId && "*"}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="file"
+                  type="file"
+                  accept=".docx"
+                  onChange={handleFileChange}
+                  className="cursor-pointer"
+                />
+              </div>
+              {selectedFile && (
+                <p className="text-sm text-muted-foreground">
+                  Выбран: {selectedFile.name}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between">
+              <Label htmlFor="is_active">Активен</Label>
+              <Switch
+                id="is_active"
+                checked={formData.is_active}
+                onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={handleCloseDialog}>
+              Отмена
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={isCreating || isUpdating || uploading}
+            >
+              {uploading ? "Загрузка..." : editingId ? "Сохранить" : "Создать"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить шаблон?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Это действие нельзя отменить. Шаблон будет удалён безвозвратно.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground">
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+export default function AdminDocumentTemplates() {
+  return (
+    <AdminLayout>
+      <DocumentTemplatesContent />
     </AdminLayout>
   );
 }
