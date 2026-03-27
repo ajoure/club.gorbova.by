@@ -2,127 +2,58 @@
 
 &nbsp;
 
-1. **Главное не забыто**
-  Базовые пункты из исходного плана сохранены:
+1. В PromptFormDialog.tsx лучше заменить фон DialogContent не на bg-muted, а на bg-background или оставить дефолтный solid фон диалога. bg-muted может снова дать ощущение серой подложки, а не белого окна как в EntityRecordSheet.
+2. В DialogContent добавить не только overflow-hidden, но и проверить/зафиксировать max-h-[90vh] overflow-y-auto overflow-x-hidden, чтобы длинные секции не создавали горизонтальный скролл.
+3. В PromptAttachmentsSection.tsx для строки карточки файла нужен полный набор:
   &nbsp;
-  - фикс Invalid key через safe storage filename;
-  - сохранение оригинального имени в file_name;
-  - перестройка PromptFormDialog на Card-секции;
-  - PromptAttachmentsSection без изменений;
-  - без правок edge function / БД / extractor / других диалогов.
+  - внешний row: flex items-center gap-3 overflow-hidden
+  - средний контент-блок: min-w-0 flex-1 overflow-hidden
+  - filename: truncate
+    Иначе truncate может снова не сработать.
   &nbsp;
-2. **Нужно явно зафиксировать proof по загрузке**
-  В DoD уже есть результат, но в плане лучше прямо потребовать:
+4. Кнопку удаления файла справа сделать shrink-0, чтобы длинное имя не выталкивало её за пределы карточки.
+5. Проверить не только список файлов, но и все длинные текстовые поля в диалоге (slug, launcher_description, response_format, подсказки), чтобы у всего контейнера не было горизонтального overflow.
+6. В DoD добавить proof:
   &nbsp;
-  - proof успешной загрузки .rtf с длинным кириллическим именем;
-  - proof file_path в Storage в ASCII-only виде;
-  - proof строки в ai_prompt_attachments с оригинальным file_name.
-  &nbsp;
-3. **Нужно явно проверить не только upload, но и повторное открытие**
-  У тебя это есть в DoD пунктом про reload диалога, это правильно.
-  Стоит уточнить: после закрытия/открытия PromptFormDialog вложение должно подтягиваться из БД, а не держаться только в локальном state.
-4. **Нужно явно сохранить текущую логику ext**
-  В helper уже сохраняется расширение, это хорошо.
-  Но стоит добавить правило:
-  &nbsp;
-  - если extension пустой или после очистки стал пустым, файл всё равно должен грузиться без ext, а не падать.
-  &nbsp;
-5. **По Card-дизайну план полный**
-  Разделение на:
-  &nbsp;
-  - Основные параметры
-  - Текст промпта
-  - База знаний
-  - Настройки запуска и отображения
-  - Формат ответа
-    выглядит правильно и лучше исходного общего блока.
-  &nbsp;
-6. **Нужно не забыть визуальную совместимость секции файлов**
-  В плане стоит явно потребовать:
-  &nbsp;
-  - PromptAttachmentsSection не ломает ширину диалога;
-  - длинные имена файлов внутри секции режутся через truncate, без overflow.
-  &nbsp;
-7. **Удаление лучше уточнить как 2-step proof**
-  В DoD есть “Storage + БД”, это верно.
-  Но лучше прямо потребовать:
-  &nbsp;
-  - после удаления запись исчезла из списка;
-  - после refresh не возвращается;
-  - файла больше нет в bucket.
-  &nbsp;
-8. **Scope выдержан правильно**
-  Важно, что он не утащил в патч лишнее:
-  &nbsp;
-  - не трогает другие диалоги;
-  - не трогает edge function;
-  - не трогает таблицы/RLS без необходимости.
-    Это соответствует начальному плану.
+  - длинный кириллический filename в списке вложений не выходит за край;
+  - в диалоге нет горизонтального скролла;
+  - фон окна визуально solid, без полупрозрачности.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Итог:
+План: Фикс overflow и прозрачности карточек в PromptFormDialog
 
-из начального плана критично ничего не потеряно. План хороший. Я бы только добавил явные **proof-требования по upload / reload / delete** и guard для случая **пустого extension**.
+## Диагностика
 
-&nbsp;
+1. **Overflow справа**: `DialogContent` имеет `max-w-2xl`, но внутренние карточки с длинными именами файлов не ограничены по ширине — `min-w-0` отсутствует на flex-контейнерах, и `truncate` не срабатывает из-за этого.
+2. **Прозрачность**: `DialogContent` использует `bg-muted/30` — полупрозрачный фон. В EntityRecordSheet используется стандартный непрозрачный фон. Нужно убрать `/30` и сделать фон solid.
 
-План: Фикс загрузки файлов + Card-дизайн PromptFormDialog
+## Изменения
 
-## 1. `src/hooks/usePromptAttachments.ts` — ASCII-only Storage path
+### 1. `src/components/ai-chat/PromptFormDialog.tsx`
 
-**Root cause:** строка 86 — `const storagePath = \`{promptId}/{fileId}_{file.name}` — кириллица и спецсимволы в ключе Storage.
+- Строка 145: заменить `bg-muted/30` на `bg-muted` (убрать прозрачность)
+- Добавить `overflow-hidden` на `DialogContent` для предотвращения горизонтального overflow
 
-**Фикс:** вынести helper-функцию и использовать только ASCII в ключе:
+### 2. `src/components/ai-chat/PromptAttachmentsSection.tsx`
 
-```typescript
-function buildSafeStorageFileName(fileName: string): string {
-  const ext = fileName.includes(".")
-    ? `.${fileName.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "")}`
-    : "";
-  return `${Date.now()}_${crypto.randomUUID()}${ext}`;
-}
-```
+- Строка 126: на карточке файла `div` с `flex items-center` — убедиться что есть `overflow-hidden` на контейнере
+- Строка 130: `truncate` уже есть на имени файла, но родительский flex-контейнер нуждается в `min-w-0` и `overflow-hidden` чтобы truncate сработал
 
-Строка 86 станет:
+Конкретно:
 
-```typescript
-const storagePath = `${promptId}/${buildSafeStorageFileName(file.name)}`;
-```
-
-Оригинальное имя файла сохраняется в `file_name` в БД (строка 106) — без изменений.
-
-## 2. `src/components/ai-chat/PromptFormDialog.tsx` — Card-секции
-
-Переструктурировать форму по паттерну EntityRecordSheet (Card → CardHeader → CardContent):
-
-- **Card «Основные параметры»** — slug, тип, название, описание
-- **Card «Текст промпта»** — textarea prompt_text
-- **Card «База знаний (файлы)»** — PromptAttachmentsSection (уже есть)
-- **Card «Настройки запуска и отображения»** — категория, иконка, подсказка для ввода, launcher title/description/order, sort_order, переключатели active/visible
-- **Card «Формат ответа»** (отдельная под-секция) — response_format JSON textarea
-
-Каждая секция: белый фон, `CardHeader` с иконкой и заголовком `text-sm text-muted-foreground`, `CardContent` с полями через `Separator`.
-
-## 3. `src/components/ai-chat/PromptAttachmentsSection.tsx` — без изменений
-
-Компонент уже корректный. Обёртка Card будет в PromptFormDialog.
+- Строка 126: добавить `overflow-hidden` к классам контейнера файла
+- Внутренний div (строка 129) уже имеет `min-w-0`, это корректно
 
 ## Что не меняется
 
-- Таблица `ai_prompt_attachments`, RLS, Storage bucket — не трогаем
-- Edge function — не трогаем
-- `fileExtractor.ts` — не трогаем
-- Другие диалоги проекта — отдельный будущий UI-pass
+- Логика хука, edge function, БД, RLS — без изменений
+- Структура Card-секций — без изменений
 
 ## DoD
 
-1. Файл с кириллическим длинным именем `.rtf` загружается без toast-ошибки
-2. В Storage путь ASCII-only (`{promptId}/{timestamp}_{uuid}.rtf`)
-3. В БД `file_name` содержит оригинальное имя
-4. После reload диалога вложение остаётся в списке
-5. Удаление файла работает корректно (Storage + БД)
-6. PromptFormDialog использует Card-секции как в EntityRecordSheet
+1. Длинные имена файлов обрезаются через truncate, не выходят за правый край карточки
+2. Фон диалога solid, без прозрачности, как в реквизитах
