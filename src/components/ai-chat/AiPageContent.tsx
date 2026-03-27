@@ -46,10 +46,10 @@ import {
 type Section = "ai" | "documents" | "requisites";
 type SubTab = "chat" | "analysis-history" | "tutorials" | "prompts" | "generate" | "history" | "entities" | "persons";
 
-const SECTIONS = [
-  { id: "ai" as const, label: "Gorbova AI", icon: Bot },
-  { id: "documents" as const, label: "Документы", icon: FileText },
-  { id: "requisites" as const, label: "Реквизиты", icon: Building2 },
+const SECTIONS: { id: Section; label: string; icon: React.ComponentType<{ className?: string }>; adminOnly?: boolean }[] = [
+  { id: "ai", label: "Gorbova AI", icon: Bot },
+  { id: "documents", label: "Документы", icon: FileText, adminOnly: true },
+  { id: "requisites", label: "Реквизиты", icon: Building2 },
 ];
 
 interface SubMenuItem {
@@ -90,6 +90,7 @@ const AI_SUB_TABS: SubMenuItem[] = [
     activeGradient: "from-purple-500/20 to-violet-500/15",
     borderColor: "border-purple-400/20",
     iconColor: "text-purple-500",
+    adminOnly: true,
   },
   {
     id: "prompts",
@@ -443,11 +444,45 @@ export function AiPageContent({ mode }: AiPageContentProps) {
     setActiveSubTab(DEFAULT_SUB[section]);
   };
 
-  // Filter sub-tabs by role:
-  // mode="admin" → show all adminOnly tabs (visibility only, not write access)
-  // mode="user" → show adminOnly tabs only if isAdminUser
+  // Filter sections and sub-tabs strictly by mode (not isAdminUser)
+  const visibleSections = useMemo(
+    () => SECTIONS.filter(sec => !sec.adminOnly || mode === "admin"),
+    [mode]
+  );
+
   const allSubTabs = activeSection === "ai" ? AI_SUB_TABS : activeSection === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
-  const subTabs = allSubTabs.filter(tab => !tab.adminOnly || mode === "admin" || isAdminUser);
+  const subTabs = useMemo(
+    () => allSubTabs.filter(tab => !tab.adminOnly || mode === "admin"),
+    [allSubTabs, mode]
+  );
+
+  // Guard: reset activeSection if it became invisible
+  useEffect(() => {
+    if (!visibleSections.some(s => s.id === activeSection)) {
+      const fallback = visibleSections[0]?.id ?? "ai";
+      // Find a visible subtab for the fallback section
+      const fallbackAllSubs = fallback === "ai" ? AI_SUB_TABS : fallback === "requisites" ? REQ_SUB_TABS : DOC_SUB_TABS;
+      const fallbackVisibleSubs = fallbackAllSubs.filter(t => !t.adminOnly || mode === "admin");
+      const defaultSub = DEFAULT_SUB[fallback];
+      const safeSub = fallbackVisibleSubs.some(t => t.id === defaultSub)
+        ? defaultSub
+        : fallbackVisibleSubs[0]?.id ?? defaultSub;
+      setActiveSection(fallback);
+      setActiveSubTab(safeSub);
+    }
+  }, [activeSection, visibleSections, mode]);
+
+  // Guard: reset activeSubTab if it became invisible
+  useEffect(() => {
+    if (subTabs.length === 0) return;
+    if (!subTabs.some(t => t.id === activeSubTab)) {
+      const defaultSub = DEFAULT_SUB[activeSection];
+      const fallback = subTabs.some(t => t.id === defaultSub)
+        ? defaultSub
+        : subTabs[0]?.id ?? defaultSub;
+      setActiveSubTab(fallback);
+    }
+  }, [activeSubTab, subTabs, activeSection]);
 
   const sectionTabClass = (active: boolean) =>
     `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
@@ -472,7 +507,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
           aria-label="AI разделы"
           className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none"
         >
-          {SECTIONS.map((sec) => {
+          {visibleSections.map((sec) => {
             const isActive = activeSection === sec.id;
             const Icon = sec.icon;
             return (
