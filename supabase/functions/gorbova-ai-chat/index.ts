@@ -6,8 +6,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp', '.rtf', '.csv'];
-const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats', 'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp', 'application/rtf', 'text/rtf', 'text/csv'];
+const ALLOWED_EXTENSIONS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png', '.webp', '.rtf', '.csv', '.txt'];
+const ALLOWED_MIME_PREFIXES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats', 'application/vnd.ms-excel', 'image/jpeg', 'image/png', 'image/webp', 'application/rtf', 'text/rtf', 'text/csv', 'text/plain'];
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_CHARS = 100000;
@@ -44,6 +44,12 @@ const PARTIAL_ANALYSIS_INSTRUCTION = `
 
 const BLOCKED_SCENARIOS = ['file_analysis', 'document_review'];
 
+interface UnsupportedFileInfo {
+  name: string;
+  reason: string;
+  extension?: string;
+}
+
 interface RequestBody {
   mode: 'chat' | 'prompt';
   messages: Array<{ role: string; content: string }>;
@@ -52,6 +58,7 @@ interface RequestBody {
   images?: Array<{ base64: string; filename: string; mimeType?: string }>;
   fileNames?: string[];
   conversation_id?: string;
+  unsupported_files?: UnsupportedFileInfo[];
 }
 
 function validateFileExtension(filename: string): boolean {
