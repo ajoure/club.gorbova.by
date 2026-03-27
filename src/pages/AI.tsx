@@ -159,6 +159,9 @@ const AI = () => {
   const [activeSection, setActiveSection] = useState<Section>("ai");
   const [activeSubTab, setActiveSubTab] = useState<SubTab>("chat");
   const [activeScenario, setActiveScenario] = useState<ChatScenario | null>(null);
+  const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
+  const [showUploader, setShowUploader] = useState(false);
+  const [isDragOverChat, setIsDragOverChat] = useState(false);
 
   // Auto-scroll refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
