@@ -701,11 +701,27 @@ Deno.serve(async (req) => {
       const canceledAt = (sub as any).cancelled_at || (sub as any).canceled_at || 
                          snapshot?.cancelled_at || snapshot?.canceled_at || null;
 
-      // PATCH-U4: Build payment/order links
-      const linkedOrderId = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
-      const linkedOrderNumber = linkedOrder?.order_number || linkedPaymentDirect?.order_number || null;
+      // PATCH-SV2-ORDER: New SoT for linkedOrderId
+      // Priority 1: sv2.order_id (direct chain via provider_subscriptions → subscriptions_v2 → orders_v2)
+      const sv2OrderId = linkedSubId ? subV2DetailsMap.get(linkedSubId)?.order_id : undefined;
+      const linkedOrderFromV2 = sv2OrderId ? v2OrderIdMap.get(sv2OrderId) : undefined;
+      // STOP-guard: sv2OrderId exists but order not found in DB
+      const sv2OrderUnresolved = !!(sv2OrderId && !linkedOrderFromV2);
+      
+      // Priority 2-3: meta-based fallbacks
+      const metaOrderId = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
+      
+      // STOP-guard: conflict detection (sv2 vs meta, both exist but differ)
+      const hasConflict = !!(linkedOrderFromV2 && metaOrderId && linkedOrderFromV2.order_id !== metaOrderId);
+      
+      // Final resolved values (sv2 wins)
+      const linkedOrderId = linkedOrderFromV2?.order_id || metaOrderId;
+      const linkedOrderNumber = linkedOrderFromV2?.order_number || linkedOrder?.order_number || linkedPaymentDirect?.order_number || null;
       const linkedPaymentId = paymentFromOrder?.payment_id || linkedPaymentDirect?.payment_id || null;
       const linkedProviderPaymentId = paymentFromOrder?.provider_payment_id || linkedPaymentDirect?.provider_payment_id || null;
+      
+      // Compute linked_before (old logic, meta-only) for stats comparison
+      const linkedOrderIdOldLogic = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
 
       return {
         id: String(sub.id),
