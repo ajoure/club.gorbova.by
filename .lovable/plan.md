@@ -1,80 +1,100 @@
+# да, согласен, с учетом правок:
 
+&nbsp;
 
-# План: Добавить страницу «Нейросеть» в Панель управления
+1. visibleSections и subTabs оформить через useMemo, чтобы не создавать новые массивы на каждый рендер и не провоцировать лишние срабатывания guard-effect.
+2. Во втором guard-effect сначала проверяй, что subTabs.length > 0. Fallback:
+  &nbsp;
+  - сначала DEFAULT_SUB[activeSection], если он есть среди видимых,
+  - иначе subTabs[0]?.id,
+  - иначе ничего не делать.
+    Не хардкодить лишний запасной id, кроме уже существующего безопасного fallback, если он реально нужен.
+  &nbsp;
+3. В первом guard-effect при смене недоступной секции не ставь activeSubTab вслепую в DEFAULT_SUB[fallback]. Сразу проверяй, что этот subtab видим для новой секции; иначе бери первый доступный subtab новой секции. Иначе возможен краткий пустой рендер.
+4. В рендере и в логике держать один SoT:
+  &nbsp;
+  - visibleSections используется в UI,
+  - subTabs считается только от уже актуальной activeSection,
+  - никаких параллельных неотфильтрованных массивов в JSX.
+  &nbsp;
+5. В DoD добавь отдельную проверку:
+  &nbsp;
+  - если открыть /ai, когда в local state раньше была секция documents или subtab tutorials/prompts, страница автоматически восстанавливается на доступную вкладку без мигания пустого контента.
+  &nbsp;
+6. Этот патч ограничить только AiPageContent.tsx. Ни sidebar, ни layout, ни router здесь не трогать.
 
-## Диагностика
+&nbsp;
 
-- `AI.tsx` (~830 строк) — монолитный компонент в `DashboardLayout`, без зависимостей от контекстов DashboardLayout кроме обёртки
-- Admin-страницы включают `AdminLayout` внутри себя
-- `routeToTitle` / `routeToHelpAnchor` в `AdminLayout.tsx` — единственный SoT для admin titles
-- В `DEFAULT_MENU` группа `service` использует `permission` для RBAC-фильтрации; `Bot` отсутствует в `MENU_ICONS`
-- `mergeMenuSettings` автоматически добавляет новые пункты из `DEFAULT_MENU` в кастомизированные настройки из БД
+&nbsp;
 
-## Изменяемые файлы
+План: Скрыть admin-only вкладки на /ai по mode
 
-### 1. Новый: `src/components/ai-chat/AiPageContent.tsx`
-- Механический перенос содержимого из `AI.tsx` (без `DashboardLayout` обёртки)
-- Принимает `mode: "user" | "admin"`
-- `mode === "admin"` → показать все `adminOnly` вкладки (только видимость)
-- **Инвариант:** `mode="admin"` НЕ обходит `canManagePrompts`, `canManageTutorials`, mutation guards, disabled-state. Все проверки `canManage*`, `canEdit*`, кнопки и секции внутри вкладок остаются 1:1 как в текущем коде. Право видеть вкладку ≠ право на запись
-- Add-only: не менять tab ids, subtab ids, query keys, state names, обработчики
-- `AI_CONTAINER_OFFSET` оставить как есть
+## Что делаем
 
-### 2. `src/pages/AI.tsx`
-- **Только page wrapper:** `DashboardLayout` → `<AiPageContent mode="user" />`
-- Не содержит: query hooks, tab/subtab state, локальных обработчиков, дублирующих констант вкладок
+Единственный файл: `src/components/ai-chat/AiPageContent.tsx`. Никакие sidebar/layout файлы не трогаем.
 
-### 3. Новый: `src/pages/admin/AdminAI.tsx`
-- **Только page wrapper:** `AdminLayout` → `<AiPageContent mode="admin" />`
-- Не содержит: query hooks, tab/subtab state, локальных обработчиков, дублирующих констант вкладок
-- Паттерн как у `AdminIlex`, `AdminEditorial`
+## Изменения
 
-### 4. `src/App.tsx`
-- Lazy import: `const AdminAI = lazy(() => import("./pages/admin/AdminAI"))`
-- Маршрут add-only в существующем блоке admin service routes, без изменения порядка существующих маршрутов:
-  ```tsx
-  <Route path="/admin/ai" element={<ProtectedRoute><LazyRoute><AdminAI /></LazyRoute></ProtectedRoute>} />
-  ```
+### 1. Тип секций — добавить `adminOnly`
 
-### 5. `src/hooks/useAdminMenuSettings.tsx`
-- Добавить `Bot` в import из `lucide-react` и в `MENU_ICONS`
-- В `DEFAULT_MENU`, группа `service`, новый пункт:
-  ```ts
-  { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 12, permission: "roles.view" }
-  ```
-- **Примечание:** `permission: "roles.view"` — временное согласованное решение по текущему паттерну меню для admin-only пунктов, НЕ новый универсальный стандарт. Не копировать без проверки для будущих пунктов
-- Новый пункт корректно появляется через `mergeMenuSettings` с `DEFAULT_MENU` без ручного сброса кастомизированных настроек меню из БД
+Строка 46-53: добавить `adminOnly?: boolean` в объекты SECTIONS, пометить `documents` как `adminOnly: true`.
 
-### 6. `src/components/layout/AdminLayout.tsx`
-- `routeToTitle`: добавить `'/admin/ai': 'Нейросеть'`
-- `routeToHelpAnchor`: добавить `'/admin/ai': 'admin'` — допустимый временный fallback (более точного help-anchor для AI-раздела пока нет)
+### 2. Sub-tabs — пометить "Туториалы"
 
-## Что НЕ изменяется
-- БД, RLS, edge functions, Storage
-- Все хуки, компоненты промптов/чата/реквизитов
+Строка 86-93: добавить `adminOnly: true` к sub-tab `tutorials`.
+
+### 3. Фильтрация секций и sub-tabs строго по mode
+
+Строка 449-450 — заменить текущую логику:
+
+```ts
+// Секции
+const visibleSections = SECTIONS.filter(sec => !sec.adminOnly || mode === "admin");
+
+// Sub-tabs (после определения allSubTabs)
+const subTabs = allSubTabs.filter(tab => !tab.adminOnly || mode === "admin");
+```
+
+Убрать `|| isAdminUser` — на `/ai` даже admin/superadmin не видят admin-only UI.
+
+### 4. Guard для активной секции/subtab после фильтрации
+
+После вычисления `visibleSections` и `subTabs` добавить useEffect:
+
+```ts
+useEffect(() => {
+  if (!visibleSections.some(s => s.id === activeSection)) {
+    const fallback = visibleSections[0]?.id ?? "ai";
+    setActiveSection(fallback);
+    setActiveSubTab(DEFAULT_SUB[fallback]);
+  }
+}, [activeSection, visibleSections]);
+
+useEffect(() => {
+  if (!subTabs.some(t => t.id === activeSubTab)) {
+    const defaultSub = DEFAULT_SUB[activeSection];
+    const fallback = subTabs.find(t => t.id === defaultSub) ? defaultSub : subTabs[0]?.id ?? "chat";
+    setActiveSubTab(fallback);
+  }
+}, [activeSubTab, subTabs, activeSection]);
+```
+
+### 5. Рендер секций — использовать visibleSections
+
+Строка 475: заменить `SECTIONS.map(...)` на `visibleSections.map(...)`.
+
+## Что НЕ меняется
+
+- Tab ids, subtab ids, query keys, state names, обработчики
+- AdminSidebar, AppSidebar, AdminLayout, useAdminMenuSettings, DashboardLayout
 - `AI_CONTAINER_OFFSET`
-- Порядок существующих маршрутов в `App.tsx`
-
-## STOP-guards
-- Зависимости от контекстов `DashboardLayout` → минимальный adapter-layer, не тащить DashboardLayout в admin
-- `Bot` конфликтует с import → другая иконка из lucide + mapping
-- CSS-ограничения по высоте/offset дают визуальный сдвиг → отдельный visual-fix PATCH, не смешивать с маршрутизацией
-- Побочные изменения в tab/subtab initial state, modal open state или query refetch → остановиться, восстановить 1:1 поведение user-версии, затем подключать admin route
-- User-specific CSS/offset-логика в AI.tsx → не менять в том же патче с маршрутом и меню, вынести отдельным visual-fix PATCH
+- canManage*, canEdit*, mutation guards, disabled-state
 
 ## DoD
-1. Пункт «Нейросеть» в admin sidebar → `/admin/ai`, виден только при `roles.view`
-2. `/admin/ai` рендерит тот же контент в `AdminLayout`, все admin-only вкладки видны
-3. `/ai` для обычных пользователей — без изменений
-4. Не-admin на `/admin/ai` блокируется `AdminLayout` guard
-5. Admin view-only видит страницу, редактирование блокируется существующей RBAC-логикой мутаций
-6. `/admin/ai` открывается без runtime-ошибок и без зависимости от `DashboardLayout`
-7. F5 на `/admin/ai` — без редирект-петель и пустого экрана
-8. Breadcrumb title и sidebar active state корректны для `/admin/ai`
-9. Переключение между `/ai` и `/admin/ai` не ломает tab/subtab навигацию и не вызывает runtime-ошибок
-10. Нет дублирования useState, query hooks, обработчиков между `AI.tsx` и `AdminAI.tsx`
-11. Создание/редактирование промптов через `/admin/ai` работает
-12. Переход из admin sidebar на `/admin/ai` и обратно не ломает layout, sticky header и scroll
-13. Прямой вход по URL на admin-only вкладку внутри `/admin/ai` не ломает рендер, даже если аналогичная вкладка скрыта в `/ai`
-14. Возврат со страницы `/admin/ai` на `/ai` не оставляет артефактов admin-only UI в пользовательском режиме
 
+1. `/ai` показывает только "Gorbova AI" и "Реквизиты" (без "Документы")
+2. Внутри "Gorbova AI" на `/ai` — только "Чат" и "История анализа" (без "Туториалы", "Промпты")
+3. `/ai` у admin-пользователя тоже скрывает Документы, Туториалы, Промпты
+4. `/admin/ai` показывает все секции и все sub-tabs
+5. Прямой вход на ранее скрытую вкладку в `/ai` не даёт пустой экран (guard сбрасывает на доступную)
+6. Переключение `/admin/ai` → `/ai` сбрасывает невидимую section/subtab на доступную автоматически
