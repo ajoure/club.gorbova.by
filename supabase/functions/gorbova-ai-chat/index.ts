@@ -211,7 +211,65 @@ Deno.serve(async (req) => {
       metadata.scenario_type = prompt.type;
     }
 
-    // 7. Quality gate — block ONLY on empty (not low)
+    // 7. Unsupported files guard (BEFORE quality gate)
+    const unsupportedFiles = body.unsupported_files;
+    const hasUsableText = stripNonContentMarkers(processedFileContents).length > 0;
+    const allFilesUnsupported =
+      Array.isArray(fileNames) && fileNames.length > 0
+      && Array.isArray(unsupportedFiles) && unsupportedFiles.length === fileNames.length
+      && !hasImages
+      && !hasUsableText;
+
+    if (unsupportedFiles && unsupportedFiles.length > 0) {
+      metadata.unsupported_files_count = unsupportedFiles.length;
+      metadata.unsupported_reasons = unsupportedFiles.map(f => f.reason);
+      metadata.unsupported_file_names = unsupportedFiles.map(f => f.name);
+      metadata.unsupported_all_files = allFilesUnsupported;
+    }
+
+    if (allFilesUnsupported) {
+      const convId = conversation_id || crypto.randomUUID();
+      metadata.blocked = true;
+      metadata.analysis_blocked_reason = 'unsupported_format';
+      metadata.processing_time_ms = Date.now() - startTime;
+
+      const blockedByUnsupportedReason: Record<string, string> = {
+        binary_doc_not_supported: 'Формат .doc не поддерживается для извлечения текста. Пересохраните файл в .docx, PDF или загрузите изображение/скриншот документа.',
+      };
+      const firstReason = unsupportedFiles![0].reason;
+      const blockedContent = blockedByUnsupportedReason[firstReason]
+        ?? 'Формат файла не поддерживается. Загрузите файл в другом формате (PDF, .docx, изображение).';
+
+      const lastUserMsg = messages[messages.length - 1];
+      if (lastUserMsg) {
+        await serviceClient.from('ai_chat_messages').insert({
+          conversation_id: convId,
+          user_id: user.id,
+          role: 'user',
+          content: lastUserMsg.content,
+          metadata: fileNames ? { file_names: fileNames } : null,
+        });
+      }
+
+      await serviceClient.from('ai_chat_messages').insert({
+        conversation_id: convId,
+        user_id: user.id,
+        role: 'assistant',
+        content: blockedContent,
+        metadata,
+      });
+
+      return new Response(JSON.stringify({
+        content: blockedContent,
+        conversation_id: convId,
+        blocked: true,
+        metadata,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 8. Quality gate — block ONLY on empty (not low)
     const qualityResult = assessExtractQuality(processedFileContents);
     metadata.extract_quality = qualityResult.quality;
     metadata.cleaned_text_length = qualityResult.cleanedLength;
