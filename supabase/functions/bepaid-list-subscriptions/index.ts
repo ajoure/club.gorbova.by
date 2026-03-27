@@ -750,6 +750,11 @@ Deno.serve(async (req) => {
         linked_payment_id: linkedPaymentId,
         linked_provider_payment_id: linkedProviderPaymentId,
         canceled_at: canceledAt,
+        // PATCH-SV2-ORDER: conflict diagnostics (read-only, no DB write)
+        ...(hasConflict ? { link_conflict: true, meta_order_id: metaOrderId, sv2_order_id: sv2OrderId } : {}),
+        // Internal fields for stats computation
+        _sv2_order_unresolved: sv2OrderUnresolved,
+        _linked_order_id_old: linkedOrderIdOldLogic,
       };
     });
 
@@ -765,7 +770,7 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        subscriptions: result,
+        subscriptions: result.map(({ _sv2_order_unresolved, _linked_order_id_old, ...rest }) => rest),
         stats: {
           total: result.length,
           active: result.filter((s) => s.status === 'active').length,
@@ -774,6 +779,20 @@ Deno.serve(async (req) => {
           canceled: result.filter((s) => s.status === 'canceled').length,
           not_linked: result.filter((s) => !s.is_linked_full).length,
           linked: result.filter((s) => s.is_linked_full).length,
+          // PATCH-SV2-ORDER: linkage diagnostics
+          chain_only: result.filter((s) => s.linked_order_id && !s._linked_order_id_old).length,
+          meta_only: result.filter((s) => !s.linked_order_id || (s._linked_order_id_old && !subV2DetailsMap.get(s.linked_subscription_id || '')?.order_id)).length > 0 
+            ? result.filter((s) => s._linked_order_id_old && !(s.linked_subscription_id && subV2DetailsMap.get(s.linked_subscription_id)?.order_id && v2OrderIdMap.has(subV2DetailsMap.get(s.linked_subscription_id)!.order_id!))).length 
+            : 0,
+          both: result.filter((s) => {
+            const sv2Oid = s.linked_subscription_id ? subV2DetailsMap.get(s.linked_subscription_id)?.order_id : undefined;
+            return sv2Oid && v2OrderIdMap.has(sv2Oid) && s._linked_order_id_old;
+          }).length,
+          link_conflicts: result.filter((s: any) => s.link_conflict).length,
+          chain_only_unresolved: result.filter((s) => s._sv2_order_unresolved).length,
+          linked_before: result.filter((s) => !!(s.linked_user_id && s.linked_subscription_id && s._linked_order_id_old)).length,
+          linked_after: result.filter((s) => s.is_linked_full).length,
+          recovered: result.filter((s) => s.is_linked_full).length - result.filter((s) => !!(s.linked_user_id && s.linked_subscription_id && s._linked_order_id_old)).length,
         },
         debug: {
           creds_source: credentials.source,
