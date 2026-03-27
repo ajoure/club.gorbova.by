@@ -56,8 +56,7 @@ export function PromptAttachmentsSection({
 
   if (!promptId) {
     return (
-      <div className="border rounded-lg p-4">
-        <h4 className="text-sm font-medium mb-2">База знаний (файлы)</h4>
+      <div>
         <p className="text-xs text-muted-foreground">
           Сначала сохраните промпт, затем можно добавить файлы базы знаний.
         </p>
@@ -75,9 +74,9 @@ export function PromptAttachmentsSection({
   };
 
   return (
-    <div className="border rounded-lg p-4 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium">База знаний (файлы)</h4>
+        <span className="text-xs text-muted-foreground">{attachments.length} файл(ов)</span>
         <Button
           type="button"
           variant="outline"

@@ -5,6 +5,22 @@ import { toast } from "sonner";
 
 const MAX_EXTRACTED_CHARS = 100_000;
 
+/**
+ * Builds an ASCII-only safe file name for Supabase Storage keys.
+ * Original file name is preserved in DB `file_name` column.
+ * Format: {timestamp}_{uuid}.{ext}
+ */
+export function buildSafeStorageFileName(fileName: string): string {
+  let ext = "";
+  if (fileName.includes(".")) {
+    const rawExt = fileName.split(".").pop()!.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (rawExt) {
+      ext = `.${rawExt}`;
+    }
+  }
+  return `${Date.now()}_${crypto.randomUUID()}${ext}`;
+}
+
 export interface PromptAttachment {
   id: string;
   prompt_id: string;
@@ -81,9 +97,8 @@ export function usePromptAttachments() {
         extractionStatus = "failed";
       }
 
-      // 2. Upload to Storage
-      const fileId = crypto.randomUUID();
-      const storagePath = `${promptId}/${fileId}_${file.name}`;
+      // 2. Upload to Storage (ASCII-only key, original name stays in DB)
+      const storagePath = `${promptId}/${buildSafeStorageFileName(file.name)}`;
 
       const { error: storageError } = await supabase.storage
         .from("prompt-attachments")
