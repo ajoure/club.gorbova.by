@@ -58,7 +58,7 @@ export function PromptAttachmentsSection({
     return (
       <div>
         <p className="text-xs text-muted-foreground">
-          Сначала сохраните промпт, затем можно добавить файлы базы знаний.
+          Сохраните карточку (достаточно кода и названия), затем вернитесь сюда для загрузки файлов базы знаний.
         </p>
       </div>
     );
