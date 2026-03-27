@@ -74,7 +74,7 @@ interface SubscriptionWithLink {
   linked_subscription_id: string | null;
   linked_user_id: string | null;
   linked_profile_name: string | null;
-  is_orphan: boolean;
+  is_linked_full: boolean;
   snapshot_state?: string;
   snapshot_at?: string;
   cancellation_capability?: string;
@@ -85,6 +85,13 @@ interface SubscriptionWithLink {
   linked_payment_id?: string | null;
   linked_provider_payment_id?: string | null;
   canceled_at?: string | null;
+  // PATCH-SV2-ORDER: conflict diagnostics (read-only)
+  link_conflict?: boolean;
+  meta_order_id?: string | null;
+  sv2_order_id?: string | null;
+  // Internal fields for stats (stripped before response)
+  _sv2_order_unresolved?: boolean;
+  _linked_order_id_old?: string | null;
 }
 
 interface CredentialsResult {
