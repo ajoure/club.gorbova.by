@@ -38,6 +38,7 @@ const TYPES = [
 ];
 
 export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }: PromptFormDialogProps) {
+  const { attachments, loading: attachmentsLoading, uploading, fetchAttachments, uploadAttachment, deleteAttachment } = usePromptAttachments();
   const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -175,7 +176,16 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
             <Textarea value={promptText} onChange={e => setPromptText(e.target.value)} className="min-h-[120px] font-mono text-xs" />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <PromptAttachmentsSection
+            promptId={prompt?.id ?? null}
+            attachments={attachments}
+            loading={attachmentsLoading}
+            uploading={uploading}
+            onFetch={fetchAttachments}
+            onUpload={uploadAttachment}
+            onDelete={deleteAttachment}
+          />
+
             <div>
               <Label>Категория</Label>
               <Input value={category} onChange={e => setCategory(e.target.value)} />
