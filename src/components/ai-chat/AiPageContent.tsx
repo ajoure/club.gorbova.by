@@ -341,7 +341,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         return { file: uf.file, type: uf.type, preview };
       })
     );
-    const { textContent, images } = await extractAllFilesContent(fileEntries);
+    const { textContent, images, unsupportedFiles } = await extractAllFilesContent(fileEntries);
     const allFiles = uploadedFiles.map((uf) => uf.file);
     return {
       fileContents: textContent || undefined,
@@ -352,6 +352,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
             mimeType: allFiles.find((f) => f.name === img.filename)?.type || "image/jpeg",
           }))
         : undefined,
+      unsupportedFiles,
     };
   };
 
@@ -360,7 +361,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
     if (!inputValue.trim() && chatFiles.length === 0) return;
     userSentMessageRef.current = true;
 
-    let fileOpts: { fileContents?: string; fileNames?: string[]; images?: Array<{ base64: string; filename: string; mimeType: string }> } | undefined;
+    let fileOpts: { fileContents?: string; fileNames?: string[]; images?: Array<{ base64: string; filename: string; mimeType: string }>; unsupportedFiles?: Array<{ name: string; reason: string; extension?: string }> } | undefined;
     if (chatFiles.length > 0) {
       fileOpts = await prepareFilesPayload(chatFiles);
     }

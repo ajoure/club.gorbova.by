@@ -1,10 +1,13 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
+import type { UnsupportedFileInfo } from "@/types/files";
 
 export interface ExtractedContent {
   text: string;
   type: "image" | "pdf" | "word" | "excel" | "text";
   filename: string;
+  unsupported?: boolean;
+  unsupported_reason?: string;
 }
 
 function getExtension(file: File): string {
@@ -78,6 +81,19 @@ async function extractAsPlainText(file: File, type: ExtractedContent["type"]): P
 }
 
 async function extractFromWord(file: File): Promise<ExtractedContent> {
+  const ext = getExtension(file);
+
+  // STOP-guard: binary .doc is not supported by mammoth
+  if (ext === "doc") {
+    return {
+      text: "",
+      type: "word",
+      filename: file.name,
+      unsupported: true,
+      unsupported_reason: "binary_doc_not_supported",
+    };
+  }
+
   try {
     const arrayBuffer = await file.arrayBuffer();
     const result = await mammoth.extractRawText({ arrayBuffer });
@@ -119,19 +135,29 @@ export async function extractAllFilesContent(
 ): Promise<{
   textContent: string;
   images: Array<{ base64: string; filename: string }>;
+  unsupportedFiles?: UnsupportedFileInfo[];
 }> {
   const textParts: string[] = [];
   const images: Array<{ base64: string; filename: string }> = [];
+  const unsupportedFiles: UnsupportedFileInfo[] = [];
 
   for (const fileData of files) {
     const { file, type, preview } = fileData;
+    const ext = getExtension(file);
 
     if (type === "image" && preview) {
       images.push({ base64: preview, filename: file.name });
       textParts.push(`[Изображение: ${file.name}]`);
-    } else if (type === "word" || type === "excel") {
+    } else if (type === "word" || type === "excel" || type === "text") {
       const extracted = await extractTextFromFile(file);
-      if (extracted && extracted.text && extracted.text.trim().length > 0) {
+      if (extracted?.unsupported) {
+        unsupportedFiles.push({
+          name: file.name,
+          reason: extracted.unsupported_reason!,
+          extension: ext,
+        });
+        textParts.push(`[UNSUPPORTED_FORMAT: ${file.name}]`);
+      } else if (extracted && extracted.text && extracted.text.trim().length > 0) {
         textParts.push(`--- Содержимое файла: ${file.name} ---\n${extracted.text}\n--- Конец файла ---`);
       } else {
         textParts.push(`[PARSE_EMPTY: ${file.name}]`);
@@ -153,5 +179,9 @@ export async function extractAllFilesContent(
     }
   }
 
-  return { textContent: textParts.join("\n\n"), images };
+  return {
+    textContent: textParts.join("\n\n"),
+    images,
+    unsupportedFiles: unsupportedFiles.length > 0 ? unsupportedFiles : undefined,
+  };
 }
