@@ -315,6 +315,22 @@ Deno.serve(async (req) => {
       });
     }
 
+    // STOP-guard: order must have an id before creating subscription
+    if (!order?.id) {
+      console.error('[bepaid-sub-checkout] STOP-guard: order.id missing after insert');
+      await supabase.from('audit_logs').insert({
+        action: 'checkout_missing_order_stop',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription-checkout',
+        meta: { user_id: userId, product_id: productId, tariff_id: tariff.id },
+      });
+      return new Response(JSON.stringify({ error: 'Order creation returned no id' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Create subscription (pre-payment) with a valid enum status
     const accessDays = tariff.access_days || 30;
     const { data: subscription, error: subError } = await supabase
@@ -324,6 +340,7 @@ Deno.serve(async (req) => {
         profile_id: profileId,
         product_id: productId,
         tariff_id: tariff.id,
+        order_id: order.id, // FIX-A: always link order
         // subscription_status enum: active, trial, past_due, canceled, expired
         // Pre-payment state should NOT grant access; use past_due until webhook confirms payment.
         status: 'past_due',
@@ -342,7 +359,41 @@ Deno.serve(async (req) => {
 
     if (subError) {
       console.error('[bepaid-sub-checkout] Subscription creation error:', subError);
+      // STOP-guard: order created but subscription insert failed — mark order diagnostically
+      await supabase.from('audit_logs').insert({
+        action: 'checkout_subscription_insert_failed',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription-checkout',
+        meta: { user_id: userId, order_id: order.id, error: subError.message },
+      });
+      // Mark the order so repair can pick it up
+      await supabase.from('orders_v2').update({
+        meta: {
+          payment_flow: 'provider_managed_checkout',
+          source: 'bepaid-create-subscription-checkout',
+          expected_amount: amountMoney,
+          orphaned_checkout: true,
+          error: subError.message,
+        },
+      }).eq('id', order.id);
       return new Response(JSON.stringify({ error: 'Failed to create subscription' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // STOP-guard: subscription insert returned no id
+    if (!subscription?.id) {
+      console.error('[bepaid-sub-checkout] STOP-guard: subscription.id missing after insert');
+      await supabase.from('audit_logs').insert({
+        action: 'checkout_subscription_insert_failed',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'bepaid-create-subscription-checkout',
+        meta: { user_id: userId, order_id: order.id, error: 'insert returned no id' },
+      });
+      return new Response(JSON.stringify({ error: 'Subscription creation returned no id' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
