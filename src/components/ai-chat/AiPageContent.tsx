@@ -566,13 +566,13 @@ export function AiPageContent({ mode }: AiPageContentProps) {
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id)}
                 className={`
-                  flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium
+                  flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium
                   transition-all duration-200 whitespace-nowrap
                   backdrop-blur-sm border
                   bg-gradient-to-r
                   ${isActive ? tab.activeGradient : tab.gradient}
                   ${isActive ? tab.borderColor : "border-white/15"}
-                  ${isActive ? "shadow-sm shadow-white/10" : "hover:shadow-sm"}
+                  ${isActive ? "shadow-inner ring-1 ring-inset ring-border/20" : "shadow-sm hover:shadow-md"}
                   ${isActive ? "text-foreground" : "text-muted-foreground hover:text-foreground"}
                   active:scale-[0.97]
                 `}
@@ -821,14 +821,18 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       {activeSubTab === "generate" && <AiDocumentsGenerateView />}
       {activeSubTab === "history" && <AiDocumentsHistoryView />}
       {activeSubTab === "templates" && (
-        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-          <LazyDocumentTemplatesContent embedded />
-        </Suspense>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+            <LazyDocumentTemplatesContent embedded />
+          </Suspense>
+        </div>
       )}
       {activeSubTab === "executors" && (
-        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-          <LazyExecutorsContent embedded />
-        </Suspense>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
+          <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+            <LazyExecutorsContent embedded />
+          </Suspense>
+        </div>
       )}
 
       {/* Entities */}
