@@ -536,6 +536,56 @@ export type Database = {
           },
         ]
       }
+      ai_prompt_attachments: {
+        Row: {
+          created_at: string | null
+          extracted_chars: number | null
+          extracted_text: string | null
+          extraction_status: string | null
+          file_name: string
+          file_path: string
+          file_size: number
+          file_type: string
+          id: string
+          prompt_id: string
+          sort_order: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          extracted_chars?: number | null
+          extracted_text?: string | null
+          extraction_status?: string | null
+          file_name: string
+          file_path: string
+          file_size: number
+          file_type: string
+          id?: string
+          prompt_id: string
+          sort_order?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          extracted_chars?: number | null
+          extracted_text?: string | null
+          extraction_status?: string | null
+          file_name?: string
+          file_path?: string
+          file_size?: number
+          file_type?: string
+          id?: string
+          prompt_id?: string
+          sort_order?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_prompt_attachments_prompt_id_fkey"
+            columns: ["prompt_id"]
+            isOneToOne: false
+            referencedRelation: "ai_user_prompts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_prompt_packages: {
         Row: {
           category: string | null
