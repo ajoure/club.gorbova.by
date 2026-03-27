@@ -49,7 +49,7 @@ interface BepaidSubscription {
   linked_subscription_id: string | null;
   linked_user_id: string | null;
   linked_profile_name: string | null;
-  is_orphan: boolean;
+  is_linked_full: boolean;
 }
 
 interface SubscriptionStats {
@@ -57,7 +57,7 @@ interface SubscriptionStats {
   active: number;
   trial: number;
   cancelled: number;
-  orphans: number;
+  not_linked: number;
   linked: number;
 }
 
@@ -90,7 +90,7 @@ export default function BepaidSubscriptionsList() {
   });
 
   const subscriptions = data?.subscriptions || [];
-  const stats = data?.stats || { total: 0, active: 0, trial: 0, cancelled: 0, orphans: 0, linked: 0 };
+  const stats = data?.stats || { total: 0, active: 0, trial: 0, cancelled: 0, not_linked: 0, linked: 0 };
 
   // Filter and sort subscriptions
   const filteredSubscriptions = useMemo(() => {
@@ -103,9 +103,9 @@ export default function BepaidSubscriptionsList() {
     
     // Link filter
     if (linkFilter === "linked") {
-      result = result.filter(s => !s.is_orphan);
+      result = result.filter(s => s.is_linked_full);
     } else if (linkFilter === "orphan") {
-      result = result.filter(s => s.is_orphan);
+      result = result.filter(s => !s.is_linked_full);
     }
     
     // Search filter
@@ -374,7 +374,7 @@ export default function BepaidSubscriptionsList() {
               </TableHeader>
               <TableBody>
                 {filteredSubscriptions.map((sub) => (
-                  <TableRow key={sub.id} className={sub.is_orphan ? "bg-red-500/5" : ""}>
+                  <TableRow key={sub.id} className={!sub.is_linked_full ? "bg-red-500/5" : ""}>
                     <TableCell>
                       <Checkbox
                         checked={selectedIds.has(sub.id)}
@@ -425,10 +425,10 @@ export default function BepaidSubscriptionsList() {
                       {sub.next_billing_at ? formatDate(sub.next_billing_at) : "—"}
                     </TableCell>
                     <TableCell>
-                      {sub.is_orphan ? (
+                      {!sub.is_linked_full ? (
                         <Badge variant="destructive" className="flex items-center gap-1 w-fit">
                           <Link2Off className="h-3 w-3" />
-                          Сирота
+                          Не связана
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="flex items-center gap-1 w-fit bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
