@@ -218,7 +218,18 @@ Deno.serve(async (req) => {
       metadata.analysis_blocked_reason = 'insufficient_data';
       metadata.processing_time_ms = Date.now() - startTime;
 
-      const blockedContent = 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате (Excel, PDF, фото).';
+      const blockedByCode: Record<string, string> = {
+        balance_analysis: 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен и содержит бухгалтерские показатели, или загрузите файл в другом формате (Excel, PDF, фото).',
+      };
+      const blockedByType: Record<string, string> = {
+        file_analysis: 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен, или загрузите файл в другом формате (Excel, PDF, фото).',
+        document_review: 'Файл не содержит распознаваемого текста для анализа. Загрузите документ в формате PDF, Word или фото.',
+      };
+      const defaultBlockedMsg = 'Файл не содержит распознаваемых данных для анализа. Проверьте, что файл заполнен, или загрузите файл в другом формате.';
+      const blockedContent =
+        (promptData?.code ? blockedByCode[promptData.code] : undefined) ??
+        (promptData?.type ? blockedByType[promptData.type] : undefined) ??
+        defaultBlockedMsg;
 
       const lastUserMsg = messages[messages.length - 1];
       if (lastUserMsg) {
