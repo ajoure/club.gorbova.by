@@ -820,6 +820,16 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       {/* Documents */}
       {activeSubTab === "generate" && <AiDocumentsGenerateView />}
       {activeSubTab === "history" && <AiDocumentsHistoryView />}
+      {activeSubTab === "templates" && (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+          <LazyDocumentTemplatesContent />
+        </Suspense>
+      )}
+      {activeSubTab === "executors" && (
+        <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
+          <LazyExecutorsContent />
+        </Suspense>
+      )}
 
       {/* Entities */}
       {activeSubTab === "entities" && (
