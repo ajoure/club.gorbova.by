@@ -11,6 +11,7 @@ import { AiDocumentsGenerateView } from "@/components/ai-documents/AiDocumentsGe
 import { AiDocumentsHistoryView } from "@/components/ai-documents/AiDocumentsHistoryView";
 import type { PersonRow } from "@/hooks/useAiPersons";
 import type { ClientLegalDetails } from "@/hooks/useLegalDetails";
+import { cn } from "@/lib/utils";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
