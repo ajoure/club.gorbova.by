@@ -4,7 +4,7 @@ import {
   Root,
   Trigger,
   createCollapsibleScope
-} from "./chunk-7ZA5MVTO.js";
+} from "./chunk-4H5JUIML.js";
 import {
   createCollection
 } from "./chunk-AJS24WE3.js";
@@ -14,10 +14,10 @@ import {
 import {
   useId
 } from "./chunk-N3XXQJTN.js";
-import "./chunk-Q3C5N2ZR.js";
 import {
   useControllableState
 } from "./chunk-M6RB35O7.js";
+import "./chunk-Q3C5N2ZR.js";
 import {
   composeEventHandlers
 } from "./chunk-ZMAP7OQT.js";
@@ -27,14 +27,14 @@ import {
 } from "./chunk-WPKJTQFJ.js";
 import {
   Primitive
-} from "./chunk-TZQKTNLI.js";
-import "./chunk-FKMA2RKD.js";
+} from "./chunk-OIFU75C3.js";
 import {
   useComposedRefs
 } from "./chunk-OXQCQE4P.js";
 import {
   require_jsx_runtime
 } from "./chunk-NZAIND7N.js";
+import "./chunk-FKMA2RKD.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";

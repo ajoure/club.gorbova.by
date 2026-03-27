@@ -2,6 +2,9 @@ import {
   deepEqual
 } from "./chunk-FX47Z3IB.js";
 import {
+  require_shim
+} from "./chunk-PU3CAANW.js";
+import {
   CommandManager,
   Editor,
   Extendable,
@@ -123,14 +126,11 @@ import {
 } from "./chunk-7Q4SBMD3.js";
 import "./chunk-YLIL3JKF.js";
 import {
-  require_shim
-} from "./chunk-PU3CAANW.js";
+  require_jsx_runtime
+} from "./chunk-NZAIND7N.js";
 import {
   require_react_dom
 } from "./chunk-FKMA2RKD.js";
-import {
-  require_jsx_runtime
-} from "./chunk-NZAIND7N.js";
 import {
   require_react
 } from "./chunk-UVNPGZG7.js";
