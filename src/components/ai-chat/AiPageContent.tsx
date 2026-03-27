@@ -491,12 +491,12 @@ export function AiPageContent({ mode }: AiPageContentProps) {
         : "text-muted-foreground hover:text-foreground"
     }`;
 
-  /** Offset от верха viewport до контейнера чата (header + padding DashboardLayout) */
-  const AI_CONTAINER_OFFSET = '4.5rem';
+  /** Offset от верха viewport до контейнера чата (header + padding) */
+  const AI_CONTAINER_OFFSET = mode === "admin" ? '3rem' : '4.5rem';
 
   return (
     <div
-      className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]"
+      className={`flex flex-col flex-1 min-h-0 gap-1 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02] ${mode === "user" ? "-mt-2 md:-mt-4" : ""}`}
       style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET})`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET})` }}
     >
 
