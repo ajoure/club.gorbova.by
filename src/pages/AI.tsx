@@ -383,7 +383,7 @@ const AI = () => {
     <DashboardLayout>
       <div
         className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 overflow-hidden bg-gradient-to-br from-blue-500/[0.02] via-transparent to-purple-500/[0.02]"
-        style={{ height: 'calc(100dvh - 4.5rem)', maxHeight: 'calc(100dvh - 4.5rem)' }}
+        style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET})`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET})` }}
       >
 
         {/* ── Главные табы ── */}
