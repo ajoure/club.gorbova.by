@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { extractAllFilesContent, getFileType } from "@/utils/fileExtractor";
-import { FileDropZone, type UploadedFile } from "@/components/mns/FileDropZone";
+import { FileDropZone, type UploadedFile, processDroppedFile } from "@/components/mns/FileDropZone";
 import { useAiEntities } from "@/hooks/useAiEntities";
 import { useAiPersons } from "@/hooks/useAiPersons";
 import { EntityTableView } from "@/components/ai-requisites/EntityTableView";
@@ -571,26 +571,28 @@ const AI = () => {
               )}
 
               <div className="flex gap-2">
-                <ChatScenarioLauncher
-                  scenarios={aiChat.scenarios}
-                  loading={aiChat.scenariosLoading}
-                  onFetch={aiChat.fetchScenarios}
-                  onSelect={handleScenarioSelect}
-                  disabled={aiChat.isLoading}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowUploader((v) => !v)}
-                  className={cn(
-                    "h-[44px] w-[44px] shrink-0",
-                    showUploader && "text-primary bg-primary/10"
-                  )}
-                  disabled={aiChat.isLoading}
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
+                <div className="flex flex-col gap-1 shrink-0">
+                  <ChatScenarioLauncher
+                    scenarios={aiChat.scenarios}
+                    loading={aiChat.scenariosLoading}
+                    onFetch={aiChat.fetchScenarios}
+                    onSelect={handleScenarioSelect}
+                    disabled={aiChat.isLoading}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowUploader((v) => !v)}
+                    className={cn(
+                      "h-[36px] w-[36px] mx-auto",
+                      (showUploader || chatFiles.length > 0) && "text-primary bg-primary/10"
+                    )}
+                    disabled={aiChat.isLoading}
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                </div>
                 <Textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
