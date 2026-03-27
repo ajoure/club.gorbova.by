@@ -2,192 +2,129 @@
 
 &nbsp;
 
-1. **Логика со 100dvh и overflow-hidden правильная**
+1. **Для карточки нужен не только overflow-hidden, но и правильная обрезка текста внутри flex**
   &nbsp;
-  - Это хороший локальный фикс в пределах AI.tsx, не трогая DashboardLayout.
-  - Подход с явной высотой контейнера выглядит оправданным.
+  - На элементах с длинными именами файлов обычно ещё нужен min-w-0 у родителя, иначе truncate может не сработать.
+  - Это особенно важно для строки с бейджами и preview.
   &nbsp;
-2. **Правильно, что автоскролл привязан к aiChat.messages.length, а не к isLoading**
+2. **Показывать не все файлы, а ограниченный набор — правильно**
   &nbsp;
-  - Это убирает лишние ложные срабатывания.
-  - Оставить именно так.
-  &nbsp;
-3. **userSentMessageRef нужно ставить и в обычной отправке, и в file-analysis**
-  &nbsp;
-  - Это уже учтено в плане — правильно.
-  - Иначе сценарный анализ мог бы не доскролливаться вниз.
-  &nbsp;
-4. **isInitialLoadRef не сбрасывать при каждом возврате на вкладку — это важная правка**
-  &nbsp;
-  - Тоже правильно.
-  - Иначе чат будет насильно уводить вниз при любом переключении вкладок.
-  &nbsp;
-5. **При onOpen / onResume действительно нужно сбрасывать isInitialLoadRef.current = true и prevMessageCountRef.current = 0**
-  &nbsp;
-  - Это необходимо, чтобы после открытия истории/резюма новый session-load корректно скроллил вниз.
-  &nbsp;
-6. **querySelector('[data-radix-scroll-area-viewport]') с null-guard — ок**
-  &nbsp;
-  - Это хороший safe-guard.
-  - Без viewport ничего не делаем, без ошибок.
-  &nbsp;
-7. **Offset 4.5rem оставить как стартовый, но обязательно проверить proof**
-  &nbsp;
-  - Здесь всё верно.
-  - Итоговое значение нужно подтвердить на реальном UI, а не оставить “на глаз”.
-  &nbsp;
-8. **DoD сформулирован правильно**
-  &nbsp;
-  - Особенно важны пункты:
+  - Оптимально:
     &nbsp;
-    - после resume/open history открывается низ переписки;
-    - при возврате на вкладку “Чат” без смены сессии позиция сохраняется;
-    - длинная переписка не уводит input и табы.
+    - первые 3 файла;
+    - затем бейдж +N ещё.
+    &nbsp;
+  - Это улучшит и layout, и читаемость.
+  &nbsp;
+3. **Бейджам файлов нужен max-w + truncate**
+  &nbsp;
+  - Формулировка верная.
+  - Для стабильности:
+    &nbsp;
+    - max-w-[180px] или похожее,
+    - truncate,
+    - inline-flex,
+    - min-w-0.
     &nbsp;
   &nbsp;
-9. **Дополнительный proof, который стоит проверить**
+4. **Карточки лучше сделать одинаковой структуры по высоте**
   &nbsp;
-  - После длинного assistant-ответа с markdown и таблицами input по-прежнему виден и не уезжает.
-  - Это полезно проверить отдельно, потому что markdown-рендеринг мог увеличить высоту bubble.
+  - Не обязательно полностью одинаковой фиксированной высоты, но хотя бы:
+    &nbsp;
+    - заголовок,
+    - бейджи,
+    - preview,
+    - футер с датами,
+    - кнопки
+      должны идти в одинаковом порядке.
+    &nbsp;
+  - А кнопочный блок лучше прижать к низу через mt-auto.
+  &nbsp;
+5. **Кнопки Открыть / Продолжить анализ одинаковой ширины — хорошая правка**
+  &nbsp;
+  - flex-1 для обеих кнопок здесь уместен.
+  &nbsp;
+6. **Убрать эмодзи 📎 — согласен**
+  &nbsp;
+  - Для этого интерфейса лучше либо без эмодзи, либо с аккуратной иконкой FileText.
+  &nbsp;
+7. **Preview текста тоже стоит ограничить**
+  &nbsp;
+  - Не только файлы, но и preview ответа должен иметь:
+    &nbsp;
+    - line clamp,
+    - overflow-hidden,
+    - единый размер.
+    &nbsp;
+  - Иначе карточки будут снова визуально “прыгать”.
+  &nbsp;
+8. **Offset в AI.tsx действительно лучше вынести в константу**
+  &nbsp;
+  - Это правильная финальная cleanup-правка.
+  - Тогда значение можно быстро подстроить без поиска магического числа по файлу.
+  &nbsp;
+9. **DoD стоит чуть расширить**
+  &nbsp;
+  - Проверить не только отсутствие горизонтального скролла на вкладке истории,
+  - но и что длинные русские имена файлов в нескольких карточках подряд не ломают grid.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План выглядит рабочим.
+План хороший.
 
 &nbsp;
 
-План: Фиксация шапки/подвала чата и автоскролл вниз
+План: Улучшение карточек «История анализа» + вынос offset в константу
 
-## Проблема
+## Файлы: `src/components/ai-chat/AnalysisHistoryView.tsx`, `src/pages/AI.tsx`
 
-На странице `/ai` (вкладка «Чат») при длинной переписке верхние табы и поле ввода уезжают при скролле. При загрузке/resume показывается начало переписки, а не последние сообщения.
+---
 
-## Диагностика
+## 1. Исправить overflow текста в карточках (`AnalysisHistoryView.tsx`)
 
-- `DashboardLayout` → `main` имеет `flex-1 overflow-x-hidden pb-20` — скроллится весь main
-- Внешний `div` (строка 338) имеет `flex-1 min-h-0` но **нет** ограничения по высоте и `overflow-hidden` — контент растёт вниз бесконечно
-- `GlassCard` (строка 402) с `flex-1 min-h-0` не ограничен родителем → `ScrollArea` внутри растягивается на полный контент
-- Нет автоскролла вниз ни при загрузке, ни при новых сообщениях
+### Проблема
 
-## Решение — один файл: `src/pages/AI.tsx`
+Бейджи с длинными именами файлов (`Баланс_Горбова_с_расчетом_и_коэффициентами...`) выходят за границы карточки. Карточки визуально неоднородны.
 
-### 1. Ограничить высоту внешнего контейнера
+### Решение
 
-Строка 338: добавить `overflow-hidden` и явную высоту через CSS `calc(100dvh - offset)`. Offset подобрать по фактической высоте header (2.5rem) + main padding (1rem top). Стартовое значение `4.5rem`, скорректировать при тестировании, вынести в inline style.
+- Добавить `overflow-hidden` на `GlassCard` контейнер карточки
+- Бейджи файлов: добавить `max-w-full truncate` чтобы длинные имена обрезались с `…`
+- Ограничить количество видимых файлов (показывать max 3–4, остальные — бейдж `+N ещё`)
+- Добавить `min-h-0` на flex-col карточки для корректного поведения в grid
 
-```tsx
-<div 
-  className="flex flex-col flex-1 min-h-0 gap-1 -mt-2 md:-mt-4 overflow-hidden ..."
-  style={{ height: 'calc(100dvh - 4.5rem)', maxHeight: 'calc(100dvh - 4.5rem)' }}
->
-```
+### Минимализм
 
-### 2. Добавить refs и state для автоскролла
+- Убрать `📎` эмодзи из бейджей — заменить на иконку `FileText` или просто убрать
+- Сделать бейджи компактнее: `text-[10px]` → оставить, но добавить `max-w-[180px] truncate`
+- Кнопки: сделать одинаковой ширины через `flex-1`
 
-```tsx
-const messagesEndRef = useRef<HTMLDivElement>(null);
-const scrollAreaRef = useRef<HTMLDivElement>(null);
-const isInitialLoadRef = useRef(true);
-const isNearBottomRef = useRef(true);
-const userSentMessageRef = useRef(false);
-const prevMessageCountRef = useRef(0);
-```
+## 2. Вынести offset в константу (`AI.tsx`)
 
-### 3. Sentinel div в конце списка сообщений
-
-После блока `isLoading` (строка 419), внутри `ScrollArea`:
+Строка 386: заменить магическое число `4.5rem` на именованную константу:
 
 ```tsx
-<div ref={messagesEndRef} />
+const AI_CONTAINER_OFFSET = '4.5rem';
 ```
 
-### 4. Ref на ScrollArea
-
-Строка 403: добавить `ref={scrollAreaRef}` на `ScrollArea`.
-
-### 5. Scroll listener — определение «пользователь у низа»
+И использовать в style:
 
 ```tsx
-useEffect(() => {
-  if (activeSubTab !== "chat") return;
-  const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
-  if (!viewport) return;
-  const handleScroll = () => {
-    isNearBottomRef.current = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 100;
-  };
-  viewport.addEventListener('scroll', handleScroll);
-  return () => viewport.removeEventListener('scroll', handleScroll);
-}, [activeSubTab]);
+style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET})`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET})` }}
 ```
-
-**Guard**: если `viewport` не найден — просто не подписываемся, без ошибок.
-
-### 6. Автоскролл при изменении messages
-
-Триггер: изменение длины `aiChat.messages` (не `isLoading`), только для `activeSubTab === "chat"`.
-
-```tsx
-useEffect(() => {
-  if (activeSubTab !== "chat") return;
-  const count = aiChat.messages.length;
-  if (count === prevMessageCountRef.current) return; // нет нового сообщения
-  prevMessageCountRef.current = count;
-
-  const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
-  if (!viewport) return;
-
-  if (isInitialLoadRef.current) {
-    // Initial load — мгновенный скролл
-    requestAnimationFrame(() => { viewport.scrollTop = viewport.scrollHeight; });
-    isInitialLoadRef.current = false;
-    return;
-  }
-
-  // Новые сообщения — скролл только если у низа ИЛИ пользователь сам отправил
-  if (isNearBottomRef.current || userSentMessageRef.current) {
-    requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    });
-    userSentMessageRef.current = false;
-  }
-}, [aiChat.messages.length, activeSubTab]);
-```
-
-### 7. Пометка «пользователь отправил»
-
-В `handleSendMessage` (строка 245) и в `handleScenarioSubmit` (строка 267) — перед вызовом `aiChat.sendMessage()`:
-
-```tsx
-userSentMessageRef.current = true;
-```
-
-### 8. Сброс isInitialLoadRef — только при первом открытии сессии
-
-**Не сбрасывать** при каждом возврате на вкладку «Чат». Сбрасывать только:
-
-- при `clearChat` → через отдельный `useEffect` на `aiChat.conversationId` переходящий в `null`
-- при `loadConversation` / `resumeConversation` → сбрасывать `isInitialLoadRef.current = true` и `prevMessageCountRef.current = 0` в обработчиках `onOpen`/`onResume` в `AnalysisHistoryView` (строки 480-496)
 
 ## Что не затрагивается
 
-- `DashboardLayout.tsx`, `PullToRefresh.tsx`, `scroll-area.tsx`
-- Другие вкладки (tutorials, prompts, documents, requisites)
-- Backend / edge functions
-
-## STOP-guards
-
-- Если `querySelector('[data-radix-scroll-area-viewport]')` возвращает `null` — никаких действий, без ошибок
-- Offset `4.5rem` — стартовое значение, подобрать при тестировании; не оставлять без proof
+- Логика автоскролла (уже реализована)
+- DashboardLayout, backend, edge functions
+- Другие вкладки
 
 ## DoD
 
-1. Табы секций и input всегда видны при любой длине переписки
-2. При загрузке/reload виден последний ответ AI (мгновенный скролл)
-3. После отправки сообщения или file-analysis — плавный автоскролл вниз
-4. Если пользователь ушёл вверх читать старые — новый assistant response НЕ сбрасывает позицию
-5. После resume/open history из вкладки «История анализа» — открывается низ переписки
-6. При возврате на вкладку «Чат» без смены сессии — позиция скролла сохраняется
-7. Proof на длинной реальной переписке (10+ сообщений)
+1. Длинные имена файлов не выходят за границы карточек
+2. Карточки выглядят аккуратно и единообразно
+3. Offset вынесен в константу
+4. Горизонтального скролла на странице истории нет
