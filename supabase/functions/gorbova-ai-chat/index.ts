@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
       if (kbAttachments?.length) {
         const kbParts: string[] = [];
         let totalKbChars = 0;
-        const KNOWLEDGE_LIMIT = 80000;
+        const KNOWLEDGE_LIMIT = 500000;
 
         for (const att of kbAttachments) {
           if (!att.extracted_text) continue;

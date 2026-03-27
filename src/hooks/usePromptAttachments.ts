@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { extractTextFromFile, getFileType } from "@/utils/fileExtractor";
 import { toast } from "sonner";
 
-const MAX_EXTRACTED_CHARS = 100_000;
+
 
 /**
  * Builds an ASCII-only safe file name for Supabase Storage keys.
@@ -85,10 +85,6 @@ export function usePromptAttachments() {
         const result = await extractTextFromFile(file);
         if (result && result.text && result.text.trim().length > 0) {
           extractedText = result.text;
-          if (extractedText.length > MAX_EXTRACTED_CHARS) {
-            extractedText = extractedText.substring(0, MAX_EXTRACTED_CHARS);
-            extractionStatus = "truncated";
-          }
         } else {
           extractionStatus = "empty";
         }
@@ -143,7 +139,6 @@ export function usePromptAttachments() {
 
       const statusLabels: Record<string, string> = {
         ready: "Текст извлечён",
-        truncated: "Текст обрезан (лимит)",
         empty: "Текст не извлечён",
         failed: "Ошибка извлечения",
       };
