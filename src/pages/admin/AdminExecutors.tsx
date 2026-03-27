@@ -109,7 +109,7 @@ function generateActsOnBasisText(type: string, basis: string, details: string): 
   return basis;
 }
 
-export function ExecutorsContent() {
+export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = {}) {
   const { executors, isLoading: executorsLoading, createExecutor, updateExecutor, deleteExecutor, setDefault: setDefaultExecutor, isCreating, isUpdating } = useExecutors();
   const { canWrite, isSuperAdmin } = usePermissions();
   

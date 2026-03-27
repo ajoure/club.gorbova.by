@@ -822,12 +822,12 @@ export function AiPageContent({ mode }: AiPageContentProps) {
       {activeSubTab === "history" && <AiDocumentsHistoryView />}
       {activeSubTab === "templates" && (
         <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-          <LazyDocumentTemplatesContent />
+          <LazyDocumentTemplatesContent embedded />
         </Suspense>
       )}
       {activeSubTab === "executors" && (
         <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
-          <LazyExecutorsContent />
+          <LazyExecutorsContent embedded />
         </Suspense>
       )}
 

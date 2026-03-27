@@ -183,33 +183,43 @@ export function DocumentTemplatesContent({ embedded = false }: { embedded?: bool
   };
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Шаблоны документов</h1>
-          <p className="text-muted-foreground">
-            Управление шаблонами для автоматической генерации документов
-          </p>
+    <div className={embedded ? "space-y-2" : "container mx-auto py-6 space-y-6"}>
+      {!embedded && (
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold">Шаблоны документов</h1>
+            <p className="text-muted-foreground">
+              Управление шаблонами для автоматической генерации документов
+            </p>
+          </div>
+          <Button onClick={() => handleOpenDialog()}>
+            <Plus className="h-4 w-4 mr-2" />
+            Добавить шаблон
+          </Button>
         </div>
-        <Button onClick={() => handleOpenDialog()}>
-          <Plus className="h-4 w-4 mr-2" />
-          Добавить шаблон
-        </Button>
-      </div>
+      )}
 
-      <Tabs defaultValue="templates" className="space-y-4">
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="templates">Шаблоны</TabsTrigger>
-          <TabsTrigger value="rules" className="flex items-center gap-1">
-            <Settings className="h-3.5 w-3.5" />
-            Правила генерации
-          </TabsTrigger>
-          <TabsTrigger value="log" className="flex items-center gap-1">
-            <FileCheck className="h-3.5 w-3.5" />
-            Журнал документов
-          </TabsTrigger>
-          <TabsTrigger value="placeholders">Плейсхолдеры</TabsTrigger>
-        </TabsList>
+      <Tabs defaultValue="templates" className={embedded ? "space-y-2" : "space-y-4"}>
+        <div className={embedded ? "flex items-center justify-between gap-2" : ""}>
+          <TabsList className="flex-wrap h-auto">
+            <TabsTrigger value="templates">Шаблоны</TabsTrigger>
+            <TabsTrigger value="rules" className="flex items-center gap-1">
+              <Settings className="h-3.5 w-3.5" />
+              Правила генерации
+            </TabsTrigger>
+            <TabsTrigger value="log" className="flex items-center gap-1">
+              <FileCheck className="h-3.5 w-3.5" />
+              Журнал документов
+            </TabsTrigger>
+            <TabsTrigger value="placeholders">Плейсхолдеры</TabsTrigger>
+          </TabsList>
+          {embedded && (
+            <Button size="sm" onClick={() => handleOpenDialog()}>
+              <Plus className="h-4 w-4 mr-2" />
+              Добавить шаблон
+            </Button>
+          )}
+        </div>
 
         <TabsContent value="templates">
           <Card>
