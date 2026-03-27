@@ -514,7 +514,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
   const sectionTabClass = (active: boolean) =>
     `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
       active
-        ? "bg-background text-foreground shadow-sm"
+        ? "bg-background text-foreground shadow-inner"
         : "text-muted-foreground hover:text-foreground"
     }`;
 
@@ -713,44 +713,48 @@ export function AiPageContent({ mode }: AiPageContentProps) {
 
       {/* Tutorials */}
       {activeSubTab === "tutorials" && (
-        <GlassCard className="p-6">
-          <div className="text-center text-muted-foreground">
-            <PlayCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
-            <h3 className="font-semibold mb-1">Туториалы</h3>
-            <p className="text-sm">Раздел в разработке</p>
-          </div>
-        </GlassCard>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <GlassCard className="p-6">
+            <div className="text-center text-muted-foreground">
+              <PlayCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <h3 className="font-semibold mb-1">Туториалы</h3>
+              <p className="text-sm">Раздел в разработке</p>
+            </div>
+          </GlassCard>
+        </div>
       )}
 
       {/* Analysis History */}
       {activeSubTab === "analysis-history" && (
-        <AnalysisHistoryView
-          onOpen={async (convId) => {
-            isInitialLoadRef.current = true;
-            prevMessageCountRef.current = 0;
-            await aiChat.loadConversation(convId);
-            setActiveSubTab("chat");
-          }}
-          onResume={async (convId) => {
-            isInitialLoadRef.current = true;
-            prevMessageCountRef.current = 0;
-            const ctx = await aiChat.resumeConversation(convId);
-            if (ctx?.scenario_type) {
-              const matchingScenario = aiChat.scenarios.find(
-                s => s.type === ctx.scenario_type
-              );
-              if (matchingScenario) {
-                // Don't auto-open upload, just restore context
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <AnalysisHistoryView
+            onOpen={async (convId) => {
+              isInitialLoadRef.current = true;
+              prevMessageCountRef.current = 0;
+              await aiChat.loadConversation(convId);
+              setActiveSubTab("chat");
+            }}
+            onResume={async (convId) => {
+              isInitialLoadRef.current = true;
+              prevMessageCountRef.current = 0;
+              const ctx = await aiChat.resumeConversation(convId);
+              if (ctx?.scenario_type) {
+                const matchingScenario = aiChat.scenarios.find(
+                  s => s.type === ctx.scenario_type
+                );
+                if (matchingScenario) {
+                  // Don't auto-open upload, just restore context
+                }
               }
-            }
-            setActiveSubTab("chat");
-          }}
-        />
+              setActiveSubTab("chat");
+            }}
+          />
+        </div>
       )}
 
       {/* Prompts — admin only (visibility controlled by mode, write access by existing RBAC) */}
       {activeSubTab === "prompts" && (mode === "admin" || isAdminUser) && (
-        <>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <div className="flex items-center justify-between px-1 mb-2">
             <div className="flex items-center gap-2">
               <Button
@@ -814,12 +818,20 @@ export function AiPageContent({ mode }: AiPageContentProps) {
             onSave={handleSavePrompt}
             saving={adminPrompts.saving}
           />
-        </>
+        </div>
       )}
 
       {/* Documents */}
-      {activeSubTab === "generate" && <AiDocumentsGenerateView />}
-      {activeSubTab === "history" && <AiDocumentsHistoryView />}
+      {activeSubTab === "generate" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <AiDocumentsGenerateView />
+        </div>
+      )}
+      {activeSubTab === "history" && (
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
+          <AiDocumentsHistoryView />
+        </div>
+      )}
       {activeSubTab === "templates" && (
         <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner">
           <Suspense fallback={<div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}>
@@ -837,7 +849,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
 
       {/* Entities */}
       {activeSubTab === "entities" && (
-        <>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <EntityTableView
             allEntities={aiEntities.allEntities}
             isLoading={aiEntities.isLoading}
@@ -861,12 +873,12 @@ export function AiPageContent({ mode }: AiPageContentProps) {
             onDelete={(id) => aiEntities.deleteEntity(id)}
             onOpenExisting={handleOpenExistingEntity}
           />
-        </>
+        </div>
       )}
 
       {/* Persons */}
       {activeSubTab === "persons" && (
-        <>
+        <div className="mx-1 px-3 py-2 rounded-xl bg-muted/20 border border-border/10 shadow-inner flex-1 min-h-0 overflow-auto">
           <PersonsTableView
             allPersons={aiPersons.allPersons}
             isLoading={aiPersons.isLoading}
@@ -888,7 +900,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
             onDelete={(id) => aiPersons.deletePerson(id)}
             onOpenExisting={handleOpenExistingPerson}
           />
-        </>
+        </div>
       )}
     </div>
   );
