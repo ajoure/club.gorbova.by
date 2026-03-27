@@ -546,7 +546,15 @@ const AI = () => {
 
         {/* Chat */}
         {activeSubTab === "chat" && (
-          <GlassCard className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
+          <GlassCard
+            className={cn(
+              "p-0 overflow-hidden flex flex-col flex-1 min-h-0 transition-all",
+              isDragOverChat && "ring-2 ring-primary/30"
+            )}
+            onDragOver={handleChatDragOver}
+            onDragLeave={handleChatDragLeave}
+            onDrop={handleChatDrop}
+          >
             <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0 p-4">
               <div className="space-y-4">
                 {aiChat.messages.map((message) => (
@@ -579,6 +587,20 @@ const AI = () => {
             )}
 
             <div className="border-t border-border/50 p-4 bg-background/50 shrink-0">
+              {/* Compact file uploader */}
+              {(showUploader || chatFiles.length > 0) && (
+                <div className="mb-3">
+                  <FileDropZone
+                    compact
+                    maxSizeMB={20}
+                    maxFiles={5}
+                    files={chatFiles}
+                    onFilesChange={setChatFiles}
+                    disabled={aiChat.isLoading}
+                  />
+                </div>
+              )}
+
               <div className="flex gap-2">
                 <ChatScenarioLauncher
                   scenarios={aiChat.scenarios}
@@ -587,6 +609,19 @@ const AI = () => {
                   onSelect={handleScenarioSelect}
                   disabled={aiChat.isLoading}
                 />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowUploader((v) => !v)}
+                  className={cn(
+                    "h-[44px] w-[44px] shrink-0",
+                    showUploader && "text-primary bg-primary/10"
+                  )}
+                  disabled={aiChat.isLoading}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
                 <Textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
@@ -597,7 +632,7 @@ const AI = () => {
                 />
                 <Button
                   onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || aiChat.isLoading}
+                  disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading}
                   size="icon"
                   className="h-[44px] w-[44px] shrink-0"
                 >
