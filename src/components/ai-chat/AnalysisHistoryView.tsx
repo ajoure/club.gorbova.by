@@ -6,6 +6,8 @@ import { Clock, FileText, MessageSquare, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
+const MAX_VISIBLE_FILES = 3;
+
 interface AnalysisHistoryViewProps {
   onOpen: (conversationId: string) => void;
   onResume: (conversationId: string) => void;
@@ -20,42 +22,59 @@ function SessionCard({ session, onOpen, onResume }: {
   const updatedAt = format(new Date(session.updated_at), "d MMM yyyy, HH:mm", { locale: ru });
   const showUpdated = session.created_at !== session.updated_at;
 
+  const visibleFiles = session.file_names.slice(0, MAX_VISIBLE_FILES);
+  const extraCount = session.file_names.length - MAX_VISIBLE_FILES;
+
   return (
-    <GlassCard className="p-4 flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <FileText className="h-4 w-4 text-primary shrink-0" />
-          <h4 className="font-medium text-sm truncate">{session.title}</h4>
-        </div>
+    <GlassCard className="p-4 flex flex-col gap-2.5 overflow-hidden min-h-0">
+      {/* Title */}
+      <div className="flex items-center gap-2 min-w-0">
+        <FileText className="h-4 w-4 text-primary shrink-0" />
+        <h4 className="font-medium text-sm truncate min-w-0">{session.title}</h4>
       </div>
 
-      {session.file_names.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {session.file_names.map((fn, i) => (
-            <Badge key={i} variant="outline" className="text-[10px]">📎 {fn}</Badge>
+      {/* File badges */}
+      {visibleFiles.length > 0 && (
+        <div className="flex flex-wrap gap-1 min-w-0">
+          {visibleFiles.map((fn, i) => (
+            <Badge
+              key={i}
+              variant="outline"
+              className="text-[10px] max-w-[180px] truncate inline-flex shrink min-w-0"
+            >
+              {fn}
+            </Badge>
           ))}
+          {extraCount > 0 && (
+            <Badge variant="secondary" className="text-[10px] shrink-0">
+              +{extraCount} ещё
+            </Badge>
+          )}
         </div>
       )}
 
+      {/* Preview */}
       {session.preview && (
-        <p className="text-xs text-muted-foreground line-clamp-2">{session.preview}...</p>
+        <p className="text-xs text-muted-foreground line-clamp-2 overflow-hidden">{session.preview}</p>
       )}
 
+      {/* Dates */}
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1">
           <Clock className="h-3 w-3" />
           {createdAt}
         </span>
         {showUpdated && (
-          <span className="text-muted-foreground/70">обновлено {updatedAt}</span>
+          <span className="text-muted-foreground/70">обн. {updatedAt}</span>
         )}
       </div>
 
-      <div className="flex gap-2 mt-1">
+      {/* Actions — pinned to bottom */}
+      <div className="flex gap-2 mt-auto pt-1">
         <Button
           variant="outline"
           size="sm"
-          className="text-xs"
+          className="text-xs flex-1"
           onClick={() => onOpen(session.conversation_id)}
         >
           <MessageSquare className="h-3 w-3 mr-1" />
@@ -63,10 +82,10 @@ function SessionCard({ session, onOpen, onResume }: {
         </Button>
         <Button
           size="sm"
-          className="text-xs"
+          className="text-xs flex-1"
           onClick={() => onResume(session.conversation_id)}
         >
-          Продолжить анализ
+          Продолжить
         </Button>
       </div>
     </GlassCard>
