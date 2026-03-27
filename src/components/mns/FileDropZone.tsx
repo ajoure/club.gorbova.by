@@ -7,7 +7,7 @@ export interface UploadedFile {
   id: string;
   file: File;
   preview?: string;
-  type: "image" | "pdf" | "word" | "excel" | "other";
+  type: "image" | "pdf" | "word" | "excel" | "text" | "other";
 }
 
 interface FileDropZoneProps {
@@ -31,9 +31,10 @@ const ACCEPTED_TYPES: Record<string, UploadedFile["type"]> = {
   "application/vnd.ms-excel": "excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
   "text/csv": "excel",
+  "text/plain": "text",
 };
 
-const ACCEPT_STRING = ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.rtf,.csv";
+const ACCEPT_STRING = ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.rtf,.csv,.txt";
 
 /** Resolve file type from MIME or extension fallback — exported as SoT */
 export function resolveFileType(file: File): UploadedFile["type"] {
@@ -44,6 +45,7 @@ export function resolveFileType(file: File): UploadedFile["type"] {
   if (ext === "csv") return "excel";
   if (ext === "xls" || ext === "xlsx") return "excel";
   if (ext === "doc" || ext === "docx") return "word";
+  if (ext === "txt") return "text";
   return "other";
 }
 
@@ -144,6 +146,7 @@ export function FileDropZone({
       case "pdf": return <FileText className="h-4 w-4 text-red-500" />;
       case "word": return <FileText className="h-4 w-4 text-blue-500" />;
       case "excel": return <FileSpreadsheet className="h-4 w-4 text-green-500" />;
+      case "text": return <FileText className="h-4 w-4 text-gray-500" />;
       default: return <FileText className="h-4 w-4" />;
     }
   };
@@ -184,7 +187,7 @@ export function FileDropZone({
             </Button>
           </label>
           <span className="text-xs text-muted-foreground">
-            до {maxSizeMB} МБ • PDF, JPG, PNG, Word, Excel, RTF, CSV
+            до {maxSizeMB} МБ • PDF, JPG, PNG, Word, Excel, RTF, CSV, TXT
           </span>
         </div>
       ) : (
@@ -203,7 +206,7 @@ export function FileDropZone({
             Перетащите файлы сюда или вставьте из буфера (Ctrl+V)
           </p>
           <p className="text-xs text-muted-foreground mb-3">
-            PDF, JPG, PNG, Word, Excel, RTF, CSV • до {maxSizeMB} МБ
+            PDF, JPG, PNG, Word, Excel, RTF, CSV, TXT • до {maxSizeMB} МБ
           </p>
           <label>
             <input
