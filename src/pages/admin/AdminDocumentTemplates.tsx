@@ -38,7 +38,7 @@ const defaultFormData: TemplateFormData = {
   is_active: true,
 };
 
-export function DocumentTemplatesContent() {
+export function DocumentTemplatesContent({ embedded = false }: { embedded?: boolean } = {}) {
   const { templates, isLoading, createTemplate, updateTemplate, deleteTemplate, uploadTemplateFile, isCreating, isUpdating } = useDocumentTemplates();
   
   const [dialogOpen, setDialogOpen] = useState(false);
