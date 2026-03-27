@@ -290,12 +290,50 @@ const AI = () => {
     await aiPersons.updatePerson({ id: personSheetPerson.id, ...data } as any);
   }, [aiPersons, personSheetPerson]);
 
+  // Shared extraction pipeline for both free chat and scenario mode
+  const prepareFilesPayload = async (uploadedFiles: UploadedFile[]) => {
+    const fileEntries = await Promise.all(
+      uploadedFiles.map(async (uf) => {
+        let preview: string | undefined;
+        if (uf.type === "image") {
+          preview = uf.preview || await fileToBase64(uf.file);
+        }
+        return { file: uf.file, type: uf.type, preview };
+      })
+    );
+    const { textContent, images } = await extractAllFilesContent(fileEntries);
+    const allFiles = uploadedFiles.map((uf) => uf.file);
+    return {
+      fileContents: textContent || undefined,
+      fileNames: allFiles.map((f) => f.name),
+      images: images.length > 0
+        ? images.map((img) => ({
+            ...img,
+            mimeType: allFiles.find((f) => f.name === img.filename)?.type || "image/jpeg",
+          }))
+        : undefined,
+    };
+  };
+
   // Chat handlers
   const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() && chatFiles.length === 0) return;
     userSentMessageRef.current = true;
-    await aiChat.sendMessage(inputValue);
+
+    let fileOpts: { fileContents?: string; fileNames?: string[]; images?: Array<{ base64: string; filename: string; mimeType: string }> } | undefined;
+    if (chatFiles.length > 0) {
+      fileOpts = await prepareFilesPayload(chatFiles);
+    }
+
+    const text = inputValue.trim()
+      ? inputValue
+      : `Анализ файлов: ${chatFiles.map((f) => f.file.name).join(", ")}`;
+
+    await aiChat.sendMessage(text, fileOpts);
     setInputValue("");
+    setChatFiles([]);
+    setShowUploader(false);
+    setIsDragOverChat(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -309,7 +347,6 @@ const AI = () => {
     if (scenario.type === "file_analysis" || scenario.type === "document_review") {
       setActiveScenario(scenario);
     } else {
-      // Chat type: just send a system-level hint and focus
       aiChat.sendMessage(`Используй сценарий: ${scenario.launcher_title}`, { promptId: scenario.id });
     }
   };
@@ -318,36 +355,89 @@ const AI = () => {
     if (!activeScenario) return;
     userSentMessageRef.current = true;
 
-    // Build adapter for unified extraction pipeline
-    const fileEntries = await Promise.all(
+    // Adapt File[] to UploadedFile[] for shared pipeline
+    const uploadedFiles: UploadedFile[] = await Promise.all(
       files.map(async (file) => {
-        const type = getFileType(file);
+        const type = getFileType(file) as UploadedFile["type"];
         let preview: string | undefined;
         if (type === "image") {
           preview = await fileToBase64(file);
         }
-        return { file, type, preview };
+        return { id: crypto.randomUUID(), file, type, preview };
       })
     );
 
-    const { textContent, images } = await extractAllFilesContent(fileEntries);
+    const payload = await prepareFilesPayload(uploadedFiles);
 
     await aiChat.sendMessage(
       `Анализ файлов: ${files.map((f) => f.name).join(", ")}`,
-      {
-        promptId: activeScenario.id,
-        fileContents: textContent || undefined,
-        fileNames: files.map((f) => f.name),
-        images: images.length > 0
-          ? images.map((img) => ({
-              ...img,
-              mimeType: files.find((f) => f.name === img.filename)?.type || "image/jpeg",
-            }))
-          : undefined,
-      }
+      { promptId: activeScenario.id, ...payload }
     );
     setActiveScenario(null);
   };
+
+  // Drag & drop handlers for chat area
+  const handleChatDragOver = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverChat(true);
+  }, []);
+
+  const handleChatDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverChat(false);
+  }, []);
+
+  const handleChatDrop = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverChat(false);
+    // Add files via FileDropZone's addFiles by updating state — 
+    // FileDropZone will handle validation through onFilesChange
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length > 0) {
+      setShowUploader(true);
+      // Process dropped files the same way FileDropZone does
+      const ACCEPTED_MIME: Record<string, UploadedFile["type"]> = {
+        "image/jpeg": "image",
+        "image/png": "image",
+        "image/webp": "image",
+        "application/pdf": "pdf",
+        "application/msword": "word",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word",
+        "application/vnd.ms-excel": "excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
+      };
+      const MAX_SIZE = 20 * 1024 * 1024;
+      const MAX_FILES = 5;
+      const remaining = MAX_FILES - chatFiles.length;
+      if (remaining <= 0) return;
+      
+      Promise.all(
+        droppedFiles.slice(0, remaining).map(async (file) => {
+          const ft = ACCEPTED_MIME[file.type] || (undefined as any);
+          if (!ft || file.size > MAX_SIZE) return null;
+          const uf: UploadedFile = { id: crypto.randomUUID(), file, type: ft };
+          if (ft === "image") {
+            uf.preview = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (ev) => resolve(ev.target?.result as string);
+              reader.readAsDataURL(file);
+            });
+          }
+          return uf;
+        })
+      ).then((results) => {
+        const valid = results.filter((f): f is UploadedFile => f !== null);
+        if (valid.length > 0) {
+          setChatFiles((prev) => [...prev, ...valid]);
+        }
+      });
+    }
+  }, [chatFiles.length]);
 
   // Admin prompt handlers
   const handleEditPrompt = (prompt: AiUserPrompt) => {
