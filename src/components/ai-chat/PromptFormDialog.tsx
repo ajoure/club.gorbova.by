@@ -186,6 +186,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
             onDelete={deleteAttachment}
           />
 
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Категория</Label>
               <Input value={category} onChange={e => setCategory(e.target.value)} />
