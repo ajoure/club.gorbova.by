@@ -84,6 +84,9 @@ interface SubscriptionWithLink {
   linked_order_number?: string | null;
   linked_payment_id?: string | null;
   linked_provider_payment_id?: string | null;
+  // PATCH-2: payment source tracking
+  payment_id_source?: string;
+  provider_payment_id_raw?: string | null;
   canceled_at?: string | null;
   // PATCH-SV2-ORDER: conflict diagnostics (read-only)
   link_conflict?: boolean;
@@ -393,6 +396,10 @@ Deno.serve(async (req) => {
     }
     console.log(`[bepaid-list-subs] PATCH-SV2-ORDER: loaded ${v2OrderIdMap.size} orders by sv2.order_id (requested: ${sv2OrderIds.length})`);
 
+    // PATCH-3: Track sv2 loaded stats for gap analysis
+    let sv2LoadedTotal = subV2DetailsMap.size;
+    let sv2LoadedNoOrder = [...subV2DetailsMap.values()].filter(d => !d.order_id).length;
+
     // Get our DB subscriptions_v2 mappings
     const { data: dbSubs } = await supabase
       .from('subscriptions_v2')
@@ -648,22 +655,112 @@ Deno.serve(async (req) => {
 
     const userIdToProfile = new Map(profiles?.map((p) => [p.user_id, { name: p.full_name, email: p.email }]) || []);
 
-    // Build result with normalized status
-    const result: SubscriptionWithLink[] = allSubscriptions.map((sub) => {
+    // PATCH-1: Helper to compute linkage for a subscription (used in pre-pass and .map())
+    const ACTIVE_CONTOUR = new Set(['active', 'trial', 'past_due', 'pending', 'failed_attempt']);
+    
+    function computeLinkage(sub: BepaidSubscription) {
       const ourSub = sub.id ? bepaidIdToOurSub.get(String(sub.id)) : undefined;
       const providerSub = providerSubsMap.get(String(sub.id));
-      
-      // PATCH-U4: Get linked order/payment - priority chain
-      // 1. orders_v2.meta->bepaid_subscription_id
       const linkedOrder = bepaidIdToOrder.get(String(sub.id));
-      // 2. payments_v2.meta->bepaid_subscription_id (fallback)
       const linkedPaymentDirect = bepaidIdToPaymentDirect.get(String(sub.id));
-      
-      // Get payment from order if exists
-      const paymentFromOrder = linkedOrder?.order_id ? orderIdToPayment.get(linkedOrder.order_id) : undefined;
       
       const linkedUserId = ourSub?.user_id || providerSub?.user_id || linkedOrder?.user_id || linkedPaymentDirect?.profile_id || null;
       const linkedSubId = ourSub?.id || providerSub?.subscription_v2_id || null;
+      
+      // SoT for linkedOrderId (same logic used in pre-pass and final .map())
+      const sv2OrderId = linkedSubId ? subV2DetailsMap.get(linkedSubId)?.order_id : undefined;
+      const linkedOrderFromV2 = sv2OrderId ? v2OrderIdMap.get(sv2OrderId) : undefined;
+      const sv2OrderUnresolved = !!(sv2OrderId && !linkedOrderFromV2);
+      const metaOrderId = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
+      const hasConflict = !!(linkedOrderFromV2 && metaOrderId && linkedOrderFromV2.order_id !== metaOrderId);
+      // sv2 wins; if sv2OrderUnresolved → null (don't use meta either for this chain)
+      const linkedOrderId = sv2OrderUnresolved ? null : (linkedOrderFromV2?.order_id || metaOrderId);
+      
+      const rawStatus = sub.state || sub.status || 'unknown';
+      const normalizedStatus = normalizeStatus(rawStatus);
+      const isActiveContour = ACTIVE_CONTOUR.has(normalizedStatus);
+      
+      return { ourSub, providerSub, linkedOrder, linkedPaymentDirect, linkedUserId, linkedSubId, sv2OrderId, linkedOrderFromV2, sv2OrderUnresolved, metaOrderId, hasConflict, linkedOrderId, normalizedStatus, isActiveContour };
+    }
+
+    // PATCH-1: Pre-pass to collect missingOrderIds (active contour, linkedOrderId!=null, linkedSubId==null)
+    const missingOrderIds: string[] = [];
+    let dealLinkMismatchBefore = 0;
+    
+    for (const sub of allSubscriptions) {
+      const link = computeLinkage(sub);
+      if (link.isActiveContour && link.linkedOrderId && !link.linkedSubId) {
+        missingOrderIds.push(link.linkedOrderId);
+        dealLinkMismatchBefore++;
+      }
+    }
+    
+    // PATCH-1: Bulk query subscriptions_v2 by order_id for recovery (NOT from subV2DetailsMap)
+    const orderIdToSv2 = new Map<string, string>();
+    let ambiguousOrderToSv2Count = 0;
+    
+    if (missingOrderIds.length > 0) {
+      const uniqueMissingOrderIds = [...new Set(missingOrderIds)];
+      for (let i = 0; i < uniqueMissingOrderIds.length; i += V2_BATCH_SIZE) {
+        const batch = uniqueMissingOrderIds.slice(i, i + V2_BATCH_SIZE);
+        const { data: sv2ByOrder } = await supabase
+          .from('subscriptions_v2')
+          .select('id, order_id, user_id')
+          .in('order_id', batch);
+        
+        if (sv2ByOrder && sv2ByOrder.length > 0) {
+          // PATCH-3: Track these for gap stats
+          sv2LoadedTotal += sv2ByOrder.filter(r => !subV2DetailsMap.has(r.id)).length;
+          sv2LoadedNoOrder += sv2ByOrder.filter(r => !r.order_id && !subV2DetailsMap.has(r.id)).length;
+          
+          // Group by order_id, only use 1:1 mappings (STOP-guard: >1 = ambiguous)
+          const byOrderId = new Map<string, typeof sv2ByOrder>();
+          for (const row of sv2ByOrder) {
+            if (!row.order_id) continue;
+            const existing = byOrderId.get(row.order_id) || [];
+            existing.push(row);
+            byOrderId.set(row.order_id, existing);
+          }
+          for (const [orderId, rows] of byOrderId) {
+            if (rows.length === 1) {
+              orderIdToSv2.set(orderId, rows[0].id);
+            } else {
+              ambiguousOrderToSv2Count++;
+            }
+          }
+        }
+      }
+    }
+    
+    let subRecoveredViaOrder = 0;
+    console.log(`[bepaid-list-subs] PATCH-1: deal_link_mismatch_before=${dealLinkMismatchBefore}, missingOrderIds=${[...new Set(missingOrderIds)].length}, orderIdToSv2=${orderIdToSv2.size}, ambiguous=${ambiguousOrderToSv2Count}`);
+
+    // PATCH-3: Count ps_active_no_sv2 from already loaded data
+    let psActiveNoSv2 = 0;
+    for (const ps of providerSubs || []) {
+      const psState = normalizeStatus(ps.state);
+      if (ACTIVE_CONTOUR.has(psState) && !ps.subscription_v2_id) {
+        psActiveNoSv2++;
+      }
+    }
+
+    // Build result with normalized status
+    const result: SubscriptionWithLink[] = allSubscriptions.map((sub) => {
+      const link = computeLinkage(sub);
+      const { ourSub, providerSub, linkedOrder, linkedPaymentDirect, linkedUserId, sv2OrderId, linkedOrderFromV2, sv2OrderUnresolved, metaOrderId, hasConflict, normalizedStatus, isActiveContour } = link;
+      let { linkedSubId, linkedOrderId } = link;
+      
+      // PATCH-1: Recovery — if linkedSubId missing but linkedOrderId found, try orderIdToSv2 (active contour only)
+      if (!linkedSubId && linkedOrderId && isActiveContour) {
+        const recoveredSv2Id = orderIdToSv2.get(linkedOrderId);
+        if (recoveredSv2Id) {
+          linkedSubId = recoveredSv2Id;
+          subRecoveredViaOrder++;
+        }
+      }
+      
+      // Get payment from order if exists
+      const paymentFromOrder = linkedOrder?.order_id ? orderIdToPayment.get(linkedOrder.order_id) : undefined;
       
       const profile = linkedUserId ? userIdToProfile.get(linkedUserId) : null;
 
@@ -687,9 +784,6 @@ Deno.serve(async (req) => {
       const divisor = currencyExponent[planCurrency] || 100;
       const planAmount = planAmountRaw / divisor;
 
-      const rawStatus = sub.state || sub.status || 'unknown';
-      const normalizedStatus = normalizeStatus(rawStatus);
-
       const providerMeta = providerSub?.meta as Record<string, any> | undefined;
       const snapshot = providerMeta?.provider_snapshot;
       
@@ -708,24 +802,54 @@ Deno.serve(async (req) => {
       const canceledAt = (sub as any).cancelled_at || (sub as any).canceled_at || 
                          snapshot?.cancelled_at || snapshot?.canceled_at || null;
 
-      // PATCH-SV2-ORDER: New SoT for linkedOrderId
-      // Priority 1: sv2.order_id (direct chain via provider_subscriptions → subscriptions_v2 → orders_v2)
-      const sv2OrderId = linkedSubId ? subV2DetailsMap.get(linkedSubId)?.order_id : undefined;
-      const linkedOrderFromV2 = sv2OrderId ? v2OrderIdMap.get(sv2OrderId) : undefined;
-      // STOP-guard: sv2OrderId exists but order not found in DB
-      const sv2OrderUnresolved = !!(sv2OrderId && !linkedOrderFromV2);
-      
-      // Priority 2-3: meta-based fallbacks
-      const metaOrderId = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
-      
-      // STOP-guard: conflict detection (sv2 vs meta, both exist but differ)
-      const hasConflict = !!(linkedOrderFromV2 && metaOrderId && linkedOrderFromV2.order_id !== metaOrderId);
-      
-      // Final resolved values (sv2 wins)
-      const linkedOrderId = linkedOrderFromV2?.order_id || metaOrderId;
       const linkedOrderNumber = linkedOrderFromV2?.order_number || linkedOrder?.order_number || linkedPaymentDirect?.order_number || null;
-      const linkedPaymentId = paymentFromOrder?.payment_id || linkedPaymentDirect?.payment_id || null;
-      const linkedProviderPaymentId = paymentFromOrder?.provider_payment_id || linkedPaymentDirect?.provider_payment_id || null;
+      
+      // PATCH-2: Payment ID with safe fallback from raw_data and source tracking
+      const baseLinkPaymentId = paymentFromOrder?.payment_id || linkedPaymentDirect?.payment_id || null;
+      const baseProviderPaymentId = paymentFromOrder?.provider_payment_id || linkedPaymentDirect?.provider_payment_id || null;
+      
+      let paymentIdSource: string = 'none';
+      let finalProviderPaymentId = baseProviderPaymentId;
+      let providerPaymentIdRaw: string | null = null;
+      
+      if (paymentFromOrder?.provider_payment_id) {
+        paymentIdSource = 'payments_v2.order_id';
+      } else if (linkedPaymentDirect?.provider_payment_id) {
+        paymentIdSource = 'payments_v2.meta';
+      } else {
+        // PATCH-2: Safe extract from raw_data — prefer explicit last_transaction fields, then timestamped latest
+        const rawData = providerSub?.raw_data as any;
+        let rawTxnUid: string | null = null;
+        
+        if (rawData) {
+          // Prefer explicit last_transaction fields
+          rawTxnUid = rawData?.last_transaction_uid || rawData?.last_transaction?.uid || null;
+          
+          // Fallback to transactions array — only pick latest by timestamp, never [0] blindly
+          if (!rawTxnUid && Array.isArray(rawData?.transactions) && rawData.transactions.length > 0) {
+            let latestTxn: any = null;
+            let latestTs = '';
+            for (const t of rawData.transactions) {
+              const ts = t.created_at || t.paid_at || t.processed_at || '';
+              if (ts && ts > latestTs) {
+                latestTs = ts;
+                latestTxn = t;
+              }
+            }
+            // Only use if we found a timestamped transaction
+            if (latestTxn?.uid && latestTs) {
+              rawTxnUid = latestTxn.uid;
+            }
+            // No timestamps → don't pick [0], leave as none
+          }
+        }
+        
+        if (rawTxnUid) {
+          finalProviderPaymentId = rawTxnUid;
+          providerPaymentIdRaw = rawTxnUid;
+          paymentIdSource = 'provider_raw';
+        }
+      }
       
       // Compute linked_before (old logic, meta-only) for stats comparison
       const linkedOrderIdOldLogic = linkedOrder?.order_id || linkedPaymentDirect?.order_id || null;
@@ -754,8 +878,11 @@ Deno.serve(async (req) => {
         details_missing: !!(sub as any)._details_missing && !cardLast4,
         linked_order_id: linkedOrderId,
         linked_order_number: linkedOrderNumber,
-        linked_payment_id: linkedPaymentId,
-        linked_provider_payment_id: linkedProviderPaymentId,
+        linked_payment_id: baseLinkPaymentId,
+        linked_provider_payment_id: finalProviderPaymentId,
+        // PATCH-2: payment source tracking (read-only, display only, does NOT affect is_linked_full)
+        payment_id_source: paymentIdSource,
+        ...(providerPaymentIdRaw ? { provider_payment_id_raw: providerPaymentIdRaw } : {}),
         canceled_at: canceledAt,
         // PATCH-SV2-ORDER: conflict diagnostics (read-only, no DB write)
         ...(hasConflict ? { link_conflict: true, meta_order_id: metaOrderId, sv2_order_id: sv2OrderId } : {}),
@@ -775,9 +902,10 @@ Deno.serve(async (req) => {
 
     console.log(`[bepaid-list-subs] Result: ${result.length} total, API=${apiListCount}, DB-enriched=${dbEnriched}, details=${detailsFetched}/${detailsFailed}, upserted=${upsertedIds.length}`);
 
-    // PATCH-SV2-ORDER: Compute linkage diagnostics
+    // PATCH-SV2-ORDER + PATCH-1: Compute linkage diagnostics
     let chainOnly = 0, metaOnly = 0, both = 0, linkConflicts = 0, chainOnlyUnresolved = 0;
     let linkedBefore = 0, linkedAfter = 0;
+    let dealLinkMismatchAfter = 0;
     for (const r of result) {
       const hasSv2Order = !!(r.linked_subscription_id && subV2DetailsMap.get(r.linked_subscription_id)?.order_id && v2OrderIdMap.has(subV2DetailsMap.get(r.linked_subscription_id)!.order_id!));
       const hasMetaOrder = !!r._linked_order_id_old;
@@ -788,9 +916,16 @@ Deno.serve(async (req) => {
       if (r._sv2_order_unresolved) chainOnlyUnresolved++;
       if (r.linked_user_id && r.linked_subscription_id && r._linked_order_id_old) linkedBefore++;
       if (r.is_linked_full) linkedAfter++;
+      // PATCH-1: deal_link_mismatch_after — active contour, linkedOrderId present but is_linked_full=false
+      const rStatus = r.status;
+      if (ACTIVE_CONTOUR.has(rStatus) && r.linked_order_id && !r.is_linked_full) {
+        dealLinkMismatchAfter++;
+      }
     }
     const recovered = linkedAfter - linkedBefore;
+    console.log(`[bepaid-list-subs] PATCH-1 stats: deal_link_mismatch_before=${dealLinkMismatchBefore}, sub_recovered_via_order=${subRecoveredViaOrder}, deal_link_mismatch_after=${dealLinkMismatchAfter}, ambiguous_order_to_sv2=${ambiguousOrderToSv2Count}`);
     console.log(`[bepaid-list-subs] PATCH-SV2-ORDER stats: chain_only=${chainOnly}, meta_only=${metaOnly}, both=${both}, conflicts=${linkConflicts}, unresolved=${chainOnlyUnresolved}, linked_before=${linkedBefore}, linked_after=${linkedAfter}, recovered=${recovered}`);
+    console.log(`[bepaid-list-subs] PATCH-3 stats: ps_active_no_sv2=${psActiveNoSv2}, sv2_loaded_total=${sv2LoadedTotal}, sv2_loaded_no_order=${sv2LoadedNoOrder}`);
 
     return new Response(
       JSON.stringify({
@@ -812,6 +947,15 @@ Deno.serve(async (req) => {
           linked_before: linkedBefore,
           linked_after: linkedAfter,
           recovered: recovered,
+          // PATCH-1: recovery diagnostics
+          deal_link_mismatch_before: dealLinkMismatchBefore,
+          sub_recovered_via_order: subRecoveredViaOrder,
+          deal_link_mismatch_after: dealLinkMismatchAfter,
+          ambiguous_order_to_sv2_count: ambiguousOrderToSv2Count,
+          // PATCH-3: gap analysis
+          ps_active_no_sv2: psActiveNoSv2,
+          sv2_pm_no_order: sv2LoadedNoOrder,
+          sv2_order_not_in_map: chainOnlyUnresolved,
         },
         debug: {
           creds_source: credentials.source,
