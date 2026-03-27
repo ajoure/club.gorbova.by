@@ -768,6 +768,23 @@ Deno.serve(async (req) => {
 
     console.log(`[bepaid-list-subs] Result: ${result.length} total, API=${apiListCount}, DB-enriched=${dbEnriched}, details=${detailsFetched}/${detailsFailed}, upserted=${upsertedIds.length}`);
 
+    // PATCH-SV2-ORDER: Compute linkage diagnostics
+    let chainOnly = 0, metaOnly = 0, both = 0, linkConflicts = 0, chainOnlyUnresolved = 0;
+    let linkedBefore = 0, linkedAfter = 0;
+    for (const r of result) {
+      const hasSv2Order = !!(r.linked_subscription_id && subV2DetailsMap.get(r.linked_subscription_id)?.order_id && v2OrderIdMap.has(subV2DetailsMap.get(r.linked_subscription_id)!.order_id!));
+      const hasMetaOrder = !!r._linked_order_id_old;
+      if (hasSv2Order && hasMetaOrder) both++;
+      else if (hasSv2Order && !hasMetaOrder) chainOnly++;
+      else if (!hasSv2Order && hasMetaOrder) metaOnly++;
+      if ((r as any).link_conflict) linkConflicts++;
+      if (r._sv2_order_unresolved) chainOnlyUnresolved++;
+      if (r.linked_user_id && r.linked_subscription_id && r._linked_order_id_old) linkedBefore++;
+      if (r.is_linked_full) linkedAfter++;
+    }
+    const recovered = linkedAfter - linkedBefore;
+    console.log(`[bepaid-list-subs] PATCH-SV2-ORDER stats: chain_only=${chainOnly}, meta_only=${metaOnly}, both=${both}, conflicts=${linkConflicts}, unresolved=${chainOnlyUnresolved}, linked_before=${linkedBefore}, linked_after=${linkedAfter}, recovered=${recovered}`);
+
     return new Response(
       JSON.stringify({
         subscriptions: result.map(({ _sv2_order_unresolved, _linked_order_id_old, ...rest }) => rest),
@@ -778,21 +795,16 @@ Deno.serve(async (req) => {
           pending: result.filter((s) => s.status === 'pending').length,
           canceled: result.filter((s) => s.status === 'canceled').length,
           not_linked: result.filter((s) => !s.is_linked_full).length,
-          linked: result.filter((s) => s.is_linked_full).length,
+          linked: linkedAfter,
           // PATCH-SV2-ORDER: linkage diagnostics
-          chain_only: result.filter((s) => s.linked_order_id && !s._linked_order_id_old).length,
-          meta_only: result.filter((s) => !s.linked_order_id || (s._linked_order_id_old && !subV2DetailsMap.get(s.linked_subscription_id || '')?.order_id)).length > 0 
-            ? result.filter((s) => s._linked_order_id_old && !(s.linked_subscription_id && subV2DetailsMap.get(s.linked_subscription_id)?.order_id && v2OrderIdMap.has(subV2DetailsMap.get(s.linked_subscription_id)!.order_id!))).length 
-            : 0,
-          both: result.filter((s) => {
-            const sv2Oid = s.linked_subscription_id ? subV2DetailsMap.get(s.linked_subscription_id)?.order_id : undefined;
-            return sv2Oid && v2OrderIdMap.has(sv2Oid) && s._linked_order_id_old;
-          }).length,
-          link_conflicts: result.filter((s: any) => s.link_conflict).length,
-          chain_only_unresolved: result.filter((s) => s._sv2_order_unresolved).length,
-          linked_before: result.filter((s) => !!(s.linked_user_id && s.linked_subscription_id && s._linked_order_id_old)).length,
-          linked_after: result.filter((s) => s.is_linked_full).length,
-          recovered: result.filter((s) => s.is_linked_full).length - result.filter((s) => !!(s.linked_user_id && s.linked_subscription_id && s._linked_order_id_old)).length,
+          chain_only: chainOnly,
+          meta_only: metaOnly,
+          both: both,
+          link_conflicts: linkConflicts,
+          chain_only_unresolved: chainOnlyUnresolved,
+          linked_before: linkedBefore,
+          linked_after: linkedAfter,
+          recovered: recovered,
         },
         debug: {
           creds_source: credentials.source,
