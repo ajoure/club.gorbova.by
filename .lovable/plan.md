@@ -2,129 +2,164 @@
 
 &nbsp;
 
-1. **Для карточки нужен не только overflow-hidden, но и правильная обрезка текста внутри flex**
+1. **Не дублировать processFile-логику в AI.tsx**
   &nbsp;
-  - На элементах с длинными именами файлов обычно ещё нужен min-w-0 у родителя, иначе truncate может не сработать.
-  - Это особенно важно для строки с бейджами и preview.
-  &nbsp;
-2. **Показывать не все файлы, а ограниченный набор — правильно**
-  &nbsp;
-  - Оптимально:
+  - Для drag & drop на GlassCard не писать отдельную третью обработку файлов.
+  - Лучше передавать всё в FileDropZone через chatFiles/setChatFiles, а сам FileDropZone в compact-режиме уже должен оставаться единым SoT для:
     &nbsp;
-    - первые 3 файла;
-    - затем бейдж +N ещё.
-    &nbsp;
-  - Это улучшит и layout, и читаемость.
-  &nbsp;
-3. **Бейджам файлов нужен max-w + truncate**
-  &nbsp;
-  - Формулировка верная.
-  - Для стабильности:
-    &nbsp;
-    - max-w-[180px] или похожее,
-    - truncate,
-    - inline-flex,
-    - min-w-0.
-    &nbsp;
-  &nbsp;
-4. **Карточки лучше сделать одинаковой структуры по высоте**
-  &nbsp;
-  - Не обязательно полностью одинаковой фиксированной высоты, но хотя бы:
-    &nbsp;
-    - заголовок,
-    - бейджи,
+    - валидации,
     - preview,
-    - футер с датами,
-    - кнопки
-      должны идти в одинаковом порядке.
+    - paste,
+    - удаления,
+    - лимитов.
     &nbsp;
-  - А кнопочный блок лучше прижать к низу через mt-auto.
   &nbsp;
-5. **Кнопки Открыть / Продолжить анализ одинаковой ширины — хорошая правка**
+2. **handleSendMessage должен использовать тот же extraction pipeline, что и scenario mode**
   &nbsp;
-  - flex-1 для обеих кнопок здесь уместен.
+  - Это ключевое требование.
+  - Логику извлечения не копировать “почти такую же”, а реально переиспользовать тот же кодовый путь, что и в handleScenarioSubmit.
   &nbsp;
-6. **Убрать эмодзи 📎 — согласен**
+3. **Для drag & drop на GlassCard нужен явный guard только на файловый drop**
   &nbsp;
-  - Для этого интерфейса лучше либо без эмодзи, либо с аккуратной иконкой FileText.
+  - Оставить проверку dataTransfer.types.includes('Files') как обязательную.
+  - Иначе можно сломать обычный drag текста/выделения.
   &nbsp;
-7. **Preview текста тоже стоит ограничить**
+4. **Hover overlay при drag нужен мягкий и временный**
   &nbsp;
-  - Не только файлы, но и preview ответа должен иметь:
+  - Не должен ломать layout и не должен перекрывать input настолько, чтобы мешать клику.
+  - Лучше делать лёгкую визуальную подсветку контейнера, а не тяжелый полноэкранный слой.
+  &nbsp;
+5. **Paste ограничивать областью чата — правильно**
+  &nbsp;
+  - Не на всю страницу.
+  - Если FileDropZone внутри GlassCard уже умеет paste, это лучший путь.
+  &nbsp;
+6. **Компактный uploader обязательно должен поддерживать длинные имена без overflow**
+  &nbsp;
+  - Для списка файлов:
     &nbsp;
-    - line clamp,
-    - overflow-hidden,
-    - единый размер.
+    - truncate
+    - max-w
+    - min-w-0
     &nbsp;
-  - Иначе карточки будут снова визуально “прыгать”.
+  - Иначе снова появится баг с вылезанием текста.
   &nbsp;
-8. **Offset в AI.tsx действительно лучше вынести в константу**
+7. **После отправки нужно очищать и состояние drag/paste**
   &nbsp;
-  - Это правильная финальная cleanup-правка.
-  - Тогда значение можно быстро подстроить без поиска магического числа по файлу.
+  - Не только chatFiles и showUploader,
+  - но и любой локальный drag-hover state, если он будет добавлен.
   &nbsp;
-9. **DoD стоит чуть расширить**
+8. **Кнопка отправки и Enter должны работать по правилу “текст ИЛИ файлы”**
   &nbsp;
-  - Проверить не только отсутствие горизонтального скролла на вкладке истории,
-  - но и что длинные русские имена файлов в нескольких карточках подряд не ломают grid.
+  - Это нужно сохранить как обязательный UX-gate.
   &nbsp;
+9. **Автоскролл после отправки файлов — обязательный proof**
+  &nbsp;
+  - Так как userSentMessageRef уже используется, надо подтвердить, что он срабатывает и для file-only отправки.
+  &nbsp;
+10. **DoD дополнить**
 
 &nbsp;
 
 &nbsp;
 
-План хороший.
+&nbsp;
+
+- Сообщение без текста, только с файлами, уходит корректно.
+- После отправки файлов uploader закрывается и очищается.
+- Free chat с файлами использует тот же extraction pipeline, что и scenario mode.
+- Длинные имена файлов не ломают input-area.
 
 &nbsp;
 
-План: Улучшение карточек «История анализа» + вынос offset в константу
+&nbsp;
 
-## Файлы: `src/components/ai-chat/AnalysisHistoryView.tsx`, `src/pages/AI.tsx`
+План: Загрузка файлов в обычный чат AI
 
----
+## Файлы для изменения
 
-## 1. Исправить overflow текста в карточках (`AnalysisHistoryView.tsx`)
+### 1. `src/components/mns/FileDropZone.tsx` — добавить `compact` prop
 
-### Проблема
+Новый опциональный prop `compact?: boolean`. В compact-режиме:
 
-Бейджи с длинными именами файлов (`Баланс_Горбова_с_расчетом_и_коэффициентами...`) выходят за границы карточки. Карточки визуально неоднородны.
+- Убрать большую drop-зону (иконка Upload, текст «Перетащите файлы»)
+- Показать компактную строку: кнопка «Выбрать файлы» + подпись «до 20 МБ»
+- Список файлов — компактный: имя с `truncate max-w-[200px] min-w-0`, размер, крестик
+- Drag/drop/paste/processFile/лимиты — без изменений, FileDropZone остаётся единственным SoT
 
-### Решение
+### 2. `src/pages/AI.tsx` — основные изменения
 
-- Добавить `overflow-hidden` на `GlassCard` контейнер карточки
-- Бейджи файлов: добавить `max-w-full truncate` чтобы длинные имена обрезались с `…`
-- Ограничить количество видимых файлов (показывать max 3–4, остальные — бейдж `+N ещё`)
-- Добавить `min-h-0` на flex-col карточки для корректного поведения в grid
+**Imports:** `FileDropZone`, `UploadedFile`, `Paperclip`
 
-### Минимализм
-
-- Убрать `📎` эмодзи из бейджей — заменить на иконку `FileText` или просто убрать
-- Сделать бейджи компактнее: `text-[10px]` → оставить, но добавить `max-w-[180px] truncate`
-- Кнопки: сделать одинаковой ширины через `flex-1`
-
-## 2. Вынести offset в константу (`AI.tsx`)
-
-Строка 386: заменить магическое число `4.5rem` на именованную константу:
+**State:**
 
 ```tsx
-const AI_CONTAINER_OFFSET = '4.5rem';
+const [chatFiles, setChatFiles] = useState<UploadedFile[]>([]);
+const [showUploader, setShowUploader] = useState(false);
+const [isDragOverChat, setIsDragOverChat] = useState(false);
 ```
 
-И использовать в style:
+**handleSendMessage (строка 289):**
+
+- Условие: `if (!inputValue.trim() && chatFiles.length === 0) return`
+- Если `chatFiles.length > 0` → использовать **тот же extraction pipeline**, что в `handleScenarioSubmit` (строки 316-343): `getFileType` → `fileToBase64` → `extractAllFilesContent` → передать `fileContents`, `fileNames`, `images` в `aiChat.sendMessage`
+- Не копировать логику, а вынести общую helper-функцию `prepareFilesForSend(files: UploadedFile[])` прямо в AI.tsx (или вызывать те же утилиты напрямую)
+- После отправки: `setChatFiles([])`, `setShowUploader(false)`, `setIsDragOverChat(false)`
+- `userSentMessageRef.current = true` — уже на месте, работает и для file-only
+
+**Кнопка отправки (строка 505):**
+
+- `disabled={!(inputValue.trim() || chatFiles.length > 0) || aiChat.isLoading}`
+
+**Input area (строки 486-515):**
+
+- Перед `<div className="flex gap-2">` — если `showUploader || chatFiles.length > 0`, рендерить `<FileDropZone compact maxSizeMB={20} maxFiles={5} files={chatFiles} onFilesChange={setChatFiles} />`
+- В `<div className="flex gap-2">` добавить кнопку-скрепку перед `ChatScenarioLauncher`:
+  ```
+  Paperclip icon, variant="ghost", size="icon"
+  Active state: text-primary bg-primary/10 когда showUploader === true
+  onClick: toggle showUploader
+  ```
+
+**Drag & drop на GlassCard чата:**
+
+- `onDragOver`: guard `e.dataTransfer.types.includes('Files')`, `setIsDragOverChat(true)`
+- `onDragLeave`: `setIsDragOverChat(false)`
+- `onDrop`: собрать `Array.from(e.dataTransfer.files)`, добавить в `chatFiles` через тот же `processFile` из FileDropZone (передаём через `setChatFiles` + `onFilesChange`). Альтернативно — просто показать uploader и передать файлы в него.
+- Визуальный hover: лёгкий `ring-2 ring-primary/30` на GlassCard при `isDragOverChat`, убрать при leave/drop. Не overlay, не блокирует клики.
+
+**Paste:** FileDropZone в compact-режиме внутри GlassCard уже обрабатывает paste. Дополнительной логики не нужно.
+
+## Extraction pipeline — единый путь
+
+Не копировать код из `handleScenarioSubmit`. Вынести общую функцию:
 
 ```tsx
-style={{ height: `calc(100dvh - ${AI_CONTAINER_OFFSET})`, maxHeight: `calc(100dvh - ${AI_CONTAINER_OFFSET})` }}
+async function prepareFilesPayload(uploadedFiles: UploadedFile[]) {
+  const fileEntries = await Promise.all(
+    uploadedFiles.map(async (uf) => ({
+      file: uf.file,
+      type: uf.type,
+      preview: uf.type === "image" ? (uf.preview || await fileToBase64(uf.file)) : undefined,
+    }))
+  );
+  return extractAllFilesContent(fileEntries);
+}
 ```
+
+Использовать и в `handleSendMessage`, и в `handleScenarioSubmit`.
 
 ## Что не затрагивается
 
-- Логика автоскролла (уже реализована)
-- DashboardLayout, backend, edge functions
-- Другие вкладки
+- Edge function, useAiChat, PromptRunFlow, база данных, автоскролл
 
 ## DoD
 
-1. Длинные имена файлов не выходят за границы карточек
-2. Карточки выглядят аккуратно и единообразно
-3. Offset вынесен в константу
-4. Горизонтального скролла на странице истории нет
+1. Скрепка с active-state рядом с полем ввода
+2. Compact uploader открывается/скрывается
+3. Drag & drop на GlassCard с guard на Files
+4. Отправка только с файлами (без текста) работает
+5. Длинные имена не ломают layout (truncate + min-w-0)
+6. После отправки chatFiles очищается, uploader скрывается
+7. Автоскролл работает после file-only отправки
+8. Единый extraction pipeline для chat и scenario mode
