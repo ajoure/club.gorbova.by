@@ -113,7 +113,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
   };
 
   const handleSave = async () => {
-    if (!code.trim() || !title.trim() || !promptText.trim()) return;
+    if (!code.trim() || !title.trim()) return;
     if (!validateResponseFormat(responseFormatStr)) return;
 
     const data: Partial<AiUserPrompt> = {
@@ -138,7 +138,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
     onOpenChange(false);
   };
 
-  const isValid = code.trim() && title.trim() && promptText.trim() && !responseFormatError;
+  const isValid = code.trim() && title.trim() && !responseFormatError;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -147,7 +147,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
           <DialogTitle>{prompt ? "Редактировать промпт" : "Создать промпт"}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 px-6 pb-2">
+        <div className="space-y-4 px-6 pb-2 min-w-0">
           {/* Card: Основные параметры */}
           <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
@@ -157,15 +157,15 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
               </div>
             </CardHeader>
             <CardContent className="space-y-4 overflow-hidden">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
+              <div className="grid grid-cols-2 gap-4 min-w-0">
+                <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Код (slug) *</Label>
-                  <Input value={code} onChange={e => setCode(e.target.value)} placeholder="balance_analysis" disabled={!!prompt} />
+                  <Input value={code} onChange={e => setCode(e.target.value)} placeholder="balance_analysis" disabled={!!prompt} className="w-full" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <Label className="text-xs text-muted-foreground">Тип *</Label>
                   <Select value={type} onValueChange={setType}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                     </SelectContent>
