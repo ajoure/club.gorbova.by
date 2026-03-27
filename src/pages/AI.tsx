@@ -211,6 +211,14 @@ const AI = () => {
     }
   }, [aiChat.messages.length, activeSubTab]);
 
+  // Scroll to bottom when returning to "chat" tab
+  useEffect(() => {
+    if (activeSubTab !== "chat") return;
+    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement | null;
+    if (!viewport) return;
+    requestAnimationFrame(() => { viewport.scrollTop = viewport.scrollHeight; });
+  }, [activeSubTab]);
+
   // Admin prompts
   const adminPrompts = useAiUserPrompts();
   const [editingPrompt, setEditingPrompt] = useState<AiUserPrompt | null>(null);
@@ -524,6 +532,26 @@ const AI = () => {
             onDragLeave={handleChatDragLeave}
             onDrop={handleChatDrop}
           >
+            {/* Chat header with "New chat" button */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border/30 shrink-0">
+              <span className="text-xs text-muted-foreground">Чат</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs gap-1"
+                onClick={() => {
+                  aiChat.clearChat();
+                  prevMessageCountRef.current = 0;
+                  isInitialLoadRef.current = true;
+                  setActiveScenario(null);
+                  setChatFiles([]);
+                  setShowUploader(false);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Новый чат
+              </Button>
+            </div>
             <ScrollArea ref={scrollAreaRef} className="flex-1 min-h-0 p-4">
               <div className="space-y-4">
                 {aiChat.messages.map((message) => (
