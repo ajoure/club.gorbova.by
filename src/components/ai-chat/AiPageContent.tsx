@@ -512,7 +512,7 @@ export function AiPageContent({ mode }: AiPageContentProps) {
   }, [activeSubTab, subTabs, activeSection]);
 
   const sectionTabClass = (active: boolean) =>
-    `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
+    `relative flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
       active
         ? "bg-background text-foreground shadow-sm"
         : "text-muted-foreground hover:text-foreground"
