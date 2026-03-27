@@ -84,6 +84,9 @@ interface SubscriptionWithLink {
   linked_order_number?: string | null;
   linked_payment_id?: string | null;
   linked_provider_payment_id?: string | null;
+  // PATCH-2: payment source tracking
+  payment_id_source?: string;
+  provider_payment_id_raw?: string | null;
   canceled_at?: string | null;
   // PATCH-SV2-ORDER: conflict diagnostics (read-only)
   link_conflict?: boolean;
