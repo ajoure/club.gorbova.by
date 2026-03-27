@@ -325,7 +325,7 @@ Deno.serve(async (req) => {
     const v2Ids = [...new Set(
       (providerSubs || []).map(ps => ps.subscription_v2_id).filter(Boolean) as string[]
     )];
-    const subV2DetailsMap = new Map<string, { product_name: string | null; tariff_name: string | null; next_charge_at: string | null; access_end_at: string | null }>();
+    const subV2DetailsMap = new Map<string, { product_name: string | null; tariff_name: string | null; next_charge_at: string | null; access_end_at: string | null; order_id: string | null }>();
 
     // Batch fetch (STOP-guard: max 500 per batch)
     const V2_BATCH_SIZE = 500;
@@ -333,7 +333,7 @@ Deno.serve(async (req) => {
       const batch = v2Ids.slice(i, i + V2_BATCH_SIZE);
       const { data: v2Rows } = await supabase
         .from('subscriptions_v2')
-        .select('id, next_charge_at, access_end_at, product_id, tariff_id')
+        .select('id, next_charge_at, access_end_at, product_id, tariff_id, order_id')
         .in('id', batch);
 
       if (!v2Rows || v2Rows.length === 0) continue;
@@ -361,6 +361,7 @@ Deno.serve(async (req) => {
           tariff_name: v2.tariff_id ? tariffMap.get(v2.tariff_id) || null : null,
           next_charge_at: v2.next_charge_at,
           access_end_at: v2.access_end_at,
+          order_id: v2.order_id || null,
         });
       }
     }
