@@ -106,7 +106,7 @@ interface BepaidSubscription {
   linked_subscription_id: string | null;
   linked_user_id: string | null;
   linked_profile_name: string | null;
-  is_orphan: boolean;
+  is_linked_full: boolean;
   snapshot_state?: string;
   snapshot_at?: string;
   cancellation_capability?: 'can_cancel_now' | 'cannot_cancel_until_paid' | 'unknown';
@@ -129,7 +129,7 @@ interface SubscriptionStats {
   pending?: number;
   canceled?: number;
   cancelled?: number;
-  orphans: number;
+  not_linked: number;
   linked: number;
 }
 
@@ -440,7 +440,7 @@ export function BepaidSubscriptionsTabContent() {
   const subscriptions = data?.subscriptions || [];
   const debugInfo = data?.debug;
   
-  const rawStats = data?.stats || { total: 0, active: 0, trial: 0, pending: 0, canceled: 0, cancelled: 0, orphans: 0, linked: 0 };
+  const rawStats = data?.stats || { total: 0, active: 0, trial: 0, pending: 0, canceled: 0, cancelled: 0, not_linked: 0, linked: 0 };
   const canceledCount = rawStats.canceled ?? rawStats.cancelled ?? 0;
   const pendingCount = rawStats.pending ?? 0;
 
@@ -448,7 +448,7 @@ export function BepaidSubscriptionsTabContent() {
     return subscriptions.filter((s: BepaidSubscription) => {
       if (!s.next_billing_at || s.status === 'canceled') return false;
       const daysUntil = differenceInDays(new Date(s.next_billing_at), new Date());
-      return daysUntil <= 7 && daysUntil >= 0 && s.is_orphan;
+      return daysUntil <= 7 && daysUntil >= 0 && !s.is_linked_full;
     }).length;
   }, [subscriptions]);
 
@@ -469,9 +469,9 @@ export function BepaidSubscriptionsTabContent() {
     }
     
     if (linkFilter === "linked") {
-      result = result.filter((s: BepaidSubscription) => !s.is_orphan);
+      result = result.filter((s: BepaidSubscription) => s.is_linked_full);
     } else if (linkFilter === "orphan") {
-      result = result.filter((s: BepaidSubscription) => s.is_orphan);
+      result = result.filter((s: BepaidSubscription) => !s.is_linked_full);
     } else if (linkFilter === "urgent") {
       result = result.filter((s: BepaidSubscription) => {
         if (!s.next_billing_at || s.status === 'canceled') return false;
@@ -795,7 +795,7 @@ export function BepaidSubscriptionsTabContent() {
   // Render cell based on column key
   const renderCell = (sub: BepaidSubscription, columnKey: string) => {
     const daysUntil = getDaysUntilCharge(sub.next_billing_at);
-    const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && sub.is_orphan;
+    const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && !sub.is_linked_full;
     const isRefreshingSnapshot = refreshingSnapshotIds.has(sub.id);
     
     switch (columnKey) {
@@ -1009,10 +1009,10 @@ export function BepaidSubscriptionsTabContent() {
         );
         
       case 'connection':
-        return sub.is_orphan ? (
+        return !sub.is_linked_full ? (
           <Badge variant="outline" className="text-[10px] text-destructive border-destructive/30">
             <Link2Off className="h-2.5 w-2.5 mr-1" />
-            Сирота
+            Не связана
           </Badge>
         ) : (
           <Tooltip>
@@ -1116,7 +1116,7 @@ export function BepaidSubscriptionsTabContent() {
                     Отменить в bePaid
                   </DropdownMenuItem>
                 )}
-                {!sub.is_orphan && (
+                {sub.is_linked_full && (
                   <>
                     <DropdownMenuSeparator />
                     {canUnlink(sub) ? (
@@ -1226,7 +1226,7 @@ export function BepaidSubscriptionsTabContent() {
           </button>
         )}
         
-        {rawStats.orphans > 0 && (
+        {rawStats.not_linked > 0 && (
           <button
             onClick={() => setLinkFilter(linkFilter === "orphan" ? "all" : "orphan")}
             className={cn(
@@ -1236,8 +1236,8 @@ export function BepaidSubscriptionsTabContent() {
                 : "bg-red-500/10 text-red-600 hover:bg-red-500/20"
             )}
           >
-            <span className="font-semibold">{rawStats.orphans}</span>
-            <span className="text-xs">сирот</span>
+            <span className="font-semibold">{rawStats.not_linked}</span>
+            <span className="text-xs">не связ.</span>
           </button>
         )}
         
@@ -1695,7 +1695,7 @@ export function BepaidSubscriptionsTabContent() {
                 <TableBody>
                   {filteredSubscriptions.map((sub: BepaidSubscription) => {
                     const daysUntil = getDaysUntilCharge(sub.next_billing_at);
-                    const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && sub.is_orphan;
+                    const isUrgent = daysUntil !== null && daysUntil <= 7 && daysUntil >= 0 && !sub.is_linked_full;
                     
                     return (
                       <TableRow 
@@ -1703,7 +1703,7 @@ export function BepaidSubscriptionsTabContent() {
                         className={cn(
                           "h-10 hover:bg-muted/30 transition-colors",
                           isUrgent && "bg-amber-500/5 border-l-2 border-l-amber-500",
-                          sub.is_orphan && !isUrgent && "bg-red-500/5"
+                          !sub.is_linked_full && !isUrgent && "bg-red-500/5"
                         )}
                       >
                         {sortedVisibleColumns.map(col => (
