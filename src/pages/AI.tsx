@@ -166,6 +166,9 @@ const AI = () => {
   const userSentMessageRef = useRef(false);
   const prevMessageCountRef = useRef(0);
 
+  // Chat
+  const aiChat = useAiChat();
+
   // Scroll listener — track if user is near bottom
   useEffect(() => {
     if (activeSubTab !== "chat") return;
@@ -201,9 +204,6 @@ const AI = () => {
       userSentMessageRef.current = false;
     }
   }, [aiChat.messages.length, activeSubTab]);
-
-  // Chat
-  const aiChat = useAiChat();
 
   // Admin prompts
   const adminPrompts = useAiUserPrompts();
