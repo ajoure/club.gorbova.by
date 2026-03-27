@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import type { UnsupportedFileInfo } from "@/types/files";
 
 export interface ChatMessage {
   id: string;
@@ -158,6 +159,7 @@ export function useAiChat() {
       fileContents?: string;
       fileNames?: string[];
       images?: Array<{ base64: string; filename: string; mimeType?: string }>;
+      unsupportedFiles?: UnsupportedFileInfo[];
     }
   ) => {
     if (!content.trim() && !options?.fileContents) return;
@@ -188,6 +190,7 @@ export function useAiChat() {
           fileNames: options?.fileNames,
           images: options?.images,
           conversation_id: conversationId,
+          unsupported_files: options?.unsupportedFiles,
         },
       });
 
