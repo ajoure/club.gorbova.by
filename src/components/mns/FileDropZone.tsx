@@ -19,16 +19,59 @@ interface FileDropZoneProps {
   compact?: boolean;
 }
 
-const ACCEPTED_TYPES = {
+const ACCEPTED_TYPES: Record<string, UploadedFile["type"]> = {
   "image/jpeg": "image",
   "image/png": "image",
   "image/webp": "image",
   "application/pdf": "pdf",
   "application/msword": "word",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "word",
+  "application/rtf": "word",
+  "text/rtf": "word",
   "application/vnd.ms-excel": "excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
-} as const;
+  "text/csv": "excel",
+};
+
+const ACCEPT_STRING = ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.rtf,.csv";
+
+/** Resolve file type from MIME or extension fallback — exported as SoT */
+export function resolveFileType(file: File): UploadedFile["type"] {
+  const fromMime = ACCEPTED_TYPES[file.type];
+  if (fromMime) return fromMime;
+  const ext = file.name.toLowerCase().split(".").pop();
+  if (ext === "rtf") return "word";
+  if (ext === "csv") return "excel";
+  if (ext === "xls" || ext === "xlsx") return "excel";
+  if (ext === "doc" || ext === "docx") return "word";
+  return "other";
+}
+
+/** Process a single dropped/selected file — exported as SoT for validation + preview */
+export async function processDroppedFile(file: File, maxSizeMB: number): Promise<UploadedFile | null> {
+  const fileType = resolveFileType(file);
+  if (fileType === "other") return null;
+  if (file.size > maxSizeMB * 1024 * 1024) return null;
+
+  const uploadedFile: UploadedFile = {
+    id: crypto.randomUUID(),
+    file,
+    type: fileType,
+  };
+
+  if (fileType === "image") {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        uploadedFile.preview = e.target?.result as string;
+        resolve(uploadedFile);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  return uploadedFile;
+}
 
 export function FileDropZone({ 
   files, 
@@ -40,55 +83,16 @@ export function FileDropZone({
 }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
 
-  const getFileType = (file: File): UploadedFile["type"] => {
-    return (ACCEPTED_TYPES[file.type as keyof typeof ACCEPTED_TYPES] as UploadedFile["type"]) || "other";
-  };
-
-  const processFile = useCallback(async (file: File): Promise<UploadedFile | null> => {
-    const fileType = getFileType(file);
-    
-    if (fileType === "other") {
-      return null;
-    }
-
-    if (file.size > maxSizeMB * 1024 * 1024) {
-      return null;
-    }
-
-    const uploadedFile: UploadedFile = {
-      id: crypto.randomUUID(),
-      file,
-      type: fileType,
-    };
-
-    // Create preview for images
-    if (fileType === "image") {
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          uploadedFile.preview = e.target?.result as string;
-          resolve(uploadedFile);
-        };
-        reader.readAsDataURL(file);
-      });
-    }
-
-    return uploadedFile;
-  }, [maxSizeMB]);
-
   const addFiles = useCallback(async (newFiles: File[]) => {
     if (files.length >= maxFiles) return;
-
     const remainingSlots = maxFiles - files.length;
     const filesToProcess = newFiles.slice(0, remainingSlots);
-    
-    const processedFiles = await Promise.all(filesToProcess.map(processFile));
+    const processedFiles = await Promise.all(filesToProcess.map(f => processDroppedFile(f, maxSizeMB)));
     const validFiles = processedFiles.filter((f): f is UploadedFile => f !== null);
-    
     if (validFiles.length > 0) {
       onFilesChange([...files, ...validFiles]);
     }
-  }, [files, maxFiles, onFilesChange, processFile]);
+  }, [files, maxFiles, maxSizeMB, onFilesChange]);
 
   const removeFile = useCallback((id: string) => {
     onFilesChange(files.filter(f => f.id !== id));
@@ -97,9 +101,7 @@ export function FileDropZone({
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!disabled) {
-      setIsDragging(true);
-    }
+    if (!disabled) setIsDragging(true);
   }, [disabled]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -112,28 +114,19 @@ export function FileDropZone({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-
     if (disabled) return;
-
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    addFiles(droppedFiles);
+    addFiles(Array.from(e.dataTransfer.files));
   }, [disabled, addFiles]);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     if (disabled) return;
-
-    const items = Array.from(e.clipboardData.items);
     const filesToAdd: File[] = [];
-
-    items.forEach(item => {
+    Array.from(e.clipboardData.items).forEach(item => {
       if (item.kind === "file") {
         const file = item.getAsFile();
-        if (file) {
-          filesToAdd.push(file);
-        }
+        if (file) filesToAdd.push(file);
       }
     });
-
     if (filesToAdd.length > 0) {
       e.preventDefault();
       addFiles(filesToAdd);
@@ -141,8 +134,7 @@ export function FileDropZone({
   }, [disabled, addFiles]);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
-    addFiles(selectedFiles);
+    addFiles(Array.from(e.target.files || []));
     e.target.value = "";
   }, [addFiles]);
 
@@ -163,11 +155,7 @@ export function FileDropZone({
   };
 
   return (
-    <div 
-      className="space-y-3"
-      onPaste={handlePaste}
-    >
-      {/* Drop Zone */}
+    <div className="space-y-3" onPaste={handlePaste}>
       {compact ? (
         <div
           onDragOver={handleDragOver}
@@ -175,9 +163,7 @@ export function FileDropZone({
           onDrop={handleDrop}
           className={cn(
             "flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed transition-colors",
-            isDragging
-              ? "border-primary bg-primary/5"
-              : "border-border",
+            isDragging ? "border-primary bg-primary/5" : "border-border",
             disabled && "opacity-50 cursor-not-allowed"
           )}
         >
@@ -185,18 +171,12 @@ export function FileDropZone({
             <input
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"
+              accept={ACCEPT_STRING}
               className="hidden"
               onChange={handleFileInput}
               disabled={disabled || files.length >= maxFiles}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={disabled || files.length >= maxFiles}
-              asChild
-            >
+            <Button type="button" variant="outline" size="sm" disabled={disabled || files.length >= maxFiles} asChild>
               <span>
                 <Upload className="h-3.5 w-3.5 mr-1.5" />
                 Выбрать файлы
@@ -204,7 +184,7 @@ export function FileDropZone({
             </Button>
           </label>
           <span className="text-xs text-muted-foreground">
-            до {maxSizeMB} МБ • PDF, JPG, PNG, Word, Excel
+            до {maxSizeMB} МБ • PDF, JPG, PNG, Word, Excel, RTF, CSV
           </span>
         </div>
       ) : (
@@ -214,9 +194,7 @@ export function FileDropZone({
           onDrop={handleDrop}
           className={cn(
             "border-2 border-dashed rounded-lg p-6 text-center transition-colors",
-            isDragging 
-              ? "border-primary bg-primary/5" 
-              : "border-border hover:border-primary/50",
+            isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50",
             disabled && "opacity-50 cursor-not-allowed"
           )}
         >
@@ -225,31 +203,24 @@ export function FileDropZone({
             Перетащите файлы сюда или вставьте из буфера (Ctrl+V)
           </p>
           <p className="text-xs text-muted-foreground mb-3">
-            PDF, JPG, PNG, Word, Excel • до {maxSizeMB} МБ
+            PDF, JPG, PNG, Word, Excel, RTF, CSV • до {maxSizeMB} МБ
           </p>
           <label>
             <input
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx"
+              accept={ACCEPT_STRING}
               className="hidden"
               onChange={handleFileInput}
               disabled={disabled || files.length >= maxFiles}
             />
-            <Button 
-              type="button" 
-              variant="outline" 
-              size="sm"
-              disabled={disabled || files.length >= maxFiles}
-              asChild
-            >
+            <Button type="button" variant="outline" size="sm" disabled={disabled || files.length >= maxFiles} asChild>
               <span>Выбрать файлы</span>
             </Button>
           </label>
         </div>
       )}
 
-      {/* Uploaded Files List */}
       {files.length > 0 && (
         <div className={compact ? "flex flex-wrap gap-1.5" : "space-y-2"}>
           {files.map((file) =>
@@ -260,27 +231,14 @@ export function FileDropZone({
               >
                 {getFileIcon(file.type)}
                 <span className="text-xs truncate min-w-0 flex-1">{file.file.name}</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5 shrink-0"
-                  onClick={() => removeFile(file.id)}
-                  disabled={disabled}
-                >
+                <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => removeFile(file.id)} disabled={disabled}>
                   <X className="h-3 w-3" />
                 </Button>
               </div>
             ) : (
-              <div
-                key={file.id}
-                className="flex items-center gap-3 p-2 rounded-lg bg-muted/50 border border-border"
-              >
+              <div key={file.id} className="flex items-center gap-3 p-2 rounded-lg bg-muted/50 border border-border">
                 {file.preview ? (
-                  <img
-                    src={file.preview}
-                    alt={file.file.name}
-                    className="h-10 w-10 rounded object-cover"
-                  />
+                  <img src={file.preview} alt={file.file.name} className="h-10 w-10 rounded object-cover" />
                 ) : (
                   <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
                     {getFileIcon(file.type)}
@@ -288,17 +246,9 @@ export function FileDropZone({
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{file.file.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatFileSize(file.file.size)}
-                  </p>
+                  <p className="text-xs text-muted-foreground">{formatFileSize(file.file.size)}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => removeFile(file.id)}
-                  disabled={disabled}
-                >
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => removeFile(file.id)} disabled={disabled}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>

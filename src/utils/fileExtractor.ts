@@ -7,27 +7,8 @@ export interface ExtractedContent {
   filename: string;
 }
 
-export async function extractTextFromFile(file: File): Promise<ExtractedContent | null> {
-  const fileType = getFileType(file);
-  
-  if (fileType === "word") {
-    return extractFromWord(file);
-  }
-  
-  if (fileType === "excel") {
-    return extractFromExcel(file);
-  }
-  
-  // For images and PDFs, we'll send them directly to AI for analysis
-  if (fileType === "image" || fileType === "pdf") {
-    return {
-      text: "",
-      type: fileType,
-      filename: file.name,
-    };
-  }
-  
-  return null;
+function getExtension(file: File): string {
+  return (file.name.toLowerCase().split(".").pop() || "");
 }
 
 export function getFileType(file: File): ExtractedContent["type"] {
@@ -35,35 +16,69 @@ export function getFileType(file: File): ExtractedContent["type"] {
   if (file.type === "application/pdf") return "pdf";
   if (
     file.type === "application/msword" ||
-    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.type === "application/rtf" ||
+    file.type === "text/rtf"
   ) return "word";
   if (
     file.type === "application/vnd.ms-excel" ||
-    file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    file.type === "text/csv"
   ) return "excel";
-  // Fallback: check extension for files with empty/generic MIME
-  const ext = file.name.toLowerCase().split(".").pop();
+  // Fallback: check extension
+  const ext = getExtension(file);
+  if (ext === "rtf") return "word";
+  if (ext === "csv") return "excel";
   if (ext === "xls" || ext === "xlsx") return "excel";
   if (ext === "doc" || ext === "docx") return "word";
   return "text";
+}
+
+export async function extractTextFromFile(file: File): Promise<ExtractedContent | null> {
+  const fileType = getFileType(file);
+  const ext = getExtension(file);
+
+  if (fileType === "word") {
+    // RTF: mammoth doesn't support it, use plain text fallback
+    if (ext === "rtf") {
+      return extractAsPlainText(file, "word");
+    }
+    return extractFromWord(file);
+  }
+
+  if (fileType === "excel") {
+    // CSV: read as plain text, don't use SheetJS
+    if (ext === "csv") {
+      return extractAsPlainText(file, "excel");
+    }
+    return extractFromExcel(file);
+  }
+
+  if (fileType === "image" || fileType === "pdf") {
+    return { text: "", type: fileType, filename: file.name };
+  }
+
+  return null;
+}
+
+async function extractAsPlainText(file: File, type: ExtractedContent["type"]): Promise<ExtractedContent> {
+  try {
+    const text = await file.text();
+    return { text, type, filename: file.name };
+  } catch (error) {
+    console.error(`Failed to read ${file.name} as text:`, error);
+    return { text: "", type, filename: file.name };
+  }
 }
 
 async function extractFromWord(file: File): Promise<ExtractedContent> {
   try {
     const arrayBuffer = await file.arrayBuffer();
     const result = await mammoth.extractRawText({ arrayBuffer });
-    return {
-      text: result.value,
-      type: "word",
-      filename: file.name,
-    };
+    return { text: result.value, type: "word", filename: file.name };
   } catch (error) {
     console.error("Failed to extract Word content:", error);
-    return {
-      text: "",
-      type: "word",
-      filename: file.name,
-    };
+    return { text: "", type: "word", filename: file.name };
   }
 }
 
@@ -76,30 +91,20 @@ async function extractFromExcel(file: File): Promise<ExtractedContent> {
     for (const name of workbook.SheetNames) {
       const sheet = workbook.Sheets[name];
       if (!sheet) continue;
-
       const csv = XLSX.utils.sheet_to_csv(sheet);
       const lines = csv
         .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.replace(/[,;|\s]/g, "").length > 0);
-
       if (lines.length > 0) {
         parts.push(`--- Лист: ${name} ---\n${lines.join("\n")}`);
       }
     }
 
-    return {
-      text: parts.join("\n\n"),
-      type: "excel",
-      filename: file.name,
-    };
+    return { text: parts.join("\n\n"), type: "excel", filename: file.name };
   } catch (error) {
     console.error("Failed to extract Excel content:", error);
-    return {
-      text: "",
-      type: "excel",
-      filename: file.name,
-    };
+    return { text: "", type: "excel", filename: file.name };
   }
 }
 
@@ -111,10 +116,10 @@ export async function extractAllFilesContent(
 }> {
   const textParts: string[] = [];
   const images: Array<{ base64: string; filename: string }> = [];
-  
+
   for (const fileData of files) {
     const { file, type, preview } = fileData;
-    
+
     if (type === "image" && preview) {
       images.push({ base64: preview, filename: file.name });
       textParts.push(`[Изображение: ${file.name}]`);
@@ -141,9 +146,6 @@ export async function extractAllFilesContent(
       }
     }
   }
-  
-  return {
-    textContent: textParts.join("\n\n"),
-    images,
-  };
+
+  return { textContent: textParts.join("\n\n"), images };
 }
