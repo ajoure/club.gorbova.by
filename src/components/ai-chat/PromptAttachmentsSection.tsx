@@ -126,9 +126,9 @@ export function PromptAttachmentsSection({
                 className="flex items-center gap-3 p-2 rounded-md border bg-muted overflow-hidden"
               >
                 <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{att.file_name}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p className="text-sm font-medium truncate block w-full">{att.file_name}</p>
+                  <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                     <span>{formatSize(att.file_size)}</span>
                     <span>•</span>
                     <span className={status.color}>{status.label}</span>

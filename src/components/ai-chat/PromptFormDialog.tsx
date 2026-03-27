@@ -149,14 +149,14 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
 
         <div className="space-y-4 px-6 pb-2">
           {/* Card: Основные параметры */}
-          <Card className="shadow-sm">
+          <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Settings2 className="h-4 w-4 text-muted-foreground" />
                 <CardTitle className="text-sm">Основные параметры</CardTitle>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 overflow-hidden">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-xs text-muted-foreground">Код (slug) *</Label>
@@ -185,27 +185,27 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
           </Card>
 
           {/* Card: Текст промпта */}
-          <Card className="shadow-sm">
+          <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
                 <CardTitle className="text-sm">Текст промпта</CardTitle>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="overflow-hidden">
               <Textarea value={promptText} onChange={e => setPromptText(e.target.value)} className="min-h-[120px] font-mono text-xs" placeholder="Системный промпт для AI..." />
             </CardContent>
           </Card>
 
           {/* Card: База знаний */}
-          <Card className="shadow-sm">
+          <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Database className="h-4 w-4 text-muted-foreground" />
                 <CardTitle className="text-sm">База знаний (файлы)</CardTitle>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="overflow-hidden">
               <PromptAttachmentsSection
                 promptId={prompt?.id ?? null}
                 attachments={attachments}
@@ -219,14 +219,14 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
           </Card>
 
           {/* Card: Настройки запуска и отображения */}
-          <Card className="shadow-sm">
+          <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Eye className="h-4 w-4 text-muted-foreground" />
                 <CardTitle className="text-sm">Настройки запуска и отображения</CardTitle>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 overflow-hidden">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-xs text-muted-foreground">Категория</Label>
@@ -275,7 +275,7 @@ export function PromptFormDialog({ open, onOpenChange, prompt, onSave, saving }:
           </Card>
 
           {/* Card: Формат ответа */}
-          <Card className="shadow-sm">
+          <Card className="shadow-sm overflow-hidden">
             <CardHeader className="pb-3">
               <div className="flex items-center gap-2">
                 <Code className="h-4 w-4 text-muted-foreground" />
