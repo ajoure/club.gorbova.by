@@ -109,7 +109,7 @@ function generateActsOnBasisText(type: string, basis: string, details: string): 
   return basis;
 }
 
-export function ExecutorsContent() {
+export function ExecutorsContent({ embedded = false }: { embedded?: boolean } = {}) {
   const { executors, isLoading: executorsLoading, createExecutor, updateExecutor, deleteExecutor, setDefault: setDefaultExecutor, isCreating, isUpdating } = useExecutors();
   const { canWrite, isSuperAdmin } = usePermissions();
   
@@ -356,54 +356,69 @@ export function ExecutorsContent() {
 
   return (
     <>
-      <div className="space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Исполнители</h1>
-            <p className="text-muted-foreground text-sm sm:text-base">
-              Юридические лица для договоров и актов
-            </p>
+      <div className={embedded ? "space-y-2" : "space-y-6"}>
+        {!embedded && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold">Исполнители</h1>
+              <p className="text-muted-foreground text-sm sm:text-base">
+                Юридические лица для договоров и актов
+              </p>
+            </div>
+            {canEdit && (
+              <Button onClick={() => handleOpenDialog()}>
+                <Plus className="h-4 w-4 mr-2" />
+                Добавить
+              </Button>
+            )}
           </div>
-          {canEdit && (
-            <Button onClick={() => handleOpenDialog()}>
+        )}
+
+        {embedded && canEdit && (
+          <div className="flex items-center justify-end">
+            <Button size="sm" onClick={() => handleOpenDialog()}>
               <Plus className="h-4 w-4 mr-2" />
               Добавить
             </Button>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* Stats */}
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Всего</CardTitle>
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{executors?.length || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Активных</CardTitle>
-              <Building2 className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{activeCount}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">По умолчанию</CardTitle>
-              <Star className="h-4 w-4 text-yellow-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-lg font-bold truncate">
-                {defaultExecutor?.short_name || defaultExecutor?.full_name || "—"}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {!embedded && (
+          <>
+            {/* Stats */}
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Всего</CardTitle>
+                  <Building2 className="h-4 w-4 text-muted-foreground" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{executors?.length || 0}</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Активных</CardTitle>
+                  <Building2 className="h-4 w-4 text-green-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{activeCount}</div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">По умолчанию</CardTitle>
+                  <Star className="h-4 w-4 text-yellow-500" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-lg font-bold truncate">
+                    {defaultExecutor?.short_name || defaultExecutor?.full_name || "—"}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        )}
 
         {/* Table */}
         <Card>
