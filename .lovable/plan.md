@@ -2,41 +2,40 @@
 
 &nbsp;
 
-1. В список deploy добавь **все entrypoint functions, которые используют _shared/create-payment-checkout.ts**, а не только те, где ты правил insert напрямую.
-  Минимум перепроверь и включи:
+1. Для **PATCH 1** добавь в proof-файлы не только агрегаты, но и **точные SQL-проверки / формулы**, которыми получены цифры. Иначе потом нельзя будет 1:1 воспроизвести proof.
+2. В блоке про offer_id = NULL допиши, что это **не только legacy/manual/import/reconcile**, но и что **PATCH 0 уже исправил direct-charge для новых orders**, то есть доля offer_id = NULL должна уменьшаться только на новых заказах после deploy.
+3. **PATCH 2 нельзя начинать как execute-план без явного входного источника.** Нужно сначала зафиксировать один из двух режимов:
   &nbsp;
-  - bepaid-create-token
-  - public-checkout
-  - все остальные entrypoints, которые импортируют _shared/create-payment-checkout
-    Иначе shared snapshot builder может остаться недеплоенным в каноничном checkout path.
+  - **CSV file mode** — пользователь загружает файл
+  - **GetCourse API mode** — dry run по API
+    Сейчас в плане это смешано.
   &nbsp;
-2. В proof после deploy нужен не просто “есть snapshot”, а **proof нового формата snapshot**.
-  Обязательно показать хотя бы 1 свежий order, где в purchase_snapshot есть именно новые поля:
+4. Для PATCH 2 добавь обязательный **source manifest**:
   &nbsp;
-  - product_id
-  - product_public_id
-  - tariff_id
-  - tariff_public_id
-  - offer_id
-  - price
-  - currency
-  - planned_access_start_at
-  - planned_access_end_at
-  - snapshot_created_at
-    Иначе можно случайно принять старый ad-hoc snapshot за новый контракт.
+  - source_type = csv_file / getcourse_api
+  - source_name
+  - source_row_count
+  - source_hash или другой идентификатор файла/выгрузки
+  - batch_id
+  - dry_run_at
+    Без этого dry run не будет воспроизводимым.
   &nbsp;
-3. Smoke-test лучше разбить на **2 обязательных сценария**, а не один:
+5. В PATCH 2 обязательно раздели отчёт на **dedupe against DB** и **dedupe inside source file**. Это разные вещи:
   &nbsp;
-  - каноничный checkout path
-  - non-checkout path (admin-manual-charge или direct-charge)
-    Потому что сейчас главный риск именно в том, что каноничный _shared/create-payment-checkout не задеплоен.
+  - повторы внутри самого CSV
+  - сделки, уже импортированные в БД
   &nbsp;
-4. В proof-пакет добавь отдельную проверку:
+6. Добавь в dry run отдельный блок **mapping proof**:
   &nbsp;
-  - **legacy order без snapshot**
-  - **legacy order со старым ad-hoc snapshot**
-  - **новый order с полным snapshot contract**
-    Чтобы было видно три состояния данных и было понятно, что backward compat реально нужен.
+  - какой gc_offer_id в какой tariff_id замапился
+  - сколько строк попало в каждый тариф
+  - сколько строк не замапилось вообще
+    Это один из ключевых результатов dry run.
+  &nbsp;
+7. Если dry run идёт через API, зафиксируй **STOP-guard по rate limit**:
+  &nbsp;
+  - перед запуском показать ожидаемый объём запросов
+  - если объём опасен для лимита, не выполнять без отдельного подтверждения режима API.
   &nbsp;
 
 &nbsp;
@@ -47,57 +46,93 @@
 
 &nbsp;
 
-- причина найдена точно,
-- проблема не в коде, а в deploy,
-- proof через свежие orders из БД обязателен.
+- PATCH 1 закрывается proof-артефактами,
+- offer_id = NULL документируется корректно,
+- PATCH 2 логично начинается с dry run, а не с импорта.
 
 &nbsp;
 
 &nbsp;
 
-План: Deploy edge functions для PATCH 0.5 + proof
+План: PATCH 1 proof-артефакты + offer_id документация + PATCH 2 dry run
 
-## Диагностика
+## Часть 1: Закрытие PATCH 1
 
-**Факт**: код `buildPurchaseSnapshot` добавлен во все 12 файлов (8 edge functions + shared). Но **ни одна edge function не была переразвёрнута** после изменений.
+### 1.1 Сохранить proof-файлы в /mnt/documents/
 
-**Доказательство**:
+**patch1_fk_check.txt** — результаты проверки orphan FK:
 
-- 1799 orders всего, 82 имеют snapshot
-- Все 82 snapshot — **старый ad-hoc формат** (только 4 поля: `access_days, product_name, tariff_code, tariff_name`)
-- Все orders после коммита (28 марта) — `purchase_snapshot = NULL`
-- Новый формат с `product_id, tariff_id, offer_id, currency, planned_access_*` — **ни разу не записан**
+- orphan product_id: 0
+- orphan tariff_id: 0  
+- orphan offer_id: 0
+- coverage: product_id 1781/1799, tariff_id 1781/1799, offer_id 206/1799
 
-## Что нужно сделать
+**patch1_public_id_coverage.txt** — покрытие public_id:
 
-### Шаг 1: Deploy всех затронутых edge functions
+- products_v2: 20/20 (100%)
+- tariffs: 12/12 (100%)
 
-Переразвернуть 10 edge functions:
+### 1.2 Документация offer_id = NULL
 
-1. `bepaid-webhook`
-2. `bepaid-auto-process`
-3. `bepaid-archive-import`
-4. `bepaid-create-subscription-checkout`
-5. `bepaid-report-import`
-6. `direct-charge`
-7. `admin-manual-charge`
-8. `subscription-charge`
-9. `getcourse-import-deals`
-10. `getcourse-import-file`
+Отдельный блок в proof-файле:
 
-### Шаг 2: Smoke-test через invoke
+```
+offer_id отсутствует у 1593 / 1799 orders (88.5%)
+Это НЕ orphan — это корректные данные:
+- legacy orders до внедрения offers
+- manual/admin orders (без привязки к offer)
+- getcourse import orders (gc_offer_id ≠ offer_id)
+- reconcile flows
 
-После deploy — вызвать хотя бы один checkout flow (e.g. `admin-manual-charge` или `direct-charge` с тестовыми данными) и проверить, что `purchase_snapshot` записался в новом формате.
+Post-purchase rules (PATCH 5-6) будут работать 
+только на orders с offer_id IS NOT NULL (206 orders сейчас).
+Для legacy orders правила не применяются — это by design.
+```
 
-### Шаг 3: Proof-пакет из БД
+---
 
-Запросить свежие orders и показать:
+## Часть 2: PATCH 2 — Dry run импорта GetCourse CSV
 
-- JSON snapshot целиком с новыми полями (`product_id`, `product_public_id`, `tariff_id`, `offer_id`, `price`, `currency`, `access_days`, `planned_access_start_at`, `reconcile_source`, `snapshot_created_at`)
-- Сравнение с legacy snapshot (4 поля) для backward compat
-- Order без snapshot для legacy fallback
+### Диагностика
 
-### Риск
+Существующие import-пути:
 
-- Deploy 10 functions — последовательно, с проверкой логов после каждой
-- Shared module `_shared/build-purchase-snapshot.ts` — деплоится вместе с каждой function автоматически
+- `getcourse-import-deals` — через GetCourse Export API (по offer_id), пишет orders + subscriptions
+- `getcourse-import-file` — через JSON-массив deals (из UI-загрузки файла)
+
+Hardcoded OFFER_TARIFF_MAP в `getcourse-import-deals`:
+
+```
+6744625 → CHAT tariff
+6744626 → FULL tariff  
+6744628 → BUSINESS tariff
+```
+
+### Что нужно для dry run
+
+**Вопрос к пользователю**: нет CSV-файла в проекте. Нужно уточнить:
+
+- Какой CSV будет импортироваться? (новый файл или повторный запуск через GetCourse API?)
+- Если CSV — пользователь должен загрузить файл
+
+### Шаги dry run
+
+1. **Зафиксировать source**: имя файла, число строк, источник, batch_id
+2. **Добавить dry_run режим** в `getcourse-import-deals` (или создать отдельную функцию):
+  - парсинг и маппинг данных
+  - проверка дубликатов (по gc_deal_id и order_number)
+  - проверка email → profile matching
+  - проверка tariff mapping
+  - **НЕ** делать INSERT — только отчёт
+3. **Отчёт dry run** сохранить в `/mnt/documents/patch2_dry_run_report.txt`:
+  - total deals в source
+  - deals с валидным email
+  - deals с маппингом tariff
+  - deals-дубликаты (уже в БД)
+  - deals готовые к импорту
+  - deals с ошибками
+
+### Риски
+
+- GetCourse API rate limit: 100 запросов / 2 часа
+- Если dry run через API — это расходует квоту
