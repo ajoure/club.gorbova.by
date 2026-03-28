@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
     // Get product and tariff
     const { data: product } = await supabase
       .from('products_v2')
-      .select('id, name, code')
+      .select('id, name, code, public_id')
       .eq('id', productId)
       .single();
 
@@ -196,7 +196,7 @@ Deno.serve(async (req) => {
     if (tariffCode) {
       const { data } = await supabase
         .from('tariffs')
-        .select('id, name, code, access_days')
+        .select('id, name, code, access_days, public_id')
         .eq('product_id', productId)
         .eq('code', tariffCode)
         .eq('is_active', true)
@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
     if (!tariff) {
       const { data } = await supabase
         .from('tariffs')
-        .select('id, name, code, access_days')
+        .select('id, name, code, access_days, public_id')
         .eq('product_id', productId)
         .eq('is_active', true)
         .order('created_at', { ascending: true })
@@ -278,7 +278,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Create order
+    const subCheckoutAccessDays = tariff.access_days || 30;
+    const subCheckoutNow = new Date();
+    const subCheckoutPlannedEnd = new Date(subCheckoutNow);
+    subCheckoutPlannedEnd.setDate(subCheckoutPlannedEnd.getDate() + subCheckoutAccessDays);
+
     const orderNumber = generateOrderNumber();
     const amountMoney = amountCents / 100;
     const { data: order, error: orderError } = await supabase
@@ -290,11 +294,9 @@ Deno.serve(async (req) => {
         tariff_id: tariff.id,
         offer_id: effectiveOfferId || null,
         order_number: orderNumber,
-        // NOT NULL fields required by schema
         base_price: amountMoney,
         final_price: amountMoney,
         is_trial: false,
-        // paid_amount = 0 until webhook confirms payment
         paid_amount: 0,
         currency,
         status: 'pending',
@@ -304,6 +306,23 @@ Deno.serve(async (req) => {
           source: 'bepaid-create-subscription-checkout',
           expected_amount: amountMoney,
         },
+        purchase_snapshot: buildPurchaseSnapshot({
+          product_id: productId,
+          product_public_id: product.public_id,
+          product_name: product.name,
+          product_code: product.code,
+          tariff_id: tariff.id,
+          tariff_public_id: tariff.public_id,
+          tariff_name: tariff.name,
+          tariff_code: tariff.code,
+          offer_id: effectiveOfferId || null,
+          price: amountMoney,
+          currency,
+          access_days: subCheckoutAccessDays,
+          planned_access_start_at: subCheckoutNow.toISOString(),
+          planned_access_end_at: subCheckoutPlannedEnd.toISOString(),
+          extra: { payment_flow: 'provider_managed_checkout' },
+        }),
       })
       .select('id')
       .single();
