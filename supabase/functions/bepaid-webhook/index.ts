@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
 import { endOfDayWarsaw } from '../_shared/timezone.ts';
 import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-message.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -4883,12 +4884,27 @@ ${userName}, к сожалению, не удалось провести опл�
             status: 'paid',
             is_trial: meta.is_trial || false,
             trial_end_at: meta.is_trial ? accessEndAt.toISOString() : null,
-            purchase_snapshot: {
+            purchase_snapshot: buildPurchaseSnapshot({
+              product_id: productV2.id,
+              product_public_id: productV2.public_id,
               product_name: productV2.name,
+              product_code: productV2.code,
+              tariff_id: tariffData.id,
+              tariff_public_id: tariffData.public_id,
               tariff_name: tariffData.name,
-              tariff_code: meta.tariff_code,
+              tariff_code: meta.tariff_code || tariffData.code,
+              price: actualAmount,
+              currency: order.currency,
               access_days: accessDays,
-            },
+              planned_access_start_at: now.toISOString(),
+              planned_access_end_at: accessEndAt.toISOString(),
+              is_trial: meta.is_trial || false,
+              trial_days: meta.is_trial ? accessDays : null,
+              extra: {
+                bepaid_uid: transactionUid,
+                bepaid_subscription_id: subscriptionId,
+              },
+            }),
             meta: {
               legacy_order_id: internalOrderId,
               bepaid_uid: transactionUid,
@@ -5868,9 +5884,11 @@ async function createOrderFromWebhook(
 
   userId = profile?.user_id || null;
   
-  // Get offer details
+  // Get offer details + product/tariff for snapshot
   let productId: string | null = null;
   let tariffId: string | null = null;
+  let orphanProduct: any = null;
+  let orphanTariff: any = null;
   
   if (offerId) {
     const { data: offer } = await supabase
@@ -5880,7 +5898,17 @@ async function createOrderFromWebhook(
         tariff_id,
         tariffs!inner (
           id,
-          product_id
+          name,
+          code,
+          public_id,
+          access_days,
+          product_id,
+          products_v2!inner (
+            id,
+            name,
+            code,
+            public_id
+          )
         )
       `)
       .eq('id', offerId)
@@ -5889,6 +5917,8 @@ async function createOrderFromWebhook(
     if (offer) {
       tariffId = offer.tariff_id;
       productId = offer.tariffs?.product_id;
+      orphanTariff = offer.tariffs;
+      orphanProduct = offer.tariffs?.products_v2;
     }
   }
 
@@ -5905,7 +5935,11 @@ async function createOrderFromWebhook(
   // Extract subscription ID from body
   const bepaidSubscriptionId = body.id || subscription?.id || null;
 
-  // Create order with payment date as created_at
+  const orphanAccessDays = orphanTariff?.access_days || 30;
+  const orphanNow = new Date();
+  const orphanPlannedEnd = new Date(orphanNow);
+  orphanPlannedEnd.setDate(orphanPlannedEnd.getDate() + orphanAccessDays);
+
   const { data: order, error } = await supabase
     .from('orders_v2')
     .insert({
@@ -5923,7 +5957,7 @@ async function createOrderFromWebhook(
       bepaid_subscription_id: bepaidSubscriptionId,
       reconcile_source: 'webhook_orphan',
       paid_amount: amountBYN,
-      created_at: transaction.paid_at || now.toISOString(),  // Use payment date, not now()
+      created_at: transaction.paid_at || now.toISOString(),
       meta: {
         reconstructed_from_webhook: true,
         bepaid_uid: transaction.uid,
@@ -5933,6 +5967,28 @@ async function createOrderFromWebhook(
         customer_first_name: transaction.customer?.first_name || subscription?.customer?.first_name,
         customer_last_name: transaction.customer?.last_name || subscription?.customer?.last_name,
       },
+      purchase_snapshot: buildPurchaseSnapshot({
+        product_id: productId,
+        product_public_id: orphanProduct?.public_id,
+        product_name: orphanProduct?.name,
+        product_code: orphanProduct?.code,
+        tariff_id: tariffId,
+        tariff_public_id: orphanTariff?.public_id,
+        tariff_name: orphanTariff?.name,
+        tariff_code: orphanTariff?.code,
+        offer_id: offerId,
+        price: amountBYN,
+        currency,
+        access_days: orphanAccessDays,
+        planned_access_start_at: orphanNow.toISOString(),
+        planned_access_end_at: orphanPlannedEnd.toISOString(),
+        reconcile_source: 'webhook_orphan',
+        extra: {
+          bepaid_uid: transaction.uid,
+          bepaid_subscription_id: bepaidSubscriptionId,
+          reconstructed_from_webhook: true,
+        },
+      }),
     })
     .select()
     .single();

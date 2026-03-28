@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -224,6 +225,19 @@ Deno.serve(async (req) => {
               imported_at: new Date().toISOString(),
               import_source: 'file',
             },
+            purchase_snapshot: buildPurchaseSnapshot({
+              product_id: productId,
+              product_name: deal.offerName,
+              tariff_id: deal.tariffId,
+              price: deal.cost,
+              currency: 'BYN',
+              reconcile_source: 'getcourse_import_file',
+              extra: {
+                gc_deal_id: deal.id,
+                gc_offer_name: deal.offerName,
+                import_source: 'file',
+              },
+            }),
             created_at: createdAt,
             deal_date: createdAt,
             updated_at: paidAt,

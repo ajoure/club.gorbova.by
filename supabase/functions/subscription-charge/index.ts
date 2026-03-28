@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1230,6 +1231,20 @@ async function chargeSubscription(
               .eq('user_id', user_id)
               .maybeSingle();
 
+            // Fetch product info for snapshot
+            const renewalProductId = subscription?.product_id ?? orderData?.product_id ?? null;
+            const renewalTariffId = tariff_id ?? orderData?.tariff_id ?? null;
+            let renewalProduct: any = null;
+            if (renewalProductId) {
+              const { data: prd } = await supabase.from('products_v2').select('id, name, code, public_id').eq('id', renewalProductId).maybeSingle();
+              renewalProduct = prd;
+            }
+
+            const renewalAccessDays = tariff?.access_days || 30;
+            const renewalNow = new Date();
+            const renewalPlannedEnd = new Date(renewalNow);
+            renewalPlannedEnd.setDate(renewalPlannedEnd.getDate() + renewalAccessDays);
+
             // Create NEW deal for this renewal
             const { data: newOrder, error: createErr } = await supabase
               .from('orders_v2')
@@ -1243,8 +1258,8 @@ async function chargeSubscription(
                 final_price: amount,
                 paid_amount: amount,
                 is_trial: false,
-                product_id: subscription?.product_id ?? orderData?.product_id ?? null,
-                tariff_id: tariff_id ?? orderData?.tariff_id ?? null,
+                product_id: renewalProductId,
+                tariff_id: renewalTariffId,
                 customer_email: orderData?.customer_email ?? null,
                 customer_phone: orderData?.customer_phone ?? null,
                 meta: {
@@ -1255,6 +1270,28 @@ async function chargeSubscription(
                   original_order_id: order_id ?? null,
                   is_trial_conversion: is_trial,
                 },
+                purchase_snapshot: buildPurchaseSnapshot({
+                  product_id: renewalProductId,
+                  product_public_id: renewalProduct?.public_id,
+                  product_name: renewalProduct?.name,
+                  product_code: renewalProduct?.code,
+                  tariff_id: renewalTariffId,
+                  tariff_public_id: tariff?.public_id,
+                  tariff_name: tariff?.name,
+                  tariff_code: tariff?.code,
+                  price: amount,
+                  currency,
+                  access_days: renewalAccessDays,
+                  planned_access_start_at: renewalNow.toISOString(),
+                  planned_access_end_at: renewalPlannedEnd.toISOString(),
+                  reconcile_source: 'subscription_renewal',
+                  extra: {
+                    subscription_id: id,
+                    original_order_id: order_id ?? null,
+                    is_trial_conversion: is_trial,
+                    bepaid_uid: bepaidUid,
+                  },
+                }),
               })
               .select('id, order_number')
               .single();
@@ -1957,7 +1994,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, access_days, getcourse_offer_id)
+        tariffs(id, name, code, access_days, getcourse_offer_id, public_id)
       `)
       .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])

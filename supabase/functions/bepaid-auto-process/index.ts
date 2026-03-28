@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -698,15 +699,23 @@ Deno.serve(async (req) => {
               customer_email: orderCustomerEmail,
               reconcile_source: 'bepaid_auto',
               created_at: paidAt,  // Use payment date, not now()
-              purchase_snapshot: {
-                bepaid_uid: item.bepaid_uid,
-                tracking_id: item.tracking_id,
-                payment_method: 'bepaid',
-                source: 'auto_process',
-                imported_at: new Date().toISOString(),
-                card_last4: item.card_last4,
-                card_holder: item.card_holder,
-              },
+              purchase_snapshot: buildPurchaseSnapshot({
+                product_id: mapping.product_id,
+                tariff_id: mapping.tariff_id,
+                offer_id: mapping.offer_id,
+                price: finalAmount,
+                currency: item.currency || 'BYN',
+                reconcile_source: 'bepaid_auto',
+                extra: {
+                  bepaid_uid: item.bepaid_uid,
+                  tracking_id: item.tracking_id,
+                  payment_method: 'bepaid',
+                  source: 'auto_process',
+                  imported_at: new Date().toISOString(),
+                  card_last4: item.card_last4,
+                  card_holder: item.card_holder,
+                },
+              }),
               meta: {
                 customer_name: item.customer_name,
                 customer_surname: item.customer_surname,

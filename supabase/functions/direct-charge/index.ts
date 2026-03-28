@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { resolveUserIds } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -255,7 +256,7 @@ Deno.serve(async (req) => {
     // Get product and tariff info
     const { data: product } = await supabase
       .from('products_v2')
-      .select('id, name, currency, telegram_club_id')
+      .select('id, name, currency, telegram_club_id, code, public_id')
       .eq('id', productId)
       .eq('is_active', true)
       .single();
@@ -269,7 +270,7 @@ Deno.serve(async (req) => {
 
     const { data: tariff } = await supabase
       .from('tariffs')
-      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id')
+      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id, public_id')
       .eq('code', tariffCode)
       .eq('product_id', productId)
       .eq('is_active', true)
@@ -468,6 +469,11 @@ Deno.serve(async (req) => {
     const orderNumber = `ORD-${new Date().getFullYear().toString().slice(-2)}-${Date.now().toString(36).toUpperCase()}`;
 
     // Create order - use total amount for installments
+    const dcAccessDays = tariff.access_days || 30;
+    const dcNow = new Date();
+    const dcPlannedEnd = new Date(dcNow);
+    dcPlannedEnd.setDate(dcPlannedEnd.getDate() + (isTrial ? effectiveTrialDays : dcAccessDays));
+
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -488,7 +494,7 @@ Deno.serve(async (req) => {
           direct_charge: true,
           auto_charge_after_trial: autoChargeAfterTrial,
           auto_charge_amount: autoChargeAmount,
-          auto_charge_offer_id: autoChargeOfferId, // Reference to pay_now offer for auto-charge
+          auto_charge_offer_id: autoChargeOfferId,
           is_installment: isInternalInstallment,
           installment_count: isInternalInstallment ? installmentCount : null,
           first_payment_amount: isInternalInstallment ? amount : null,
@@ -498,6 +504,28 @@ Deno.serve(async (req) => {
           trial_days: isTrial ? effectiveTrialDays : null,
           is_trial: isTrial || false,
         },
+        purchase_snapshot: buildPurchaseSnapshot({
+          product_id: productId,
+          product_public_id: product.public_id,
+          product_name: product.name,
+          product_code: product.code,
+          tariff_id: tariff.id,
+          tariff_public_id: tariff.public_id,
+          tariff_name: tariff.name,
+          tariff_code: tariff.code || tariffCode,
+          offer_id: offer?.id || null,
+          price: totalAmount,
+          currency: product.currency,
+          access_days: isTrial ? effectiveTrialDays : dcAccessDays,
+          planned_access_start_at: dcNow.toISOString(),
+          planned_access_end_at: dcPlannedEnd.toISOString(),
+          is_trial: isTrial || false,
+          trial_days: isTrial ? effectiveTrialDays : null,
+          extra: {
+            is_installment: isInternalInstallment,
+            installment_count: isInternalInstallment ? installmentCount : null,
+          },
+        }),
       })
       .select()
       .single();

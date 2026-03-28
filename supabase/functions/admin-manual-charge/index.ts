@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -279,13 +280,13 @@ Deno.serve(async (req) => {
       // Get product and tariff info for order details
       const { data: product } = await supabase
         .from('products_v2')
-        .select('name, code')
+        .select('name, code, public_id')
         .eq('id', product_id)
         .single();
 
       const { data: tariff } = await supabase
         .from('tariffs')
-        .select('name, duration_days, access_duration_days')
+        .select('name, duration_days, access_duration_days, access_days, code, public_id')
         .eq('id', tariff_id)
         .single();
 
@@ -293,7 +294,11 @@ Deno.serve(async (req) => {
       const { data: orderNumberData } = await supabase.rpc('generate_order_number');
       const orderNumber = orderNumberData || `ORD-ADM-${Date.now()}`;
 
-      // Create order for manual charge with product/tariff
+      const manualAccessDays = tariff?.access_days || tariff?.access_duration_days || tariff?.duration_days || 30;
+      const manualNow = new Date();
+      const manualPlannedEnd = new Date(manualNow);
+      manualPlannedEnd.setDate(manualPlannedEnd.getDate() + manualAccessDays);
+
       const { data: order, error: orderError } = await supabase
         .from('orders_v2')
         .insert({
@@ -316,6 +321,23 @@ Deno.serve(async (req) => {
             product_name: product?.name,
             tariff_name: tariff?.name,
           },
+          purchase_snapshot: buildPurchaseSnapshot({
+            product_id,
+            product_public_id: product?.public_id,
+            product_name: product?.name,
+            product_code: product?.code,
+            tariff_id,
+            tariff_public_id: tariff?.public_id,
+            tariff_name: tariff?.name,
+            tariff_code: tariff?.code,
+            price: amount / 100,
+            currency: 'BYN',
+            access_days: manualAccessDays,
+            planned_access_start_at: manualNow.toISOString(),
+            planned_access_end_at: manualPlannedEnd.toISOString(),
+            reconcile_source: 'admin_manual',
+            extra: { charged_by: user.id },
+          }),
         })
         .select()
         .single();
