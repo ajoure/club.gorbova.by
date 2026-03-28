@@ -294,7 +294,11 @@ Deno.serve(async (req) => {
       const { data: orderNumberData } = await supabase.rpc('generate_order_number');
       const orderNumber = orderNumberData || `ORD-ADM-${Date.now()}`;
 
-      // Create order for manual charge with product/tariff
+      const manualAccessDays = tariff?.access_days || tariff?.access_duration_days || tariff?.duration_days || 30;
+      const manualNow = new Date();
+      const manualPlannedEnd = new Date(manualNow);
+      manualPlannedEnd.setDate(manualPlannedEnd.getDate() + manualAccessDays);
+
       const { data: order, error: orderError } = await supabase
         .from('orders_v2')
         .insert({
@@ -317,6 +321,23 @@ Deno.serve(async (req) => {
             product_name: product?.name,
             tariff_name: tariff?.name,
           },
+          purchase_snapshot: buildPurchaseSnapshot({
+            product_id,
+            product_public_id: product?.public_id,
+            product_name: product?.name,
+            product_code: product?.code,
+            tariff_id,
+            tariff_public_id: tariff?.public_id,
+            tariff_name: tariff?.name,
+            tariff_code: tariff?.code,
+            price: amount / 100,
+            currency: 'BYN',
+            access_days: manualAccessDays,
+            planned_access_start_at: manualNow.toISOString(),
+            planned_access_end_at: manualPlannedEnd.toISOString(),
+            reconcile_source: 'admin_manual',
+            extra: { charged_by: user.id },
+          }),
         })
         .select()
         .single();
