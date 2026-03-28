@@ -280,13 +280,13 @@ Deno.serve(async (req) => {
       // Get product and tariff info for order details
       const { data: product } = await supabase
         .from('products_v2')
-        .select('name, code')
+        .select('name, code, public_id')
         .eq('id', product_id)
         .single();
 
       const { data: tariff } = await supabase
         .from('tariffs')
-        .select('name, duration_days, access_duration_days')
+        .select('name, duration_days, access_duration_days, access_days, code, public_id')
         .eq('id', tariff_id)
         .single();
 
