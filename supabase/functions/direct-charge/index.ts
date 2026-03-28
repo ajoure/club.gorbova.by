@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
     // Get product and tariff info
     const { data: product } = await supabase
       .from('products_v2')
-      .select('id, name, currency, telegram_club_id')
+      .select('id, name, currency, telegram_club_id, code, public_id')
       .eq('id', productId)
       .eq('is_active', true)
       .single();
@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
 
     const { data: tariff } = await supabase
       .from('tariffs')
-      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id')
+      .select('id, name, code, access_days, original_price, trial_days, trial_price, trial_auto_charge, getcourse_offer_id, public_id')
       .eq('code', tariffCode)
       .eq('product_id', productId)
       .eq('is_active', true)
