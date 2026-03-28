@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -611,6 +612,18 @@ async function createOrder(
       gc_offer_id: deal.offer_id,
       imported_at: new Date().toISOString(),
     },
+    purchase_snapshot: buildPurchaseSnapshot({
+      product_id: productId,
+      tariff_id: tariffId,
+      price: deal.deal_cost,
+      currency: 'BYN',
+      reconcile_source: 'getcourse_historical',
+      extra: {
+        gc_deal_id: deal.id,
+        gc_offer_id: deal.offer_id,
+        import_source: 'getcourse_import_deals',
+      },
+    }),
     created_at: deal.deal_created_at,
     updated_at: deal.deal_payed_at || deal.deal_created_at,
   };
