@@ -475,6 +475,7 @@ Deno.serve(async (req) => {
         user_id: user.id,
         product_id: productId,
         tariff_id: tariff.id,
+        offer_id: offer?.id || null,
         customer_email: user.email,
         base_price: totalAmount,
         final_price: totalAmount,
