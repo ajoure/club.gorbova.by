@@ -9,6 +9,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from './bepaid-credentials.ts';
+import { buildPurchaseSnapshot } from './build-purchase-snapshot.ts';
 
 export interface CreateCheckoutParams {
   supabase: ReturnType<typeof createClient>;
@@ -71,8 +72,8 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
 
   // === Load product, tariff, profile ===
   const [productResult, tariffResult, profileResult] = await Promise.all([
-    supabase.from('products_v2').select('id, name, code').eq('id', product_id).maybeSingle(),
-    supabase.from('tariffs').select('id, name, code, access_days').eq('id', tariff_id).maybeSingle(),
+    supabase.from('products_v2').select('id, name, code, public_id').eq('id', product_id).maybeSingle(),
+    supabase.from('tariffs').select('id, name, code, access_days, public_id').eq('id', tariff_id).maybeSingle(),
     supabase.from('profiles').select('id, email, full_name').eq('user_id', user_id).maybeSingle(),
   ]);
 
@@ -194,6 +195,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       payment_flow: paymentFlow,
     };
 
+    const accessDaysOneTime = tariff.access_days || 30;
+    const nowOneTime = new Date();
+    const plannedEndOneTime = new Date(nowOneTime);
+    plannedEndOneTime.setDate(plannedEndOneTime.getDate() + accessDaysOneTime);
+
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -211,6 +217,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         customer_email: customerEmail,
         deal_date: new Date().toISOString(),
         meta: orderMeta,
+        purchase_snapshot: buildPurchaseSnapshot({
+          product_id,
+          product_public_id: product.public_id,
+          product_name: product.name,
+          product_code: product.code,
+          tariff_id,
+          tariff_public_id: tariff.public_id,
+          tariff_name: tariff.name,
+          tariff_code: tariff.code,
+          offer_id: offer_id || null,
+          price: amountByn,
+          currency: 'BYN',
+          access_days: accessDaysOneTime,
+          planned_access_start_at: nowOneTime.toISOString(),
+          planned_access_end_at: plannedEndOneTime.toISOString(),
+          is_trial: false,
+          extra: { payment_flow: paymentFlow },
+        }),
       })
       .select('id')
       .single();
@@ -519,6 +543,11 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       payment_flow: paymentFlow,
     };
 
+    const accessDaysSub = tariff.access_days || 30;
+    const nowSub = new Date();
+    const plannedEndSub = new Date(nowSub);
+    plannedEndSub.setDate(plannedEndSub.getDate() + accessDaysSub);
+
     const { data: order, error: orderError } = await supabase
       .from('orders_v2')
       .insert({
@@ -536,6 +565,24 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         customer_email: customerEmail,
         deal_date: new Date().toISOString(),
         meta: subOrderMeta,
+        purchase_snapshot: buildPurchaseSnapshot({
+          product_id,
+          product_public_id: product.public_id,
+          product_name: product.name,
+          product_code: product.code,
+          tariff_id,
+          tariff_public_id: tariff.public_id,
+          tariff_name: tariff.name,
+          tariff_code: tariff.code,
+          offer_id: offer_id || null,
+          price: amountByn,
+          currency: 'BYN',
+          access_days: accessDaysSub,
+          planned_access_start_at: nowSub.toISOString(),
+          planned_access_end_at: plannedEndSub.toISOString(),
+          is_trial: false,
+          extra: { payment_flow: paymentFlow },
+        }),
       })
       .select('id')
       .single();
