@@ -499,7 +499,19 @@ Deno.serve(async (req) => {
                     card_holder: payment.cardHolder,
                     card_mask: payment.cardMask,
                     original_description: payment.description
-                  }
+                  },
+                  purchase_snapshot: buildPurchaseSnapshot({
+                    product_id: productId,
+                    tariff_id: tariffId,
+                    price: payment.amount,
+                    currency: payment.currency,
+                    reconcile_source: 'bepaid_report_import',
+                    extra: {
+                      bepaid_uid: payment.uid,
+                      original_description: payment.description,
+                      import_source: 'bepaid_report',
+                    },
+                  }),
                 })
                 .select()
                 .single();
