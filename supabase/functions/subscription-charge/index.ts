@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
