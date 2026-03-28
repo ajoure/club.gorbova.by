@@ -1958,7 +1958,7 @@ Deno.serve(async (req) => {
       .from('subscriptions_v2')
       .select(`
         *,
-        tariffs(id, name, access_days, getcourse_offer_id)
+        tariffs(id, name, code, access_days, getcourse_offer_id, public_id)
       `)
       .lte('next_charge_at', endOfDayIso)  // Use end of day instead of nowIso
       .in('status', ['active', 'trial', 'past_due'])
