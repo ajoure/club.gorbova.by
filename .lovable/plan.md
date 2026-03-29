@@ -323,8 +323,43 @@ WHERE target_type != 'batch' AND parent_event_key IS NOT NULL;
 
 ---
 
-## Watermark coverage proof (v19 + v21)
+## Watermark coverage proof (v19 + v21 + v22.1)
 
 Два раздела:
 - Section A: access events (target_type != 'batch')
 - Section B: meta/batch events (target_type = 'batch')
+
+---
+
+## PATCH v22.1: ledger migration hardening (applied)
+
+| # | Правка | Статус |
+|---|--------|--------|
+| 1 | Watermark разделён: `phase1_ledger_schema_ready_at` (записан) + `phase1_ledger_cutover_at` (запишется после деплоя всех path wrappers) | ✅ |
+| 2 | RLS policy пересоздана с явным `WITH CHECK` | ✅ |
+| 3 | Удалён дублирующий индекс `idx_ledger_source_event_key` (UNIQUE уже создаёт btree) | ✅ |
+
+### Watermark контракт
+
+- `phase1_ledger_schema_ready_at` — момент создания таблицы. Информационный.
+- `phase1_ledger_cutover_at` — записать **только** после деплоя всех Phase 1 path wrappers:
+  - 4 primary grant-path groups
+  - 2 downstream paths
+  - 7 revoke paths
+  - post-check
+- Все proof-артефакты и invariant report используют **только** `phase1_ledger_cutover_at`.
+
+### Текущий статус Phase 1
+
+| Шаг | Описание | Статус |
+|-----|----------|--------|
+| 1 | DDL + CHECK + FK + индексы | ✅ schema_ready |
+| 2 | Watermark (schema_ready_at) | ✅ записан |
+| 3 | Hardcode cleanup (8 live files) | ⬜ не начат |
+| 4 | Grant-path wrapping (4 группы) | ⬜ не начат |
+| 5 | Downstream paths (2) | ⬜ не начат |
+| 6 | Revoke paths (7) | ⬜ не начат |
+| 7 | resolveAccessWindow() | ⬜ не начат |
+| 8 | post_check | ⬜ не начат |
+| 9 | cutover_at watermark | ⬜ blocked by 3–8 |
+| 10 | 6 proof-артефактов | ⬜ blocked by 9 |
