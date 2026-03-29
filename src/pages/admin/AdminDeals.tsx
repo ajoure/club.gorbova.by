@@ -361,18 +361,23 @@ export default function AdminDeals() {
     return applyFilters(result, activeFilters, getDealFieldValue);
   }, [dealsWithIndex, debouncedSearch, activeFilters, getDealFieldValue, selectedProductId]);
 
-  // Product filter counts
+  // Product filter counts — computed from filtered data (excluding product filter itself)
   const productCounts = useMemo(() => {
-    if (!deals) return new Map<string, number>();
-    const validDeals = deals.filter(d => VALID_DEAL_STATUSES.includes(d.status as any));
+    let base = dealsWithIndex;
+
+    if (debouncedSearch) {
+      base = base.filter(d => matchSearchIndex(debouncedSearch, d.search_index));
+    }
+    base = applyFilters(base, activeFilters, getDealFieldValue);
+
     const counts = new Map<string, number>();
-    validDeals.forEach(d => {
+    base.forEach(d => {
       if (d.product_id) {
         counts.set(d.product_id, (counts.get(d.product_id) || 0) + 1);
       }
     });
     return counts;
-  }, [deals, VALID_DEAL_STATUSES]);
+  }, [dealsWithIndex, debouncedSearch, activeFilters, getDealFieldValue]);
 
   // Export columns builder
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
