@@ -102,10 +102,21 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   pending: { label: "Ожидает оплаты", color: "bg-amber-500/20 text-amber-600", icon: Clock },
   paid: { label: "Оплачен", color: "bg-green-500/20 text-green-600", icon: CheckCircle },
   partial: { label: "Частично оплачен", color: "bg-blue-500/20 text-blue-600", icon: AlertTriangle },
+  canceled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   cancelled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   refunded: { label: "Возврат", color: "bg-red-500/20 text-red-600", icon: XCircle },
+  failed: { label: "Ошибка", color: "bg-red-500/20 text-red-600", icon: XCircle },
   expired: { label: "Истёк", color: "bg-muted text-muted-foreground", icon: XCircle },
+  needs_mapping: { label: "Требует маппинга", color: "bg-orange-500/20 text-orange-600", icon: AlertTriangle },
 };
+
+/** Fallback for unknown statuses */
+function getStatusConfig(status: string) {
+  return STATUS_CONFIG[status] || { label: status, color: "bg-muted text-muted-foreground", icon: AlertTriangle };
+}
+
+/** Import sources that count as "imported" deals */
+const IMPORT_SOURCES = ['bepaid_archive_import', 'getcourse_historical', 'csv_active_import'] as const;
 
 /** Extract payer name from latest payment (immutable sort) */
 function getLatestPayerName(deal: any): string | null {
