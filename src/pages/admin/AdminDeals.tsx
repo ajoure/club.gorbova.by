@@ -102,10 +102,21 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   pending: { label: "Ожидает оплаты", color: "bg-amber-500/20 text-amber-600", icon: Clock },
   paid: { label: "Оплачен", color: "bg-green-500/20 text-green-600", icon: CheckCircle },
   partial: { label: "Частично оплачен", color: "bg-blue-500/20 text-blue-600", icon: AlertTriangle },
+  canceled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   cancelled: { label: "Отменён", color: "bg-red-500/20 text-red-600", icon: XCircle },
   refunded: { label: "Возврат", color: "bg-red-500/20 text-red-600", icon: XCircle },
+  failed: { label: "Ошибка", color: "bg-red-500/20 text-red-600", icon: XCircle },
   expired: { label: "Истёк", color: "bg-muted text-muted-foreground", icon: XCircle },
+  needs_mapping: { label: "Требует маппинга", color: "bg-orange-500/20 text-orange-600", icon: AlertTriangle },
 };
+
+/** Fallback for unknown statuses */
+function getStatusConfig(status: string) {
+  return STATUS_CONFIG[status] || { label: status, color: "bg-muted text-muted-foreground", icon: AlertTriangle };
+}
+
+/** Import sources that count as "imported" deals */
+const IMPORT_SOURCES = ['bepaid_archive_import', 'getcourse_historical', 'csv_active_import'] as const;
 
 /** Extract payer name from latest payment (immutable sort) */
 function getLatestPayerName(deal: any): string | null {
@@ -142,34 +153,47 @@ export default function AdminDeals() {
   
   const queryClient = useQueryClient();
 
-  // Fetch deals (orders_v2) with related data
+  // Fetch ALL deals (orders_v2) with related data — batched pagination
   const { data: deals, isLoading, refetch } = useQuery({
     queryKey: ["admin-deals", dateFilter],
-    queryFn: async () => {
-      let query = supabase
-        .from("orders_v2")
-        .select(`
-          *,
-          products_v2(id, name, code),
-          tariffs(id, name, code, access_days),
-          flows(id, name),
-          payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
-          profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
-        `)
-        .order("deal_date", { ascending: false, nullsFirst: false })
-        .limit(1000);
+    queryFn: async ({ signal }) => {
+      const PAGE_SIZE = 1000;
+      let from = 0;
+      const all: any[] = [];
 
-      // Apply date filter
-      if (dateFilter.from) {
-        query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
-      }
-      if (dateFilter.to) {
-        query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
+      for (;;) {
+        let query = supabase
+          .from("orders_v2")
+          .select(`
+            *,
+            products_v2(id, name, code),
+            tariffs(id, name, code, access_days),
+            flows(id, name),
+            payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
+            profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
+          `)
+          .order("deal_date", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        // Apply date filter
+        if (dateFilter.from) {
+          query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
+        }
+        if (dateFilter.to) {
+          query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
+        }
+
+        const { data, error } = await query.abortSignal(signal!);
+        if (error) throw error;
+        if (!data?.length) break;
+        all.push(...data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-      return data;
+      // Deduplicate by id
+      return Array.from(new Map(all.map(o => [o.id, o])).values());
     },
   });
 
@@ -280,6 +304,8 @@ export default function AdminDeals() {
       type: "select",
       options: [
         { value: "bepaid_archive_import", label: "Архивный импорт (ARC-*)" },
+        { value: "getcourse_historical", label: "GetCourse (исторический)" },
+        { value: "csv_active_import", label: "CSV импорт" },
         { value: "bepaid_import", label: "Bepaid импорт" },
         { value: "bepaid_reconcile", label: "Сверка" },
         { value: "manual", label: "Ручная" },
@@ -289,10 +315,6 @@ export default function AdminDeals() {
     { key: "is_trial", label: "Триал", type: "boolean" },
     { key: "deal_date", label: "Дата сделки", type: "date" },
   ], [products, tariffs]);
-
-  // Valid deal statuses (excluding pending/failed payment attempts)
-  const VALID_DEAL_STATUSES = ['paid', 'trial', 'canceled', 'refunded'] as const;
-
 
   // Get field value for sorting/filtering
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
@@ -312,31 +334,29 @@ export default function AdminDeals() {
     }
   }, [fallbackProfilesMap]);
 
-  // P0-guard: Build search index ONCE per deal
+  // P0-guard: Build search index ONCE per deal — NO status whitelist, show all deals
   const dealsWithIndex = useMemo(() => {
     if (!deals) return [];
-    return deals
-      .filter(d => VALID_DEAL_STATUSES.includes(d.status as any))
-      .map(d => {
-        const profile = resolveDealProfile(d, fallbackProfilesMap);
-        const payerName = getLatestPayerName(d);
-        return {
-          ...d,
-          search_index: buildSearchIndex([
-            d.order_number,
-            d.customer_email,
-            d.customer_phone,
-            profile?.email,
-            profile?.phone,
-            profile?.full_name,
-            payerName,
-            (d.products_v2 as any)?.name,
-            (d.tariffs as any)?.name,
-            d.final_price,
-          ]),
-        };
-      });
-  }, [deals, fallbackProfilesMap, VALID_DEAL_STATUSES]);
+    return deals.map(d => {
+      const profile = resolveDealProfile(d, fallbackProfilesMap);
+      const payerName = getLatestPayerName(d);
+      return {
+        ...d,
+        search_index: buildSearchIndex([
+          d.order_number,
+          d.customer_email,
+          d.customer_phone,
+          profile?.email,
+          profile?.phone,
+          profile?.full_name,
+          payerName,
+          (d.products_v2 as any)?.name,
+          (d.tariffs as any)?.name,
+          d.final_price,
+        ]),
+      };
+    });
+  }, [deals, fallbackProfilesMap]);
 
   // P0-guard: Debounce search input (150ms)
   const debouncedSearch = useDebouncedValue(search, 150);
@@ -390,7 +410,7 @@ export default function AdminDeals() {
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
-    { header: "Статус", getValue: (d) => STATUS_CONFIG[d.status]?.label || d.status || "" },
+    { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
     { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
   ], [fallbackProfilesMap]);
 
@@ -402,23 +422,24 @@ export default function AdminDeals() {
     getFieldValue: getDealFieldValue,
   });
 
-  // Preset counts
+  // Preset counts — from full loaded dataset
   const presetCounts = useMemo(() => {
-    if (!deals) return { paid: 0, pending: 0, trial: 0, canceled: 0, imported: 0 };
+    if (!deals) return { paid: 0, pending: 0, failed: 0, trial: 0, canceled: 0, imported: 0 };
     return {
       paid: deals.filter(d => d.status === "paid").length,
       pending: deals.filter(d => d.status === "pending").length,
+      failed: deals.filter(d => d.status === "failed").length,
       trial: deals.filter(d => d.is_trial).length,
-      canceled: deals.filter(d => d.status === "canceled" || d.status === "refunded").length,
-      imported: deals.filter(d => d.reconcile_source === "bepaid_archive_import").length,
+      canceled: deals.filter(d => d.status === "canceled" || d.status === "cancelled" || d.status === "refunded").length,
+      imported: deals.filter(d => IMPORT_SOURCES.includes(d.reconcile_source as any)).length,
     };
   }, [deals]);
 
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
     { id: "all", label: "Все", filters: [] },
     { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
-    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "equals", value: "canceled" }], count: presetCounts.canceled },
-    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "equals", value: "bepaid_archive_import" }], count: presetCounts.imported },
+    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "in", value: "canceled,cancelled,refunded" }], count: presetCounts.canceled },
+    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "in", value: IMPORT_SOURCES.join(",") }], count: presetCounts.imported },
   ], [presetCounts]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
@@ -841,7 +862,7 @@ export default function AdminDeals() {
             <TableBody>
               {sortedDeals.map((deal) => {
                 const profile = resolveDealProfile(deal, fallbackProfilesMap);
-                const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+                const statusConfig = getStatusConfig(deal.status);
                 const StatusIcon = statusConfig.icon;
                 const payments = (deal.payments_v2 as any[]) || [];
                 const paidPayments = payments.filter(p => p.status === "paid");

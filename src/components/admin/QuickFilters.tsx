@@ -367,6 +367,8 @@ export function applyFilters<T>(
           return String(value || "").toLowerCase() === filterValue.toLowerCase();
         case "not_equals":
           return String(value || "").toLowerCase() !== filterValue.toLowerCase();
+        case "in":
+          return filterValue.split(",").map(v => v.trim().toLowerCase()).includes(String(value || "").toLowerCase());
         case "gt":
           return Number(value) > Number(filterValue);
         case "lt":
