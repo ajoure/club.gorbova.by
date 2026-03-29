@@ -862,7 +862,7 @@ export default function AdminDeals() {
             <TableBody>
               {sortedDeals.map((deal) => {
                 const profile = resolveDealProfile(deal, fallbackProfilesMap);
-                const statusConfig = STATUS_CONFIG[deal.status] || { label: deal.status, color: "bg-muted", icon: Clock };
+                const statusConfig = getStatusConfig(deal.status);
                 const StatusIcon = statusConfig.icon;
                 const payments = (deal.payments_v2 as any[]) || [];
                 const paidPayments = payments.filter(p => p.status === "paid");
