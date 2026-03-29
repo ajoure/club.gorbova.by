@@ -373,6 +373,19 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // Regress guard: log unknown provider/reconcile_source combos (info, not failed)
+    try {
+      const { data: sourceBreakdown } = await supabase.rpc('execute_readonly_query', {
+        query_text: `SELECT coalesce(o.provider,'__NULL__') AS provider, coalesce(o.reconcile_source,'__NULL__') AS reconcile_source, count(*) AS cnt FROM orders_v2 o WHERE o.status = 'paid' AND o.created_at > now() - interval '30 days' GROUP BY 1, 2 ORDER BY cnt DESC LIMIT 50`
+      });
+      if (sourceBreakdown) {
+        console.log("[nightly] INV-20 regress guard — provider/reconcile_source breakdown (30d):", JSON.stringify(sourceBreakdown));
+      }
+    } catch (rgErr) {
+      // If the RPC doesn't exist, try a simpler approach
+      console.log("[nightly] INV-20 regress guard skipped:", rgErr);
+    }
+
     const passedCount = invariants.filter((i) => i.passed).length;
     const failedCount = invariants.filter((i) => !i.passed).length;
 
