@@ -1,154 +1,83 @@
-# Да, согласен, с учетом правок:
-
-1. В proof_full_join.csv добавить колонки: current_bucket, already_imported, ready_after_profile_appeared, can_auto_import_now.
-
-2. review_safe_import.csv формировать только из строк:
-
-   - review_flag = yes
-
-   - только tariff_mismatch
-
-   - без duplicate_client
-
-   - с найденным profile match.
-
-3. Перед follow-up импортом заново прогнать profile matching по всем 33 review-строкам.
-
-4. Все follow-up batch’и делать идемпотентно:
-
-   - order_number = MIG-CB2S-ROW-{source_row}
-
-   - existing order/subscription повторно не создавать
-
-   - entitlement только через lookup/update.
-
-5. Row 107 оформить отдельным mini-batch файлом row107_ready_after_profile.csv и импортировать отдельным шагом с тем же контрактом, что и review_safe_import.
-
-6. review_duplicate_proof.csv расширить полями:
-
-   source_row, order_number_planned, email, customer_name, mapped_tariff_name, mapped_flow_name, amount, review_reason, already_imported_same_email_same_flow_same_tariff.
-
-7. unmatched_no_profile.csv формировать только после повторного matching; в финале там должны остаться только rows 2, 14, 87.
-
-8. batch_report.txt вести тремя снимками:
-
-   - state_before_followup
-
-   - state_after_review_safe_import
-
-   - state_after_row107_import
-
-   с отдельными счетчиками imported_orders_total, review_remaining, unmatched_remaining, skipped_employee, duplicates_prevented.
-
-9. Явно зафиксировать: существующие 78 orders не пересоздаются и не меняются; выполняется только delta-import.
-
-10. STOP-guards:
-
-   - если у строки есть mapped_flow_name, но нет flow_id → batch stop
-
-   - если row 107 уже импортирован → пропустить как duplicate
-
-&nbsp;
-
-План: Proof-артефакты + поэтапный импорт review/unmatched — ЦБ 2 ступень
-
-## Текущее состояние
 
 
-| Метрика                 | Значение |
-| ----------------------- | -------- |
-| Всего строк CSV         | 116      |
-| orders_v2 импортировано | 78       |
-| subscriptions_v2        | 63       |
-| orders без user_id      | 15       |
-| review                  | 33       |
-| employee                | 1        |
-| unmatched               | 4        |
-| duplicates              | 0        |
+# План: Финальный proof-блок + артефакты ЦБ 2 ступень
 
+## Данные из БД (verified)
 
-Reconciliation: `116 = 78 + 33 + 1 + 4 + 0` ✓
+### Счетчики
+
+| Метрика | Значение |
+|---|---|
+| orders_v2 (MIG-CB2S-*) | **103** (78 initial + 24 review_safe + 1 row107) |
+| subscriptions_v2 (cb2s_*) | **81** (63 initial + 17 review_safe + 1 row107) |
+| review_remaining | **9** (8 duplicate + 1 row28 без профиля) |
+| unmatched_remaining | **3** (rows 2, 14, 87) |
+
+Reconciliation: `116 = 103 + 8(dup) + 1(row28) + 1(employee) + 3(unmatched) = 116` ✓
+
+### Row 107 — proof
+
+| Поле | Значение |
+|---|---|
+| order_id | `df202eb8-82a3-4a58-9751-1247530fb192` |
+| order_number | `MIG-CB2S-ROW-107` |
+| subscription_id | `ba62c25c-9cb0-40c6-b57b-4dd48442dc72` |
+| profile_id | `066bbf20-61f6-4cf6-9493-25c1ba75bdc8` |
+| user_id | `8d974225-b89c-4a97-9ce3-9b0c4041ea5d` |
+| entitlement для CB2S (87a8870f) | **НЕ СУЩЕСТВУЕТ** |
+
+**Важно**: У пользователя row 107 есть entitlements для двух других продуктов, но **нет entitlement для ЦБ 2 ступень** (product_id `87a8870f`). Это требует отдельного действия — вставки entitlement.
 
 ---
 
-## Каноническое правило (фиксируется)
+## Проблема с артефактами
 
-> **Источник истины для тарифа = поле «Состав заказа».**
-> Отдельная колонка «Тариф» — только диагностическая.
-> Все строки с tariff_mismatch без duplicate_client импортируются автоматически по `mapped_tariff_name`.
+Исходный CSV (`ЦБ_2_ступень_normalized-2.csv`) отсутствует в текущей файловой системе проекта. Без него невозможно восстановить:
+- email, customer_name, amount, order_composition_raw для duplicate/unmatched строк
+- полный proof_full_join.csv со всеми 116 строками
 
----
-
-## Порядок выполнения
-
-### Шаг 1: Пересобрать proof-артефакты
-
-Скрипт читает CSV + БД, генерирует 5 файлов в `/mnt/documents/cb2s_import/`:
-
-1. `**batch_report.txt**` — текущее состояние:
-  - 78 orders (63 с user_id, 15 без)
-  - 63 subscriptions
-  - 0 новых entitlements (63 уже существовали)
-  - reconciliation `116 = 78 + 33 + 1 + 4 + 0`
-2. `**proof_full_join.csv**` — все 116 строк с классификацией и order_id (если создан)
-3. `**review_safe_import.csv**` — строки review без duplicate_client (только tariff_mismatch), готовые к импорту
-4. `**review_duplicate_proof.csv**` — 8 строк (4 клиента), grouped by client:
-  `source_row, email, customer_name, mapped_tariff_name, mapped_flow_name, amount, order_composition_raw, review_reason`
-5. `**unmatched_no_profile.csv**` — 3 строки (rows 2, 14, 87) без профиля
-
-Row 107 (`bogy98@mail.ru`) выделяется отдельно как `ready-after-profile-appeared`.
-
-### Шаг 2: Импорт review_safe_import
-
-- Берутся все review-строки без `duplicate_client` (ожидается ~25 строк)
-- Тариф = `mapped_tariff_name` (из «Состав заказа»)
-- Dry-run → execute
-- Создаются: orders + subscriptions (+ entitlements где есть user_id)
-- Reconciliation обновляется: `116 = (78 + N_safe) + (33 - N_safe) + 1 + 4 + 0`
-
-### Шаг 3: Импорт row 107
-
-- Профиль появился: `profile_id=066bbf20`, `user_id=8d974225`
-- Mini-batch: 1 order + 1 subscription + 1 entitlement (если нет существующего)
-- Row 107 уходит из unmatched → executed
-- Reconciliation: `116 = (78 + N_safe + 1) + (33 - N_safe) + 1 + 3 + 0`
-
-### Шаг 4: Proof по 8 duplicate-строкам
-
-- Сформирован на Шаге 1 как `review_duplicate_proof.csv`
-- Предоставляется пользователю для решения по каждому из 4 клиентов
-- Никакого автоматического импорта без подтверждения
-
-### Шаг 5: Решение по 3 unmatched без профиля
-
-- Файл `unmatched_no_profile.csv` (rows 2, 14, 87)
-- Профили автоматически не создаются
-- Ждём отдельного подтверждения
+**Необходимо**: пользователь должен повторно загрузить CSV, либо мы восстановим данные из meta-полей orders_v2 (но там нет amount и customer_name).
 
 ---
 
-## Артефакты (DoD)
+## Что будет выполнено
 
+### 1. Вставить entitlement для row 107
+Entitlement для CB2S продукта не был создан. Нужно создать:
+- `user_id = 8d974225-b89c-4a97-9ce3-9b0c4041ea5d`
+- `product_id = 87a8870f-d426-419a-9f15-faa76c3f2be3`
+- `status = active`
 
-| Файл                         | Содержание                                                        |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `batch_report.txt`           | Обновляется поэтапно (before → after row 107 → after review_safe) |
-| `proof_full_join.csv`        | Все 116 строк с финальной классификацией                          |
-| `review_safe_import.csv`     | Строки tariff_mismatch без duplicate                              |
-| `review_duplicate_proof.csv` | 8 строк, 4 клиента, grouped by client                             |
-| `unmatched_no_profile.csv`   | 3 строки без профиля                                              |
+### 2. Сгенерировать артефакты (из данных БД + CSV, если доступен)
 
+| Файл | Источник данных |
+|---|---|
+| `batch_report.txt` | БД: orders_v2, subscriptions_v2, entitlements, audit_logs |
+| `proof_full_join.csv` | CSV + БД join (нужен CSV) |
+| `review_duplicate_proof.csv` | CSV (нужен CSV для amount, customer_name) |
+| `unmatched_no_profile.csv` | CSV (нужен CSV) |
+| `row107_ready_after_profile.csv` | БД — данные есть |
 
-Все файлы → `/mnt/documents/cb2s_import/`
+### 3. Показать таблицы в отчете
+
+**8 duplicate-строк**: source_row, email, customer_name, mapped_tariff_name, mapped_flow_name, amount_byn, already_imported — требуется CSV.
+
+**3 unmatched строки (rows 2, 14, 87)**: аналогично требуется CSV.
 
 ---
 
-## Изменяемые компоненты
+## Вопрос к пользователю
 
-Только exec-скрипты. Никаких изменений в кодовой базе, миграциях или edge functions.
+Для полной генерации артефактов нужен файл `ЦБ_2_ступень_normalized-2.csv`. Варианты:
 
-## Риски
+1. **Загрузить CSV повторно** — полная генерация всех артефактов
+2. **Собрать частичные артефакты из БД** — batch_report.txt + row107 proof + то что есть в meta; duplicate/unmatched таблицы будут неполными (без amount, customer_name)
 
-- Review_safe_import: если какая-то строка имеет пустой `flow_id` при заполненном `mapped_flow_name` — STOP-guard сработает, строка не импортируется
-- Row 107: entitlement может уже существовать — проверяется перед вставкой
-- Duplicate proof: решение принимается только человеком после просмотра фактов
+---
+
+## Строго не выполняется автоматически
+
+- 8 duplicate-строк — ждём решения
+- 3 unmatched (rows 2, 14, 87) — ждём решения
+- Row 28 без профиля — ждём решения
+
