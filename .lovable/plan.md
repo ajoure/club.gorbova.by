@@ -1,197 +1,157 @@
+# Да, согласен, с учетом правок:
 
+&nbsp;
 
-# План: Устранение ложных срабатываний INV-20 и INV-22 (v4)
+1. Сделать execute + audit в одной транзакции (чтобы audit не разъехался с фактом UPDATE):
 
----
+&nbsp;
 
-## DIAGNOSE (перед любым фиксом)
+BEGIN;
 
-### SQL 0a — разбивка 290 по provider
+&nbsp;
 
-```sql
-SELECT coalesce(o.provider, '__NULL__') AS provider, count(*) cnt
+WITH cand AS (
+
+  SELECT [o.id](http://o.id)
+
+  FROM orders_v2 o
+
+  WHERE o.status='paid'
+
+    AND NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id=[o.id](http://o.id))
+
+    AND lower(o.provider)='bepaid'
+
+    AND o.reconcile_source='getcourse_historical'
+
+),
+
+upd AS (
+
+  UPDATE orders_v2 o
+
+  SET provider='getcourse', updated_at=now()
+
+  FROM cand
+
+  WHERE [o.id](http://o.id)=[cand.id](http://cand.id)
+
+  RETURNING [o.id](http://o.id), o.order_number
+
+)
+
+INSERT INTO audit_logs (action, actor_type, actor_user_id, actor_label, meta)
+
+SELECT
+
+  'inv20.gc_historical_provider_normalized',
+
+  'system',
+
+  NULL,
+
+  'patch_inv20_provider_fix',
+
+  jsonb_build_object(
+
+    'affected_count', (SELECT count(*) FROM upd),
+
+    'sample_ids', (SELECT coalesce(jsonb_agg(id), '[]'::jsonb) FROM (SELECT id FROM upd LIMIT 20) s),
+
+    'old_provider', 'BePaid',
+
+    'new_provider', 'getcourse',
+
+    'where_contract', 'status=paid AND no payments_v2 AND lower(provider)=bepaid AND reconcile_source=getcourse_historical'
+
+  );
+
+&nbsp;
+
+COMMIT;
+
+&nbsp;
+
+2. Verify расширить: кроме dry-run→0 добавить проверку, что provider реально стал getcourse по тому же WHERE (для исключения “не обновилось из-за RLS/ошибки”):
+
+&nbsp;
+
+SELECT count(*)
+
 FROM orders_v2 o
-LEFT JOIN payments_v2 p ON p.order_id = o.id
-WHERE o.status = 'paid' AND p.id IS NULL
-GROUP BY o.provider ORDER BY cnt DESC;
-```
 
-### SQL 0b — есть ли bePaid-заказы с provider != 'bepaid'
+WHERE o.status='paid'
+
+  AND NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id=[o.id](http://o.id))
+
+  AND o.reconcile_source='getcourse_historical'
+
+  AND lower(o.provider)='getcourse';
+
+&nbsp;
+
+План: PATCH INV-20 — нормализация provider у GC-исторических заказов
+
+## Контекст
+
+Paid orders с `reconcile_source='getcourse_historical'` и `lower(provider)='bepaid'` без `payments_v2` ложно попадают в bePaid-allowlist INV-20. Значение `getcourse` — каноничный provider в проекте.
+
+## Шаги
+
+### 1. Dry-run — подсчёт кандидатов
 
 ```sql
-SELECT count(*) cnt
+SELECT count(*) AS candidate_count
 FROM orders_v2 o
-WHERE o.status = 'paid'
-  AND (o.provider IS NULL OR o.provider != 'bepaid')
-  AND (
-    o.bepaid_subscription_id IS NOT NULL
-    OR (o.meta->>'bepaid_subscription_id') IS NOT NULL
-  );
+WHERE o.status='paid'
+  AND NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id=o.id)
+  AND lower(o.provider)='bepaid'
+  AND o.reconcile_source='getcourse_historical';
 ```
 
-### SQL 1 — разбивка 290 по reconcile_source
+### 2. Execute — UPDATE тем же WHERE (без IN)
+
+Через insert tool:
 
 ```sql
-SELECT o.reconcile_source, count(*) cnt
-FROM orders_v2 o
-LEFT JOIN payments_v2 p ON p.order_id = o.id
-WHERE o.status = 'paid' AND p.id IS NULL
-GROUP BY o.reconcile_source ORDER BY cnt DESC;
+WITH cand AS (
+  SELECT o.id
+  FROM orders_v2 o
+  WHERE o.status='paid'
+    AND NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id=o.id)
+    AND lower(o.provider)='bepaid'
+    AND o.reconcile_source='getcourse_historical'
+)
+UPDATE orders_v2 o
+SET provider='getcourse', updated_at=now()
+FROM cand
+WHERE o.id=cand.id
+RETURNING o.id, o.order_number;
 ```
 
-### SQL 2 — 20 примеров ТОП-источника
+### 3. Audit log из RETURNING
 
-```sql
-SELECT o.id, o.order_number, o.reconcile_source, o.provider,
-       o.bepaid_subscription_id, o.created_at, o.meta
-FROM orders_v2 o
-LEFT JOIN payments_v2 p ON p.order_id = o.id
-WHERE o.status = 'paid' AND p.id IS NULL
-ORDER BY o.created_at DESC LIMIT 20;
-```
+Insert в `audit_logs` с meta из фактических результатов:
 
-### INV-22 dry-run
+- `affected_count` = count(RETURNING)
+- `sample_ids` = первые 20 id
+- `where_contract` = строка условия
+- `old_provider` / `new_provider`
 
-```sql
-SELECT s.id, s.user_id, s.profile_id, s.auto_renew, s.status, s.access_end_at,
-       ps.id as ps_id, ps.state, ps.renew_at, ps.active_to
-FROM subscriptions_v2 s
-JOIN provider_subscriptions ps ON ps.subscription_v2_id = s.id
-WHERE s.auto_renew = true AND s.status = 'active'
-  AND (
-    ps.state IN ('expired','canceled','failed','redirecting')
-    OR (ps.id IS NOT NULL AND ps.renew_at IS NULL AND ps.active_to IS NULL)
-  );
-```
+### 4. Verify
 
----
+- Повторный dry-run (шаг 1) → **0**
+- Общий bePaid-subset (информационный): `<= было`
+- `inv20_paid_orders_without_payments()` — проверить снижение
 
-## FIX 1: INV-20 — безопасный фильтр (allowlist не перебивается denylist)
+## Что НЕ меняется
 
-### Ключевое правило
-
-bePaid-marked заказы проверяются **всегда** (denylist по reconcile_source их НЕ исключает). Только non-bepaid заказы фильтруются по reconcile_source.
-
-### WHERE-условие (единый SQL-фрагмент для RPC и fallback)
-
-```sql
-WHERE o.status = 'paid'
-  AND NOT EXISTS (SELECT 1 FROM payments_v2 p WHERE p.order_id = o.id)
-  AND (
-    -- (A) bePaid-marked → проверяем ВСЕГДА, denylist не применяется
-    o.provider = 'bepaid'
-    OR o.bepaid_subscription_id IS NOT NULL
-    OR (o.meta->>'bepaid_subscription_id') IS NOT NULL
-    -- (B) non-bepaid → проверяем только если не known non-payment source
-    OR (
-      (o.provider IS NULL OR o.provider != 'bepaid')
-      AND o.bepaid_subscription_id IS NULL
-      AND (o.meta->>'bepaid_subscription_id') IS NULL
-      AND (
-        o.reconcile_source IS NULL
-        OR o.reconcile_source NOT IN (
-          'getcourse_historical', 'rule_engine', 'bepaid_archive_import'
-        )
-      )
-    )
-  )
-```
-
-### Применение — строго идентично в 2 местах
-
-1. **Миграция**: `CREATE OR REPLACE FUNCTION inv20_paid_orders_without_payments` — CTE `missing` и `suppressed` получают этот WHERE вместо текущего.
-2. **Nightly fallback** (строки 220-244 в `nightly-payments-invariants/index.ts`): заменить fallback-запрос на **вызов того же RPC** `supabase.rpc('inv20_paid_orders_without_payments')`. Это единственный способ гарантировать идентичность. Если RPC упал — логировать ошибку и НЕ пытаться fallback с другой логикой.
-
-Текущий fallback (`from('orders_v2').select().eq('status','paid')...`) **удаляется** — он уже не нужен, потому что не может воспроизвести гибридный WHERE через JS-фильтры.
-
-### Unknown_sources info-лог (regress guard)
-
-После основных инвариантов, nightly выполняет info-запрос:
-
-```sql
-SELECT coalesce(o.provider,'__NULL__') AS provider,
-       coalesce(o.reconcile_source,'__NULL__') AS reconcile_source,
-       count(*) cnt
-FROM orders_v2 o
-WHERE o.status = 'paid'
-  AND o.created_at > now() - interval '30 days'
-GROUP BY 1, 2
-ORDER BY cnt DESC
-LIMIT 50;
-```
-
-Логируется как `level: 'info'`, не `failed`. `LIMIT 50` предотвращает тяжёлый scan.
-
----
-
-## FIX 2: INV-22 — UPDATE + row-level audit
-
-### Execute
-
-UPDATE только exact id из dry-run: `SET auto_renew = false`.
-
-### Audit — row-level (стандарт проекта)
-
-**Единый actor_label**: `patch_inv20_inv22_fix`.
-
-1 batch audit:
-```json
-{
-  "action": "inv22.batch_auto_renew_disabled",
-  "actor_type": "system",
-  "actor_label": "patch_inv20_inv22_fix",
-  "meta": { "subscription_count": 2, "reason": "INV-22: provider_subscription terminal state" }
-}
-```
-
-N row-level audit (по каждой подписке):
-```json
-{
-  "action": "inv22.subscription_auto_renew_disabled",
-  "actor_type": "system",
-  "actor_label": "patch_inv20_inv22_fix",
-  "meta": {
-    "subscription_v2_id": "...",
-    "provider_subscription_id": "...",
-    "old_auto_renew": true,
-    "new_auto_renew": false,
-    "ps_state": "expired",
-    "ps_renew_at": null,
-    "ps_active_to": "...",
-    "access_end_at": "..."
-  }
-}
-```
-
----
-
-## Изменяемые компоненты
-
-1. **Миграция SQL**: `CREATE OR REPLACE FUNCTION inv20_paid_orders_without_payments` — гибридный WHERE
-2. **Edge function** `nightly-payments-invariants/index.ts`: удалить JS-fallback (строки 220-251), оставить только RPC-путь + unknown_sources info-лог
-3. **Insert tool**: UPDATE 2 подписки + INSERT audit_logs (batch + row-level)
-
-## Scope isolation
-
-Фильтр применяется **только** к INV-20. INV-19, INV-21, INV-22 логика — не затрагивается. Add-only (кроме удаления fallback, который заменяется RPC).
+- RPC, edge function, схема, UI — без изменений
 
 ## DoD
 
-1. Диагностика SQL 0a/0b/1/2 выполнена, proof зафиксирован
-2. INV-20 before: 290 → after: 0 (или только реальные bePaid без платежей)
-3. **Proof bepaid-subset** (не увеличился после фикса):
-   ```sql
-   SELECT count(*)
-   FROM orders_v2 o
-   LEFT JOIN payments_v2 p ON p.order_id = o.id
-   WHERE o.status='paid' AND p.id IS NULL
-     AND (o.provider='bepaid'
-          OR o.bepaid_subscription_id IS NOT NULL
-          OR (o.meta ? 'bepaid_subscription_id'));
-   ```
-   Ожидание: 0 или только реальные проблемы (не скрыты фильтром).
-4. INV-22 before: 2 → after: 0
-5. audit_logs: 1 batch + 2 row-level записи, `actor_type='system'`, `actor_label='patch_inv20_inv22_fix'`, row-level включает `provider_subscription_id`, `ps_state`, `ps_renew_at`, `ps_active_to`
-6. Regress guard: unknown provider/reconcile_source логируются как info с `LIMIT 50`
-7. Другие инварианты не затронуты
-
+1. Dry-run выполнен, candidate_count зафиксирован
+2. UPDATE выполнен тем же WHERE
+3. GC-historical subset = **0**
+4. Общий bePaid-subset <= было (информационный)
+5. audit_logs запись с реальными данными из RETURNING
