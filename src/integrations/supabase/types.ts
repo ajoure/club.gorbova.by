@@ -14,6 +14,130 @@ export type Database = {
   }
   public: {
     Tables: {
+      access_grant_ledger: {
+        Row: {
+          action_type: string
+          created_at: string
+          error_details: Json | null
+          execution_key: string
+          id: string
+          metadata: Json | null
+          order_id: string | null
+          parent_event_key: string | null
+          parent_execution_key: string | null
+          profile_id: string | null
+          reason_code: string
+          result: Json | null
+          source_event_key: string
+          source_event_type: string
+          source_offer_id: string | null
+          source_order_id: string | null
+          source_subject_ref: string | null
+          source_subject_type: string
+          source_subscription_id: string | null
+          status: string
+          target_key: string
+          target_ref: string | null
+          target_type: string
+          user_id: string | null
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          error_details?: Json | null
+          execution_key?: string
+          id?: string
+          metadata?: Json | null
+          order_id?: string | null
+          parent_event_key?: string | null
+          parent_execution_key?: string | null
+          profile_id?: string | null
+          reason_code: string
+          result?: Json | null
+          source_event_key: string
+          source_event_type: string
+          source_offer_id?: string | null
+          source_order_id?: string | null
+          source_subject_ref?: string | null
+          source_subject_type: string
+          source_subscription_id?: string | null
+          status: string
+          target_key: string
+          target_ref?: string | null
+          target_type: string
+          user_id?: string | null
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          error_details?: Json | null
+          execution_key?: string
+          id?: string
+          metadata?: Json | null
+          order_id?: string | null
+          parent_event_key?: string | null
+          parent_execution_key?: string | null
+          profile_id?: string | null
+          reason_code?: string
+          result?: Json | null
+          source_event_key?: string
+          source_event_type?: string
+          source_offer_id?: string | null
+          source_order_id?: string | null
+          source_subject_ref?: string | null
+          source_subject_type?: string
+          source_subscription_id?: string | null
+          status?: string
+          target_key?: string
+          target_ref?: string | null
+          target_type?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_ledger_order"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_ledger_profile"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_ledger_source_offer"
+            columns: ["source_offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_ledger_source_order"
+            columns: ["source_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_ledger_source_subscription"
+            columns: ["source_subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_ledger_source_subscription"
+            columns: ["source_subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       admin_docs: {
         Row: {
           content_text: string
