@@ -316,10 +316,6 @@ export default function AdminDeals() {
     { key: "deal_date", label: "Дата сделки", type: "date" },
   ], [products, tariffs]);
 
-  // Valid deal statuses (excluding pending/failed payment attempts)
-  const VALID_DEAL_STATUSES = ['paid', 'trial', 'canceled', 'refunded'] as const;
-
-
   // Get field value for sorting/filtering
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
@@ -338,31 +334,29 @@ export default function AdminDeals() {
     }
   }, [fallbackProfilesMap]);
 
-  // P0-guard: Build search index ONCE per deal
+  // P0-guard: Build search index ONCE per deal — NO status whitelist, show all deals
   const dealsWithIndex = useMemo(() => {
     if (!deals) return [];
-    return deals
-      .filter(d => VALID_DEAL_STATUSES.includes(d.status as any))
-      .map(d => {
-        const profile = resolveDealProfile(d, fallbackProfilesMap);
-        const payerName = getLatestPayerName(d);
-        return {
-          ...d,
-          search_index: buildSearchIndex([
-            d.order_number,
-            d.customer_email,
-            d.customer_phone,
-            profile?.email,
-            profile?.phone,
-            profile?.full_name,
-            payerName,
-            (d.products_v2 as any)?.name,
-            (d.tariffs as any)?.name,
-            d.final_price,
-          ]),
-        };
-      });
-  }, [deals, fallbackProfilesMap, VALID_DEAL_STATUSES]);
+    return deals.map(d => {
+      const profile = resolveDealProfile(d, fallbackProfilesMap);
+      const payerName = getLatestPayerName(d);
+      return {
+        ...d,
+        search_index: buildSearchIndex([
+          d.order_number,
+          d.customer_email,
+          d.customer_phone,
+          profile?.email,
+          profile?.phone,
+          profile?.full_name,
+          payerName,
+          (d.products_v2 as any)?.name,
+          (d.tariffs as any)?.name,
+          d.final_price,
+        ]),
+      };
+    });
+  }, [deals, fallbackProfilesMap]);
 
   // P0-guard: Debounce search input (150ms)
   const debouncedSearch = useDebouncedValue(search, 150);
@@ -416,7 +410,7 @@ export default function AdminDeals() {
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
-    { header: "Статус", getValue: (d) => STATUS_CONFIG[d.status]?.label || d.status || "" },
+    { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
     { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
   ], [fallbackProfilesMap]);
 
@@ -428,23 +422,24 @@ export default function AdminDeals() {
     getFieldValue: getDealFieldValue,
   });
 
-  // Preset counts
+  // Preset counts — from full loaded dataset
   const presetCounts = useMemo(() => {
-    if (!deals) return { paid: 0, pending: 0, trial: 0, canceled: 0, imported: 0 };
+    if (!deals) return { paid: 0, pending: 0, failed: 0, trial: 0, canceled: 0, imported: 0 };
     return {
       paid: deals.filter(d => d.status === "paid").length,
       pending: deals.filter(d => d.status === "pending").length,
+      failed: deals.filter(d => d.status === "failed").length,
       trial: deals.filter(d => d.is_trial).length,
-      canceled: deals.filter(d => d.status === "canceled" || d.status === "refunded").length,
-      imported: deals.filter(d => d.reconcile_source === "bepaid_archive_import").length,
+      canceled: deals.filter(d => d.status === "canceled" || d.status === "cancelled" || d.status === "refunded").length,
+      imported: deals.filter(d => IMPORT_SOURCES.includes(d.reconcile_source as any)).length,
     };
   }, [deals]);
 
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
     { id: "all", label: "Все", filters: [] },
     { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
-    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "equals", value: "canceled" }], count: presetCounts.canceled },
-    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "equals", value: "bepaid_archive_import" }], count: presetCounts.imported },
+    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "in", value: "canceled,cancelled,refunded" }], count: presetCounts.canceled },
+    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "in", value: IMPORT_SOURCES.join(",") }], count: presetCounts.imported },
   ], [presetCounts]);
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
