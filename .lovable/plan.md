@@ -1,220 +1,154 @@
 # Да, согласен, с учетом правок:
 
-&nbsp;
+1. В proof_full_join.csv добавить колонки: current_bucket, already_imported, ready_after_profile_appeared, can_auto_import_now.
 
-1. Раздели order-level и access-level дедупликацию.  
-Сейчас в плане это местами смешано. Должно быть так:  
+2. review_safe_import.csv формировать только из строк:
 
-  - orders_v2: одна запись на каждую реальную покупку из CSV
-  - subscriptions_v2 / entitlements: без дубляжа доступа  
-  То есть если у одного клиента две покупки, два заказа сохраняем, но второй доступ не создаём, если это уже тот же profile_id + product_id + tariff_id + flow.
-2. &nbsp;
-3. DUPLICATE не должен автоматически выкидывать заказ.  
-Дубликатом для полного skip считать только:  
+   - review_flag = yes
 
-  - одинаковый source_order_id, или
-  - одинаковый source_order_number, или
-  - полностью идентичный normalized-row fingerprint  
-  А совпадение email + product + tariff + flow — это дубликат доступа, а не обязательно дубликат покупки.
-4. &nbsp;
-5. order_number = MIG-CB2S-{source_row} лучше заменить на стабильный business key.  
-Правильнее:  
+   - только tariff_mismatch
 
-  - основной: MIG-CB2S-{source_order_id}
-  - fallback: MIG-CB2S-NUM-{source_order_number}
-  - только если обоих нет: MIG-CB2S-ROW-{source_row}  
-  Иначе при пересборке CSV/смене порядка строк идемпотентность сломается.
-6. &nbsp;
-7. Для subscriptions дедупликацию делай по flow_code, а не по flow_name.  
-Так надежнее.  
-Даже если flow_id в subscriptions_v2 не заполняем, в meta должны быть:  
+   - без duplicate_client
 
-  - flow_id
-  - flow_code
-  - flow_name
-8. &nbsp;
-9. Если у потока нет start_date и включается grant_from_import_date, брать не now() на каждую строку, а один batch_started_at.  
-Иначе внутри одного импорта у строк будут разные секунды старта.  
-Должно быть:  
+   - с найденным profile match.
 
-  - batch_started_at = один timestamp на весь batch
-  - access_start_at = start_date потока или batch_started_at
-10. &nbsp;
-11. В orders_v2 поток нужно записывать в колонку flow_id.  
-Запрет был только на subscriptions_v2.flow_id.  
-Для заказов flow_id как раз нужен и должен быть заполнен.
-12. В entitlements ты пропустил product_code.  
-Нужно явно зафиксировать:  
+3. Перед follow-up импортом заново прогнать profile matching по всем 33 review-строкам.
 
-  - product_code = 'prd_0d01a2fdc477'
-  - product_id = 87a8870f-d426-419a-9f15-faa76c3f2be3
-13. &nbsp;
-14. orders_without_entitlement_due_to_missing_user_id не отдельный reconciliation bucket.  
-Это под-счетчик внутри импортированных orders.  
-Иначе reconciliation будет двойным счетом.  
-Правильно:
+4. Все follow-up batch’и делать идемпотентно:
+
+   - order_number = MIG-CB2S-ROW-{source_row}
+
+   - existing order/subscription повторно не создавать
+
+   - entitlement только через lookup/update.
+
+5. Row 107 оформить отдельным mini-batch файлом row107_ready_after_profile.csv и импортировать отдельным шагом с тем же контрактом, что и review_safe_import.
+
+6. review_duplicate_proof.csv расширить полями:
+
+   source_row, order_number_planned, email, customer_name, mapped_tariff_name, mapped_flow_name, amount, review_reason, already_imported_same_email_same_flow_same_tariff.
+
+7. unmatched_no_profile.csv формировать только после повторного matching; в финале там должны остаться только rows 2, 14, 87.
+
+8. batch_report.txt вести тремя снимками:
+
+   - state_before_followup
+
+   - state_after_review_safe_import
+
+   - state_after_row107_import
+
+   с отдельными счетчиками imported_orders_total, review_remaining, unmatched_remaining, skipped_employee, duplicates_prevented.
+
+9. Явно зафиксировать: существующие 78 orders не пересоздаются и не меняются; выполняется только delta-import.
+
+10. STOP-guards:
+
+   - если у строки есть mapped_flow_name, но нет flow_id → batch stop
+
+   - если row 107 уже импортирован → пропустить как duplicate
 
 &nbsp;
 
-116 = orders_inserted + review_bucket + skipped_employee + unmatched_profiles + duplicates_prevented
+План: Proof-артефакты + поэтапный импорт review/unmatched — ЦБ 2 ступень
 
-&nbsp;
+## Текущее состояние
 
-8. А orders_without_entitlement_due_to_missing_user_id — только поясняющий счетчик внутри orders_inserted.
-9. Для entitlements update через GREATEST — верно, но только если existing.expires_at не NULL.  
-Зафиксируй safe-rule:  
 
-  - если existing.expires_at IS NULL → ставим new_access_end_at
-  - иначе GREATEST(existing.expires_at, new_access_end_at)
-10. &nbsp;
-11. purchase_snapshot.original_csv_row лучше не хранить целиком без фильтра.  
-Лучше хранить:  
+| Метрика                 | Значение |
+| ----------------------- | -------- |
+| Всего строк CSV         | 116      |
+| orders_v2 импортировано | 78       |
+| subscriptions_v2        | 63       |
+| orders без user_id      | 15       |
+| review                  | 33       |
+| employee                | 1        |
+| unmatched               | 4        |
+| duplicates              | 0        |
 
-  - source_row_num
-  - source_file
-  - original_order_composition_raw
-  - original_tariff_raw
-  - original_flow_name
-  - review_flag
-  - review_reason
-  - recommended_action  
-  Полную сырую строку целиком лучше не тянуть, чтобы не раздувать snapshot.
-12. &nbsp;
-13. Для READY_IMPORT добавь отдельный STOP-guard по потокам.  
-Если у строки mapped_flow_name заполнен, а flow_id не найден — это не READY, а STOP.
-14. Главный контракт зафиксируй одной строкой, чтобы не было двусмысленности:  
 
-  - заказов сохраняем все допустимые покупки,
-  - доступ создаём только один на комбинацию profile + product + tariff + flow,
-  - entitlement только если есть user_id.
-15. &nbsp;
+Reconciliation: `116 = 78 + 33 + 1 + 4 + 0` ✓
 
-&nbsp;
+---
 
-&nbsp;
+## Каноническое правило (фиксируется)
 
-Готовый блок для замены в план:
+> **Источник истины для тарифа = поле «Состав заказа».**
+> Отдельная колонка «Тариф» — только диагностическая.
+> Все строки с tariff_mismatch без duplicate_client импортируются автоматически по `mapped_tariff_name`.
 
-Дополни план следующей информацией:
+---
 
-&nbsp;
+## Порядок выполнения
 
-1. Разделить дедупликацию:
+### Шаг 1: Пересобрать proof-артефакты
 
-   - order-level: одна запись orders_v2 на каждую реальную покупку из CSV
+Скрипт читает CSV + БД, генерирует 5 файлов в `/mnt/documents/cb2s_import/`:
 
-   - access-level: subscriptions/entitlements без дубляжа доступа
+1. `**batch_report.txt**` — текущее состояние:
+  - 78 orders (63 с user_id, 15 без)
+  - 63 subscriptions
+  - 0 новых entitlements (63 уже существовали)
+  - reconciliation `116 = 78 + 33 + 1 + 4 + 0`
+2. `**proof_full_join.csv**` — все 116 строк с классификацией и order_id (если создан)
+3. `**review_safe_import.csv**` — строки review без duplicate_client (только tariff_mismatch), готовые к импорту
+4. `**review_duplicate_proof.csv**` — 8 строк (4 клиента), grouped by client:
+  `source_row, email, customer_name, mapped_tariff_name, mapped_flow_name, amount, order_composition_raw, review_reason`
+5. `**unmatched_no_profile.csv**` — 3 строки (rows 2, 14, 87) без профиля
 
-&nbsp;
+Row 107 (`bogy98@mail.ru`) выделяется отдельно как `ready-after-profile-appeared`.
 
-2. Полный skip как duplicate применять только при:
+### Шаг 2: Импорт review_safe_import
 
-   - совпадении source_order_id
+- Берутся все review-строки без `duplicate_client` (ожидается ~25 строк)
+- Тариф = `mapped_tariff_name` (из «Состав заказа»)
+- Dry-run → execute
+- Создаются: orders + subscriptions (+ entitlements где есть user_id)
+- Reconciliation обновляется: `116 = (78 + N_safe) + (33 - N_safe) + 1 + 4 + 0`
 
-   - или совпадении source_order_number
+### Шаг 3: Импорт row 107
 
-   - или полном совпадении normalized-row fingerprint.
+- Профиль появился: `profile_id=066bbf20`, `user_id=8d974225`
+- Mini-batch: 1 order + 1 subscription + 1 entitlement (если нет существующего)
+- Row 107 уходит из unmatched → executed
+- Reconciliation: `116 = (78 + N_safe + 1) + (33 - N_safe) + 1 + 3 + 0`
 
-   Совпадение email + product + tariff + flow = это duplicate_access, а не обязательно duplicate_order.
+### Шаг 4: Proof по 8 duplicate-строкам
 
-&nbsp;
+- Сформирован на Шаге 1 как `review_duplicate_proof.csv`
+- Предоставляется пользователю для решения по каждому из 4 клиентов
+- Никакого автоматического импорта без подтверждения
 
-3. order_number:
+### Шаг 5: Решение по 3 unmatched без профиля
 
-   - основной: MIG-CB2S-{source_order_id}
+- Файл `unmatched_no_profile.csv` (rows 2, 14, 87)
+- Профили автоматически не создаются
+- Ждём отдельного подтверждения
 
-   - fallback: MIG-CB2S-NUM-{source_order_number}
+---
 
-   - fallback-2: MIG-CB2S-ROW-{source_row}
+## Артефакты (DoD)
 
-&nbsp;
 
-4. В subscriptions_v2.flow_id не писать, но в meta обязательно хранить:
+| Файл                         | Содержание                                                        |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `batch_report.txt`           | Обновляется поэтапно (before → after row 107 → after review_safe) |
+| `proof_full_join.csv`        | Все 116 строк с финальной классификацией                          |
+| `review_safe_import.csv`     | Строки tariff_mismatch без duplicate                              |
+| `review_duplicate_proof.csv` | 8 строк, 4 клиента, grouped by client                             |
+| `unmatched_no_profile.csv`   | 3 строки без профиля                                              |
 
-   - flow_id
 
-   - flow_code
+Все файлы → `/mnt/documents/cb2s_import/`
 
-   - flow_name
+---
 
-&nbsp;
+## Изменяемые компоненты
 
-5. Для access_start_at:
+Только exec-скрипты. Никаких изменений в кодовой базе, миграциях или edge functions.
 
-   - если у потока есть start_date → брать start_date
+## Риски
 
-   - если start_date нет → использовать единый batch_started_at на весь импорт, а не now() по каждой строке
-
-&nbsp;
-
-6. В orders_v2.flow_id поток заполняется обязательно, если он найден в системе.
-
-&nbsp;
-
-7. В entitlements явно писать:
-
-   - product_code = prd_0d01a2fdc477
-
-   - product_id = 87a8870f-d426-419a-9f15-faa76c3f2be3
-
-&nbsp;
-
-8. Entitlement update:
-
-   - если existing.expires_at IS NULL → new_access_end_at
-
-   - иначе expires_at = GREATEST(existing.expires_at, new_access_end_at)
-
-&nbsp;
-
-9. orders_without_entitlement_due_to_missing_user_id — это не отдельный reconciliation bucket, а под-счетчик внутри orders_inserted.
-
-&nbsp;
-
-10. В purchase_snapshot не хранить целиком raw CSV row; хранить только нормализованные исходные поля:
-
-   - source_row_num
-
-   - source_file
-
-   - original_purchase_date
-
-   - original_flow_name
-
-   - original_tariff_raw
-
-   - original_order_composition_raw
-
-   - review_flag
-
-   - review_reason
-
-   - recommended_action
-
-&nbsp;
-
-11. Дополнительный STOP-guard:
-
-   - если mapped_flow_name заполнен, а flow_id не найден в БД → STOP, строка не может попасть в READY_IMPORT.
-
-&nbsp;
-
-12. Финальный бизнес-контракт:
-
-   - orders_v2 = все допустимые покупки
-
-   - subscriptions_v2 = один активный доступ на profile+product+tariff+flow
-
-   - entitlements = только для профилей с user_id
-
-   - review_flag=yes и employee не импортируются автоматически
-
-План: Импорт покупателей ЦБ 2 ступень из нормализованного CSV
-
-## Контекст
-
-
-| Сущность      | Значение                                                          |
-| ------------- | ----------------------------------------------------------------- |
-| Продукт       | `87a8870f-d426-419a-9f15-faa76c3f2be3` (PRD-000023, ЦБ 2 ступень) |
-| Тариф Премиум | `5d598dae-4933-47a6-9af9-c0e05940ea9                              |
+- Review_safe_import: если какая-то строка имеет пустой `flow_id` при заполненном `mapped_flow_name` — STOP-guard сработает, строка не импортируется
+- Row 107: entitlement может уже существовать — проверяется перед вставкой
+- Duplicate proof: решение принимается только человеком после просмотра фактов
