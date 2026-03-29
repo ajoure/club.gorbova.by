@@ -1,175 +1,238 @@
-Да, согласен, с учетом правок:
-
-1. Зафиксировать source of truth: страница AdminDeals читает сделки только из orders_v2. Клиентский whitelist статусов не участвует в базовой видимости.
-
-2. Явно разделить:
-
-- data loading = полная batched/paginated загрузка набора;
-
-- UI filtering = поиск, period filter, quick filters, product pills, preset-ы поверх уже загруженного полного набора.
-
-3. В execute зафиксировать технический контракт batched fetch:
-
-- стабильная сортировка;
-
-- загрузка батчами до исчерпания набора;
-
-- дедупликация по [order.id](http://order.id);
-
-- abort/cancel protection при unmount / повторном запросе;
-
-- финальный total только после полной догрузки.
-
-4. Уточнить правило для counts:
-
-- productCounts и presetCounts считаются от полного загруженного набора;
-
-- отдельно зафиксировать, counts глобальные или в рамках текущего period filter;
-
-- после клика на pill пользователь должен видеть ровно то количество, которое показано в count.
-
-5. Preset «Импортированные» не хардкодить одним reconcile_source.
-
-Сделать единый allowlist/import-sources config.
-
-Минимум учесть:
-
-- bepaid_archive_import
-
-- getcourse_historical
-
-Также собрать distinct reconcile_source из orders_v2 и сверить с фактическими данными.
-
-6. Все реальные статусы order_status должны отображаться.
-
-Если встречается неизвестный статус:
-
-- не скрывать строку;
-
-- показывать raw status + fallback label.
-
-7. Добавить STOP-guard:
-
-если после полной batched загрузки bottleneck окажется не в data source, а в рендере таблицы, не возвращать limit 1000, а оформить отдельный follow-up PATCH на виртуализацию / серверную пагинацию UI.
-
-8. Расширить DoD:
-
-- verify по «ЗАКРОЙ ГОД»
-
-- verify по продукту с количеством >1000
-
-- verify по продукту, где есть pending/failed/partial
-
-- verify по “Все продукты”
-
-- verify, что pill counts совпадают с фактически открывающимся набором
-
-- verify, что pending / failed / partial / draft / needs_mapping видимы без специального пользовательского фильтра
-
-После этих правок план можно считать готовым к патчу.
+# Да, согласен, с учетом правок:
 
 &nbsp;
 
-План:
+1. Добавь ещё один cross-field DB-guard для batch-строк.  
+Сейчас action_type='batch_start' и target_type='batch' описаны логически, но это лучше зафиксировать в БД явно:
 
-1. Проблема
+&nbsp;
 
-На странице «Сделки» сейчас скрывается часть реальных заказов. По фактам из кода и базы:
+ADD CONSTRAINT chk_batch_row_contract CHECK (
 
-- для списка сделок запрашиваются только последние `1000` строк из `orders_v2`;
-- затем фронтенд дополнительно оставляет только статусы `paid | trial | canceled | refunded`;
-- из-за этого не видны `pending`, `failed`, `partial`, `draft`, `needs_mapping`, а также старые сделки, не попавшие в top-1000;
-- поэтому по продуктам показываются неверные количества, и для «ЗАКРОЙ ГОД» видно только 8–10 последних, хотя в базе их `311`.
+  (action_type = 'batch_start' AND target_type = 'batch')
 
-2. Диагностика
+  OR
 
-Подтверждено чтением `docs/ENGINEERING_RULES.md`, `src/pages/admin/AdminDeals.tsx`, `src/components/admin/QuickFilters.tsx`, `src/components/ui/period-selector.tsx` и запросами к базе:
+  (action_type <> 'batch_start' AND target_type <> 'batch')
 
-- `orders_v2` по продукту «ЗАКРОЙ ГОД» = `311`;
-- в top-1000 по `deal_date` попадает только `10`;
-- в текущем коде фильтр видимости режет «ЗАКРОЙ ГОД» до `309`, потому что ещё 2 заказа имеют `pending`;
-- по другим продуктам потери ещё больше, например `Gorbova Club: 1645 всего, 1006 видимо текущим кодом`;
-- «архивность» здесь не отдельное поле в `orders_v2`, проблема не в archive-режиме, а в лимите + статусном фильтре;
-- preset «Импортированные» сейчас смотрит на `bepaid_archive_import`, но в базе исторический импорт есть и как `getcourse_historical`.
+);
 
-3. Предлагаемое решение
+&nbsp;
 
-Исправить источник данных и логику фильтрации в `AdminDeals`, чтобы страница действительно показывала все сделки:
+1. Иначе можно случайно получить невалидные строки вида target_type='batch', action_type='grant'.
+2. Добавь симметричный guard для parent-полей.  
+Сейчас lineage proof хороший, но сама таблица ещё допускает полусломанные строки, где заполнен только один parent:
 
-- убрать клиентский whitelist `VALID_DEAL_STATUSES` как механизм базовой видимости;
-- загружать не top-1000, а все строки через безопасную пагинацию батчами;
-- считать бейджи по продуктам и preset-ы от полного набора данных, а не от усечённого;
-- нормализовать статус отмены (`canceled`) и проверить, не используется ли где-то альтернативный `cancelled` именно для orders;
-- пересмотреть preset «Импортированные», чтобы он отражал реальные исторические источники, а не только один legacy-source.
+&nbsp;
 
-4. Изменяемые компоненты
+ADD CONSTRAINT chk_parent_keys_pair CHECK (
 
-Основной scope:
+  (parent_event_key IS NULL AND parent_execution_key IS NULL)
 
-- `src/pages/admin/AdminDeals.tsx`
+  OR
 
-Проверка связанных мест без дублирования логики:
+  (parent_event_key IS NOT NULL AND parent_execution_key IS NOT NULL)
 
-- `src/components/admin/QuickFilters.tsx`
-- `src/components/ui/period-selector.tsx`
-- при необходимости только чтение связанных хуков/компонентов, если найдётся повторное использование той же логики.
+);
 
-5. Что не будет изменено
+&nbsp;
 
-- структура таблицы `orders_v2`;
-- импорт исторических данных;
-- логика удаления сделок;
-- backend-функции purge/archive cleanup;
-- другие админские страницы, если там не переиспользуется тот же источник данных.
+2. Это важно, чтобы downstream-контракт был защищён не только proof-запросом, но и самой схемой.
+3. Добавь минимальный subject-contract, чтобы ledger-строка не была “без источника”.  
+Нужен CHECK, что у записи есть хотя бы один реальный источник:
 
-6. Dry-run
+&nbsp;
 
-Перед изменением будет выполнена безопасная сверка:
+ADD CONSTRAINT chk_has_subject CHECK (
 
-- сравнить rowcount по продуктам в базе и в выдаче страницы;
-- отдельно проверить «ЗАКРОЙ ГОД», `Gorbova Club`, `Бухгалтерия как бизнес`;
-- проверить расклад по статусам, чтобы понять, какие именно статусы нужно отображать в «Все»;
-- проверить, как должны считаться preset-ы после снятия ограничения.
+  order_id IS NOT NULL
 
-7. Execute
+  OR source_order_id IS NOT NULL
 
-Патч будет включать:
+  OR source_subscription_id IS NOT NULL
 
-- рефакторинг query в `AdminDeals` на полную выборку batched/paginated вместо `.limit(1000)`;
-- удаление базового скрытия статусов из `dealsWithIndex`;
-- перестройку `filteredDeals`, `productCounts`, `presetCounts` так, чтобы:
-  - «Все» = все сделки;
-  - продуктовые pill-бейджи = контекстные counts от полного набора;
-  - поиск и quick filters работали поверх полного набора;
-- корректировку preset «Импортированные» по фактическим reconcile_source;
-- проверку label/status-конфига, чтобы в UI корректно отображались все реальные статусы из enum `order_status`.
+  OR source_offer_id IS NOT NULL
 
-8. STOP-guards
+  OR source_subject_ref IS NOT NULL
 
-Работа останавливается, если в ходе dry-run выяснится хотя бы одно:
+);
 
-- для `AdminDeals` уже существует серверный RPC/edge-function источник, который нельзя дублировать;
-- выборка всех сделок приводит к неприемлемому объёму без виртуализации/серверной пагинации;
-- часть заказов намеренно должна быть скрыта по бизнес-правилу, подтверждённому в существующей архитектуре;
-- найден второй source of truth для сделок помимо `orders_v2`.
+&nbsp;
 
-9. DoD
+3. Иначе таблица позволит audit-строки, которые невозможно будет трассировать назад.
+4. Сделай machine-check для [result.post](http://result.post)_check по action_type.  
+Сейчас контракт описан текстом, но лучше зафиксировать хотя бы на уровне validate-query/proof:  
 
-Задача считается выполненной, когда:
+  - grant / extend / reactivate → [result.post](http://result.post)_check обязателен
+  - batch_start → [result.post](http://result.post)_check IS NULL
+  - revoke / expire / skip / failed → [result.post](http://result.post)_check допускается только если это явно оговорено, иначе NULL
+5.   
+Не обязательно CHECK constraint, но как минимум отдельный verify-блок в p0_invariant_report.txt, чтобы подрядчик не “забыл” писать post_check в боевых grant-строках.
 
-- в «Сделках» по «Все продукты» отображаются все сделки из `orders_v2`, а не только последние 1000;
-- по продукту «ЗАКРОЙ ГОД» видно `311`, а не `8`;
-- product-pill counts совпадают с тем, что реально откроется после клика;
-- `pending/failed/partial/draft/needs_mapping` не исчезают из общего списка без явного пользовательского фильтра;
-- preset-ы и поиск работают на полном наборе;
-- есть verify по нескольким продуктам и статусам.
+&nbsp;
 
-10. Риски и зависимости
+&nbsp;
 
-- если записей много, может понадобиться не просто batched fetch, а переход на серверную пагинацию;
-- возможен скрытый бизнес-контракт: например, некоторые статусы не должны считаться «сделками» — это нужно проверить перед патчем;
-- preset «Импортированные» может потребовать явного списка allowed sources, а не одного значения.
+После этих 4 правок план уже можно считать финальным и достаточно жёстким для исполнения без дальнейшего расползания.
 
-11. Требуется дополнительная информация
+&nbsp;
 
-Сейчас критического дозапроса не требуется: причина уже доказана по коду и данным. Следующий шаг — патч страницы `AdminDeals` с полной выборкой и снятием искусственного скрытия статусов.
+План: Универсальная система offer-driven fulfillment + platform access grants (v21)
+
+## Принятые правки v21
+
+
+| #   | Правка                                                                                              |
+| --- | --------------------------------------------------------------------------------------------------- |
+| 1   | CHECK constraint для `reason_code` + cross-field guard `action_type ↔ status`                       |
+| 2   | Lineage proof: parent валиден только если **одна строка** удовлетворяет обоим условиям одновременно |
+| 3   | FK на существующие таблицы с `ON DELETE SET NULL` + явное решение по `user_id`                      |
+
+
+Все правки v1–v20 сохранены.
+
+---
+
+## Изменение 1: CHECK для reason_code + action_type ↔ status guard
+
+### reason_code CHECK
+
+```sql
+ALTER TABLE access_grant_ledger
+  ADD CONSTRAINT chk_reason_code CHECK (
+    reason_code IN (
+      'paid_order', 'trial_start', 'subscription_renew', 'subscription_extend',
+      'admin_grant', 'bulk_import', 'rule_engine_bonus',
+      'payment_failed', 'trial_expired', 'admin_cancel', 'subscription_expired',
+      'admin_revoke', 'cron_cleanup', 'violation_kick',
+      'duplicate_skip', 'already_active', 'no_matching_target',
+      'batch_orchestration'
+    )
+  );
+```
+
+### action_type ↔ status cross-field guard
+
+```sql
+ALTER TABLE access_grant_ledger
+  ADD CONSTRAINT chk_action_status_compat CHECK (
+    CASE action_type
+      WHEN 'grant'       THEN status IN ('granted', 'failed', 'skipped')
+      WHEN 'extend'      THEN status IN ('extended', 'failed', 'skipped')
+      WHEN 'revoke'      THEN status IN ('revoked', 'failed', 'skipped')
+      WHEN 'expire'      THEN status IN ('expired', 'failed', 'skipped')
+      WHEN 'reactivate'  THEN status IN ('reactivated', 'failed', 'skipped')
+      WHEN 'skip'        THEN status IN ('skipped')
+      WHEN 'batch_start' THEN status IN ('completed', 'failed')
+      ELSE false
+    END
+  );
+```
+
+Мусорные комбинации (`action_type='grant', status='expired'` и т.п.) теперь невозможны на уровне БД.
+
+---
+
+## Изменение 2: Lineage proof — single-row parent match
+
+Текущая проверка (два отдельных EXISTS) заменяется на **один EXISTS с двумя условиями**:
+
+```sql
+-- Валидный parent: одна строка p, где оба поля совпадают одновременно
+SELECT
+  count(*) as total_downstream,
+  count(*) FILTER (WHERE parent_event_key IS NOT NULL AND parent_execution_key IS NOT NULL) as has_both_parent_fields,
+  count(*) FILTER (WHERE EXISTS (
+    SELECT 1 FROM access_grant_ledger p
+    WHERE p.source_event_key = l.parent_event_key
+      AND p.execution_key   = l.parent_execution_key
+  )) as parent_single_row_match
+FROM access_grant_ledger l
+WHERE target_type != 'batch'
+  AND parent_event_key IS NOT NULL
+  AND created_at >= (watermark);
+
+-- orphan = total_downstream - parent_single_row_match
+```
+
+В `p0_ledger_watermark_coverage_proof.txt` секция A2 обновлена:
+
+```text
+#### A2: DOWNSTREAM PATHS (single-row parent match)
+| # | path | expected | ledger_rows | has_both_parent_fields | parent_single_row_match | orphan | status |
+|---|------|----------|-------------|----------------------|------------------------|--------|--------|
+| 7 | telegram-grant-access | 95 | 95 | 95 | 95 | 0 | PASS |
+| 8 | telegram-process-access-queue | 30 | 30 | 30 | 30 | 0 | PASS |
+```
+
+orphan > 0 по любому path = Phase 1 DoD не выполнен.
+
+---
+
+## Изменение 3: FK на существующие таблицы
+
+```sql
+ALTER TABLE access_grant_ledger
+  ADD CONSTRAINT fk_ledger_order
+    FOREIGN KEY (order_id) REFERENCES orders_v2(id) ON DELETE SET NULL,
+
+  ADD CONSTRAINT fk_ledger_source_order
+    FOREIGN KEY (source_order_id) REFERENCES orders_v2(id) ON DELETE SET NULL,
+
+  ADD CONSTRAINT fk_ledger_source_subscription
+    FOREIGN KEY (source_subscription_id) REFERENCES subscriptions_v2(id) ON DELETE SET NULL,
+
+  ADD CONSTRAINT fk_ledger_source_offer
+    FOREIGN KEY (source_offer_id) REFERENCES tariff_offers(id) ON DELETE SET NULL,
+
+  ADD CONSTRAINT fk_ledger_profile
+    FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE SET NULL;
+```
+
+### user_id — решение для Phase 1
+
+`user_id` **не получает FK на `auth.users(id)**` в Phase 1. Причины:
+
+1. `auth.users` — reserved Supabase schema, прямые FK из public-схемы не рекомендованы и могут вызвать проблемы при restore/migration
+2. `profiles.id` уже является каноническим proxy для `auth.users.id` в проекте (profiles.id = auth.users.id by convention)
+3. Ghost grants используют `user_id = profile_id` placeholder — FK на auth.users сломает этот паттерн
+
+Вместо FK гарантия целостности user_id обеспечивается:
+
+- `fk_ledger_profile` покрывает связь с пользователем через `profile_id`
+- `user_id` остаётся informational/nullable, без FK
+- В Phase 2 при необходимости можно добавить FK на `profiles(id)` для `user_id` отдельной миграцией
+
+---
+
+## Обновлённый DoD (v21, 72 инварианта)
+
+К 69 инвариантам v20 добавлены:
+
+- **70**: `reason_code` защищён CHECK constraint на уровне БД. Произвольные коды невозможны без миграции.
+- **71**: `action_type ↔ status` защищены cross-field CHECK constraint. Мусорные комбинации невозможны.
+- **72**: FK на `orders_v2`, `subscriptions_v2`, `tariff_offers`, `profiles` с `ON DELETE SET NULL`. `user_id` без FK (решение задокументировано, proxy через `profile_id`).
+
+Lineage proof усилен: parent валиден только при single-row match по обоим полям одновременно.
+
+---
+
+## Proof-артефакты (11 файлов, без изменений в количестве)
+
+Формат `p0_ledger_watermark_coverage_proof.txt` секция A2 обновлён на single-row parent match.
+
+---
+
+## Порядок реализации (обновлённый)
+
+Phase 0 + Phase 1:
+
+1. Создать `access_grant_ledger` по полному DDL v18 + CHECK constraints v19/v20 + **reason_code CHECK v21** + **action_type↔status guard v21** + **FK v21**
+2. Записать deploy watermark через INSERT ... ON CONFLICT с guard
+3. Убрать hardcode из 8 live файлов
+4. Обернуть **4 grant-path группы** в FulfillmentExecutor
+5. Обернуть **2 downstream paths** с parent propagation
+6. Обернуть **7 revoke-paths** в AccessRevoker
+7. Для batch/import: трёхуровневая структура
+8. `resolveAccessWindow()`, merge effective windows, запись в `result JSONB`
+9. P0 invariant report, **6 proof-артефактов** с single-row lineage proof
