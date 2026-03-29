@@ -11862,7 +11862,7 @@ export type Database = {
         }
       }
       inv20_paid_orders_without_payments: {
-        Args: { p_limit?: number; p_since: string }
+        Args: { p_limit?: number; p_since?: string }
         Returns: {
           count_total: number
           samples: Json
