@@ -1,83 +1,92 @@
 
 
-# План: Финальный proof-блок + артефакты ЦБ 2 ступень
+# План: Исправление дат + мердж Потекина→Михейкина
 
-## Данные из БД (verified)
+## Диагностика
 
-### Счетчики
-
-| Метрика | Значение |
+| Проблема | Масштаб |
 |---|---|
-| orders_v2 (MIG-CB2S-*) | **103** (78 initial + 24 review_safe + 1 row107) |
-| subscriptions_v2 (cb2s_*) | **81** (63 initial + 17 review_safe + 1 row107) |
-| review_remaining | **9** (8 duplicate + 1 row28 без профиля) |
-| unmatched_remaining | **3** (rows 2, 14, 87) |
+| Все 111 orders MIG-CB2S-* имеют `deal_date` = 29.03.2026 или NULL | 111 строк |
+| Все 89 subscriptions cb2s_* имеют `access_start_at` = 29.03.2026 | 89 строк |
+| Потекина создана как ghost вместо мерджа в Михейкину | 1 order + 1 subscription + 1 entitlement |
+| `meta` не содержит `payment_date` — дату не записали при импорте | все |
 
-Reconciliation: `116 = 103 + 8(dup) + 1(row28) + 1(employee) + 3(unmatched) = 116` ✓
+## Данные от пользователя
 
-### Row 107 — proof
+- **Поток 1** → `deal_date = 2023-02-08`, `access_start_at = 2023-02-08`
+- **Поток 2** → `deal_date = 2023-08-04`, `access_start_at = 2023-08-04`
+- **Поток 3** → `deal_date = 2025-04-28`, `access_start_at = 2025-04-28`
+- **access_end_at для всех** → `2026-08-30 23:59:59`
 
-| Поле | Значение |
-|---|---|
-| order_id | `df202eb8-82a3-4a58-9751-1247530fb192` |
-| order_number | `MIG-CB2S-ROW-107` |
-| subscription_id | `ba62c25c-9cb0-40c6-b57b-4dd48442dc72` |
-| profile_id | `066bbf20-61f6-4cf6-9493-25c1ba75bdc8` |
-| user_id | `8d974225-b89c-4a97-9ce3-9b0c4041ea5d` |
-| entitlement для CB2S (87a8870f) | **НЕ СУЩЕСТВУЕТ** |
+## Порядок выполнения
 
-**Важно**: У пользователя row 107 есть entitlements для двух других продуктов, но **нет entitlement для ЦБ 2 ступень** (product_id `87a8870f`). Это требует отдельного действия — вставки entitlement.
+### Шаг 1: Мердж Потекина → Михейкина
+
+1. Перепривязать order `MIG-CB2S-ROW-14` (`f349ef8f`):
+   - `profile_id` → `e19ea68a` (Михейкина)
+   - `user_id` → `51f7fd83` (Михейкина auth)
+
+2. Перепривязать subscription (`155d7eeb`) на Потекина → Михейкина:
+   - `profile_id` → `e19ea68a`
+   - `user_id` → `51f7fd83`
+
+3. Обновить entitlement cb_2_step, если привязан к ghost user_id `e6fd6835`:
+   - Проверить: есть ли entitlement cb_2_step у Михейкиной (`51f7fd83`)?
+     - Нет → обновить `user_id` entitlement на `51f7fd83`
+     - Да → удалить дубль от ghost
+
+4. Удалить ghost-профиль `e6fd6835` (Потекина)
+
+5. Audit log: `actor_label = 'patch_cb2s_potekina_merge'`, `batch_id`, affected entities
+
+### Шаг 2: Backfill deal_date для всех 111 orders
+
+Логика: по `flow_id` определить поток → проставить `deal_date`:
+
+```text
+flow_id = '94dc4c62...' (1 поток) → deal_date = 2023-02-08
+flow_id = 'a1db20a0...' (2 поток) → deal_date = 2023-08-04
+flow_id = 'b28f0254...' (3 поток) → deal_date = 2025-04-28
+```
+
+Для orders без `flow_id` — проверить `meta->>'flow_code'` или `purchase_snapshot->>'flow_code'`.
+
+### Шаг 3: Backfill access_start_at + access_end_at для всех 89 subscriptions
+
+Аналогичная логика по flow:
+
+```text
+поток 1 → access_start_at = 2023-02-08, access_end_at = 2026-08-30
+поток 2 → access_start_at = 2023-08-04, access_end_at = 2026-08-30  
+поток 3 → access_start_at = 2025-04-28, access_end_at = 2026-08-30
+```
+
+### Шаг 4: Обновить entitlements expires_at
+
+Все entitlements с `product_id = 87a8870f` (ЦБ 2 ступень):
+- `expires_at = 2026-08-30 23:59:59`
+
+### Шаг 5: Audit log + proof
+
+- Записать в `audit_logs` все batch-операции
+- Пересобрать `batch_report.txt` и `proof_full_join.csv`
 
 ---
 
-## Проблема с артефактами
+## Reconciliation (ожидаемый итог)
 
-Исходный CSV (`ЦБ_2_ступень_normalized-2.csv`) отсутствует в текущей файловой системе проекта. Без него невозможно восстановить:
-- email, customer_name, amount, order_composition_raw для duplicate/unmatched строк
-- полный proof_full_join.csv со всеми 116 строками
+- Orders: 111 (из них ROW-14 теперь на Михейкиной)
+- Subscriptions: 89
+- Ghost-профиль Потекина: удален
+- deal_date: архивные даты по потокам
+- access_end_at: 30.08.2026 у всех
 
-**Необходимо**: пользователь должен повторно загрузить CSV, либо мы восстановим данные из meta-полей orders_v2 (но там нет amount и customer_name).
+## Риски
 
----
+- Orders без flow_id и без flow_code в meta — не получат deal_date. Будут выявлены и показаны в отчете.
+- Entitlement cb_2_step для row 107 (`438e32a4`) — уже создан ранее, expires_at будет обновлен до 30.08.2026.
 
-## Что будет выполнено
+## Изменяемые компоненты
 
-### 1. Вставить entitlement для row 107
-Entitlement для CB2S продукта не был создан. Нужно создать:
-- `user_id = 8d974225-b89c-4a97-9ce3-9b0c4041ea5d`
-- `product_id = 87a8870f-d426-419a-9f15-faa76c3f2be3`
-- `status = active`
-
-### 2. Сгенерировать артефакты (из данных БД + CSV, если доступен)
-
-| Файл | Источник данных |
-|---|---|
-| `batch_report.txt` | БД: orders_v2, subscriptions_v2, entitlements, audit_logs |
-| `proof_full_join.csv` | CSV + БД join (нужен CSV) |
-| `review_duplicate_proof.csv` | CSV (нужен CSV для amount, customer_name) |
-| `unmatched_no_profile.csv` | CSV (нужен CSV) |
-| `row107_ready_after_profile.csv` | БД — данные есть |
-
-### 3. Показать таблицы в отчете
-
-**8 duplicate-строк**: source_row, email, customer_name, mapped_tariff_name, mapped_flow_name, amount_byn, already_imported — требуется CSV.
-
-**3 unmatched строки (rows 2, 14, 87)**: аналогично требуется CSV.
-
----
-
-## Вопрос к пользователю
-
-Для полной генерации артефактов нужен файл `ЦБ_2_ступень_normalized-2.csv`. Варианты:
-
-1. **Загрузить CSV повторно** — полная генерация всех артефактов
-2. **Собрать частичные артефакты из БД** — batch_report.txt + row107 proof + то что есть в meta; duplicate/unmatched таблицы будут неполными (без amount, customer_name)
-
----
-
-## Строго не выполняется автоматически
-
-- 8 duplicate-строк — ждём решения
-- 3 unmatched (rows 2, 14, 87) — ждём решения
-- Row 28 без профиля — ждём решения
+Только data-fix через insert tool (UPDATE). Никаких миграций, edge functions, UI-изменений.
 
