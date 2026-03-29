@@ -216,39 +216,16 @@ Deno.serve(async (req) => {
     );
 
     if (inv20Err) {
-      console.error("[nightly] INV-20 RPC failed, falling back:", inv20Err.message);
-      const { data: paidOrders } = await supabase
-        .from("orders_v2")
-        .select("id, order_number, created_at, meta")
-        .eq("status", "paid")
-        .not("user_id", "is", null)
-        .gte("created_at", ninetyDaysAgo)
-        .limit(200);
-
-      if (paidOrders && paidOrders.length > 0) {
-        const orderIds = paidOrders.map((o: any) => o.id);
-        const { data: existingPayments } = await supabase
-          .from("payments_v2")
-          .select("order_id")
-          .in("order_id", orderIds);
-
-        const paidOrderIds = new Set((existingPayments || []).map((p: any) => p.order_id));
-        const missing = paidOrders.filter((o: any) => {
-          if (paidOrderIds.has(o.id)) return false;
-          const m = o.meta as any;
-          if (m?.superseded_by_repair || m?.no_real_payment) {
-            inv20Suppressed++;
-            return false;
-          }
-          return true;
-        });
-        inv20Missing = missing.length;
-        inv20Samples = missing.slice(0, 5).map((o: any) => ({
-          id: o.id,
-          order_number: o.order_number,
-          created_at: o.created_at,
-        }));
-      }
+      // RPC failed — log error, do NOT attempt JS fallback (can't reproduce hybrid WHERE)
+      console.error("[nightly] INV-20 RPC failed:", inv20Err.message);
+      invariants.push({
+        name: "INV-20: Paid orders without payments_v2",
+        passed: false,
+        count: -1,
+        suppressed: 0,
+        samples: [],
+        description: `RPC inv20_paid_orders_without_payments failed: ${inv20Err.message}. No fallback — fix the RPC.`,
+      });
     } else if (inv20Data) {
       const row = Array.isArray(inv20Data) ? inv20Data[0] : inv20Data;
       inv20Missing = Number(row?.count_total ?? 0);
