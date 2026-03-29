@@ -153,34 +153,47 @@ export default function AdminDeals() {
   
   const queryClient = useQueryClient();
 
-  // Fetch deals (orders_v2) with related data
+  // Fetch ALL deals (orders_v2) with related data — batched pagination
   const { data: deals, isLoading, refetch } = useQuery({
     queryKey: ["admin-deals", dateFilter],
-    queryFn: async () => {
-      let query = supabase
-        .from("orders_v2")
-        .select(`
-          *,
-          products_v2(id, name, code),
-          tariffs(id, name, code, access_days),
-          flows(id, name),
-          payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
-          profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
-        `)
-        .order("deal_date", { ascending: false, nullsFirst: false })
-        .limit(1000);
+    queryFn: async ({ signal }) => {
+      const PAGE_SIZE = 1000;
+      let from = 0;
+      const all: any[] = [];
 
-      // Apply date filter
-      if (dateFilter.from) {
-        query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
-      }
-      if (dateFilter.to) {
-        query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
+      for (;;) {
+        let query = supabase
+          .from("orders_v2")
+          .select(`
+            *,
+            products_v2(id, name, code),
+            tariffs(id, name, code, access_days),
+            flows(id, name),
+            payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
+            profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
+          `)
+          .order("deal_date", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+
+        // Apply date filter
+        if (dateFilter.from) {
+          query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
+        }
+        if (dateFilter.to) {
+          query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
+        }
+
+        const { data, error } = await query.abortSignal(signal!);
+        if (error) throw error;
+        if (!data?.length) break;
+        all.push(...data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-      return data;
+      // Deduplicate by id
+      return Array.from(new Map(all.map(o => [o.id, o])).values());
     },
   });
 
@@ -291,6 +304,8 @@ export default function AdminDeals() {
       type: "select",
       options: [
         { value: "bepaid_archive_import", label: "Архивный импорт (ARC-*)" },
+        { value: "getcourse_historical", label: "GetCourse (исторический)" },
+        { value: "csv_active_import", label: "CSV импорт" },
         { value: "bepaid_import", label: "Bepaid импорт" },
         { value: "bepaid_reconcile", label: "Сверка" },
         { value: "manual", label: "Ручная" },
