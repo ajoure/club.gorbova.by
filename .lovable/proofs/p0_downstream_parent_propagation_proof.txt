@@ -1,0 +1,144 @@
+# Phase 1 Downstream Parent Propagation Proof
+# Created: 2026-03-30 (PATCH v22.6 Sub-patch B)
+# Scope: Parent lineage wiring for all Phase 1 downstream calls
+
+## 1. Primary Callers → Downstream Lineage Table
+
+| # | Primary caller | Downstream | Lineage source | Parented/Autonomous | source_event_key reused exactly |
+|---|---------------|------------|----------------|--------------------|---------------------------------|
+| 1 | grant-access-for-order | telegram-grant-access | ledger execution_key + source_event_key | parented | yes — renewSourceEventKey variable |
+| 2 | subscription-charge (renew) | telegram_access_queue → telegram-grant-access | ledger execution_key via queue.meta | parented | yes — renewSourceEventKey variable |
+| 3 | subscription-charge (trial_expire) | telegram-revoke-access | executeRevoke result executionKey | parented | yes — revokeCtx.sourceEventKey |
+| 4 | subscriptions-reconcile (block 1: cancel_at) | telegram-revoke-access | executeRevoke result executionKey | parented | yes — revokeCtx.sourceEventKey |
+| 5 | subscriptions-reconcile (block 2: trial) | telegram-revoke-access | executeRevoke result executionKey | parented | yes — revokeCtx.sourceEventKey |
+| 6 | subscriptions-reconcile (block 3: access_expired) | telegram-revoke-access | executeRevoke result executionKey | parented | yes — revokeCtx.sourceEventKey |
+| 7 | subscriptions-reconcile (block 4: tg_sync) | telegram-revoke-access | executeRevoke result executionKey | parented | yes — revokeCtx.sourceEventKey |
+| 8 | subscription-admin-actions:revoke_access | telegram-revoke-access | inline executeRevoke result | parented | yes — branch sourceEventKey |
+| 9 | subscription-admin-actions:delete | telegram-revoke-access | inline executeRevoke result | parented | yes — branch sourceEventKey |
+| 10 | subscription-admin-actions:refund+revoke | telegram-revoke-access | inline executeRevoke result | parented | yes — branch sourceEventKey |
+| 11 | telegram-club-members (reinvite_ghosts) | telegram_access_queue → telegram-grant-access | NONE — autonomous | autonomous | N/A |
+
+## 2. Queue Lineage Path
+
+```
+writer (subscription-charge renew) 
+  → telegram_access_queue.meta = { parent_event_key, parent_execution_key }
+  → telegram-process-access-queue reads item.meta
+  → forwards parent_event_key / parent_execution_key in downstream body
+  → telegram-grant-access / telegram-revoke-access receives parent keys
+```
+
+### Queue Writer Inventory
+
+| # | Writer | File | Queue action | meta.parent_event_key | meta.parent_execution_key | Status |
+|---|--------|------|-------------|----------------------|--------------------------|--------|
+| 1 | subscription-charge (renew path) | subscription-charge/index.ts | grant | renewSourceEventKey | renewLedgerResult.execution_key | ✅ parented (conditional: only when execution_key present) |
+| 2 | telegram-club-members (reinvite_ghosts) | telegram-club-members/index.ts | grant | NOT SET | NOT SET | ✅ autonomous/no-parent by design |
+| 3 | telegram-process-access-queue (retry re-enqueue) | telegram-process-access-queue/index.ts | grant/revoke | preserved from original row meta | preserved from original row meta | ✅ passthrough |
+
+### Queue Processor: telegram-process-access-queue
+
+- SELECT includes `meta` field (line 36)
+- Grant path: extracts `parent_event_key` / `parent_execution_key` from `item.meta` (lines 225-226)
+- Revoke path: extracts parent keys from `item.meta` (lines 272-273)
+- Backward compatible: `null` meta → `null` parent keys → downstream works without parent lineage
+- Does NOT set `_from_primary_path = true` (queue is not primary)
+
+## 3. Autonomous Enqueue: telegram-club-members
+
+**Classification**: autonomous / no-parent by design
+
+**Reason**:
+- Queue rows created by `reinvite_ghosts` flow have no upstream primary ledger row
+- There is no prior grant/revoke event to derive lineage from
+- `meta = null` is correct and expected
+- This does NOT constitute an orphan or missing-lineage defect
+- This does NOT block Sub-patch B DoD
+
+## 4. subscription-admin-actions Branch Table
+
+| Branch | Inline ledger | Post-switch duplicate | Parent keys to downstream |
+|--------|--------------|----------------------|--------------------------|
+| cancel | ✅ yes (lines ~710-765) | ❌ no (removed) | N/A — no downstream telegram call |
+| revoke_access | ✅ yes (lines ~943-985) | ❌ no (removed) | ✅ passed to telegram-revoke-access |
+| delete | ✅ yes (lines ~1078-1114) | ❌ no (removed) | ✅ passed to telegram-revoke-access |
+| refund+revoke | ✅ yes (lines ~483-507) | ❌ no (never was in post-switch) | ✅ passed to telegram-revoke-access |
+
+### Machine-check confirmation
+After cleanup, `subscription-admin-actions/index.ts` grep for `executeRevoke`/`writeLedgerEntry`:
+- Line 4: import (ok)
+- Line 5: import (ok)
+- Line 502: inline in refund+revoke branch (ok)
+- Line 716: inline in cancel branch (ok)
+- Line 741: inline in cancel branch (ok)
+- Line 952: inline in revoke_access branch (ok)
+- Line 971: inline in revoke_access branch (ok)
+- Line 1087: inline in delete branch (ok)
+- Line 1100: inline in delete branch (ok)
+- **No executeRevoke/writeLedgerEntry calls outside case branches** ✅
+
+## 5. Idempotent Skip Guard: execution_key = null
+
+### Grant paths (grant-access-for-order → telegram-grant-access)
+- If `writeLedgerEntry` returns `execution_key = null` (idempotent skip):
+  - Recovery: re-read existing row by `source_event_key` to get `execution_key`
+  - Pass recovered execution_key as `parent_execution_key` downstream
+  - `_from_primary_path = true` still set (lineage recovered)
+
+### Queue meta (subscription-charge → telegram_access_queue)
+- If `renewLedgerResult.execution_key` is null/undefined:
+  - Conditional spread `...(renewLedgerResult?.execution_key ? { meta: ... } : {})` → meta field NOT included in upsert
+  - Existing `meta` on conflict row is NOT overwritten with null
+  - Queue processor handles `null` meta gracefully (backward compatible)
+
+### Revoke paths (subscription-charge trial_expire, subscriptions-reconcile, admin-actions)
+- If `executeRevoke` returns `executionKey = null`:
+  - Parent keys passed as `null` to downstream
+  - `_from_primary_path` NOT set for revoke downstream (revoke writes own ledger)
+  - No crash, no drift
+
+## 6. Single-Row Parent Match SQL
+
+```sql
+-- Lineage verification: child rows must match parent by BOTH keys simultaneously
+SELECT 
+  child.id AS child_id,
+  child.source_event_key AS child_event_key,
+  child.parent_event_key,
+  child.parent_execution_key,
+  parent.id AS parent_id,
+  parent.source_event_key AS parent_event_key_actual,
+  parent.execution_key AS parent_execution_key_actual
+FROM access_grant_ledger child
+JOIN access_grant_ledger parent
+  ON parent.source_event_key = child.parent_event_key
+ AND parent.execution_key = child.parent_execution_key
+WHERE child.parent_event_key IS NOT NULL;
+```
+
+**Rule**: Two separate EXISTS checks are NOT acceptable as primary lineage proof.
+Only the single-row JOIN on both fields simultaneously validates the parent-child relationship.
+
+## 7. Three Lineage Modes
+
+| Mode | parent_event_key | parent_execution_key | _from_primary_path | Example |
+|------|-----------------|---------------------|--------------------|---------|
+| Primary → child | SET (from primary ledger row) | SET (execution_key) | true (grant paths) | grant-access-for-order → telegram-grant-access |
+| Autonomous/manual | NULL | NULL | false/absent | telegram-club-members reinvite, manual admin calls |
+| Queue child | FROM queue.meta | FROM queue.meta | false (queue is not primary) | subscription-charge → queue → telegram-grant-access |
+
+## 8. Sprint Status
+
+| Sub-patch | Status |
+|-----------|--------|
+| Sub-patch A (revoke paths) | ✅ done |
+| Sub-patch B (parent propagation) | ✅ done in code |
+| Runtime verification for B | ⏸ deferred_non_blocking |
+| Sub-patch C (batch/import) | 📋 next |
+| phase1_ledger_cutover_at | ❌ NOT SET |
+
+```
+wrapped_in_code = yes (Sub-patch B)
+runtime_verified = deferred (runtime_deferred_non_blocking)
+cutover_allowed = no
+```
