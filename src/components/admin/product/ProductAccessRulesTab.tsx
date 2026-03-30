@@ -135,6 +135,10 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
     notes: "",
+    // Conditional service rule fields
+    has_condition: false,
+    condition_required_product_id: "",
+    condition_required_tariff_id: "",
   });
 
   // Filtered rules
