@@ -87,8 +87,9 @@ function getPricingUrl(): string {
   return `${getSiteUrl()}/#pricing`;
 }
 
-async function logAudit(supabase: any, event: any) {
-  await supabase.from('telegram_access_audit').insert(event);
+async function logAudit(supabase: any, event: any): Promise<string | null> {
+  const { data } = await supabase.from('telegram_access_audit').insert(event).select('id').single();
+  return data?.id || null;
 }
 
 // Helper to find club_id if not provided
