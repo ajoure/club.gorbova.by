@@ -130,7 +130,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     target_ref: "",
     target_label: "",
     is_active: true,
-    priority: "0",
+    priority: "",
     duration_mode: "tariff" as "tariff" | "manual",
     duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
@@ -182,7 +182,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: "",
       target_label: "",
       is_active: true,
-      priority: "0",
+      priority: "",
       duration_mode: "tariff",
       duration_days: "",
       rule_purpose: "primary",
@@ -202,7 +202,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: rule.target_ref,
       target_label: rule.target_label || "",
       is_active: rule.is_active,
-      priority: String(rule.priority),
+      priority: rule.priority ? String(rule.priority) : "",
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
       duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
@@ -662,7 +662,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   {(Object.entries(TARGET_TYPE_LABELS) as [GrantTargetType, string][])
-                    .filter(([k]) => k !== "entitlement")
+                    .filter(([k]) => k !== "entitlement" && k !== "email")
                     .map(([k, v]) => (
                       <SelectItem key={k} value={k}>{v}</SelectItem>
                     ))}
@@ -734,7 +734,14 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     </SelectTrigger>
                     <SelectContent>
                       {availableEntitlements.map((e) => (
-                        <SelectItem key={e.product_code} value={e.product_code}>{e.product_code}</SelectItem>
+                        <SelectItem key={e.product_code} value={e.product_code}>
+                          <div className="flex flex-col">
+                            <span>{e.label}</span>
+                            {e.label !== e.product_code && (
+                              <span className="text-[10px] text-muted-foreground">{e.product_code}</span>
+                            )}
+                          </div>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -902,10 +909,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     value={form.priority}
+                    placeholder="0"
                     onChange={(e) => setForm({ ...form, priority: e.target.value.replace(/\D/g, "") })}
-                    onBlur={() => {
-                      if (form.priority.trim() === "") setForm(f => ({ ...f, priority: "0" }));
-                    }}
                     className="h-9 w-[100px]"
                   />
                 </div>

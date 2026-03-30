@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getProductName } from "@/lib/product-names";
 
 // === Telegram Clubs ===
 export interface ClubOption {
@@ -61,6 +62,7 @@ export function useAvailableProducts() {
 export interface EntitlementOption {
   product_code: string;
   label: string;
+  group?: string;
 }
 
 export function useAvailableEntitlements() {
@@ -80,9 +82,10 @@ export function useAvailableEntitlements() {
       (data || []).forEach((row: any) => {
         if (row.product_code && !seen.has(row.product_code)) {
           seen.add(row.product_code);
+          const humanLabel = getProductName(row.product_code);
           result.push({
             product_code: row.product_code,
-            label: row.product_code,
+            label: humanLabel,
           });
         }
       });
