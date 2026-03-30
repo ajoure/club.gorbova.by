@@ -135,6 +135,10 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
     notes: "",
+    // Conditional service rule fields
+    has_condition: false,
+    condition_required_product_id: "",
+    condition_required_tariff_id: "",
   });
 
   // Filtered rules
@@ -187,6 +191,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: "",
       rule_purpose: "primary",
       notes: "",
+      has_condition: false,
+      condition_required_product_id: "",
+      condition_required_tariff_id: "",
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -195,6 +202,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const openEditDialog = (rule: AccessRule) => {
     setEditing(rule);
     const purpose = getRulePurpose(rule);
+    const conditions = (rule.conditions || {}) as Record<string, unknown>;
+    const hasCondition = conditions.condition_type === "prior_purchase";
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -207,6 +216,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
       notes: rule.notes || "",
+      has_condition: hasCondition,
+      condition_required_product_id: (conditions.required_product_id as string) || "",
+      condition_required_tariff_id: (conditions.required_tariff_id as string) || "",
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -221,6 +233,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     const conditions: Record<string, unknown> = {};
     if (form.rule_purpose !== "primary") {
       conditions.rule_purpose = form.rule_purpose;
+    }
+    // Conditional service rule: prior_purchase
+    if (form.has_condition && form.condition_required_product_id) {
+      conditions.condition_type = "prior_purchase";
+      conditions.required_product_id = form.condition_required_product_id;
+      if (form.condition_required_tariff_id) {
+        conditions.required_tariff_id = form.condition_required_tariff_id;
+      }
+      conditions.match_mode = "any_paid_order";
     }
 
     // Parse string fields to numbers on save
@@ -805,7 +826,59 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   );
                 })}
               </div>
-            </div>
+              </div>
+
+              {/* Conditional rule block — shown for "service" purpose */}
+              {form.rule_purpose === "service" && (
+                <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/30 p-3 bg-muted/20">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={form.has_condition}
+                      onCheckedChange={(v) => setForm({ ...form, has_condition: v })}
+                    />
+                    <Label className="text-xs">Выдавать только если ранее покупал</Label>
+                  </div>
+                  {form.has_condition && (
+                    <div className="space-y-2 pl-1">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">Требуемый продукт</Label>
+                        <Select
+                          value={form.condition_required_product_id}
+                          onValueChange={(v) => setForm({ ...form, condition_required_product_id: v, condition_required_tariff_id: "" })}
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue placeholder="Выберите продукт-условие" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableProducts.map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {form.condition_required_product_id && (
+                        <div className="space-y-1">
+                          <Label className="text-[11px] text-muted-foreground">Конкретный тариф (необязательно)</Label>
+                          <Select
+                            value={form.condition_required_tariff_id || "__any__"}
+                            onValueChange={(v) => setForm({ ...form, condition_required_tariff_id: v === "__any__" ? "" : v })}
+                          >
+                            <SelectTrigger className="h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__any__">Любой тариф</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-muted-foreground">
+                        Доступ будет выдан только если у покупателя есть оплаченный заказ на выбранный продукт. Проверяется по истории заказов.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
             <Separator />
 
