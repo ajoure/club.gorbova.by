@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { executeRevoke } from '../_shared/access-revoker.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,6 +20,7 @@ Deno.serve(async (req) => {
 
     console.log('Starting subscription reconciliation...');
     const now = new Date();
+    const jobRunId = crypto.randomUUID();
 
     // Helper function to get club_id for a subscription
     async function getClubIdForSubscription(userId: string, productId: string): Promise<string | null> {
