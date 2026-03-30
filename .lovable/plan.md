@@ -1,221 +1,271 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Зафиксируй add-only режим для proof-файлов: ничего из ранее подтвержденного не удалять и не переписывать целиком; только:
+1. Добавь шаг **“proof sync sweep”**: перед финальным decision block сделать grep/поиск по всем proof-файлам и readiness summary на старые формулировки:
   &nbsp;
-  - добавить финальные секции,
-  - исправить 3 найденных текстовых рассинхрона proof ↔ code,
-  - явно пометить исправленные строки как proof-text sync fix, а не как новое требование.
+  - BLOCKED_SAFE_GUARD
+  - sandbox billing
+  - subscription-charge renew blocker
+  - R3 = blocked
+    И обновить **все** затронутые файлы add-only, не только 4 перечисленных. Иначе останутся противоречия между proof-слоем и новым решением Path A.
   &nbsp;
-2. В p0_ledger_path_coverage_proof.txt сделай одну итоговую таблицу со строгими колонками:
+2. В шаге 5 зафиксируй жёсткий порядок:
   &nbsp;
-  - path
-  - wrapped_in_code
-  - runtime_status
-  - proof_status
-  - deferred_reason
-  - notes
-    И отдельно не смешивай runtime PASS и wrapped_in_code.
+  - сначала обновление proof-файлов,
+  - потом **idempotent** запись phase1_ledger_schema_ready_at,
+  - потом финальный SQL recheck,
+  - потом финальный decision block.
+    Не оставляй формулировку “если решено”. Для текущего плана решение уже должно быть определено.
   &nbsp;
-3. В p0_ledger_grep_guard_proof.txt добавь явный расширенный scope и результаты grep по import files:
+3. Отдельно пропиши, что в v22.8:
   &nbsp;
-  - [Date.now](http://Date.now)(
-  - Math.random(
-  - row:${index}
-  - IMP-${
-  - .single() в existence-check контексте
-    С фактическими count, а не только PASS/FAIL.
+  - phase1_ledger_schema_ready_at можно записывать,
+  - phase1_ledger_cutover_at **не записывается**,
+  - readiness/cutover approval и cutover watermark — это разные вещи.
+    Это нужно явно, чтобы не смешать schema_ready и cutover_at.
   &nbsp;
-4. В p0_invariant_report.txt добавь отдельный блок Proof/Text Sync Fixes, где перечислишь 3 уже найденных minor-расхождения:
+4. В блоке “Production Truth / Source of Renewal” добавь не только narrative, но и **контрактное следствие**:
   &nbsp;
-  - fallback pattern в batch proof,
-  - sprint status в parent propagation proof,
-  - row:{index} → hash:{canonicalHash} в contract proof.
-    Это нужно, чтобы не было ощущения, что proof тихо переписали задним числом.
+  - текущий production renewal ledger classification = grant
+  - это временно считается допустимым для cutover
+  - semantic mismatch renewal classified as grant, not extend не blocker текущего релиза, а deferred design debt
   &nbsp;
-5. В финальном decision block добавь два статуса, а не один:
+5. В “Dead-Code Proof Package” добавь отдельный подпункт:
   &nbsp;
-  - SPRINT IMPLEMENTATION STATUS = COMPLETE
-  - CUTOVER READINESS STATUS = BLOCKED
-    И отдельной строкой:
-  - NEW CODE PATCHES IN THIS FOLLOW-UP = NO
+  - unreachable_extend_coverage = excluded_from_runtime_matrix
+  - extend ledger rows expected in current production = 0
+    Это должно быть записано явно, иначе потом снова появится старое ожидание runtime-proof по extend.
   &nbsp;
-6. В deferred list раздели пункты на 2 группы:
+6. В remaining blockers запиши точнее:
   &nbsp;
-  - Deferred runtime verification
-  - Deferred cutover readiness
-    И не смешивай их в один список.
+  - если после записи phase1_ledger_schema_ready_at и финального SQL recheck всё PASS, то
+    remaining_cutover_blockers = only formal approval
+    Сейчас формулировка немного смешивает текущие и будущие blockers.
   &nbsp;
-7. В DoD добавь явную проверку:
+7. Добавь отдельный machine-check для v22.8:
   &nbsp;
-  - все proof-файлы синхронизированы **между собой и с кодом**
-  - все ранее найденные text-drift mismatches устранены
-  - новых code tasks не создано
+  - после proof sync sweep проверить, что нигде в актуальных proof-файлах не осталось старого статуса R3 = BLOCKED_SAFE_GUARD
+  - и что subscription-charge extend везде помечен как EXCLUDED_FROM_CUTOVER / dead code
+    Это нужен как финальный anti-drift check.
+  &nbsp;
+8. В deferred list добавь ещё один пункт:
+  &nbsp;
+  - semantic reporting / analytics impact: renewals currently counted as grant in ledger
+    Чтобы потом не забыть, что это влияет не только на код, но и на интерпретацию отчётов.
+  &nbsp;
+9. В decision block добавь ещё две строки:
+  &nbsp;
+  - CURRENT_RENEWAL_LEDGER_CLASSIFICATION = grant
+  - EXTEND_PATH_RUNTIME_EXPECTATION = none (dead code)
+    Тогда итоговый статус будет полностью однозначным.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Если это внесено, план можно утверждать и переходить к финализации proof-пакета без нового цикла пересогласования.
+После этих правок план уже можно считать финальным и не возвращаться к пересогласованию.
 
 &nbsp;
 
-# План: PATCH v22.6 Sub-patch D — Consolidated Proof / Coverage / Finalization
+План: v22.8 — Dead Code Resolution + Cutover Finalization
 
 ## Статус
 
 ```
-SAFE_TO_CONTINUE_IMPLEMENTATION = YES
-CUTOVER_ALLOWED = NO
-CURRENT_STEP = FINAL CONSOLIDATED PROOF / COVERAGE FOLLOW-UP
+CURRENT_PATH = A (dead code recognition, no sandbox billing)
+NEW_CODE_IN_V22.8 = NO
+DEAD_CODE_CLEANUP_NOW = NO
+SUBSCRIPTION_CHARGE_EXTEND_RUNTIME_REQUIREMENT = REMOVED
+CUTOVER_DECISION = proceed_to_final_readiness_check
+FOLLOW_UP_SPRINT = semantics refactor / dead code cleanup
 ```
 
-## Диагностика
+---
 
-Проведена полная ревизия всех proof-файлов и кода. Новых blocker-фактов не обнаружено:
+## 1. Production Truth / Source of Renewal
 
-- `Date.now()` / `Math.random()` = 0 в обоих import files
-- `row:${index}` в identity path = 0
-- `.single()` в bepaid — только на INSERT (корректно), existence-check уже через select+length
-- Все 7 proof-файлов существуют и содержат актуальные данные Sub-patch A/B/C
-- `p0_invariant_report.txt` — не существует, нужно создать
-- `p0_downstream_parent_propagation_proof.txt` — sprint status устарел (Sub-patch C = "next", должен быть "done")
+**Факт**: `subscription-charge` содержит два взаимоисключающих guard на строках 554–574, которые делают весь код ниже (включая extend ledger write на строках 1520–1556) **недостижимым**:
 
-## Scope
+```text
+Line 556: if (billing_type === 'provider_managed')
+            → return { skipped: true, skip_reason: 'provider_managed' }
 
-Только proof/coverage finalization. Код не трогаем — новых фактов нет.
-
-## Задачи
-
-### 1. Создать `p0_invariant_report.txt`
-
-Consolidated invariant report по Phase 0 + Phase 1:
-
-- Schema guards: action/status compatibility, target/reason/source_subject dictionaries
-- Parent pair constraint (both NULL or both NOT NULL)
-- chk_has_subject (≥1 subject ref NOT NULL)
-- Batch symmetry (batch_start → target_type='batch', row-level → never 'batch')
-- Deterministic identity (no entropy in import paths)
-- Old-value guards (0 telegram_access, 0 bare subscription, 0 completed non-batch)
-- No duplicate post-switch block
-- stableRowHash drift guard (byte-identical)
-- Archive pseudo-target contract v1
-- DB SoT contracts (bepaid_product_mappings, tariffs.getcourse_offer_id)
-
-### 2. Финализировать `p0_ledger_runtime_smoke_proof.txt`
-
-Добавить блок:
-
-```
-## Sprint Close Runtime Assessment
-Runtime smoke sufficient for sprint close: YES
-Cutover allowed: NO
-Reason: subscription-charge extend path lacks safe sandbox billing proof
-Deferred paths: 9 revoke + parent propagation + batch/import = runtime_deferred_non_blocking
+Line 566: if (billing_type !== 'provider_managed')
+            → return { skipped: true, skip_reason: 'mit_disabled' }
 ```
 
-### 3. Финализировать `p0_downstream_parent_propagation_proof.txt`
+Обе ветки возвращают `skipped`. Код после строки 574 — **dead code**.
 
-Обновить sprint status:
+**Production renewal source of truth:**
 
-- Sub-patch C = done in code (сейчас написано "next")
-- Sub-patch D = current (proof finalization)
-
-### 4. Финализировать `p0_batch_import_tree_proof.txt`
-
-Обновить sprint status:
-
-- Sub-patch D = current → done
-- Обновить fallback identity строки: убрать `row:{index}` из таблиц секции 2 (сейчас proof-текст всё ещё показывает `row:{index}` как fallback в таблице, хотя код уже использует `hash:${canonicalHash}`)
-
-### 5. Обновить `p0_ledger_contract_validation_proof.txt`
-
-Добавить финальный sprint status block + Sub-patch D = done.
-
-### 6. Обновить `p0_ledger_path_coverage_proof.txt`
-
-Добавить:
-
-- Итоговый runtime status per path (wrapped / runtime PASS / runtime deferred)
-- Финальный coverage summary с runtime column
-
-### 7. Обновить `p0_revoke_path_inventory.txt`
-
-Sprint status: Sub-patch D = done, sprint = implementation-complete.
-
-### 8. Обновить `p0_ledger_grep_guard_proof.txt`
-
-Расширить grep scope на import files (bepaid-report-import, getcourse-import-deals). Добавить entropy grep results.
-
-### 9. Финальный deferred list
-
-Единый список в `p0_invariant_report.txt` (или отдельной секцией):
-
-- Runtime smoke для parent propagation paths
-- Runtime smoke для revoke wrappers
-- Runtime smoke для import batch paths
-- subscription-charge extend runtime proof
-- Final cutover decision
-- phase1_ledger_cutover_at выставление
-
-### 10. Финальный decision block
-
-```
-v22.6 MAIN IMPLEMENTATION STATUS = COMPLETE
-CODE PATCHES STATUS = COMPLETE (Sub-patches A, B, C)
-PROOF FINALIZATION STATUS = COMPLETE
-CUTOVER STATUS = BLOCKED
-REASON = subscription-charge runtime proof requires safe billing sandbox
-NEXT STEP = separate cutover/readiness sprint
-phase1_ledger_cutover_at = NOT SET
+```text
+bePaid webhook → bepaid-webhook → payment_reconcile_queue
+  → bepaid-queue-cron / bepaid-auto-process
+    → grant-access-for-order (action_type='grant', status='granted')
 ```
 
-## Файлы
+Этот путь (`grant-access-for-order`) уже имеет **runtime PASS** из v22.6/v22.7.
+
+**Решения:**
+
+- `subscription-charge` renew/extend path = dead code / unreachable under current guards
+- Production renewal = webhook pipeline через `grant-access-for-order`
+- Cutover readiness оценивается по живому пути, а не по unreachable ветке
+- Требование sandbox billing для v22.7/v22.8 **отменяется** как не относящееся к реальному production path
+
+---
+
+## 2. Cutover Impact of Dead Code Finding
+
+### Что меняется в readiness-оценке
 
 
-| Действие | Файл                                                         |
-| -------- | ------------------------------------------------------------ |
-| Создать  | `.lovable/proofs/p0_invariant_report.txt`                    |
-| Обновить | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`          |
-| Обновить | `.lovable/proofs/p0_downstream_parent_propagation_proof.txt` |
-| Обновить | `.lovable/proofs/p0_batch_import_tree_proof.txt`             |
-| Обновить | `.lovable/proofs/p0_ledger_contract_validation_proof.txt`    |
-| Обновить | `.lovable/proofs/p0_ledger_path_coverage_proof.txt`          |
-| Обновить | `.lovable/proofs/p0_revoke_path_inventory.txt`               |
-| Обновить | `.lovable/proofs/p0_ledger_grep_guard_proof.txt`             |
+| Аспект                      | Было (v22.7)                 | Стало (v22.8)                                |
+| --------------------------- | ---------------------------- | -------------------------------------------- |
+| subscription-charge extend  | BLOCKED_SAFE_GUARD           | **EXCLUDED_FROM_CUTOVER** (dead code)        |
+| Sandbox billing requirement | Обязательное условие cutover | **Снято**                                    |
+| Renewal runtime proof       | Отсутствует                  | **Покрыт через grant-access-for-order PASS** |
 
 
-## Что НЕ изменяется
+### Какой blocker снимается
 
-- Любой код edge functions
-- DDL / миграции
-- UI
-- frozen helpers
-- phase1_ledger_cutover_at
+- **R3 subscription-charge renew** — больше не blocker, т.к. extend path = unreachable dead code
 
-## STOP-guards
+### Какие blockers остаются
 
-- Не добавлять кодовые идеи — новых фактов нет
-- Не заявлять cutover готовым
-- Не подменять machine-check числа декларациями (где нельзя проверить runtime — честно пометить deferred)
-- Если при финальной записи proof найден новый факт → либо critical blocker, либо deferred, но не новый цикл
+```
+remaining_cutover_blockers:
+  1. S13: phase1_ledger_schema_ready_at watermark not set in app_settings
+  2. Final SQL recheck after watermark is set
+  3. Formal cutover approval
+```
 
-## Найденные расхождения proof ↔ код (minor, не blockers)
+Других blockers нет. Все SQL invariants S1–S12 = PASS. Runtime PASS для живых путей уже получен.
 
-1. `p0_batch_import_tree_proof.txt` секция 2: fallback pattern всё ещё показывает `row:{index}:{sha256_hash}` — код уже использует `row:hash:${canonicalHash}`. Нужно обновить текст proof.
-2. `p0_downstream_parent_propagation_proof.txt` sprint status: Sub-patch C = "next" → должен быть "done in code".
-3. `p0_ledger_contract_validation_proof.txt` секция chk_has_subject: `row:{index}` → должен быть `hash:{canonicalHash}`.
+---
 
-Все три — текстовые расхождения proof с уже исправленным кодом. Исправляются в рамках этого follow-up.
+## 3. No-New-Code Decision
 
-## DoD
+Для текущего спринта жёстко зафиксировано:
 
-1. Все proof-файлы синхронизированы между собой и с кодом
-2. Есть одна итоговая таблица покрытия paths (в p0_ledger_path_coverage_proof.txt)
-3. Есть один итоговый deferred list (в p0_invariant_report.txt)
-4. Есть один финальный decision block
-5. Нет новых кодовых идей
-6. phase1_ledger_cutover_at = NOT SET
-7. Спринт v22.6 = implementation-complete, cutover-blocked
+- **Код не меняем** — ни edge functions, ни shared helpers, ни DDL
+- **Dead code не чистим** — cleanup deferred
+- **Ledger semantics**: `grant` используется для renewals в текущем production pipeline — принимаем как operational reality
+- **Semantic refactor** grant vs extend — переносится в отдельный будущий спринт
+
+---
+
+## 4. Обновлённая Runtime Матрица
+
+
+| #      | Path                       | Status (v22.8)            | Основание                                      |
+| ------ | -------------------------- | ------------------------- | ---------------------------------------------- |
+| R1     | grant-access-for-order     | **PASS**                  | Runtime verified; live renewal-equivalent path |
+| R2     | subscriptions-reconcile    | **PASS**                  | Runtime verified v22.6                         |
+| R3     | subscription-charge extend | **EXCLUDED_FROM_CUTOVER** | Dead code, unreachable under current guards    |
+| R4–R18 | Revoke/admin/import paths  | DEFERRED_NON_BLOCKING     | Functions invoked where possible, 0 candidates |
+
+
+**Важно**: R3 больше не `BLOCKED_SAFE_GUARD`, а `EXCLUDED_FROM_CUTOVER as dead code`. Это принципиальное изменение статуса.
+
+---
+
+## 5. Proof-файлы для обновления
+
+
+| Файл                                | Что обновляется                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `p0_ledger_runtime_smoke_proof.txt` | Заменить blocker по sandbox/renew → EXCLUDED_FROM_CUTOVER; добавить dead-code finding с excerpt guard-веток                    |
+| `p0_ledger_path_coverage_proof.txt` | Пометить subscription-charge extend как dead/unreachable, excluded from live coverage; обновить итоговую таблицу               |
+| `p0_invariant_report.txt`           | Добавить finding + decision block по dead code; обновить deferred list и decision block; снять sandbox requirement             |
+| `.lovable/v22.7_readiness_plan.md`  | Синхронизировать итоговый cutover status; обновить R3 статус; убрать формулировки про sandbox billing как обязательное условие |
+
+
+---
+
+## 6. Dead-Code Proof Package
+
+Обязательные доказательства для записи в proof-файлы:
+
+### 6.1 Guard-ветки (excerpt из subscription-charge/index.ts:554–574)
+
+```text
+Lines 556-563: if (billing_type === 'provider_managed')
+  → return { skipped: true, skip_reason: 'provider_managed' }
+
+Lines 566-573: if (billing_type !== 'provider_managed')
+  → return { skipped: true, skip_reason: 'mit_disabled' }
+```
+
+Обе ветки взаимоисключающие и исчерпывающие (X === Y || X !== Y). Обе возвращают `skipped`. **Код после строки 574 недостижим.**
+
+### 6.2 Extend ledger write (строки 1520–1556)
+
+Содержит `action_type: 'extend'`, `status: 'extended'`, `reason_code: 'subscription_renew'`. Этот код **никогда не выполняется** при текущем control flow.
+
+### 6.3 Живой renewal path
+
+```text
+bepaid-webhook (получает callback от bePaid)
+  → записывает в payment_reconcile_queue
+bepaid-queue-cron / bepaid-auto-process
+  → обрабатывает очередь
+  → вызывает grant-access-for-order
+    → action_type='grant', status='granted'
+    → runtime PASS подтверждён в v22.6
+```
+
+---
+
+## 7. Deferred List (не блокирует cutover)
+
+
+| #   | Item                                                          | Sprint       | Priority        |
+| --- | ------------------------------------------------------------- | ------------ | --------------- |
+| 1   | Semantic split: grant vs extend в live renewal path           | Post-cutover | Medium          |
+| 2   | Cleanup/removal dead code в subscription-charge (~1200 строк) | Post-cutover | Low             |
+| 3   | Optional sandbox program для future semantic verification     | Post-cutover | Low             |
+| 4   | Cross-product access rules / offer_grant_rules UI             | Post-cutover | Separate sprint |
+
+
+---
+
+## 8. Задачи v22.8
+
+1. Обновить `p0_ledger_runtime_smoke_proof.txt` — dead-code finding, excerpt, EXCLUDED_FROM_CUTOVER
+2. Обновить `p0_ledger_path_coverage_proof.txt` — extend = dead/unreachable, excluded
+3. Обновить `p0_invariant_report.txt` — finding, decision, deferred list, снять sandbox requirement
+4. Обновить `.lovable/v22.7_readiness_plan.md` — синхронизировать cutover status
+5. Установить `phase1_ledger_schema_ready_at` watermark в `app_settings` (если решено)
+6. Финальный SQL recheck
+7. Decision block: CUTOVER_ALLOWED = YES/NO
+
+---
+
+## 9. Финальный Decision Block
+
+```
+CURRENT_PATH = A
+NEW_CODE_IN_V22.8 = NO
+DEAD_CODE_CLEANUP_NOW = NO
+SUBSCRIPTION_CHARGE_EXTEND_RUNTIME_REQUIREMENT = REMOVED
+PRODUCTION_RENEWAL_PATH = bepaid-webhook → grant-access-for-order (PASS)
+SANDBOX_BILLING_REQUIREMENT = REMOVED (not applicable to live path)
+CUTOVER_DECISION = proceed_to_final_readiness_check
+REMAINING_BLOCKERS = schema_ready watermark + final SQL recheck + formal approval
+FOLLOW_UP_SPRINT = semantics refactor / dead code cleanup / access rules UI
+```
+
+---
+
+## Что НЕ входит в v22.8
+
+- Новый код / code patches
+- Dead code cleanup
+- Schema changes / DDL
+- UI / admin panels
+- Cross-product access rules
+- Semantic refactor grant vs extend
+- Sandbox billing setup
