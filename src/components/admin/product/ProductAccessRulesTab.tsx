@@ -234,6 +234,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     if (form.rule_purpose !== "primary") {
       conditions.rule_purpose = form.rule_purpose;
     }
+    // Conditional service rule: prior_purchase
+    if (form.has_condition && form.condition_required_product_id) {
+      conditions.condition_type = "prior_purchase";
+      conditions.required_product_id = form.condition_required_product_id;
+      if (form.condition_required_tariff_id) {
+        conditions.required_tariff_id = form.condition_required_tariff_id;
+      }
+      conditions.match_mode = "any_paid_order";
+    }
 
     // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
