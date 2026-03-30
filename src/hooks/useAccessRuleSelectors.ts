@@ -62,6 +62,7 @@ export function useAvailableProducts() {
 export interface EntitlementOption {
   product_code: string;
   label: string;
+  group?: string;
 }
 
 export function useAvailableEntitlements() {
