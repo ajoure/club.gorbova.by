@@ -64,11 +64,16 @@ const RUNTIME_LABELS: Record<string, string> = {
 };
 
 const LEGACY_STATUS_LABELS: Record<LegacyStatus, string> = {
-  active_legacy_only: "Действует (только legacy)",
+  active_legacy_only: "Действует (старая настройка)",
   duplicated_by_rule: "Дублируется новым правилом",
   migrated_replaced: "Мигрировано и заменено",
   inactive_legacy: "Неактивно",
-  fallback_effective: "Fallback (правило неактивно)",
+  fallback_effective: "Резерв (правило неактивно)",
+};
+
+const LEGACY_SOURCE_LABELS: Record<string, string> = {
+  club: "клуб",
+  email: "email-аккаунт",
 };
 
 const LEGACY_STATUS_COLORS: Record<LegacyStatus, string> = {
