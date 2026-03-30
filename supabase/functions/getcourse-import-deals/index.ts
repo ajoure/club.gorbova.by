@@ -578,8 +578,9 @@ async function createOrder(
   }
   
   // Также проверяем по order_number
-  // Avoid double prefix: if deal_number already starts with GC- or HASH-, handle accordingly
-  const gcOrderNumber = String(deal.deal_number).startsWith('GC-') ? String(deal.deal_number) : `GC-${deal.deal_number}`;
+  // Avoid double prefix: if deal_number already starts with GC- or HASH-, use as-is or add GC- once
+  const dealNumStr = String(deal.deal_number);
+  const gcOrderNumber = dealNumStr.startsWith('GC-') ? dealNumStr : `GC-${dealNumStr}`;
   const { data: byNumber } = await supabase
     .from('orders_v2')
     .select('id')
