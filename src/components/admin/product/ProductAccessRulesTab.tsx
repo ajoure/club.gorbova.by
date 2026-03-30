@@ -860,9 +860,13 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 <div className="space-y-1.5">
                   <Label className="text-xs">Приоритет (выше = важнее)</Label>
                   <Input
-                    type="number"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={form.priority}
-                    onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => setForm({ ...form, priority: e.target.value.replace(/\D/g, "") })}
+                    onBlur={() => {
+                      if (form.priority.trim() === "") setForm(f => ({ ...f, priority: "0" }));
+                    }}
                     className="h-9 w-[100px]"
                   />
                 </div>
