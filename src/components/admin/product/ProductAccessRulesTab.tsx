@@ -369,7 +369,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     <SelectValue placeholder="Все тарифы" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все тарифы (product-level)</SelectItem>
+                    <SelectItem value="__all__">Все тарифы (product-level)</SelectItem>
                     {tariffs.map((t) => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                     ))}
