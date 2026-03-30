@@ -2,173 +2,151 @@
 
 &nbsp;
 
-1. Runtime smoke не считать PASS при отсутствии реальных строк.  
-Если после phase1_ledger_schema_ready_at / до phase1_ledger_cutover_at для любого из 3 path нет ни одной ledger-row, статус должен быть не PASS, а PENDING_RUNTIME_EVENT. Cutover в таком случае запрещён.
-2. Исправь JSON-проверку post_check.  
-Не result->>'post_check', а result->'post_check' IS NOT NULL.  
-И отдельно machine-check на 5 canonical keys:  
+1. В Step 1 не привязывайся к gafo:webhook:%. Для ручного запуска допустимы и admin/manual ветки. Проверка должна идти по source_event_key LIKE 'gafo:%' и по created_at >= proof_started_at.
+2. Для runtime smoke критерий успеха — не только granted/extended. Допустимые исходы:  
 
-  - entitlement
-  - telegram
-  - subscription
-  - ledger_row
-  - target_resolution
+  - grant-access-for-order: granted / extended / skipped / failed
+  - subscription-charge: extended / failed / skipped
+  - subscriptions-reconcile: revoked / expired / skipped  
+  Главное — чтобы ledger-row записалась и прошла DDL/runtime-contract. Иначе ты можешь получить ложный FAIL на идемпотентном повторном вызове.
 3. &nbsp;
-4. Паттерны source_event_key проверь по фактическим префиксам, а не по одному примеру.  
-Для smoke-поиска используй не только:  
+4. Добавь proof_started_at в начало smoke-прогона и фиксируй before/after:  
 
-  - gafo:webhook:%
-  - sub-renew:%
-  - cron-reconcile:%  
-  а все реально допустимые варианты из текущего wrapper-контракта:
-  - gafo:%
-  - sub-renew:%
-  - cron-reconcile:% / sr:% — взять фактический префикс из кода, не гадать.
+  - SELECT now() как старт proof
+  - counts по каждому path до вызова
+  - counts после вызова  
+  Не проверяй просто “последнюю строку”, иначе можно случайно поймать старую запись.
 5. &nbsp;
-6. Добавь отдельный machine-check на отсутствие старых ledger-значений в БД, а не только grep по коду.  
-Проверить в access_grant_ledger после watermark:  
+6. В Step 1 для grant-access-for-order отдельно зафиксируй риск идемпотентности: если order уже обрабатывался, ожидаемый результат может быть skipped/already_active. Это не FAIL, если row валидна и reason_code/status/result корректны.
+7. В Step 2 и Step 3 раздели статусы:  
 
-  - target_type IN ('telegram_access','subscription') = 0
-  - status = 'completed' AND action_type <> 'batch_start' = 0
-7. &nbsp;
-8. Grep scope зафиксируй жёстко.  
-Искать только в:  
+  - PASS — path отработал и создал хотя бы одну новую валидную ledger row
+  - BLOCKED_NO_ELIGIBLE_INPUT — нет подходящей подписки/кандидата для ветки
+  - FAIL — row создана, но нарушает DDL/runtime-contract  
+  Иначе отсутствие подходящих данных будет смешано с реальной ошибкой.
+8. &nbsp;
+9. В Step 4 для merge-proof проверяй не только наличие post_check, а что после update сохранились поля окна доступа:  
 
-  - supabase/functions/_shared/
-  - supabase/functions/grant-access-for-order/
-  - supabase/functions/subscription-charge/
-  - supabase/functions/subscriptions-reconcile/  
-  И явно исключить:
-  - .lovable/proofs/
-  - supabase/migrations/
-  - archival/test paths  
-  Иначе будут ложные срабатывания.
-9. &nbsp;
-10. Helper contract freeze надо проверить не текстом, а grep/assertion.  
-В proof добавить:  
+  - access_start
+  - access_end
+  - window_days
+  - source_window_rule
+  - previous_end  
+  И отдельно: jsonb_object_keys(result->'post_check') = ровно {entitlement, telegram, subscription, ledger_row, target_resolution}.
+10. &nbsp;
+11. В proof-файлы добавь фактический invocation log:  
 
-  - writeLedgerEntry возвращает id, execution_key, error
-  - executeRevoke принимает targetType, targetKey, targetRef, reasonCode, reconcileBasis
-  - buildPostCheck не содержит telegram_grant, только telegram
-11. &nbsp;
-12. Для runtime smoke нужен явный fallback-сценарий ручного прогона.  
-Если cron/path ещё не сработал, в плане добавь:  
-
-  - как вызвать subscriptions-reconcile
-  - как вызвать тестовый grant-access-for-order
-  - как вызвать тестовый subscription-charge:renew  
-  И только после этого собирать p0_ledger_runtime_smoke_proof.txt.
-13. &nbsp;
-14. Обновление p0_ledger_contract_validation_proof.txt делай add-only.  
-Новая секция: Runtime Validation Gate (v22.4) без переписывания уже утверждённых секций.
-15. Cutover guard сформулируй жёстче.  
-phase1_ledger_cutover_at запрещено писать, пока одновременно не выполнены:  
-
-  - runtime_smoke = PASS
-  - grep_guard = PASS
-  - contract_validation = PASS
-  - orphan_downstream = 0
-  - missing_required_post_check = 0
-16. &nbsp;
-17. Файлы proof лучше перечислить так:
+  - payload вызова
+  - HTTP/result edge function
+  - source_event_key найденной строки
+  - ledger id
+  - verdict PASS / BLOCKED_NO_ELIGIBLE_INPUT / FAIL  
+  Без этого proof будет неполным и трудно воспроизводимым.
+12. &nbsp;
+13. Если цель — именно закрыть gate, лучше прогонять не “любые текущие данные”, а контролируемые кандидаты в preview/test окружении. Для prod-данных smoke допустим только если вызов гарантированно не меняет бизнес-состояние сверх уже разрешенного контракта.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+После этих правок план можно считать готовым к выполнению.
 
-- создать p0_ledger_runtime_smoke_proof.txt
-- создать p0_ledger_grep_guard_proof.txt
-- обновить p0_ledger_contract_validation_proof.txt
-- при необходимости создать p0_runtime_manual_smoke_steps.txt, если реальных событий ещё нет
-
-&nbsp;
-
-&nbsp;
-
-После этих правок план можно считать финальным для PATCH v22.4.
-
-&nbsp;
-
-# План: PATCH v22.4 — Runtime Validation Gate
+# План: PATCH v22.4 — Runtime Smoke Execution
 
 ## Цель
 
-Подтвердить, что foundation-fix v22.3 реально пишет валидные ledger rows в runtime, а не только компилируется. Создать два proof-файла и зафиксировать helper contract freeze.
+Выполнить runtime smoke для 3 уже обёрнутых paths, получить реальные ledger rows, обновить proof-файлы из PENDING_RUNTIME_EVENT в PASS/FAIL.
 
-## Шаги реализации
+## Текущий статус
 
-### Шаг 1. Runtime smoke — запросить реальные ledger rows из БД
+- Ledger rows от v22.3 paths: **0** (все три PENDING)
+- Тестовые данные доступны:
+  - Order `73638223-...` (paid, product `73c29914-...`, tariff `56c35e86-...`, profile `2ef54ad1-...`)
+  - Subscription `e53c5c45-...` (active, next_charge `2026-03-08`, profile `ebc0fecc-...`)
+- DB old-value guard: всё чисто
 
-Выполнить SQL-запрос к `access_grant_ledger` для получения последних записей от каждого из 3 уже обёрнутых path-ов:
+## Шаги
 
-- `source_event_key LIKE 'gafo:webhook:%'` → grant-access-for-order
-- `source_event_key LIKE 'sub-renew:%'` → subscription-charge
-- `source_event_key LIKE 'cron-reconcile:%'` → subscriptions-reconcile
+### Шаг 1. Invoke grant-access-for-order
 
-По каждой записи проверить:
+Вызвать edge function с тестовым order:
 
-1. `action_type ↔ status` валиден
-2. `reason_code` из DDL словаря
-3. `target_type` из DDL словаря
-4. `source_subject_type` из DDL словаря
-5. `chk_has_subject` — есть хотя бы один subject ref
-6. `result->>'post_check'` существует и соответствует нормализованной схеме
-7. result access window fields не затёрты (access_start, access_end, window_days присутствуют для grant/extend)
+```
+POST /grant-access-for-order
+Body: { "orderId": "73638223-6503-46fb-883c-474495d31762" }
+```
 
-Если записей ещё нет (paths ещё не запускались после deploy) — зафиксировать это в proof как "pending first runtime event" и предложить ручной smoke-test.
+Затем запросить ledger row:
 
-### Шаг 2. Глобальный grep по live scope
+```sql
+SELECT * FROM access_grant_ledger 
+WHERE source_event_key LIKE 'gafo:webhook:%' 
+ORDER BY created_at DESC LIMIT 1
+```
 
-Поиск по `supabase/functions/_shared/`, `supabase/functions/grant-access-for-order/`, `supabase/functions/subscription-charge/`, `supabase/functions/subscriptions-reconcile/` на:
+Machine-check: action_type=grant/extend, status=granted/extended, reason_code=paid_order, target_type=product, source_subject_type=order, post_check с 5 canonical keys, access_start/access_end NOT NULL.
 
-- `target_type.*'telegram_access'` в ledger-контексте
-- `target_type.*'subscription'` (без `_tier`) в ledger-контексте
-- `status.*'completed'` в ledger-контексте (не payment status)
-- `applicable:` (old-style boolean) в post_check
-- `telegram_grant` как ключ в ledger post_check
+### Шаг 2. Invoke subscription-charge (renew)
 
-Результаты зафиксировать в proof.
+Вызвать edge function:
 
-### Шаг 3. Создать `p0_ledger_runtime_smoke_proof.txt`
+```
+POST /subscription-charge
+Body: { "action": "process_renewals" }
+```
 
-Содержимое:
+Затем запросить ledger row с `source_event_key LIKE 'sub-renew:%'`.
+Machine-check: action_type=extend, status=extended, reason_code=subscription_renew, target_type=subscription_tier.
 
-- Для каждого path: фактическая ledger row (или статус "pending")
-- Machine-check по 7 пунктам выше
-- Вердикт PASS/FAIL
+**Риск:** единственная подходящая подписка `e53c5c45-...` с next_charge_at 2026-03-08 может не иметь валидного payment token. Если renew не произойдёт (payment fail), ledger row может быть `failed` — зафиксировать как допустимый runtime результат и проверить по failed-contract.
 
-### Шаг 4. Создать `p0_ledger_grep_guard_proof.txt`
+### Шаг 3. Invoke subscriptions-reconcile
 
-Содержимое:
+Вызвать edge function:
 
-- Перечень grep-запросов
-- Результат: 0 matches для каждого запрещённого паттерна в live scope
-- Отдельная секция: helper contract freeze
+```
+POST /subscriptions-reconcile
+Body: {}
+```
 
-### Шаг 5. Зафиксировать helper contract freeze
+Запросить ledger rows с `source_event_key LIKE 'cron-reconcile:%'`.
+Machine-check по block-by-block mapping из плана v22.3.
 
-В `p0_ledger_grep_guard_proof.txt` добавить секцию "Helper Contract Freeze":
+**Риск:** может не найтись подписок с expired cancel_at / trial / access. Тогда block 4 (telegram sync) — единственный реальный кандидат. Зафиксировать, какие блоки сработали.
 
-- `writeLedgerEntry()` → возвращает `{ id, execution_key, error }`
-- `executeRevoke()` → принимает `targetType/targetKey/targetRef/reasonCode/reconcileBasis` только извне
-- `buildPostCheck()` → 5 canonical keys: `entitlement, telegram, subscription, ledger_row, target_resolution`
+### Шаг 4. Проверка merge в updateLedgerPostCheck
 
-### Шаг 6. Обновить `p0_ledger_contract_validation_proof.txt`
+Для каждого созданного row с post_check проверить:
 
-Добавить секцию "Runtime validation" со ссылкой на runtime smoke proof.
+```sql
+SELECT id, 
+  result->>'access_start' AS access_start,
+  result->>'access_end' AS access_end,
+  result->>'window_days' AS window_days,
+  result->'post_check' IS NOT NULL AS has_post_check,
+  jsonb_object_keys(result->'post_check') AS pc_keys
+FROM access_grant_ledger
+WHERE source_event_key LIKE 'gafo:%' OR source_event_key LIKE 'sub-renew:%' OR source_event_key LIKE 'cron-reconcile:%'
+ORDER BY created_at DESC LIMIT 10
+```
+
+Убедиться: access window fields сохранены после merge.
+
+### Шаг 5. Обновить proof-файлы
+
+1. `p0_ledger_runtime_smoke_proof.txt` — заполнить фактическими runtime данными, поменять статус на PASS или FAIL
+2. `p0_ledger_contract_validation_proof.txt` — добавить фактические runtime строки в секцию Runtime Validation Gate
+3. Если какой-то path не сработал (нет подходящих данных) — оставить PENDING с пояснением
 
 ## Файлы
 
 
-| Действие | Файл                                                                                |
-| -------- | ----------------------------------------------------------------------------------- |
-| Создать  | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`                                 |
-| Создать  | `.lovable/proofs/p0_ledger_grep_guard_proof.txt`                                    |
-| Обновить | `.lovable/proofs/p0_ledger_contract_validation_proof.txt` (добавить runtime секцию) |
+| Действие | Файл                                                      |
+| -------- | --------------------------------------------------------- |
+| Обновить | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`       |
+| Обновить | `.lovable/proofs/p0_ledger_contract_validation_proof.txt` |
 
 
 ## STOP-guard
 
-Если хотя бы один runtime smoke row не проходит DDL/runtime contract → STOP. Не переходить к downstream parent propagation, batch/import tree, cutover marker.
+Если хотя бы одна runtime row нарушает DDL contract → зафиксировать FAIL, не продолжать rollout.
