@@ -2,281 +2,173 @@
 
 &nbsp;
 
-1. Исправь несоответствие по количеству reason_code.  
-В плане сейчас написано «17 значений», но в DDL перечислено 18 кодов:  
-paid_order, trial_start, subscription_renew, subscription_extend, admin_grant, bulk_import, rule_engine_bonus, payment_failed, trial_expired, admin_cancel, subscription_expired, admin_revoke, cron_cleanup, violation_kick, duplicate_skip, already_active, no_matching_target, batch_orchestration.  
-Это нужно синхронизировать в тексте плана, TS union и proof, иначе подрядчик легко уедет в off-by-one.
-2. writeLedgerEntry() должен сразу возвращать не только id, но и execution_key.  
-Даже если execution_key генерится дефолтом БД, helper обязан делать select('id, execution_key') и возвращать оба поля.  
-Иначе следующий патч с parent_execution_key снова потребует переделки foundation helper.
-3. Зафиксируй явный контракт target_key для каждого target_type в v22.3.  
-Сейчас план нормализует target_type, но не фиксирует одинаково target_key. Нужна таблица:  
+1. Runtime smoke не считать PASS при отсутствии реальных строк.  
+Если после phase1_ledger_schema_ready_at / до phase1_ledger_cutover_at для любого из 3 path нет ни одной ledger-row, статус должен быть не PASS, а PENDING_RUNTIME_EVENT. Cutover в таком случае запрещён.
+2. Исправь JSON-проверку post_check.  
+Не result->>'post_check', а result->'post_check' IS NOT NULL.  
+И отдельно machine-check на 5 canonical keys:  
 
-  - product → products_v2.code или детерминированный product key
-  - subscription_tier → tariff_id/tariff.code по единому правилу
-  - club → club_id или club.slug по единому правилу
-  - batch → {batch_id}  
-  Без этого proof по target-resolution останется расплывчатым.
-4. &nbsp;
-5. В p0_ledger_contract_validation_proof.txt добавь отдельный machine-check по result для каждого action_type.  
-Не только schema post_check, но и:  
+  - entitlement
+  - telegram
+  - subscription
+  - ledger_row
+  - target_resolution
+3. &nbsp;
+4. Паттерны source_event_key проверь по фактическим префиксам, а не по одному примеру.  
+Для smoke-поиска используй не только:  
 
-  - grant/extend/reactivate → есть access_start, access_end, window_days, source_window_rule, post_check
-  - revoke/expire → есть revoked_from, previous_access_end, reconcile_basis, other_active_sources_checked
-  - skip → есть skip_reason
-  - failed → есть failed_at_step, error_message
-  - batch_start → post_check IS NULL  
-  И отдельной проверкой: post-check merge не затёр поля окна доступа.
-6. &nbsp;
-7. Для subscription-charge и subscription-admin-actions зафиксируй branch-level mapping не только по reason_code, но и по source_event_type + source_subject_type.  
-То есть не общий дефолт на файл, а по каждой ветке:  
+  - gafo:webhook:%
+  - sub-renew:%
+  - cron-reconcile:%  
+  а все реально допустимые варианты из текущего wrapper-контракта:
+  - gafo:%
+  - sub-renew:%
+  - cron-reconcile:% / sr:% — взять фактический префикс из кода, не гадать.
+5. &nbsp;
+6. Добавь отдельный machine-check на отсутствие старых ledger-значений в БД, а не только grep по коду.  
+Проверить в access_grant_ledger после watermark:  
 
-  - renew/extend
-  - failed_revoke
-  - cancel
-  - grant_access
-  - extend
-  - refund+revoke  
-  Иначе часть строк снова начнёт писать неверный source_subject_type.
-8. &nbsp;
-9. AccessRevoker оставь generic до конца: caller обязан передавать targetType, targetKey, targetRef, reasonCode, reconcileBasis, а helper ничего не “досочиняет” сам.  
-Это особенно важно для subscriptions-reconcile, где у тебя уже есть block-by-block mapping. Нужно прямо зафиксировать как обязательный контракт helper-а.
-10. p0_ledger_contract_validation_proof.txt делай не только code-based, но и runtime-based.  
-Минимум по одному реальному ledger row после patch для:  
+  - target_type IN ('telegram_access','subscription') = 0
+  - status = 'completed' AND action_type <> 'batch_start' = 0
+7. &nbsp;
+8. Grep scope зафиксируй жёстко.  
+Искать только в:  
 
-  - grant-access-for-order
-  - subscription-charge
-  - subscriptions-reconcile  
-  И уже по этим строкам проверяй CHECK-совместимость, result-contract и merge post_check.
+  - supabase/functions/_shared/
+  - supabase/functions/grant-access-for-order/
+  - supabase/functions/subscription-charge/
+  - supabase/functions/subscriptions-reconcile/  
+  И явно исключить:
+  - .lovable/proofs/
+  - supabase/migrations/
+  - archival/test paths  
+  Иначе будут ложные срабатывания.
+9. &nbsp;
+10. Helper contract freeze надо проверить не текстом, а grep/assertion.  
+В proof добавить:  
+
+  - writeLedgerEntry возвращает id, execution_key, error
+  - executeRevoke принимает targetType, targetKey, targetRef, reasonCode, reconcileBasis
+  - buildPostCheck не содержит telegram_grant, только telegram
 11. &nbsp;
-12. EditDealDialog.tsx не клади в archival.  
-Оставь отдельную секцию:  
-UI-only non-access paths  
-с формулировкой, которую ты уже зафиксировал. Это правильно и не смешивает UI-логику с историческими скриптами.
+12. Для runtime smoke нужен явный fallback-сценарий ручного прогона.  
+Если cron/path ещё не сработал, в плане добавь:  
+
+  - как вызвать subscriptions-reconcile
+  - как вызвать тестовый grant-access-for-order
+  - как вызвать тестовый subscription-charge:renew  
+  И только после этого собирать p0_ledger_runtime_smoke_proof.txt.
+13. &nbsp;
+14. Обновление p0_ledger_contract_validation_proof.txt делай add-only.  
+Новая секция: Runtime Validation Gate (v22.4) без переписывания уже утверждённых секций.
+15. Cutover guard сформулируй жёстче.  
+phase1_ledger_cutover_at запрещено писать, пока одновременно не выполнены:  
+
+  - runtime_smoke = PASS
+  - grep_guard = PASS
+  - contract_validation = PASS
+  - orphan_downstream = 0
+  - missing_required_post_check = 0
+16. &nbsp;
+17. Файлы proof лучше перечислить так:
 
 &nbsp;
 
 &nbsp;
 
-После этих правок PATCH v22.3 можно считать корректным foundation-fix перед продолжением Steps 4–10.
+&nbsp;
+
+- создать p0_ledger_runtime_smoke_proof.txt
+- создать p0_ledger_grep_guard_proof.txt
+- обновить p0_ledger_contract_validation_proof.txt
+- при необходимости создать p0_runtime_manual_smoke_steps.txt, если реальных событий ещё нет
 
 &nbsp;
 
-# План: PATCH v22.3 — Foundation Fix
+&nbsp;
+
+После этих правок план можно считать финальным для PATCH v22.4.
+
+&nbsp;
+
+# План: PATCH v22.4 — Runtime Validation Gate
 
 ## Цель
 
-Исправить shared helpers и уже обёрнутые paths до продолжения rollout Steps 4–10. Все ledger-записи должны проходить DDL CHECKs.
-
-## Диагностика: 14 нарушений DDL
-
-
-| #   | Файл                               | Дефект                                                                               | DDL CHECK                                                  |
-| --- | ---------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| 1   | fulfillment-executor.ts L29        | `status: 'completed'|'pending'`                                                      | `chk_action_status_compat`: grant→granted, extend→extended |
-| 2   | fulfillment-executor.ts L38-42     | `PostCheckResult` с `applicable: boolean`                                            | Контракт v22: `applicability: 'required'|'not_applicable'` |
-| 3   | fulfillment-executor.ts L112       | `updateLedgerPostCheck` ставит `status: 'completed'` + replace result                | Затирает access window fields; wrong status                |
-| 4   | fulfillment-executor.ts L138       | `telegram_grant` как ключ post_check                                                 | Контракт: `telegram`                                       |
-| 5   | fulfillment-executor.ts L169-174   | `validateSourceEventKey()` проверяет только `:`                                      | STOP-guard не закрыт                                       |
-| 6   | access-revoker.ts L61,94           | `target_type: 'telegram_access'`                                                     | `chk_target_type`: нет такого значения                     |
-| 7   | access-revoker.ts L97              | `status: 'completed'` для revoke                                                     | должен быть `'revoked'`                                    |
-| 8   | access-revoker.ts L16-28           | Нет `targetType`, `targetKey`, `targetRef`, `reconcileBasis`, `profileId`, `orderId` | generic helper, не telegram-only                           |
-| 9   | grant-access-for-order L689        | `reason_code: 'order_grant'`                                                         | `chk_reason_code`: нужен `'paid_order'`                    |
-| 10  | grant-access-for-order L690        | `target_type: 'subscription'`                                                        | Временно `'product'` для v22.3                             |
-| 11  | grant-access-for-order L696        | `status: 'completed'`                                                                | grant→`'granted'`, extend→`'extended'`                     |
-| 12  | subscription-charge L1536          | `reason_code: 'subscription_renewal'`                                                | нужен `'subscription_renew'`                               |
-| 13  | subscription-charge L1537          | `target_type: 'subscription'`                                                        | Временно `'subscription_tier'`                             |
-| 14  | subscription-charge L1541          | `status: 'completed'`                                                                | extend→`'extended'`                                        |
-| 15  | subscriptions-reconcile L144       | `reason: 'trial_canceled'`                                                           | нужен `'trial_expired'`                                    |
-| 16  | subscriptions-reconcile L204       | `reason: 'access_expired'`                                                           | нужен `'subscription_expired'`                             |
-| 17  | subscriptions-reconcile L249       | `reason: 'no_valid_access'`                                                          | нужен `'cron_cleanup'`                                     |
-| 18  | subscriptions-reconcile L252       | `sourceSubjectType: 'telegram_access'`                                               | `chk_source_subject_type`: нет, нужен `'cron_job'`         |
-| 19  | subscriptions-reconcile all blocks | `target_type` наследуется как `'telegram_access'` через helper                       | block-by-block mapping нужен                               |
-
+Подтвердить, что foundation-fix v22.3 реально пишет валидные ledger rows в runtime, а не только компилируется. Создать два proof-файла и зафиксировать helper contract freeze.
 
 ## Шаги реализации
 
-### Шаг 1. Переписать `fulfillment-executor.ts`
+### Шаг 1. Runtime smoke — запросить реальные ledger rows из БД
 
-**LedgerEntry interface** — strict unions по DDL:
+Выполнить SQL-запрос к `access_grant_ledger` для получения последних записей от каждого из 3 уже обёрнутых path-ов:
 
-- `status`: `'granted'|'extended'|'revoked'|'expired'|'reactivated'|'skipped'|'failed'|'completed'`
-- `target_type`: `'product'|'club'|'training_module'|'feature'|'batch'|'domain'|'menu_item'|'training_lesson'|'subscription_tier'`
-- `reason_code`: все 17 значений из `chk_reason_code`
-- `source_subject_type`: `'order'|'subscription'|'admin_action'|'import_batch'|'cron_job'|'system'|'rule_engine_trigger'`
+- `source_event_key LIKE 'gafo:webhook:%'` → grant-access-for-order
+- `source_event_key LIKE 'sub-renew:%'` → subscription-charge
+- `source_event_key LIKE 'cron-reconcile:%'` → subscriptions-reconcile
 
-**PostCheckResult** — нормализованная схема, унифицированные ключи:
+По каждой записи проверить:
 
-```ts
-interface PostCheckItem {
-  applicability: 'required' | 'not_applicable';
-  status: 'pass' | 'warn' | 'fail' | null;
-  details?: string;
-  ref?: string;
-}
-interface PostCheckResult {
-  entitlement: PostCheckItem;
-  telegram: PostCheckItem;        // НЕ telegram_grant
-  subscription: PostCheckItem;
-  ledger_row: PostCheckItem;
-  target_resolution: PostCheckItem;
-}
-```
+1. `action_type ↔ status` валиден
+2. `reason_code` из DDL словаря
+3. `target_type` из DDL словаря
+4. `source_subject_type` из DDL словаря
+5. `chk_has_subject` — есть хотя бы один subject ref
+6. `result->>'post_check'` существует и соответствует нормализованной схеме
+7. result access window fields не затёрты (access_start, access_end, window_days присутствуют для grant/extend)
 
-**updateLedgerPostCheck()** — merge, не replace:
+Если записей ещё нет (paths ещё не запускались после deploy) — зафиксировать это в proof как "pending first runtime event" и предложить ручной smoke-test.
 
-- Сначала читает текущий `result` из БД
-- Мержит `post_check` в существующий result
-- НЕ трогает `status`, НЕ затирает `access_start/access_end/window_days/...`
+### Шаг 2. Глобальный grep по live scope
 
-**validateSourceEventKey()** — жёсткая валидация:
+Поиск по `supabase/functions/_shared/`, `supabase/functions/grant-access-for-order/`, `supabase/functions/subscription-charge/`, `supabase/functions/subscriptions-reconcile/` на:
 
-- Throw при пустом ключе или отсутствии `:`
-- Throw при обнаружении ISO timestamp pattern, `Date.now()`, `Math.random()`, `new Date()`
-- Допустимые discriminators: UUID, integer id, hash
+- `target_type.*'telegram_access'` в ledger-контексте
+- `target_type.*'subscription'` (без `_tier`) в ledger-контексте
+- `status.*'completed'` в ledger-контексте (не payment status)
+- `applicable:` (old-style boolean) в post_check
+- `telegram_grant` как ключ в ledger post_check
 
-**writeLedgerEntry()** — runtime-валидация всего DDL до insert:
+Результаты зафиксировать в proof.
 
-- `action_type ↔ status` по `chk_action_status_compat`
-- `reason_code` из словаря
-- `target_type` из словаря
-- `source_subject_type` из словаря
-- `parent_event_key` и `parent_execution_key` — оба NULL или оба NOT NULL
-- Хотя бы один subject reference NOT NULL (`order_id || source_order_id || source_subscription_id || source_offer_id || source_subject_ref`)
-- `batch_start ↔ batch` symmetry
-- При нарушении — throw, не silent fail
+### Шаг 3. Создать `p0_ledger_runtime_smoke_proof.txt`
 
-**buildPostCheck()** — переписать под новую схему:
+Содержимое:
 
-- `applicable: true` → `applicability: 'required'`
-- `applicable: false` → `applicability: 'not_applicable'`
-- `status: 'written'` → `status: 'pass'`
-- `status: 'not_applicable'` → `status: null`
-- Ключ `telegramGrant` в input → маппится на `telegram` в output
+- Для каждого path: фактическая ledger row (или статус "pending")
+- Machine-check по 7 пунктам выше
+- Вердикт PASS/FAIL
 
-### Шаг 2. Переписать `access-revoker.ts`
+### Шаг 4. Создать `p0_ledger_grep_guard_proof.txt`
 
-Сделать **generic helper**, не telegram-only.
+Содержимое:
 
-**RevokeContext** — расширить:
+- Перечень grep-запросов
+- Результат: 0 matches для каждого запрещённого паттерна в live scope
+- Отдельная секция: helper contract freeze
 
-```ts
-interface RevokeContext {
-  userId: string;
-  profileId?: string | null;
-  orderId?: string | null;
-  targetType: 'product' | 'club' | 'subscription_tier';  // обязательный
-  targetKey: string;                                        // обязательный
-  targetRef?: string | null;
-  subscriptionId?: string | null;
-  reasonCode: string;                  // renamed from reason
-  reconcileBasis: string;              // обязательный, передаётся caller-ом
-  sourceEventType: 'webhook' | 'cron' | 'admin' | 'system';
-  sourceEventKey: string;
-  sourceSubjectType: string;
-  sourceSubjectRef?: string | null;
-  parentEventKey?: string | null;
-  parentExecutionKey?: string | null;
-  metadata?: Record<string, unknown>;
-}
-```
+### Шаг 5. Зафиксировать helper contract freeze
 
-**executeRevoke():**
+В `p0_ledger_grep_guard_proof.txt` добавить секцию "Helper Contract Freeze":
 
-- Использовать `ctx.targetType`, `ctx.targetKey`, `ctx.targetRef` из caller, не собирать внутри
-- `status: 'revoked'` для action_type='revoke'
-- `status: 'skipped'` для action_type='skip' — OK
-- `result.reconcile_basis = ctx.reconcileBasis` — из caller, не из внутренней логики
-- Active-source check через authoritative tables, не через ledger
+- `writeLedgerEntry()` → возвращает `{ id, execution_key, error }`
+- `executeRevoke()` → принимает `targetType/targetKey/targetRef/reasonCode/reconcileBasis` только извне
+- `buildPostCheck()` → 5 canonical keys: `entitlement, telegram, subscription, ledger_row, target_resolution`
 
-### Шаг 3. Исправить grant-access-for-order/index.ts
+### Шаг 6. Обновить `p0_ledger_contract_validation_proof.txt`
 
-- `reason_code: 'order_grant'` → `'paid_order'`
-- `target_type: 'subscription'` → `'product'` (временно v22.3, одна строка = primary target)
-- `status: 'completed'` → `actionType === 'grant' ? 'granted' : 'extended'`
-- `post_check` → через обновлённый `buildPostCheck()`
+Добавить секцию "Runtime validation" со ссылкой на runtime smoke proof.
 
-### Шаг 4. Исправить subscription-charge/index.ts
-
-- `reason_code: 'subscription_renewal'` → `'subscription_renew'`
-- `target_type: 'subscription'` → `'subscription_tier'` (временно v22.3)
-- `status: 'completed'` → `'extended'`
-- `source_event_type: 'cron'` — оставить для cron-branch (это реальный origin)
-- `post_check` → через обновлённый `buildPostCheck()`
-- Добавить `profile_id`
-
-### Шаг 5. Исправить subscriptions-reconcile/index.ts
-
-Block-by-block target mapping:
+## Файлы
 
 
-| Block                    | Семантика                 | reason_code              | target_type           | source_subject_type |
-| ------------------------ | ------------------------- | ------------------------ | --------------------- | ------------------- |
-| 1. Expired cancellations | subscription-layer expire | `'subscription_expired'` | `'subscription_tier'` | `'subscription'`    |
-| 2. Trial expired         | subscription-layer expire | `'trial_expired'`        | `'subscription_tier'` | `'subscription'`    |
-| 3. Access expired        | subscription-layer expire | `'subscription_expired'` | `'subscription_tier'` | `'subscription'`    |
-| 4. Telegram sync         | club projection sync      | `'cron_cleanup'`         | `'club'`              | `'cron_job'`        |
+| Действие | Файл                                                                                |
+| -------- | ----------------------------------------------------------------------------------- |
+| Создать  | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`                                 |
+| Создать  | `.lovable/proofs/p0_ledger_grep_guard_proof.txt`                                    |
+| Обновить | `.lovable/proofs/p0_ledger_contract_validation_proof.txt` (добавить runtime секцию) |
 
 
-Каждый блок передаёт в `executeRevoke()` свой `targetType`, `targetKey`, `reasonCode`, `reconcileBasis`.
+## STOP-guard
 
-### Шаг 6. Классифицировать EditDealDialog.tsx
-
-Категория: **UI-only non-access path** (не archival, не grant, не revoke).
-Обновить `p0_hardcode_archival_ignored_proof.txt`:
-
-- Отдельная секция "UI-only non-access paths"
-- Запись: `EditDealDialog.tsx L272 — UI display logic (shows next_charge_at field), not access grant/revoke path, no ledger impact. Follow-up UI-only patch.`
-
-### Шаг 7. Создать `p0_ledger_contract_validation_proof.txt`
-
-По каждому обёрнутому path (grant-access-for-order, subscription-charge, subscriptions-reconcile) проверить:
-
-1. `action_type ↔ status` валиден по `chk_action_status_compat`
-2. `reason_code` из словаря `chk_reason_code`
-3. `target_type` из словаря `chk_target_type`
-4. `source_subject_type` из словаря `chk_source_subject_type`
-5. `chk_has_subject` — хотя бы один subject ref NOT NULL
-6. `chk_parent_keys_pair` — оба NULL или оба NOT NULL
-7. `chk_batch_row_contract` — N/A для текущих paths
-8. `result.post_check` — ключи только из `{entitlement, telegram, subscription, ledger_row, target_resolution}`
-9. `result.post_check` — schema `{applicability, status, details?, ref?}`
-10. result не затёрт post-check update-ом (access window fields сохранились после merge)
-11. Нет `'completed'` вне `batch_start`
-12. Нет `'telegram_access'` / `'subscription'` как target_type
-
-### Временный контракт v22.3
-
-В v22.3 исправляем только валидность уже записываемых строк. Каждый path пишет одну строку с одним primary target_type. Полноценная декомпозиция event → product / subscription_tier / club rows выполняется следующим патчем Steps 4–10.
-
-### STOP-guards v22.3
-
-1. Любое значение status/action_type/target_type/reason_code/source_subject_type вне DDL CHECK → STOP
-2. `post_check` использует `applicable: boolean` вместо `applicability: string` → STOP
-3. `post_check` использует ключ `telegram_grant` вместо `telegram` → STOP
-4. `'completed'` как status вне `batch_start` → STOP
-5. `'telegram_access'` / `'subscription'` как target_type → STOP
-6. `updateLedgerPostCheck` затирает result вместо merge → STOP
-7. EditDealDialog не классифицирован в proof → STOP
-8. `validateSourceEventKey` не блокирует timestamp discriminators → STOP
-
-### Порядок
-
-1. Переписать `_shared/fulfillment-executor.ts`
-2. Переписать `_shared/access-revoker.ts`
-3. Исправить `grant-access-for-order/index.ts`
-4. Исправить `subscription-charge/index.ts`
-5. Исправить `subscriptions-reconcile/index.ts`
-6. Обновить `p0_hardcode_archival_ignored_proof.txt` (EditDealDialog → UI-only non-access path)
-7. Создать `p0_ledger_contract_validation_proof.txt`
-
-### После v22.3
-
-Только после PASS `p0_ledger_contract_validation_proof.txt` продолжать Steps 4–10:
-
-- Downstream parent propagation
-- Remaining revoke paths
-- Batch/import tree
-- Path-specific transactional RPCs
-- Target decomposition (multi-row per event)
-- Coverage proofs + cutover marker
+Если хотя бы один runtime smoke row не проходит DDL/runtime contract → STOP. Не переходить к downstream parent propagation, batch/import tree, cutover marker.
