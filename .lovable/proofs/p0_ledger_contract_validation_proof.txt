@@ -264,12 +264,72 @@ Queue processor reads `meta` from queue rows and forwards parent keys downstream
 When `meta` is null (old rows or autonomous enqueues), parent keys are passed as null.
 No crash, no forced lineage — backward compatible. ✅
 
+## Sub-patch C: Batch/Import Tree (v22.6)
+
+Added: 2026-03-30
+
+### chk_has_subject verification for batch/import paths
+
+| Path | source_subject_ref | Other subject FKs | chk_has_subject |
+|------|-------------------|-------------------|-----------------|
+| bepaid batch_start | batchId (UUID) | — | ✅ PASS |
+| bepaid row-level | payment.uid / `row:{index}` | order_id, source_order_id, profile_id, user_id | ✅ PASS |
+| getcourse file batch_start | batchId (UUID) | — | ✅ PASS |
+| getcourse file row-level | externalId / `row:{index}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
+| getcourse API batch_start | batchId (UUID) | — | ✅ PASS |
+| getcourse API row-level | deal.id / `row:{index}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
+
+### batch_start contract validation
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| action_type = 'batch_start' | batch_start | batch_start | ✅ PASS |
+| status = 'completed' | completed | completed | ✅ PASS |
+| target_type = 'batch' | batch | batch | ✅ PASS |
+| reason_code = 'batch_orchestration' | batch_orchestration | batch_orchestration | ✅ PASS |
+| source_subject_type = 'import_batch' | import_batch | import_batch | ✅ PASS |
+| chk_batch_row_contract | batch_start → target_type='batch' | ✅ | ✅ PASS |
+| post_check | NULL (batch rows) | Not provided | ✅ PASS |
+
+### Row-level contract validation
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| action_type ↔ status | grant→granted, skip→skipped, grant→failed | Via outcome mapping | ✅ PASS |
+| reason_code | bulk_import, duplicate_skip, no_matching_target | Per outcome | ✅ PASS |
+| target_type | subscription_tier / product (NEVER batch) | Via target_type resolution | ✅ PASS |
+| source_subject_type | import_batch | import_batch | ✅ PASS |
+| parent keys | Both set (from batch_start) | parent_event_key + parent_execution_key | ✅ PASS |
+| failed result | failed_at_step + error_message | In catch block | ✅ PASS |
+
+### Machine-check: no duplicate post-switch ledger block (from Sub-patch B)
+
+After cleanup in subscription-admin-actions, revoke branches have ONLY inline ledger path.
+Duplicate post-switch revoke ledger path is ABSENT. ✅
+
+### Volume guard order verification
+
+| Import | Guard before batch_start | Confirmed |
+|--------|------------------------|-----------|
+| bepaid-report-import | ✅ (after parse, before batch_start) | ✅ |
+| getcourse file import | ✅ (in main handler, before batch_start) | ✅ |
+| getcourse API import | ✅ (in main handler, before batch_start) | ✅ |
+
+### source_event_type by origin
+
+| Path | Expected | Actual | Status |
+|------|----------|--------|--------|
+| bepaid-report-import | admin | admin | ✅ PASS |
+| getcourse file import | admin | admin | ✅ PASS |
+| getcourse API import | system | system | ✅ PASS |
+
 ### Sprint status
 
 | Component | Status |
 |-----------|--------|
 | Sub-patch A (revoke paths) | ✅ done |
 | Sub-patch B (parent propagation) | ✅ done in code |
-| Runtime verification for B | ⏸ deferred_non_blocking |
-| Sub-patch C (batch/import) | 📋 next |
+| Sub-patch C (batch/import) | ✅ done in code |
+| Runtime verification | ⏸ deferred_non_blocking |
+| Sub-patch D (consolidated proof finalization) | 📋 next |
 | phase1_ledger_cutover_at | ❌ NOT SET |

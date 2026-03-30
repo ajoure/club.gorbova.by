@@ -1,0 +1,57 @@
+# Phase 1 Ledger Path Coverage Proof
+# Created: 2026-03-30 (PATCH v22.6 Sub-patch C)
+# Scope: All ledger-wrapped paths — access-affecting and batch/meta
+
+## Section A: Access-affecting rows (grant/skip/failed row-level)
+
+These rows represent actual access events and participate in access-proof,
+target-resolution proof, and entitlement verification.
+
+| # | Path | source_event_key pattern | action_types | target_type | Status |
+|---|------|------------------------|--------------|-------------|--------|
+| 1 | grant-access-for-order | `gafo:webhook:{orderId}` | grant, extend | product | ✅ wrapped |
+| 2 | subscription-charge (renew) | `sub-renew:{subId}:{paymentId}` | extend | subscription_tier | ✅ wrapped |
+| 3 | subscriptions-reconcile (cancel_at) | `cron-reconcile:{jobRunId}:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
+| 4 | subscriptions-reconcile (trial) | `cron-reconcile:{jobRunId}:trial:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
+| 5 | subscriptions-reconcile (expired) | `cron-reconcile:{jobRunId}:expired:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
+| 6 | subscriptions-reconcile (tg sync) | `cron-reconcile:{jobRunId}:tg:{userId}:{clubId}` | revoke, skip | club | ✅ wrapped |
+| 7 | telegram-revoke-access | `tg-revoke:{userId}:{clubId}:{auditId}` | revoke | club | ✅ wrapped |
+| 8 | telegram-check-expired | `cron-expire:{jobRunId}:{accessId}` | revoke | club | ✅ wrapped |
+| 9 | telegram-kick-violators | `cron-kick:{jobRunId}:{memberId}` | revoke | club | ✅ wrapped |
+| 10 | cancel-trial | `trial-cancel:{subId}:{auditLogId}` | revoke | subscription_tier | ✅ wrapped |
+| 11 | subscription-charge (trial_ended) | `sub-trial-expire:{subId}:{chargeRunId}` | revoke | subscription_tier | ✅ wrapped |
+| 12 | subscription-admin-actions:cancel | `admin-cancel:{subId}:{auditLogId}` | revoke | subscription_tier | ✅ wrapped |
+| 13 | subscription-admin-actions:revoke | `admin-revoke:{subId}:{auditLogId}` | revoke | subscription_tier | ✅ wrapped |
+| 14 | subscription-admin-actions:delete | `admin-delete:{subId}:{auditLogId}` | revoke | subscription_tier | ✅ wrapped |
+| 15 | subscription-admin-actions:refund+revoke | `admin-refund-revoke:{subId}:{orderId}` | revoke | subscription_tier | ✅ wrapped |
+| 16 | bepaid-report-import (row-level) | `bepaid-import:{batchId}:row:{uid}` | grant, skip | subscription_tier, product | ✅ wrapped |
+| 17 | getcourse-import-deals file (row-level) | `gc-import:{batchId}:row:{externalId}` | grant, skip | subscription_tier, product | ✅ wrapped |
+| 18 | getcourse-import-deals API (row-level) | `gc-import:{batchId}:row:{dealId}` | grant, skip | subscription_tier, product | ✅ wrapped |
+
+## Section B: Batch/meta rows (batch_start, target_type='batch')
+
+These rows are for batch orchestration ONLY. They do NOT participate in:
+- access-proof checks
+- target-resolution proof
+- entitlement/subscription projection verification
+
+| # | Path | source_event_key pattern | target_type | Status |
+|---|------|------------------------|-------------|--------|
+| B1 | bepaid-report-import (batch_start) | `bepaid-import-batch:{batchId}` | batch | ✅ wrapped |
+| B2 | getcourse file import (batch_start) | `gc-import-batch:{batchId}` | batch | ✅ wrapped |
+| B3 | getcourse API import (batch_start) | `gc-import-batch:{batchId}` | batch | ✅ wrapped |
+
+## Separation rule
+
+- target_type='batch' exists ONLY in Section B rows
+- Section A rows NEVER use target_type='batch'
+- Proof/invariant checks MUST filter: WHERE target_type != 'batch'
+
+## Coverage summary
+
+- Total access-affecting paths: 18
+- Total batch/meta paths: 3
+- Total wrapped paths: 21
+- Unwrapped paths: 0
+
+## phase1_ledger_cutover_at = NOT SET

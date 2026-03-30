@@ -1,5 +1,5 @@
 # Phase 1 Revoke Path Inventory
-# Updated: 2026-03-30 (PATCH v22.6 Sub-patch A — Consolidated)
+# Updated: 2026-03-30 (PATCH v22.6 Sub-patch C — sprint status update)
 
 ## Statuses: pending | wrapped_in_code_verified | wrapped_claim_removed | runtime_deferred_non_blocking | excluded_from_scope | pending_next_subpatch
 
@@ -54,6 +54,13 @@ Status corrected: wrapped_claim_removed → re-wrapped and verified in this cons
 |-----------|--------|
 | Sub-patch A (revoke paths) | ✅ done |
 | Sub-patch B (parent propagation) | ✅ done in code |
-| Runtime verification for B | ⏸ deferred_non_blocking |
-| Sub-patch C (batch/import) | 📋 next |
+| Sub-patch C (batch/import) | ✅ done in code |
+| Runtime verification | ⏸ deferred_non_blocking |
+| Sub-patch D (consolidated proof finalization) | 📋 next |
 | phase1_ledger_cutover_at | ❌ NOT SET |
+
+## Sub-patch C note
+
+Sub-patch C = last main code patch for v22.6.
+After this, only one consolidated follow-up for proof/coverage/invariant finalization
+is permitted, with no new code changes unless new facts emerge from code or database.
