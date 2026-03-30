@@ -529,7 +529,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             <div className="space-y-2">
               {/* Active grants */}
               {effectiveGrants.filter(g => g.effective_status === "active").map((g, idx) => (
-                <EffectiveGrantCard key={`active-${idx}`} grant={g} formatDuration={formatDuration} />
+                <EffectiveGrantCard key={`active-${idx}`} grant={g} getDurationDisplay={getDurationDisplay} />
               ))}
               {/* Overridden grants (collapsed) */}
               {effectiveGrants.filter(g => g.effective_status === "overridden").length > 0 && (
