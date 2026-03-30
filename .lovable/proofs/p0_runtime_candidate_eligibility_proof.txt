@@ -1,0 +1,112 @@
+# Phase 1 Ledger — Runtime Candidate Eligibility Proof
+# Generated: 2026-03-30 (PATCH v22.5)
+# Purpose: Document why subscription-charge and subscriptions-reconcile
+#          returned BLOCKED_NO_ELIGIBLE_INPUT in v22.4 smoke, and
+#          how v22.5 fixture resolved reconcile.
+
+## 1. subscription-charge (v22.4 smoke: BLOCKED_NO_ELIGIBLE_INPUT)
+
+### Candidate analysis
+
+Only candidate with next_charge_at in the past:
+
+| Field | candidate e53c5c45-60d3-4d58-aab1-10a01bd97a08 |
+|-------|------------------------------------------------|
+| status | active |
+| next_charge_at | 2026-03-08 14:25:26+00 |
+| auto_renew | false |
+| charge_attempts | 0 |
+| billing_type | mit |
+| payment_method_id | NOT NULL (has method) |
+
+### Gate-by-gate eligibility
+
+| # | Gate | Expected | Actual | Pass? |
+|---|------|----------|--------|-------|
+| 1 | next_charge_at <= endOfDay(APP_TZ) | <= 2026-03-30 | 2026-03-08 | ✅ YES |
+| 2 | status IN ('active','trial','past_due') | match | 'active' | ✅ YES |
+| 3 | auto_renew = true | true | false | ❌ EXCLUDED |
+| 4 | charge_attempts < 3 | < 3 | 0 | ✅ YES |
+| 5 | wasChargeAttemptedToday() = false | false | N/A (excluded at gate 3) | — |
+| 6 | billing_type = 'provider_managed' | provider_managed | mit | ❌ EXCLUDED |
+| 7 | payment_method_id IS NOT NULL | NOT NULL | NOT NULL | ✅ YES |
+
+### Conclusion
+
+Candidate excluded by gates 3 (auto_renew=false) AND 6 (billing_type=mit).
+This is BLOCKED_NO_ELIGIBLE_INPUT — the function executed correctly but no candidate passed all gates.
+
+### Bug found during v22.4 smoke
+
+subscription-charge/index.ts line 2212: `todayUtc` was undefined.
+Fixed to `todayKey`. Audit-log insert only, no ledger impact. Deployed 2026-03-30.
+
+### v22.5 status: BLOCKED_SAFE_GUARD
+
+No sandbox/test billing mode available in current environment:
+- BEPAID_SECRET_KEY is production key (no test_mode app_setting found)
+- No sandbox payment tokens exist for test subscriptions
+- Creating a fixture with provider_managed + valid payment_method_id would trigger real bePaid charge attempt
+- A payment failure ledger row proves the failed-contract, NOT the success extend-contract
+
+Therefore subscription-charge:renew success path cannot be safely smoke-tested
+without sandbox billing infrastructure. Status: BLOCKED_SAFE_GUARD.
+
+## 2. subscriptions-reconcile (v22.4 smoke: BLOCKED_NO_ELIGIBLE_INPUT → v22.5: PASS)
+
+### v22.4 candidate analysis
+
+| Block | Candidates found | Why excluded |
+|-------|-----------------|--------------|
+| Block 1 (cancel_at_passed) | 0 | No subscriptions with cancel_at < now() AND status != 'canceled' |
+| Block 2 (trial_expired) | 1 (2130e4fc) | cancel_at IS NULL → block only writes ledger when cancel_at is set |
+| Block 3 (access_end_at expired) | 0 | No subs with access_end_at < dayStart AND status IN (active, past_due) |
+| Block 4 (telegram sync) | 0 | All telegram_access checked via hasValidAccess → no revoke needed |
+
+### Block 2 candidate detail: 2130e4fc-7ca5-4e70-aada-fa9d8755547a
+
+| Field | Value |
+|-------|-------|
+| status | trial |
+| trial_end_at | 2026-01-27 (past) |
+| cancel_at | NULL |
+| access_end_at | 2026-03-12 (past) |
+| auto_renew | false |
+| billing_type | mit |
+| payment_method_id | NULL |
+
+Block 2 code: executeRevoke only called when `sub.cancel_at` is set.
+Since cancel_at IS NULL, subscription is left for subscription-charge to handle.
+This is by design, not a code failure.
+
+### v22.5 fixture resolution
+
+Fixture B created a controlled subscription:
+
+| Field | Value |
+|-------|-------|
+| id | 57582a40-9952-447f-a39f-f18122217b60 |
+| user_id | 03182abc-2857-4c11-9e7c-8a52a81af1f4 |
+| product_id | 11c9f1b8-0355-4753-bd74-40b42aa53616 (Gorbova Club) |
+| tariff_id | 31f75673-a7ae-420a-b5ab-5906e34cbf84 (CHAT) |
+| status | active |
+| cancel_at | 2026-03-29 00:00:00+00 (yesterday) |
+| access_end_at | 2026-03-29 00:00:00+00 |
+| meta.smoke_fixture | v22.5 |
+
+Pre-check isolation:
+- other_active_subs for user = 0
+- entitlements for user = 0
+- telegram_access_grants for user = 0
+
+Result: Block 1 (cancel_at_passed) picked up the subscription, updated status to canceled,
+called executeRevoke(), and wrote a valid ledger row. See p0_ledger_runtime_smoke_proof.txt.
+
+## Machine-check rule
+
+| Status | Definition |
+|--------|-----------|
+| PASS | Path invoked, ≥1 new valid ledger row created, all DDL/runtime checks pass |
+| BLOCKED_NO_ELIGIBLE_INPUT | Path invoked correctly, no candidates passed eligibility gates |
+| BLOCKED_SAFE_GUARD | Path cannot be safely tested due to production billing risk |
+| FAIL | Path invoked, ledger row created but violates DDL/runtime contract |

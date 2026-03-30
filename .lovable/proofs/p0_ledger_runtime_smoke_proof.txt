@@ -1,14 +1,16 @@
 # Phase 1 Ledger Runtime Smoke Proof
 # Generated: 2026-03-30 (PATCH v22.4)
-# Updated: 2026-03-30 — runtime smoke execution
+# Updated: 2026-03-30 — PATCH v22.5 reconcile fixture smoke
 
 ## Proof metadata
 
-proof_started_at: 2026-03-30T06:27:37.351490+00:00
-before_counts: gafo=0, sub-renew=0, cron-reconcile=0
-after_counts:  gafo=1, sub-renew=0, cron-reconcile=0
+proof_started_at (v22.4): 2026-03-30T06:27:37.351490+00:00
+proof_started_at (v22.5): 2026-03-30T06:40:28.163217+00:00
 
-## 1. grant-access-for-order
+before_counts (v22.5): gafo=1, sub-renew=0, cron-reconcile=0
+after_counts (v22.5):  gafo=1, sub-renew=0, cron-reconcile=1
+
+## 1. grant-access-for-order (v22.4)
 
 ### Invocation
 
@@ -67,7 +69,7 @@ No applicable:boolean pattern: ✅
 
 ## 2. subscription-charge
 
-### Invocation (attempt 1 — before fix)
+### v22.4 Invocation (attempt 1 — before fix)
 
 POST /subscription-charge
 Body: {"action": "process_renewals"}
@@ -80,56 +82,124 @@ Line 2212: `today_utc: todayUtc` → `today_utc: todayKey`
 Variable `todayUtc` was never defined. Replaced with `todayKey` (defined at line 1933).
 Fix deployed via supabase--deploy_edge_functions.
 
-### Invocation (attempt 2 — after fix)
+### v22.4 Invocation (attempt 2 — after fix)
 
 POST /subscription-charge
 Body: {"action": "process_renewals"}
 HTTP status: 200
 Response: total=0, success=0, failed=0, no_card=0
 
-### Analysis
+### v22.4 Analysis
 
-Only 1 active subscription due (e53c5c45, next_charge_at=2026-03-08).
-Subscription filtered out by charge processing gates (likely day-boundary or already-attempted logic).
-No ledger row created because no subscription was actually processed.
+Only 1 candidate with past-due next_charge_at: e53c5c45-60d3-4d58-aab1-10a01bd97a08.
+Excluded by gates: auto_renew=false (gate 3), billing_type=mit (gate 6).
+See p0_runtime_candidate_eligibility_proof.txt for full gate table.
 
-### Verdict: ⏸ BLOCKED_NO_ELIGIBLE_INPUT
+### v22.5 Status: BLOCKED_SAFE_GUARD
 
-No eligible subscription candidates passed the charge gates.
-This is not a code failure — the function executed correctly but had no work to do.
-Runtime smoke deferred until a subscription is naturally due for renewal.
+No sandbox/test billing available:
+- BEPAID_SECRET_KEY is production
+- No test_mode app_setting exists
+- Creating a provider_managed fixture risks real billing charge
+- A payment-failure ledger row does NOT prove the extend success path
+
+Fixture A was NOT created. Renew success path requires sandbox billing infrastructure.
+
+### Verdict: ⏸ BLOCKED_SAFE_GUARD
 
 ---
 
 ## 3. subscriptions-reconcile
 
-### Invocation
+### v22.4 Invocation
 
 POST /subscriptions-reconcile
 Body: {}
 HTTP status: 200
 Response: success=true, trials_expired=1, canceled=0, access_expired=0, telegram_synced=0
 
-### Analysis
+### v22.4 Analysis
 
 trials_expired=1 refers to subscription 2130e4fc (status=trial, trial_end_at=2026-01-27, cancel_at=NULL).
-However, the reconcile trial block (block 2) only runs executeRevoke when `sub.cancel_at` is set.
-Since cancel_at is NULL, no ledger row was written — by design, the subscription is left for subscription-charge to handle.
+Block 2 only runs executeRevoke when `sub.cancel_at` is set.
+Since cancel_at IS NULL, no ledger row was written — by design.
+See p0_runtime_candidate_eligibility_proof.txt for block-by-block analysis.
 
-Other blocks:
-- Block 1 (cancel_at_passed): 0 candidates
-- Block 3 (access_end_at expired): 0 candidates
-- Block 4 (telegram sync): 0 candidates
+### v22.5 Fixture B
 
-### Verdict: ⏸ BLOCKED_NO_ELIGIBLE_INPUT
+Created controlled subscription 57582a40-9952-447f-a39f-f18122217b60:
+- user_id: 03182abc-2857-4c11-9e7c-8a52a81af1f4
+- product_id: 11c9f1b8-0355-4753-bd74-40b42aa53616 (Gorbova Club)
+- status: active, cancel_at: 2026-03-29 (yesterday)
+- meta.smoke_fixture: v22.5
+- Pre-check: 0 other active subs, 0 entitlements, 0 tg grants
 
-No candidates matched any block that writes to the ledger.
-This is not a code failure — all blocks executed correctly but had no qualifying data.
-Runtime smoke deferred until subscriptions with cancel_at / expired access_end_at exist.
+See p0_runtime_fixture_lifecycle_proof.txt for full lifecycle.
+
+### v22.5 Invocation
+
+POST /subscriptions-reconcile
+Body: {}
+HTTP status: 200
+Response: success=true, canceled=1, trials_expired=1, access_expired=0, telegram_synced=0
+
+### Ledger row
+
+| Field | Value |
+|-------|-------|
+| id | 9578416b-9900-48e0-97bf-99824788190b |
+| source_event_key | cron-reconcile:207ea6f7-14a4-410e-b3c8-13f6ba66a62e:57582a40-9952-447f-a39f-f18122217b60 |
+| action_type | revoke |
+| status | revoked |
+| reason_code | subscription_expired |
+| target_type | subscription_tier |
+| source_subject_type | subscription |
+| target_key | 03182abc-2857-4c11-9e7c-8a52a81af1f4:11c9f1b8-0355-4753-bd74-40b42aa53616 |
+| source_event_type | cron |
+| source_subject_ref | 57582a40-9952-447f-a39f-f18122217b60 |
+| source_subscription_id | 57582a40-9952-447f-a39f-f18122217b60 |
+| parent_event_key | NULL |
+| parent_execution_key | NULL |
+| has_post_check | false (revoke path — no post_check by design) |
+
+### Result payload
+
+| Field | Value |
+|-------|-------|
+| revoked_from | 57582a40-9952-447f-a39f-f18122217b60 |
+| reconcile_basis | cancel_at_passed |
+| other_active_sources_checked | true |
+| previous_access_end | null |
+| kept_projections | [] |
+
+### Machine-check
+
+| # | Check | Expected | Actual | Status |
+|---|-------|----------|--------|--------|
+| 1 | action_type ↔ status | revoke→revoked | revoke→revoked | ✅ PASS |
+| 2 | reason_code ∈ DDL dictionary | subscription_expired | subscription_expired | ✅ PASS |
+| 3 | target_type ∈ DDL dictionary | subscription_tier | subscription_tier | ✅ PASS |
+| 4 | source_subject_type ∈ DDL dictionary | subscription | subscription | ✅ PASS |
+| 5 | chk_has_subject (≥1 NOT NULL) | true | source_subject_ref + source_subscription_id | ✅ PASS |
+| 6 | chk_parent_keys_pair | both NULL or both NOT NULL | both NULL (top-level) | ✅ PASS |
+| 7 | result.reconcile_basis present | yes | cancel_at_passed | ✅ PASS |
+| 8 | result.revoked_from present | yes | 57582a40 | ✅ PASS |
+| 9 | result.other_active_sources_checked present | yes | true | ✅ PASS |
+| 10 | source_event_key deterministic | UUID-based | jobRunId:subId | ✅ PASS |
+| 11 | no 'completed' status | — | status=revoked | ✅ PASS |
+| 12 | no 'telegram_access' target_type | — | subscription_tier | ✅ PASS |
+| 13 | no 'subscription' as target_type | — | subscription_tier | ✅ PASS |
+
+### Fixture cleanup
+
+Subscription 57582a40 hard-deleted via migration (WHERE meta->>'smoke_fixture' = 'v22.5').
+Post-cleanup: 0 remaining fixtures. Ledger row preserved (immutable audit).
+
+### Verdict: ✅ PASS
 
 ---
 
-## DB old-value guard (re-verified after smoke)
+## DB old-value guard (re-verified after v22.5 smoke)
 
 | Check | Query | Count | Status |
 |-------|-------|-------|--------|
@@ -137,37 +207,29 @@ Runtime smoke deferred until subscriptions with cancel_at / expired access_end_a
 | target_type = 'subscription' | `WHERE target_type = 'subscription'` | 0 | ✅ PASS |
 | status = 'completed' (non-batch) | `WHERE status = 'completed' AND action_type <> 'batch_start'` | 0 | ✅ PASS |
 
-## Merge verification (updateLedgerPostCheck)
-
-Row b604ba7c-447c-4fc6-831a-3d15ceb9bc39:
-- access_start: 2026-04-28T21:59:59.000Z ✅ preserved
-- access_end: 2026-05-28T12:00:00.000Z ✅ preserved
-- window_days: 30 ✅ preserved
-- source_window_rule: calendar_month ✅ preserved
-- previous_end: 2026-04-28T21:59:59+00:00 ✅ preserved
-- post_check: 5 canonical keys ✅ present after merge
-
-Merge verdict: ✅ PASS — access window fields not overwritten by post_check merge.
-
 ## Overall verdict
 
-| Path | Status | Ledger rows |
-|------|--------|-------------|
-| grant-access-for-order | ✅ PASS | 1 valid row |
-| subscription-charge | ⏸ BLOCKED_NO_ELIGIBLE_INPUT | 0 (no candidates) |
-| subscriptions-reconcile | ⏸ BLOCKED_NO_ELIGIBLE_INPUT | 0 (no candidates) |
+| Path | Status | Ledger rows | Detail |
+|------|--------|-------------|--------|
+| grant-access-for-order | ✅ PASS | 1 (b604ba7c) | extend/extended, DDL valid, post_check 5 keys |
+| subscription-charge | ⏸ BLOCKED_SAFE_GUARD | 0 | No sandbox billing; extend path cannot be safely tested |
+| subscriptions-reconcile | ✅ PASS | 1 (9578416b) | revoke/revoked via cancel_at_passed, DDL valid |
 
 ## Cutover guard
 
 phase1_ledger_cutover_at MUST NOT be set until ALL of:
-- runtime_smoke = PASS for ALL 3 paths (currently 1/3)
+- grant-access-for-order runtime_smoke = PASS ✅
+- subscriptions-reconcile runtime_smoke = PASS ✅
+- subscription-charge runtime_smoke = PASS or BLOCKED_SAFE_GUARD with explicit approval ⏸
 - grep_guard = PASS ✅
 - contract_validation = PASS ✅
 - orphan_downstream = 0
 - missing_required_post_check = 0
 
-## Bug found and fixed
+Current status: 2/3 PASS + 1 BLOCKED_SAFE_GUARD.
+Decision required: accept BLOCKED_SAFE_GUARD for cutover or provision sandbox billing.
 
-subscription-charge/index.ts line 2212: `todayUtc` was undefined.
-Fixed to `todayKey`. Non-ledger-affecting (audit_logs insert only).
-Deployed 2026-03-30.
+## Bug found and fixed (v22.4)
+
+subscription-charge/index.ts line 2212: `todayUtc` undefined → fixed to `todayKey`.
+Audit-log only, no ledger impact. Deployed 2026-03-30.

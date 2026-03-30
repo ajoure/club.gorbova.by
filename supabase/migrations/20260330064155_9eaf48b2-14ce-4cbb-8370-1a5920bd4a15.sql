@@ -1,0 +1,1 @@
+DELETE FROM subscriptions_v2 WHERE id = '57582a40-9952-447f-a39f-f18122217b60' AND (meta->>'smoke_fixture') = 'v22.5'

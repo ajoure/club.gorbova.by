@@ -1,0 +1,59 @@
+# Phase 1 Ledger — Runtime Fixture Lifecycle Proof
+# Generated: 2026-03-30 (PATCH v22.5)
+# Purpose: Track all smoke-test fixtures, their creation, usage, and cleanup.
+
+## Fixture B — subscriptions-reconcile (Block 1: cancel_at_passed)
+
+### Creation
+
+| Field | Value |
+|-------|-------|
+| id | 57582a40-9952-447f-a39f-f18122217b60 |
+| created_by | SQL INSERT via supabase--insert tool |
+| created_at | 2026-03-30 ~06:40 UTC |
+| table | subscriptions_v2 |
+| user_id | 03182abc-2857-4c11-9e7c-8a52a81af1f4 |
+| profile_id | 3291af77-1792-4260-b067-29ce34f6ce08 |
+| product_id | 11c9f1b8-0355-4753-bd74-40b42aa53616 (Gorbova Club) |
+| tariff_id | 31f75673-a7ae-420a-b5ab-5906e34cbf84 (CHAT) |
+| status | active |
+| cancel_at | 2026-03-29 00:00:00+00 |
+| access_end_at | 2026-03-29 00:00:00+00 |
+| meta | {"smoke_fixture": "v22.5"} |
+
+### Pre-check isolation
+
+| Check | Count | Status |
+|-------|-------|--------|
+| other active subs for user | 0 | ✅ isolated |
+| entitlements for user | 0 | ✅ isolated |
+| telegram_access_grants for user | 0 | ✅ isolated |
+
+### Usage
+
+Invoked via POST /subscriptions-reconcile at 2026-03-30 06:41:07 UTC.
+Block 1 (cancel_at_passed) picked up the fixture subscription.
+Subscription status updated: active → canceled.
+Ledger row written: 9578416b-9900-48e0-97bf-99824788190b.
+
+### Cleanup
+
+Method: Hard DELETE via SQL migration
+Query: DELETE FROM subscriptions_v2 WHERE id = '57582a40-...' AND (meta->>'smoke_fixture') = 'v22.5'
+Executed at: 2026-03-30 ~06:42 UTC
+Verification: SELECT count(*) WHERE meta->>'smoke_fixture' = 'v22.5' → 0
+
+### Post-cleanup verification
+
+| Check | Result |
+|-------|--------|
+| Fixture row exists | NO (deleted) |
+| Ledger row preserved | YES (9578416b, immutable audit record) |
+| No orphan side effects | ✅ user had no entitlements/tg grants to affect |
+
+## Fixture A — subscription-charge:renew
+
+NOT CREATED. Reason: BLOCKED_SAFE_GUARD.
+No sandbox/test billing mode available. Creating a fixture with provider_managed
+billing would risk real payment charge via bePaid production API.
+See p0_runtime_candidate_eligibility_proof.txt for details.
