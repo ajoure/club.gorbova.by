@@ -41,6 +41,7 @@ getcourse-sync
 import-contacts-gc
 amocrm-sync
 subscription-actions
+subscriptions-reconcile
 subscription-admin-actions
 subscription-grace-reminders
 subscription-renewal-reminders
