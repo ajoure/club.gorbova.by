@@ -323,13 +323,44 @@ Duplicate post-switch revoke ledger path is ABSENT. ✅
 | getcourse file import | admin | admin | ✅ PASS |
 | getcourse API import | system | system | ✅ PASS |
 
+## Sub-patch C addendum: entropy elimination & deterministic identity
+
+### 1. Date.now / Math.random removal
+- getcourse-import-deals/index.ts: `Date.now()` count = 0, `Math.random()` count = 0 ✅
+- bepaid-report-import/index.ts: `Date.now()` count = 0, `Math.random()` count = 0 ✅
+
+### 2. Index removed from identity
+- rowSourceEventKey fallback: `{prefix}:row:hash:${canonicalHash}` (no index) ✅
+- rowSubjectRef fallback: `hash:${canonicalHash}` (no index) ✅
+- index only in result.row_index (debug trace) ✅
+
+### 3. Deterministic order_number
+- gc_file: `HASH-${canonicalHash}` → order_number `GC-HASH-${canonicalHash}` ✅
+- No double GC- prefix: createOrder checks `.startsWith('GC-')` ✅
+- Repeated import of same row without externalId → duplicate path (not new order) ✅
+
+### 4. bepaid existence-check: .single() → select+length
+- Uses `.select('id')` without `.single()` or `.maybeSingle()` on existence check ✅
+- 0 rows → create, 1 row → skip, >1 rows → failed with 'multiple_existing_orders' ✅
+- Remaining `.single()` calls are on INSERT (`.insert(...).select().single()`) — correct ✅
+
+### 5. DB SoT contracts
+- getcourse: tariff via `tariffs.getcourse_offer_id` (no OFFER_TARIFF_MAP) ✅
+- bepaid: product via `bepaid_product_mappings` table ✅
+
+### 6. stableRowHash drift guard
+- Implementation byte-identical in both files ✅
+- Sort rule: Object.keys().sort() ✅
+- Serialization: JSON.stringify ✅
+- Slice: .slice(0, 16) ✅
+
 ### Sprint status
 
 | Component | Status |
 |-----------|--------|
 | Sub-patch A (revoke paths) | ✅ done |
 | Sub-patch B (parent propagation) | ✅ done in code |
-| Sub-patch C (batch/import) | ✅ done in code |
+| Sub-patch C (batch/import — consolidated final) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
 | Sub-patch D (consolidated proof finalization) | 📋 next |
 | phase1_ledger_cutover_at | ❌ NOT SET |
