@@ -936,14 +936,14 @@ async function processFileDeals(
           status: 'skipped',
           reason_code: 'duplicate_skip',
           target_type: tariffId ? 'subscription_tier' : 'product',
-          target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+          target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${isArchiveDeal ? 'archive' : (productId || 'unknown')}`,
           user_id: userIdForRecords,
           profile_id: profile.id,
           order_id: order.id,
           source_order_id: order.id,
           parent_event_key: batchSourceEventKey,
           parent_execution_key: batchStartResult?.execution_key || null,
-          result: { skip_reason: 'order_already_exists', existing_order_id: order.id },
+          result: { skip_reason: 'order_already_exists', existing_order_id: order.id, row_index: index, ...(isArchiveDeal ? { is_archive_deal: true, archive_target_contract: 'pseudo_target_v1' } : {}) },
         });
         continue; // Skip subscription creation for duplicate orders
       }
@@ -968,7 +968,7 @@ async function processFileDeals(
         status: 'granted',
         reason_code: 'bulk_import',
         target_type: tariffId ? 'subscription_tier' : 'product',
-        target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+        target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${isArchiveDeal ? 'archive' : (productId || 'unknown')}`,
         user_id: userIdForRecords,
         profile_id: profile.id,
         order_id: order.id,
@@ -978,8 +978,10 @@ async function processFileDeals(
         parent_execution_key: batchStartResult?.execution_key || null,
         result: {
           is_archive_deal: isArchiveDeal,
+          ...(isArchiveDeal ? { archive_target_contract: 'pseudo_target_v1' } : {}),
           subscription_created: subscription?.isNew || false,
           subscription_active: subscription?.isActive || false,
+          row_index: index,
         },
       });
 
