@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { writeLedgerEntry, buildPostCheck } from '../_shared/fulfillment-executor.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -662,6 +663,48 @@ Deno.serve(async (req) => {
     });
   } catch (auditError) {
     console.error("Audit log error (non-critical):", auditError);
+  }
+
+  // 7. Phase 1: Write ledger entry
+  try {
+    const actionType = existingProductSub ? 'extend' : 'grant';
+    const sourceEventKey = `gafo:webhook:${orderId}`;
+    
+    const postCheck = buildPostCheck({
+      entitlement: { status: results.entitlement?.action || 'unknown', ref: results.entitlement?.id },
+      telegramGrant: grantTelegram ? { status: results.telegram ? 'queued' : 'skipped' } : undefined,
+      subscription: { status: results.subscription?.action || 'unknown', ref: results.subscription?.id },
+      ledgerRow: { status: 'written' },
+      targetResolution: { status: 'matched', ref: productId },
+    });
+
+    await writeLedgerEntry(supabase, {
+      source_event_type: 'webhook',
+      source_event_key: sourceEventKey,
+      source_subject_type: 'order',
+      source_subject_ref: orderId,
+      source_order_id: orderId,
+      source_offer_id: order.offer_id || null,
+      action_type: actionType,
+      reason_code: 'order_grant',
+      target_type: 'subscription',
+      target_key: `${userId}:${productId}`,
+      target_ref: results.subscription?.id || null,
+      user_id: userId,
+      profile_id: profileId || null,
+      order_id: orderId,
+      status: 'completed',
+      result: {
+        access_start: accessStartAt.toISOString(),
+        access_end: accessEndAt.toISOString(),
+        window_days: durationDays,
+        source_window_rule: isClubProduct ? 'calendar_month' : (tariff?.access_days ? 'tariff_duration' : 'default_30d'),
+        previous_end: existingProductSub?.access_end_at || null,
+        post_check: postCheck,
+      },
+    });
+  } catch (ledgerError) {
+    console.error("[grant-access-for-order] Ledger write error:", ledgerError);
   }
 
     return new Response(
