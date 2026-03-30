@@ -241,3 +241,21 @@ Decision required: accept BLOCKED_SAFE_GUARD for cutover or provision sandbox bi
 
 subscription-charge/index.ts line 2212: `todayUtc` undefined → fixed to `todayKey`.
 Audit-log only, no ledger impact. Deployed 2026-03-30.
+
+---
+
+## Sprint Close Runtime Assessment (Sub-patch D)
+
+Added: 2026-03-30
+
+Runtime smoke sufficient for sprint close: **YES**
+Cutover allowed: **NO**
+Reason: subscription-charge extend path lacks safe sandbox billing proof
+
+Deferred runtime paths:
+- 9 revoke wrapper paths (Sub-patch A) = runtime_deferred_non_blocking
+- parent propagation paths (Sub-patch B) = runtime_deferred_non_blocking
+- batch/import paths (Sub-patch C) = runtime_deferred_non_blocking
+
+Sprint status: implementation-complete, cutover-blocked.
+See `p0_invariant_report.txt` for consolidated deferred list and decision block.

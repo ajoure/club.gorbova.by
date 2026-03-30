@@ -1,0 +1,188 @@
+# Phase 1 Consolidated Invariant Report
+# Created: 2026-03-30 (PATCH v22.6 Sub-patch D)
+# Scope: Phase 0 + Phase 1 — all invariants across ledger system
+
+## 1. Schema Guards
+
+### action_type ↔ status compatibility
+
+| action_type | allowed statuses |
+|---|---|
+| grant | granted, failed |
+| extend | extended, failed |
+| reactivate | reactivated, failed |
+| revoke | revoked, skipped, failed |
+| expire | expired, failed |
+| skip | skipped |
+| batch_start | completed |
+
+Enforced by: `validateLedgerEntry()` in fulfillment-executor.ts (runtime throw on violation)
+
+### target_type dictionary (9 values)
+
+product, subscription_tier, club, batch, telegram_bot, order, payment, access, unknown
+
+### reason_code dictionary (18 values)
+
+paid_order, subscription_renew, subscription_expired, trial_expired, trial_cancel,
+cron_cleanup, manual_revoke, admin_action, admin_cancel, admin_revoke, admin_delete,
+admin_refund_revoke, bulk_import, duplicate_skip, no_matching_target, batch_orchestration,
+refund_revoke, system_cleanup
+
+### source_subject_type dictionary (7 values)
+
+order, subscription, cron_job, admin, import_batch, telegram_member, system
+
+## 2. Parent Pair Constraint
+
+Rule: parent_event_key and parent_execution_key are BOTH NULL or BOTH NOT NULL.
+Enforced by: `validateLedgerEntry()` runtime check + DDL `chk_parent_keys_pair`
+
+DB check (2026-03-30): `WHERE (parent_event_key IS NULL) != (parent_execution_key IS NULL)` → **0 rows** ✅
+
+## 3. chk_has_subject
+
+Rule: At least one of (source_subject_ref, source_order_id, source_subscription_id, order_id, profile_id, user_id) must be NOT NULL.
+Enforced by: `validateLedgerEntry()` runtime check + DDL constraint
+
+Import fallback: `source_subject_ref = hash:${canonicalHash}` (deterministic, no index)
+
+## 4. Batch Symmetry
+
+Rule: batch_start rows MUST have target_type='batch'; non-batch_start rows MUST NOT have target_type='batch'.
+Enforced by: `validateLedgerEntry()` chk_batch_row_contract
+
+DB check (2026-03-30): `WHERE target_type = 'batch' AND action_type != 'batch_start'` → **0 rows** ✅
+
+## 5. Deterministic Identity (Import Paths)
+
+Rule: No runtime entropy (Date.now, Math.random, UUID, index) in identity fields.
+
+Grep results (2026-03-30, factual):
+| Pattern | getcourse-import-deals | bepaid-report-import | Total |
+|---|---|---|---|
+| `Date.now(` | 0 | 0 | 0 ✅ |
+| `Math.random(` | 0 | 0 | 0 ✅ |
+| `row:${index}` | 0 | 0 | 0 ✅ |
+
+Identity fields verified entropy-free:
+- rowSourceEventKey: `hash:${canonicalHash}` or externalId/uid
+- rowSubjectRef: `hash:${canonicalHash}` or externalId/uid
+- deal_number: `HASH-${canonicalHash}` or externalId
+- order_number: `GC-HASH-${canonicalHash}` or `GC-${externalId}` or `IMP-${payment.orderId}`
+
+## 6. Old-Value Guards
+
+DB check (2026-03-30, factual counts from total 248 rows):
+| Check | Query | Count | Status |
+|---|---|---|---|
+| telegram_access target | `WHERE target_type = 'telegram_access'` | 0 | ✅ PASS |
+| bare subscription target | `WHERE target_type = 'subscription'` | 0 | ✅ PASS |
+| completed non-batch | `WHERE status = 'completed' AND action_type <> 'batch_start'` | 0 | ✅ PASS |
+
+## 7. No Duplicate Post-Switch Block
+
+subscription-admin-actions: shared post-switch ledger block REMOVED in Sub-patch B.
+All revoke branches use exclusively inline ledger writes.
+Machine-check: grep for executeRevoke/writeLedgerEntry outside case branches = 0 ✅
+
+## 8. stableRowHash Drift Guard
+
+Rule: Implementation in getcourse-import-deals and bepaid-report-import MUST be byte-identical.
+Contract:
+- Sort: `Object.keys(payload).sort()`
+- Serialize: `JSON.stringify(sorted)`
+- Hash: `crypto.subtle.digest('SHA-256', ...)`
+- Slice: `.slice(0, 16)`
+Status: byte-identical confirmed ✅
+
+## 9. Archive Pseudo-Target Contract v1 (Sanctioned Temporary)
+
+Current state: No canonical archive product_id exists in products_v2.
+Contract:
+- target_type = 'product', target_key = '{userId}:archive'
+- result.is_archive_deal = true
+- result.archive_target_contract = 'pseudo_target_v1'
+
+Switch rule:
+- When canonical archive product_id is added → switch to `{userId}:{archiveProductId}`
+- Document as "archive_target_contract_v2"
+- Pseudo-target FORBIDDEN after switch
+
+## 10. DB SoT Contracts
+
+| Import | SoT source | Hardcoded alternative | Status |
+|---|---|---|---|
+| getcourse-import-deals | `tariffs.getcourse_offer_id` | OFFER_TARIFF_MAP removed | ✅ DB SoT |
+| bepaid-report-import | `bepaid_product_mappings` table | limit 1 removed | ✅ DB SoT |
+
+## 11. bepaid Existence-Check Contract
+
+Order duplicate check uses `.select('id')` + length check (NOT .single()):
+- 0 rows → normal create path
+- 1 row → duplicate skip path
+- >1 rows → failed with `failed_at_step='order_lookup'`, `error_message='multiple_existing_orders'`
+
+Remaining `.single()` in bepaid (3 occurrences) = all on INSERT `.insert(...).select().single()` — correct ✅
+
+---
+
+## Proof/Text Sync Fixes Applied in Sub-patch D
+
+The following 3 minor text-drift mismatches were found during finalization and corrected:
+
+| # | File | Was | Now | Nature |
+|---|---|---|---|---|
+| 1 | p0_batch_import_tree_proof.txt Section 2 | fallback: `row:{index}:{sha256_hash}` | `row:hash:${canonicalHash}` | proof-text sync fix (code was already correct) |
+| 2 | p0_downstream_parent_propagation_proof.txt Sprint Status | Sub-patch C = "next" | Sub-patch C = "done in code" | proof-text sync fix |
+| 3 | p0_ledger_contract_validation_proof.txt chk_has_subject | `row:{index}` | `hash:${canonicalHash}` | proof-text sync fix |
+
+These are NOT new requirements — code was already correct. Only proof text was stale.
+
+---
+
+## Deferred List (Consolidated)
+
+### Deferred Runtime Verification
+
+| # | Item | Reason |
+|---|---|---|
+| 1 | Runtime smoke for 9 revoke wrapper paths (Sub-patch A) | Paths wrapped in code; runtime trigger requires production events |
+| 2 | Runtime smoke for parent propagation paths (Sub-patch B) | Wrapped in code; requires downstream events with parent keys |
+| 3 | Runtime smoke for batch/import paths (Sub-patch C) | Wrapped in code; requires actual import execution |
+| 4 | subscription-charge extend runtime proof | BLOCKED_SAFE_GUARD — no sandbox billing available |
+
+### Deferred Cutover Readiness
+
+| # | Item | Reason |
+|---|---|---|
+| 5 | Final cutover decision | Blocked by item 4 above |
+| 6 | Setting phase1_ledger_cutover_at | Blocked until all runtime paths verified or explicitly approved |
+| 7 | Orphan downstream count = 0 verification | Requires runtime rows with parent lineage |
+| 8 | Missing required post_check = 0 verification | Requires runtime rows |
+
+---
+
+## Final Decision Block
+
+```
+v22.6 SPRINT IMPLEMENTATION STATUS = COMPLETE
+CODE PATCHES STATUS = COMPLETE (Sub-patches A, B, C)
+PROOF FINALIZATION STATUS = COMPLETE
+CUTOVER READINESS STATUS = BLOCKED
+REASON = subscription-charge runtime proof requires safe billing sandbox
+NEW CODE PATCHES IN THIS FOLLOW-UP = NO
+NEXT STEP = separate cutover/readiness sprint
+phase1_ledger_cutover_at = NOT SET
+```
+
+## DoD Verification
+
+1. All proof files synchronized between each other and with code ✅
+2. All previously found text-drift mismatches corrected ✅ (3 fixes documented above)
+3. No new code tasks created ✅
+4. Final coverage table present in p0_ledger_path_coverage_proof.txt ✅
+5. Deferred list consolidated above ✅
+6. Decision block present ✅
+7. phase1_ledger_cutover_at = NOT SET ✅
+8. Sprint v22.6 = implementation-complete, cutover-blocked ✅
