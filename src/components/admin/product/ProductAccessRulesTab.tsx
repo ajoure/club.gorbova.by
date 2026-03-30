@@ -24,6 +24,10 @@ import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
   Users, Package, Zap, Clock, Star, Gift, Settings2, Info
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -64,11 +68,16 @@ const RUNTIME_LABELS: Record<string, string> = {
 };
 
 const LEGACY_STATUS_LABELS: Record<LegacyStatus, string> = {
-  active_legacy_only: "Действует (только legacy)",
+  active_legacy_only: "Действует (старая настройка)",
   duplicated_by_rule: "Дублируется новым правилом",
   migrated_replaced: "Мигрировано и заменено",
   inactive_legacy: "Неактивно",
-  fallback_effective: "Fallback (правило неактивно)",
+  fallback_effective: "Резерв (правило неактивно)",
+};
+
+const LEGACY_SOURCE_LABELS: Record<string, string> = {
+  club: "клуб",
+  email: "email-аккаунт",
 };
 
 const LEGACY_STATUS_COLORS: Record<LegacyStatus, string> = {
@@ -108,6 +117,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [typeFilter, setTypeFilter] = useState<GrantTargetType | "all">("all");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [deletingRule, setDeletingRule] = useState<AccessRule | null>(null);
+  const [isDeletePending, setIsDeletePending] = useState(false);
 
   const { data: effectiveGrants = [] } = useEffectiveGrants(productId, previewTariffId || undefined);
 
@@ -332,7 +343,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             <p className="text-sm text-muted-foreground mb-1">Нет правил доступа</p>
             <p className="text-xs text-muted-foreground mb-4">
               {legacyMappings.length > 0
-                ? `Найдено ${legacyMappings.length} legacy-привязок (см. ниже)`
+                ? `Найдено ${legacyMappings.length} старых привязок (см. ниже)`
                 : "Добавьте правило, чтобы определить, что получит покупатель"}
             </p>
             <Button variant="outline" size="sm" onClick={openCreateDialog}>
@@ -392,7 +403,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                         )}
                         {hasOverlap && (
                           <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300">
-                            Дублирует legacy
+                            Дублирует старую настройку
                           </Badge>
                         )}
                       </div>
@@ -425,7 +436,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => deleteRule(rule.id)}
+                        onClick={() => setDeletingRule(rule)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -451,7 +462,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 <SelectValue placeholder="Все тарифы" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">Все тарифы (product-level)</SelectItem>
+                <SelectItem value="__all__">Все тарифы (уровень продукта)</SelectItem>
                 {tariffs.map((t) => {
                   const dur = tariffDurations.find(td => td.id === t.id);
                   return (
@@ -502,7 +513,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           <CardHeader className="py-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-amber-500" />
-              <CardTitle className="text-sm">Действующие legacy-настройки</CardTitle>
+              <CardTitle className="text-sm">Действующие старые настройки</CardTitle>
               <Badge variant="outline" className="text-[10px]">{legacyMappings.length}</Badge>
             </div>
           </CardHeader>
@@ -519,7 +530,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
-                      <span>Источник: {m.source.replace("product_", "").replace("_mappings", "")}</span>
+                      <span>Источник: {LEGACY_SOURCE_LABELS[m.source.replace("product_", "").replace("_mappings", "")] ?? m.source}</span>
                       {m.duration_days != null && (
                         <>
                           <span>·</span>
@@ -613,7 +624,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   <SelectItem value="entitlement">
                     <span className="flex items-center gap-1.5">
                       {TARGET_TYPE_LABELS.entitlement}
-                      <Badge variant="outline" className="text-[9px] px-1 py-0">advanced</Badge>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0">служебный</Badge>
                     </span>
                   </SelectItem>
                 </SelectContent>
@@ -866,6 +877,47 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* === Delete Confirmation Dialog === */}
+      <AlertDialog open={!!deletingRule} onOpenChange={(open) => { if (!open) setDeletingRule(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить правило?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingRule && (
+                <>
+                  Будет удалено правило: <strong>{deletingRule.target_label || deletingRule.target_ref}</strong>
+                  {" "}({TARGET_TYPE_LABELS[deletingRule.grant_target_type]}).
+                  <br />
+                  Это действие необратимо.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletePending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeletePending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!deletingRule || isDeletePending) return;
+                setIsDeletePending(true);
+                try {
+                  await deleteRule(deletingRule.id);
+                  setDeletingRule(null);
+                } catch {
+                  // toast already handled by mutation
+                } finally {
+                  setIsDeletePending(false);
+                }
+              }}
+            >
+              {isDeletePending ? "Удаление…" : "Удалить правило"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -910,7 +962,7 @@ function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGran
             {formatDuration(g.duration_days)}
             {g.duration_source !== "unknown" && (
               <span className="ml-0.5 text-muted-foreground">
-                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "legacy"})
+                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "старая настройка"})
               </span>
             )}
           </Badge>
