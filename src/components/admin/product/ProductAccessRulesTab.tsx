@@ -403,7 +403,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                         )}
                         {hasOverlap && (
                           <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300">
-                            Дублирует legacy
+                            Дублирует старую настройку
                           </Badge>
                         )}
                       </div>
