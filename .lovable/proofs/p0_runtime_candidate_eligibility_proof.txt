@@ -1,5 +1,6 @@
 # Phase 1 Ledger — Runtime Candidate Eligibility Proof
 # Generated: 2026-03-30 (PATCH v22.5)
+# Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 # Purpose: Document why subscription-charge and subscriptions-reconcile
 #          returned BLOCKED_NO_ELIGIBLE_INPUT in v22.4 smoke, and
 #          how v22.5 fixture resolved reconcile.
@@ -41,16 +42,28 @@ This is BLOCKED_NO_ELIGIBLE_INPUT — the function executed correctly but no can
 subscription-charge/index.ts line 2212: `todayUtc` was undefined.
 Fixed to `todayKey`. Audit-log insert only, no ledger impact. Deployed 2026-03-30.
 
-### v22.5 status: BLOCKED_SAFE_GUARD
+### v22.8 Status: EXCLUDED_FROM_CUTOVER (dead code)
 
-No sandbox/test billing mode available in current environment:
-- BEPAID_SECRET_KEY is production key (no test_mode app_setting found)
-- No sandbox payment tokens exist for test subscriptions
-- Creating a fixture with provider_managed + valid payment_method_id would trigger real bePaid charge attempt
-- A payment failure ledger row proves the failed-contract, NOT the success extend-contract
+v22.5 status was BLOCKED_SAFE_GUARD due to no sandbox billing.
+v22.8 analysis revealed the extend path is **unreachable dead code**:
 
-Therefore subscription-charge:renew success path cannot be safely smoke-tested
-without sandbox billing infrastructure. Status: BLOCKED_SAFE_GUARD.
+```
+subscription-charge/index.ts lines 554-574:
+
+Line 556: if (billing_type === 'provider_managed')
+  → return { skipped: true, skip_reason: 'provider_managed' }
+
+Line 566: if (billing_type !== 'provider_managed')
+  → return { skipped: true, skip_reason: 'mit_disabled' }
+```
+
+Both branches are exhaustive (X === Y || X !== Y) and both return `skipped`.
+Code after line 574 — including extend ledger write at lines 1520-1556 — is **unreachable**.
+
+Production renewals go through: bepaid-webhook → grant-access-for-order (runtime PASS from v22.6).
+Sandbox billing is NOT required. The extend path does not execute in production.
+
+Status changed: BLOCKED_SAFE_GUARD → **EXCLUDED_FROM_CUTOVER** (dead code).
 
 ## 2. subscriptions-reconcile (v22.4 smoke: BLOCKED_NO_ELIGIBLE_INPUT → v22.5: PASS)
 
@@ -108,5 +121,5 @@ called executeRevoke(), and wrote a valid ledger row. See p0_ledger_runtime_smok
 |--------|-----------|
 | PASS | Path invoked, ≥1 new valid ledger row created, all DDL/runtime checks pass |
 | BLOCKED_NO_ELIGIBLE_INPUT | Path invoked correctly, no candidates passed eligibility gates |
-| BLOCKED_SAFE_GUARD | Path cannot be safely tested due to production billing risk |
+| EXCLUDED_FROM_CUTOVER | Path is unreachable dead code; no runtime proof needed (v22.8) |
 | FAIL | Path invoked, ledger row created but violates DDL/runtime contract |

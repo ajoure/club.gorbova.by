@@ -1,5 +1,6 @@
 # Phase 1 Ledger — Runtime Fixture Lifecycle Proof
 # Generated: 2026-03-30 (PATCH v22.5)
+# Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 # Purpose: Track all smoke-test fixtures, their creation, usage, and cleanup.
 
 ## Fixture B — subscriptions-reconcile (Block 1: cancel_at_passed)
@@ -53,7 +54,37 @@ Verification: SELECT count(*) WHERE meta->>'smoke_fixture' = 'v22.5' → 0
 
 ## Fixture A — subscription-charge:renew
 
-NOT CREATED. Reason: BLOCKED_SAFE_GUARD.
-No sandbox/test billing mode available. Creating a fixture with provider_managed
-billing would risk real payment charge via bePaid production API.
-See p0_runtime_candidate_eligibility_proof.txt for details.
+NOT CREATED. Status: **EXCLUDED_FROM_CUTOVER** (v22.8 dead code finding).
+
+v22.5 reason was BLOCKED_SAFE_GUARD (no sandbox billing).
+v22.8 analysis revealed the extend path is unreachable dead code:
+- Lines 556-563: billing_type === 'provider_managed' → return skipped
+- Lines 566-573: billing_type !== 'provider_managed' → return skipped
+- Both branches exhaust all values, making extend ledger write at lines 1520-1556 unreachable.
+
+Production renewals go through bepaid-webhook → grant-access-for-order (runtime PASS).
+No fixture needed — the path cannot execute.
+
+## Fixture C — subscription-admin-actions (v22.7)
+
+### Creation
+
+| Field | Value |
+|-------|-------|
+| id | a7b8c9d0-1234-5678-9abc-def012345678 |
+| created_by | SQL migration |
+| created_at | 2026-03-30 |
+| table | subscriptions_v2 |
+| user_id | 2ef54ad1-198e-4e3d-a686-0de9f6037332 |
+| status | active |
+| meta | {"smoke_fixture": "v22.7", "purpose": "admin-actions-runtime-smoke"} |
+
+### Usage
+
+NOT USED. Could not invoke subscription-admin-actions without valid admin JWT.
+
+### Cleanup
+
+Method: Hard DELETE via SQL migration
+Query: DELETE FROM subscriptions_v2 WHERE id = 'a7b8c9d0-...' AND meta->>'smoke_fixture' = 'v22.7'
+Post-cleanup: 0 remaining fixtures.
