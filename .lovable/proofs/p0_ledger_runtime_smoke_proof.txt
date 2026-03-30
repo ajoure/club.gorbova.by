@@ -259,3 +259,58 @@ Deferred runtime paths:
 
 Sprint status: implementation-complete, cutover-blocked.
 See `p0_invariant_report.txt` for consolidated deferred list and decision block.
+
+---
+
+## v22.7 Readiness Sprint — Runtime Verification Results
+
+Added: 2026-03-30 (v22.7)
+
+### Functions invoked
+
+| Function | HTTP | Response summary |
+|----------|------|-----------------|
+| subscriptions-reconcile | 200 | trials_expired=1, canceled=0, access_expired=0, telegram_synced=0 |
+| telegram-check-expired | 200 | processed=0, revoked=0, 0 active records in telegram_access |
+| subscription-charge | 200 | total=0 candidates, 0 eligible renewals |
+
+### New ledger rows written: 0
+
+Reason: No eligible candidates for any grant/revoke/extend path in current production data.
+This is data-state, not code-bug. All invoked functions ran their full logic path and correctly found 0 actionable items.
+
+### Runtime status per path
+
+| # | Path | Invoked | Candidates | Ledger written | Status |
+|---|------|---------|-----------|---------------|--------|
+| R1 | grant-access-for-order | v22.6 | 1 | 1 (b604ba7c) | ✅ PASS |
+| R2 | subscriptions-reconcile (cancel_at) | v22.6 | 1 (fixture) | 1 (9578416b) | ✅ PASS |
+| R3 | subscription-charge (renew) | v22.7 | 0 | 0 | ⏸ BLOCKED_SAFE_GUARD |
+| R4 | subscriptions-reconcile (trial) | v22.7 | 1 (no cancel_at) | 0 (by design) | ⏸ DEFERRED_NON_BLOCKING |
+| R5 | subscriptions-reconcile (expired) | v22.7 | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
+| R6 | subscriptions-reconcile (tg sync) | v22.7 | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
+| R7 | telegram-revoke-access | — | — | — | ⏸ DEFERRED_NON_BLOCKING |
+| R8 | telegram-check-expired | v22.7 | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
+| R9 | telegram-kick-violators | v22.7 (cron) | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
+| R10 | cancel-trial | — | — | — | ⏸ DEFERRED_NON_BLOCKING |
+| R11 | sub-charge (trial_ended) | — | — | — | ⏸ DEFERRED_NON_BLOCKING |
+| R12-15 | subscription-admin-actions | — | — | — | ⏸ DEFERRED_NON_BLOCKING (requires admin JWT) |
+| R16-18 | imports (bepaid/getcourse) | — | — | — | ⏸ DEFERRED_NON_BLOCKING (requires import data) |
+
+### SQL invariant re-check (post-runtime)
+
+| Check | Count | Status |
+|-------|-------|--------|
+| total_rows | 248 | ✅ |
+| parent_pair_violations | 0 | ✅ |
+| orphan_children | 0 | ✅ |
+| action_status_mismatch | 0 | ✅ |
+| source_event_key_duplicates | 0 | ✅ |
+
+### v22.7 Verdict
+
+CUTOVER_ALLOWED = **NO**
+BLOCKERS: R3 BLOCKED_SAFE_GUARD + S13 watermark missing
+DEFERRED_NON_BLOCKING: 15 paths (all code-verified, no runtime trigger available)
+FAIL: 0
+NEW CODE PATCHES: NO
