@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { writeLedgerEntry } from '../_shared/fulfillment-executor.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -302,6 +303,15 @@ function detectTariffFromDescription(description: string): { tariffCode: string 
   return { tariffCode: null, tariffId: null };
 }
 
+// Deterministic hash for fallback row keys (no timestamp, no random)
+async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
+  const sorted = JSON.stringify(
+    Object.keys(payload).sort().reduce((acc, k) => { acc[k] = payload[k]; return acc; }, {} as Record<string, unknown>)
+  );
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sorted));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -312,7 +322,9 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { reportData, dryRun = true } = await req.json();
+    const body = await req.json();
+    const reportData = body.reportData;
+    const dryRun = body.dryRun ?? true;
     
     if (!reportData) {
       throw new Error("reportData is required");
@@ -331,6 +343,41 @@ Deno.serve(async (req) => {
 
     console.log(`Parsed ${payments.length} valid payment records`);
 
+    // Volume guard: hard stop BEFORE any ledger write (including batch_start)
+    if (payments.length > 1000 && !body.batch_mode) {
+      return new Response(
+        JSON.stringify({ error: 'batch_mode required for >1000 rows', count: payments.length }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Ledger batch context (only for execute mode)
+    let batchId: string | undefined;
+    let batchSourceEventKey: string | undefined;
+    let batchStartResult: { id: string; execution_key: string | null; error: any } | undefined;
+
+    if (!dryRun) {
+      batchId = crypto.randomUUID();
+      batchSourceEventKey = `bepaid-import-batch:${batchId}`;
+      batchStartResult = await writeLedgerEntry(supabase, {
+        source_event_type: 'admin',
+        source_event_key: batchSourceEventKey,
+        source_subject_type: 'import_batch',
+        source_subject_ref: batchId,
+        action_type: 'batch_start',
+        reason_code: 'batch_orchestration',
+        target_type: 'batch',
+        target_key: `bepaid-import:${batchId}`,
+        status: 'completed',
+        result: {
+          batch_size: payments.length,
+          import_type: 'bepaid_report',
+          mode: 'execute',
+          started_at: new Date().toISOString(),
+        },
+      });
+    }
+
     // Fetch existing profiles for matching
     const { data: profiles, error: profilesError } = await supabase
       .from('profiles')
@@ -348,8 +395,6 @@ Deno.serve(async (req) => {
     };
 
     // Phase 1: Look up product from bepaid_product_mappings instead of hardcode
-    // For now, the mapping should resolve to the correct product_id
-    // TODO: Full bepaid_product_mappings lookup will be added in Step 4 (FulfillmentExecutor)
     const { data: productMapping } = await supabase
       .from('bepaid_product_mappings')
       .select('product_id')
@@ -365,7 +410,21 @@ Deno.serve(async (req) => {
     // Check if this product uses calendar month window
     const useCalendarMonth = await isCalendarMonthProduct(supabase, productId);
 
-    for (const payment of payments) {
+    for (let index = 0; index < payments.length; index++) {
+      const payment = payments[index];
+
+      // Rate limiting: pause every 200 rows
+      if (index > 0 && index % 200 === 0) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      // Compute deterministic row source event key
+      const rowSourceEventKey = batchId
+        ? (payment.uid
+          ? `bepaid-import:${batchId}:row:${payment.uid}`
+          : `bepaid-import:${batchId}:row:${index}:${await stableRowHash(payment as any)}`)
+        : undefined;
+
       try {
         const cardHolderCyrillic = payment.cardHolder ? transliterateToСyrillic(payment.cardHolder) : '';
         const { tariffCode, tariffId } = detectTariffFromDescription(payment.description);
@@ -386,7 +445,6 @@ Deno.serve(async (req) => {
             matchedProfile = profiles?.find(p => {
               if (!p.full_name) return false;
               const profileName = p.full_name.toLowerCase();
-              // Check if all name parts are in the profile name
               return nameParts.every(part => profileName.includes(part.toLowerCase()));
             });
             if (matchedProfile) matchType = 'name_translit';
@@ -453,6 +511,24 @@ Deno.serve(async (req) => {
               // Skip if we can't get a user_id
               detail.action = 'skipped_no_user_id';
               result.skipped++;
+              // Ledger: skip row (no user_id available)
+              if (batchId && batchSourceEventKey && rowSourceEventKey) {
+                await writeLedgerEntry(supabase, {
+                  source_event_type: 'admin',
+                  source_event_key: rowSourceEventKey,
+                  source_subject_type: 'import_batch',
+                  source_subject_ref: payment.uid || `row:${index}`,
+                  action_type: 'skip',
+                  status: 'skipped',
+                  reason_code: 'no_matching_target',
+                  target_type: 'product',
+                  target_key: `unknown:${productId}`,
+                  profile_id: matchedProfile.id,
+                  parent_event_key: batchSourceEventKey,
+                  parent_execution_key: batchStartResult?.execution_key || null,
+                  result: { skip_reason: 'no_user_id_available' },
+                });
+              }
               result.details.push(detail);
               continue;
             }
@@ -475,7 +551,7 @@ Deno.serve(async (req) => {
               // Phase 1: Calculate subscription end date from config rule
               let subscriptionEnd: Date;
               if (useCalendarMonth) {
-                subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21); // 21:00 UTC = 00:00 Minsk
+                subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21);
               } else {
                 subscriptionEnd = new Date(paymentDate);
                 subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
@@ -585,9 +661,55 @@ Deno.serve(async (req) => {
                 .eq('id', matchedProfile.id);
 
               result.matched++;
+
+              // Ledger: grant row for order_created
+              if (batchId && batchSourceEventKey && rowSourceEventKey) {
+                await writeLedgerEntry(supabase, {
+                  source_event_type: 'admin',
+                  source_event_key: rowSourceEventKey,
+                  source_subject_type: 'import_batch',
+                  source_subject_ref: payment.uid,
+                  action_type: 'grant',
+                  status: 'granted',
+                  reason_code: 'bulk_import',
+                  target_type: tariffId ? 'subscription_tier' : 'product',
+                  target_key: tariffId ? `${userId}:${tariffId}` : `${userId}:${productId}`,
+                  user_id: userId,
+                  profile_id: matchedProfile.id,
+                  order_id: newOrder.id,
+                  source_order_id: newOrder.id,
+                  parent_event_key: batchSourceEventKey,
+                  parent_execution_key: batchStartResult?.execution_key || null,
+                  result: {
+                    access_start: paymentDate.toISOString(),
+                    access_end: subscriptionEnd.toISOString(),
+                  },
+                });
+              }
             } else {
               detail.action = 'order_exists';
               result.skipped++;
+              // Ledger: skip row (duplicate order)
+              if (batchId && batchSourceEventKey && rowSourceEventKey) {
+                await writeLedgerEntry(supabase, {
+                  source_event_type: 'admin',
+                  source_event_key: rowSourceEventKey,
+                  source_subject_type: 'import_batch',
+                  source_subject_ref: payment.uid,
+                  action_type: 'skip',
+                  status: 'skipped',
+                  reason_code: 'duplicate_skip',
+                  target_type: tariffId ? 'subscription_tier' : 'product',
+                  target_key: tariffId ? `${userId}:${tariffId}` : `${userId}:${productId}`,
+                  user_id: userId,
+                  profile_id: matchedProfile.id,
+                  order_id: existingOrder.id,
+                  source_order_id: existingOrder.id,
+                  parent_event_key: batchSourceEventKey,
+                  parent_execution_key: batchStartResult?.execution_key || null,
+                  result: { skip_reason: 'order_already_exists', existing_order_id: existingOrder.id },
+                });
+              }
             }
           } else {
             // Create new archived profile
@@ -602,7 +724,7 @@ Deno.serve(async (req) => {
             // Phase 1: Calculate subscription end date from config rule
             let subscriptionEnd: Date;
             if (useCalendarMonth) {
-              subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21); // 21:00 UTC = 00:00 Minsk
+              subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21);
             } else {
               subscriptionEnd = new Date(paymentDate);
               subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
@@ -655,6 +777,24 @@ Deno.serve(async (req) => {
             } else {
               detail.action = 'skipped_no_user_id';
               result.skipped++;
+              // Ledger: skip row (no user_id for new profile)
+              if (batchId && batchSourceEventKey && rowSourceEventKey) {
+                await writeLedgerEntry(supabase, {
+                  source_event_type: 'admin',
+                  source_event_key: rowSourceEventKey,
+                  source_subject_type: 'import_batch',
+                  source_subject_ref: payment.uid || `row:${index}`,
+                  action_type: 'skip',
+                  status: 'skipped',
+                  reason_code: 'no_matching_target',
+                  target_type: 'product',
+                  target_key: `unknown:${productId}`,
+                  profile_id: newProfile.id,
+                  parent_event_key: batchSourceEventKey,
+                  parent_execution_key: batchStartResult?.execution_key || null,
+                  result: { skip_reason: 'no_user_id_for_new_profile' },
+                });
+              }
               result.details.push(detail);
               continue;
             }
@@ -747,9 +887,34 @@ Deno.serve(async (req) => {
             detail.action = 'profile_and_order_created';
             
             result.created++;
+
+            // Ledger: grant row for profile_and_order_created
+            if (batchId && batchSourceEventKey && rowSourceEventKey) {
+              await writeLedgerEntry(supabase, {
+                source_event_type: 'admin',
+                source_event_key: rowSourceEventKey,
+                source_subject_type: 'import_batch',
+                source_subject_ref: payment.uid,
+                action_type: 'grant',
+                status: 'granted',
+                reason_code: 'bulk_import',
+                target_type: tariffId ? 'subscription_tier' : 'product',
+                target_key: tariffId ? `${userId}:${tariffId}` : `${userId}:${productId}`,
+                user_id: userId,
+                profile_id: newProfile.id,
+                order_id: newOrder.id,
+                source_order_id: newOrder.id,
+                parent_event_key: batchSourceEventKey,
+                parent_execution_key: batchStartResult?.execution_key || null,
+                result: {
+                  access_start: paymentDate.toISOString(),
+                  access_end: subscriptionEnd.toISOString(),
+                },
+              });
+            }
           }
         } else {
-          // Dry run mode
+          // Dry run mode — no ledger writes
           detail.action = matchedProfile ? 'would_match' : 'would_create';
           if (matchedProfile) {
             result.matched++;
@@ -763,6 +928,28 @@ Deno.serve(async (req) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
         result.errors.push(`Error processing payment ${payment.uid}: ${errorMessage}`);
         result.skipped++;
+
+        // Ledger: failed row in per-row catch
+        if (!dryRun && batchId && batchSourceEventKey && rowSourceEventKey) {
+          try {
+            await writeLedgerEntry(supabase, {
+              source_event_type: 'admin',
+              source_event_key: rowSourceEventKey,
+              source_subject_type: 'import_batch',
+              source_subject_ref: payment.uid || `row:${index}`,
+              action_type: 'grant',
+              status: 'failed',
+              reason_code: 'bulk_import',
+              target_type: 'product',
+              target_key: `unknown:${productId}`,
+              parent_event_key: batchSourceEventKey,
+              parent_execution_key: batchStartResult?.execution_key || null,
+              result: { failed_at_step: 'row_processing', error_message: errorMessage },
+            });
+          } catch (ledgerErr) {
+            console.error(`[bepaid-import] Failed to write error ledger for row ${index}:`, ledgerErr);
+          }
+        }
       }
     }
 

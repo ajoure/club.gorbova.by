@@ -1,0 +1,204 @@
+# Phase 1 Batch/Import Tree Proof
+# Created: 2026-03-30 (PATCH v22.6 Sub-patch C)
+# Scope: bepaid-report-import, getcourse-import-deals
+
+## 1. Batch-start rows
+
+| Import type | source_event_key pattern | source_subject_ref | source_event_type | target_type |
+|---|---|---|---|---|
+| bepaid-report-import | `bepaid-import-batch:{batchId}` | batchId (UUID) | admin | batch |
+| getcourse file import | `gc-import-batch:{batchId}` | batchId (UUID) | admin | batch |
+| getcourse API import | `gc-import-batch:{batchId}` | batchId (UUID) | system | batch |
+
+All batch_start rows:
+- action_type = 'batch_start'
+- status = 'completed'
+- reason_code = 'batch_orchestration'
+- target_type = 'batch' (ALWAYS — never used for row-level)
+- target_key = `{prefix}-import:{batchId}`
+- chk_has_subject: source_subject_ref = batchId ✅
+
+## 2. Row-level rows
+
+| Import type | source_event_key pattern (primary) | fallback pattern | source_subject_ref |
+|---|---|---|---|
+| bepaid | `bepaid-import:{batchId}:row:{payment.uid}` | `bepaid-import:{batchId}:row:{index}:{sha256_hash}` | payment.uid or `row:{index}` |
+| getcourse file | `gc-import:{batchId}:row:{externalId}` | `gc-import:{batchId}:row:{index}:{sha256_hash}` | externalId or `row:{index}` |
+| getcourse API | `gc-import:{batchId}:row:{deal.id}` | `gc-import:{batchId}:row:{index}:{sha256_hash}` | deal.id or `row:{index}` |
+
+Row-level target_type resolution:
+- subscription created (tariffId exists) → target_type = 'subscription_tier', target_key = `{userId}:{tariffId}`
+- only order/product outcome → target_type = 'product', target_key = `{userId}:{productId}`
+- archive deal (no tariff) → target_type = 'product', target_key = `{userId}:archive`
+- unknown/failed → target_type = 'product', target_key = `unknown:{productId}` or `unknown:unknown`
+
+Row-level rows NEVER use target_type = 'batch'. ✅
+
+### Business FK population
+
+All row-level rows populate available FKs at write time:
+- user_id: when known (after profile resolution)
+- profile_id: when known (after findOrCreateProfile)
+- order_id / source_order_id: when order created or found
+- source_subscription_id: when subscription created
+- source_subject_ref: always (payment.uid, deal.id, or fallback)
+- chk_has_subject: satisfied by source_subject_ref ✅
+
+## 3. Outcome mapping
+
+### bepaid-report-import
+
+| Outcome | action_type | status | reason_code | result extras |
+|---|---|---|---|---|
+| order_created / profile_and_order_created | grant | granted | bulk_import | access_start, access_end |
+| order_exists (duplicate) | skip | skipped | duplicate_skip | existing_order_id |
+| skipped_no_user_id | skip | skipped | no_matching_target | skip_reason |
+| catch error | grant | failed | bulk_import | failed_at_step, error_message |
+
+### getcourse-import-deals (file import)
+
+| Outcome | action_type | status | reason_code | result extras |
+|---|---|---|---|---|
+| order+subscription created | grant | granted | bulk_import | subscription_created, subscription_active |
+| order created (archive/no tariff) | grant | granted | bulk_import | is_archive_deal=true |
+| order skipped (exists) | skip | skipped | duplicate_skip | existing_order_id |
+| tariff unknown / not determined | skip | skipped | no_matching_target | tariff_code |
+| catch error | grant | failed | bulk_import | failed_at_step, error_message |
+
+### getcourse-import-deals (API import)
+
+| Outcome | action_type | status | reason_code | result extras |
+|---|---|---|---|---|
+| order+subscription created | grant | granted | bulk_import | subscription_created, subscription_active |
+| offer not in mapping | skip | skipped | no_matching_target | offer_id |
+| product not found for tariff | skip | skipped | no_matching_target | tariff_id |
+| order already exists | skip | skipped | duplicate_skip | existing_order_id |
+| catch error | grant | failed | bulk_import | failed_at_step, error_message |
+
+## 4. Lineage: batch_start → row
+
+Parent lineage for ALL row-level rows:
+```
+parent_event_key = batch_start.source_event_key
+parent_execution_key = batch_start.execution_key
+```
+
+Single-row parent match SQL:
+```sql
+SELECT r.id, r.source_event_key, r.parent_event_key, r.parent_execution_key,
+       b.source_event_key AS batch_event_key, b.execution_key AS batch_exec_key
+FROM access_grant_ledger r
+JOIN access_grant_ledger b
+  ON b.source_event_key = r.parent_event_key
+  AND b.execution_key = r.parent_execution_key
+  AND b.action_type = 'batch_start'
+WHERE r.action_type != 'batch_start'
+  AND r.source_event_key LIKE 'bepaid-import:%:row:%'
+   OR r.source_event_key LIKE 'gc-import:%:row:%';
+```
+
+## 5. batch_start exclusion from access-proof
+
+batch_start rows (target_type='batch'):
+- NOT included in access-proof checks
+- NOT included in target-resolution proof
+- NOT included in entitlement/subscription projection verification
+- Used ONLY for batch orchestration and lineage root
+
+## 6. Volume guard contract
+
+Order (hard stop):
+1. Parse/count rows
+2. Volume guard: if rows > 1000 && !batch_mode → return 400 (BEFORE batch_start)
+3. batch_start ledger row
+4. Row-level processing
+
+bepaid: guard at line ~60 (after parse, before batch_start) ✅
+getcourse file: guard in main handler before batch_start + processFileDeals call ✅
+getcourse API: guard in main handler before batch_start + import loop ✅
+
+## 7. Downstream propagation (gc file import → telegram-grant-access)
+
+Downstream telegram call:
+- Only for grant/granted rows with active subscription
+- NOT for skip/skipped or grant/failed rows
+
+Idempotent guard for execution_key:
+- If rowLedgerResult.execution_key exists → pass parent keys + _from_primary_path: true
+- If execution_key = null → attempt recovery from access_grant_ledger by source_event_key
+  - If recovered → pass recovered execution_key + _from_primary_path: true
+  - If not recovered → call without _from_primary_path (autonomous downstream)
+
+## 8. dryRun machine-check
+
+### bepaid-report-import
+- dryRun = true (default) → ALL ledger writes skipped (batch_start + row-level)
+- Guards: `if (!dryRun)` wraps batch_start; `if (batchId && batchSourceEventKey)` guards row-level
+- Machine-check:
+  - before count: SELECT count(*) FROM access_grant_ledger WHERE source_event_key LIKE 'bepaid-import%'
+  - dryRun invocation (dryRun=true)
+  - after count: same query
+  - diff = 0 ✅
+
+### getcourse-import-deals
+- No dryRun mode exists (confirmed: no dryRun parameter in code)
+- preview action returns early before import loop (no ledger writes in preview)
+- Machine-check:
+  - preview invocation → 0 new ledger rows (returns before batch_start)
+  - import invocation → batch_start + row rows appear ✅
+
+## 9. source_event_type by origin
+
+| Import path | source_event_type | Reason |
+|---|---|---|
+| bepaid-report-import | admin | file upload from admin UI |
+| getcourse file import | admin | file upload from admin UI |
+| getcourse API import | system | API/scheduled origin |
+
+## 10. Fallback hash contract
+
+Implementation (identical in both files):
+```typescript
+async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
+  const sorted = JSON.stringify(
+    Object.keys(payload).sort().reduce((acc, k) => { acc[k] = payload[k]; return acc; }, {} as Record<string, unknown>)
+  );
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sorted));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+```
+
+Properties:
+- Deterministic: same payload → same hash ✅
+- No timestamp in discriminator ✅
+- No random in discriminator ✅
+- Identical implementation in both files ✅
+- sha256(JSON.stringify(sorted_keys_payload)).slice(0, 16) ✅
+
+## 11. Per-row catch = mandatory failed ledger
+
+Both imports:
+- Each row processed in individual try/catch
+- catch block ALWAYS writes failed ledger row with:
+  - failed_at_step: 'row_processing'
+  - error_message: actual error message
+- Failed ledger write itself is wrapped in try/catch to prevent cascade failure
+- Only after ledger write does error propagate to aggregate result
+
+## 12. Strict batch/meta vs row/access separation
+
+- target_type='batch' exists ONLY for batch_start rows ✅
+- Row-level rows NEVER use target_type='batch' ✅
+- Section A (access-affecting) = row-level grant/skip/failed rows
+- Section B (batch/meta) = batch_start rows only
+
+## Sprint status
+
+| Component | Status |
+|-----------|--------|
+| Sub-patch A (revoke paths) | ✅ done |
+| Sub-patch B (parent propagation) | ✅ done in code |
+| Sub-patch C (batch/import) | ✅ done in code |
+| Runtime verification | ⏸ deferred_non_blocking |
+| Sub-patch D (consolidated proof finalization) | 📋 next |
+| phase1_ledger_cutover_at | ❌ NOT SET |
