@@ -2,181 +2,288 @@
 
 &nbsp;
 
-1. Не переносить общий audit_log целиком внутрь всех веток subscription-admin-actions, чтобы не сломать текущую общую семантику. Сделать так:
+1. В этот патч добавь не только чтение meta в telegram-process-access-queue, но и **все места постановки в очередь**, чтобы они записывали parent_event_key / parent_execution_key в telegram_access_queue.meta. Иначе lineage в queue будет неоткуда брать.
+2. Для grant-access-for-order зафиксируй безопасный порядок точнее:
+  **primary DB changes → ledger row → downstream telegram call → audit/post-check update**.
+  Нельзя переносом сломать текущую выдачу entitlement/subscription или welcome-flow.
+3. Для telegram-grant-access явно зафиксируй, что при *from*primary_path=true и отсутствии parent keys функция возвращает ошибку, а при обычном ручном/автономном вызове без этого флага — работает с NULL parent keys. Это нужно отдельно указать как backward-compatible контракт.
+4. Для subscription-admin-actions прямо допиши mapping по веткам после переноса ledger внутрь case, чтобы не осталось двусмысленности:
   &nbsp;
-  - либо создать **локальный branch-audit insert** только для cancel / revoke_access / delete и взять его id как discriminator,
-  - либо использовать заранее сгенерированный deterministic action_request_id, который пишется и в branch-audit, и в ledger.
-    Главное: не допустить двойного или конфликтующего аудита.
+  - cancel → inline ledger, downstream не нужен
+  - revoke_access → inline ledger, потом telegram-revoke-access с parent keys
+  - delete → inline ledger, потом telegram-revoke-access, потом физическое удаление
+  - refund+revoke → inline ledger, потом telegram-revoke-access
+    И отдельно: **общий post-switch ledger block удалить полностью**.
   &nbsp;
-2. Для 3 незакрытых веток в subscription-admin-actions зафиксировать единый порядок:
+5. Для telegram-grant-access добавь явный outcome-contract по ledger:
   &nbsp;
-  - снять before_status / before_canceled_at / before_access_end_at,
-  - выполнить branch business update,
-  - определить projection_changed = yes/no,
-  - если no → writeLedgerEntry(skip),
-  - если yes → executeRevoke(revoke).
-    Не опираться только на status='canceled'; использовать именно сравнение before/after по реально изменяемым полям.
+  - success → action_type='grant', status='granted'
+  - no-op/already-linked/already-in-chat → action_type='skip', status='skipped'
+  - hard failure → action_type='grant', status='failed'
   &nbsp;
-3. Для delete отдельно зафиксировать правило:
+6. В proof-файле p0_downstream_parent_propagation_proof.txt зафиксируй 3 отдельных режима:
   &nbsp;
-  - ledger и audit пишутся **до** физического delete,
-  - после delete в ledger должны сохраняться source_subject_ref, source_subscription_id, target_key, reason_code,
-  - proof должен явно подтверждать, что delete не уничтожает возможность трассировки.
+  - primary → child с parent keys
+  - autonomous/manual → NULL parents
+  - queue child → lineage из telegram_access_queue.meta
+    И lineage-proof делать только через **single-row parent match по двум полям одновременно**.
   &nbsp;
-4. Для revoke_access и cancel не считать сам факт вызова telegram-revoke-access доказательством revoke. Ledger row Sub-patch A должна отражать **итог branch decision** в subscription-admin-actions, а downstream Telegram revoke останется отдельным child-событием в Sub-patch B.
-5. В p0_revoke_wrapper_completion_proof.txt добавить 2 поля:
-  &nbsp;
-  - branch_decision_source = before_after_projection_diff / explicit_guard
-  - audit_discriminator_source = branch_audit_id / action_request_id
-    Это снимет двусмысленность, откуда взят discriminator и почему выбран revoke или skip.
-  &nbsp;
-6. В p0_revoke_path_inventory.txt жёстко разделить:
-  &nbsp;
-  - wrapped_in_code_verified
-  - wrapped_claim_removed
-    То есть предыдущую ошибочную формулировку “9/9 wrapped” не просто заменить, а явно отметить, что по 3 веткам claim был исправлен после code-review.
-  &nbsp;
-7. В DoD этого патча записать только одно:
-  &nbsp;
-  - subscription-admin-actions:{cancel|revoke_access|delete} реально wrapped_in_code и подтверждены grep/code-proof.
-    Runtime verification оставить deferred и не смешивать с этим патчем.
-  &nbsp;
-8. После этого патча не возвращаться к повторному обсуждению Sub-patch A. Сразу переходить к Sub-patch B, а все runtime/proof хвосты по A сохранять как deferred-notes до конца большого спринта.
+7. Явно добавь guard: если после DDL миграции telegram_access_queue.meta не используется ни одним enqueue writer, Sub-patch B считается **не завершённым**, даже если processor уже умеет читать meta.
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH v22.6 Sub-patch A — Consolidated Proof + Доделка 3 незакрытых веток
+После этих 7 уточнений план можно отдавать в работу как следующий патч без нового пересогласования всего спринта.
 
-## Диагностика
+&nbsp;
 
-При ревью кода обнаружено критическое расхождение между proof-файлами и реальным кодом.
+План: PATCH v22.6 Sub-patch B — Downstream Parent Propagation
 
-### Реально обёрнуты (6 из 9):
+## Статус
 
-1. `telegram-revoke-access` — executeRevoke в 3 outcomes (success, no-tg-linked, blocked-skip). **Обёрнут.**
-2. `telegram-check-expired` — executeRevoke для revoke, writeLedgerEntry для skip. **Обёрнут.**
-3. `telegram-kick-violators` — executeRevoke для kick, writeLedgerEntry для skip. **Обёрнут.**
-4. `cancel-trial` — executeRevoke (immediate), writeLedgerEntry (deferred). **Обёрнут.**
-5. `subscription-charge:trial_ended_no_payment` — executeRevoke (line 2162-2188). **Обёрнут.**
-6. `subscription-admin-actions:refund+revoke` — executeRevoke (line 499-519). **Обёрнут.**
+```
+SAFE_TO_CONTINUE_IMPLEMENTATION = YES
+CUTOVER_ALLOWED = NO
+```
 
-### НЕ обёрнуты (3 из 9):
+## Диагностика текущего состояния
 
-7. `**subscription-admin-actions:cancel**` (line 666-691) — только DB update + notification. Нет ledger write.
-8. `**subscription-admin-actions:revoke_access**` (line 828-894) — только DB update + telegram-revoke-access invoke + GC cancel. Нет ledger write.
-9. `**subscription-admin-actions:delete**` (line 897-958) — только DB update + telegram-revoke-access + GC cancel + physical delete. Нет ledger write.
 
-Импорты `executeRevoke` и `writeLedgerEntry` добавлены в файл (line 4-5), но ни в одной из трёх веток они не вызываются.
+| Компонент                          | Ledger write                    | Сохраняет execution_key | Передаёт parent keys downstream            |
+| ---------------------------------- | ------------------------------- | ----------------------- | ------------------------------------------ |
+| grant-access-for-order             | ✅ (line 683)                    | ❌                       | ❌                                          |
+| subscription-charge (trial_expire) | ✅ executeRevoke (line 2177)     | ❌                       | ❌ (downstream вызов line 2155 ДО ledger)   |
+| subscriptions-reconcile            | ✅ executeRevoke (4 блока)       | ❌                       | ❌                                          |
+| subscription-admin-actions         | ✅ (post-switch block line 1118) | ❌                       | ❌ (downstream внутри case, до ledger)      |
+| telegram-grant-access              | ❌ нет ledger                    | —                       | —                                          |
+| telegram-process-access-queue      | ❌                               | —                       | ❌                                          |
+| telegram-revoke-access             | ✅                               | ✅                       | — (конечная точка, уже читает parent keys) |
+
+
+**Критическая проблема**: `telegram_access_queue` таблица НЕ имеет поля `meta` — только `user_id, club_id, subscription_id, action, status, attempts, last_error, created_at, processed_at`. Для хранения lineage нужна DDL-миграция.
 
 ---
 
-## Решение
+## Scope Sub-patch B
 
-### Шаг 1. Добавить ledger write в 3 незакрытые ветки
+### 7 уточнений из ревью — как закрыты
 
-`**cancel` (line 666-691):**
+1. **Idempotent skip guard**: если `execution_key = null` → не передавать `_from_primary_path = true`. Либо дочитать существующую ledger row по `source_event_key`.
+2. **subscription-admin-actions двойная запись**: перенести ledger write внутрь каждого case (cancel/revoke_access/delete), удалить общий post-switch block (lines 1117-1205).
+3. **telegram_access_queue meta**: DDL миграция — добавить колонку `meta JSONB DEFAULT NULL`. Писать `parent_event_key`/`parent_execution_key` в meta при постановке в очередь.
+4. **telegram-grant-access outcome matrix**: grant→granted, already_has_access→skipped, failure→failed.
+5. **Порядок операций**: primary DB changes → ledger row → downstream call.
+6. **Proof 3 состояния**: primary with parents, autonomous NULL, queued from meta.
+7. **Scope freeze**: без batch/import, без runtime smoke, без cutover marker.
 
-- После DB update (line 677), перед notification:
-- Pre-state guard: если `subscription.status` уже `'canceled'` или `subscription.canceled_at IS NOT NULL` → skip
-- Иначе → executeRevoke с `admin-cancel:{subscription_id}:{auditLogId}`, reason_code=`admin_cancel`
-- Нужен audit_log insert ДО ledger write для auditLogId discriminator
+---
 
-`**revoke_access` (line 828-894):**
+## Реализация по файлам
 
-- После DB update (line 838), перед telegram-revoke-access invoke:
-- Pre-state guard: если уже `canceled` → skip
-- Иначе → executeRevoke с `admin-revoke:{subscription_id}:{auditLogId}`, reason_code=`admin_revoke`
+### Шаг 0. DDL миграция
 
-`**delete` (line 897-958):**
+Добавить `meta` колонку в `telegram_access_queue`:
 
-- После DB update (line 911), перед telegram-revoke-access invoke:
-- Pre-state guard: если уже `canceled` → skip
-- Иначе → executeRevoke с `admin-delete:{subscription_id}:{auditLogId}`, reason_code=`admin_revoke`
+```sql
+ALTER TABLE public.telegram_access_queue ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT NULL;
+COMMENT ON COLUMN public.telegram_access_queue.meta IS 'Optional metadata including parent lineage keys for ledger propagation';
+```
 
-Для всех трёх:
+Также обновить триггеры, которые INSERT в queue, чтобы не ломались (они не пишут meta → NULL по default, ok).
 
-- `targetType = 'subscription_tier'`
-- `targetKey = '{userId}:{tariffId|productId}'`
-- `sourceEventType = 'admin'`
-- `sourceSubjectType = 'admin_action'`
-- `sourceSubjectRef = adminUserId`
-- Pre-state snapshot: сохранить `before_status = subscription.status`, `before_canceled_at = subscription.canceled_at` ДО DB update
+### Шаг 1. telegram-grant-access/index.ts
 
-### Шаг 2. Создать audit_log entries для discriminator
+**Добавить ledger integration + приём parent keys:**
 
-В ветках cancel/revoke_access/delete нужно создать audit_log запись ДО ledger write, чтобы получить auditLogId для source_event_key. Текущий код записывает общий audit_log после switch (line ~1024). Нужно либо:
+- Import `writeLedgerEntry`, `buildPostCheck` из `fulfillment-executor.ts`
+- Расширить `GrantAccessRequest`:
+  ```
+  parent_event_key?: string | null
+  parent_execution_key?: string | null
+  _from_primary_path?: boolean
+  ```
+- Guard: если `_from_primary_path = true` и parent keys отсутствуют → 400
+- **Outcome matrix** (одна ledger row на весь request, после всех club iterations):
 
-- Переместить audit_log insert внутрь каждой ветки (перед ledger), либо
-- Сгенерировать UUID и записать audit_log + ledger вместе.
 
-Рекомендация: audit_log insert внутри каждой ветки, сохранить id.
+| Outcome                                 | action_type | status  |
+| --------------------------------------- | ----------- | ------- |
+| successful grant (invite links created) | grant       | granted |
+| already has access / no-op              | skip        | skipped |
+| hard failure (telegram API error)       | grant       | failed  |
 
-### Шаг 3. Обновить proof-файлы
 
-1. `**p0_revoke_wrapper_completion_proof.txt**` — добавить колонки: `exact_branch_lines`, `pre_state_guard`, `uses_executeRevoke`/`uses_writeLedgerEntry`
-2. `**p0_revoke_path_inventory.txt**` — исправить формулировку: "9 paths Sub-patch A → wrapped_in_code", остальные "pending_next_subpatch"
-3. Добавить отдельный **mini-proof по subscription-admin-actions** с branch-matrix:
-  - cancel → revoke/skip
-  - revoke_access → revoke/skip
-  - delete → revoke/skip
-  - refund+revoke → revoke
-  - refund+reduce = excluded_from_v22_6_scope
-4. Добавить отдельный **mini-proof по telegram-revoke-access** с outcome-matrix:
-  - success revoke → executeRevoke (line 672-692)
-  - blocked/valid-access → writeLedgerEntry skip (line 280-310)
-  - no-telegram-linked → executeRevoke (line 448-469)
-5. Добавить **mini-proof по telegram-check-expired и telegram-kick-violators**:
-  - revoke → executeRevoke
-  - valid-access skip → writeLedgerEntry
-  - jobRunId = crypto.randomUUID() per cron run
+- `source_event_key`: `tg-grant:{userId}:{clubIds.join(',')}:{auditId}` где `auditId` из `logAudit` записи
+- parent_event_key / parent_execution_key из body → в ledger row (nullable)
+
+### Шаг 2. telegram-process-access-queue/index.ts
+
+- Читать `meta` из queue row (расширить select: `.select("id, user_id, club_id, subscription_id, action, attempts, meta")`)
+- При вызове telegram-grant-access / telegram-revoke-access: пробрасывать `parent_event_key`/`parent_execution_key` из `item.meta` (если есть)
+- Не ставить `_from_primary_path = true` — queue сам по себе не primary
+
+### Шаг 3. grant-access-for-order/index.ts
+
+**Изменить порядок операций:**
+
+```
+Было:  entitlement → telegram-grant-access → subscription → ledger
+Будет: entitlement → subscription → ledger → telegram-grant-access (с parent keys)
+```
+
+- Сохранить результат: `const ledgerResult = await writeLedgerEntry(...)` → получить `execution_key`
+- **Idempotent skip guard**: если `ledgerResult.execution_key === null` (idempotent skip) → не передавать `_from_primary_path: true`, либо дочитать:
+  ```ts
+  const existing = await supabase.from('access_grant_ledger')
+    .select('execution_key').eq('source_event_key', sourceEventKey).single();
+  ```
+- При вызове telegram-grant-access добавить:
+  ```ts
+  parent_event_key: sourceEventKey,
+  parent_execution_key: ledgerResult.execution_key || existing?.execution_key,
+  _from_primary_path: true
+  ```
+
+### Шаг 4. subscription-charge/index.ts (trial_expire branch)
+
+**Изменить порядок:**
+
+```
+Было:  telegram-revoke-access (line 2155) → executeRevoke (line 2162)
+Будет: executeRevoke → telegram-revoke-access (с parent keys)
+```
+
+- `const revokeResult = await executeRevoke(...)` → получить `executionKey`
+- Idempotent skip guard: если `revokeResult.executionKey === null` → передать parent keys как NULL
+- При вызове telegram-revoke-access добавить `parent_event_key`, `parent_execution_key`
+
+### Шаг 5. subscriptions-reconcile/index.ts
+
+4 блока executeRevoke + downstream telegram-revoke-access:
+
+В каждом блоке:
+
+- `revokeResult` уже содержит `executionKey`
+- При вызове telegram-revoke-access добавить:
+  ```ts
+  parent_event_key: revokeCtx.sourceEventKey,
+  parent_execution_key: revokeResult.executionKey || null,
+  ```
+- Не ставить `_from_primary_path = true` для revoke — telegram-revoke-access уже сам пишет ledger
+
+### Шаг 6. subscription-admin-actions/index.ts
+
+**Критическое изменение: ликвидация двойной записи.**
+
+Перенести ledger write из общего post-switch block (lines 1117-1205) внутрь каждого case:
+
+- **cancel** (line 676-703): добавить ledger write после DB update. Нет downstream telegram call → parent propagation не нужен.
+- **revoke_access** (line 852-933): ledger write после DB update + branch audit, ДО telegram-revoke-access call. Передать parent keys.
+- **delete** (line 936-1010): ledger write после DB update + branch audit, ДО telegram-revoke-access call. Передать parent keys.
+- **refund+revoke** (line 469-519): ledger write уже inline. Переместить ДО telegram-revoke-access (line 485). Передать parent keys.
+
+**Удалить** общий post-switch block (lines 1117-1205) после переноса логики в cases.
+
+Idempotent skip guard: если executeRevoke вернул `executionKey = null`:
+
+```ts
+// Не передавать _from_primary_path = true
+// downstream получит parent_event_key = null → graceful NULL
+```
+
+---
+
+## Правила
+
+### Idempotent skip contract
+
+```
+if (ledgerResult.execution_key === null) {
+  // idempotent_skip case
+  // Option A: не вызывать downstream повторно
+  // Option B: дочитать existing row по source_event_key → взять execution_key
+  // Option C: вызвать downstream без _from_primary_path → parent keys NULL
+}
+```
+
+Выбрано: **Option C** для revoke paths (downstream уже пишет свою ledger row), **Option B** для grant paths (grant-access-for-order → telegram-grant-access).
+
+### Порядок операций (жёсткое правило)
+
+```
+1. Все primary DB-изменения (projections)
+2. Ledger write (получаем execution_key)
+3. Downstream call (с parent keys)
+```
+
+### One ledger row per final outcome
+
+- telegram-grant-access: одна row на весь request
+- telegram-revoke-access: одна row на итоговый результат (уже реализовано Sub-patch A)
 
 ---
 
 ## Файлы
 
 
-| Действие | Файл                                                               |
-| -------- | ------------------------------------------------------------------ |
-| Изменить | `supabase/functions/subscription-admin-actions/index.ts` (3 ветки) |
-| Обновить | `.lovable/proofs/p0_revoke_wrapper_completion_proof.txt`           |
-| Обновить | `.lovable/proofs/p0_revoke_path_inventory.txt`                     |
+| Действие     | Файл                                                         |
+| ------------ | ------------------------------------------------------------ |
+| DDL миграция | `telegram_access_queue` — добавить `meta JSONB`              |
+| Изменить     | `supabase/functions/telegram-grant-access/index.ts`          |
+| Изменить     | `supabase/functions/telegram-process-access-queue/index.ts`  |
+| Изменить     | `supabase/functions/grant-access-for-order/index.ts`         |
+| Изменить     | `supabase/functions/subscription-charge/index.ts`            |
+| Изменить     | `supabase/functions/subscriptions-reconcile/index.ts`        |
+| Изменить     | `supabase/functions/subscription-admin-actions/index.ts`     |
+| Создать      | `.lovable/proofs/p0_downstream_parent_propagation_proof.txt` |
+| Обновить     | `.lovable/proofs/p0_ledger_contract_validation_proof.txt`    |
+| Обновить     | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`          |
 
 
 ## Что НЕ изменяется
 
-- `_shared/fulfillment-executor.ts` — контракт заморожен
-- `_shared/access-revoker.ts` — контракт заморожен
-- Все остальные edge functions (telegram-*, cancel-trial, subscription-charge) — уже обёрнуты корректно
-- grant/extend ветки — вне scope
-- Parent propagation — Sub-patch B
-- UI — не затрагивается
+- `_shared/fulfillment-executor.ts` — заморожен
+- `_shared/access-revoker.ts` — заморожен
+- Batch/import tree — Sub-patch C
+- UI
+- Существующая бизнес-логика (audit_logs, telegram ban/unban, GC sync)
 
 ## STOP-guards
 
 1. writeLedgerEntry / executeRevoke API изменился → STOP
-2. Ветка пишет revoked для уже canceled subscription → STOP
-3. auditLogId не получен до ledger write → STOP
+2. Downstream ломает старые вызовы без parent keys → STOP
+3. Нужно менять frozen helpers → STOP
+4. Патч лезет в batch/import → STOP
+5. execution_key = null при idempotent skip не обработан → STOP
+6. Общий post-switch ledger block остался рядом с inline ledger writes → STOP (двойная запись)
 
 ## DoD
 
-Все 9 paths Sub-patch A = wrapped_in_code (реально в коде, не только в proof):
-
-1. telegram-revoke-access — ✅ verified in code
-2. telegram-check-expired — ✅ verified in code
-3. telegram-kick-violators — ✅ verified in code
-4. cancel-trial — ✅ verified in code
-5. subscription-charge:trial_ended_no_payment — ✅ verified in code
-6. subscription-admin-actions:cancel — ❌ → обернуть
-7. subscription-admin-actions:revoke_access — ❌ → обернуть
-8. subscription-admin-actions:delete — ❌ → обернуть
-9. subscription-admin-actions:refund+revoke — ✅ verified in code
+1. telegram-grant-access: принимает parent keys, пишет ledger (grant/skip/failed)
+2. telegram-process-access-queue: читает meta из queue row, пробрасывает lineage
+3. grant-access-for-order: ledger ДО downstream, передаёт parent keys
+4. subscription-charge: ledger ДО downstream, передаёт parent keys
+5. subscriptions-reconcile: передаёт parent keys в 4 downstream вызова
+6. subscription-admin-actions: ledger внутри cases, без двойной записи, parent keys в downstream
+7. Backward compatibility сохранена
+8. DDL миграция для queue meta
+9. Proof файл с 3 состояниями + single-row parent match SQL
+10. phase1_ledger_cutover_at = NOT SET
 
 ```
-wrapped_in_code = yes (6/9 verified, 3 to fix)
+wrapped_in_code = yes (Sub-patch B)
 runtime_verified = deferred (runtime_deferred_non_blocking)
 cutover_allowed = no
 SAFE_TO_CONTINUE_IMPLEMENTATION = YES
 CUTOVER_ALLOWED = NO
 ```
+
+## ОТЛОЖЕНО НА ПОСЛЕ СПРИНТА
+
+- Runtime smoke 9 revoke paths (Sub-patch A)
+- Runtime smoke parent propagation paths (Sub-patch B)
+- Parent propagation runtime verification
+- Batch/import runtime verification (Sub-patch C)
+- Coverage finalization
+- Cutover decision + phase1_ledger_cutover_at
