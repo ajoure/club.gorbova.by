@@ -1,365 +1,420 @@
-# План: Универсальная система offer-driven fulfillment + platform access grants (v22)
+Да, согласен, с учетом правок:
 
-## Принятые правки v22
+&nbsp;
 
-| # | Правка |
-|---|--------|
-| 1 | Cross-field DB-guard: `action_type='batch_start' ↔ target_type='batch'` (и наоборот) |
-| 2 | Симметричный guard: parent_event_key и parent_execution_key — оба NULL или оба NOT NULL |
-| 3 | Subject-contract: хотя бы один из 5 source-полей обязателен |
-| 4 | Machine-check для result.post_check по action_type в p0_invariant_report.txt |
+1. Верни path-specific source_event_key для grant-access-for-order.  
+В v3 произошёл откат назад до order-grant:{order_id}, а это уже не соответствует принятому контракту idempotency/event-level.  
+Нужно:  
 
-Все правки v1–v21 сохранены.
+  - webhook-вызов → gafo:webhook:{delivery_id|provider_event_id}:{order_id}
+  - admin/manual replay → gafo:admin:{request_id}:{order_id}
+  - fallback только если действительно нет event/request id, и это должно быть явно задокументировано.
+2. &nbsp;
+3. subscription-charge:renew/extend не должен иметь source_event_type='system' по умолчанию.  
+Здесь нужен path-specific split:  
+
+  - webhook success → source_event_type='webhook'
+  - cron-initiated renew/extend → source_event_type='cron'  
+  И ключи тоже должны это отражать. Иначе proof по типам событий потом поедет.
+4. &nbsp;
+5. Не фиксируй telegram-revoke-access только через subscription_id.  
+Для manual/admin revoke там может не быть subscription context.  
+Нужен контракт:  
+
+  - primary key = subscription_id, если он реально есть
+  - иначе fallback = {user_id}:{club_id}:{audit_log_id|request_id}  
+  Это же правило явно зафиксировать в source_subject_ref.
+6. &nbsp;
+7. Phase 1 subset invariants нужно перечислить явно, а не писать “1–76 из DoD v22”.  
+Сейчас это противоречит твоему же правилу, что p0_invariant_report.txt покрывает только Phase 0 + Phase 1.  
+Исправить:  
+
+  - выделить отдельный список Phase 1 subset invariants
+  - только его проверять в p0_invariant_report.txt
+  - инварианты Phase 2+ не упоминать как выполненные.
+8. &nbsp;
+9. Для DB-only paths выбери один технический механизм транзакции и зафиксируй его.  
+Сейчас написано “SECURITY DEFINER RPC или explicit BEGIN…COMMIT”. Это оставляет две реализации и риск расхождения.  
+Нужен один вариант по умолчанию для всех DB-only grant paths Phase 1. Лучше зафиксировать:  
+
+  - либо единый SECURITY DEFINER RPC,
+  - либо единый transactional helper,  
+  но не “или”.
+10. &nbsp;
+11. p0_revoke_path_inventory.txt должен содержать точное количество и точный список, без формулировки 7+ revoke paths.  
+Сейчас в Step 10 это уже расплывчато.  
+Нужен точный контракт:  
+
+  - 7 revoke-paths
+  - отдельно перечислены все дополнительные admin ветки, если они мапятся на те же 7
+  - без плавающих чисел.
+12. &nbsp;
+13. Добавь отдельный machine-check на config-source replacement.  
+Не только grep на отсутствие hardcode, но и verify, что:  
+
+  - products_v2.meta.access_window_rule='calendar_month'
+  - bepaid-report-import реально читает bepaid_product_mappings
+  - getcourse-import-deals реально читает tariffs.getcourse_offer_id
+  - Learning.tsx и Products.tsx реально читают через product_club_mappings  
+  Иначе можно убрать hardcode, но остаться без работающего SoT.
+14. &nbsp;
+15. Для downstream proof оставь orphan=0 только при single-row parent match по обоим полям одновременно.  
+Это уже было принято раньше, но в v3 в тексте Step 5/10 это надо повторить явно, чтобы подрядчик не вернулся к двум отдельным EXISTS.
+
+&nbsp;
+
+&nbsp;
+
+После этих правок execution plan уже можно считать финальным для запуска.
+
+&nbsp;
+
+&nbsp;
+
+# Execution Plan v3 — Phase 1 / Steps 3–10
+
+## Принятые правки v3
+
+
+| #   | Правка                                                                                            |
+| --- | ------------------------------------------------------------------------------------------------- |
+| 1   | Mini-patch `products_v2.meta` через `jsonb_set(COALESCE(...))`, не затирая существующий meta      |
+| 2   | Убраны все timestamp-based `source_event_key`. Только детерминированные discriminators            |
+| 3   | Batch row key: primary = `row:{stable_external_id}`, fallback = `row:{row_index}:{hash(payload)}` |
+| 4   | `refund+reduce` вынесен из Phase 1 scope (explicit exclude)                                       |
+| 5   | Transactional contract: одна SQL transaction / один SECURITY DEFINER RPC, не "batch"              |
+| 6   | `p0_invariant_report.txt` покрывает только Phase 0 + Phase 1 subset                               |
+| 7   | Отдельный proof по config-source mini-patch                                                       |
+| 8   | Frontend query contract через `product_club_mappings` — exact query, без slug/code/name           |
+| 9   | Cutover-proof файл/блок для `phase1_ledger_cutover_at`                                            |
+
 
 ---
 
-## Изменение 1 (v22): chk_batch_row_contract
+## Step 3: Hardcode cleanup
+
+### 3.0 Mini-patch: config-source
 
 ```sql
-ADD CONSTRAINT chk_batch_row_contract CHECK (
-  (action_type = 'batch_start' AND target_type = 'batch')
-  OR
-  (action_type <> 'batch_start' AND target_type <> 'batch')
-);
+UPDATE products_v2
+SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{access_window_rule}', '"calendar_month"'::jsonb, true)
+WHERE id = '11c9f1b8-0355-4753-bd74-40b42aa53616';
 ```
 
-Предотвращает невалидные строки вида `target_type='batch', action_type='grant'`.
+Proof-блок (в `p0_config_source_proof.txt`):
 
----
+- rowcount = 1
+- старый meta сохранён (snapshot до/после)
+- новый ключ `access_window_rule = 'calendar_month'` появился
+- все 5 edge paths и 2 frontend paths читают config, а не hardcode
 
-## Изменение 2 (v22): chk_parent_keys_pair
+### 3.1 Live scope: 7 файлов
 
-```sql
-ADD CONSTRAINT chk_parent_keys_pair CHECK (
-  (parent_event_key IS NULL AND parent_execution_key IS NULL)
-  OR
-  (parent_event_key IS NOT NULL AND parent_execution_key IS NOT NULL)
-);
+
+| #   | Файл                              | Что захардкожено                                           | Чем заменяется                                               | SoT                          |
+| --- | --------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------- |
+| 1   | `grant-access-for-order/index.ts` | `CLUB_PRODUCT_ID` (L159)                                   | `products_v2.meta->>'access_window_rule' = 'calendar_month'` | `products_v2.meta`           |
+| 2   | `subscription-charge/index.ts`    | `CLUB_PRODUCT_ID` (L1141)                                  | `products_v2.meta->>'access_window_rule'` lookup             | `products_v2.meta`           |
+| 3   | `bepaid-report-import/index.ts`   | `productId` hardcode (L348, L458, L599) + tariff UUID maps | DB lookup `bepaid_product_mappings`                          | `bepaid_product_mappings`    |
+| 4   | `getcourse-import-deals/index.ts` | `CLUB_PRODUCT_ID` (L697) + tariff maps                     | DB lookup `tariffs.getcourse_offer_id`                       | `tariffs.getcourse_offer_id` |
+| 5   | `admin-manual-charge/index.ts`    | `isClubProduct` (L420)                                     | `products_v2.meta->>'access_window_rule'` lookup             | `products_v2.meta`           |
+| 6   | `src/pages/Learning.tsx`          | `11c9f1b8...` UUID                                         | `product_club_mappings` → `product_id` list                  | `product_club_mappings`      |
+| 7   | `src/pages/Products.tsx`          | `11c9f1b8...` UUID (L120)                                  | `product_club_mappings` → `product_id` list                  | `product_club_mappings`      |
+
+
+### 3.2 Frontend query contract (Learning.tsx, Products.tsx)
+
+```text
+1. SELECT product_id FROM product_club_mappings
+2. Использовать полученные product_id для subscriptions_v2 / entitlements lookup
+3. Без code/name/slug
+4. Без fallback на hardcoded UUID
 ```
 
-Downstream-контракт защищён схемой, а не только proof-запросом.
+### 3.3 Import mapping SoT proof
+
+**bepaid-report-import:**
+
+- authoritative SoT: `bepaid_product_mappings` (таблица уже существует)
+- hardcoded tariff UUIDs в текущем коде → заменяются на lookup по `bepaid_product_mappings.bepaid_product_code`
+- proof: список всех заменённых UUID + новый lookup query
+
+**getcourse-import-deals:**
+
+- authoritative SoT: `tariffs.getcourse_offer_id` (поле уже существует)
+- hardcoded tariff/product UUID → заменяются на lookup `tariffs WHERE getcourse_offer_id = :gc_offer_id`
+- proof: список всех заменённых UUID + новый lookup query
+
+**STOP-guard:** если для любого hardcoded UUID не найден доказуемый DB SoT replacement → STOP.
+
+### 3.4 Archival (не трогать)
+
+
+| #   | Файл                                         | Причина                                            |
+| --- | -------------------------------------------- | -------------------------------------------------- |
+| 1   | `admin-fix-club-billing-dates/index.ts`      | Maintenance script                                 |
+| 2   | `admin-backfill-recurring-snapshot/index.ts` | One-time backfill                                  |
+| 3   | `test-full-trial-flow/index.ts`              | Test fixture                                       |
+| 4   | `getcourse-import-file/index.ts`             | Legacy import (replaced by getcourse-import-deals) |
+
+
+### 3.5 False positive
+
+`src/components/admin/deals/EditDealDialog.tsx` — нет hardcoded club product ID. Исключён из scope.
+
+### 3.6 Proof
+
+`p0_hardcode_live_cleanup_proof.txt`: 7 live files patched + grep before/after, `hardcoded_club_id_occurrences_after = 0`
+`p0_hardcode_archival_ignored_proof.txt`: 4 archival files + reasoning
 
 ---
 
-## Изменение 3 (v22): chk_has_subject
+## Step 4: FulfillmentExecutor — 4 grant-path groups
 
-```sql
-ADD CONSTRAINT chk_has_subject CHECK (
-  order_id IS NOT NULL
-  OR source_order_id IS NOT NULL
-  OR source_subscription_id IS NOT NULL
-  OR source_offer_id IS NOT NULL
-  OR source_subject_ref IS NOT NULL
-);
+### Helper
+
+`supabase/functions/_shared/fulfillment-executor.ts`
+
+### Groups
+
+
+| #   | Group                            | Files                                                                                                 | source_event_type |
+| --- | -------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------- |
+| 1   | grant-access-for-order           | `grant-access-for-order/index.ts`                                                                     | `webhook`         |
+| 2   | subscription-charge:renew/extend | `subscription-charge/index.ts` (success branch only)                                                  | `system`          |
+| 3   | bulk imports                     | `bepaid-report-import`, `getcourse-import-deals`                                                      | `system`          |
+| 4   | admin/manual                     | `admin-manual-charge`, `subscription-admin-actions:extend`, `subscription-admin-actions:grant_access` | `admin`           |
+
+
+### source_event_key contract (no timestamps)
+
+
+| Path                                    | source_event_key format                                                                          | Deterministic source           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------ |
+| grant-access-for-order                  | `order-grant:{order_id}`                                                                         | order UUID                     |
+| subscription-charge:renew               | `sub-renew:{subscription_id}:{payment_id}`                                                       | payment UUID                   |
+| bepaid-report-import:row                | `bepaid-import:{batch_id}:row:{uid}` (fallback: `row:{row_index}:{sha256(normalized_payload)}`)  | external uid or row_index+hash |
+| getcourse-import-deals:row              | `gc-import:{batch_id}:row:{gcDealId}` (fallback: `row:{row_index}:{sha256(normalized_payload)}`) | gcDealId or row_index+hash     |
+| admin-manual-charge                     | `admin-charge:{order_id}`                                                                        | created order UUID             |
+| subscription-admin-actions:extend       | `admin-extend:{subscription_id}:{audit_log_id}`                                                  | audit_log UUID                 |
+| subscription-admin-actions:grant_access | `admin-grant:{subscription_id}:{audit_log_id}`                                                   | audit_log UUID                 |
+
+
+**STOP-guard:** если source_event_key содержит `Date.now()`, `new Date()`, `Math.random()` как discriminator → STOP.
+
+### subscription-admin-actions branch matrix
+
+
+| Action                              | Role                | Ledger action_type | Scope                               |
+| ----------------------------------- | ------------------- | ------------------ | ----------------------------------- |
+| `extend`                            | FulfillmentExecutor | `extend`           | Phase 1 ✅                           |
+| `grant_access`                      | FulfillmentExecutor | `grant`            | Phase 1 ✅                           |
+| `set_end_date`                      | FulfillmentExecutor | `extend`           | Phase 1 ✅                           |
+| `cancel`                            | AccessRevoker       | `revoke`           | Phase 1 ✅ (Step 6)                  |
+| `revoke_access`                     | AccessRevoker       | `revoke`           | Phase 1 ✅ (Step 6)                  |
+| `delete`                            | AccessRevoker       | `revoke`           | Phase 1 ✅ (Step 6)                  |
+| `refund` + `access_action='revoke'` | AccessRevoker       | `revoke`           | Phase 1 ✅ (Step 6)                  |
+| `refund` + `access_action='reduce'` | —                   | —                  | **Phase 1 EXCLUDED**                |
+| `resume`                            | —                   | —                  | Вне scope ledger (no access change) |
+| `pause`                             | —                   | —                  | Вне scope ledger (no access change) |
+| `toggle_auto_renew`                 | —                   | —                  | Вне scope ledger (no access change) |
+
+
+`**refund + reduce` decision:** явно исключён из Phase 1. Причина: текущий result-контракт для `revoke/expire` не фиксирует `new_access_end` при partial reduce. Требует отдельного `reason_code` (e.g. `refund_reduce`) и расширения result-схемы. Оставлен для Phase 2.
+
+### subscription-charge branch matrix
+
+
+| Branch                                   | Role                | Ledger action_type | source_event_key                                 |
+| ---------------------------------------- | ------------------- | ------------------ | ------------------------------------------------ |
+| success (charge OK, extend)              | FulfillmentExecutor | `extend`           | `sub-renew:{sub_id}:{payment_id}`                |
+| failed_revoke (max attempts, cancel sub) | AccessRevoker       | `revoke`           | `sub-failed-revoke:{sub_id}:{payment_id}`        |
+| failed_retry (not max, schedule next)    | —                   | —                  | Вне scope ledger Phase 1 (нет изменения доступа) |
+
+
+---
+
+## Step 5: Downstream parent propagation — 2 paths
+
+
+| #   | Path                            | Parent contract                                                                    |
+| --- | ------------------------------- | ---------------------------------------------------------------------------------- |
+| 1   | `telegram-grant-access`         | `parent_event_key` + `parent_execution_key` обязательны при вызове из primary path |
+| 2   | `telegram-process-access-queue` | То же                                                                              |
+
+
+**Error contract:** если primary path вызвал downstream без parent keys → ERROR, не silent fallback.
+
+**Autonomous call** (e.g. manual admin invoke): оба parent поля NULL, создаёт свой первичный event.
+
+---
+
+## Step 6: AccessRevoker — 7 revoke paths
+
+### Helper
+
+`supabase/functions/_shared/access-revoker.ts`
+
+
+| #   | Path                                | source_event_key                                   |
+| --- | ----------------------------------- | -------------------------------------------------- |
+| 1   | `telegram-revoke-access` (manual)   | `admin-revoke:{subscription_id}:{audit_log_id}`    |
+| 2   | `telegram-check-expired`            | `cron-expire:{job_run_id}:{subscription_id}`       |
+| 3   | `telegram-kick-violators`           | `cron-kick:{job_run_id}:{user_id}:{club_id}`       |
+| 4   | `cancel-trial`                      | `cron-trial-expire:{job_run_id}:{subscription_id}` |
+| 5   | `subscription-charge:failed_revoke` | `sub-failed-revoke:{sub_id}:{payment_id}`          |
+| 6   | `subscription-admin-actions:cancel` | `admin-cancel:{subscription_id}:{audit_log_id}`    |
+| 7   | `subscriptions-reconcile`           | `cron-reconcile:{job_run_id}:{subscription_id}`    |
+
+
+`subscription-admin-actions:revoke_access`, `:delete`, `:refund+revoke` also map here with their own keys.
+
+---
+
+## Step 7: Batch/import tree
+
+For `bepaid-report-import` and `getcourse-import-deals`:
+
+```text
+batch_start event (target_type='batch', action_type='batch_start')
+  └── row event 1 (action_type='grant'/'extend', parent = batch_start)
+       └── downstream telegram event (parent = row event, NOT batch event)
+  └── row event 2 ...
 ```
 
-Каждая ledger-строка трассируется к конкретному источнику.
+### Row key contract (одинаковый для обоих import paths)
+
+- primary: `row:{stable_external_id}` (uid для bepaid, gcDealId для getcourse)
+- fallback (если external id отсутствует): `row:{row_index}:{sha256(JSON.stringify(sorted_payload_keys))}`
+- proof: ни один live import не может сгенерить row event без stable key
 
 ---
 
-## Изменение 4 (v22): Machine-check для result.post_check
+## Step 8: resolveAccessWindow()
 
-Не CHECK constraint, а verify-блок в p0_invariant_report.txt:
+### Helper
 
-```sql
--- grant/extend/reactivate → post_check обязателен
-SELECT count(*) FILTER (WHERE action_type IN ('grant','extend','reactivate') AND status NOT IN ('failed','skipped') AND result->'post_check' IS NULL) as missing_post_check
-FROM access_grant_ledger
-WHERE created_at >= (watermark);
--- missing_post_check = 0 → PASS
+`supabase/functions/_shared/resolve-access-window.ts`
 
--- batch_start → post_check IS NULL
-SELECT count(*) FILTER (WHERE action_type = 'batch_start' AND result->'post_check' IS NOT NULL) as unexpected_post_check
-FROM access_grant_ledger
-WHERE created_at >= (watermark);
--- unexpected_post_check = 0 → PASS
+Единая функция, приоритет:
+
+1. Explicit window (из события)
+2. Flow window
+3. Tariff duration
+4. Config rule (`products_v2.meta->>'access_window_rule' = 'calendar_month'`)
+5. Extend existing (GREATEST mode)
+
+### result JSONB contract по action_type
+
+
+| action_type             | Обязательные поля result                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| grant/extend/reactivate | `access_start`, `access_end`, `window_days`, `source_window_rule`, `previous_end` (nullable), `post_check`   |
+| revoke/expire           | `revoked_from`, `previous_access_end`, `reconcile_basis`, `other_active_sources_checked`, `kept_projections` |
+| skip                    | `skip_reason`, `existing_ref`                                                                                |
+| failed                  | `failed_at_step`, `error_message`                                                                            |
+| batch_start             | `batch_size`, `source_file`, `import_type` (all nullable)                                                    |
+
+
+---
+
+## Step 9: Post-check + transactional contract
+
+### 5 проверок post_check
+
+1. entitlement created/updated
+2. telegram grant created/queued
+3. subscription exists/extended
+4. ledger row written
+5. target resolution matched
+
+### Transactional contract
+
+**DB-only paths** (grant-access-for-order, subscription-charge:renew, admin-manual-charge, subscription-admin-actions:extend):
+
+- Projection changes + ledger INSERT в **одной SQL transaction** (через SECURITY DEFINER RPC `fn_fulfillment_execute` или explicit `BEGIN...COMMIT` в edge function через raw pg client).
+- Success response невозможен без записанной ledger row.
+
+**Downstream/external paths** (telegram-grant-access, telegram-process-access-queue):
+
+- Parent ledger event ДОЛЖЕН существовать до вызова downstream.
+- Downstream записывает свой child ledger event.
+- Downstream не может считаться завершённым, пока child ledger row не записан.
+
+**Batch paths** (bepaid-report-import, getcourse-import-deals):
+
+- batch_start ledger row записывается первой.
+- Каждый row event записывает ledger row атомарно с projection change.
+- Итоговый batch summary обновляет batch_start row result.
+
+---
+
+## Step 10: Proof + cutover
+
+### Phase 1 subset invariants (для p0_invariant_report.txt)
+
+Покрываются **только** Phase 0 + Phase 1 инварианты. Future Phase 2+ инварианты **не упоминаются** как выполненные.
+
+Subset:
+
+- Инварианты 1–76 из DoD v22 (все текущие CHECK/FK/schema guards)
+- Machine-check: post_check по action_type
+- Machine-check: source_event_key determinism
+- Machine-check: parent lineage single-row match
+- Machine-check: hardcoded UUID occurrences = 0
+
+### 7 proof-файлов
+
+1. `p0_config_source_proof.txt` — mini-patch meta proof
+2. `p0_hardcode_live_cleanup_proof.txt` — 7 live files
+3. `p0_hardcode_archival_ignored_proof.txt` — 4 archival files
+4. `p0_invariant_report.txt` — Phase 0+1 subset only
+5. `p0_revoke_path_inventory.txt` — 7+3 revoke paths
+6. `p0_ledger_path_coverage_proof.txt` — all paths covered
+7. `p0_ledger_watermark_coverage_proof.txt` — single-row lineage, coverage from cutover_at
+
+### Cutover-proof контракт
+
+Файл/блок: `p0_cutover_proof.txt`
+
+```text
+1. Кто пишет: финальная миграция / deploy script
+2. Что пишет:
+   UPDATE app_settings
+   SET value = jsonb_set(value, '{phase1_ledger_cutover_at}', to_jsonb(now()::text))
+   WHERE key = 'system'
+     AND NOT (value ? 'phase1_ledger_cutover_at');
+3. Записывается ОДИН раз (idempotent guard: NOT value ? 'phase1_ledger_cutover_at')
+4. Все coverage queries используют:
+   WHERE created_at >= (SELECT (value->>'phase1_ledger_cutover_at')::timestamptz FROM app_settings WHERE key = 'system')
+5. НЕ используют phase1_ledger_schema_ready_at для coverage
+6. Proof: SELECT value->>'phase1_ledger_cutover_at' FROM app_settings WHERE key = 'system' → NOT NULL
 ```
 
----
+### STOP-guards (8)
 
-## Полный DDL access_grant_ledger (v18 + v19 + v20 + v21 + v22)
-
-```sql
-CREATE TABLE public.access_grant_ledger (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-  -- Event identity
-  source_event_key TEXT NOT NULL,
-  execution_key TEXT NOT NULL DEFAULT gen_random_uuid()::text,
-
-  -- Lineage
-  parent_event_key TEXT,
-  parent_execution_key TEXT,
-
-  -- Action
-  action_type TEXT NOT NULL,
-  status TEXT NOT NULL,
-  reason_code TEXT NOT NULL,
-
-  -- Source context
-  source_event_type TEXT NOT NULL,
-  source_subject_type TEXT NOT NULL,
-  source_subject_ref TEXT,
-
-  -- Target
-  target_type TEXT NOT NULL,
-  target_key TEXT NOT NULL,
-  target_ref UUID,
-
-  -- Actors
-  user_id UUID,
-  profile_id UUID,
-
-  -- Source references
-  order_id UUID,
-  source_order_id UUID,
-  source_subscription_id UUID,
-  source_offer_id UUID,
-
-  -- Result
-  result JSONB,
-  error_details JSONB,
-
-  -- Metadata
-  metadata JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-  -- === CHECK CONSTRAINTS ===
-
-  -- v19: dictionary constraints
-  CONSTRAINT chk_action_type CHECK (
-    action_type IN ('grant','extend','revoke','expire','reactivate','skip','batch_start')
-  ),
-  CONSTRAINT chk_status CHECK (
-    status IN ('granted','extended','skipped','failed','revoked','expired','reactivated','completed')
-  ),
-  CONSTRAINT chk_source_event_type CHECK (
-    source_event_type IN ('webhook','cron','admin','manual','system','rule_engine')
-  ),
-  CONSTRAINT chk_source_subject_type CHECK (
-    source_subject_type IN ('order','subscription','admin_action','import_batch','cron_job','system','rule_engine_trigger')
-  ),
-
-  -- v20: expanded target_type for future phases
-  CONSTRAINT chk_target_type CHECK (
-    target_type IN ('product','club','training_module','feature','batch','domain','menu_item','training_lesson','subscription_tier')
-  ),
-
-  -- v21: reason_code dictionary
-  CONSTRAINT chk_reason_code CHECK (
-    reason_code IN (
-      'paid_order','trial_start','subscription_renew','subscription_extend',
-      'admin_grant','bulk_import','rule_engine_bonus',
-      'payment_failed','trial_expired','admin_cancel','subscription_expired',
-      'admin_revoke','cron_cleanup','violation_kick',
-      'duplicate_skip','already_active','no_matching_target',
-      'batch_orchestration'
-    )
-  ),
-
-  -- v21: action_type ↔ status cross-field guard
-  CONSTRAINT chk_action_status_compat CHECK (
-    CASE action_type
-      WHEN 'grant'       THEN status IN ('granted','failed','skipped')
-      WHEN 'extend'      THEN status IN ('extended','failed','skipped')
-      WHEN 'revoke'      THEN status IN ('revoked','failed','skipped')
-      WHEN 'expire'      THEN status IN ('expired','failed','skipped')
-      WHEN 'reactivate'  THEN status IN ('reactivated','failed','skipped')
-      WHEN 'skip'        THEN status IN ('skipped')
-      WHEN 'batch_start' THEN status IN ('completed','failed')
-      ELSE false
-    END
-  ),
-
-  -- v22: batch row ↔ batch action symmetry
-  CONSTRAINT chk_batch_row_contract CHECK (
-    (action_type = 'batch_start' AND target_type = 'batch')
-    OR
-    (action_type <> 'batch_start' AND target_type <> 'batch')
-  ),
-
-  -- v22: parent keys pair (both or neither)
-  CONSTRAINT chk_parent_keys_pair CHECK (
-    (parent_event_key IS NULL AND parent_execution_key IS NULL)
-    OR
-    (parent_event_key IS NOT NULL AND parent_execution_key IS NOT NULL)
-  ),
-
-  -- v22: at least one subject reference
-  CONSTRAINT chk_has_subject CHECK (
-    order_id IS NOT NULL
-    OR source_order_id IS NOT NULL
-    OR source_subscription_id IS NOT NULL
-    OR source_offer_id IS NOT NULL
-    OR source_subject_ref IS NOT NULL
-  )
-);
-
--- Indexes
-CREATE INDEX idx_ledger_source_event_key ON public.access_grant_ledger (source_event_key);
-CREATE INDEX idx_ledger_execution_key ON public.access_grant_ledger (execution_key);
-CREATE INDEX idx_ledger_profile_id ON public.access_grant_ledger (profile_id);
-CREATE INDEX idx_ledger_order_id ON public.access_grant_ledger (order_id);
-CREATE INDEX idx_ledger_target ON public.access_grant_ledger (target_type, target_key);
-CREATE INDEX idx_ledger_created_at ON public.access_grant_ledger (created_at);
-CREATE INDEX idx_ledger_action_status ON public.access_grant_ledger (action_type, status);
-
--- v21: Foreign keys
-ALTER TABLE public.access_grant_ledger
-  ADD CONSTRAINT fk_ledger_order FOREIGN KEY (order_id) REFERENCES orders_v2(id) ON DELETE SET NULL,
-  ADD CONSTRAINT fk_ledger_source_order FOREIGN KEY (source_order_id) REFERENCES orders_v2(id) ON DELETE SET NULL,
-  ADD CONSTRAINT fk_ledger_source_subscription FOREIGN KEY (source_subscription_id) REFERENCES subscriptions_v2(id) ON DELETE SET NULL,
-  ADD CONSTRAINT fk_ledger_source_offer FOREIGN KEY (source_offer_id) REFERENCES tariff_offers(id) ON DELETE SET NULL,
-  ADD CONSTRAINT fk_ledger_profile FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE SET NULL;
-
--- RLS
-ALTER TABLE public.access_grant_ledger ENABLE ROW LEVEL SECURITY;
-
--- v21: Watermark (safe idempotent)
-INSERT INTO app_settings (key, value)
-VALUES ('system', jsonb_build_object('phase1_ledger_enabled_at', now()::text))
-ON CONFLICT (key) DO UPDATE
-SET value = CASE
-  WHEN NOT (COALESCE(app_settings.value, '{}'::jsonb) ? 'phase1_ledger_enabled_at')
-  THEN jsonb_set(COALESCE(app_settings.value, '{}'::jsonb), '{phase1_ledger_enabled_at}', to_jsonb(now()::text))
-  ELSE app_settings.value
-END;
-```
+1. Nondeterministic `source_event_key` (timestamp/random as discriminator) → STOP
+2. Primary grant path missing ledger row → STOP
+3. Downstream called from primary without parent keys → STOP
+4. `hardcoded_club_id_occurrences_after > 0` in live files → STOP
+5. Watermark coverage diff > 0 по любому path → STOP
+6. Orphan downstream > 0 → STOP
+7. Missing required post_check → STOP
+8. No доказуемый DB SoT replacement for any hardcoded UUID → STOP
 
 ---
 
-## Обновлённый DoD (v22, 76 инвариантов)
+## Порядок реализации
 
-К 72 инвариантам v21 добавлены:
-
-- **73**: `chk_batch_row_contract` — `action_type='batch_start' ↔ target_type='batch'` симметрия. Невалидные комбинации невозможны.
-- **74**: `chk_parent_keys_pair` — parent_event_key и parent_execution_key всегда оба NULL или оба NOT NULL.
-- **75**: `chk_has_subject` — каждая ledger-строка имеет хотя бы один source reference.
-- **76**: Machine-check в p0_invariant_report.txt: grant/extend/reactivate (non-failed/skipped) → post_check обязателен; batch_start → post_check IS NULL.
-
----
-
-## Proof-артефакты (11 файлов, без изменений в количестве)
-
-В `p0_invariant_report.txt` добавлен verify-блок для post_check по action_type.
-
----
-
-## Порядок реализации (обновлённый)
-
-Phase 0 + Phase 1:
-1. Создать `access_grant_ledger` по полному DDL v18 + v19 + v20 + v21 + **v22 constraints**
-2. Записать deploy watermark через INSERT ... ON CONFLICT с guard
-3. Убрать hardcode из 8 live файлов
-4. Обернуть **4 grant-path группы** в FulfillmentExecutor
-5. Обернуть **2 downstream paths** с parent propagation
-6. Обернуть **7 revoke-paths** в AccessRevoker
-7. Для batch/import: трёхуровневая структура
-8. `resolveAccessWindow()`, merge effective windows, запись в `result JSONB`
-9. P0 invariant report, **6 proof-артефактов** с single-row lineage proof + post_check machine-check
-
----
-
-## Контракт result JSONB по action_type (v20)
-
-### grant / extend / reactivate
-- `access_start`, `access_end`, `window_days`, `source_window_rule` — ОБЯЗАТЕЛЬНО
-- `previous_end` (для extend) — nullable
-- `post_check` — ОБЯЗАТЕЛЬНО (5 проверок: `{applicability, status, details, ref}`)
-
-### revoke / expire
-- `revoked_from`, `previous_access_end`, `reconcile_basis`, `other_active_sources_checked`, `kept_projections` — ОБЯЗАТЕЛЬНО
-
-### skip
-- `skip_reason`, `existing_ref` — ОБЯЗАТЕЛЬНО/nullable
-
-### failed
-- `failed_at_step`, `error_message` — ОБЯЗАТЕЛЬНО
-- `error_details` — отдельная колонка JSONB
-
-### batch_start
-- `batch_size`, `source_file`, `import_type` — nullable
-- `result` может быть NULL
-
----
-
-## Контракт result.post_check (v20 нормализованный)
-
-```jsonb
-{
-  "applicability": "required | not_applicable",
-  "status": "pass | warn | fail | null",
-  "details": "...",
-  "ref": "..."
-}
-```
-
-- `not_applicable` → `status = null`
-- `required` → `status` обязателен
-
----
-
-## user_id — решение Phase 1 (v21)
-
-FK на auth.users(id) не ставится. Причины:
-1. auth.users — reserved Supabase schema
-2. profiles.id — канонический proxy
-3. Ghost grants используют placeholder
-
----
-
-## Lineage proof (v21 + v22)
-
-Single-row parent match + chk_parent_keys_pair:
-```sql
-SELECT count(*) FILTER (WHERE EXISTS (
-  SELECT 1 FROM access_grant_ledger p
-  WHERE p.source_event_key = l.parent_event_key
-    AND p.execution_key = l.parent_execution_key
-)) as parent_single_row_match
-FROM access_grant_ledger l
-WHERE target_type != 'batch' AND parent_event_key IS NOT NULL;
-```
-
----
-
-## Watermark coverage proof (v19 + v21 + v22.1)
-
-Два раздела:
-- Section A: access events (target_type != 'batch')
-- Section B: meta/batch events (target_type = 'batch')
-
----
-
-## PATCH v22.1: ledger migration hardening (applied)
-
-| # | Правка | Статус |
-|---|--------|--------|
-| 1 | Watermark разделён: `phase1_ledger_schema_ready_at` (записан) + `phase1_ledger_cutover_at` (запишется после деплоя всех path wrappers) | ✅ |
-| 2 | RLS policy пересоздана с явным `WITH CHECK` | ✅ |
-| 3 | Удалён дублирующий индекс `idx_ledger_source_event_key` (UNIQUE уже создаёт btree) | ✅ |
-
-### Watermark контракт
-
-- `phase1_ledger_schema_ready_at` — момент создания таблицы. Информационный.
-- `phase1_ledger_cutover_at` — записать **только** после деплоя всех Phase 1 path wrappers:
-  - 4 primary grant-path groups
-  - 2 downstream paths
-  - 7 revoke paths
-  - post-check
-- Все proof-артефакты и invariant report используют **только** `phase1_ledger_cutover_at`.
-
-### Текущий статус Phase 1
-
-| Шаг | Описание | Статус |
-|-----|----------|--------|
-| 1 | DDL + CHECK + FK + индексы | ✅ schema_ready |
-| 2 | Watermark (schema_ready_at) | ✅ записан |
-| 3 | Hardcode cleanup (8 live files) | ⬜ не начат |
-| 4 | Grant-path wrapping (4 группы) | ⬜ не начат |
-| 5 | Downstream paths (2) | ⬜ не начат |
-| 6 | Revoke paths (7) | ⬜ не начат |
-| 7 | resolveAccessWindow() | ⬜ не начат |
-| 8 | post_check | ⬜ не начат |
-| 9 | cutover_at watermark | ⬜ blocked by 3–8 |
-| 10 | 6 proof-артефактов | ⬜ blocked by 9 |
+1. Mini-patch `products_v2.meta` (миграция)
+2. Hardcode cleanup в 7 live files
+3. Создать `_shared/resolve-access-window.ts`
+4. Создать `_shared/fulfillment-executor.ts` + SECURITY DEFINER RPC
+5. Обернуть 4 grant-path groups
+6. Обернуть 2 downstream paths с parent propagation
+7. Создать `_shared/access-revoker.ts`
+8. Обернуть 7+ revoke paths
+9. Batch/import tree для bepaid + getcourse
+10. Post-check per ledger row
+11. 7 proof-файлов
+12. Cutover marker `phase1_ledger_cutover_at` (только после 11 = PASS)
