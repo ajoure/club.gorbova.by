@@ -436,7 +436,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => deleteRule(rule.id)}
+                        onClick={() => setDeletingRule(rule)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
