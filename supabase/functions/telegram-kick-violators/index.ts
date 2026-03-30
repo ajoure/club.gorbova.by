@@ -156,6 +156,8 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    const jobRunId = crypto.randomUUID();
+
     // Find all active clubs with autokick enabled
     const { data: clubs, error: clubsError } = await supabase
       .from('telegram_clubs')
