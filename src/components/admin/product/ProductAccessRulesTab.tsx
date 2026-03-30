@@ -624,7 +624,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   <SelectItem value="entitlement">
                     <span className="flex items-center gap-1.5">
                       {TARGET_TYPE_LABELS.entitlement}
-                      <Badge variant="outline" className="text-[9px] px-1 py-0">advanced</Badge>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0">служебный</Badge>
                     </span>
                   </SelectItem>
                 </SelectContent>
