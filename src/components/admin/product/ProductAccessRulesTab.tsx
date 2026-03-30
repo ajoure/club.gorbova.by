@@ -743,7 +743,6 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                           </div>
                         </SelectItem>
                       ))}
-                      ))}
                     </SelectContent>
                   </Select>
                   <p className="text-[11px] text-muted-foreground">
