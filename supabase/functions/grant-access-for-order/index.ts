@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -154,9 +155,9 @@ Deno.serve(async (req) => {
     const productCode = product?.code || (order.purchase_snapshot as any)?.product_code || "general";
     
     // Calculate access period - use custom days if provided, otherwise from tariff
-    // PATCH-3: For club products, use calendar month (+1 month) instead of fixed days
+    // Phase 1: calendar month rule from products_v2.meta instead of hardcoded UUID
     const now = new Date();
-    const isClubProduct = productId === "11c9f1b8-0355-4753-bd74-40b42aa53616";
+    const isClubProduct = await isCalendarMonthProduct(supabase, productId);
     const durationDays = customAccessDays ?? tariff?.access_days ?? 30;
     
     // Determine base start date:
@@ -196,29 +197,13 @@ Deno.serve(async (req) => {
       }
     }
     
-    // PATCH-3: Calculate access_end_at - calendar month for club, days for others
+    // Phase 1: Calculate access_end_at - calendar month from config, days for others
     let accessEndAt: Date;
     if (isClubProduct && !customAccessDays) {
-      // Calendar month: 22.01 → 22.02 → 22.03 (TZ-safe using UTC)
-      accessEndAt = new Date(Date.UTC(
-        accessStartAt.getUTCFullYear(),
-        accessStartAt.getUTCMonth() + 1,  // +1 calendar month
-        accessStartAt.getUTCDate(),
-        12, 0, 0  // Normalize to noon UTC to avoid DST issues
-      ));
-      
-      // Handle edge case: 31 Jan → 28/29 Feb (clamp to last day of month)
-      if (accessEndAt.getUTCDate() !== accessStartAt.getUTCDate()) {
-        accessEndAt = new Date(Date.UTC(
-          accessStartAt.getUTCFullYear(),
-          accessStartAt.getUTCMonth() + 2,
-          0,  // Last day of previous month
-          12, 0, 0
-        ));
-      }
-      console.log(`[grant-access-for-order] Club product: calendar month ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
+      accessEndAt = calcCalendarMonthEnd(accessStartAt);
+      console.log(`[grant-access-for-order] Calendar month product: ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
     } else {
-      // For non-club or custom days: use duration in days
+      // For non-calendar-month or custom days: use duration in days
       accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);
     }
 
