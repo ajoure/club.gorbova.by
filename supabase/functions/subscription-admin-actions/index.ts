@@ -706,6 +706,64 @@ Deno.serve(async (req) => {
         }).select('id').single();
         branchAuditId = cancelAudit?.id || null;
 
+        // Sub-patch B: Inline ledger for cancel (no downstream call needed)
+        try {
+          const cancelDiscriminator = branchAuditId || subscription_id;
+          const cancelAlreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
+          const cancelSourceEventKey = `admin-cancel:${subscription_id}:${cancelDiscriminator}`;
+
+          if (cancelAlreadyCanceled) {
+            await writeLedgerEntry(supabase, {
+              source_event_type: 'admin',
+              source_event_key: cancelSourceEventKey,
+              source_subject_type: 'admin_action',
+              source_subject_ref: adminUserId,
+              source_subscription_id: subscription_id,
+              action_type: 'skip',
+              reason_code: 'admin_cancel' as any,
+              target_type: 'subscription_tier',
+              target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              target_ref: subscription.product_id || null,
+              user_id: subscription.user_id,
+              order_id: subscription.order_id || null,
+              status: 'skipped',
+              result: {
+                skip_reason: 'already_canceled',
+                branch_decision_source: 'before_after_projection_diff',
+                audit_discriminator_source: 'branch_audit_id',
+                before_status: beforeSnapshot.status,
+                before_canceled_at: beforeSnapshot.canceled_at,
+                reconcile_basis: 'admin_cancel',
+              },
+            });
+            console.log(`[subscription-admin-actions] Ledger cancel: skipped (already_canceled)`);
+          } else {
+            const cancelRevokeResult = await executeRevoke(supabase, {
+              userId: subscription.user_id,
+              orderId: subscription.order_id || null,
+              targetType: 'subscription_tier',
+              targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              targetRef: subscription.product_id || null,
+              subscriptionId: subscription_id,
+              reasonCode: 'admin_cancel' as any,
+              reconcileBasis: 'admin_cancel',
+              sourceEventType: 'admin',
+              sourceEventKey: cancelSourceEventKey,
+              sourceSubjectType: 'admin_action',
+              sourceSubjectRef: adminUserId,
+              metadata: {
+                branch_decision_source: 'before_after_projection_diff',
+                audit_discriminator_source: 'branch_audit_id',
+                before_status: beforeSnapshot.status,
+                before_canceled_at: beforeSnapshot.canceled_at,
+              },
+            });
+            console.log(`[subscription-admin-actions] Ledger cancel: revoked=${cancelRevokeResult.revoked}, id=${cancelRevokeResult.ledgerId}`);
+          }
+        } catch (ledgerErr) {
+          console.error('[subscription-admin-actions] Ledger error for cancel (non-blocking):', ledgerErr);
+        }
+
         // Send Telegram notification about cancellation (access_ending)
         const endDate = new Date(cancelAt).toLocaleDateString('ru-RU');
         const product = subscription.products_v2 as any;
