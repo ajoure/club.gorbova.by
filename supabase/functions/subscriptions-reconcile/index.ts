@@ -68,14 +68,22 @@ Deno.serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // PATCH 11B: Check if user has other valid access before revoking
-        const access = await hasValidAccess(supabase, sub.user_id);
-        if (access.valid) {
-          console.log(`Skip revoke for ${sub.user_id}: has ${access.source} until ${access.endAt}`);
-        } else {
-          // Revoke Telegram access with club_id
+        // Phase 1: Use AccessRevoker with ledger write
+        const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+        const revokeResult = await executeRevoke(supabase, {
+          userId: sub.user_id,
+          clubId,
+          subscriptionId: sub.id,
+          reason: 'subscription_expired',
+          sourceEventType: 'cron',
+          sourceEventKey: `cron-reconcile:${jobRunId}:${sub.id}`,
+          sourceSubjectType: 'subscription',
+          sourceSubjectRef: sub.id,
+        });
+
+        if (revokeResult.revoked) {
+          // Actually invoke telegram-revoke-access
           try {
-            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
             await supabase.functions.invoke('telegram-revoke-access', {
               body: { 
                 user_id: sub.user_id, 
@@ -87,6 +95,8 @@ Deno.serve(async (req) => {
           } catch (e) {
             console.error(`Failed to revoke Telegram access for user ${sub.user_id}:`, e);
           }
+        } else {
+          console.log(`Skip revoke for ${sub.user_id}: ${revokeResult.skippedReason}`);
         }
 
         // Log the action
