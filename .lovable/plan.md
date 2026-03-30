@@ -2,79 +2,136 @@
 
 &nbsp;
 
-1. Добавь в scope явную формулировку:
+1. **v23.1.3A: domain/section тип не просто “скрыть email” — нужен явный rollback из рабочего UI**
   &nbsp;
-  - **этот патч закрывает только UI-баг numeric inputs и баг отображения срока**;
-  - **runtime-проверка реальной выдачи доступа не входит в этот патч** и идёт отдельным follow-up proof/verification patch.
-  - Иначе будет повторное смешение UI-фикса и runtime-валидации.
-  &nbsp;
-2. Для numeric fix зафиксируй единое правило:
-  &nbsp;
-  - priority и duration_days в UI хранятся как string;
-  - парсинг в число только:
+  - В плане зафиксируй прямо:
     &nbsp;
-    - на blur,
-    - на save;
+    - тип **«Доступ к домену / разделу»** сейчас считается **не runtime-ready**;
+    - его нельзя оставлять активным вариантом создания нового правила;
+    - безопасный вариант: убрать из рабочего выбора **или** показать disabled с подписью Скоро / недоступно.
     &nbsp;
-  - пустое значение допустимо в форме;
-  - не использовать || 0, потому что это снова ломает удаление и возвращает ноль насильно.
+  - Просто “фильтровать email” недостаточно как формулировка. Нужен явный UX-результат, чтобы админ не думал, что функция работает.
   &nbsp;
-3. Для priority зафиксируй нормализацию отдельно:
+2. **v23.1.3A: entitlement display model нужно сделать не только label, но и групповую подачу**
   &nbsp;
-  - если поле пустое при сохранении → использовать 0;
-  - если введено некорректное значение → fallback к 0;
-  - но **не во время печати**.
-  &nbsp;
-4. Для duration_days зафиксируй нормализацию отдельно:
-  &nbsp;
-  - если режим manual и поле пустое → null, а не 0;
-  - если режим tariff → duration_days = null;
-  - пресеты должны писать строку, но сохраняться как число только в payload.
-  &nbsp;
-5. Исправь duration semantics не только в EffectiveGrantCard, но и везде, где показывается duration label на экране:
-  &nbsp;
-  - карточка правила;
-  - preview / explain;
-  - legacy/effective строки, если там участвует общий helper.
-  - Нельзя оставить старый formatDuration(null) => "Бессрочно" где-то ещё на этом экране.
-  &nbsp;
-6. Лучше не перегружать formatDuration бизнес-смыслом.
-  &nbsp;
-  - Сделай отдельный helper уровня экрана, например:
+  - Сейчас проблема не только в raw code, но и в смешении сущностей:
     &nbsp;
-    - getDurationDisplay(...)
+    - продукты,
+    - клуб,
+    - консультации,
+    - сервисные/служебные права.
     &nbsp;
-  - Чтобы:
+  - Добавь в план:
     &nbsp;
-    - formatDuration занимался только форматированием числа,
-    - а business resolution (из тарифа, зависит от тарифа, бессрочно) был отдельно и прозрачно.
+    - grouping / category для вариантов в селекте;
+    - формат отображения:
+      &nbsp;
+      - человеческое название
+      - вторым слоем технический код
+      &nbsp;
+    - скрытие совсем непонятных или недопустимых для ручного назначения кодов, если они не должны быть доступны обычному админу.
+    &nbsp;
+  - Без этого “служебное право доступа” останется частично непонятным.
+  &nbsp;
+3. **v23.1.3A: numeric fix распространить на все numeric поля Access Rules dialog**
+  &nbsp;
+  - В плане это упомянуто, но усили:
+    &nbsp;
+    - один общий паттерн для всех numeric inputs;
+    - proof минимум для:
+      &nbsp;
+      - priority,
+      - duration_days,
+      - пресеты после ручного ввода.
+      &nbsp;
+    &nbsp;
+  - И отдельно зафиксируй:
+    &nbsp;
+    - пустое значение допустимо во время ввода;
+    - 0 только fallback на save;
+    - во время печати не делать автонормализацию.
     &nbsp;
   &nbsp;
-7. В duration matrix уточни distinction:
+4. **v23.1.3B: condition model лучше строить по ID, а не только по product_code**
   &nbsp;
-  - unknown / unresolved in current preview context
-  - truly unlimited
-  - это не одно и то же.
-  - Сейчас главный баг именно от смешения этих двух состояний.
-  &nbsp;
-8. В DoD добавь proof по numeric bug:
-  &nbsp;
-  - можно стереть 0 обычным backspace;
-  - можно ввести 12 посимвольно;
-  - можно оставить поле пустым и форма не ломается;
-  - пресет после ручного ввода не ломает состояние.
-  &nbsp;
-9. В DoD добавь proof по duration semantics:
-  &nbsp;
-  - product-level rule без выбранного тарифа показывает:
+  - В conditions добавь безопасную модель:
     &nbsp;
-    - По сроку тарифа покупки
-    - или Срок зависит от тарифа;
+    - основной ключ: required_product_id
+    - опционально display/code для UI/trace
     &nbsp;
-  - tariff-level rule показывает конкретное значение;
-  - Бессрочно не появляется как fallback для null.
+  - product_code можно использовать для отображения/совместимости, но не как единственный SoT.
+  - В проекте у нас приоритет ID-driven архитектуры, это нужно сохранить. 
   &nbsp;
-10. Добавь post-patch note:
+5. **v23.1.3B: prior purchase condition должна поддерживать как минимум два уровня**
+  &nbsp;
+  - Не только required_product_code, а:
+    &nbsp;
+    - required_product_id
+    - опционально required_tariff_id
+    &nbsp;
+  - Потому что твоя бизнес-логика звучит именно как:
+    &nbsp;
+    - доступ к **тому тарифу/тому ЦБ, который уже был куплен**.
+    &nbsp;
+  - Только продуктового уровня может быть недостаточно.
+  &nbsp;
+6. **v23.1.3B: match_mode нужно уточнить и ограничить**
+  &nbsp;
+  - Сейчас предложены:
+    &nbsp;
+    - any_paid_order
+    - active_entitlement
+    &nbsp;
+  - Добавь в план, какой именно режим берём **в этом патче по умолчанию**, чтобы не оставлять двусмысленность.
+  - Для текущего кейса безопаснее зафиксировать один основной режим:
+    &nbsp;
+    - any_paid_order
+    &nbsp;
+  - Остальные режимы — backlog/future.
+  &nbsp;
+7. **v23.1.3B: UI для условного правила должен быть понятен без технических терминов**
+  &nbsp;
+  - Не просто condition_type = prior_purchase, а нормальный блок:
+    &nbsp;
+    - Выдавать только если ранее покупал
+    - выбор продукта / тарифа
+    &nbsp;
+  - И пояснение:
+    &nbsp;
+    - Проверяется по оплаченным заказам
+    &nbsp;
+  - Техническое имя condition_type — не показывать как основной UI-текст.
+  &nbsp;
+8. **v23.1.3B: runtime skip должен быть виден не только в ledger, но и в логике explain/proof**
+  &nbsp;
+  - Добавь в план:
+    &nbsp;
+    - как это отразится в preview / proof-отчёте;
+    - как будет видно, что правило:
+      &nbsp;
+      - сработало,
+      - не сработало из-за условия.
+      &nbsp;
+    &nbsp;
+  - Иначе это будет видно только в коде/ledger, но не в итоговой проверке.
+  &nbsp;
+9. **v23.1.3B: proof-пакет нужно прописать сразу**
+  &nbsp;
+  - Для части B добавь обязательные сценарии:
+    &nbsp;
+    1. пользователь **без** prior purchase → skipped_by_condition;
+    2. пользователь **с** prior purchase → grant выполнен;
+    3. legacy и обычные безусловные rules не ломаются;
+    4. BUSINESS не даёт ЦБ как безусловный бонус.
+    &nbsp;
+  - Нужны proof-артефакты:
+    &nbsp;
+    - UI создания правила;
+    - DB/лог/ledger proof;
+    - итоговый runtime result.
+    &nbsp;
+  &nbsp;
+10. **Порядок выполнения верный, но добавь stop-condition между A и B**
 
 &nbsp;
 
@@ -82,107 +139,239 @@
 
 &nbsp;
 
-- следующий отдельный патч после этого — **runtime verification новой rule и overlap new rule + legacy**, без расширения текущего UI-фикса.
+- После v23.1.3A:
+  &nbsp;
+  - numeric fix подтверждён,
+  - entitlement UX подтверждён,
+  - domain rollback подтверждён.
+  &nbsp;
+- Только после этого переходить к v23.1.3B.
+- Не запускать runtime-часть, пока UI-часть не закрыта proof-ом.
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH v23.1.2 — Numeric input fix + duration semantics
+&nbsp;
 
-## Scope и ограничения
+11. **DoD для v23.1.3A усили**
 
-- Backend, access_rules schema, runtime grant logic, legacy fallback logic — **не трогаем**
-- Только UI-фиксы в 2 файлах
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Добавь:
+  &nbsp;
+  - proof, что 0 удаляется backspace;
+  - ввод 3 не даёт 30;
+  - служебные права показываются понятными названиями, а не голыми кодами;
+  - тип domain/section больше не доступен как рабочая настройка.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. **DoD для v23.1.3B усили**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Добавь:
+  &nbsp;
+  - правило с condition сохраняется в conditions JSONB;
+  - используется ID-based condition;
+  - runtime даёт granted / skipped_by_condition;
+  - нет безусловной выдачи ЦБ;
+  - есть доказуемый proof по двум сценариям: with prior purchase / without prior purchase.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+В остальном разделение на **A = UI-fix** и **B = conditional runtime rule** правильное.
+
+&nbsp;
+
+План: PATCH v23.1.3A + v23.1.3B
+
+Патч разделён на две независимые части. Не смешиваем UI-фикс с runtime/business-logic.
 
 ---
 
-## Проблема 1: Numeric input bug
+## v23.1.3A — Numeric input fix + display model для системных прав
 
-**Где:** `ProductAccessRulesTab.tsx`
+### Scope
 
-- Строка 828: `duration_days` — `type="number"` + `parseInt` на каждый onChange → залипание
-- Строка 851-853: `priority` — `type="number"` + `parseInt(e.target.value) || 0` → нельзя стереть 0
+- Починить баг numeric inputs (priority залипает на 0, ввод 3 → 30)
+- Привести отображение entitlement-кодов к человекочитаемому виду
+- Убрать тип «Доступ к домену / разделу» из рабочего выбора (disabled до backend-ready)
 
-**Исправление:**
+### 1. Numeric input — root cause и fix
 
-- Добавить string-state поля `priorityStr` и `durationDaysStr` в form (или отдельный state)
-- Убрать `type="number"`, использовать `inputMode="numeric"` + `pattern="[0-9]*"`
-- На onChange — просто сохранять string
-- На blur — парсить в число (пустое → null/0)
-- На save (handleSave) — парсить из string в number для payload
+**Root cause**: поле priority начинается с `"0"`. Курсор встаёт перед нулём → ввод `3` даёт `"30"`. `onBlur` возвращает `"0"` при пустом поле, что блокирует естественное удаление.
 
-Конкретные строки:
-
-- Строка 126-138: добавить `priority: "0"` и `duration_days: ""` как string
-- Строка 178-192 (openCreateDialog): `priority: "0"`, `duration_days: ""`
-- Строка 195-212 (openEditDialog): `priority: String(rule.priority)`, `duration_days: rule.duration_days != null ? String(rule.duration_days) : ""`
-- Строка 226-237 (handleSave): парсить `form.priority` и `form.duration_days` из string
-- Строка 811: preset onClick → `setForm({ ...form, duration_days: String(p.days) })`
-- Строка 814: сравнение preset → `Number(form.duration_days) === p.days`
-- Строка 824-831: Input → убрать type="number", `value={form.duration_days}`, onChange → сохранять string, onBlur → нормализовать
-- Строка 850-855: priority Input → аналогично
-
----
-
-## Проблема 2: Duration semantics — ложное «Бессрочно»
-
-**Где:** `formatDuration` (строка 262-267)
-
-```tsx
-const formatDuration = (days: number | null) => {
-  if (days == null) return "Бессрочно";  // ← ПРОБЛЕМА
-```
-
-Когда product-level rule имеет `duration_mode=tariff` и `duration_days=null`, а preview запрашивается без конкретного тарифа (`previewTariffId=""`), в `useEffectiveGrants` tariffAccessDays=null → duration_days=null → formatDuration возвращает «Бессрочно».
-
-**Исправление в `EffectiveGrantCard` (строка 961-968):**
-Заменить прямой вызов `formatDuration(g.duration_days)` на контекстно-зависимую логику:
-
-```
-если duration_source === "unknown" и duration_days === null:
-  → "По сроку тарифа покупки"
-если duration_days === null и source_type === "rule":
-  → "По сроку тарифа покупки"  
-иначе:
-  → formatDuration(g.duration_days)
-```
-
-**Аналогично в списке правил (строка 411-415):**
-
-```
-если rule.duration_days == null и effectiveDuration == null:
-  → показать "По сроку тарифа покупки" вместо formatDuration(null) = "Бессрочно"
-```
-
-**Duration resolution matrix (для кода и отчёта):**
+**Файл**: `ProductAccessRulesTab.tsx`
 
 
-| Приоритет | Источник    | Условие                      | Лейбл                        |
-| --------- | ----------- | ---------------------------- | ---------------------------- |
-| 1         | rule manual | rule.duration_days != null   | `{N} дн. (из правила)`       |
-| 2         | tariff      | tariffAccessDays != null     | `{N} дн. (из тарифа)`        |
-| 3         | legacy      | legacy.duration_days != null | `{N} дн. (старая настройка)` |
-| 4         | не задано   | все null, product-level      | `По сроку тарифа покупки`    |
-| 5         | бессрочно   | явный режим (future)         | `Бессрочно`                  |
+| Что                                         | Сейчас                         | Будет                                        |
+| ------------------------------------------- | ------------------------------ | -------------------------------------------- |
+| Начальное значение priority (стр. 133, 185) | `"0"`                          | `""`                                         |
+| openEditDialog (стр. 205)                   | `String(rule.priority)`        | `rule.priority ? String(rule.priority) : ""` |
+| onBlur (стр. 906-908)                       | `"" → "0"`                     | **убрать** — пустое допустимо                |
+| Input priority                              | без placeholder                | `placeholder="0"`                            |
+| handleSave (стр. 227)                       | `parseInt(form.priority) || 0` | без изменений — уже корректно                |
 
 
-`Бессрочно` больше не используется как fallback для null.
+### 2. Entitlement display model
+
+Сейчас в селекторе entitlement (стр. 737) показываются raw-коды: `cb_2_step`, `club`, `consultation`, `premium`, `pro` и т.д. Это непригодно для администратора.
+
+**Решение**:
+
+- В `useAccessRuleSelectors.ts` → `useAvailableEntitlements`: использовать `getProductName(code)` из `src/lib/product-names.ts` для `label`
+- В UI (стр. 737): показывать `{e.label}` (человеческое название) + мелким шрифтом `{e.product_code}` как технический код
+- Для кодов без маппинга в `PRODUCT_NAMES` — показывать raw code как есть (fallback уже работает в `getProductName`)
+
+### 3. Убрать «Доступ к домену / разделу» из рабочего выбора
+
+**Факт**: тип `email` (domain/section) не имеет реального SoT для пользовательского доступа. `product_email_mappings` — это настройка email-отправки, не grant.
+
+**Решение**:
+
+- В селекторе типа цели (стр. 664-668): фильтровать `email` так же как `entitlement` — но вместо показа с бейджем, **не показывать совсем** или показать disabled с пометкой «Недоступно»
+- В `getRuntimeSupport` (стр. 497): `email` → `"disabled"` (или убрать из enum)
+- Существующие legacy email-маппинги в preview продолжают отображаться (это данные, не создание новых правил)
+
+### Файлы v23.1.3A
+
+
+| Файл                                                     | Изменения                                                                                           |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | priority: "" вместо "0", убрать onBlur, placeholder, скрыть email из селектора, entitlement display |
+| `src/hooks/useAccessRuleSelectors.ts`                    | entitlement label через getProductName                                                              |
+
+
+### DoD v23.1.3A
+
+1. Ввод `3` в пустое поле priority → `3`, не `30`
+2. Можно оставить priority пустым, при сохранении → 0
+3. Системные права показываются человеческими названиями + код мелким шрифтом
+4. «Доступ к домену / разделу» не доступен для выбора при создании нового правила
+5. Существующие legacy email-маппинги в preview не затронуты
 
 ---
 
-## Файлы
+## v23.1.3B — Условное служебное правило (conditional service rule)
+
+### Scope
+
+- Добавить модель условного доступа по факту предыдущей покупки
+- Использовать существующее JSONB поле `conditions` в `access_rules` — без изменения schema
+- Добавить runtime-проверку в `grant-access-for-order`
+- Кейс: при покупке Gorbova Club / тариф BUSINESS доступ к «Ценному бухгалтеру» выдаётся **только если** у пользователя уже есть покупка ЦБ
+
+### 1. Condition model в `conditions` JSONB
+
+Структура (add-only, не меняет schema):
+
+```json
+{
+  "rule_purpose": "service",
+  "condition_type": "prior_purchase",
+  "required_product_code": "cb20",
+  "match_mode": "any_paid_order"
+}
+```
+
+- `condition_type: "prior_purchase"` — правило активируется только при наличии предыдущей покупки
+- `required_product_code` — код продукта, покупка которого является условием
+- `match_mode`: `any_paid_order` (есть хотя бы один paid order с этим product_code) или `active_entitlement` (есть активный entitlement)
+
+### 2. Discovery: что считается «покупал»
+
+Проверка по таблице `orders_v2`:
+
+```sql
+SELECT 1 FROM orders_v2 o
+JOIN products_v2 p ON o.product_id = p.id
+WHERE o.user_id = {user_id}
+  AND p.code = {required_product_code}
+  AND o.status = 'paid'
+LIMIT 1
+```
+
+Это самый надёжный и простой источник. Альтернатива — проверка `entitlements`, но orders_v2 даёт более явную бизнес-семантику «покупал».
+
+### 3. UI для условного правила
+
+В форме создания/редактирования правила при `rule_purpose = "service"`:
+
+- Показывать дополнительный блок «Условие выдачи»
+- Селект: `condition_type = "prior_purchase"`
+- Селект продукта-условия (из `products_v2`)
+- Подпись: «Доступ будет выдан только если у покупателя уже есть оплаченный заказ на выбранный продукт»
+
+### 4. Runtime в `grant-access-for-order`
+
+В текущем grant flow (стр. 562-640) после чтения `access_rules`:
+
+- Если правило имеет `conditions.condition_type === "prior_purchase"`:
+  - Проверить наличие paid order с `required_product_code`
+  - Если условие выполнено → grant как обычно
+  - Если не выполнено → skip + ledger entry со статусом `skipped_by_condition`
+  - Лог: `[grant-access] Conditional rule {rule_id}: prior_purchase check → granted/skipped`
+
+Это add-only логика: существующие правила без conditions продолжают работать как раньше.
+
+### 5. Ledger entry для conditional skip
+
+При пропуске условного правила записать в `access_grant_ledger`:
+
+```json
+{
+  "status": "skipped",
+  "reason_code": "condition_not_met",
+  "meta": {
+    "condition_type": "prior_purchase",
+    "required_product_code": "cb20",
+    "check_result": false
+  }
+}
+```
+
+### Файлы v23.1.3B
 
 
-| Файл                                                     | Изменения                                                                                            |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | Numeric string-state для priority/duration_days; duration label fix в EffectiveGrantCard и rule list |
-| `src/hooks/useAccessRules.ts`                            | Без изменений                                                                                        |
+| Файл                                                     | Изменения                                               |
+| -------------------------------------------------------- | ------------------------------------------------------- |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | UI-блок условия при rule_purpose=service                |
+| `src/hooks/useAccessRules.ts`                            | Отображение условия в preview/effective grants          |
+| `supabase/functions/grant-access-for-order/index.ts`     | Add-only: проверка prior_purchase condition перед grant |
 
 
-## DoD
+### DoD v23.1.3B
 
-1. priority и duration_days можно стереть backspace и ввести число посимвольно
-2. Product-level rule с mode «из тарифа» показывает «По сроку тарифа покупки», а не «Бессрочно»
-3. Tariff-level rule показывает конкретный срок с пометкой источника
-4. «Бессрочно» показывается только когда нет ни одного источника срока и это не product-level rule с наследованием
+1. Условное правило можно создать через UI (rule_purpose=service + condition)
+2. Условие сохраняется в `conditions` JSONB без изменения schema
+3. Runtime проверяет prior_purchase перед выдачей
+4. При невыполнении условия → skip + ledger entry `skipped_by_condition`
+5. Существующие безусловные правила не затронуты
+6. BUSINESS не выдаёт ЦБ как безусловный бонус — только при выполнении условия
+
+---
+
+## Порядок выполнения
+
+1. **Сначала v23.1.3A** — чистый UI-фикс, без backend-изменений
+2. **Затем v23.1.3B** — условные правила + runtime
+
+Части не зависят друг от друга и не смешиваются.
