@@ -1,5 +1,6 @@
 # Phase 1 Hardcode Archival/Ignored Proof
 # Generated: 2026-03-30
+# Updated: 2026-03-30 (PATCH v22.3)
 
 ## Archival files (intentionally not patched)
 
@@ -10,8 +11,8 @@
 | 3 | supabase/functions/test-full-trial-flow/index.ts | Test fixture only |
 | 4 | supabase/functions/getcourse-import-file/index.ts | Legacy import, replaced by getcourse-import-deals |
 
-## Additional discovery
-- src/components/admin/EditDealDialog.tsx — has hardcoded UUID at L272.
-  Originally listed as false positive for `deals/EditDealDialog.tsx` (different path).
-  The actual file `admin/EditDealDialog.tsx` does contain the UUID.
-  Decision: Not in 7-file live scope per approved plan. To be patched separately.
+## UI-only non-access paths
+
+| # | File | Line | Description | Classification |
+|---|------|------|-------------|----------------|
+| 1 | src/components/admin/EditDealDialog.tsx | L272 | `formData.product_id === "11c9f1b8-..."` — UI display logic that determines whether to show `next_charge_at` field. | UI-only non-access path. Not a grant path. Not a revoke path. Not an archival script. No ledger impact. Follow-up UI-only patch to remove hardcoded UUID and use product metadata lookup. |

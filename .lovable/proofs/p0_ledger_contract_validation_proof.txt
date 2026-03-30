@@ -1,0 +1,184 @@
+# Phase 1 Ledger Contract Validation Proof
+# Generated: 2026-03-30 (PATCH v22.3)
+# Scope: All already-wrapped paths after foundation fix
+
+## DDL CHECKs validated
+
+### 1. grant-access-for-order/index.ts
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| action_type ↔ status | grant→granted, extend→extended | `actionType === 'grant' ? 'granted' : 'extended'` | ✅ PASS |
+| reason_code | `chk_reason_code` | `'paid_order'` | ✅ PASS |
+| target_type | `chk_target_type` | `'product'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'order'` | ✅ PASS |
+| chk_has_subject | ≥1 NOT NULL | `source_subject_ref=orderId`, `source_order_id=orderId`, `order_id=orderId` | ✅ PASS |
+| chk_parent_keys_pair | both NULL or both NOT NULL | Both NULL (top-level event) | ✅ PASS |
+| chk_batch_row_contract | N/A (not batch_start) | N/A | ✅ PASS |
+| post_check keys | {entitlement, telegram, subscription, ledger_row, target_resolution} | Via `buildPostCheck()` with normalized keys | ✅ PASS |
+| post_check schema | {applicability, status, details?, ref?} | Via `PostCheckItem` interface | ✅ PASS |
+| no 'completed' outside batch_start | — | status is 'granted' or 'extended' | ✅ PASS |
+| no 'telegram_access' target_type | — | target_type='product' | ✅ PASS |
+| no 'subscription' target_type | — | target_type='product' | ✅ PASS |
+
+**target_key contract**: `{user_id}:{product_id}` — deterministic, product-scoped
+**source_event_key**: `gafo:webhook:{orderId}` — deterministic UUID-based
+
+**result contract for grant/extend**:
+| Field | Present | Source |
+|-------|---------|--------|
+| access_start | ✅ | `accessStartAt.toISOString()` |
+| access_end | ✅ | `accessEndAt.toISOString()` |
+| window_days | ✅ | `durationDays` |
+| source_window_rule | ✅ | `'calendar_month'` / `'tariff_duration'` / `'default_30d'` |
+| previous_end | ✅ | `existingProductSub?.access_end_at` |
+| post_check | ✅ | Normalized schema |
+
+### 2. subscription-charge/index.ts (renew/extend branch)
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| action_type ↔ status | extend→extended | `'extended'` | ✅ PASS |
+| reason_code | `chk_reason_code` | `'subscription_renew'` | ✅ PASS |
+| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS |
+| source_event_type | real origin | `'cron'` (cron-triggered charge) | ✅ PASS |
+| chk_has_subject | ≥1 NOT NULL | `source_subject_ref=id`, `source_subscription_id=id`, `source_order_id=renewalOrderId\|\|order_id` | ✅ PASS |
+| chk_parent_keys_pair | both NULL or both NOT NULL | Both NULL (top-level event) | ✅ PASS |
+| chk_batch_row_contract | N/A | N/A | ✅ PASS |
+| post_check keys | normalized | Via `buildPostCheck()` | ✅ PASS |
+| post_check schema | normalized | Via `PostCheckItem` | ✅ PASS |
+| no 'completed' outside batch_start | — | status='extended' | ✅ PASS |
+| no 'subscription' target_type | — | target_type='subscription_tier' | ✅ PASS |
+| profile_id present | — | `subscription?.profile_id` | ✅ PASS |
+
+**target_key contract**: `{user_id}:{tariff_id}` — deterministic, tariff-scoped
+**source_event_key**: `sub-renew:{subscription_id}:{payment_id}` — deterministic UUID-based
+
+**result contract for extend**:
+| Field | Present |
+|-------|---------|
+| access_start | ✅ |
+| access_end | ✅ |
+| window_days | ✅ |
+| source_window_rule | ✅ |
+| previous_end | ✅ |
+| post_check | ✅ |
+
+### 3. subscriptions-reconcile/index.ts
+
+#### Block 1: Expired cancellations (cancel_at passed)
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| action_type ↔ status | revoke→revoked, skip→skipped | Via AccessRevoker | ✅ PASS |
+| reason_code | `chk_reason_code` | `'subscription_expired'` | ✅ PASS |
+| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS |
+| chk_has_subject | ≥1 NOT NULL | `source_subject_ref=sub.id`, `source_subscription_id=sub.id` | ✅ PASS |
+| reconcile_basis | caller-provided | `'cancel_at_passed'` | ✅ PASS |
+
+**target_key**: `{user_id}:{product_id}`
+**source_event_key**: `cron-reconcile:{jobRunId}:{sub.id}`
+
+**result contract for revoke**:
+| Field | Present |
+|-------|---------|
+| revoked_from | ✅ |
+| previous_access_end | ✅ (null, can be enriched) |
+| reconcile_basis | ✅ |
+| other_active_sources_checked | ✅ |
+
+#### Block 2: Trial expired (trial_end_at passed + canceled)
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| reason_code | `chk_reason_code` | `'trial_expired'` | ✅ PASS |
+| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS |
+| reconcile_basis | caller-provided | `'trial_end_at_passed_and_canceled'` | ✅ PASS |
+
+**source_event_key**: `cron-reconcile:{jobRunId}:trial:{sub.id}`
+
+#### Block 3: Access expired (access_end_at passed)
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| reason_code | `chk_reason_code` | `'subscription_expired'` | ✅ PASS |
+| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS |
+| reconcile_basis | caller-provided | `'access_end_at_passed'` | ✅ PASS |
+
+**source_event_key**: `cron-reconcile:{jobRunId}:expired:{sub.id}`
+
+#### Block 4: Telegram sync (no valid access for joined member)
+
+| Check | Expected | Actual | Status |
+|-------|----------|--------|--------|
+| reason_code | `chk_reason_code` | `'cron_cleanup'` | ✅ PASS |
+| target_type | `chk_target_type` | `'club'` | ✅ PASS |
+| source_subject_type | `chk_source_subject_type` | `'cron_job'` | ✅ PASS |
+| reconcile_basis | caller-provided | `'no_valid_access_for_telegram_member'` | ✅ PASS |
+
+**source_event_key**: `cron-reconcile:{jobRunId}:tg:{user_id}:{club_id}`
+
+## Cross-cutting validations
+
+### source_event_key determinism
+All keys use UUID-based discriminators (orderId, subscription.id, payment.id, jobRunId, user_id, club_id).
+No ISO timestamps, no Date.now(), no Math.random().
+`validateSourceEventKey()` enforces this at runtime with throw on violation.
+
+### Runtime DDL validation in writeLedgerEntry()
+Before every insert, `validateLedgerEntry()` checks:
+- action_type ↔ status compatibility
+- reason_code ∈ dictionary (18 values)
+- target_type ∈ dictionary (9 values)
+- source_subject_type ∈ dictionary (7 values)
+- parent_event_key / parent_execution_key pair constraint
+- chk_has_subject (≥1 subject ref NOT NULL)
+- batch_start → target_type='batch' constraint
+Throws on any violation — no silent fail.
+
+### writeLedgerEntry returns execution_key
+`select('id, execution_key')` after insert.
+Returns `{ id, execution_key, error }` for parent propagation.
+
+### updateLedgerPostCheck uses MERGE
+Reads existing result → merges post_check → preserves access window fields.
+Does NOT change status. Does NOT overwrite access_start/access_end/window_days/source_window_rule/previous_end.
+
+### post_check key set
+Fixed set: `{entitlement, telegram, subscription, ledger_row, target_resolution}`.
+No `telegram_grant` key anywhere.
+
+### post_check item schema
+All items use `{applicability: 'required'|'not_applicable', status: 'pass'|'warn'|'fail'|null, details?, ref?}`.
+No `applicable: boolean` anywhere.
+
+### result contract by action_type
+- grant/extend/reactivate → MUST have: access_start, access_end, window_days, source_window_rule, post_check. MAY have: previous_end.
+- revoke/expire → MUST have: revoked_from, reconcile_basis, other_active_sources_checked. MAY have: previous_access_end, kept_projections.
+- skip → MUST have: skip_reason. MAY have: reconcile_basis, existing_ref, other_active_sources_checked.
+- failed → SHOULD have: failed_at_step, error_message.
+- batch_start → post_check IS NULL.
+
+### batch rows
+No batch_start rows in current wrapped paths. N/A.
+
+### 'completed' status
+Not used in any wrapped path. Only allowed for batch_start action_type.
+
+### 'telegram_access' as target_type
+Not used anywhere. Replaced with 'club' (block 4) or 'subscription_tier' (blocks 1-3) or 'product' (grant).
+
+### 'subscription' as target_type
+Not used anywhere. Replaced with 'subscription_tier' or 'product'.
+
+## Runtime validation pending
+Runtime proof (actual ledger rows) will be collected after deployment of PATCH v22.3.
+Code-level proof: ✅ ALL CHECKS PASS.
+
+## Conclusion
+PATCH v22.3 foundation fix brings all 3 wrapped paths into full DDL compatibility.
+Safe to proceed with Steps 4–10 after deployment verification.
