@@ -1,0 +1,2 @@
+ALTER TABLE public.telegram_access_queue ADD COLUMN IF NOT EXISTS meta JSONB DEFAULT NULL;
+COMMENT ON COLUMN public.telegram_access_queue.meta IS 'Optional metadata including parent lineage keys for ledger propagation';
