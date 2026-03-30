@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { writeLedgerEntry } from '../_shared/fulfillment-executor.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -761,11 +762,26 @@ async function findTariffByCode(supabase: any, code: string): Promise<{ id: stri
   return data;
 }
 
+// Deterministic hash for fallback row keys (no timestamp, no random)
+async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
+  const sorted = JSON.stringify(
+    Object.keys(payload).sort().reduce((acc, k) => { acc[k] = payload[k]; return acc; }, {} as Record<string, unknown>)
+  );
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(sorted));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
 // Обработка импорта из файла (режим file)
 async function processFileDeals(
   supabase: any,
   deals: any[],
-  settings: any
+  settings: any,
+  batchContext: {
+    batchId: string;
+    batchSourceEventKey: string;
+    batchStartResult: { id: string; execution_key: string | null; error: any };
+    sourceEventType: string;
+  }
 ): Promise<ImportResult> {
   const result: ImportResult = {
     total_fetched: deals.length,
@@ -780,11 +796,26 @@ async function processFileDeals(
   
   const normalizeNames = settings?.normalizeNames !== false;
   const mergeEmailDuplicates = settings?.mergeEmailDuplicates !== false;
+  const { batchId, batchSourceEventKey, batchStartResult, sourceEventType } = batchContext;
   
   console.log(`[File Import] Processing ${deals.length} deals`);
   console.log(`[File Import] Settings: normalizeNames=${normalizeNames}, mergeEmailDuplicates=${mergeEmailDuplicates}`);
   
-  for (const deal of deals) {
+  for (let index = 0; index < deals.length; index++) {
+    const deal = deals[index];
+
+    // Rate limiting: pause every 200 rows
+    if (index > 0 && index % 200 === 0) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    // Compute deterministic row source event key
+    const externalId = deal.externalId || deal.id;
+    const rowSourceEventKey = externalId
+      ? `gc-import:${batchId}:row:${externalId}`
+      : `gc-import:${batchId}:row:${index}:${await stableRowHash(deal as Record<string, unknown>)}`;
+    const rowSubjectRef = externalId ? String(externalId) : `row:${index}`;
+
     try {
       const tariffCode = deal.tariffCode;
       
@@ -792,6 +823,21 @@ async function processFileDeals(
       if (tariffCode === 'UNKNOWN' || tariffCode === 'skip' || !tariffCode) {
         result.orders_skipped++;
         result.details.push(`Пропущено: ${deal.user_email} - тариф не определён`);
+        // Ledger: skip row (no matching target)
+        await writeLedgerEntry(supabase, {
+          source_event_type: sourceEventType,
+          source_event_key: rowSourceEventKey,
+          source_subject_type: 'import_batch',
+          source_subject_ref: rowSubjectRef,
+          action_type: 'skip',
+          status: 'skipped',
+          reason_code: 'no_matching_target',
+          target_type: 'product',
+          target_key: `unknown:unknown`,
+          parent_event_key: batchSourceEventKey,
+          parent_execution_key: batchStartResult?.execution_key || null,
+          result: { skip_reason: 'tariff_not_determined', tariff_code: tariffCode || null },
+        });
         continue;
       }
       
@@ -803,14 +849,12 @@ async function processFileDeals(
       if (tariffCode === 'ARCHIVE_UNKNOWN') {
         console.log(`[File Import] Archive deal (no tariff) for ${deal.user_email}`);
         isArchiveDeal = true;
-        // Continue to create order without tariff - orders will have tariff_id = null
       } else {
         // Find tariff by code
         const tariff = await findTariffByCode(supabase, tariffCode);
         if (!tariff) {
           console.log(`[File Import] Tariff not found: ${tariffCode}, creating order without tariff`);
           isArchiveDeal = true;
-          // Don't skip - create order without tariff
         } else {
           tariffId = tariff.id;
           productId = tariff.product_id;
@@ -853,6 +897,26 @@ async function processFileDeals(
         }
       } else {
         result.orders_skipped++;
+        // Ledger: skip row (duplicate order)
+        await writeLedgerEntry(supabase, {
+          source_event_type: sourceEventType,
+          source_event_key: rowSourceEventKey,
+          source_subject_type: 'import_batch',
+          source_subject_ref: rowSubjectRef,
+          action_type: 'skip',
+          status: 'skipped',
+          reason_code: 'duplicate_skip',
+          target_type: tariffId ? 'subscription_tier' : 'product',
+          target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+          user_id: userIdForRecords,
+          profile_id: profile.id,
+          order_id: order.id,
+          source_order_id: order.id,
+          parent_event_key: batchSourceEventKey,
+          parent_execution_key: batchStartResult?.execution_key || null,
+          result: { skip_reason: 'order_already_exists', existing_order_id: order.id },
+        });
+        continue; // Skip subscription creation for duplicate orders
       }
       
       // Create subscription for paid deals only if we have tariff/product
@@ -862,10 +926,37 @@ async function processFileDeals(
           supabase, normalizedDeal, userIdForRecords, order.id, tariffId, productId
         );
       }
+
+      // Ledger: grant row
+      const rowLedgerResult = await writeLedgerEntry(supabase, {
+        source_event_type: sourceEventType,
+        source_event_key: rowSourceEventKey,
+        source_subject_type: 'import_batch',
+        source_subject_ref: rowSubjectRef,
+        action_type: 'grant',
+        status: 'granted',
+        reason_code: 'bulk_import',
+        target_type: tariffId ? 'subscription_tier' : 'product',
+        target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+        user_id: userIdForRecords,
+        profile_id: profile.id,
+        order_id: order.id,
+        source_order_id: order.id,
+        source_subscription_id: subscription?.id || null,
+        parent_event_key: batchSourceEventKey,
+        parent_execution_key: batchStartResult?.execution_key || null,
+        result: {
+          is_archive_deal: isArchiveDeal,
+          subscription_created: subscription?.isNew || false,
+          subscription_active: subscription?.isActive || false,
+        },
+      });
+
       if (subscription?.isNew) {
         result.subscriptions_created++;
         
         // Автоматическая выдача доступа в Telegram для активных подписок
+        // Downstream only for grant/granted rows (not skip/failed)
         if (subscription.isActive) {
           try {
             // Проверяем, есть ли у продукта telegram_club_id
@@ -876,15 +967,52 @@ async function processFileDeals(
               .single();
             
             if (product?.telegram_club_id) {
-              // Выдаём доступ в клуб
-              await supabase.functions.invoke('telegram-grant-access', {
-                body: {
-                  user_id: userIdForRecords,
-                  club_id: product.telegram_club_id,
-                  valid_until: subscription.accessEndAt,
-                  source: 'import',
-                },
-              });
+              // Downstream telegram-grant-access with idempotent parent guard
+              if (rowLedgerResult?.execution_key) {
+                await supabase.functions.invoke('telegram-grant-access', {
+                  body: {
+                    user_id: userIdForRecords,
+                    club_id: product.telegram_club_id,
+                    valid_until: subscription.accessEndAt,
+                    source: 'import',
+                    parent_event_key: rowSourceEventKey,
+                    parent_execution_key: rowLedgerResult.execution_key,
+                    _from_primary_path: true,
+                  },
+                });
+              } else {
+                // Idempotent skip or null execution_key:
+                // Try to recover existing execution_key from ledger
+                const { data: existingRow } = await supabase
+                  .from('access_grant_ledger')
+                  .select('execution_key')
+                  .eq('source_event_key', rowSourceEventKey)
+                  .maybeSingle();
+
+                if (existingRow?.execution_key) {
+                  await supabase.functions.invoke('telegram-grant-access', {
+                    body: {
+                      user_id: userIdForRecords,
+                      club_id: product.telegram_club_id,
+                      valid_until: subscription.accessEndAt,
+                      source: 'import',
+                      parent_event_key: rowSourceEventKey,
+                      parent_execution_key: existingRow.execution_key,
+                      _from_primary_path: true,
+                    },
+                  });
+                } else {
+                  // No execution_key recoverable — call without _from_primary_path
+                  await supabase.functions.invoke('telegram-grant-access', {
+                    body: {
+                      user_id: userIdForRecords,
+                      club_id: product.telegram_club_id,
+                      valid_until: subscription.accessEndAt,
+                      source: 'import',
+                    },
+                  });
+                }
+              }
               result.details.push(`TG доступ: ${deal.user_email}`);
             }
           } catch (tgError) {
@@ -899,6 +1027,26 @@ async function processFileDeals(
       const errorMsg = error instanceof Error ? error.message : (typeof error === 'object' ? JSON.stringify(error) : String(error));
       result.details.push(`Ошибка: ${deal.user_email} - ${errorMsg}`);
       result.errors++;
+
+      // Ledger: failed row in per-row catch
+      try {
+        await writeLedgerEntry(supabase, {
+          source_event_type: sourceEventType,
+          source_event_key: rowSourceEventKey,
+          source_subject_type: 'import_batch',
+          source_subject_ref: rowSubjectRef,
+          action_type: 'grant',
+          status: 'failed',
+          reason_code: 'bulk_import',
+          target_type: 'product',
+          target_key: `unknown:unknown`,
+          parent_event_key: batchSourceEventKey,
+          parent_execution_key: batchStartResult?.execution_key || null,
+          result: { failed_at_step: 'row_processing', error_message: errorMsg },
+        });
+      } catch (ledgerErr) {
+        console.error(`[File Import] Failed to write error ledger for row ${index}:`, ledgerErr);
+      }
     }
   }
   
@@ -924,7 +1072,7 @@ Deno.serve(async (req) => {
     const offerIds = body.offerIds || body.offer_ids;
     const dateFrom = body.dateFrom || body.date_from;
     const dateTo = body.dateTo || body.date_to;
-    const fileDeals = body.fileDeals || body.deals; // Deals from file import (support both param names)
+    const fileDeals = body.fileDeals || body.deals;
     
     // Настройки нормализации (по умолчанию включены)
     const normalizeNames = body.settings?.normalizeNames !== false;
@@ -941,8 +1089,42 @@ Deno.serve(async (req) => {
     // РЕЖИМ ФАЙЛА: если переданы deals из файла
     if (fileDeals && Array.isArray(fileDeals) && fileDeals.length > 0) {
       console.log(`[MODE] File import with ${fileDeals.length} deals`);
-      
-      const result = await processFileDeals(supabase, fileDeals, body.settings);
+
+      // Volume guard: hard stop BEFORE any ledger write
+      if (fileDeals.length > 1000 && !body.batch_mode) {
+        return new Response(
+          JSON.stringify({ error: 'batch_mode required for >1000 rows', count: fileDeals.length }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Create batch_start ledger row
+      const batchId = crypto.randomUUID();
+      const batchSourceEventKey = `gc-import-batch:${batchId}`;
+      const batchStartResult = await writeLedgerEntry(supabase, {
+        source_event_type: 'admin', // file upload from admin UI
+        source_event_key: batchSourceEventKey,
+        source_subject_type: 'import_batch',
+        source_subject_ref: batchId,
+        action_type: 'batch_start',
+        reason_code: 'batch_orchestration',
+        target_type: 'batch',
+        target_key: `gc-import:${batchId}`,
+        status: 'completed',
+        result: {
+          batch_size: fileDeals.length,
+          import_type: 'getcourse_file',
+          mode: 'execute',
+          started_at: new Date().toISOString(),
+        },
+      });
+
+      const result = await processFileDeals(supabase, fileDeals, body.settings, {
+        batchId,
+        batchSourceEventKey,
+        batchStartResult,
+        sourceEventType: 'admin',
+      });
       
       // Log the import
       if (instanceId) {
@@ -968,7 +1150,6 @@ Deno.serve(async (req) => {
         JSON.stringify({ 
           success: true, 
           result,
-          // Match expected format from importMutation
           orders_created: result.orders_created,
           profiles_created: result.profiles_created,
           subscriptions_created: result.subscriptions_created,
@@ -1043,6 +1224,35 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Volume guard: hard stop BEFORE any ledger write
+    if (deals.length > 1000 && !body.batch_mode) {
+      return new Response(
+        JSON.stringify({ error: 'batch_mode required for >1000 rows', count: deals.length }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Create batch_start ledger row for API import
+    const apiBatchId = crypto.randomUUID();
+    const apiBatchSourceEventKey = `gc-import-batch:${apiBatchId}`;
+    const apiBatchStartResult = await writeLedgerEntry(supabase, {
+      source_event_type: 'system', // API/scheduled origin
+      source_event_key: apiBatchSourceEventKey,
+      source_subject_type: 'import_batch',
+      source_subject_ref: apiBatchId,
+      action_type: 'batch_start',
+      reason_code: 'batch_orchestration',
+      target_type: 'batch',
+      target_key: `gc-import:${apiBatchId}`,
+      status: 'completed',
+      result: {
+        batch_size: deals.length,
+        import_type: 'getcourse_api',
+        mode: 'execute',
+        started_at: new Date().toISOString(),
+      },
+    });
+
     // Импорт
     const result: ImportResult = {
       total_fetched: deals.length,
@@ -1055,13 +1265,41 @@ Deno.serve(async (req) => {
       details: [],
     };
 
-    for (const deal of deals) {
+    for (let index = 0; index < deals.length; index++) {
+      const deal = deals[index];
+
+      // Rate limiting: pause every 200 rows
+      if (index > 0 && index % 200 === 0) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      // Deterministic row source event key
+      const rowSourceEventKey = deal.id
+        ? `gc-import:${apiBatchId}:row:${deal.id}`
+        : `gc-import:${apiBatchId}:row:${index}:${await stableRowHash(deal as any)}`;
+      const rowSubjectRef = deal.id ? String(deal.id) : `row:${index}`;
+
       try {
         // Проверяем маппинг тарифа
         const tariffId = OFFER_TARIFF_MAP[String(deal.offer_id)];
         if (!tariffId) {
           result.details.push(`Offer ${deal.offer_id} не найден в маппинге`);
           result.errors++;
+          // Ledger: skip row (no matching target)
+          await writeLedgerEntry(supabase, {
+            source_event_type: 'system',
+            source_event_key: rowSourceEventKey,
+            source_subject_type: 'import_batch',
+            source_subject_ref: rowSubjectRef,
+            action_type: 'skip',
+            status: 'skipped',
+            reason_code: 'no_matching_target',
+            target_type: 'product',
+            target_key: `unknown:offer_${deal.offer_id}`,
+            parent_event_key: apiBatchSourceEventKey,
+            parent_execution_key: apiBatchStartResult?.execution_key || null,
+            result: { skip_reason: 'offer_not_in_mapping', offer_id: deal.offer_id },
+          });
           continue;
         }
 
@@ -1070,6 +1308,21 @@ Deno.serve(async (req) => {
         if (!productId) {
           result.details.push(`Product не найден для tariff ${tariffId}`);
           result.errors++;
+          // Ledger: skip row (no matching target)
+          await writeLedgerEntry(supabase, {
+            source_event_type: 'system',
+            source_event_key: rowSourceEventKey,
+            source_subject_type: 'import_batch',
+            source_subject_ref: rowSubjectRef,
+            action_type: 'skip',
+            status: 'skipped',
+            reason_code: 'no_matching_target',
+            target_type: 'product',
+            target_key: `unknown:tariff_${tariffId}`,
+            parent_event_key: apiBatchSourceEventKey,
+            parent_execution_key: apiBatchStartResult?.execution_key || null,
+            result: { skip_reason: 'product_not_found_for_tariff', tariff_id: tariffId },
+          });
           continue;
         }
 
@@ -1087,20 +1340,86 @@ Deno.serve(async (req) => {
           result.orders_created++;
         } else {
           result.orders_skipped++;
+          // Ledger: skip row (duplicate order)
+          await writeLedgerEntry(supabase, {
+            source_event_type: 'system',
+            source_event_key: rowSourceEventKey,
+            source_subject_type: 'import_batch',
+            source_subject_ref: rowSubjectRef,
+            action_type: 'skip',
+            status: 'skipped',
+            reason_code: 'duplicate_skip',
+            target_type: 'subscription_tier',
+            target_key: `${profile.user_id}:${tariffId}`,
+            user_id: profile.user_id,
+            profile_id: profile.id,
+            order_id: order.id,
+            source_order_id: order.id,
+            parent_event_key: apiBatchSourceEventKey,
+            parent_execution_key: apiBatchStartResult?.execution_key || null,
+            result: { skip_reason: 'order_already_exists', existing_order_id: order.id },
+          });
+          continue;
         }
 
         // Создаём подписку
         const subscription = await createSubscription(
           supabase, deal, profile.user_id!, order.id, tariffId, productId
         );
+
+        // Ledger: grant row
+        await writeLedgerEntry(supabase, {
+          source_event_type: 'system',
+          source_event_key: rowSourceEventKey,
+          source_subject_type: 'import_batch',
+          source_subject_ref: rowSubjectRef,
+          action_type: 'grant',
+          status: 'granted',
+          reason_code: 'bulk_import',
+          target_type: 'subscription_tier',
+          target_key: `${profile.user_id}:${tariffId}`,
+          user_id: profile.user_id,
+          profile_id: profile.id,
+          order_id: order.id,
+          source_order_id: order.id,
+          source_subscription_id: subscription?.id || null,
+          parent_event_key: apiBatchSourceEventKey,
+          parent_execution_key: apiBatchStartResult?.execution_key || null,
+          result: {
+            subscription_created: subscription?.isNew || false,
+            subscription_active: subscription?.isActive || false,
+          },
+        });
+
         if (subscription?.isNew) {
           result.subscriptions_created++;
         }
 
       } catch (error) {
         console.error(`Error processing deal ${deal.id}:`, error);
-        result.details.push(`Ошибка для сделки ${deal.deal_number}: ${error instanceof Error ? error.message : String(error)}`);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        result.details.push(`Ошибка для сделки ${deal.deal_number}: ${errorMsg}`);
         result.errors++;
+
+        // Ledger: failed row in per-row catch
+        try {
+          await writeLedgerEntry(supabase, {
+            source_event_type: 'system',
+            source_event_key: rowSourceEventKey,
+            source_subject_type: 'import_batch',
+            source_subject_ref: rowSubjectRef,
+            action_type: 'grant',
+            status: 'failed',
+            reason_code: 'bulk_import',
+            target_type: 'product',
+            target_key: `unknown:unknown`,
+            parent_event_key: apiBatchSourceEventKey,
+            parent_execution_key: apiBatchStartResult?.execution_key || null,
+            result: { failed_at_step: 'row_processing', error_message: errorMsg },
+          });
+        } catch (ledgerErr) {
+          console.error(`[API Import] Failed to write error ledger for row ${index}:`, ledgerErr);
+        }
       }
     }
 
