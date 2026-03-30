@@ -734,7 +734,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     </SelectTrigger>
                     <SelectContent>
                       {availableEntitlements.map((e) => (
-                        <SelectItem key={e.product_code} value={e.product_code}>{e.product_code}</SelectItem>
+                        <SelectItem key={e.product_code} value={e.product_code}>
+                          <div className="flex flex-col">
+                            <span>{e.label}</span>
+                            {e.label !== e.product_code && (
+                              <span className="text-[10px] text-muted-foreground">{e.product_code}</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
                       ))}
                     </SelectContent>
                   </Select>
