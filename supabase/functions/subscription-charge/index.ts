@@ -1516,6 +1516,42 @@ async function chargeSubscription(
         }
       });
 
+      // Phase 1: Write ledger entry for successful renew/extend
+      try {
+        const { writeLedgerEntry, buildPostCheck } = await import('../_shared/fulfillment-executor.ts');
+        const ledgerPostCheck = buildPostCheck({
+          subscription: { status: 'extended', ref: id },
+          ledgerRow: { status: 'written' },
+          targetResolution: { status: 'matched', ref: subscription?.product_id },
+        });
+
+        await writeLedgerEntry(supabase, {
+          source_event_type: 'cron',
+          source_event_key: `sub-renew:${id}:${payment.id}`,
+          source_subject_type: 'subscription',
+          source_subject_ref: id,
+          source_subscription_id: id,
+          source_order_id: renewalOrderId || order_id || null,
+          action_type: 'extend',
+          reason_code: 'subscription_renewal',
+          target_type: 'subscription',
+          target_key: `${user_id}:${subscription?.product_id}`,
+          target_ref: id,
+          user_id: user_id,
+          status: 'completed',
+          result: {
+            access_start: new Date().toISOString(),
+            access_end: newEndDate.toISOString(),
+            window_days: isClubProduct ? null : (tariff.access_days || 30),
+            source_window_rule: isClubProduct ? 'calendar_month' : 'tariff_duration',
+            previous_end: subscription?.access_end_at || null,
+            post_check: ledgerPostCheck,
+          },
+        });
+      } catch (ledgerErr) {
+        console.error('[subscription-charge] Ledger write error:', ledgerErr);
+      }
+
       // Send to GetCourse if this was a trial conversion
       if (is_trial && fullPaymentGcOfferId && orderData.customer_email) {
         console.log(`Sending trial conversion to GetCourse: offer=${fullPaymentGcOfferId}`);
