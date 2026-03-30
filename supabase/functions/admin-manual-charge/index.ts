@@ -3,6 +3,7 @@ import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -415,32 +416,16 @@ Deno.serve(async (req) => {
           })
           .eq('id', order.id);
 
-        // PATCH-2: Calculate access dates using calendar month for club products
+        // Phase 1: Calculate access dates using calendar month from config
         const now = new Date();
-        const isClubProduct = product_id === "11c9f1b8-0355-4753-bd74-40b42aa53616";
+        const isClubProduct = await isCalendarMonthProduct(supabase, product_id);
         
         let accessEnd: Date;
         if (isClubProduct) {
-          // Calendar month: 22.01 → 22.02 → 22.03 (TZ-safe using UTC)
-          accessEnd = new Date(Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth() + 1,  // +1 calendar month
-            now.getUTCDate(),
-            12, 0, 0  // Normalize to noon UTC to avoid DST issues
-          ));
-          
-          // Handle edge case: 31 Jan → 28/29 Feb (clamp to last day of month)
-          if (accessEnd.getUTCDate() !== now.getUTCDate()) {
-            accessEnd = new Date(Date.UTC(
-              now.getUTCFullYear(),
-              now.getUTCMonth() + 2,
-              0,  // Last day of previous month
-              12, 0, 0
-            ));
-          }
-          console.log(`[admin-manual-charge] Club product: calendar month ${now.toISOString()} → ${accessEnd.toISOString()}`);
+          accessEnd = calcCalendarMonthEnd(now);
+          console.log(`[admin-manual-charge] Calendar month product: ${now.toISOString()} → ${accessEnd.toISOString()}`);
         } else {
-          // For non-club products: use tariff duration (fallback to 30 days, NOT 365)
+          // For non-calendar-month products: use tariff duration (fallback to 30 days, NOT 365)
           const durationDays = tariff?.access_duration_days || tariff?.duration_days || 30;
           accessEnd = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
         }
