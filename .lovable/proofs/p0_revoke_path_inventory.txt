@@ -56,11 +56,13 @@ Status corrected: wrapped_claim_removed → re-wrapped and verified in this cons
 | Sub-patch B (parent propagation) | ✅ done in code |
 | Sub-patch C (batch/import) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
-| Sub-patch D (consolidated proof finalization) | 📋 next |
+| Sub-patch D (consolidated proof finalization) | ✅ done |
 | phase1_ledger_cutover_at | ❌ NOT SET |
+
+Sprint v22.6 = implementation-complete, cutover-blocked.
 
 ## Sub-patch C note
 
 Sub-patch C = last main code patch for v22.6.
-After this, only one consolidated follow-up for proof/coverage/invariant finalization
-is permitted, with no new code changes unless new facts emerge from code or database.
+Sub-patch D = proof/coverage finalization only (no code changes).
+See `p0_invariant_report.txt` for consolidated deferred list and decision block.

@@ -54,4 +54,41 @@ These rows are for batch orchestration ONLY. They do NOT participate in:
 - Total wrapped paths: 21
 - Unwrapped paths: 0
 
+## Final Path Coverage Table (Sub-patch D)
+
+| # | Path | wrapped_in_code | runtime_status | proof_status | deferred_reason | notes |
+|---|------|----------------|----------------|--------------|-----------------|-------|
+| 1 | grant-access-for-order | ✅ yes | ✅ PASS | ✅ verified | — | extend/extended, smoke PASS |
+| 2 | subscription-charge (renew) | ✅ yes | ⏸ BLOCKED_SAFE_GUARD | ✅ contract verified | no sandbox billing | extend path untestable |
+| 3 | subscriptions-reconcile (cancel_at) | ✅ yes | ✅ PASS | ✅ verified | — | fixture verified |
+| 4 | subscriptions-reconcile (trial) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped in code |
+| 5 | subscriptions-reconcile (expired) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped in code |
+| 6 | subscriptions-reconcile (tg sync) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped in code |
+| 7 | telegram-revoke-access | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | parent nullable |
+| 8 | telegram-check-expired | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped |
+| 9 | telegram-kick-violators | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped |
+| 10 | cancel-trial | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | immediate/deferred split |
+| 11 | subscription-charge (trial_ended) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped |
+| 12 | subscription-admin-actions:cancel | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | inline ledger |
+| 13 | subscription-admin-actions:revoke | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | inline ledger |
+| 14 | subscription-admin-actions:delete | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | inline ledger |
+| 15 | subscription-admin-actions:refund+revoke | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | inline ledger |
+| 16 | bepaid-report-import (row-level) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | dryRun/execute contracts |
+| 17 | getcourse-import-deals file (row-level) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | file mode |
+| 18 | getcourse-import-deals API (row-level) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | API mode |
+| B1 | bepaid-report-import (batch_start) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | target_type=batch |
+| B2 | getcourse file import (batch_start) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | target_type=batch |
+| B3 | getcourse API import (batch_start) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | target_type=batch |
+
+### Summary
+
+- wrapped_in_code: 21/21 ✅
+- runtime PASS: 2/21 (grant-access-for-order, subscriptions-reconcile cancel_at)
+- runtime BLOCKED_SAFE_GUARD: 1/21 (subscription-charge renew)
+- runtime deferred: 18/21
+- proof contract verified: 21/21
+
 ## phase1_ledger_cutover_at = NOT SET
+
+Sprint v22.6 = implementation-complete, cutover-blocked.
+See `p0_invariant_report.txt` for consolidated deferred list and decision block.
