@@ -86,13 +86,15 @@ Deno.serve(async (req) => {
         });
 
         if (revokeResult.revoked) {
-          // Actually invoke telegram-revoke-access
+          // Sub-patch B: Pass parent lineage to downstream telegram-revoke-access
           try {
             await supabase.functions.invoke('telegram-revoke-access', {
               body: { 
                 user_id: sub.user_id, 
                 club_id: clubId,
-                reason: 'subscription_expired' 
+                reason: 'subscription_expired',
+                parent_event_key: `cron-reconcile:${jobRunId}:${sub.id}`,
+                parent_execution_key: revokeResult.executionKey || null,
               },
             });
             console.log(`Revoked Telegram access for user ${sub.user_id}, club ${clubId}`);
@@ -159,7 +161,13 @@ Deno.serve(async (req) => {
           if (revokeResult.revoked) {
             try {
               await supabase.functions.invoke('telegram-revoke-access', {
-                body: { user_id: sub.user_id, club_id: clubId, reason: 'trial_canceled' },
+                body: { 
+                  user_id: sub.user_id, 
+                  club_id: clubId, 
+                  reason: 'trial_canceled',
+                  parent_event_key: `cron-reconcile:${jobRunId}:trial:${sub.id}`,
+                  parent_execution_key: revokeResult.executionKey || null,
+                },
               });
             } catch (e) {
               console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
@@ -229,6 +237,8 @@ Deno.serve(async (req) => {
                 club_id: clubId,
                 reason: 'access_expired',
                 preserve_pricing: preservePricing,
+                parent_event_key: `cron-reconcile:${jobRunId}:expired:${sub.id}`,
+                parent_execution_key: revokeResult.executionKey || null,
               },
             });
           } catch (e) {
@@ -275,7 +285,13 @@ Deno.serve(async (req) => {
             console.log(`User ${access.user_id} has no valid access, revoking Telegram access`);
             try {
               await supabase.functions.invoke('telegram-revoke-access', {
-                body: { user_id: access.user_id, club_id: access.club_id, reason: 'no_valid_access' },
+                body: { 
+                  user_id: access.user_id, 
+                  club_id: access.club_id, 
+                  reason: 'no_valid_access',
+                  parent_event_key: `cron-reconcile:${jobRunId}:tg:${access.user_id}:${access.club_id}`,
+                  parent_execution_key: revokeResult.executionKey || null,
+                },
               });
             } catch (e) {
               console.error(`Failed to revoke Telegram for user ${access.user_id}:`, e);
