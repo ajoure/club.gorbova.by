@@ -1262,97 +1262,10 @@ Deno.serve(async (req) => {
 
     const auditLogId = auditRow?.id || subscription_id;
 
-    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete)
-    // refund+revoke is handled inline in its own branch above
-    const revokeBranches = ['cancel', 'revoke_access', 'delete'];
-    if (revokeBranches.includes(action)) {
-      try {
-        // Pre-state guard: before/after projection diff
-        const projectionChanged = (
-          beforeSnapshot.status !== 'canceled' &&
-          beforeSnapshot.status !== 'expired'
-        ) && (
-          beforeSnapshot.canceled_at === null ||
-          beforeSnapshot.access_end_at !== new Date().toISOString()
-        );
-        // Simplified: if before was already canceled/expired → no projection change
-        const alreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
-
-        const reasonCodeMap: Record<string, string> = {
-          cancel: 'admin_cancel',
-          revoke_access: 'admin_revoke',
-          delete: 'admin_revoke',
-        };
-        const keyPrefixMap: Record<string, string> = {
-          cancel: 'admin-cancel',
-          revoke_access: 'admin-revoke',
-          delete: 'admin-delete',
-        };
-        const reconcileMap: Record<string, string> = {
-          cancel: 'admin_cancel',
-          revoke_access: 'admin_revoke_access',
-          delete: 'admin_delete',
-        };
-
-        // Use branch-specific auditId (from within the case), fallback to generic
-        const discriminatorId = branchAuditId || auditLogId;
-
-        if (alreadyCanceled) {
-          const skipEntry: LedgerEntry = {
-            source_event_type: 'admin',
-            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
-            source_subject_type: 'admin_action',
-            source_subject_ref: adminUserId,
-            source_subscription_id: subscription_id,
-            action_type: 'skip',
-            reason_code: reasonCodeMap[action] as any,
-            target_type: 'subscription_tier',
-            target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
-            target_ref: subscription.product_id || null,
-            user_id: subscription.user_id,
-            order_id: subscription.order_id || null,
-            status: 'skipped',
-            result: {
-              skip_reason: 'already_canceled',
-              branch_decision_source: 'before_after_projection_diff',
-              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
-              before_status: beforeSnapshot.status,
-              before_canceled_at: beforeSnapshot.canceled_at,
-              before_access_end_at: beforeSnapshot.access_end_at,
-              reconcile_basis: reconcileMap[action],
-            },
-          };
-          await writeLedgerEntry(supabase, skipEntry);
-          console.log(`[subscription-admin-actions] Ledger ${action}: skipped (already_canceled), before_status=${beforeSnapshot.status}`);
-        } else {
-          const revokeCtx: RevokeContext = {
-            userId: subscription.user_id,
-            orderId: subscription.order_id || null,
-            targetType: 'subscription_tier',
-            targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
-            targetRef: subscription.product_id || null,
-            subscriptionId: subscription_id,
-            reasonCode: reasonCodeMap[action] as any,
-            reconcileBasis: reconcileMap[action],
-            sourceEventType: 'admin',
-            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
-            sourceSubjectType: 'admin_action',
-            sourceSubjectRef: adminUserId,
-            metadata: {
-              branch_decision_source: 'before_after_projection_diff',
-              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
-              before_status: beforeSnapshot.status,
-              before_canceled_at: beforeSnapshot.canceled_at,
-              before_access_end_at: beforeSnapshot.access_end_at,
-            },
-          };
-          const revokeResult = await executeRevoke(supabase, revokeCtx);
-          console.log(`[subscription-admin-actions] Ledger ${action}: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
-        }
-      } catch (ledgerErr) {
-        console.error(`[subscription-admin-actions] Ledger error for ${action} (non-blocking):`, ledgerErr);
-      }
-    }
+    // Phase 1 Ledger: post-switch block REMOVED (v22.6 Sub-patch B)
+    // All revoke branches (cancel, revoke_access, delete, refund+revoke)
+    // now have inline ledger writes within their respective case blocks.
+    // See: cancel (~line 710), revoke_access (~line 943), delete (~line 1078), refund+revoke (~line 483).
 
     // Deferred physical delete: AFTER audit + ledger writes to preserve traceability
     if (pendingPhysicalDelete) {

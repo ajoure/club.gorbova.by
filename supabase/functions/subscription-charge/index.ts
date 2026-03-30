@@ -1526,9 +1526,10 @@ async function chargeSubscription(
           targetResolution: { status: 'matched', ref: subscription?.product_id },
         });
 
-        await writeLedgerEntry(supabase, {
+        const renewSourceEventKey = `sub-renew:${id}:${payment.id}`;
+        const renewLedgerResult = await writeLedgerEntry(supabase, {
           source_event_type: 'cron',
-          source_event_key: `sub-renew:${id}:${payment.id}`,
+          source_event_key: renewSourceEventKey,
           source_subject_type: 'subscription',
           source_subject_ref: id,
           source_subscription_id: id,
@@ -1682,6 +1683,12 @@ async function chargeSubscription(
                 subscription_id: id,
                 action: 'grant',
                 status: 'pending',
+                ...(renewLedgerResult?.execution_key ? {
+                  meta: {
+                    parent_event_key: renewSourceEventKey,
+                    parent_execution_key: renewLedgerResult.execution_key,
+                  }
+                } : {}),
               }, { onConflict: 'user_id,club_id,subscription_id,action' });
 
             if (queueError) {
