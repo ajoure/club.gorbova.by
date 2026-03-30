@@ -24,6 +24,10 @@ import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
   Users, Package, Zap, Clock, Star, Gift, Settings2, Info
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
