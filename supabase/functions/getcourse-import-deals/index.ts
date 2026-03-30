@@ -42,12 +42,8 @@ interface ImportResult {
   details: string[];
 }
 
-// Маппинг offer_id -> tariff_id
-const OFFER_TARIFF_MAP: Record<string, string> = {
-  '6744625': '31f75673-a7ae-420a-b5ab-5906e34cbf84', // CHAT
-  '6744626': 'b276d8a5-8e5f-4876-9f99-36f818722d6c', // FULL
-  '6744628': '7c748940-dcad-4c7c-a92e-76a2344622d3', // BUSINESS
-};
+// DB SoT: tariff lookup uses tariffs.getcourse_offer_id (no hardcoded mapping)
+// API import fetches tariff by getcourse_offer_id from DB at runtime.
 
 // Маппинг статусов GetCourse -> наши статусы
 const STATUS_MAP: Record<string, string> = {
@@ -568,19 +564,22 @@ async function createOrder(
   tariffId: string | null,
   productId: string | null
 ): Promise<{ id: string; isNew: boolean }> {
-  // Проверяем дубликат по gc_deal_id
-  const { data: existing } = await supabase
-    .from('orders_v2')
-    .select('id')
-    .contains('meta', { gc_deal_id: deal.id })
-    .maybeSingle();
-  
-  if (existing) {
-    return { id: existing.id, isNew: false };
+  // Проверяем дубликат по gc_deal_id (skip if no stable external id)
+  if (deal.id && deal.id !== 0) {
+    const { data: existing } = await supabase
+      .from('orders_v2')
+      .select('id')
+      .contains('meta', { gc_deal_id: deal.id })
+      .maybeSingle();
+    
+    if (existing) {
+      return { id: existing.id, isNew: false };
+    }
   }
   
   // Также проверяем по order_number
-  const gcOrderNumber = `GC-${deal.deal_number}`;
+  // Avoid double prefix: if deal_number already starts with GC- or HASH-, handle accordingly
+  const gcOrderNumber = String(deal.deal_number).startsWith('GC-') ? String(deal.deal_number) : `GC-${deal.deal_number}`;
   const { data: byNumber } = await supabase
     .from('orders_v2')
     .select('id')
@@ -608,7 +607,7 @@ async function createOrder(
     customer_phone: deal.user_phone,
     is_trial: false,
     meta: {
-      gc_deal_id: deal.id,
+      gc_deal_id: deal.id && deal.id !== 0 ? deal.id : null,
       gc_deal_number: deal.deal_number,
       gc_user_id: deal.user_id,
       gc_offer_id: deal.offer_id,
@@ -763,6 +762,7 @@ async function findTariffByCode(supabase: any, code: string): Promise<{ id: stri
 }
 
 // Deterministic hash for fallback row keys (no timestamp, no random)
+// MUST be byte-identical to the implementation in bepaid-report-import/index.ts
 async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
   const sorted = JSON.stringify(
     Object.keys(payload).sort().reduce((acc, k) => { acc[k] = payload[k]; return acc; }, {} as Record<string, unknown>)
@@ -888,6 +888,7 @@ async function processFileDeals(
       }
       
       // Create order - use profile.id for ghost profiles (user_id may be null)
+      currentStep = 'order_create';
       const userIdForRecords = profile.user_id || profile.id;
       const order = await createOrder(supabase, normalizedDeal, userIdForRecords, tariffId, productId);
       if (order.isNew) {
@@ -920,6 +921,7 @@ async function processFileDeals(
       }
       
       // Create subscription for paid deals only if we have tariff/product
+      currentStep = 'subscription_apply';
       let subscription = null;
       if (tariffId && productId) {
         subscription = await createSubscription(
@@ -928,6 +930,7 @@ async function processFileDeals(
       }
 
       // Ledger: grant row
+      currentStep = 'ledger_write';
       const rowLedgerResult = await writeLedgerEntry(supabase, {
         source_event_type: sourceEventType,
         source_event_key: rowSourceEventKey,
@@ -957,6 +960,7 @@ async function processFileDeals(
         
         // Автоматическая выдача доступа в Telegram для активных подписок
         // Downstream only for grant/granted rows (not skip/failed)
+        currentStep = 'downstream_sync';
         if (subscription.isActive) {
           try {
             // Проверяем, есть ли у продукта telegram_club_id
@@ -1042,7 +1046,7 @@ async function processFileDeals(
           target_key: `unknown:unknown`,
           parent_event_key: batchSourceEventKey,
           parent_execution_key: batchStartResult?.execution_key || null,
-          result: { failed_at_step: 'row_processing', error_message: errorMsg },
+          result: { failed_at_step: currentStep, error_message: errorMsg, row_index: index },
         });
       } catch (ledgerErr) {
         console.error(`[File Import] Failed to write error ledger for row ${index}:`, ledgerErr);
@@ -1273,17 +1277,39 @@ Deno.serve(async (req) => {
         await new Promise(r => setTimeout(r, 100));
       }
 
-      // Deterministic row source event key
+      // Compute deterministic canonical hash from raw business payload
+      let apiCanonicalHash: string | null = null;
+      if (!deal.id) {
+        apiCanonicalHash = await stableRowHash({
+          source: 'gc_api',
+          email: (deal.user_email || '').toLowerCase().trim(),
+          phone: (deal.user_phone || '').trim(),
+          first_name: (deal.user_first_name || '').trim(),
+          last_name: (deal.user_last_name || '').trim(),
+          amount: String(deal.deal_cost || 0),
+          paid_at: deal.deal_payed_at || deal.deal_created_at || '',
+          offer_id: String(deal.offer_id || ''),
+        });
+      }
+      // Identity without index — two identical rows = conscious dedup
       const rowSourceEventKey = deal.id
         ? `gc-import:${apiBatchId}:row:${deal.id}`
-        : `gc-import:${apiBatchId}:row:${index}:${await stableRowHash(deal as any)}`;
-      const rowSubjectRef = deal.id ? String(deal.id) : `row:${index}`;
+        : `gc-import:${apiBatchId}:row:hash:${apiCanonicalHash}`;
+      const rowSubjectRef = deal.id ? String(deal.id) : `hash:${apiCanonicalHash}`;
 
       try {
-        // Проверяем маппинг тарифа
-        const tariffId = OFFER_TARIFF_MAP[String(deal.offer_id)];
+        let currentStep = 'row_parse';
+        // DB SoT: lookup tariff by getcourse_offer_id (no hardcoded mapping)
+        currentStep = 'order_lookup';
+        const { data: tariffMatch } = await supabase
+          .from('tariffs')
+          .select('id, product_id')
+          .eq('getcourse_offer_id', deal.offer_id)
+          .eq('is_active', true)
+          .maybeSingle();
+        const tariffId = tariffMatch?.id || null;
         if (!tariffId) {
-          result.details.push(`Offer ${deal.offer_id} не найден в маппинге`);
+          result.details.push(`Offer ${deal.offer_id} не найден в tariffs.getcourse_offer_id`);
           result.errors++;
           // Ledger: skip row (no matching target)
           await writeLedgerEntry(supabase, {
@@ -1298,13 +1324,13 @@ Deno.serve(async (req) => {
             target_key: `unknown:offer_${deal.offer_id}`,
             parent_event_key: apiBatchSourceEventKey,
             parent_execution_key: apiBatchStartResult?.execution_key || null,
-            result: { skip_reason: 'offer_not_in_mapping', offer_id: deal.offer_id },
+            result: { skip_reason: 'offer_not_in_tariffs_db', offer_id: deal.offer_id },
           });
           continue;
         }
 
-        // Получаем product_id
-        const productId = await getProductIdByTariff(supabase, tariffId);
+        // product_id already obtained from tariff lookup
+        const productId = tariffMatch?.product_id || null;
         if (!productId) {
           result.details.push(`Product не найден для tariff ${tariffId}`);
           result.errors++;
@@ -1327,6 +1353,7 @@ Deno.serve(async (req) => {
         }
 
         // Создаём/находим профиль (с настройками нормализации)
+        currentStep = 'profile_resolve';
         const profile = await findOrCreateProfile(supabase, deal, normalizeNames, mergeEmailDuplicates);
         if (profile.isNew) {
           result.profiles_created++;
@@ -1335,6 +1362,7 @@ Deno.serve(async (req) => {
         }
 
         // Создаём заказ
+        currentStep = 'order_create';
         const order = await createOrder(supabase, deal, profile.user_id!, tariffId, productId);
         if (order.isNew) {
           result.orders_created++;
@@ -1363,11 +1391,13 @@ Deno.serve(async (req) => {
         }
 
         // Создаём подписку
+        currentStep = 'subscription_apply';
         const subscription = await createSubscription(
           supabase, deal, profile.user_id!, order.id, tariffId, productId
         );
 
         // Ledger: grant row
+        currentStep = 'ledger_write';
         await writeLedgerEntry(supabase, {
           source_event_type: 'system',
           source_event_key: rowSourceEventKey,
@@ -1415,7 +1445,7 @@ Deno.serve(async (req) => {
             target_key: `unknown:unknown`,
             parent_event_key: apiBatchSourceEventKey,
             parent_execution_key: apiBatchStartResult?.execution_key || null,
-            result: { failed_at_step: 'row_processing', error_message: errorMsg },
+            result: { failed_at_step: currentStep, error_message: errorMsg, row_index: index },
           });
         } catch (ledgerErr) {
           console.error(`[API Import] Failed to write error ledger for row ${index}:`, ledgerErr);

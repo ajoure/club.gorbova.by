@@ -287,23 +287,24 @@ function parsePaymentLine(line: string): PaymentRecord | null {
   };
 }
 
-function detectTariffFromDescription(description: string): { tariffCode: string | null; tariffId: string | null } {
+// DB SoT: tariff detection uses bepaid_product_mappings table (no hardcoded IDs)
+// Matches payment description against bepaid_plan_title from DB mappings
+function matchDescriptionToMapping(
+  description: string,
+  mappings: Array<{ bepaid_plan_title: string; tariff_id: string | null; product_id: string | null }>
+): { tariffId: string | null; productId: string | null } {
+  if (!description || !mappings?.length) return { tariffId: null, productId: null };
   const desc = description.toLowerCase();
-  
-  if (desc.includes('business')) {
-    return { tariffCode: 'business', tariffId: '7c748940-dcad-4c7c-a92e-76a2344622d3' };
+  for (const m of mappings) {
+    if (m.bepaid_plan_title && desc.includes(m.bepaid_plan_title.toLowerCase())) {
+      return { tariffId: m.tariff_id, productId: m.product_id };
+    }
   }
-  if (desc.includes('full')) {
-    return { tariffCode: 'full', tariffId: 'b276d8a5-8e5f-4876-9f99-36f818722d6c' };
-  }
-  if (desc.includes('chat')) {
-    return { tariffCode: 'chat', tariffId: '31f75673-a7ae-420a-b5ab-5906e34cbf84' };
-  }
-  
-  return { tariffCode: null, tariffId: null };
+  return { tariffId: null, productId: null };
 }
 
 // Deterministic hash for fallback row keys (no timestamp, no random)
+// MUST be byte-identical to the implementation in getcourse-import-deals/index.ts
 async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
   const sorted = JSON.stringify(
     Object.keys(payload).sort().reduce((acc, k) => { acc[k] = payload[k]; return acc; }, {} as Record<string, unknown>)
@@ -394,20 +395,26 @@ Deno.serve(async (req) => {
       details: []
     };
 
-    // Phase 1: Look up product from bepaid_product_mappings instead of hardcode
-    const { data: productMapping } = await supabase
+    // DB SoT: Load all bepaid_product_mappings for description-based tariff/product matching
+    const { data: allMappings } = await supabase
       .from('bepaid_product_mappings')
-      .select('product_id')
-      .limit(1)
-      .maybeSingle();
-    const productId = productMapping?.product_id || null;
-    if (!productId) {
-      console.error('[bepaid-report-import] No product mapping found in bepaid_product_mappings');
+      .select('bepaid_plan_title, product_id, tariff_id, offer_id');
+    if (!allMappings || allMappings.length === 0) {
+      console.error('[bepaid-report-import] No product mappings found in bepaid_product_mappings');
       return new Response(JSON.stringify({ error: 'No product mapping configured' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    // Check if this product uses calendar month window
+    const defaultProductId = allMappings[0]?.product_id || null;
+    // productId used throughout the loop — overridden per-row if mapping matches
+    let productId = defaultProductId;
+    if (!productId) {
+      console.error('[bepaid-report-import] Default mapping has no product_id');
+      return new Response(JSON.stringify({ error: 'Product mapping has no product_id' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // Check if default product uses calendar month window
     const useCalendarMonth = await isCalendarMonthProduct(supabase, productId);
 
     for (let index = 0; index < payments.length; index++) {
@@ -418,20 +425,40 @@ Deno.serve(async (req) => {
         await new Promise(r => setTimeout(r, 100));
       }
 
-      // Compute deterministic row source event key
+      // Compute deterministic canonical hash from raw business payload
+      // Hash uses RAW fields — no runtime settings affect identity
+      let bepaidCanonicalHash: string | null = null;
+      if (!payment.uid && batchId) {
+        bepaidCanonicalHash = await stableRowHash({
+          source: 'bepaid',
+          email: (payment.email || '').toLowerCase().trim(),
+          card_holder: (payment.cardHolder || '').trim(),
+          amount: String(payment.amount),
+          currency: payment.currency,
+          payment_date: payment.paymentDate || '',
+          description: payment.description || '',
+          order_id: payment.orderId || '',
+        });
+      }
+      // Identity without index — two identical rows = conscious dedup (same hash → same identity)
       const rowSourceEventKey = batchId
         ? (payment.uid
           ? `bepaid-import:${batchId}:row:${payment.uid}`
-          : `bepaid-import:${batchId}:row:${index}:${await stableRowHash(payment as any)}`)
+          : `bepaid-import:${batchId}:row:hash:${bepaidCanonicalHash}`)
         : undefined;
 
       try {
+        let currentStep = 'row_parse';
         const cardHolderCyrillic = payment.cardHolder ? transliterateToСyrillic(payment.cardHolder) : '';
-        const { tariffCode, tariffId } = detectTariffFromDescription(payment.description);
+        // DB SoT: match description against bepaid_product_mappings
+        const mappingMatch = matchDescriptionToMapping(payment.description, allMappings);
+        const tariffId = mappingMatch.tariffId;
+        productId = mappingMatch.productId || defaultProductId!;
         
         let matchedProfile: any = null;
         let matchType = 'none';
 
+        currentStep = 'profile_match';
         // Try to match by email first
         if (payment.email) {
           matchedProfile = profiles?.find(p => p.email?.toLowerCase() === payment.email?.toLowerCase());
@@ -466,7 +493,7 @@ Deno.serve(async (req) => {
           cardHolderCyrillic,
           email: payment.email,
           amount: payment.amount,
-          tariff: tariffCode,
+          tariff: tariffId || null,
           matchedProfileId: matchedProfile?.id || null,
           matchedProfileName: matchedProfile?.full_name || null,
           matchType,
@@ -476,6 +503,7 @@ Deno.serve(async (req) => {
 
         if (!dryRun) {
           if (matchedProfile) {
+            currentStep = 'auth_user_resolve';
             // Get user_id - create auth user if needed for archived profile
             let userId = matchedProfile.user_id;
             
@@ -517,7 +545,7 @@ Deno.serve(async (req) => {
                   source_event_type: 'admin',
                   source_event_key: rowSourceEventKey,
                   source_subject_type: 'import_batch',
-                  source_subject_ref: payment.uid || `row:${index}`,
+                  source_subject_ref: payment.uid || `hash:${bepaidCanonicalHash}`,
                   action_type: 'skip',
                   status: 'skipped',
                   reason_code: 'no_matching_target',
@@ -534,16 +562,44 @@ Deno.serve(async (req) => {
             }
 
             // Create order for matched profile
+            currentStep = 'order_lookup';
             const orderNumber = `IMP-${payment.orderId}`;
             
-            // Check if order already exists
-            const { data: existingOrder } = await supabase
+            // Check if order already exists — 0: create, 1: skip, >1: ambiguous (failed)
+            const { data: existingOrders } = await supabase
               .from('orders_v2')
               .select('id')
-              .eq('order_number', orderNumber)
-              .single();
+              .eq('order_number', orderNumber);
+            
+            if (existingOrders && existingOrders.length > 1) {
+              // Multiple matches — ambiguous duplicate state
+              detail.action = 'ambiguous_duplicate';
+              result.skipped++;
+              if (batchId && batchSourceEventKey && rowSourceEventKey) {
+                await writeLedgerEntry(supabase, {
+                  source_event_type: 'admin',
+                  source_event_key: rowSourceEventKey,
+                  source_subject_type: 'import_batch',
+                  source_subject_ref: payment.uid || `hash:${bepaidCanonicalHash}`,
+                  action_type: 'skip',
+                  status: 'skipped',
+                  reason_code: 'no_matching_target',
+                  target_type: tariffId ? 'subscription_tier' : 'product',
+                  target_key: tariffId ? `${userId}:${tariffId}` : `${userId}:${productId}`,
+                  user_id: userId,
+                  profile_id: matchedProfile.id,
+                  parent_event_key: batchSourceEventKey,
+                  parent_execution_key: batchStartResult?.execution_key || null,
+                  result: { failed_at_step: 'order_lookup', error_message: 'multiple_existing_orders', count: existingOrders.length },
+                });
+              }
+              result.details.push(detail);
+              continue;
+            }
+            const existingOrder = existingOrders?.[0] || null;
 
             if (!existingOrder) {
+              currentStep = 'order_create';
               // Parse payment date for order and subscription
               const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
               const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
@@ -600,6 +656,7 @@ Deno.serve(async (req) => {
               detail.orderId = newOrder.id;
               detail.action = 'order_created';
 
+              currentStep = 'payment_create';
               // Create payment record
               await supabase
                 .from('payments_v2')
@@ -621,6 +678,7 @@ Deno.serve(async (req) => {
                   }
                 });
 
+              currentStep = 'subscription_apply';
               // Create subscription with proper dates
               await supabase
                 .from('subscriptions_v2')
@@ -639,6 +697,7 @@ Deno.serve(async (req) => {
                   }
                 });
 
+              currentStep = 'profile_update';
               // Update profile with card data and was_club_member flag
               const existingCardMasks = (matchedProfile.card_masks as string[]) || [];
               const existingCardHolders = (matchedProfile.card_holder_names as string[]) || [];
@@ -662,6 +721,7 @@ Deno.serve(async (req) => {
 
               result.matched++;
 
+              currentStep = 'ledger_write';
               // Ledger: grant row for order_created
               if (batchId && batchSourceEventKey && rowSourceEventKey) {
                 await writeLedgerEntry(supabase, {
@@ -712,6 +772,7 @@ Deno.serve(async (req) => {
               }
             }
           } else {
+            currentStep = 'profile_resolve';
             // Create new archived profile
             const nameParts = cardHolderCyrillic.split(' ');
             const firstName = nameParts[0] || '';
@@ -747,6 +808,7 @@ Deno.serve(async (req) => {
 
             if (profileError) throw profileError;
             
+            currentStep = 'auth_user_resolve';
             // Create auth user for this profile
             let userId: string | null = null;
             const email = payment.email || `card_${payment.cardMask?.slice(-4) || 'unknown'}@imported.local`;
@@ -783,7 +845,7 @@ Deno.serve(async (req) => {
                   source_event_type: 'admin',
                   source_event_key: rowSourceEventKey,
                   source_subject_type: 'import_batch',
-                  source_subject_ref: payment.uid || `row:${index}`,
+                  source_subject_ref: payment.uid || `hash:${bepaidCanonicalHash}`,
                   action_type: 'skip',
                   status: 'skipped',
                   reason_code: 'no_matching_target',
@@ -799,6 +861,7 @@ Deno.serve(async (req) => {
               continue;
             }
 
+            currentStep = 'order_create';
             // Create order for new profile
             const orderNumber = `IMP-${payment.orderId}`;
             const { data: newOrder, error: orderError } = await supabase
@@ -842,6 +905,7 @@ Deno.serve(async (req) => {
 
             if (orderError) throw orderError;
 
+            currentStep = 'payment_create';
             // Create payment record
             await supabase
               .from('payments_v2')
@@ -863,6 +927,7 @@ Deno.serve(async (req) => {
                 }
               });
 
+            currentStep = 'subscription_apply';
             // Create subscription with proper dates
             await supabase
               .from('subscriptions_v2')
@@ -888,6 +953,7 @@ Deno.serve(async (req) => {
             
             result.created++;
 
+            currentStep = 'ledger_write';
             // Ledger: grant row for profile_and_order_created
             if (batchId && batchSourceEventKey && rowSourceEventKey) {
               await writeLedgerEntry(supabase, {
@@ -936,7 +1002,7 @@ Deno.serve(async (req) => {
               source_event_type: 'admin',
               source_event_key: rowSourceEventKey,
               source_subject_type: 'import_batch',
-              source_subject_ref: payment.uid || `row:${index}`,
+              source_subject_ref: payment.uid || `hash:${bepaidCanonicalHash}`,
               action_type: 'grant',
               status: 'failed',
               reason_code: 'bulk_import',
@@ -944,7 +1010,7 @@ Deno.serve(async (req) => {
               target_key: `unknown:${productId}`,
               parent_event_key: batchSourceEventKey,
               parent_execution_key: batchStartResult?.execution_key || null,
-              result: { failed_at_step: 'row_processing', error_message: errorMessage },
+              result: { failed_at_step: currentStep, error_message: errorMessage, row_index: index },
             });
           } catch (ledgerErr) {
             console.error(`[bepaid-import] Failed to write error ledger for row ${index}:`, ledgerErr);
