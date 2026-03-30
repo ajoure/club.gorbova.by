@@ -2011,6 +2011,7 @@ Deno.serve(async (req) => {
     }
 
     // ========== EXECUTE mode - actually charge subscriptions ==========
+    const chargeRunId = crypto.randomUUID();
     
     // PATCH: Select ALL candidates due today (with or without card) for accurate statistics
     const { data: allCandidates, error: queryError } = await supabase
