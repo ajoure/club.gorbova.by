@@ -191,6 +191,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: "",
       rule_purpose: "primary",
       notes: "",
+      has_condition: false,
+      condition_required_product_id: "",
+      condition_required_tariff_id: "",
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
