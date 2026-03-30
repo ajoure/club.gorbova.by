@@ -469,7 +469,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
             target_label: m.email_accounts?.email || m.email_account_id,
             source_type: "legacy",
             source_id: m.id,
-            source_label: "Legacy (product_email_mappings)",
+            source_label: "Старая настройка (email)",
             scope: "product",
             is_active: m.is_active ?? true,
             priority: -1,

@@ -921,7 +921,7 @@ function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGran
             {formatDuration(g.duration_days)}
             {g.duration_source !== "unknown" && (
               <span className="ml-0.5 text-muted-foreground">
-                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "legacy"})
+                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "старая настройка"})
               </span>
             )}
           </Badge>
