@@ -88,7 +88,16 @@ These rows are for batch orchestration ONLY. They do NOT participate in:
 - runtime deferred: 18/21
 - proof contract verified: 21/21
 
+### v22.7 Runtime Verification Update (2026-03-30)
+
+Functions invoked in v22.7: subscriptions-reconcile, telegram-check-expired, subscription-charge.
+New ledger rows: 0 (no eligible candidates in production data).
+5 deferred paths had functions invoked but found 0 candidates.
+10 deferred paths could not be invoked (require admin JWT, import data, or would affect real users).
+0 FAIL results. SQL invariants ALL PASS post-runtime.
+
 ## phase1_ledger_cutover_at = NOT SET
 
-Sprint v22.6 = implementation-complete, cutover-blocked.
+Sprint v22.6 = implementation-complete.
+Sprint v22.7 = readiness-complete, cutover-blocked.
 See `p0_invariant_report.txt` for consolidated deferred list and decision block.
