@@ -902,10 +902,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     value={form.priority}
+                    placeholder="0"
                     onChange={(e) => setForm({ ...form, priority: e.target.value.replace(/\D/g, "") })}
-                    onBlur={() => {
-                      if (form.priority.trim() === "") setForm(f => ({ ...f, priority: "0" }));
-                    }}
                     className="h-9 w-[100px]"
                   />
                 </div>
