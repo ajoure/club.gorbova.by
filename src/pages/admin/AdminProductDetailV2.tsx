@@ -20,8 +20,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical
+  ArrowLeft, Plus, Tag, MousePointer, Users, Eye, Globe, CreditCard, ChevronDown, Calendar, Bell, RefreshCw, Settings2, FolderTree, Pencil, Trash2, ChevronRight, X, EyeOff, Power, PowerOff, GripVertical, Shield
 } from "lucide-react";
+import { ProductAccessRulesTab } from "@/components/admin/product/ProductAccessRulesTab";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { SortableTariffItem } from "@/components/admin/product/SortableTariffItem";
@@ -727,6 +728,10 @@ export default function AdminProductDetailV2() {
                 <FolderTree className="h-3.5 w-3.5" />
                 Состав
               </TabsTrigger>
+              <TabsTrigger value="access_rules" className="gap-1.5 text-xs">
+                <Shield className="h-3.5 w-3.5" />
+                Доступы
+              </TabsTrigger>
             </TabsList>
           </div>
 
@@ -1190,6 +1195,16 @@ export default function AdminProductDetailV2() {
           {/* Composition Tab */}
           <TabsContent value="composition" className="space-y-4 mt-6">
             {productId && <ProductCompositionTab productId={productId} />}
+          </TabsContent>
+
+          {/* Access Rules Tab */}
+          <TabsContent value="access_rules" className="space-y-4 mt-6">
+            {productId && (
+              <ProductAccessRulesTab
+                productId={productId}
+                tariffs={(tariffs || []).map((t: any) => ({ id: t.id, name: t.name }))}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </div>

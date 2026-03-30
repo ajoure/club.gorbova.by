@@ -138,6 +138,75 @@ export type Database = {
           },
         ]
       }
+      access_rules: {
+        Row: {
+          conditions: Json | null
+          created_at: string
+          created_by: string | null
+          duration_days: number | null
+          grant_target_type: string
+          id: string
+          is_active: boolean
+          notes: string | null
+          priority: number
+          product_id: string | null
+          target_label: string | null
+          target_ref: string
+          tariff_id: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          conditions?: Json | null
+          created_at?: string
+          created_by?: string | null
+          duration_days?: number | null
+          grant_target_type: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          priority?: number
+          product_id?: string | null
+          target_label?: string | null
+          target_ref: string
+          tariff_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          conditions?: Json | null
+          created_at?: string
+          created_by?: string | null
+          duration_days?: number | null
+          grant_target_type?: string
+          id?: string
+          is_active?: boolean
+          notes?: string | null
+          priority?: number
+          product_id?: string | null
+          target_label?: string | null
+          target_ref?: string
+          tariff_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "access_rules_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "access_rules_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       admin_docs: {
         Row: {
           content_text: string

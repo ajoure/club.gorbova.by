@@ -562,13 +562,56 @@ Deno.serve(async (req) => {
     // 3. Try to grant Telegram access if applicable
     if (grantTelegram) {
       try {
-        const { data: clubMapping } = await supabase
-          .from("product_club_mappings")
-          .select("club_id")
-          .eq("product_id", productId)
-          .maybeSingle();
+        // Phase v23: Read from access_rules first, fallback to legacy product_club_mappings
+        let clubId: string | null = null;
 
-        if (clubMapping?.club_id) {
+        // Try new rules layer (tariff-level first, then product-level)
+        if (tariffId) {
+          const { data: tariffRule } = await supabase
+            .from("access_rules")
+            .select("target_ref")
+            .eq("tariff_id", tariffId)
+            .eq("grant_target_type", "club")
+            .eq("is_active", true)
+            .order("priority", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (tariffRule?.target_ref) {
+            clubId = tariffRule.target_ref;
+            console.log(`[grant-access] Club from access_rules (tariff): ${clubId}`);
+          }
+        }
+        if (!clubId && productId) {
+          const { data: productRule } = await supabase
+            .from("access_rules")
+            .select("target_ref")
+            .eq("product_id", productId)
+            .is("tariff_id", null)
+            .eq("grant_target_type", "club")
+            .eq("is_active", true)
+            .order("priority", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (productRule?.target_ref) {
+            clubId = productRule.target_ref;
+            console.log(`[grant-access] Club from access_rules (product): ${clubId}`);
+          }
+        }
+
+        // Legacy fallback: product_club_mappings
+        if (!clubId) {
+          const { data: clubMapping } = await supabase
+            .from("product_club_mappings")
+            .select("club_id")
+            .eq("product_id", productId)
+            .maybeSingle();
+          if (clubMapping?.club_id) {
+            clubId = clubMapping.club_id;
+            console.log(`[grant-access] Club from legacy product_club_mappings: ${clubId}`);
+          }
+        }
+
+        if (clubId) {
           const telegramResponse = await fetch(`${supabaseUrl}/functions/v1/telegram-grant-access`, {
             method: "POST",
             headers: {
@@ -577,7 +620,7 @@ Deno.serve(async (req) => {
             },
             body: JSON.stringify({
               userId,
-              clubId: clubMapping.club_id,
+              clubId,
               orderId,
               // Sub-patch B: Pass parent lineage from ledger write
               parent_event_key: grantLedgerSourceEventKey || null,
