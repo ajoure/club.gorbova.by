@@ -1,0 +1,108 @@
+# Manual Smoke-Test Steps for Runtime Validation
+# Generated: 2026-03-30 (PATCH v22.4)
+# Use when paths have not fired naturally after v22.3 deployment
+
+## Prerequisites
+- v22.3 foundation fix deployed
+- Access to invoke edge functions (via supabase dashboard or curl)
+
+## Step 1: grant-access-for-order
+
+1. Find a test order with status='paid' and valid product mappings:
+   ```sql
+   SELECT id, status, profile_id FROM orders_v2 
+   WHERE status = 'paid' 
+   ORDER BY created_at DESC LIMIT 5;
+   ```
+
+2. Invoke the edge function:
+   ```
+   POST /grant-access-for-order
+   Body: { "orderId": "<order_id>", "type": "webhook" }
+   ```
+
+3. Verify ledger row:
+   ```sql
+   SELECT id, action_type, status, reason_code, target_type, target_key,
+          source_subject_type, source_event_key,
+          result->'post_check' IS NOT NULL AS has_post_check,
+          result->>'access_start' AS access_start,
+          result->>'access_end' AS access_end
+   FROM access_grant_ledger
+   WHERE source_event_key LIKE 'gafo:webhook:%'
+   ORDER BY created_at DESC LIMIT 1;
+   ```
+
+4. Expected values:
+   - action_type: 'grant' or 'extend'
+   - status: 'granted' or 'extended'
+   - reason_code: 'paid_order'
+   - target_type: 'product'
+   - source_subject_type: 'order'
+   - has_post_check: true
+   - access_start/access_end: NOT NULL
+
+## Step 2: subscription-charge (renew)
+
+1. Find an active subscription due for renewal:
+   ```sql
+   SELECT id, profile_id, status, next_charge_at 
+   FROM subscriptions_v2 
+   WHERE status = 'active' AND next_charge_at <= now()
+   ORDER BY next_charge_at LIMIT 5;
+   ```
+
+2. Invoke the edge function:
+   ```
+   POST /subscription-charge
+   Body: { "action": "process_renewals" }
+   ```
+
+3. Verify ledger row:
+   ```sql
+   SELECT id, action_type, status, reason_code, target_type, target_key,
+          source_subject_type, source_event_key,
+          result->'post_check' IS NOT NULL AS has_post_check,
+          result->>'access_start' AS access_start,
+          result->>'access_end' AS access_end
+   FROM access_grant_ledger
+   WHERE source_event_key LIKE 'sub-renew:%'
+   ORDER BY created_at DESC LIMIT 1;
+   ```
+
+4. Expected values:
+   - action_type: 'extend'
+   - status: 'extended'
+   - reason_code: 'subscription_renew'
+   - target_type: 'subscription_tier'
+   - source_subject_type: 'subscription'
+   - has_post_check: true
+   - access_start/access_end: NOT NULL
+
+## Step 3: subscriptions-reconcile
+
+1. Invoke the edge function:
+   ```
+   POST /subscriptions-reconcile
+   Body: {}
+   ```
+
+2. Verify ledger rows:
+   ```sql
+   SELECT id, action_type, status, reason_code, target_type, target_key,
+          source_subject_type, source_event_key,
+          result->>'reconcile_basis' AS reconcile_basis
+   FROM access_grant_ledger
+   WHERE source_event_key LIKE 'cron-reconcile:%'
+   ORDER BY created_at DESC LIMIT 10;
+   ```
+
+3. Expected values per block:
+   - Block 1 (cancel_at_passed): reason_code='subscription_expired', target_type='subscription_tier', source_subject_type='subscription'
+   - Block 2 (trial_end_at): reason_code='trial_expired', target_type='subscription_tier', source_subject_type='subscription'
+   - Block 3 (access_end_at): reason_code='subscription_expired', target_type='subscription_tier', source_subject_type='subscription'
+   - Block 4 (telegram sync): reason_code='cron_cleanup', target_type='club', source_subject_type='cron_job'
+
+## After smoke-test
+
+Re-run the machine-check queries from p0_ledger_runtime_smoke_proof.txt and update status from PENDING_RUNTIME_EVENT to PASS or FAIL.
