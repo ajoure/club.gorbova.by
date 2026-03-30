@@ -530,7 +530,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
-                      <span>Источник: {m.source.replace("product_", "").replace("_mappings", "")}</span>
+                      <span>Источник: {LEGACY_SOURCE_LABELS[m.source.replace("product_", "").replace("_mappings", "")] ?? m.source}</span>
                       {m.duration_days != null && (
                         <>
                           <span>·</span>
