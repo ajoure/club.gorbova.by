@@ -35,28 +35,32 @@
 | previous_end | ✅ | `existingProductSub?.access_end_at` |
 | post_check | ✅ | Normalized schema |
 
-### 2. subscription-charge/index.ts (renew/extend branch)
+### 2. subscription-charge/index.ts (renew/extend branch) — DEAD CODE (v22.8)
+
+**v22.8 NOTE**: This entire section documents code that is **unreachable dead code**.
+Guards at lines 556-574 return `skipped` for ALL billing_type values before this code executes.
+Contract validation below is correct at code level but EXCLUDED_FROM_CUTOVER.
 
 | Check | Expected | Actual | Status |
 |-------|----------|--------|--------|
-| action_type ↔ status | extend→extended | `'extended'` | ✅ PASS |
-| reason_code | `chk_reason_code` | `'subscription_renew'` | ✅ PASS |
-| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS |
-| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS |
-| source_event_type | real origin | `'cron'` (cron-triggered charge) | ✅ PASS |
-| chk_has_subject | ≥1 NOT NULL | `source_subject_ref=id`, `source_subscription_id=id`, `source_order_id=renewalOrderId\|\|order_id` | ✅ PASS |
-| chk_parent_keys_pair | both NULL or both NOT NULL | Both NULL (top-level event) | ✅ PASS |
+| action_type ↔ status | extend→extended | `'extended'` | ✅ PASS (code-level, unreachable) |
+| reason_code | `chk_reason_code` | `'subscription_renew'` | ✅ PASS (code-level, unreachable) |
+| target_type | `chk_target_type` | `'subscription_tier'` | ✅ PASS (code-level, unreachable) |
+| source_subject_type | `chk_source_subject_type` | `'subscription'` | ✅ PASS (code-level, unreachable) |
+| source_event_type | real origin | `'cron'` (cron-triggered charge) | ✅ PASS (code-level, unreachable) |
+| chk_has_subject | ≥1 NOT NULL | `source_subject_ref=id`, `source_subscription_id=id`, `source_order_id=renewalOrderId\|\|order_id` | ✅ PASS (code-level, unreachable) |
+| chk_parent_keys_pair | both NULL or both NOT NULL | Both NULL (top-level event) | ✅ PASS (code-level, unreachable) |
 | chk_batch_row_contract | N/A | N/A | ✅ PASS |
-| post_check keys | normalized | Via `buildPostCheck()` | ✅ PASS |
-| post_check schema | normalized | Via `PostCheckItem` | ✅ PASS |
-| no 'completed' outside batch_start | — | status='extended' | ✅ PASS |
-| no 'subscription' target_type | — | target_type='subscription_tier' | ✅ PASS |
-| profile_id present | — | `subscription?.profile_id` | ✅ PASS |
+| post_check keys | normalized | Via `buildPostCheck()` | ✅ PASS (code-level, unreachable) |
+| post_check schema | normalized | Via `PostCheckItem` | ✅ PASS (code-level, unreachable) |
+| no 'completed' outside batch_start | — | status='extended' | ✅ PASS (code-level, unreachable) |
+| no 'subscription' target_type | — | target_type='subscription_tier' | ✅ PASS (code-level, unreachable) |
+| profile_id present | — | `subscription?.profile_id` | ✅ PASS (code-level, unreachable) |
 
 **target_key contract**: `{user_id}:{tariff_id}` — deterministic, tariff-scoped
 **source_event_key**: `sub-renew:{subscription_id}:{payment_id}` — deterministic UUID-based
 
-**result contract for extend**:
+**result contract for extend** (unreachable):
 | Field | Present |
 |-------|---------|
 | access_start | ✅ |
@@ -176,17 +180,18 @@ Not used anywhere. Replaced with 'club' (block 4) or 'subscription_tier' (blocks
 ### 'subscription' as target_type
 Not used anywhere. Replaced with 'subscription_tier' or 'product'.
 
-## Runtime Validation Gate (v22.5)
+## Runtime Validation Gate (v22.5, updated v22.8)
 
 Added: 2026-03-30
 Updated: 2026-03-30 — PATCH v22.5 reconcile fixture smoke completed
+Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 
-### Status: 2/3 PASS + 1 BLOCKED_SAFE_GUARD
+### Status: 2/3 PASS + 1 EXCLUDED_FROM_CUTOVER (dead code)
 
 | Path | Status | Ledger rows | Detail |
 |------|--------|-------------|--------|
 | grant-access-for-order | ✅ PASS | 1 (b604ba7c) | extend/extended, paid_order, product, 5 canonical post_check keys, merge verified |
-| subscription-charge | ⏸ BLOCKED_SAFE_GUARD | 0 | No sandbox billing; extend path untestable without risk |
+| subscription-charge | ⛔ EXCLUDED_FROM_CUTOVER | 0 | Dead code: extend path unreachable under current guards (v22.8) |
 | subscriptions-reconcile | ✅ PASS | 1 (9578416b) | revoke/revoked, cancel_at_passed, subscription_tier, DDL valid |
 
 DB old-value guard: still clean (0 telegram_access, 0 bare subscription, 0 completed non-batch).
@@ -195,32 +200,32 @@ DB old-value guard: still clean (0 telegram_access, 0 bare subscription, 0 compl
 subscription-charge/index.ts line 2212: `todayUtc` undefined → fixed to `todayKey`. Audit-log only, no ledger impact.
 
 ### Linked proofs
-- `p0_ledger_runtime_smoke_proof.txt` — runtime row validation (2/3 PASS + 1 BLOCKED_SAFE_GUARD)
+- `p0_ledger_runtime_smoke_proof.txt` — runtime row validation (2/3 PASS + 1 EXCLUDED_FROM_CUTOVER)
 - `p0_ledger_grep_guard_proof.txt` — code grep + helper contract freeze (PASS)
-- `p0_runtime_candidate_eligibility_proof.txt` — gate-by-gate analysis of blocked paths
+- `p0_runtime_candidate_eligibility_proof.txt` — gate-by-gate analysis + dead code finding
 - `p0_runtime_fixture_lifecycle_proof.txt` — fixture creation, usage, cleanup tracking
 - `p0_runtime_manual_smoke_steps.txt` — manual smoke-test procedure
 
-### Cutover guard
+### Cutover guard (updated v22.8)
 
 phase1_ledger_cutover_at MUST NOT be set until:
 - grant-access-for-order runtime_smoke = PASS ✅
 - subscriptions-reconcile runtime_smoke = PASS ✅
-- subscription-charge runtime_smoke = PASS or BLOCKED_SAFE_GUARD with explicit approval ⏸
+- subscription-charge extend = EXCLUDED_FROM_CUTOVER (dead code) ✅
 - grep_guard = PASS ✅
 - contract_validation = PASS ✅
-- orphan_downstream = 0
-- missing_required_post_check = 0
+- orphan_downstream = 0 ✅
+- missing_required_post_check = 0 ✅ (1 revoke = by design)
+- phase1_ledger_schema_ready_at = SET ✅
 
-Decision required: accept BLOCKED_SAFE_GUARD for subscription-charge cutover,
-or provision sandbox billing to test extend path.
+All technical prerequisites met. Formal approval required.
 
 ## Conclusion
 PATCH v22.3: all 3 wrapped paths DDL-compatible (code-level).
 PATCH v22.4: grant-access-for-order PASS, todayUtc bug fixed.
 PATCH v22.5: subscriptions-reconcile PASS via controlled fixture.
-             subscription-charge BLOCKED_SAFE_GUARD (no sandbox billing).
-Cutover blocked pending decision on subscription-charge status.
+v22.8: subscription-charge extend = EXCLUDED_FROM_CUTOVER (dead code finding).
+       Production renewals use bepaid-webhook → grant-access-for-order (PASS).
 
 ---
 
@@ -365,7 +370,9 @@ Duplicate post-switch revoke ledger path is ABSENT. ✅
 | Sub-patch C (batch/import — consolidated final) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
 | Sub-patch D (consolidated proof finalization) | ✅ done |
-| phase1_ledger_cutover_at | ❌ NOT SET |
+| phase1_ledger_cutover_at | ❌ NOT SET (pending formal approval) |
 
-Sprint v22.6 = implementation-complete, cutover-blocked.
+Sprint v22.6 = implementation-complete.
+Sprint v22.7 = readiness-complete.
+Sprint v22.8 = cutover-ready, pending formal approval.
 See `p0_invariant_report.txt` for consolidated deferred list and decision block.

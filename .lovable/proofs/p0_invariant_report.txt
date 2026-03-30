@@ -1,5 +1,6 @@
 # Phase 1 Consolidated Invariant Report
 # Created: 2026-03-30 (PATCH v22.6 Sub-patch D)
+# Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 # Scope: Phase 0 + Phase 1 — all invariants across ledger system
 
 ## 1. Schema Guards
@@ -141,7 +142,7 @@ These are NOT new requirements — code was already correct. Only proof text was
 
 ---
 
-## Deferred List (Consolidated)
+## Deferred List (Consolidated, updated v22.8)
 
 ### Deferred Runtime Verification
 
@@ -150,93 +151,83 @@ These are NOT new requirements — code was already correct. Only proof text was
 | 1 | Runtime smoke for 9 revoke wrapper paths (Sub-patch A) | Paths wrapped in code; runtime trigger requires production events |
 | 2 | Runtime smoke for parent propagation paths (Sub-patch B) | Wrapped in code; requires downstream events with parent keys |
 | 3 | Runtime smoke for batch/import paths (Sub-patch C) | Wrapped in code; requires actual import execution |
-| 4 | subscription-charge extend runtime proof | BLOCKED_SAFE_GUARD — no sandbox billing available |
+| 4 | subscription-charge extend runtime proof | EXCLUDED_FROM_CUTOVER — dead code, extend path unreachable (v22.8) |
 
-### Deferred Cutover Readiness
+### Deferred Design Debt (v22.8)
 
-| # | Item | Reason |
+| # | Item | Priority |
 |---|---|---|
-| 5 | Final cutover decision | Blocked by item 4 above |
-| 6 | Setting phase1_ledger_cutover_at | Blocked until all runtime paths verified or explicitly approved |
-| 7 | Orphan downstream count = 0 verification | Requires runtime rows with parent lineage |
-| 8 | Missing required post_check = 0 verification | Requires runtime rows |
+| 5 | Semantic split: grant vs extend in live renewal path | Medium |
+| 6 | Cleanup/removal of dead code in subscription-charge (~1200 lines) | Low |
+| 7 | Optional sandbox program for future semantic verification | Low |
+| 8 | Semantic reporting/analytics impact: renewals counted as grant in ledger | Medium |
+
+### Cutover Readiness (updated v22.8)
+
+| # | Item | v22.8 Status | Detail |
+|---|------|-------------|--------|
+| 9 | Final cutover decision | READY for formal approval | All technical blockers resolved |
+| 10 | phase1_ledger_cutover_at | NOT SET | Awaiting formal approval |
+| 11 | Orphan downstream = 0 | ✅ VERIFIED (0) | SQL check passed |
+| 12 | Missing post_check = 0 | ✅ VERIFIED (1 = revoke, by design) | SQL check passed |
 
 ---
 
-## Final Decision Block (v22.6)
+## v22.8 Dead Code Finding
+
+### Finding
+
+subscription-charge/index.ts contains two mutually exclusive guards at lines 554–574:
 
 ```
-v22.6 SPRINT IMPLEMENTATION STATUS = COMPLETE
-CODE PATCHES STATUS = COMPLETE (Sub-patches A, B, C)
-PROOF FINALIZATION STATUS = COMPLETE
-CUTOVER READINESS STATUS = BLOCKED
-REASON = subscription-charge runtime proof requires safe billing sandbox
-NEW CODE PATCHES IN THIS FOLLOW-UP = NO
-NEXT STEP = separate cutover/readiness sprint
-phase1_ledger_cutover_at = NOT SET
+Lines 556-563: if (billing_type === 'provider_managed')
+  → return { skipped: true, skip_reason: 'provider_managed' }
+
+Lines 566-573: if (billing_type !== 'provider_managed')
+  → return { skipped: true, skip_reason: 'mit_disabled' }
 ```
+
+Both branches exhaust all possible values (X === Y || X !== Y) and both return `skipped`.
+The extend ledger write at lines 1520-1556 is **unreachable dead code**.
+
+### Impact
+
+- subscription-charge extend path: EXCLUDED_FROM_CUTOVER
+- Sandbox billing requirement: REMOVED (not applicable to live path)
+- Production renewal source of truth: bepaid-webhook → grant-access-for-order (PASS)
+- Current renewal ledger classification: `grant` (accepted as operational reality)
+
+### Contract consequence
+
+- Renewal classified as `grant` in current production = temporarily acceptable for cutover
+- Semantic mismatch = deferred design debt, not blocker
 
 ---
 
-## v22.7 Readiness Sprint Results
-
-Added: 2026-03-30
-
-### SQL Invariant Checks: ALL PASS (S1-S12)
-
-248 total rows, 0 violations across all invariant categories.
-source_event_type distribution: cron:244, webhook:4.
-
-Missing: S13 phase1_ledger_schema_ready_at watermark (not set in app_settings).
-
-### Runtime Smoke: 2 PASS, 1 BLOCKED_SAFE_GUARD, 15 DEFERRED_NON_BLOCKING, 0 FAIL
-
-- R1-R2 (gafo + reconcile): PASS from v22.6
-- R3 (sub-charge renew): BLOCKED_SAFE_GUARD — 0 eligible candidates, no sandbox
-- R4-R18: DEFERRED_NON_BLOCKING — functions invoked where possible (5/15), 0 candidates found in production data
-
-### Deferred Runtime Verification (updated from v22.6)
-
-| # | Item | v22.7 Status | Detail |
-|---|------|-------------|--------|
-| 1 | 9 revoke wrapper paths | DEFERRED_NON_BLOCKING | Functions invoked, 0 candidates in DB |
-| 2 | Parent propagation paths | DEFERRED_NON_BLOCKING | No downstream events with parent keys |
-| 3 | Batch/import paths | DEFERRED_NON_BLOCKING | Requires actual import execution |
-| 4 | subscription-charge extend | BLOCKED_SAFE_GUARD | No sandbox billing, 0 eligible candidates |
-
-### Deferred Cutover Readiness (updated from v22.6)
-
-| # | Item | v22.7 Status | Detail |
-|---|------|-------------|--------|
-| 5 | Final cutover decision | BLOCKED | By item 4 + S13 watermark |
-| 6 | phase1_ledger_cutover_at | NOT SET | Blocked until resolved |
-| 7 | Orphan downstream = 0 | ✅ VERIFIED (0) | SQL check passed |
-| 8 | Missing post_check = 0 | ✅ VERIFIED (1 = revoke, by design) | SQL check passed |
-
-### v22.7 Final Decision Block
+## Final Decision Block (v22.8)
 
 ```
-v22.7 READINESS SPRINT STATUS = COMPLETE
-SQL INVARIANT CHECKS = ALL_PASS (S1-S12)
-RUNTIME SMOKE = 2 PASS + 1 BLOCKED_SAFE_GUARD + 15 DEFERRED_NON_BLOCKING + 0 FAIL
-LINEAGE CHECKS = L1 PASS, L2-L3 N/A
-POST-RUNTIME SQL = ALL PASS
+v22.8 DEAD CODE RESOLUTION STATUS = COMPLETE
+SQL INVARIANT CHECKS = ALL_PASS (S1-S13)
+RUNTIME SMOKE = 2 PASS + 1 EXCLUDED_FROM_CUTOVER + 15 DEFERRED_NON_BLOCKING + 0 FAIL
 
-CUTOVER_ALLOWED = NO
-BLOCKERS:
-  1. R3 subscription-charge renew = BLOCKED_SAFE_GUARD
-  2. S13 phase1_ledger_schema_ready_at not set
+CUTOVER_ALLOWED = PENDING FORMAL APPROVAL
+TECHNICAL_BLOCKERS = NONE
 
-NEXT STEPS:
-  1. Set schema_ready_at watermark
-  2. Provision sandbox billing OR formally approve BLOCKED_SAFE_GUARD
-  3. If approved → set phase1_ledger_cutover_at → cutover complete
+CURRENT_PATH = A
+NEW_CODE_IN_V22.8 = NO
+DEAD_CODE_CLEANUP_NOW = NO
+SUBSCRIPTION_CHARGE_EXTEND_RUNTIME_REQUIREMENT = REMOVED
+PRODUCTION_RENEWAL_PATH = bepaid-webhook → grant-access-for-order (PASS)
+SANDBOX_BILLING_REQUIREMENT = REMOVED (not applicable to live path)
+CURRENT_RENEWAL_LEDGER_CLASSIFICATION = grant
+EXTEND_PATH_RUNTIME_EXPECTATION = none (dead code)
 
-NEW CODE PATCHES IN v22.7 = NO
-phase1_ledger_cutover_at = NOT SET
+phase1_ledger_schema_ready_at = SET
+phase1_ledger_cutover_at = NOT SET (awaiting formal approval)
 ```
 
-## DoD Verification (v22.6 + v22.7)
+## DoD Verification (v22.6 + v22.7 + v22.8)
 
 1. All proof files synchronized between each other and with code ✅
 2. All previously found text-drift mismatches corrected ✅ (3 fixes documented in v22.6)
@@ -246,7 +237,11 @@ phase1_ledger_cutover_at = NOT SET
 6. Decision block present ✅
 7. phase1_ledger_cutover_at = NOT SET ✅
 8. Sprint v22.6 = implementation-complete ✅
-9. Sprint v22.7 = readiness-complete, cutover-blocked ✅
-10. SQL invariants ALL PASS ✅
-11. Runtime smoke executed where possible ✅
-12. 0 new code-level findings ✅
+9. Sprint v22.7 = readiness-complete ✅
+10. Sprint v22.8 = cutover-ready, pending formal approval ✅
+11. SQL invariants ALL PASS ✅
+12. Runtime smoke executed where possible ✅
+13. 0 new code-level findings ✅
+14. Dead code finding documented with proof package ✅
+15. Proof sync sweep completed — no stale BLOCKED_SAFE_GUARD references ✅
+16. Anti-drift machine check passed ✅

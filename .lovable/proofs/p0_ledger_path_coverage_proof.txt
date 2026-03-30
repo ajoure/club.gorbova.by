@@ -1,5 +1,6 @@
 # Phase 1 Ledger Path Coverage Proof
 # Created: 2026-03-30 (PATCH v22.6 Sub-patch C)
+# Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 # Scope: All ledger-wrapped paths — access-affecting and batch/meta
 
 ## Section A: Access-affecting rows (grant/skip/failed row-level)
@@ -10,7 +11,7 @@ target-resolution proof, and entitlement verification.
 | # | Path | source_event_key pattern | action_types | target_type | Status |
 |---|------|------------------------|--------------|-------------|--------|
 | 1 | grant-access-for-order | `gafo:webhook:{orderId}` | grant, extend | product | ✅ wrapped |
-| 2 | subscription-charge (renew) | `sub-renew:{subId}:{paymentId}` | extend | subscription_tier | ✅ wrapped |
+| 2 | subscription-charge (renew) | `sub-renew:{subId}:{paymentId}` | extend | subscription_tier | ⛔ wrapped but DEAD CODE (v22.8) |
 | 3 | subscriptions-reconcile (cancel_at) | `cron-reconcile:{jobRunId}:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
 | 4 | subscriptions-reconcile (trial) | `cron-reconcile:{jobRunId}:trial:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
 | 5 | subscriptions-reconcile (expired) | `cron-reconcile:{jobRunId}:expired:{subId}` | revoke, skip | subscription_tier | ✅ wrapped |
@@ -47,19 +48,21 @@ These rows are for batch orchestration ONLY. They do NOT participate in:
 - Section A rows NEVER use target_type='batch'
 - Proof/invariant checks MUST filter: WHERE target_type != 'batch'
 
-## Coverage summary
+## Coverage summary (updated v22.8)
 
-- Total access-affecting paths: 18
+- Total access-affecting paths: 18 (17 live + 1 dead code)
 - Total batch/meta paths: 3
 - Total wrapped paths: 21
 - Unwrapped paths: 0
+- Dead code paths: 1 (subscription-charge extend — EXCLUDED_FROM_CUTOVER)
+- Live paths covered by runtime or deferred: 17 + 3 = 20
 
-## Final Path Coverage Table (Sub-patch D)
+## Final Path Coverage Table (updated v22.8)
 
 | # | Path | wrapped_in_code | runtime_status | proof_status | deferred_reason | notes |
 |---|------|----------------|----------------|--------------|-----------------|-------|
-| 1 | grant-access-for-order | ✅ yes | ✅ PASS | ✅ verified | — | extend/extended, smoke PASS |
-| 2 | subscription-charge (renew) | ✅ yes | ⏸ BLOCKED_SAFE_GUARD | ✅ contract verified | no sandbox billing | extend path untestable |
+| 1 | grant-access-for-order | ✅ yes | ✅ PASS | ✅ verified | — | extend/extended, smoke PASS; live renewal-equivalent path |
+| 2 | subscription-charge (renew) | ✅ yes | ⛔ EXCLUDED_FROM_CUTOVER | ⛔ dead code | extend path unreachable | guards at L556-574 return skipped for ALL billing_types |
 | 3 | subscriptions-reconcile (cancel_at) | ✅ yes | ✅ PASS | ✅ verified | — | fixture verified |
 | 4 | subscriptions-reconcile (trial) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped in code |
 | 5 | subscriptions-reconcile (expired) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime trigger needed | wrapped in code |
@@ -80,13 +83,14 @@ These rows are for batch orchestration ONLY. They do NOT participate in:
 | B2 | getcourse file import (batch_start) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | target_type=batch |
 | B3 | getcourse API import (batch_start) | ✅ yes | ⏸ deferred | ✅ contract verified | runtime import needed | target_type=batch |
 
-### Summary
+### Summary (updated v22.8)
 
 - wrapped_in_code: 21/21 ✅
 - runtime PASS: 2/21 (grant-access-for-order, subscriptions-reconcile cancel_at)
-- runtime BLOCKED_SAFE_GUARD: 1/21 (subscription-charge renew)
+- runtime EXCLUDED_FROM_CUTOVER: 1/21 (subscription-charge renew — dead code)
 - runtime deferred: 18/21
-- proof contract verified: 21/21
+- proof contract verified: 20/21 (excluding dead code path)
+- dead code paths: 1/21
 
 ### v22.7 Runtime Verification Update (2026-03-30)
 
@@ -96,8 +100,17 @@ New ledger rows: 0 (no eligible candidates in production data).
 10 deferred paths could not be invoked (require admin JWT, import data, or would affect real users).
 0 FAIL results. SQL invariants ALL PASS post-runtime.
 
-## phase1_ledger_cutover_at = NOT SET
+### v22.8 Dead Code Resolution Update (2026-03-30)
+
+subscription-charge extend path reclassified from BLOCKED_SAFE_GUARD to EXCLUDED_FROM_CUTOVER.
+Reason: two mutually exclusive guards at lines 554-574 make extend ledger write unreachable.
+Production renewals use grant-access-for-order (runtime PASS).
+Sandbox billing requirement REMOVED from cutover prerequisites.
+unreachable_extend_coverage = excluded_from_runtime_matrix
+extend ledger rows expected in current production = 0
+
+## phase1_ledger_cutover_at = NOT SET (pending formal approval)
 
 Sprint v22.6 = implementation-complete.
-Sprint v22.7 = readiness-complete, cutover-blocked.
-See `p0_invariant_report.txt` for consolidated deferred list and decision block.
+Sprint v22.7 = readiness-complete.
+Sprint v22.8 = cutover-ready, pending formal approval.
