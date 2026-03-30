@@ -9252,6 +9252,7 @@ export type Database = {
           created_at: string | null
           id: string
           last_error: string | null
+          meta: Json | null
           processed_at: string | null
           status: string
           subscription_id: string | null
@@ -9264,6 +9265,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_error?: string | null
+          meta?: Json | null
           processed_at?: string | null
           status?: string
           subscription_id?: string | null
@@ -9276,6 +9278,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           last_error?: string | null
+          meta?: Json | null
           processed_at?: string | null
           status?: string
           subscription_id?: string | null

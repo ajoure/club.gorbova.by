@@ -579,6 +579,10 @@ Deno.serve(async (req) => {
               userId,
               clubId: clubMapping.club_id,
               orderId,
+              // Sub-patch B: Pass parent lineage from ledger write
+              parent_event_key: grantLedgerSourceEventKey || null,
+              parent_execution_key: grantLedgerExecutionKey || null,
+              _from_primary_path: !!(grantLedgerSourceEventKey && grantLedgerExecutionKey),
             }),
           });
 
@@ -665,14 +669,16 @@ Deno.serve(async (req) => {
     console.error("Audit log error (non-critical):", auditError);
   }
 
-  // 7. Phase 1: Write ledger entry
+  // 7. Phase 1: Write ledger entry (BEFORE telegram call for parent lineage)
+  let grantLedgerExecutionKey: string | null = null;
+  let grantLedgerSourceEventKey: string | null = null;
   try {
     const actionType = existingProductSub ? 'extend' : 'grant';
-    const sourceEventKey = `gafo:webhook:${orderId}`;
+    grantLedgerSourceEventKey = `gafo:webhook:${orderId}`;
     
     const postCheck = buildPostCheck({
       entitlement: { status: results.entitlement?.action || 'unknown', ref: results.entitlement?.id },
-      telegram: grantTelegram ? { status: results.telegram ? 'queued' : 'skipped' } : undefined,
+      telegram: grantTelegram ? { status: 'pending_downstream' } : undefined,
       subscription: { status: results.subscription?.action || 'unknown', ref: results.subscription?.id },
       ledgerRow: { status: 'written' },
       targetResolution: { status: 'matched', ref: productId },
@@ -680,9 +686,9 @@ Deno.serve(async (req) => {
 
     const ledgerStatus = actionType === 'grant' ? 'granted' : 'extended';
 
-    await writeLedgerEntry(supabase, {
+    const ledgerResult = await writeLedgerEntry(supabase, {
       source_event_type: 'webhook',
-      source_event_key: sourceEventKey,
+      source_event_key: grantLedgerSourceEventKey,
       source_subject_type: 'order',
       source_subject_ref: orderId,
       source_order_id: orderId,
@@ -705,8 +711,27 @@ Deno.serve(async (req) => {
         post_check: postCheck,
       },
     });
+    grantLedgerExecutionKey = ledgerResult.execution_key;
   } catch (ledgerError) {
     console.error("[grant-access-for-order] Ledger write error:", ledgerError);
+  }
+
+  // Sub-patch B: Idempotent skip guard — if execution_key is null, try to recover
+  if (!grantLedgerExecutionKey && grantLedgerSourceEventKey) {
+    try {
+      const { data: existingLedger } = await supabase
+        .from('access_grant_ledger')
+        .select('execution_key')
+        .eq('source_event_key', grantLedgerSourceEventKey)
+        .limit(1)
+        .maybeSingle();
+      if (existingLedger?.execution_key) {
+        grantLedgerExecutionKey = existingLedger.execution_key;
+        console.log('[grant-access-for-order] Recovered execution_key from existing ledger row');
+      }
+    } catch (recoveryErr) {
+      console.error('[grant-access-for-order] Execution key recovery error:', recoveryErr);
+    }
   }
 
     return new Response(

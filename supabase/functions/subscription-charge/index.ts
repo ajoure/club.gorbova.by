@@ -2152,15 +2152,12 @@ Deno.serve(async (req) => {
             })
             .eq('id', sub.id);
 
-          await supabase.functions.invoke('telegram-revoke-access', {
-            body: {
-              user_id: sub.user_id,
-              reason: 'trial_ended_no_payment',
-            },
-          });
+          // Sub-patch B: executeRevoke BEFORE telegram call for parent lineage
+          let trialRevokeSourceEventKey: string | null = null;
+          let trialRevokeExecutionKey: string | null = null;
 
-          // Phase 1 Ledger: trial_ended_no_payment revoke
           try {
+            trialRevokeSourceEventKey = `sub-trial-expire:${sub.id}:${chargeRunId}`;
             const revokeCtx: RevokeContext = {
               userId: sub.user_id,
               targetType: 'subscription_tier',
@@ -2170,15 +2167,26 @@ Deno.serve(async (req) => {
               reasonCode: 'trial_expired',
               reconcileBasis: 'trial_ended_no_payment',
               sourceEventType: 'cron',
-              sourceEventKey: `sub-trial-expire:${sub.id}:${chargeRunId}`,
+              sourceEventKey: trialRevokeSourceEventKey,
               sourceSubjectType: 'subscription',
               sourceSubjectRef: sub.id,
             };
             const revokeResult = await executeRevoke(supabase, revokeCtx);
+            trialRevokeExecutionKey = revokeResult.executionKey || null;
             console.log(`[subscription-charge] Ledger trial-expire: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
           } catch (ledgerErr) {
             console.error('[subscription-charge] Ledger error (non-blocking):', ledgerErr);
           }
+
+          // Sub-patch B: telegram-revoke AFTER ledger, with parent keys
+          await supabase.functions.invoke('telegram-revoke-access', {
+            body: {
+              user_id: sub.user_id,
+              reason: 'trial_ended_no_payment',
+              parent_event_key: trialRevokeSourceEventKey || null,
+              parent_execution_key: trialRevokeExecutionKey || null,
+            },
+          });
         }
 
         results.push({ 
