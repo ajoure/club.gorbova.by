@@ -157,7 +157,7 @@ Idempotent guard for execution_key:
 
 ## 10. Fallback hash contract
 
-Implementation (identical in both files):
+Implementation (identical in both files — byte-identical drift guard confirmed):
 ```typescript
 async function stableRowHash(payload: Record<string, unknown>): Promise<string> {
   const sorted = JSON.stringify(
@@ -172,18 +172,61 @@ Properties:
 - Deterministic: same payload → same hash ✅
 - No timestamp in discriminator ✅
 - No random in discriminator ✅
-- Identical implementation in both files ✅
+- No index in discriminator ✅
+- Identical implementation in both files (byte-identical) ✅
 - sha256(JSON.stringify(sorted_keys_payload)).slice(0, 16) ✅
 
-## 11. Per-row catch = mandatory failed ledger
+### 10a. Canonical hash payload (explicit field list)
+
+Hash строится из **сырого бизнес-пэйлоада** + стабильной нормализации строк.
+Настройки UI/импорта (normalizeNames, mergeEmailDuplicates) на identity НЕ влияют.
+
+| Поле | bepaid | gc_file | gc_api |
+|---|---|---|---|
+| source | 'bepaid' | 'gc_file' | 'gc_api' |
+| email | payment.email (lower+trim) | deal.user_email (lower+trim) | deal.user_email (lower+trim) |
+| phone | — | deal.user_phone (trim) | deal.user_phone (trim) |
+| first_name / last_name | cardHolder (trim) | first+last (trim) | first+last (trim) |
+| amount | payment.amount | deal.amount | deal.deal_cost |
+| currency | payment.currency | — | — |
+| paid_at | payment.paymentDate | deal.paidAt/createdAt | deal.deal_payed_at |
+| tariff_code / offer_id | description-based | deal.tariffCode | deal.offer_id |
+| access_start | — | deal.accessStartAt | — |
+| access_end | — | deal.accessEndAt | — |
+
+НЕ входят в hash: Date.now, Math.random, runtime UUID, index, время выполнения, operator settings.
+
+### 10b. Identical rows without externalId = conscious dedup
+
+Две полностью одинаковые строки в файле → одинаковый canonicalHash → одинаковый rowSourceEventKey.
+Вторая строка проходит как duplicate по ledger idempotency или order duplicate-check.
+Это **осознанный dedup**, а не ошибка.
+
+### 10c. Order number contract (no entropy)
+
+- gc_file без externalId: deal_number = `HASH-${canonicalHash}`, order_number = `GC-HASH-${canonicalHash}`
+- gc_file с externalId: deal_number = externalId, order_number = `GC-${externalId}`
+- gc_api: deal_number = deal.id, order_number = `GC-${deal.id}` или `GCID-${deal.id}`
+- No double prefix: createOrder checks `.startsWith('GC-')` before adding `GC-` prefix ✅
+
+## 11. Per-row catch = mandatory failed ledger (stage-based)
 
 Both imports:
 - Each row processed in individual try/catch
-- catch block ALWAYS writes failed ledger row with:
-  - failed_at_step: 'row_processing'
+- `currentStep` variable tracks current stage
+- catch block writes failed ledger row with:
+  - failed_at_step: currentStep (actual stage, not generic 'row_processing')
   - error_message: actual error message
+  - row_index: index (debug trace only, not in identity)
 - Failed ledger write itself is wrapped in try/catch to prevent cascade failure
-- Only after ledger write does error propagate to aggregate result
+
+### failed_at_step stages per import:
+
+getcourse (file + API):
+`row_parse` → `profile_resolve` → `order_lookup` → `order_create` → `subscription_apply` → `downstream_sync` → `ledger_write`
+
+bepaid:
+`row_parse` → `profile_match` → `auth_user_resolve` → `order_lookup` → `order_create` → `payment_create` → `subscription_apply` → `profile_update` → `ledger_write`
 
 ## 12. Strict batch/meta vs row/access separation
 
@@ -191,6 +234,101 @@ Both imports:
 - Row-level rows NEVER use target_type='batch' ✅
 - Section A (access-affecting) = row-level grant/skip/failed rows
 - Section B (batch/meta) = batch_start rows only
+- batch_start rows do NOT participate in access-affecting counts ✅
+
+## 13. Archive pseudo-target contract (sanctioned temporary)
+
+- While no canonical archive product_id exists in products_v2:
+  - target_type = 'product', target_key = '{userId}:archive'
+  - result.is_archive_deal = true
+  - result.archive_target_contract = 'pseudo_target_v1'
+- When canonical archive product_id is added:
+  - switch to target_key = '{userId}:{archiveProductId}'
+  - document change as "archive_target_contract_v2" in proof
+  - pseudo-target FORBIDDEN after switch
+
+## 14. bepaid existence-check contract
+
+- Order duplicate check uses `.select('id')` + length check (NOT .single())
+- 0 rows → normal create path
+- 1 row → duplicate skip path
+- >1 rows → ambiguous duplicate state:
+  - status='failed', failed_at_step='order_lookup', error_message='multiple_existing_orders'
+  - Separate ledger row with count in result ✅
+
+## 15. DB SoT contracts
+
+- getcourse: tariff lookup via `tariffs.getcourse_offer_id` (DB SoT, no hardcoded OFFER_TARIFF_MAP) ✅
+- bepaid: product mapping via `bepaid_product_mappings` table (DB SoT) ✅
+
+## 16. dryRun / preview non-write contract (code level)
+
+- bepaid dryRun=true → ни batch_start, ни row-level ledger не пишутся
+  - Guard: `if (!dryRun)` оборачивает batch_start
+  - Guard: `if (batchId && batchSourceEventKey)` guards row-level
+- getcourse preview → `action === 'preview'` returns before batch_start and import loop
+  - Ни одной ledger row ✅
+
+## 17. Entropy elimination grep proof (Sub-patch C final)
+
+```
+grep -cn "Date.now(" getcourse-import-deals/index.ts → 0 ✅
+grep -cn "Math.random(" getcourse-import-deals/index.ts → 0 ✅
+grep -cn "Date.now(" bepaid-report-import/index.ts → 0 ✅
+grep -cn "Math.random(" bepaid-report-import/index.ts → 0 ✅
+```
+
+Identity path check (no runtime entropy in):
+- rowSourceEventKey: hash:${canonicalHash} or externalId ✅
+- rowSubjectRef: hash:${canonicalHash} or externalId ✅
+- deal_number: HASH-${canonicalHash} or externalId ✅
+- order_number: GC-HASH-${canonicalHash} or GC-${externalId} ✅
+- No index in any identity field ✅
+
+## 18. Machine-check format (watermark-based)
+
+### dryRun (bepaid)
+```sql
+-- before (proof_started_at = T)
+SELECT count(*) FROM access_grant_ledger
+WHERE source_event_key LIKE 'bepaid-import%'
+  AND created_at >= T;
+-- result: 0
+
+-- dryRun invocation (dryRun=true)
+
+-- after
+SELECT count(*) FROM access_grant_ledger
+WHERE source_event_key LIKE 'bepaid-import%'
+  AND created_at >= T;
+-- result: 0
+-- diff = 0 ✅
+```
+
+### preview (getcourse)
+```sql
+-- before
+SELECT count(*) FROM access_grant_ledger
+WHERE source_event_key LIKE 'gc-import%'
+  AND created_at >= T;
+-- result: 0
+
+-- preview invocation (action='preview')
+
+-- after
+SELECT count(*) FROM access_grant_ledger
+WHERE source_event_key LIKE 'gc-import%'
+  AND created_at >= T;
+-- result: 0
+-- diff = 0 ✅
+```
+
+### execute formula
+```
+delta = 1 (batch_start) + N (row-level)
+where N = grant + skip + failed rows
+batch/meta and access rows counted separately ✅
+```
 
 ## Sprint status
 
@@ -198,7 +336,11 @@ Both imports:
 |-----------|--------|
 | Sub-patch A (revoke paths) | ✅ done |
 | Sub-patch B (parent propagation) | ✅ done in code |
-| Sub-patch C (batch/import) | ✅ done in code |
+| Sub-patch C (batch/import — consolidated final) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
 | Sub-patch D (consolidated proof finalization) | 📋 next |
 | phase1_ledger_cutover_at | ❌ NOT SET |
+
+Sub-patch C = последний основной code patch по v22.6 main scope.
+Далее только consolidated follow-up на proof/coverage/runtime validation.
+Новые code-правки допустимы только при новых фактах из verify/runtime.
