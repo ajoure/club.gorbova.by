@@ -1,215 +1,337 @@
-Да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Fixture-данные не через schema migration.  
-Не создавать test subscriptions миграцией. Это одноразовые runtime-фикстуры, значит нужен отдельный smoke SQL script / admin debug script / one-off seed, а не постоянная миграция, иначе тестовые строки останутся в истории развёртываний.
-2. Fixture A для subscription-charge нельзя запускать с риском реального списания.  
-Текущий вариант со stub payment_method_id слишком опасен и логически слабый.  
-Добавь жёсткое правило:  
-
-  - либо используется только sandbox/test-mode provider token, который гарантированно не спишет реальные деньги;
-  - либо smoke для renew-path считается BLOCKED_SAFE_GUARD и не выполняется в prod/real billing environment.  
-  Важное уточнение: просто «пусть упадёт с payment error» не годится как smoke renew-path, потому что это уже другой сценарий, и он не доказывает success-ветку extend.
-3. &nbsp;
-4. Для Fixture B обязательно изолировать другие active sources.  
-Иначе subscriptions-reconcile может корректно вернуть skipped, а не revoked, из-за multi-source protection.  
-Добавь в plan явный pre-check перед запуском:  
-
-  - у test user нет других active entitlements / active subscriptions / manual club access, которые сохранят доступ;
-  - это фиксируется в eligibility-proof отдельным блоком other_active_sources = 0.
-5. &nbsp;
-6. Cleanup нельзя делать через status='smoke_completed'.  
-Такой статус, скорее всего, не входит в бизнес-словарь статусов и может сломать проверки.  
-Замени cleanup на одно из двух:  
-
-  - hard delete fixture rows по meta.smoke_fixture = 'v22.5', если это безопасно;
-  - либо rollback в исходное валидное состояние с сохранением proof, без введения нового статуса.
-7. &nbsp;
-8. Для subscription-charge нужно развести 2 допустимых smoke-исхода.  
-В proof явно зафиксируй:  
-
-  - PASS-SUCCESS: renew/extend path реально отработал и создал ledger row extend;
-  - BLOCKED_SAFE_GUARD: в окружении нельзя безопасно инициировать renew без риска реального списания.  
-  Но FAILED payment не считать валидной заменой success-smoke для renew-path, если это не та ветка, которую вы хотите доказать.
-9. &nbsp;
-10. Для subscriptions-reconcile ожидаемый результат формулировать как revoked OR skipped, но только с доказательством причины.  
-Если вышел skipped, proof обязан показать:  
-
-  - какой именно active source сохранил доступ;
-  - что executeRevoke() реально вызвался;
-  - что ledger row всё равно записана корректно.
-11. &nbsp;
-12. Добавь отдельный proof по fixture lifecycle.  
-Новый файл:  
-
-  - .lovable/proofs/p0_runtime_fixture_lifecycle_proof.txt  
-  В нём:
-  - кто создан,
-  - какими SQL/script-командами,
-  - какие id,
-  - какой meta.smoke_fixture,
-  - чем и когда очищены,
-  - подтверждение, что fixture не остались активными после smoke.
-13. &nbsp;
-14. Обнови финальный cutover guard.  
-phase1_ledger_cutover_at разрешён только если:  
-
-  - grant-access-for-order = PASS
-  - subscriptions-reconcile = PASS
-  - subscription-charge = PASS или BLOCKED_SAFE_GUARD с явно одобренным решением не тестировать renew в текущем окружении  
-  Если хотите именно строгие 3/3 PASS, тогда это тоже надо зафиксировать отдельно и не подменять failed/blocked на pseudo-pass.
-15. &nbsp;
-16. Eligibility-proof должен быть add-only и числовым.  
-Для каждого blocked path покажи не просто причину текстом, а таблицу:  
-
-  - candidate id
-  - gate name
-  - expected value
-  - actual value
-  - excluded_by_gate = yes/no
-17. &nbsp;
+1. **Убери все OR/неопределённость из discriminator-правил и зафиксируй один точный источник для каждого path.**
+  Формулировки вида accessGrantId или auditLogId потом снова вызовут новую волну правок.
+  Нужна одна жёсткая таблица:
+  &nbsp;
+  - telegram-revoke-access manual/admin → только auditLogId
+  - telegram-revoke-access downstream/system path → только accessGrantId или только telegram_[access.id](http://access.id)
+    Но выбрать надо **один** конкретный id на каждую ветку и больше не оставлять альтернатив.
+  &nbsp;
+2. **Для telegram-check-expired и telegram-kick-violators зафиксируй единый подход к skip-веткам.**
+  Сейчас в плане revoke идёт через executeRevoke, а skip местами через writeLedgerEntry.
+  Нужно прямо закрепить одно правило:
+  &nbsp;
+  - либо executeRevoke используется только там, где helper сам принимает решение revoke/skip;
+  - либо если решение уже принято снаружи, то skip пишется напрямую через writeLedgerEntry.
+    Это надо прописать явно, чтобы потом не появилось ещё 5 уточнений по “почему тут helper, а тут нет”.
+  &nbsp;
+3. **Для subscription-admin-actions добавь жёсткий pre-state snapshot guard.**
+  Не просто “если already canceled → skip”, а:
+  &nbsp;
+  - до ветки читается before_status, before_access_end_at, before_canceled_at
+  - после действия сравнивается, был ли реальный projection change
+    И именно от этого зависит revoked vs skipped.
+    Иначе в delete/refund+revoke потом снова всплывут спорные кейсы.
+  &nbsp;
+4. **cancel-trial deferred-ветку пометь как intentional non-revoke event в proof.**
+  Иначе позже её снова попытаются “починить” до revoke.
+  Прямо добавь в план и proof:
+  &nbsp;
+  - deferred branch = skip
+  - projection unchanged by design
+  - future revoke expected from cron path later
+  &nbsp;
+5. **subscription-charge:failed_revoke закрепи как отдельный один конкретный branch-name в proof и inventory.**
+  Не просто “failed_revoke”, а один канонический ярлык, например:
+  &nbsp;
+  - subscription-charge:trial_ended_no_payment
+    Это снимет будущую путаницу между:
+  - real payment failure
+  - end-of-trial without payment
+  - generic failed charge retry
+  &nbsp;
+6. **В telegram-revoke-access добавь явное правило “one ledger row per final outcome”.**
+  Потому что там есть blocked/no-linked/ban-failed/successful-revoke ветки.
+  Нужно прямо запретить multiple ledger rows на один request в рамках Sub-patch A, кроме случаев, где это уже отдельные item-level операции по циклу.
+7. **В proof сразу раздели статусы на wrapped_in_code и runtime_deferred_non_blocking.**
+  Не просто runtime_verified = deferred, а отдельная пометка, что deferred не блокирует продолжение спринта по новым правилам.
+  Это согласуется с твоим новым правилом длинных спринтов.
+8. **Добавь в конец плана обязательный блок ОТЛОЖЕНО НА ПОСЛЕ СПРИНТА и туда перенеси runtime этих 9 paths как один consolidated follow-up.**
+  Не разрозненно, а одним пакетом:
+  &nbsp;
+  - runtime smoke 9 revoke paths
+  - parent propagation runtime
+  - batch/import runtime
+  - coverage finalization
+  - cutover decision
+  &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-После этих правок план уже можно запускать.
+После этих уточнений план можно считать frozen для **Sub-patch A**.
 
-# План: PATCH v22.5 — Close Runtime Gate for remaining 2 paths
+&nbsp;
 
-## Цель
+План: PATCH v22.6 Sub-patch A — Standalone Revoke Wrappers (FROZEN)
 
-Закрыть runtime-proof для `subscription-charge` и `subscriptions-reconcile` контролируемыми fixture-кейсами. Создать eligibility-proof. Обновить smoke proof до 3/3 PASS (или зафиксировать FAIL).
-
-## Диагностика: почему paths заблокированы
-
-### subscription-charge
-
-Eligibility gates (все должны пройти):
-
-1. `next_charge_at <= endOfDay(APP_TZ)`
-2. `status IN ('active','trial','past_due')`
-3. `auto_renew = true`
-4. `charge_attempts < 3`
-5. `wasChargeAttemptedToday()` = false
-6. `billing_type = 'provider_managed'` (иначе — MIT-disabled, не чарджится)
-7. `payment_method_id IS NOT NULL`
-
-Подписка `e53c5c45` отфильтрована gate #5 или #6 (already attempted / not provider_managed).
-
-### subscriptions-reconcile
-
-- Block 1 (cancel_at_passed): 0 подписок с `cancel_at < now() AND status != 'canceled'`
-- Block 2 (trial_expired): `2130e4fc` найден, но `cancel_at IS NULL` → ledger не пишется (by design)
-- Block 3 (access_end_at expired): 0 подписок с `access_end_at < dayStart AND status IN (active, past_due)`
-- Block 4 (telegram sync): все telegram_access проверены через hasValidAccess → revoke skipped
-
-## Шаги реализации
-
-### Шаг 1. Создать `p0_runtime_candidate_eligibility_proof.txt`
-
-Документирует для каждого blocked path:
-
-- A. Какие кандидаты ожидались
-- B. Какие eligibility-gates их отфильтровали (с конкретными значениями полей)
-- C. Почему это BLOCKED_NO_ELIGIBLE_INPUT, а не FAIL
-
-Секции:
-
-- `subscription-charge`: gate analysis для `e53c5c45`, фикс `todayUtc → todayKey`
-- `subscriptions-reconcile`: block-by-block analysis, trial `2130e4fc` cancel_at=NULL
-
-### Шаг 2. Fixture A — subscription-charge:renew
-
-Создать тестовую подписку через SQL migration:
-
-- Новая строка в `subscriptions_v2` с:
-  - `status = 'active'`
-  - `next_charge_at = '2026-03-29'` (вчера — гарантированно due)
-  - `auto_renew = true`
-  - `charge_attempts = 0`
-  - `billing_type = 'provider_managed'`
-  - `payment_method_id` = привязать к существующему test payment method (или создать stub)
-  - `user_id` = тестовый пользователь
-  - `product_id` = существующий product
-  - `tariff_id` = существующий tariff
-- Пометить как `meta->>'smoke_fixture' = 'v22.5'` для идентификации
-
-**Риск:** bePaid реально попытается списать. Если нет test-mode токена, charge упадёт с payment error → ledger row с `status='failed'`. Это допустимый smoke-результат — проверяем failed-contract вместо extended-contract.
-
-### Шаг 3. Fixture B — subscriptions-reconcile (Block 1: cancel_at_passed)
-
-Создать тестовую подписку через SQL migration:
-
-- `status = 'active'`
-- `cancel_at = '2026-03-29'` (вчера — гарантированно passed)
-- `user_id` = тестовый пользователь
-- `product_id` = существующий product
-- Пометить `meta->>'smoke_fixture' = 'v22.5'`
-
-Block 1 должен: обновить status → canceled, вызвать `executeRevoke()`, записать ledger row.
-
-### Шаг 4. Invoke subscription-charge
+## Статус
 
 ```
-POST /subscription-charge
-Body: { "action": "process_renewals" }
+SAFE_TO_CONTINUE_IMPLEMENTATION = YES
+CUTOVER_ALLOWED = NO
 ```
 
-Проверить ledger row с `source_event_key LIKE 'sub-renew:%'` и `created_at >= proof_started_at`.
+## Scope: 9 paths, 2 класса
 
-Machine-check:
+### Standalone revoke functions (4 файла)
 
-- `action_type` = `extend` или path к `failed`
-- `status` = `extended` или `failed`
-- `reason_code` = `subscription_renew`
-- `target_type` = `subscription_tier`
-- `source_subject_type` = `subscription`
-- `result.post_check` (если extend) или `result.error_message` (если failed)
+1. `telegram-revoke-access`
+2. `telegram-check-expired`
+3. `telegram-kick-violators`
+4. `cancel-trial`
 
-### Шаг 5. Invoke subscriptions-reconcile
+### Embedded revoke branches (2 файла, 5 branches)
+
+5. `subscription-charge:failed_revoke`
+6. `subscription-admin-actions:cancel`
+7. `subscription-admin-actions:revoke_access`
+8. `subscription-admin-actions:delete`
+9. `subscription-admin-actions:refund+revoke`
+
+### Явно исключено
+
+- `subscription-admin-actions:grant_access / extend / set_end_date` → не в этом патче
+- `subscription-admin-actions:refund+reduce` = `excluded_from_v22_6_scope`
+- `pause / resume / toggle_auto_renew` → вне ledger scope Phase 1
+
+### Вне scope Sub-patch A
+
+- Downstream lineage и parent propagation → Sub-patch B
+- Batch/import tree → Sub-patch C
+
+---
+
+## Ключевые правила
+
+### 1. executeRevoke vs writeLedgerEntry
+
+**executeRevoke (через AccessRevoker)** — для всех 9 paths, т.к. все они принимают revoke-decision и должны проверять active-source:
+
+- `telegram-revoke-access`
+- `telegram-check-expired`
+- `telegram-kick-violators`
+- `cancel-trial` (immediate ветка)
+- `subscription-charge:failed_revoke`
+- `subscription-admin-actions:{cancel|revoke_access|delete|refund+revoke}`
+
+**writeLedgerEntry напрямую** — только для `cancel-trial` skip-ветки (deferred cancel, нет revoke decision).
+
+### 2. source_event_key: детерминированный событийный discriminator
+
+
+| Path                              | source_event_key pattern                                     | Discriminator source                                                                                      |
+| --------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| telegram-revoke-access            | `tg-revoke:{userId}:{clubId}:{accessGrantId или auditLogId}` | Создаётся audit запись → берём её id. Если вызов из downstream — accessGrantId из telegram_access_grants. |
+| telegram-check-expired            | `cron-expire:{jobRunId}:{accessId}`                          | `accessId` = `telegram_access.id` записи, `jobRunId` = crypto.randomUUID() один на весь cron run          |
+| telegram-kick-violators           | `cron-kick:{jobRunId}:{memberId}`                            | `memberId` = `telegram_club_members.id`, `jobRunId` = crypto.randomUUID() один на весь cron run           |
+| cancel-trial (immediate)          | `trial-cancel:{subscriptionId}:{auditLogId}`                 | audit_logs.id из записи trial_canceled                                                                    |
+| cancel-trial (deferred)           | `trial-cancel-defer:{subscriptionId}:{auditLogId}`           | audit_logs.id из записи trial_canceled                                                                    |
+| subscription-charge:failed_revoke | `sub-trial-expire:{subId}:{chargeRunId}`                     | `chargeRunId` = jobRunId текущего charge run                                                              |
+| admin:cancel                      | `admin-cancel:{subId}:{auditLogId}`                          | audit_logs.id записываемого лога                                                                          |
+| admin:revoke_access               | `admin-revoke:{subId}:{auditLogId}`                          | audit_logs.id                                                                                             |
+| admin:delete                      | `admin-delete:{subId}:{auditLogId}`                          | audit_logs.id                                                                                             |
+| admin:refund+revoke               | `admin-refund-revoke:{subId}:{auditLogId}`                   | audit_logs.id                                                                                             |
+
+
+**Правило:** audit_log insert делается ДО ledger write, чтобы получить id для discriminator. Для cron paths — один `jobRunId = crypto.randomUUID()` на весь run.
+
+### 3. telegram-revoke-access: динамические поля по ветке вызова
+
+Не хардкодить одно значение. Вычислять из body/контекста:
+
+
+| Поле                 | Если `is_manual=true` / admin_id | Если system/cron call   | Если downstream (из queue/reconcile) |
+| -------------------- | -------------------------------- | ----------------------- | ------------------------------------ |
+| source_event_type    | `admin`                          | `system`                | из body или `system`                 |
+| source_subject_type  | `admin_action`                   | `cron_job` или `system` | из body или `subscription`           |
+| reason_code          | `admin_revoke`                   | из body.reason mapping  | из body или `subscription_expired`   |
+| reconcile_basis      | `admin_manual_revoke`            | из body.reason          | из body                              |
+| parent_event_key     | NULL                             | NULL                    | из body (Sub-patch B)                |
+| parent_execution_key | NULL                             | NULL                    | из body (Sub-patch B)                |
+
+
+**В Sub-patch A** parent_* всегда NULL (propagation = Sub-patch B). Функция читает parent_event_key/parent_execution_key из body, но в Sub-patch A callers их не передают → graceful NULL.
+
+### 4. subscription-charge:failed_revoke — конкретный бизнес-сценарий
+
+Развести по reason:
+
+- Если trial закончился без auto_charge и access_end_at < now → `reason_code = 'trial_expired'`, `reconcile_basis = 'trial_ended_no_payment'`
+- Не использовать generic `payment_failed` — это другой сценарий (был реальный неуспешный платёж).
+
+### 5. cancel-trial: machine-rule по projection
 
 ```
-POST /subscriptions-reconcile
-Body: {}
+keep_access_until_trial_end = true  → ТОЛЬКО skip (writeLedgerEntry, action_type='skip', status='skipped', reason_code='trial_expired')
+keep_access_until_trial_end = false → ТОЛЬКО revoke (executeRevoke, action_type='revoke', status='revoked', reason_code='trial_expired')
+Любое иное поведение = STOP
 ```
 
-Проверить ledger row с `source_event_key LIKE 'cron-reconcile:%'` и `created_at >= proof_started_at`.
+### 6. subscription-admin-actions: guard "no projection change → skip"
 
-Machine-check:
+Перед ledger write проверить: реально ли ветка изменила projection.
 
-- `action_type` = `revoke` или `skip`
-- `status` = `revoked` или `skipped`
-- `reason_code` = `subscription_expired`
-- `target_type` = `subscription_tier`
-- `source_subject_type` = `subscription`
-- `result.reconcile_basis` = `cancel_at_passed`
+- Если subscription уже `status='canceled'` до входа в ветку cancel/revoke_access/delete → `action_type='skip'`, `status='skipped'`, `reason_code` по ветке
+- Если projection реально изменилась → `action_type='revoke'`, `status='revoked'`
 
-### Шаг 6. Обновить proof-файлы
+---
 
-1. `p0_ledger_runtime_smoke_proof.txt` — заменить BLOCKED на PASS/FAIL с фактическими строками
-2. `p0_ledger_contract_validation_proof.txt` — добавить runtime rows
-3. Проверить cutover guard: все 3 пути = PASS → можно двигаться дальше
+## Реализация по файлам
 
-### Шаг 7. Cleanup fixture rows
+### cancel-trial/index.ts
 
-После smoke пометить fixture-подписки `status = 'smoke_completed'` или удалить через migration, чтобы не мешали production reconcile.
+1. Добавить `import { executeRevoke } from '../_shared/access-revoker.ts'` и `import { writeLedgerEntry } from '../_shared/fulfillment-executor.ts'`
+2. Сдвинуть audit_logs.insert ПЕРЕД ledger write (чтобы получить auditLogId)
+3. После update subscriptions_v2:
+  - Если `keep_access_until_trial_end = false` → `executeRevoke(supabase, { ... reason_code: 'trial_expired', reconcile_basis: 'trial_cancel_immediate', sourceEventKey: 'trial-cancel:{subId}:{auditLogId}', targetType: 'subscription_tier', ... })`
+  - Если `keep_access_until_trial_end = true` → `writeLedgerEntry(supabase, { action_type: 'skip', status: 'skipped', reason_code: 'trial_expired', sourceEventKey: 'trial-cancel-defer:{subId}:{auditLogId}', ... })`
+4. Не менять бизнес-логику (GC sync, existing audit_logs pattern остаётся)
+
+### telegram-revoke-access/index.ts
+
+1. Добавить `import { executeRevoke } from '../_shared/access-revoker.ts'`
+2. В конце основного flow (после ban/update/audit), одна ledger row на итоговый бизнес-результат:
+  - Вычислить source_event_type / source_subject_type / reason_code по is_manual/admin_id/reason
+  - Для discriminator: использовать id из уже записанного `telegram_access_audit` insert (logAudit)
+  - `executeRevoke(supabase, { sourceEventKey: 'tg-revoke:{userId}:{clubId}:{auditId}', targetType: 'club', targetKey: clubId, ... })`
+3. Для blocked revoke path (line 273) — `writeLedgerEntry` с `action_type='skip'`
+4. Для no-telegram-linked path (line 413) — тоже одна ledger row
+5. Читать `parent_event_key` / `parent_execution_key` из body → записывать в ledger (nullable, backward compat)
+
+### telegram-check-expired/index.ts
+
+1. Добавить `import { executeRevoke } from '../_shared/access-revoker.ts'`
+2. Сгенерировать `jobRunId = crypto.randomUUID()` в начале handler
+3. Для каждого revoked access (line 121): `executeRevoke(supabase, { sourceEventKey: 'cron-expire:{jobRunId}:{access.id}', targetType: 'club', reason_code: 'cron_cleanup', reconcile_basis: 'access_expired', ... })`
+4. Для каждого skipped (valid access, line 102): `writeLedgerEntry` с `action_type='skip'`
+
+### telegram-kick-violators/index.ts
+
+1. Добавить `import { executeRevoke } from '../_shared/access-revoker.ts'`
+2. Сгенерировать `jobRunId = crypto.randomUUID()` в начале handler
+3. Для каждого kicked violator: `executeRevoke(supabase, { sourceEventKey: 'cron-kick:{jobRunId}:{violator.id}', targetType: 'club', reason_code: 'violation_kick', reconcile_basis: 'no_valid_access', ... })`
+4. Для skipped (has valid access): `writeLedgerEntry` с `action_type='skip'`
+
+### subscription-charge/index.ts (failed_revoke branch only)
+
+1. Перед `supabase.functions.invoke('telegram-revoke-access', ...)` на line 2153:
+  - `executeRevoke(supabase, { sourceEventKey: 'sub-trial-expire:{sub.id}:{chargeRunId}', targetType: 'subscription_tier', reason_code: 'trial_expired', reconcile_basis: 'trial_ended_no_payment', ... })`
+2. `chargeRunId` — уже существующий run identifier (или сгенерировать один на весь job)
+
+### subscription-admin-actions/index.ts (4 revoke branches)
+
+1. Добавить `import { executeRevoke } from '../_shared/access-revoker.ts'`
+2. Для discriminator: сдвинуть audit_logs.insert (line 1024) ПЕРЕД switch-case ledger writes, или делать отдельный insert внутри каждой ветки и сохранять id.
+3. Guard: проверить `subscription.status` перед ledger write. Если уже `canceled` → skip.
+4. Для каждой ветки:
+  - `cancel` → `executeRevoke({ sourceEventKey: 'admin-cancel:{subId}:{auditLogId}', reason_code: 'admin_cancel', targetType: 'subscription_tier', reconcile_basis: 'admin_cancel' })`
+  - `revoke_access` → `executeRevoke({ sourceEventKey: 'admin-revoke:{subId}:{auditLogId}', reason_code: 'admin_revoke', targetType: 'subscription_tier', reconcile_basis: 'admin_revoke_access' })`
+  - `delete` → `executeRevoke({ sourceEventKey: 'admin-delete:{subId}:{auditLogId}', reason_code: 'admin_revoke', targetType: 'subscription_tier', reconcile_basis: 'admin_delete' })`
+  - `refund+revoke` → `executeRevoke({ sourceEventKey: 'admin-refund-revoke:{subId}:{auditLogId}', reason_code: 'admin_revoke', targetType: 'subscription_tier', reconcile_basis: 'admin_refund_revoke' })`
+
+---
+
+## Proof файлы
+
+### Создать: `p0_revoke_wrapper_completion_proof.txt`
+
+Таблица:
+
+
+| #   | path                   | wrapped_in_code | runtime_verified | source_event_key pattern              | target_type | reason_code | status mapping  | uses_executeRevoke | notes                            |
+| --- | ---------------------- | --------------- | ---------------- | ------------------------------------- | ----------- | ----------- | --------------- | ------------------ | -------------------------------- |
+| 1   | telegram-revoke-access | yes             | deferred         | tg-revoke:{userId}:{clubId}:{auditId} | club        | dynamic     | revoked/skipped | yes                | dynamic fields by caller context |
+| ... | ...                    | ...             | ...              | ...                                   | ...         | ...         | ...             | ...                | ...                              |
+
+
+### Обновить: `p0_revoke_path_inventory.txt`
+
+Четыре статуса: `pending` → `wrapped_in_code` → `runtime_verified` → `excluded_from_scope`
+
+### Обновить: `p0_ledger_runtime_smoke_proof.txt`
+
+Добавить decision block:
+
+```
+Decision: BLOCKED_SAFE_GUARD on subscription-charge is ACCEPTED as non-blocking for implementation.
+Remains blocking for final cutover.
+```
+
+---
+
+## ОТЛОЖЕНО НА ПОСЛЕ СПРИНТА
+
+- Runtime smoke для всех 9 новых paths
+- Coverage proof gaps
+- Parent propagation runtime check (Sub-patch B)
+- Batch/import runtime verification (Sub-patch C)
+- `phase1_ledger_cutover_at` marker
+
+---
 
 ## Файлы
 
 
-| Действие      | Файл                                                         |
-| ------------- | ------------------------------------------------------------ |
-| Создать       | `.lovable/proofs/p0_runtime_candidate_eligibility_proof.txt` |
-| SQL migration | fixture subscriptions для smoke                              |
-| Обновить      | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`          |
-| Обновить      | `.lovable/proofs/p0_ledger_contract_validation_proof.txt`    |
+| Действие | Файл                                                     |
+| -------- | -------------------------------------------------------- |
+| Изменить | `supabase/functions/cancel-trial/index.ts`               |
+| Изменить | `supabase/functions/telegram-revoke-access/index.ts`     |
+| Изменить | `supabase/functions/telegram-check-expired/index.ts`     |
+| Изменить | `supabase/functions/telegram-kick-violators/index.ts`    |
+| Изменить | `supabase/functions/subscription-charge/index.ts`        |
+| Изменить | `supabase/functions/subscription-admin-actions/index.ts` |
+| Создать  | `.lovable/proofs/p0_revoke_wrapper_completion_proof.txt` |
+| Обновить | `.lovable/proofs/p0_revoke_path_inventory.txt`           |
+| Обновить | `.lovable/proofs/p0_ledger_runtime_smoke_proof.txt`      |
 
+
+## Что НЕ изменяется
+
+- `_shared/fulfillment-executor.ts` — контракт заморожен
+- `_shared/access-revoker.ts` — контракт заморожен
+- Существующая бизнес-логика (audit_logs, telegram_logs, GC sync, ban/unban)
+- grant/extend ветки subscription-admin-actions
+- Parent propagation (Sub-patch B)
+- UI компоненты
 
 ## STOP-guards
 
-1. Нет eligibility-proof для blocked path → STOP
-2. `phase1_ledger_cutover_at` при < 3 PASS → STOP
-3. Fixture создаёт реальное списание в prod без test-mode → зафиксировать failed как допустимый smoke
-4. После fixture path не пишет ledger row и нет eligibility explanation → FAIL
+1. writeLedgerEntry / executeRevoke API изменился → STOP
+2. cancel-trial пишет revoke при `keep_access_until_trial_end = true` → STOP
+3. cancel-trial пишет skip при `keep_access_until_trial_end = false` → STOP
+4. subscription-admin-actions пишет revoked для уже canceled subscription → STOP
+5. source_event_key содержит timestamp или random (кроме jobRunId) → STOP
+6. telegram-revoke-access хардкодит reason_code/source_subject_type одним значением → STOP
+
+## DoD Sub-patch A
+
+Все 9 paths wrapped_in_code:
+
+1. telegram-revoke-access — wrapped (executeRevoke, dynamic fields)
+2. telegram-check-expired — wrapped (executeRevoke)
+3. telegram-kick-violators — wrapped (executeRevoke)
+4. cancel-trial — wrapped (executeRevoke для immediate, writeLedgerEntry для deferred)
+5. subscription-charge:failed_revoke — wrapped (executeRevoke)
+6. subscription-admin-actions:cancel — wrapped (executeRevoke + no-change guard)
+7. subscription-admin-actions:revoke_access — wrapped (executeRevoke + no-change guard)
+8. subscription-admin-actions:delete — wrapped (executeRevoke + no-change guard)
+9. subscription-admin-actions:refund+revoke — wrapped (executeRevoke + no-change guard)
+
+Proof:
+
+- `p0_revoke_wrapper_completion_proof.txt` создан с полной таблицей (wrapped_in_code + runtime_verified колонки)
+- `p0_revoke_path_inventory.txt` обновлён (четыре статуса)
+- `p0_ledger_runtime_smoke_proof.txt` обновлён с decision block
+
+```
+wrapped_in_code = yes (9/9)
+runtime_verified = deferred
+cutover_allowed = no
+SAFE_TO_CONTINUE_IMPLEMENTATION = YES
+CUTOVER_ALLOWED = NO
+```
