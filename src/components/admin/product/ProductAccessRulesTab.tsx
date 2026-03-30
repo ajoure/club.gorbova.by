@@ -343,7 +343,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             <p className="text-sm text-muted-foreground mb-1">Нет правил доступа</p>
             <p className="text-xs text-muted-foreground mb-4">
               {legacyMappings.length > 0
-                ? `Найдено ${legacyMappings.length} legacy-привязок (см. ниже)`
+                ? `Найдено ${legacyMappings.length} старых привязок (см. ниже)`
                 : "Добавьте правило, чтобы определить, что получит покупатель"}
             </p>
             <Button variant="outline" size="sm" onClick={openCreateDialog}>
