@@ -1,0 +1,21 @@
+# Phase 1 Config Source Proof
+# Generated: 2026-03-30
+
+## Mini-patch: products_v2.meta.access_window_rule
+
+### Before
+- products_v2.meta for id='11c9f1b8-0355-4753-bd74-40b42aa53616': NULL
+
+### After
+- products_v2.meta: {"access_window_rule": "calendar_month"}
+- rowcount = 1
+- Old meta preserved (was NULL, now has single key)
+
+### Paths reading config instead of hardcode
+1. grant-access-for-order/index.ts → isCalendarMonthProduct(supabase, productId)
+2. subscription-charge/index.ts → isCalendarMonthProduct(supabase, subscription?.product_id)
+3. admin-manual-charge/index.ts → isCalendarMonthProduct(supabase, product_id)
+4. bepaid-report-import/index.ts → isCalendarMonthProduct(supabase, productId)
+5. getcourse-import-deals/index.ts → isCalendarMonthProduct(supabase, productId)
+6. src/pages/Learning.tsx → product_club_mappings lookup
+7. src/pages/Products.tsx → product_club_mappings lookup

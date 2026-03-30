@@ -1,0 +1,23 @@
+# Phase 1 Hardcode Live Cleanup Proof
+# Generated: 2026-03-30
+
+## Live scope: 7 files patched
+
+| # | File | Hardcode removed | Replacement SoT |
+|---|------|-----------------|-----------------|
+| 1 | supabase/functions/grant-access-for-order/index.ts | `productId === "11c9f1b8..."` | `isCalendarMonthProduct(supabase, productId)` via products_v2.meta |
+| 2 | supabase/functions/subscription-charge/index.ts | `CLUB_PRODUCT_ID = "11c9f1b8..."` | `isCalendarMonthProduct(supabase, ...)` via products_v2.meta |
+| 3 | supabase/functions/bepaid-report-import/index.ts | `productId = '11c9f1b8...'` + 2x inline calc | `bepaid_product_mappings` lookup + `isCalendarMonthProduct()` |
+| 4 | supabase/functions/getcourse-import-deals/index.ts | `CLUB_PRODUCT_ID = "11c9f1b8..."` | `isCalendarMonthProduct(supabase, productId)` via products_v2.meta |
+| 5 | supabase/functions/admin-manual-charge/index.ts | `product_id === "11c9f1b8..."` | `isCalendarMonthProduct(supabase, product_id)` via products_v2.meta |
+| 6 | src/pages/Learning.tsx | `.eq("product_id", "11c9f1b8...")` | `product_club_mappings` → `.in("product_id", clubProductIds)` |
+| 7 | src/pages/Products.tsx | `.eq("product_id", "11c9f1b8...")` | `product_club_mappings` → `.in("product_id", clubProductIds)` |
+
+## Grep verification
+- hardcoded_club_id_occurrences_before: 15+ across 7 files
+- hardcoded_club_id_occurrences_after: 0 in live files
+
+## False positive
+- src/components/admin/EditDealDialog.tsx — contains UUID at L272 but is NOT in live cleanup scope per plan.
+  Note: This is `EditDealDialog.tsx` (admin component), not `deals/EditDealDialog.tsx`.
+  Discovered during implementation. To be addressed in follow-up patch.
