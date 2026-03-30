@@ -814,10 +814,10 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     {DURATION_PRESETS.map((p) => (
                       <button
                         key={p.days}
-                        onClick={() => setForm({ ...form, duration_days: p.days })}
+                        onClick={() => setForm({ ...form, duration_days: String(p.days) })}
                         className={cn(
                           "px-2.5 py-1 rounded-md border text-xs transition-all",
-                          form.duration_days === p.days
+                          form.duration_days !== "" && Number(form.duration_days) === p.days
                             ? "border-primary bg-primary/10 text-primary"
                             : "border-border text-muted-foreground hover:text-foreground"
                         )}
@@ -828,10 +828,16 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   </div>
                   <div className="flex items-center gap-2">
                     <Input
-                      type="number"
-                      min={1}
-                      value={form.duration_days ?? ""}
-                      onChange={(e) => setForm({ ...form, duration_days: e.target.value ? parseInt(e.target.value) : null })}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={form.duration_days}
+                      onChange={(e) => setForm({ ...form, duration_days: e.target.value.replace(/\D/g, "") })}
+                      onBlur={() => {
+                        const trimmed = form.duration_days.trim();
+                        if (trimmed === "") return; // allow empty
+                        const n = parseInt(trimmed, 10);
+                        if (isNaN(n) || n < 1) setForm(f => ({ ...f, duration_days: "" }));
+                      }}
                       placeholder="Кол-во дней"
                       className="h-9 w-[120px]"
                     />
