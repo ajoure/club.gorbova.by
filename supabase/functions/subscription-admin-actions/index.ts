@@ -662,6 +662,16 @@ Deno.serve(async (req) => {
 
     let result: Record<string, any> = { success: true };
 
+    // Phase 1: Pre-state snapshot for revoke branches (before any DB update)
+    const beforeSnapshot = {
+      status: subscription.status,
+      canceled_at: subscription.canceled_at,
+      access_end_at: subscription.access_end_at,
+      cancel_at: subscription.cancel_at,
+    };
+    let branchAuditId: string | null = null;
+    let pendingPhysicalDelete = false;
+
     switch (action) {
       case 'cancel': {
         const cancelAt = subscription.access_end_at || new Date().toISOString();
@@ -675,6 +685,20 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq('id', subscription_id);
+
+        // Branch-specific audit for ledger discriminator
+        const { data: cancelAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.cancel.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+          },
+        }).select('id').single();
+        branchAuditId = cancelAudit?.id || null;
 
         // Send Telegram notification about cancellation (access_ending)
         const endDate = new Date(cancelAt).toLocaleDateString('ru-RU');
@@ -837,6 +861,21 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription_id);
 
+        // Branch-specific audit for ledger discriminator
+        const { data: revokeAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.revoke_access.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+            before_access_end_at: beforeSnapshot.access_end_at,
+          },
+        }).select('id').single();
+        branchAuditId = revokeAudit?.id || null;
+
         // Revoke Telegram access with club_id
         const productForRevoke = subscription.products_v2 as any;
         if (productForRevoke?.telegram_club_id) {
@@ -895,8 +934,7 @@ Deno.serve(async (req) => {
       }
 
       case 'delete': {
-        // PATCH: порядок операций — сначала UPDATE статуса, потом revoke, потом DELETE.
-        // Это устраняет race condition где revoke видит "active" подписку.
+        // PATCH: порядок операций — сначала UPDATE статуса, потом audit+ledger, потом revoke, потом DELETE.
 
         // 1. Обновляем статус до revoke (чтобы guard в telegram-revoke-access не видел active)
         await supabase
@@ -910,10 +948,27 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription_id);
 
-        // 2. Send Telegram notification
+        // 2. Branch-specific audit for ledger discriminator (BEFORE physical delete)
+        const { data: deleteAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.delete.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+            before_access_end_at: beforeSnapshot.access_end_at,
+            tariff_id: subscription.tariff_id,
+            product_id: subscription.product_id,
+          },
+        }).select('id').single();
+        branchAuditId = deleteAudit?.id || null;
+
+        // 3. Send Telegram notification
         await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
 
-        // 3. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
+        // 4. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
           const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
@@ -930,7 +985,7 @@ Deno.serve(async (req) => {
           console.warn('[delete] No telegram_club_id on product — telegram revoke skipped');
         }
 
-        // 4. Cancel in GetCourse
+        // 5. Cancel in GetCourse
         const tariffForDelete = subscription.tariffs as any;
         const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
         const orderForDelete = subscription.orders_v2 as any;
@@ -948,11 +1003,8 @@ Deno.serve(async (req) => {
           result.getcourse_cancel = gcResult;
         }
 
-        // 5. Физически удаляем запись подписки
-        await supabase
-          .from('subscriptions_v2')
-          .delete()
-          .eq('id', subscription_id);
+        // 6. Physical delete is DEFERRED until after ledger write
+        pendingPhysicalDelete = true;
 
         result.deleted = true;
         break;
@@ -1060,13 +1112,21 @@ Deno.serve(async (req) => {
 
     const auditLogId = auditRow?.id || subscription_id;
 
-    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete, refund+revoke)
+    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete)
+    // refund+revoke is handled inline in its own branch above
     const revokeBranches = ['cancel', 'revoke_access', 'delete'];
     if (revokeBranches.includes(action)) {
       try {
-        // Pre-state guard: if subscription was already canceled before this action, write skip
-        const beforeStatus = subscription.status;
-        const alreadyCanceled = beforeStatus === 'canceled' || beforeStatus === 'expired';
+        // Pre-state guard: before/after projection diff
+        const projectionChanged = (
+          beforeSnapshot.status !== 'canceled' &&
+          beforeSnapshot.status !== 'expired'
+        ) && (
+          beforeSnapshot.canceled_at === null ||
+          beforeSnapshot.access_end_at !== new Date().toISOString()
+        );
+        // Simplified: if before was already canceled/expired → no projection change
+        const alreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
 
         const reasonCodeMap: Record<string, string> = {
           cancel: 'admin_cancel',
@@ -1084,10 +1144,13 @@ Deno.serve(async (req) => {
           delete: 'admin_delete',
         };
 
+        // Use branch-specific auditId (from within the case), fallback to generic
+        const discriminatorId = branchAuditId || auditLogId;
+
         if (alreadyCanceled) {
           const skipEntry: LedgerEntry = {
             source_event_type: 'admin',
-            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
             source_subject_type: 'admin_action',
             source_subject_ref: adminUserId,
             source_subscription_id: subscription_id,
@@ -1101,11 +1164,16 @@ Deno.serve(async (req) => {
             status: 'skipped',
             result: {
               skip_reason: 'already_canceled',
-              before_status: beforeStatus,
+              branch_decision_source: 'before_after_projection_diff',
+              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
+              before_status: beforeSnapshot.status,
+              before_canceled_at: beforeSnapshot.canceled_at,
+              before_access_end_at: beforeSnapshot.access_end_at,
               reconcile_basis: reconcileMap[action],
             },
           };
           await writeLedgerEntry(supabase, skipEntry);
+          console.log(`[subscription-admin-actions] Ledger ${action}: skipped (already_canceled), before_status=${beforeSnapshot.status}`);
         } else {
           const revokeCtx: RevokeContext = {
             userId: subscription.user_id,
@@ -1117,9 +1185,16 @@ Deno.serve(async (req) => {
             reasonCode: reasonCodeMap[action] as any,
             reconcileBasis: reconcileMap[action],
             sourceEventType: 'admin',
-            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
             sourceSubjectType: 'admin_action',
             sourceSubjectRef: adminUserId,
+            metadata: {
+              branch_decision_source: 'before_after_projection_diff',
+              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
+              before_status: beforeSnapshot.status,
+              before_canceled_at: beforeSnapshot.canceled_at,
+              before_access_end_at: beforeSnapshot.access_end_at,
+            },
           };
           const revokeResult = await executeRevoke(supabase, revokeCtx);
           console.log(`[subscription-admin-actions] Ledger ${action}: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
@@ -1127,6 +1202,15 @@ Deno.serve(async (req) => {
       } catch (ledgerErr) {
         console.error(`[subscription-admin-actions] Ledger error for ${action} (non-blocking):`, ledgerErr);
       }
+    }
+
+    // Deferred physical delete: AFTER audit + ledger writes to preserve traceability
+    if (pendingPhysicalDelete) {
+      await supabase
+        .from('subscriptions_v2')
+        .delete()
+        .eq('id', subscription_id);
+      console.log(`[subscription-admin-actions] Physical delete completed for ${subscription_id}`);
     }
 
     console.log(`Admin action ${action} completed for subscription ${subscription_id}`);
