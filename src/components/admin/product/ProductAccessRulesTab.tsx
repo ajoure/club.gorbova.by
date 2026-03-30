@@ -469,6 +469,17 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                             Дублирует старую настройку
                           </Badge>
                         )}
+                        {(() => {
+                          const cond = (rule.conditions || {}) as Record<string, unknown>;
+                          if (cond.condition_type !== "prior_purchase") return null;
+                          const condProduct = availableProducts.find(p => p.id === cond.required_product_id);
+                          const condLabel = condProduct?.name || (cond.required_product_id as string) || "—";
+                          return (
+                            <Badge variant="outline" className="text-[10px] text-orange-600 border-orange-300">
+                              Условие: ранее покупал {condLabel}
+                            </Badge>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
@@ -828,8 +839,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
               </div>
               </div>
 
-              {/* Conditional rule block — shown for "service" purpose */}
-              {form.rule_purpose === "service" && (
+              {/* Conditional rule block — shown for product_access target type */}
+              {form.grant_target_type === "product_access" && (
                 <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/30 p-3 bg-muted/20">
                   <div className="flex items-center gap-2">
                     <Switch
