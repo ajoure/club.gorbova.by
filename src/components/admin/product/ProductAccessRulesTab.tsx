@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -131,18 +131,20 @@ function ProductCheckboxList({
     <div className="space-y-2">
       {/* Selected chips */}
       {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => {
-            const p = products.find(x => x.id === id);
-            return (
-              <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
-                {p?.name || id}
-                <button onClick={() => toggle(id)} className="ml-0.5 hover:text-destructive">
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            );
-          })}
+        <div className="max-h-[80px] overflow-y-auto px-1">
+          <div className="flex flex-wrap gap-1">
+            {selected.map(id => {
+              const p = products.find(x => x.id === id);
+              return (
+                <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
+                  {p?.name || id}
+                  <button onClick={() => toggle(id)} className="ml-0.5 hover:text-destructive">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              );
+            })}
+          </div>
         </div>
       )}
       {/* Search */}
@@ -159,9 +161,9 @@ function ProductCheckboxList({
       <div className="text-[10px] text-muted-foreground">
         Выбрано: {selected.length} из {products.length}
       </div>
-      {/* Checkbox list */}
-      <ScrollArea className="max-h-[200px] border rounded-md">
-        <div className="p-1 space-y-0.5">
+      {/* Checkbox list — plain div with overflow instead of Radix ScrollArea */}
+      <div className="max-h-[200px] overflow-y-auto border rounded-md bg-background">
+        <div className="p-2 space-y-0.5">
           {filtered.length === 0 ? (
             <div className="text-xs text-muted-foreground text-center py-3">Ничего не найдено</div>
           ) : (
@@ -169,7 +171,8 @@ function ProductCheckboxList({
               <label
                 key={p.id}
                 className={cn(
-                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs hover:bg-muted/50 transition-colors",
+                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs",
+                  "hover:bg-muted/50 transition-colors leading-normal",
                   selected.includes(p.id) && "bg-primary/5"
                 )}
               >
@@ -182,7 +185,7 @@ function ProductCheckboxList({
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -839,15 +842,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
       {/* === Create/Edit Dialog === */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>{editing ? "Редактировать правило" : "Новое правило доступа"}</DialogTitle>
             <DialogDescription>
               Определите, что получит покупатель при покупке
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5 py-2">
+          <div className="space-y-5 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
             {/* === Section 1: Где действует === */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -1055,7 +1058,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
               {/* Conditional rule block — shown for product_access target type */}
               {form.grant_target_type === "product_access" && (
-                <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/30 p-3 bg-muted/20">
+                <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/30 p-4 bg-muted/20">
                   <div className="flex items-center gap-2">
                     <Switch
                       checked={form.has_condition}
