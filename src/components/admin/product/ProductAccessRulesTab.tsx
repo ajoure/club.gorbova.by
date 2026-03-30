@@ -202,9 +202,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: rule.target_ref,
       target_label: rule.target_label || "",
       is_active: rule.is_active,
-      priority: rule.priority,
+      priority: String(rule.priority),
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
-      duration_days: rule.duration_days,
+      duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
       notes: rule.notes || "",
     });
