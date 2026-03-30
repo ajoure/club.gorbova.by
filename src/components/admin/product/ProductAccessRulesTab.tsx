@@ -452,9 +452,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {effectiveDuration != null ? formatDuration(effectiveDuration) : "Из тарифа"}
-                          {rule.duration_days != null && <span className="text-[10px]">(из правила)</span>}
-                          {rule.duration_days == null && effectiveDuration != null && <span className="text-[10px]">(из тарифа)</span>}
+                          {rule.duration_days != null
+                            ? `${formatDuration(rule.duration_days)} (из правила)`
+                            : effectiveDuration != null
+                              ? `${formatDuration(effectiveDuration)} (из тарифа)`
+                              : "По сроку тарифа покупки"
+                          }
                         </span>
                         {rule.notes && (
                           <>
