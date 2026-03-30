@@ -470,6 +470,27 @@ Deno.serve(async (req) => {
             },
           });
 
+          // Phase 1 Ledger: revoke for kicked violator
+          try {
+            const revokeCtx: RevokeContext = {
+              userId: userId || `tg:${member.telegram_user_id}`,
+              targetType: 'club',
+              targetKey: `${userId || member.telegram_user_id}:${club.id}`,
+              targetRef: club.id,
+              reasonCode: 'violation_kick',
+              reconcileBasis: 'no_valid_access',
+              sourceEventType: 'cron',
+              sourceEventKey: `cron-kick:${jobRunId}:${member.id}`,
+              sourceSubjectType: 'cron_job',
+              sourceSubjectRef: jobRunId,
+              clubId: club.id,
+            };
+            const revokeResult = await executeRevoke(supabase, revokeCtx);
+            console.log(`[telegram-kick-violators] Ledger revoke: revoked=${revokeResult.revoked}, member=${member.id}`);
+          } catch (ledgerErr) {
+            console.error('[telegram-kick-violators] Ledger error (non-blocking):', ledgerErr);
+          }
+
           // PATCH P0.9.5: Also log to telegram_logs for unified history
           await supabase.from('telegram_logs').insert({
             action: 'cron_autokick',
