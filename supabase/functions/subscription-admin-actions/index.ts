@@ -496,6 +496,28 @@ Deno.serve(async (req) => {
             console.warn('[refund] No telegram_club_id on product — telegram revoke skipped');
           }
 
+          // Phase 1 Ledger: refund+revoke
+          try {
+            const revokeCtx: RevokeContext = {
+              userId: order.user_id,
+              orderId: order_id,
+              targetType: 'subscription_tier',
+              targetKey: `${order.user_id}:${relatedSubscription.tariff_id || relatedSubscription.product_id || 'unknown'}`,
+              targetRef: relatedSubscription.product_id || null,
+              subscriptionId: relatedSubscription.id,
+              reasonCode: 'admin_revoke',
+              reconcileBasis: 'admin_refund_revoke',
+              sourceEventType: 'admin',
+              sourceEventKey: `admin-refund-revoke:${relatedSubscription.id}:${order_id}`,
+              sourceSubjectType: 'admin_action',
+              sourceSubjectRef: adminUserId,
+            };
+            const revokeResult = await executeRevoke(supabase, revokeCtx);
+            console.log(`[refund+revoke] Ledger: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+          } catch (ledgerErr) {
+            console.error('[refund+revoke] Ledger error (non-blocking):', ledgerErr);
+          }
+
           console.log(`Access revoked for subscription ${relatedSubscription.id}`);
         } else if (effectiveAccessAction === 'reduce' && reduce_days > 0) {
           // Reduce access period

@@ -1,0 +1,48 @@
+# Phase 1: Revoke Wrapper Completion Proof
+# Generated: 2026-03-30 (PATCH v22.6 Sub-patch A)
+
+## Status
+wrapped_in_code = yes (9/9)
+runtime_verified = deferred (runtime_deferred_non_blocking)
+cutover_allowed = no
+SAFE_TO_CONTINUE_IMPLEMENTATION = YES
+CUTOVER_ALLOWED = NO
+
+## Wrapped Paths
+
+| # | path | type | wrapped_in_code | runtime_verified | source_event_key pattern | target_type | reason_code | status mapping | uses_executeRevoke | notes |
+|---|------|------|-----------------|------------------|--------------------------|-------------|-------------|----------------|--------------------|----|
+| 1 | telegram-revoke-access | standalone | yes | runtime_deferred_non_blocking | tg-revoke:{userId}:{clubId}:{auditId} | club | dynamic (admin_revoke/subscription_expired/violation_kick/cron_cleanup) | revoked/skipped | yes | dynamic fields by caller context; reads parent keys from body (nullable) |
+| 2 | telegram-check-expired | standalone | yes | runtime_deferred_non_blocking | cron-expire:{jobRunId}:{accessId} | club | cron_cleanup (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | jobRunId = crypto.randomUUID() per cron run |
+| 3 | telegram-kick-violators | standalone | yes | runtime_deferred_non_blocking | cron-kick:{jobRunId}:{memberId} | club | violation_kick (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | jobRunId = crypto.randomUUID() per cron run |
+| 4 | cancel-trial (immediate) | standalone | yes | runtime_deferred_non_blocking | trial-cancel:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | revoked | yes | keep_access_until_trial_end = false → revoke |
+| 4b | cancel-trial (deferred) | standalone | yes | runtime_deferred_non_blocking | trial-cancel-defer:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | skipped | no (writeLedgerEntry) | keep_access_until_trial_end = true → skip; intentional non-revoke event; projection unchanged by design; future revoke expected from cron path |
+| 5 | subscription-charge:trial_ended_no_payment | embedded | yes | runtime_deferred_non_blocking | sub-trial-expire:{subId}:{chargeRunId} | subscription_tier | trial_expired | revoked | yes | reconcile_basis = trial_ended_no_payment |
+| 6 | subscription-admin-actions:cancel | embedded | yes | runtime_deferred_non_blocking | admin-cancel:{subId}:{auditLogId} | subscription_tier | admin_cancel | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
+| 7 | subscription-admin-actions:revoke_access | embedded | yes | runtime_deferred_non_blocking | admin-revoke:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
+| 8 | subscription-admin-actions:delete | embedded | yes | runtime_deferred_non_blocking | admin-delete:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
+| 9 | subscription-admin-actions:refund+revoke | embedded | yes | runtime_deferred_non_blocking | admin-refund-revoke:{subId}:{orderId} | subscription_tier | admin_revoke | revoked | yes | effectiveAccessAction === 'revoke' only |
+
+## Explicitly Excluded from v22.6
+- subscription-admin-actions:grant_access → not in this patch
+- subscription-admin-actions:extend → not in this patch
+- subscription-admin-actions:set_end_date → not in this patch
+- subscription-admin-actions:refund+reduce = excluded_from_v22_6_scope
+- subscription-admin-actions:pause / resume / toggle_auto_renew → outside Phase 1 ledger scope
+
+## Rules Applied
+1. executeRevoke used for all revoke-decision paths (active-source check)
+2. writeLedgerEntry used only for skip paths where decision already made outside
+3. source_event_key is deterministic with event-specific discriminator
+4. One ledger row per final business outcome (no internal sub-step rows)
+5. All ledger writes are non-blocking (try/catch, errors logged but don't break flow)
+6. cancel-trial machine-rule: keep_access_until_trial_end=true → ONLY skip; false → ONLY revoke
+7. subscription-admin-actions pre-state guard: already canceled → skip, not revoke
+8. Parent keys read from body (nullable, backward compat) — Sub-patch B will add propagation
+
+## ОТЛОЖЕНО НА ПОСЛЕ СПРИНТА
+- runtime smoke 9 revoke paths
+- parent propagation runtime (Sub-patch B)
+- batch/import runtime (Sub-patch C)
+- coverage finalization
+- cutover decision
