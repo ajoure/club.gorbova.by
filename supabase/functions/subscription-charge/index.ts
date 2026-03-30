@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1137,30 +1138,14 @@ async function chargeSubscription(
         }
       ).catch((e) => console.warn(`Receipt fetch failed:`, e));
 
-      // Extend subscription - calendar month for club, days for others
-      const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
-      const isClubProduct = subscription?.product_id === CLUB_PRODUCT_ID;
+      // Extend subscription - calendar month from config, days for others
+      const isClubProduct = await isCalendarMonthProduct(supabase, subscription?.product_id);
       let newEndDate: Date;
 
       if (isClubProduct) {
         // Calendar month: 22.01 → 22.02 (same day next month)
         const now = new Date();
-        newEndDate = new Date(Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth() + 1,
-          now.getUTCDate(),
-          21, 0, 0  // 21:00 UTC = 00:00 Minsk next day (end of day)
-        ));
-        
-        // Edge case: 31 Jan → 28/29 Feb (last day of month)
-        if (newEndDate.getUTCDate() !== now.getUTCDate()) {
-          newEndDate = new Date(Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth() + 2,
-            0,  // 0 = last day of previous month
-            21, 0, 0
-          ));
-        }
+        newEndDate = calcCalendarMonthEnd(now, 21); // 21:00 UTC = 00:00 Minsk
       } else {
         newEndDate = new Date();
         newEndDate.setDate(newEndDate.getDate() + (tariff.access_days || 30));
