@@ -480,24 +480,11 @@ Deno.serve(async (req) => {
             })
             .eq('id', relatedSubscription.id);
 
-          // Revoke Telegram access — PATCH: is_manual:true + club_id обязательны для admin-revoke
-          if (product?.telegram_club_id) {
-            const revokeRes = await supabase.functions.invoke('telegram-revoke-access', {
-              body: {
-                user_id: order.user_id,
-                club_id: product.telegram_club_id,
-                is_manual: true,
-                reason: 'refund',
-                admin_id: adminUserId,
-              },
-            });
-            console.log('[refund] telegram-revoke-access result:', JSON.stringify(revokeRes.data));
-          } else {
-            console.warn('[refund] No telegram_club_id on product — telegram revoke skipped');
-          }
-
-          // Phase 1 Ledger: refund+revoke
+          // Sub-patch B: Inline ledger BEFORE telegram call for parent lineage
+          let refundRevokeSourceEventKey: string | null = null;
+          let refundRevokeExecutionKey: string | null = null;
           try {
+            refundRevokeSourceEventKey = `admin-refund-revoke:${relatedSubscription.id}:${order_id}`;
             const revokeCtx: RevokeContext = {
               userId: order.user_id,
               orderId: order_id,
@@ -508,14 +495,33 @@ Deno.serve(async (req) => {
               reasonCode: 'admin_revoke',
               reconcileBasis: 'admin_refund_revoke',
               sourceEventType: 'admin',
-              sourceEventKey: `admin-refund-revoke:${relatedSubscription.id}:${order_id}`,
+              sourceEventKey: refundRevokeSourceEventKey,
               sourceSubjectType: 'admin_action',
               sourceSubjectRef: adminUserId,
             };
             const revokeResult = await executeRevoke(supabase, revokeCtx);
+            refundRevokeExecutionKey = revokeResult.executionKey || null;
             console.log(`[refund+revoke] Ledger: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
           } catch (ledgerErr) {
             console.error('[refund+revoke] Ledger error (non-blocking):', ledgerErr);
+          }
+
+          // Sub-patch B: Revoke Telegram access with parent keys
+          if (product?.telegram_club_id) {
+            const revokeRes = await supabase.functions.invoke('telegram-revoke-access', {
+              body: {
+                user_id: order.user_id,
+                club_id: product.telegram_club_id,
+                is_manual: true,
+                reason: 'refund',
+                admin_id: adminUserId,
+                parent_event_key: refundRevokeSourceEventKey || null,
+                parent_execution_key: refundRevokeExecutionKey || null,
+              },
+            });
+            console.log('[refund] telegram-revoke-access result:', JSON.stringify(revokeRes.data));
+          } else {
+            console.warn('[refund] No telegram_club_id on product — telegram revoke skipped');
           }
 
           console.log(`Access revoked for subscription ${relatedSubscription.id}`);
