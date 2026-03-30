@@ -130,7 +130,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     target_ref: "",
     target_label: "",
     is_active: true,
-    priority: "0",
+    priority: "",
     duration_mode: "tariff" as "tariff" | "manual",
     duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
