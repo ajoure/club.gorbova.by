@@ -1,0 +1,17 @@
+# Phase 1 Hardcode Archival/Ignored Proof
+# Generated: 2026-03-30
+
+## Archival files (intentionally not patched)
+
+| # | File | Reason |
+|---|------|--------|
+| 1 | supabase/functions/admin-fix-club-billing-dates/index.ts | Maintenance script, not in live runtime |
+| 2 | supabase/functions/admin-backfill-recurring-snapshot/index.ts | One-time backfill, already executed |
+| 3 | supabase/functions/test-full-trial-flow/index.ts | Test fixture only |
+| 4 | supabase/functions/getcourse-import-file/index.ts | Legacy import, replaced by getcourse-import-deals |
+
+## Additional discovery
+- src/components/admin/EditDealDialog.tsx — has hardcoded UUID at L272.
+  Originally listed as false positive for `deals/EditDealDialog.tsx` (different path).
+  The actual file `admin/EditDealDialog.tsx` does contain the UUID.
+  Decision: Not in 7-file live scope per approved plan. To be patched separately.

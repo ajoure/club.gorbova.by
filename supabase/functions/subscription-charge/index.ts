@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1137,30 +1138,14 @@ async function chargeSubscription(
         }
       ).catch((e) => console.warn(`Receipt fetch failed:`, e));
 
-      // Extend subscription - calendar month for club, days for others
-      const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
-      const isClubProduct = subscription?.product_id === CLUB_PRODUCT_ID;
+      // Extend subscription - calendar month from config, days for others
+      const isClubProduct = await isCalendarMonthProduct(supabase, subscription?.product_id);
       let newEndDate: Date;
 
       if (isClubProduct) {
         // Calendar month: 22.01 → 22.02 (same day next month)
         const now = new Date();
-        newEndDate = new Date(Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth() + 1,
-          now.getUTCDate(),
-          21, 0, 0  // 21:00 UTC = 00:00 Minsk next day (end of day)
-        ));
-        
-        // Edge case: 31 Jan → 28/29 Feb (last day of month)
-        if (newEndDate.getUTCDate() !== now.getUTCDate()) {
-          newEndDate = new Date(Date.UTC(
-            now.getUTCFullYear(),
-            now.getUTCMonth() + 2,
-            0,  // 0 = last day of previous month
-            21, 0, 0
-          ));
-        }
+        newEndDate = calcCalendarMonthEnd(now, 21); // 21:00 UTC = 00:00 Minsk
       } else {
         newEndDate = new Date();
         newEndDate.setDate(newEndDate.getDate() + (tariff.access_days || 30));
@@ -1530,6 +1515,42 @@ async function chargeSubscription(
           order_id: order_id,
         }
       });
+
+      // Phase 1: Write ledger entry for successful renew/extend
+      try {
+        const { writeLedgerEntry, buildPostCheck } = await import('../_shared/fulfillment-executor.ts');
+        const ledgerPostCheck = buildPostCheck({
+          subscription: { status: 'extended', ref: id },
+          ledgerRow: { status: 'written' },
+          targetResolution: { status: 'matched', ref: subscription?.product_id },
+        });
+
+        await writeLedgerEntry(supabase, {
+          source_event_type: 'cron',
+          source_event_key: `sub-renew:${id}:${payment.id}`,
+          source_subject_type: 'subscription',
+          source_subject_ref: id,
+          source_subscription_id: id,
+          source_order_id: renewalOrderId || order_id || null,
+          action_type: 'extend',
+          reason_code: 'subscription_renewal',
+          target_type: 'subscription',
+          target_key: `${user_id}:${subscription?.product_id}`,
+          target_ref: id,
+          user_id: user_id,
+          status: 'completed',
+          result: {
+            access_start: new Date().toISOString(),
+            access_end: newEndDate.toISOString(),
+            window_days: isClubProduct ? null : (tariff.access_days || 30),
+            source_window_rule: isClubProduct ? 'calendar_month' : 'tariff_duration',
+            previous_end: subscription?.access_end_at || null,
+            post_check: ledgerPostCheck,
+          },
+        });
+      } catch (ledgerErr) {
+        console.error('[subscription-charge] Ledger write error:', ledgerErr);
+      }
 
       // Send to GetCourse if this was a trial conversion
       if (is_trial && fullPaymentGcOfferId && orderData.customer_email) {

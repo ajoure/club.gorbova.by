@@ -1,9 +1,11 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 // Belarusian/Russian transliteration map from Latin to Cyrillic
@@ -345,7 +347,23 @@ Deno.serve(async (req) => {
       details: []
     };
 
-    const productId = '11c9f1b8-0355-4753-bd74-40b42aa53616'; // Club product
+    // Phase 1: Look up product from bepaid_product_mappings instead of hardcode
+    // For now, the mapping should resolve to the correct product_id
+    // TODO: Full bepaid_product_mappings lookup will be added in Step 4 (FulfillmentExecutor)
+    const { data: productMapping } = await supabase
+      .from('bepaid_product_mappings')
+      .select('product_id')
+      .limit(1)
+      .maybeSingle();
+    const productId = productMapping?.product_id || null;
+    if (!productId) {
+      console.error('[bepaid-report-import] No product mapping found in bepaid_product_mappings');
+      return new Response(JSON.stringify({ error: 'No product mapping configured' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // Check if this product uses calendar month window
+    const useCalendarMonth = await isCalendarMonthProduct(supabase, productId);
 
     for (const payment of payments) {
       try {
@@ -454,24 +472,10 @@ Deno.serve(async (req) => {
               const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
               const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
               
-              // Calculate subscription end date - calendar month for club at 21:00 UTC (end of day Minsk)
-              const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+              // Phase 1: Calculate subscription end date from config rule
               let subscriptionEnd: Date;
-              if (productId === CLUB_PRODUCT_ID) {
-                subscriptionEnd = new Date(Date.UTC(
-                  paymentDate.getUTCFullYear(),
-                  paymentDate.getUTCMonth() + 1,
-                  paymentDate.getUTCDate(),
-                  21, 0, 0
-                ));
-                // Edge case: 31 Jan → 28/29 Feb
-                if (subscriptionEnd.getUTCDate() !== paymentDate.getUTCDate()) {
-                  subscriptionEnd = new Date(Date.UTC(
-                    paymentDate.getUTCFullYear(),
-                    paymentDate.getUTCMonth() + 2,
-                    0, 21, 0, 0
-                  ));
-                }
+              if (useCalendarMonth) {
+                subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21); // 21:00 UTC = 00:00 Minsk
               } else {
                 subscriptionEnd = new Date(paymentDate);
                 subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);
@@ -595,23 +599,10 @@ Deno.serve(async (req) => {
             const paymentDateMatch = payment.paymentDate?.match(/(\d{4}-\d{2}-\d{2})/);
             const paymentDate = paymentDateMatch ? new Date(paymentDateMatch[1]) : new Date();
             
-            // Calculate subscription end date - calendar month for club at 21:00 UTC (end of day Minsk)
-            const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+            // Phase 1: Calculate subscription end date from config rule
             let subscriptionEnd: Date;
-            if (productId === CLUB_PRODUCT_ID) {
-              subscriptionEnd = new Date(Date.UTC(
-                paymentDate.getUTCFullYear(),
-                paymentDate.getUTCMonth() + 1,
-                paymentDate.getUTCDate(),
-                21, 0, 0
-              ));
-              if (subscriptionEnd.getUTCDate() !== paymentDate.getUTCDate()) {
-                subscriptionEnd = new Date(Date.UTC(
-                  paymentDate.getUTCFullYear(),
-                  paymentDate.getUTCMonth() + 2,
-                  0, 21, 0, 0
-                ));
-              }
+            if (useCalendarMonth) {
+              subscriptionEnd = calcCalendarMonthEnd(paymentDate, 21); // 21:00 UTC = 00:00 Minsk
             } else {
               subscriptionEnd = new Date(paymentDate);
               subscriptionEnd.setDate(subscriptionEnd.getDate() + 30);

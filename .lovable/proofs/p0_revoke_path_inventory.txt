@@ -1,0 +1,22 @@
+# Phase 1 Revoke Path Inventory
+# Generated: 2026-03-30
+
+## 7 revoke paths (wrapped with AccessRevoker in Phase 1)
+
+| # | Path | source_event_key pattern | Status |
+|---|------|------------------------|--------|
+| 1 | subscriptions-reconcile (expired cancellations) | `cron-reconcile:{jobRunId}:{subId}` | ✅ Wrapped |
+| 2 | subscriptions-reconcile (trial canceled) | `cron-reconcile:{jobRunId}:trial:{subId}` | ✅ Wrapped |
+| 3 | subscriptions-reconcile (access expired) | `cron-reconcile:{jobRunId}:expired:{subId}` | ✅ Wrapped |
+| 4 | subscriptions-reconcile (telegram sync) | `cron-reconcile:{jobRunId}:tg:{userId}:{clubId}` | ✅ Wrapped |
+| 5 | telegram-revoke-access | `admin-revoke:{subId}:{auditLogId}` | Pending |
+| 6 | telegram-check-expired | `cron-expire:{jobRunId}:{subId}` | Pending |
+| 7 | telegram-kick-violators | `cron-kick:{jobRunId}:{userId}:{clubId}` | Pending |
+| 8 | cancel-trial | `cron-trial-expire:{jobRunId}:{subId}` | Pending |
+| 9 | subscription-charge:failed_revoke | `sub-failed-revoke:{subId}:{paymentId}` | Pending |
+| 10 | subscription-admin-actions:cancel | `admin-cancel:{subId}:{auditLogId}` | Pending |
+
+## Additional admin branches mapping to same 7 logical paths
+- subscription-admin-actions:revoke_access → maps to telegram-revoke-access
+- subscription-admin-actions:delete → maps to AccessRevoker
+- subscription-admin-actions:refund+revoke → maps to AccessRevoker

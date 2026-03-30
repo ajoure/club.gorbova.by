@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { executeRevoke } from '../_shared/access-revoker.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -19,6 +20,7 @@ Deno.serve(async (req) => {
 
     console.log('Starting subscription reconciliation...');
     const now = new Date();
+    const jobRunId = crypto.randomUUID();
 
     // Helper function to get club_id for a subscription
     async function getClubIdForSubscription(userId: string, productId: string): Promise<string | null> {
@@ -66,14 +68,22 @@ Deno.serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // PATCH 11B: Check if user has other valid access before revoking
-        const access = await hasValidAccess(supabase, sub.user_id);
-        if (access.valid) {
-          console.log(`Skip revoke for ${sub.user_id}: has ${access.source} until ${access.endAt}`);
-        } else {
-          // Revoke Telegram access with club_id
+        // Phase 1: Use AccessRevoker with ledger write
+        const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+        const revokeResult = await executeRevoke(supabase, {
+          userId: sub.user_id,
+          clubId,
+          subscriptionId: sub.id,
+          reason: 'subscription_expired',
+          sourceEventType: 'cron',
+          sourceEventKey: `cron-reconcile:${jobRunId}:${sub.id}`,
+          sourceSubjectType: 'subscription',
+          sourceSubjectRef: sub.id,
+        });
+
+        if (revokeResult.revoked) {
+          // Actually invoke telegram-revoke-access
           try {
-            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
             await supabase.functions.invoke('telegram-revoke-access', {
               body: { 
                 user_id: sub.user_id, 
@@ -85,6 +95,8 @@ Deno.serve(async (req) => {
           } catch (e) {
             console.error(`Failed to revoke Telegram access for user ${sub.user_id}:`, e);
           }
+        } else {
+          console.log(`Skip revoke for ${sub.user_id}: ${revokeResult.skippedReason}`);
         }
 
         // Log the action
@@ -123,24 +135,29 @@ Deno.serve(async (req) => {
             })
             .eq('id', sub.id);
 
-          // PATCH 11B: Check if user has other valid access before revoking
-          const access = await hasValidAccess(supabase, sub.user_id);
-          if (access.valid) {
-            console.log(`Skip revoke for ${sub.user_id}: has ${access.source} until ${access.endAt}`);
-          } else {
-            // Revoke Telegram access with club_id
+          // Phase 1: Use AccessRevoker with ledger
+          const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+          const revokeResult = await executeRevoke(supabase, {
+            userId: sub.user_id,
+            clubId,
+            subscriptionId: sub.id,
+            reason: 'trial_canceled',
+            sourceEventType: 'cron',
+            sourceEventKey: `cron-reconcile:${jobRunId}:trial:${sub.id}`,
+            sourceSubjectType: 'subscription',
+            sourceSubjectRef: sub.id,
+          });
+
+          if (revokeResult.revoked) {
             try {
-              const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
               await supabase.functions.invoke('telegram-revoke-access', {
-                body: { 
-                  user_id: sub.user_id, 
-                  club_id: clubId,
-                  reason: 'trial_canceled' 
-                },
+                body: { user_id: sub.user_id, club_id: clubId, reason: 'trial_canceled' },
               });
             } catch (e) {
               console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
             }
+          } else {
+            console.log(`Skip revoke for ${sub.user_id}: ${revokeResult.skippedReason}`);
           }
 
           console.log(`Trial subscription ${sub.id} canceled after trial end`);
@@ -176,28 +193,37 @@ Deno.serve(async (req) => {
           })
           .eq('id', sub.id);
 
-        // PATCH 11B: Check if user has other valid access before revoking
-        const accessCheck = await hasValidAccess(supabase, sub.user_id);
-        if (accessCheck.valid) {
-          console.log(`Skip revoke for ${sub.user_id}: has ${accessCheck.source} until ${accessCheck.endAt}`);
-        } else {
-          // Revoke Telegram access with club_id
-          // PATCH: Pass preserve_pricing flag if subscription is in grace
-          const preservePricing = sub.grace_period_status === 'in_grace';
-          
+        // Phase 1: Use AccessRevoker with ledger
+        const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
+        const preservePricing = sub.grace_period_status === 'in_grace';
+        
+        const revokeResult = await executeRevoke(supabase, {
+          userId: sub.user_id,
+          clubId,
+          subscriptionId: sub.id,
+          reason: 'access_expired',
+          sourceEventType: 'cron',
+          sourceEventKey: `cron-reconcile:${jobRunId}:expired:${sub.id}`,
+          sourceSubjectType: 'subscription',
+          sourceSubjectRef: sub.id,
+          metadata: { preserve_pricing: preservePricing, grace_period_status: sub.grace_period_status },
+        });
+
+        if (revokeResult.revoked) {
           try {
-            const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
             await supabase.functions.invoke('telegram-revoke-access', {
               body: { 
                 user_id: sub.user_id, 
                 club_id: clubId,
                 reason: 'access_expired',
-                preserve_pricing: preservePricing, // PATCH: Don't mark was_club_member if grace active
+                preserve_pricing: preservePricing,
               },
             });
           } catch (e) {
             console.error(`Failed to revoke Telegram for user ${sub.user_id}:`, e);
           }
+        } else {
+          console.log(`Skip revoke for ${sub.user_id}: ${revokeResult.skippedReason}`);
         }
 
         // PATCH: DON'T mark was_club_member here!
@@ -216,20 +242,24 @@ Deno.serve(async (req) => {
       console.error('Error fetching telegram access:', tgError);
     } else if (telegramAccess && telegramAccess.length > 0) {
       for (const access of telegramAccess) {
-        // PATCH 11B: Use comprehensive access check instead of just subscriptions
-        const accessCheck = await hasValidAccess(supabase, access.user_id);
+        // Phase 1: Use AccessRevoker with ledger
+        const revokeResult = await executeRevoke(supabase, {
+          userId: access.user_id,
+          clubId: access.club_id,
+          reason: 'no_valid_access',
+          sourceEventType: 'cron',
+          sourceEventKey: `cron-reconcile:${jobRunId}:tg:${access.user_id}:${access.club_id}`,
+          sourceSubjectType: 'telegram_access',
+          sourceSubjectRef: access.id,
+        });
 
-        if (!accessCheck.valid) {
+        if (revokeResult.revoked) {
           // No valid access, check if active_until is also expired
           if (access.active_until && new Date(access.active_until) < now) {
             console.log(`User ${access.user_id} has no valid access, revoking Telegram access`);
             try {
               await supabase.functions.invoke('telegram-revoke-access', {
-                body: { 
-                  user_id: access.user_id, 
-                  club_id: access.club_id,
-                  reason: 'no_valid_access' 
-                },
+                body: { user_id: access.user_id, club_id: access.club_id, reason: 'no_valid_access' },
               });
             } catch (e) {
               console.error(`Failed to revoke Telegram for user ${access.user_id}:`, e);

@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
+import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -693,25 +694,16 @@ async function createSubscription(
       accessEndAt.setDate(accessEndAt.getDate() + 30);
     }
   } else {
-    // Fallback: calendar month for club at 21:00 UTC (end of day Minsk)
-    const CLUB_PRODUCT_ID = "11c9f1b8-0355-4753-bd74-40b42aa53616";
+    // Fallback: use config rule for calendar month
     accessStartAt = new Date(deal.deal_payed_at || deal.deal_created_at);
     
-    if (productId === CLUB_PRODUCT_ID) {
-      accessEndAt = new Date(Date.UTC(
-        accessStartAt.getUTCFullYear(),
-        accessStartAt.getUTCMonth() + 1,
-        accessStartAt.getUTCDate(),
-        21, 0, 0
-      ));
-      // Edge case: 31 Jan → 28/29 Feb
-      if (accessEndAt.getUTCDate() !== accessStartAt.getUTCDate()) {
-        accessEndAt = new Date(Date.UTC(
-          accessStartAt.getUTCFullYear(),
-          accessStartAt.getUTCMonth() + 2,
-          0, 21, 0, 0
-        ));
-      }
+    // Phase 1: Check calendar month from products_v2.meta instead of hardcoded UUID
+    // Note: isCalendarMonth flag must be passed from caller since this is a sync function context
+    // The productId-based check happens in the caller; here we use the flag
+    const useCalendarMonth = productId ? await isCalendarMonthProduct(supabase, productId) : false;
+    
+    if (useCalendarMonth) {
+      accessEndAt = calcCalendarMonthEnd(accessStartAt, 21); // 21:00 UTC = 00:00 Minsk
     } else {
       accessEndAt = new Date(accessStartAt);
       accessEndAt.setDate(accessEndAt.getDate() + 30);
