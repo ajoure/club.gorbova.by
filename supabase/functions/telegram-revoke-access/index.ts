@@ -216,6 +216,9 @@ Deno.serve(async (req) => {
     const body: RevokeAccessRequest = await req.json();
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
     const forceRevoke = (body as any).force_revoke === true;
+    // Phase 1: read parent keys from body for downstream lineage (nullable, backward compat)
+    const parentEventKey: string | null = (body as any).parent_event_key || null;
+    const parentExecutionKey: string | null = (body as any).parent_execution_key || null;
 
     // PATCH: явное admin-действие = is_manual:true ИЛИ admin_id передан
     const isAdminAction = is_manual === true || (typeof admin_id === 'string' && admin_id.length > 0);
@@ -272,6 +275,34 @@ Deno.serve(async (req) => {
             original_revoke_reason: reason,
           }
         });
+
+        // Phase 1 Ledger: blocked revoke → skip
+        try {
+          const skipEntry: LedgerEntry = {
+            source_event_type: 'system',
+            source_event_key: `tg-revoke-blocked:${user_id}:${club_id || 'unknown'}:${accessResult.subscriptionId || accessResult.entitlementId || accessResult.manualAccessId || 'unknown'}`,
+            source_subject_type: 'system',
+            source_subject_ref: user_id,
+            action_type: 'skip',
+            reason_code: 'already_active',
+            target_type: 'club',
+            target_key: `${user_id}:${club_id || 'unknown'}`,
+            target_ref: club_id || null,
+            user_id: user_id,
+            status: 'skipped',
+            result: {
+              skip_reason: 'access_still_valid',
+              access_source: accessSource,
+              access_end_at: accessEndAt,
+              reconcile_basis: 'revoke_blocked_valid_access',
+            },
+            parent_event_key: parentEventKey,
+            parent_execution_key: parentExecutionKey,
+          };
+          await writeLedgerEntry(supabase, skipEntry);
+        } catch (ledgerErr) {
+          console.error('[telegram-revoke-access] Ledger skip write error (non-blocking):', ledgerErr);
+        }
 
         return new Response(JSON.stringify({
           success: false,
