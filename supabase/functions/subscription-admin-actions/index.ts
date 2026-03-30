@@ -1075,10 +1075,48 @@ Deno.serve(async (req) => {
         }).select('id').single();
         branchAuditId = deleteAudit?.id || null;
 
+        // Sub-patch B: Inline ledger BEFORE telegram call for parent lineage
+        let deleteSourceEventKey: string | null = null;
+        let deleteExecutionKey: string | null = null;
+        try {
+          const deleteDiscriminator = branchAuditId || subscription_id;
+          deleteSourceEventKey = `admin-delete:${subscription_id}:${deleteDiscriminator}`;
+          const deleteAlreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
+
+          if (deleteAlreadyCanceled) {
+            const skipResult = await writeLedgerEntry(supabase, {
+              source_event_type: 'admin', source_event_key: deleteSourceEventKey,
+              source_subject_type: 'admin_action', source_subject_ref: adminUserId,
+              source_subscription_id: subscription_id, action_type: 'skip',
+              reason_code: 'admin_revoke' as any, target_type: 'subscription_tier',
+              target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              target_ref: subscription.product_id || null, user_id: subscription.user_id,
+              order_id: subscription.order_id || null, status: 'skipped',
+              result: { skip_reason: 'already_canceled', branch_decision_source: 'before_after_projection_diff', audit_discriminator_source: 'branch_audit_id', before_status: beforeSnapshot.status, reconcile_basis: 'admin_delete' },
+            });
+            deleteExecutionKey = skipResult.execution_key;
+            console.log(`[subscription-admin-actions] Ledger delete: skipped (already_canceled)`);
+          } else {
+            const dr = await executeRevoke(supabase, {
+              userId: subscription.user_id, orderId: subscription.order_id || null,
+              targetType: 'subscription_tier', targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              targetRef: subscription.product_id || null, subscriptionId: subscription_id,
+              reasonCode: 'admin_revoke' as any, reconcileBasis: 'admin_delete',
+              sourceEventType: 'admin', sourceEventKey: deleteSourceEventKey,
+              sourceSubjectType: 'admin_action', sourceSubjectRef: adminUserId,
+              metadata: { branch_decision_source: 'before_after_projection_diff', audit_discriminator_source: 'branch_audit_id', before_status: beforeSnapshot.status },
+            });
+            deleteExecutionKey = dr.executionKey || null;
+            console.log(`[subscription-admin-actions] Ledger delete: revoked=${dr.revoked}, id=${dr.ledgerId}`);
+          }
+        } catch (ledgerErr) {
+          console.error('[subscription-admin-actions] Ledger error for delete (non-blocking):', ledgerErr);
+        }
+
         // 3. Send Telegram notification
         await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
 
-        // 4. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
+        // 4. Revoke Telegram access with parent keys
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
           const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
@@ -1088,6 +1126,8 @@ Deno.serve(async (req) => {
               is_manual: true,
               reason: 'subscription_deleted',
               admin_id: adminUserId,
+              parent_event_key: deleteSourceEventKey || null,
+              parent_execution_key: deleteExecutionKey || null,
             },
           });
           console.log('[delete] Telegram revoke result:', JSON.stringify(revokeResult.data));
