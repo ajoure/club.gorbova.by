@@ -264,12 +264,48 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     setForm({ ...form, target_ref: ref, target_label: label });
   };
 
-  // Format duration display
-  const formatDuration = (days: number | null, source?: string) => {
-    if (days == null) return "Бессрочно";
+  // Format duration — pure number formatter, no business logic
+  const formatDuration = (days: number | null) => {
+    if (days == null) return null;
     if (days >= 365 && days % 365 === 0) return `${days / 365} г.`;
     if (days >= 30 && days % 30 === 0) return `${days / 30} мес.`;
     return `${days} дн.`;
+  };
+
+  // Context-aware duration display with business resolution
+  const getDurationDisplay = (
+    durationDays: number | null,
+    durationSource: string,
+    sourceType: string,
+  ): string => {
+    // 1. Explicit duration from rule
+    if (durationDays != null && durationSource === "rule") {
+      return `${formatDuration(durationDays)} (из правила)`;
+    }
+    // 2. Duration from tariff
+    if (durationDays != null && durationSource === "tariff") {
+      return `${formatDuration(durationDays)} (из тарифа)`;
+    }
+    // 3. Duration from legacy
+    if (durationDays != null && durationSource === "legacy") {
+      return `${formatDuration(durationDays)} (старая настройка)`;
+    }
+    // 4. Duration present but source unknown
+    if (durationDays != null) {
+      return formatDuration(durationDays)!;
+    }
+    // 5. No duration — distinguish unresolved vs truly unlimited
+    if (sourceType === "rule" && durationSource === "unknown") {
+      return "По сроку тарифа покупки";
+    }
+    if (sourceType === "rule") {
+      return "По сроку тарифа покупки";
+    }
+    // Legacy with null duration — unknown at preview time
+    if (sourceType === "legacy") {
+      return "Срок не задан";
+    }
+    return "По сроку тарифа покупки";
   };
 
   return (
