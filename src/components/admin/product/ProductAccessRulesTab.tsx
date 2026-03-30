@@ -117,6 +117,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [typeFilter, setTypeFilter] = useState<GrantTargetType | "all">("all");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [deletingRule, setDeletingRule] = useState<AccessRule | null>(null);
+  const [isDeletePending, setIsDeletePending] = useState(false);
 
   const { data: effectiveGrants = [] } = useEffectiveGrants(productId, previewTariffId || undefined);
 
