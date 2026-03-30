@@ -565,36 +565,104 @@ Deno.serve(async (req) => {
         // Phase v23: Read from access_rules first, fallback to legacy product_club_mappings
         let clubId: string | null = null;
 
+        // Helper: check prior_purchase condition on a rule
+        const checkPriorPurchaseCondition = async (ruleConditions: any, ruleId: string): Promise<boolean> => {
+          if (!ruleConditions || ruleConditions.condition_type !== 'prior_purchase') {
+            return true; // No condition = unconditional
+          }
+          const requiredProductId = ruleConditions.required_product_id;
+          const requiredTariffId = ruleConditions.required_tariff_id;
+          if (!requiredProductId) return true;
+
+          let query = supabase
+            .from('orders_v2')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('product_id', requiredProductId)
+            .eq('status', 'paid')
+            .limit(1);
+          
+          if (requiredTariffId) {
+            query = query.eq('tariff_id', requiredTariffId);
+          }
+
+          const { data: priorOrder } = await query.maybeSingle();
+          const conditionMet = !!priorOrder;
+          
+          console.log(`[grant-access] Conditional rule ${ruleId}: prior_purchase check for product ${requiredProductId}${requiredTariffId ? ` tariff ${requiredTariffId}` : ''} → ${conditionMet ? 'PASSED' : 'FAILED'}`);
+          
+          if (!conditionMet) {
+            // Write ledger entry for skipped condition
+            try {
+              await writeLedgerEntry(supabase, {
+                source_event_type: 'webhook',
+                source_event_key: `gafo:condition_skip:${orderId}:${ruleId}`,
+                source_subject_type: 'order',
+                source_subject_ref: orderId,
+                source_order_id: orderId,
+                action_type: 'grant',
+                reason_code: 'condition_not_met',
+                target_type: 'club',
+                target_key: `${userId}:condition_check`,
+                user_id: userId,
+                profile_id: profileId || null,
+                order_id: orderId,
+                status: 'skipped',
+                result: {
+                  condition_type: 'prior_purchase',
+                  required_product_id: requiredProductId,
+                  required_tariff_id: requiredTariffId || null,
+                  check_result: false,
+                },
+              });
+            } catch (ledgerErr) {
+              console.error('[grant-access] Ledger write for condition skip failed:', ledgerErr);
+            }
+          }
+          
+          return conditionMet;
+        };
+
         // Try new rules layer (tariff-level first, then product-level)
         if (tariffId) {
-          const { data: tariffRule } = await supabase
+          const { data: tariffRules } = await supabase
             .from("access_rules")
-            .select("target_ref")
+            .select("id, target_ref, conditions")
             .eq("tariff_id", tariffId)
             .eq("grant_target_type", "club")
             .eq("is_active", true)
-            .order("priority", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (tariffRule?.target_ref) {
-            clubId = tariffRule.target_ref;
-            console.log(`[grant-access] Club from access_rules (tariff): ${clubId}`);
+            .order("priority", { ascending: false });
+          
+          if (tariffRules?.length) {
+            for (const rule of tariffRules) {
+              const conditionOk = await checkPriorPurchaseCondition(rule.conditions, rule.id);
+              if (conditionOk && rule.target_ref) {
+                clubId = rule.target_ref;
+                console.log(`[grant-access] Club from access_rules (tariff): ${clubId}`);
+                break;
+              }
+            }
           }
         }
         if (!clubId && productId) {
-          const { data: productRule } = await supabase
+          const { data: productRules } = await supabase
             .from("access_rules")
-            .select("target_ref")
+            .select("id, target_ref, conditions")
             .eq("product_id", productId)
             .is("tariff_id", null)
             .eq("grant_target_type", "club")
             .eq("is_active", true)
-            .order("priority", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (productRule?.target_ref) {
-            clubId = productRule.target_ref;
-            console.log(`[grant-access] Club from access_rules (product): ${clubId}`);
+            .order("priority", { ascending: false });
+          
+          if (productRules?.length) {
+            for (const rule of productRules) {
+              const conditionOk = await checkPriorPurchaseCondition(rule.conditions, rule.id);
+              if (conditionOk && rule.target_ref) {
+                clubId = rule.target_ref;
+                console.log(`[grant-access] Club from access_rules (product): ${clubId}`);
+                break;
+              }
+            }
           }
         }
 
