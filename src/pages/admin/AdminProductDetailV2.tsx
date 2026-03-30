@@ -728,6 +728,10 @@ export default function AdminProductDetailV2() {
                 <FolderTree className="h-3.5 w-3.5" />
                 Состав
               </TabsTrigger>
+              <TabsTrigger value="access_rules" className="gap-1.5 text-xs">
+                <Shield className="h-3.5 w-3.5" />
+                Доступы
+              </TabsTrigger>
             </TabsList>
           </div>
 
