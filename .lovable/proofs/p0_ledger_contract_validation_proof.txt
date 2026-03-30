@@ -221,3 +221,55 @@ PATCH v22.4: grant-access-for-order PASS, todayUtc bug fixed.
 PATCH v22.5: subscriptions-reconcile PASS via controlled fixture.
              subscription-charge BLOCKED_SAFE_GUARD (no sandbox billing).
 Cutover blocked pending decision on subscription-charge status.
+
+---
+
+## Sub-patch B Finish (v22.6)
+
+Added: 2026-03-30
+
+### Duplicate post-switch ledger block removal
+
+The shared post-switch block in `subscription-admin-actions/index.ts` (previously lines 1265-1355)
+has been **fully removed**. All revoke branches now use exclusively inline ledger writes.
+
+#### Machine-check: inline-only ledger in subscription-admin-actions
+
+| Branch | Inline ledger path | Post-switch duplicate | Confirmed |
+|--------|-------------------|----------------------|-----------|
+| cancel | writeLedgerEntry + executeRevoke (lines ~710-765) | REMOVED | ✅ |
+| revoke_access | writeLedgerEntry + executeRevoke (lines ~943-985) | REMOVED | ✅ |
+| delete | writeLedgerEntry + executeRevoke (lines ~1078-1114) | REMOVED | ✅ |
+| refund+revoke | executeRevoke (lines ~483-507) | never existed in post-switch | ✅ |
+
+grep result after cleanup: `executeRevoke` / `writeLedgerEntry` appear ONLY within case branches + imports.
+No second block outside case branches for revoke actions.
+
+### Parent propagation wired
+
+All primary callers now pass `parent_event_key` / `parent_execution_key` to downstream calls.
+See `p0_downstream_parent_propagation_proof.txt` for full lineage table.
+
+### Queue meta wired
+
+`subscription-charge` renew path writes lineage into `telegram_access_queue.meta`
+using the exact same `renewSourceEventKey` variable used for the primary ledger row (no drift).
+Conditional spread ensures existing meta is NOT overwritten when `execution_key` is absent.
+
+`telegram-club-members` reinvite_ghosts enqueue is autonomous/no-parent by design (no upstream ledger row).
+
+### telegram-process-access-queue backward compatibility
+
+Queue processor reads `meta` from queue rows and forwards parent keys downstream.
+When `meta` is null (old rows or autonomous enqueues), parent keys are passed as null.
+No crash, no forced lineage — backward compatible. ✅
+
+### Sprint status
+
+| Component | Status |
+|-----------|--------|
+| Sub-patch A (revoke paths) | ✅ done |
+| Sub-patch B (parent propagation) | ✅ done in code |
+| Runtime verification for B | ⏸ deferred_non_blocking |
+| Sub-patch C (batch/import) | 📋 next |
+| phase1_ledger_cutover_at | ❌ NOT SET |

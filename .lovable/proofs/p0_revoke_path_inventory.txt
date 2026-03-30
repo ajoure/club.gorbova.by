@@ -34,12 +34,26 @@ Status corrected: wrapped_claim_removed → re-wrapped and verified in this cons
 - subscription-admin-actions:pause/resume/toggle_auto_renew → excluded_from_scope (no projection change)
 
 ## Pending next subpatch
-- Grant/extend paths → pending_next_subpatch (Sub-patch B)
 - Batch/import paths → pending_next_subpatch (Sub-patch C)
-- Parent propagation → pending_next_subpatch (Sub-patch B)
+
+## Completed in Sub-patch B
+- Parent propagation for all downstream calls → ✅ done in code
+- Queue meta lineage (subscription-charge → telegram_access_queue.meta) → ✅ done
+- Duplicate post-switch ledger block in subscription-admin-actions → ✅ removed
+- telegram-club-members reinvite enqueue → autonomous/no-parent by design (documented)
 
 ## Additional admin branches mapping
-- subscription-admin-actions:revoke_access → uses executeRevoke directly + branch audit
-- subscription-admin-actions:delete → uses executeRevoke directly + branch audit; physical delete AFTER ledger
-- subscription-admin-actions:refund+revoke → uses executeRevoke directly
-- subscription-admin-actions:cancel → uses executeRevoke directly + branch audit
+- subscription-admin-actions:revoke_access → uses executeRevoke directly + branch audit + parent keys to downstream
+- subscription-admin-actions:delete → uses executeRevoke directly + branch audit + parent keys; physical delete AFTER ledger
+- subscription-admin-actions:refund+revoke → uses executeRevoke directly + parent keys to downstream
+- subscription-admin-actions:cancel → uses executeRevoke directly + branch audit (no downstream telegram call)
+
+## Sprint Status
+
+| Sub-patch | Status |
+|-----------|--------|
+| Sub-patch A (revoke paths) | ✅ done |
+| Sub-patch B (parent propagation) | ✅ done in code |
+| Runtime verification for B | ⏸ deferred_non_blocking |
+| Sub-patch C (batch/import) | 📋 next |
+| phase1_ledger_cutover_at | ❌ NOT SET |
