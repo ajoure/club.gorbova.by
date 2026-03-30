@@ -842,15 +842,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
       {/* === Create/Edit Dialog === */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>{editing ? "Редактировать правило" : "Новое правило доступа"}</DialogTitle>
             <DialogDescription>
               Определите, что получит покупатель при покупке
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5 py-2">
+          <div className="space-y-5 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
             {/* === Section 1: Где действует === */}
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
