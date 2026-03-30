@@ -1,136 +1,188 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Добавь в цель и scope явное ограничение:
+1. Добавь в scope явную формулировку:
   &nbsp;
-  - **backend, access_rules schema, runtime grant logic, legacy fallback logic не менять**;
-  - патч только про **русский UI-текст** и **безопасное подтверждение удаления**.
+  - **этот патч закрывает только UI-баг numeric inputs и баг отображения срока**;
+  - **runtime-проверка реальной выдачи доступа не входит в этот патч** и идёт отдельным follow-up proof/verification patch.
+  - Иначе будет повторное смешение UI-фикса и runtime-валидации.
   &nbsp;
-2. Уточни, что русификация должна быть **полной по экрану**, а не только по перечисленным строкам:
+2. Для numeric fix зафиксируй единое правило:
   &nbsp;
-  - проверить все badge / helper text / preview labels / warning text / source labels / duration source / dropdown labels;
-  - отдельно сделать grep/поиск по строкам:
+  - priority и duration_days в UI хранятся как string;
+  - парсинг в число только:
     &nbsp;
-    - legacy
-    - fallback
-    - advanced
-    - product-level
-    - product_club_mappings
-    - product_email_mappings
+    - на blur,
+    - на save;
     &nbsp;
-  - в финальном отчёте показать, что на этом экране эти англоязычные подписи больше не торчат.
+  - пустое значение допустимо в форме;
+  - не использовать || 0, потому что это снова ломает удаление и возвращает ноль насильно.
   &nbsp;
-3. По источнику legacy в нижней панели не оставляй просто замену club -> клуб, email -> email-аккаунт как локальный хардкод без правила:
+3. Для priority зафиксируй нормализацию отдельно:
   &nbsp;
-  - добавь явный маленький mapper:
+  - если поле пустое при сохранении → использовать 0;
+  - если введено некорректное значение → fallback к 0;
+  - но **не во время печати**.
+  &nbsp;
+4. Для duration_days зафиксируй нормализацию отдельно:
+  &nbsp;
+  - если режим manual и поле пустое → null, а не 0;
+  - если режим tariff → duration_days = null;
+  - пресеты должны писать строку, но сохраняться как число только в payload.
+  &nbsp;
+5. Исправь duration semantics не только в EffectiveGrantCard, но и везде, где показывается duration label на экране:
+  &nbsp;
+  - карточка правила;
+  - preview / explain;
+  - legacy/effective строки, если там участвует общий helper.
+  - Нельзя оставить старый formatDuration(null) => "Бессрочно" где-то ещё на этом экране.
+  &nbsp;
+6. Лучше не перегружать formatDuration бизнес-смыслом.
+  &nbsp;
+  - Сделай отдельный helper уровня экрана, например:
     &nbsp;
-    - club → клуб
-    - email → email-аккаунт
+    - getDurationDisplay(...)
     &nbsp;
-  - с fallback на исходное значение, если появится новый source type.
-  &nbsp;
-4. Для source_label в useAccessRules.ts зафиксируй, что русифицируются **все legacy source labels**, а не только 2 места по памяти:
-  &nbsp;
-  - Старая настройка (клуб)
-  - Старая настройка (email)
-  - если есть иные legacy/fallback строки в effective preview, их тоже привести к единому стилю.
-  &nbsp;
-5. Для подтверждения удаления добавь явное требование по UX:
-  &nbsp;
-  - в диалоге показывать **название цели** или тип правила, что именно удаляется;
-  - кнопки:
+  - Чтобы:
     &nbsp;
-    - Отмена
-    - Удалить правило
+    - formatDuration занимался только форматированием числа,
+    - а business resolution (из тарифа, зависит от тарифа, бессрочно) был отдельно и прозрачно.
     &nbsp;
-  - destructive-стиль для подтверждения.
   &nbsp;
-6. Добавь guard against double submit:
+7. В duration matrix уточни distinction:
   &nbsp;
-  - пока идёт удаление, кнопка подтверждения disabled / loading;
-  - повторный клик не должен отправлять второй delete.
+  - unknown / unresolved in current preview context
+  - truly unlimited
+  - это не одно и то же.
+  - Сейчас главный баг именно от смешения этих двух состояний.
   &nbsp;
-7. Добавь post-delete behavior:
+8. В DoD добавь proof по numeric bug:
   &nbsp;
-  - после успешного удаления диалог закрывается;
-  - после ошибки удаления диалог не зависает в неконсистентном состоянии;
-  - список правил и preview обновляются как и раньше, без поломки текущего invalidate flow.
+  - можно стереть 0 обычным backspace;
+  - можно ввести 12 посимвольно;
+  - можно оставить поле пустым и форма не ломается;
+  - пресет после ручного ввода не ломает состояние.
   &nbsp;
-8. Уточни DoD:
+9. В DoD добавь proof по duration semantics:
   &nbsp;
-  - не «ни одного английского слова вообще», а:
-  - **ни одного английского слова в пользовательских бейджах, статусах, preview-подписях и warning-текстах на вкладке “Доступы”**, кроме технических данных внутри пользовательского ввода/значений, если они приходят из данных.
-  - Иначе формулировка слишком абсолютная и может дать ложный fail на системных значениях в data.
+  - product-level rule без выбранного тарифа показывает:
+    &nbsp;
+    - По сроку тарифа покупки
+    - или Срок зависит от тарифа;
+    &nbsp;
+  - tariff-level rule показывает конкретное значение;
+  - Бессрочно не появляется как fallback для null.
   &nbsp;
-9. Добавь proof в DoD:
-  &nbsp;
-  - скрин экрана со старыми настройками после русификации;
-  - скрин preview с русскими source labels;
-  - скрин диалога подтверждения удаления;
-  - proof успешного удаления одного test rule.
-  &nbsp;
+10. Добавь post-patch note:
 
 &nbsp;
 
 &nbsp;
 
-# План: PATCH v23.1.1 — Русификация бейджей + подтверждение удаления
+&nbsp;
 
-## Цель
+- следующий отдельный патч после этого — **runtime verification новой rule и overlap new rule + legacy**, без расширения текущего UI-фикса.
 
-Привести все текстовые элементы UI к русскому языку, убрать английские термины (legacy, fallback, advanced, product-level, product_club_mappings). Добавить подтверждение удаления правил.
+&nbsp;
 
-## Анализ текущего состояния
+&nbsp;
 
-Редактирование и удаление правил **уже реализованы** (кнопки Pencil и Trash2, строки 421-431). Но:
+План: PATCH v23.1.2 — Numeric input fix + duration semantics
 
-- Удаление происходит без подтверждения — опасно
-- В UI остаются английские слова
+## Scope и ограничения
 
-### Английские тексты, которые нужно заменить
+- Backend, access_rules schema, runtime grant logic, legacy fallback logic — **не трогаем**
+- Только UI-фиксы в 2 файлах
+
+---
+
+## Проблема 1: Numeric input bug
+
+**Где:** `ProductAccessRulesTab.tsx`
+
+- Строка 828: `duration_days` — `type="number"` + `parseInt` на каждый onChange → залипание
+- Строка 851-853: `priority` — `type="number"` + `parseInt(e.target.value) || 0` → нельзя стереть 0
+
+**Исправление:**
+
+- Добавить string-state поля `priorityStr` и `durationDaysStr` в form (или отдельный state)
+- Убрать `type="number"`, использовать `inputMode="numeric"` + `pattern="[0-9]*"`
+- На onChange — просто сохранять string
+- На blur — парсить в число (пустое → null/0)
+- На save (handleSave) — парсить из string в number для payload
+
+Конкретные строки:
+
+- Строка 126-138: добавить `priority: "0"` и `duration_days: ""` как string
+- Строка 178-192 (openCreateDialog): `priority: "0"`, `duration_days: ""`
+- Строка 195-212 (openEditDialog): `priority: String(rule.priority)`, `duration_days: rule.duration_days != null ? String(rule.duration_days) : ""`
+- Строка 226-237 (handleSave): парсить `form.priority` и `form.duration_days` из string
+- Строка 811: preset onClick → `setForm({ ...form, duration_days: String(p.days) })`
+- Строка 814: сравнение preset → `Number(form.duration_days) === p.days`
+- Строка 824-831: Input → убрать type="number", `value={form.duration_days}`, onChange → сохранять string, onBlur → нормализовать
+- Строка 850-855: priority Input → аналогично
+
+---
+
+## Проблема 2: Duration semantics — ложное «Бессрочно»
+
+**Где:** `formatDuration` (строка 262-267)
+
+```tsx
+const formatDuration = (days: number | null) => {
+  if (days == null) return "Бессрочно";  // ← ПРОБЛЕМА
+```
+
+Когда product-level rule имеет `duration_mode=tariff` и `duration_days=null`, а preview запрашивается без конкретного тарифа (`previewTariffId=""`), в `useEffectiveGrants` tariffAccessDays=null → duration_days=null → formatDuration возвращает «Бессрочно».
+
+**Исправление в `EffectiveGrantCard` (строка 961-968):**
+Заменить прямой вызов `formatDuration(g.duration_days)` на контекстно-зависимую логику:
+
+```
+если duration_source === "unknown" и duration_days === null:
+  → "По сроку тарифа покупки"
+если duration_days === null и source_type === "rule":
+  → "По сроку тарифа покупки"  
+иначе:
+  → formatDuration(g.duration_days)
+```
+
+**Аналогично в списке правил (строка 411-415):**
+
+```
+если rule.duration_days == null и effectiveDuration == null:
+  → показать "По сроку тарифа покупки" вместо formatDuration(null) = "Бессрочно"
+```
+
+**Duration resolution matrix (для кода и отчёта):**
 
 
-| Где                                                | Сейчас                                     | Должно быть                     |
-| -------------------------------------------------- | ------------------------------------------ | ------------------------------- |
-| Бейдж entitlement (стр. 616)                       | `advanced`                                 | `служебный`                     |
-| Статус legacy (стр. 67)                            | `Действует (только legacy)`                | `Действует (старая настройка)`  |
-| Статус legacy (стр. 71)                            | `Fallback (правило неактивно)`             | `Резерв (правило неактивно)`    |
-| Заголовок панели (стр. 505)                        | `Действующие legacy-настройки`             | `Действующие старые настройки`  |
-| Источник legacy (стр. 522)                         | `m.source.replace(...)` → `club` / `email` | `клуб` / `email-аккаунт`        |
-| Preview source_label (useAccessRules.ts, стр. 323) | `Правило (тариф)`                          | OK                              |
-| Preview source_label (стр. 418, 439)               | `Legacy (product_club_mappings)`           | `Старая настройка (клуб)`       |
-| Preview source_label (стр. 470)                    | `Legacy (product_email_mappings)`          | `Старая настройка (email)`      |
-| Preview overridden_by (стр. 427)                   | `Новое правило`                            | OK                              |
-| Селект preview (стр. 454)                          | `Все тарифы (product-level)`               | `Все тарифы (уровень продукта)` |
-| Бейдж миграции (стр. 928-930)                      | `Не мигрировано`                           | OK (уже на русском)             |
-| Preview duration source (стр. 913)                 | `legacy`                                   | `старая настройка`              |
-| Бейдж overlap (стр. 395)                           | `Дублирует legacy`                         | `Дублирует старую настройку`    |
+| Приоритет | Источник    | Условие                      | Лейбл                        |
+| --------- | ----------- | ---------------------------- | ---------------------------- |
+| 1         | rule manual | rule.duration_days != null   | `{N} дн. (из правила)`       |
+| 2         | tariff      | tariffAccessDays != null     | `{N} дн. (из тарифа)`        |
+| 3         | legacy      | legacy.duration_days != null | `{N} дн. (старая настройка)` |
+| 4         | не задано   | все null, product-level      | `По сроку тарифа покупки`    |
+| 5         | бессрочно   | явный режим (future)         | `Бессрочно`                  |
 
 
-## Что сделать
+`Бессрочно` больше не используется как fallback для null.
 
-### 1. Файл `ProductAccessRulesTab.tsx`
+---
 
-- Заменить все английские бейджи/подписи на русские (см. таблицу)
-- Добавить `AlertDialog` для подтверждения удаления правила (вместо прямого `deleteRule(rule.id)`)
-- State для `deletingRuleId` + диалог «Удалить правило? Это действие необратимо.»
-
-### 2. Файл `useAccessRules.ts`
-
-- Заменить `source_label` значения: `Legacy (product_club_mappings)` → `Старая настройка (клуб)`, аналогично для email
-
-### Файлы
+## Файлы
 
 
-| Файл                                                     | Действие                                              |
-| -------------------------------------------------------- | ----------------------------------------------------- |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | Русификация ~15 строк + добавить AlertDialog удаления |
-| `src/hooks/useAccessRules.ts`                            | Заменить 3 строки source_label                        |
+| Файл                                                     | Изменения                                                                                            |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | Numeric string-state для priority/duration_days; duration label fix в EffectiveGrantCard и rule list |
+| `src/hooks/useAccessRules.ts`                            | Без изменений                                                                                        |
 
 
 ## DoD
 
-1. Ни одного английского слова в бейджах, статусах, подписях
-2. Удаление правила требует подтверждения через диалог
-3. Редактирование и удаление работают (уже реализовано, не ломаем)
+1. priority и duration_days можно стереть backspace и ввести число посимвольно
+2. Product-level rule с mode «из тарифа» показывает «По сроку тарифа покупки», а не «Бессрочно»
+3. Tariff-level rule показывает конкретный срок с пометкой источника
+4. «Бессрочно» показывается только когда нет ни одного источника срока и это не product-level rule с наследованием
