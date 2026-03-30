@@ -940,16 +940,62 @@ Deno.serve(async (req) => {
         }).select('id').single();
         branchAuditId = revokeAudit?.id || null;
 
-        // Revoke Telegram access with club_id
+        // Sub-patch B: Inline ledger BEFORE telegram call for parent lineage
+        let revokeAccessSourceEventKey: string | null = null;
+        let revokeAccessExecutionKey: string | null = null;
+        try {
+          const revokeDiscriminator = branchAuditId || subscription_id;
+          revokeAccessSourceEventKey = `admin-revoke:${subscription_id}:${revokeDiscriminator}`;
+          const revokeAlreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
+
+          if (revokeAlreadyCanceled) {
+            const skipResult = await writeLedgerEntry(supabase, {
+              source_event_type: 'admin',
+              source_event_key: revokeAccessSourceEventKey,
+              source_subject_type: 'admin_action',
+              source_subject_ref: adminUserId,
+              source_subscription_id: subscription_id,
+              action_type: 'skip',
+              reason_code: 'admin_revoke' as any,
+              target_type: 'subscription_tier',
+              target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              target_ref: subscription.product_id || null,
+              user_id: subscription.user_id,
+              order_id: subscription.order_id || null,
+              status: 'skipped',
+              result: { skip_reason: 'already_canceled', branch_decision_source: 'before_after_projection_diff', audit_discriminator_source: 'branch_audit_id', before_status: beforeSnapshot.status, reconcile_basis: 'admin_revoke_access' },
+            });
+            revokeAccessExecutionKey = skipResult.execution_key;
+            console.log(`[subscription-admin-actions] Ledger revoke_access: skipped (already_canceled)`);
+          } else {
+            const rr = await executeRevoke(supabase, {
+              userId: subscription.user_id, orderId: subscription.order_id || null,
+              targetType: 'subscription_tier', targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+              targetRef: subscription.product_id || null, subscriptionId: subscription_id,
+              reasonCode: 'admin_revoke' as any, reconcileBasis: 'admin_revoke_access',
+              sourceEventType: 'admin', sourceEventKey: revokeAccessSourceEventKey,
+              sourceSubjectType: 'admin_action', sourceSubjectRef: adminUserId,
+              metadata: { branch_decision_source: 'before_after_projection_diff', audit_discriminator_source: 'branch_audit_id', before_status: beforeSnapshot.status },
+            });
+            revokeAccessExecutionKey = rr.executionKey || null;
+            console.log(`[subscription-admin-actions] Ledger revoke_access: revoked=${rr.revoked}, id=${rr.ledgerId}`);
+          }
+        } catch (ledgerErr) {
+          console.error('[subscription-admin-actions] Ledger error for revoke_access (non-blocking):', ledgerErr);
+        }
+
+        // Revoke Telegram access with club_id + parent keys
         const productForRevoke = subscription.products_v2 as any;
         if (productForRevoke?.telegram_club_id) {
           const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
             body: {
               user_id: subscription.user_id,
               club_id: productForRevoke.telegram_club_id,
-              is_manual: true,   // PATCH: обязательно для admin-revoke
+              is_manual: true,
               reason: 'subscription_revoked',
               admin_id: adminUserId,
+              parent_event_key: revokeAccessSourceEventKey || null,
+              parent_execution_key: revokeAccessExecutionKey || null,
             },
           });
           console.log('[revoke_access] Telegram revoke result:', JSON.stringify(revokeResult.data));
