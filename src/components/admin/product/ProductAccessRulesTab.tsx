@@ -513,7 +513,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           <CardHeader className="py-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-amber-500" />
-              <CardTitle className="text-sm">Действующие legacy-настройки</CardTitle>
+              <CardTitle className="text-sm">Действующие старые настройки</CardTitle>
               <Badge variant="outline" className="text-[10px]">{legacyMappings.length}</Badge>
             </div>
           </CardHeader>
