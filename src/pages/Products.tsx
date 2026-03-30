@@ -118,17 +118,26 @@ function ProductCard({ title, description, badge, badgeVariant = "secondary", li
 export default function Products() {
   const { user } = useAuth();
   
-  // Check if user has active club subscription
+  // Check if user has active club subscription via product_club_mappings
   const { data: hasClubAccess } = useQuery({
     queryKey: ["club-access", user?.id],
     queryFn: async () => {
       if (!user?.id) return false;
       
+      // Phase 1: Get club product IDs from product_club_mappings (no hardcoded UUID)
+      const { data: mappings } = await supabase
+        .from("product_club_mappings")
+        .select("product_id")
+        .eq("is_active", true);
+      
+      const clubProductIds = (mappings || []).map((m: any) => m.product_id).filter(Boolean);
+      if (clubProductIds.length === 0) return false;
+      
       const { data } = await supabase
         .from("subscriptions_v2")
         .select("id, status")
         .eq("user_id", user.id)
-        .eq("product_id", "11c9f1b8-0355-4753-bd74-40b42aa53616")
+        .in("product_id", clubProductIds)
         .in("status", ["active", "trial"])
         .maybeSingle();
       
