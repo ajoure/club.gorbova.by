@@ -1,63 +1,150 @@
-# PATCH v23.1.4 — Multi-product access rule + per-product prior purchase filter — В РАБОТЕ
+# да, согласен, с учетом правок:
 
-## Discovery результат
-- **Projection table**: `entitlements` (user_id, product_code, product_id, status, expires_at, order_id, profile_id)
-- **Prior purchase evidence**: `orders_v2` с `status = 'paid'` и `product_id` = целевой продукт
-- **Grant contract**: upsert в `entitlements` с `user_id + product_code` unique constraint
+&nbsp;
 
-## Что сделано
+1. **Правильно, лучше уйти от Radix ScrollArea в этих внутренних списках**
+  &nbsp;
+  - Для такого встроенного чекбокс-списка внутри модалки обычный div с overflow-y-auto действительно безопаснее и предсказуемее.
+  - Зафиксируй это прямо как сознательное решение для этого компонента, а не временный workaround.
+  &nbsp;
+2. **Ширину модалки лучше задать не просто sm:max-w-2xl, а в логике “как у других крупных редакторов”**
+  &nbsp;
+  - Добавь:
+    &nbsp;
+    - max-h-[85vh]
+    - flex flex-col
+    - scrollable body + фиксированный footer
+    &nbsp;
+  - Чтобы модалка вела себя так же, как крупные editor/dialog окна платформы, а не просто стала шире.
+  &nbsp;
+3. **Нужен явный scrollable body для всей модалки**
+  &nbsp;
+  - Не только списки внутри.
+  - Если контента много, верх и низ модалки должны оставаться управляемыми:
+    &nbsp;
+    - header фиксирован,
+    - body скроллится,
+    - footer с кнопками всегда доступен.
+    &nbsp;
+  - Это важно для длинных форм с multi-select и conditions.
+  &nbsp;
+4. **Для chips блока лучше зафиксировать guard от вертикального раздувания**
+  &nbsp;
+  - Согласен с max-h-[80px] overflow-y-auto.
+  - Добавь также:
+    &nbsp;
+    - pr-1 / px-1
+    - нормальные gap
+    - чтобы длинный список выбранных не ломал ширину и высоту секции.
+    &nbsp;
+  &nbsp;
+5. **Список чекбоксов лучше сделать визуально более стабильным**
+  &nbsp;
+  - Добавь в план:
+    &nbsp;
+    - border + rounded-md + background
+    - hover state строк
+    - нормальную line-height
+    - достаточный vertical padding на item
+    &nbsp;
+  - Иначе скролл может заработать, но список останется визуально “сбитым”.
+  &nbsp;
+6. **Уточни одинаковый layout для двух списков**
+  &nbsp;
+  - Один и тот же компонент/паттерн должен использоваться и для:
+    &nbsp;
+    - target products,
+    - condition products.
+    &nbsp;
+  - Чтобы не получить два слегка разных поведения и два набора багов.
+  &nbsp;
+7. **Нужен отдельный пункт про mobile/smaller viewport**
+  &nbsp;
+  - После расширения модалки проверить:
+    &nbsp;
+    - на меньшей высоте окна body действительно скроллится;
+    - footer не уезжает за низ;
+    - список не перекрывает кнопки.
+    &nbsp;
+  - Это добавить в proof.
+  &nbsp;
+8. **В DoD усили визуальные критерии**
+  &nbsp;
+  - Не только “scroll работает”, но и:
+    &nbsp;
+    - footer модалки всегда виден;
+    - список не вылезает за границы;
+    - chips не наезжают на input/границы;
+    - обе зоны multi-select выглядят одинаково и аккуратно.
+    &nbsp;
+  &nbsp;
+9. **Scope exclusion оставить жёстким**
+  &nbsp;
+  - Да, runtime/storage/logic не трогаем.
+  - Это чистый UI/layout patch.
+  &nbsp;
 
-### UI (ProductAccessRulesTab.tsx)
-1. ✅ Multi-select для target products (чекбоксы + поиск + chips + счётчик + scroll area)
-2. ✅ Condition prior_purchase multi-select с toggle "Проверять эти же продукты" / "Выбрать отдельный список"
-3. ✅ Save: `conditions.target_product_ids`, `conditions.required_product_ids`, `match_mode: "per_product"`
-4. ✅ Edit restore: восстановление multi-product state из conditions JSONB
-5. ✅ Backward-compatible: single target_ref + required_product_id для legacy
-6. ✅ Rule card: ProductListBadge с tooltip для multi-product targets и conditions
-7. ✅ Label auto-generation для multi-product rules
+&nbsp;
 
-### Runtime (grant-access-for-order/index.ts)
-1. ✅ Новая секция 3b: product_access rules processing
-2. ✅ Resolve rules: tariff-level first, fallback to product-level
-3. ✅ Multi-target: `conditions.target_product_ids` → массив, fallback на `[target_ref]`
-4. ✅ Per-product prior purchase filter: каждый target проверяется индивидуально
-5. ✅ Grant executor: upsert в `entitlements` с product_code, product_id, expires_at
-6. ✅ Ledger per product: `status: "granted"` / `status: "skipped"`, `reason_code: "condition_not_met"`
-7. ✅ Backward-compatible: single target_ref rules работают как массив из одного
+&nbsp;
 
-### Storage contract (add-only JSONB)
-```json
-{
-  "rule_purpose": "service",
-  "target_product_ids": ["uuid-1", "uuid-2"],
-  "condition_type": "prior_purchase",
-  "required_product_ids": ["uuid-1", "uuid-2"],
-  "match_mode": "per_product"
-}
+PATCH v23.1.4A — Access Rules modal layout + scroll fix
+
+## Проблема
+
+1. `ScrollArea` (Radix) не скроллит — использует `max-h-[200px]` без явной высоты. Radix ScrollArea требует фиксированную `h-*` на viewport, `max-h` не работает.
+2. Модалка `sm:max-w-lg` (32rem / 512px) — слишком узкая для multi-select с chips.
+3. Chips и чекбокс-листы упираются в края — нет запасных padding.
+4. Стиль модалки не соответствует другим модалкам платформы (например, `LinkPaymentDialog` использует `sm:max-w-[600px] max-h-[85vh] flex flex-col`).
+
+## Изменения
+
+**Один файл**: `src/components/admin/product/ProductAccessRulesTab.tsx`
+
+### 1. ProductCheckboxList — scroll fix (строки 130-186)
+
+- Заменить `<ScrollArea className="max-h-[200px] border rounded-md">` на обычный `div` с `overflow-y-auto max-h-[200px]` — это надёжнее, чем Radix ScrollArea, для встроенных списков внутри модалки.
+- Добавить `p-2` внутрь контейнера вместо `p-1` — увеличить внутренние отступы.
+- Chips блок: добавить `max-h-[80px] overflow-y-auto` чтобы при 10+ выбранных элементах chips не растягивали модалку.
+
+### 2. Модалка — ширина и layout (строка 842)
+
+- Заменить `sm:max-w-lg` на `sm:max-w-2xl` (42rem / 672px) — ближе к `LinkPaymentDialog` и `BroadcastTemplateDialog`.
+- Добавить `flex flex-col` для правильной структуры flex.
+- Контент внутри `space-y-5 py-2` обернуть в scrollable body: добавить `overflow-y-auto flex-1 min-h-0` чтобы footer всегда был видим.
+
+### 3. Внутренние отступы
+
+- В condition block (строка 1058): `p-3` → `p-4` для единообразия с другими card-секциями.
+- Chips внутри `ProductCheckboxList`: добавить `px-1` на обёртку `flex-wrap` чтобы не упирались в края.
+
+### 4. Итоговый layout ProductCheckboxList
+
+```text
+┌─────────────────────────────────┐
+│ [chip1] [chip2] [chip3] [×]    │  ← max-h-[80px] overflow-y-auto
+├─────────────────────────────────┤
+│ 🔍 Поиск продукта…              │  ← input с иконкой
+├─────────────────────────────────┤
+│ Выбрано: 3 из 47                │  ← счётчик
+├─────────────────────────────────┤
+│ ☐ Продукт 1                     │
+│ ☑ Продукт 2                     │  ← overflow-y-auto max-h-[200px]
+│ ☐ Продукт 3                     │     border rounded-md p-2
+│ ...                              │
+└─────────────────────────────────┘
 ```
-Precedence: массив → используем массив; нет массива → fallback на старое одиночное поле.
 
 ## Scope exclusion
-- Domain/section access (email type) — disabled/rollback, не трогаем
-- Tariff-level conditions (required_tariff_ids) — deferred
-- Модуль `module_access` — не используется в этом патче
-- Club и entitlement rules — без изменений
 
-## DoD v23.1.4
-1. ✅ Одно правило позволяет выбрать несколько продуктов на выдачу
-2. ✅ Condition prior_purchase поддерживает множественный выбор продуктов
-3. ✅ Default mode: "проверять эти же продукты" (не нужно выбирать дважды)
-4. ✅ Runtime проходит по каждому target product и проверяет prior purchase per product
-5. ✅ Продукт A куплен ранее → access granted; Продукт B не куплен → skipped
-6. ✅ Ledger entry per product: granted / skipped (reason_code: condition_not_met)
-7. ✅ Старые single-target правила не ломаются
-8. ✅ Club, entitlement rules не затронуты
-9. ✅ В карточке правила видно количество и список продуктов (tooltip)
-10. ✅ match_mode = per_product зафиксирован как default
-11. ⬜ Runtime proof: stop-guard pending
+- Runtime не трогаем
+- Storage contract не меняем
+- Новых типов правил не добавляем
 
-## Stop-guard (перед финальным approve)
-- [ ] product_access rules реально исполняются runtime
-- [ ] multi-target не ломает single-target rules
-- [ ] per-product filtering реально работает
-- [ ] ledger entries корректны
+## DoD
+
+1. Вертикальный scroll работает в обоих multi-select списках
+2. Chips не выходят за границы, есть scroll при переполнении
+3. Модалка шире, footer всегда виден
+4. Внутренние отступы выровнены
+5. Длинные списки не ломают layout
