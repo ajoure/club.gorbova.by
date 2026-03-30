@@ -202,6 +202,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const openEditDialog = (rule: AccessRule) => {
     setEditing(rule);
     const purpose = getRulePurpose(rule);
+    const conditions = (rule.conditions || {}) as Record<string, unknown>;
+    const hasCondition = conditions.condition_type === "prior_purchase";
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -214,6 +216,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
       notes: rule.notes || "",
+      has_condition: hasCondition,
+      condition_required_product_id: (conditions.required_product_id as string) || "",
+      condition_required_tariff_id: (conditions.required_tariff_id as string) || "",
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
