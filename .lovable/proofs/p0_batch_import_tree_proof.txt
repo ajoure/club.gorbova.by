@@ -22,9 +22,11 @@ All batch_start rows:
 
 | Import type | source_event_key pattern (primary) | fallback pattern | source_subject_ref |
 |---|---|---|---|
-| bepaid | `bepaid-import:{batchId}:row:{payment.uid}` | `bepaid-import:{batchId}:row:{index}:{sha256_hash}` | payment.uid or `row:{index}` |
-| getcourse file | `gc-import:{batchId}:row:{externalId}` | `gc-import:{batchId}:row:{index}:{sha256_hash}` | externalId or `row:{index}` |
-| getcourse API | `gc-import:{batchId}:row:{deal.id}` | `gc-import:{batchId}:row:{index}:{sha256_hash}` | deal.id or `row:{index}` |
+| bepaid | `bepaid-import:{batchId}:row:{payment.uid}` | `bepaid-import:{batchId}:row:hash:${canonicalHash}` | payment.uid or `hash:${canonicalHash}` |
+| getcourse file | `gc-import:{batchId}:row:{externalId}` | `gc-import:{batchId}:row:hash:${canonicalHash}` | externalId or `hash:${canonicalHash}` |
+| getcourse API | `gc-import:{batchId}:row:{deal.id}` | `gc-import:{batchId}:row:hash:${canonicalHash}` | deal.id or `hash:${canonicalHash}` |
+
+> **proof-text sync fix**: Previously showed `row:{index}:{sha256_hash}` — updated to match code (Sub-patch C).
 
 Row-level target_type resolution:
 - subscription created (tariffId exists) → target_type = 'subscription_tier', target_key = `{userId}:{tariffId}`
@@ -338,9 +340,8 @@ batch/meta and access rows counted separately ✅
 | Sub-patch B (parent propagation) | ✅ done in code |
 | Sub-patch C (batch/import — consolidated final) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
-| Sub-patch D (consolidated proof finalization) | 📋 next |
+| Sub-patch D (consolidated proof finalization) | ✅ done |
 | phase1_ledger_cutover_at | ❌ NOT SET |
 
-Sub-patch C = последний основной code patch по v22.6 main scope.
-Далее только consolidated follow-up на proof/coverage/runtime validation.
-Новые code-правки допустимы только при новых фактах из verify/runtime.
+Sprint v22.6 = implementation-complete, cutover-blocked.
+See `p0_invariant_report.txt` for consolidated deferred list and decision block.

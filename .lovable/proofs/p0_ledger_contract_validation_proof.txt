@@ -273,11 +273,13 @@ Added: 2026-03-30
 | Path | source_subject_ref | Other subject FKs | chk_has_subject |
 |------|-------------------|-------------------|-----------------|
 | bepaid batch_start | batchId (UUID) | — | ✅ PASS |
-| bepaid row-level | payment.uid / `row:{index}` | order_id, source_order_id, profile_id, user_id | ✅ PASS |
+| bepaid row-level | payment.uid / `hash:${canonicalHash}` | order_id, source_order_id, profile_id, user_id | ✅ PASS |
 | getcourse file batch_start | batchId (UUID) | — | ✅ PASS |
-| getcourse file row-level | externalId / `row:{index}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
+| getcourse file row-level | externalId / `hash:${canonicalHash}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
 | getcourse API batch_start | batchId (UUID) | — | ✅ PASS |
-| getcourse API row-level | deal.id / `row:{index}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
+| getcourse API row-level | deal.id / `hash:${canonicalHash}` | order_id, source_order_id, source_subscription_id, profile_id, user_id | ✅ PASS |
+
+> **proof-text sync fix**: Previously showed `row:{index}` — updated to match code (Sub-patch C).
 
 ### batch_start contract validation
 
@@ -362,5 +364,8 @@ Duplicate post-switch revoke ledger path is ABSENT. ✅
 | Sub-patch B (parent propagation) | ✅ done in code |
 | Sub-patch C (batch/import — consolidated final) | ✅ done in code |
 | Runtime verification | ⏸ deferred_non_blocking |
-| Sub-patch D (consolidated proof finalization) | 📋 next |
+| Sub-patch D (consolidated proof finalization) | ✅ done |
 | phase1_ledger_cutover_at | ❌ NOT SET |
+
+Sprint v22.6 = implementation-complete, cutover-blocked.
+See `p0_invariant_report.txt` for consolidated deferred list and decision block.

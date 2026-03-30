@@ -113,6 +113,45 @@ Verified by grep:
 
 **Status: ✅ FROZEN**
 
+---
+
+## Extended Grep Scope: Import Files (Sub-patch D)
+
+Added: 2026-03-30
+
+### Scope
+
+- supabase/functions/bepaid-report-import/index.ts
+- supabase/functions/getcourse-import-deals/index.ts
+
+### Entropy pattern checks (factual counts)
+
+| # | Pattern | getcourse-import-deals | bepaid-report-import | Total | Status |
+|---|---------|----------------------|---------------------|-------|--------|
+| 1 | `Date.now(` | 0 | 0 | 0 | ✅ PASS |
+| 2 | `Math.random(` | 0 | 0 | 0 | ✅ PASS |
+| 3 | `row:${index}` (in identity) | 0 | 0 | 0 | ✅ PASS |
+| 4 | `IMP-${` (non-deterministic?) | 0 | 2 | 2 | ✅ PASS — `IMP-${payment.orderId}` is deterministic (UUID-based) |
+| 5 | `.single()` in existence-check | 0 | 0 | 0 | ✅ PASS — existence checks use `.select('id')` + length |
+
+### .single() detail for bepaid-report-import
+
+3 occurrences, ALL on INSERT operations (correct):
+- Line 653: `.insert(...).select().single()` (order create)
+- Line 807: `.insert(...).select().single()` (profile create)
+- Line 904: `.insert(...).select().single()` (order create in alt path)
+
+None on existence/lookup queries. ✅
+
+### Identity path entropy-free verification
+
+| Field | Source | Entropy-free |
+|---|---|---|
+| rowSourceEventKey | `hash:${canonicalHash}` or externalId/uid | ✅ |
+| rowSubjectRef | `hash:${canonicalHash}` or externalId/uid | ✅ |
+| deal_number | `HASH-${canonicalHash}` or externalId | ✅ |
+| order_number | `GC-HASH-${canonicalHash}` / `GC-${externalId}` / `IMP-${orderId}` | ✅ |
+
 ## Overall verdict
 
 **PASS** — All forbidden patterns absent from live scope. Helper contracts verified and frozen.

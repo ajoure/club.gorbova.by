@@ -134,11 +134,13 @@ Only the single-row JOIN on both fields simultaneously validates the parent-chil
 | Sub-patch A (revoke paths) | ✅ done |
 | Sub-patch B (parent propagation) | ✅ done in code |
 | Runtime verification for B | ⏸ deferred_non_blocking |
-| Sub-patch C (batch/import) | 📋 next |
+| Sub-patch C (batch/import) | ✅ done in code |
+| Sub-patch D (proof finalization) | ✅ done |
 | phase1_ledger_cutover_at | ❌ NOT SET |
 
 ```
 wrapped_in_code = yes (Sub-patch B)
 runtime_verified = deferred (runtime_deferred_non_blocking)
 cutover_allowed = no
+sprint_status = implementation-complete, cutover-blocked
 ```
