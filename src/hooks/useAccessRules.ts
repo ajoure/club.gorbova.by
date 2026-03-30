@@ -436,7 +436,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
             target_label: m.telegram_clubs?.club_name || m.club_id,
             source_type: "legacy",
             source_id: m.id,
-            source_label: "Legacy (product_club_mappings)",
+            source_label: "Старая настройка (клуб)",
             scope: "product",
             is_active: m.is_active,
             priority: -1,
