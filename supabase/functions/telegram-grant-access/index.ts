@@ -1,5 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +21,10 @@ interface GrantAccessRequest {
   tariff_name?: string;      // For logging in telegram chat
   product_name?: string;     // For logging in telegram chat
   duration_days?: number;    // For calculating access end
+  // Sub-patch B: Parent lineage for downstream ledger propagation
+  parent_event_key?: string | null;
+  parent_execution_key?: string | null;
+  _from_primary_path?: boolean;
 }
 
 // PATCH 13+: Throttle delay between Telegram API calls
@@ -267,7 +272,17 @@ Deno.serve(async (req) => {
     // ========== END AUTH GUARD ==========
 
     const body: GrantAccessRequest = await req.json();
-    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days } = body;
+    const { user_id, club_id, club_ids, is_manual, admin_id, valid_until, comment, source, source_id, tariff_name, product_name, duration_days, parent_event_key, parent_execution_key, _from_primary_path } = body;
+
+    // Sub-patch B: Validate parent lineage contract
+    if (_from_primary_path === true && (!parent_event_key || !parent_execution_key)) {
+      return new Response(JSON.stringify({ 
+        error: '_from_primary_path=true requires parent_event_key and parent_execution_key',
+        code: 'MISSING_PARENT_LINEAGE',
+      }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     console.log('Grant access request:', body);
 
@@ -970,6 +985,58 @@ Deno.serve(async (req) => {
         channel_invite_link: channelInviteLink,
         dm_sent: dmSent,
       });
+    }
+
+    // Sub-patch B: Write ledger entry for grant outcome
+    try {
+      const hasAnyInvite = results.some((r: any) => r.chat_invite_link || r.channel_invite_link);
+      const allSkipped = results.every((r: any) => !r.chat_invite_link && !r.channel_invite_link && !r.error);
+      const hasError = results.some((r: any) => r.error);
+
+      let ledgerActionType: string;
+      let ledgerStatus: string;
+
+      if (hasAnyInvite) {
+        ledgerActionType = 'grant';
+        ledgerStatus = 'granted';
+      } else if (hasError && !hasAnyInvite) {
+        ledgerActionType = 'grant';
+        ledgerStatus = 'failed';
+      } else {
+        // no-op / already linked / no clubs matched
+        ledgerActionType = 'skip';
+        ledgerStatus = 'skipped';
+      }
+
+      const clubIdsList = resolvedClubIds.join(',');
+      const ledgerSourceEventKey = `tg-grant:${user_id}:${clubIdsList}:${Date.now()}`;
+
+      const ledgerEntry: LedgerEntry = {
+        source_event_type: is_manual ? 'admin' : 'system',
+        source_event_key: ledgerSourceEventKey,
+        source_subject_type: is_manual ? 'admin_action' : 'subscription',
+        source_subject_ref: admin_id || source_id || null,
+        action_type: ledgerActionType,
+        reason_code: source === 'auto_subscription' ? 'paid_order' : (is_manual ? 'admin_grant' : 'system_grant'),
+        target_type: 'club',
+        target_key: `${user_id}:${clubIdsList}`,
+        target_ref: resolvedClubIds[0] || null,
+        user_id: user_id,
+        profile_id: profile?.id || null,
+        status: ledgerStatus,
+        result: {
+          clubs_processed: results.length,
+          has_invite: hasAnyInvite,
+          source: source || (is_manual ? 'manual' : 'system'),
+        },
+        parent_event_key: parent_event_key || null,
+        parent_execution_key: parent_execution_key || null,
+      };
+
+      await writeLedgerEntry(supabase, ledgerEntry);
+      console.log(`[telegram-grant-access] Ledger: action=${ledgerActionType}, status=${ledgerStatus}, parent=${parent_event_key || 'null'}`);
+    } catch (ledgerErr) {
+      console.error('[telegram-grant-access] Ledger write error (non-blocking):', ledgerErr);
     }
 
     return new Response(JSON.stringify({ success: true, results }), {
