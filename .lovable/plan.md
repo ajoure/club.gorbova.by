@@ -1,54 +1,137 @@
-# PATCH v23.1.3A — ВЫПОЛНЕН ✅
+# да, согласен, с учетом правок:
 
-## Что сделано
-1. **Numeric input fix**: priority `""` вместо `"0"`, убран onBlur normalize, placeholder="0"
-2. **Entitlement display**: человекочитаемые названия + код мелким шрифтом
-3. **Domain/section rollback**: тип `email` убран из селектора типа цели
+&nbsp;
 
----
+1. Не пиши, что condition block должен показываться **для любого target type вообще**. Ограничь явно:
+  &nbsp;
+  - показывать блок условия для тех типов, где это бизнес-осмысленно и поддержано runtime;
+  - в текущем патче минимум:
+    &nbsp;
+    - product_access
+    - при необходимости club
+    &nbsp;
+  - entitlement не включай по умолчанию в этот кейс, иначе снова вернёмся к путанице со служебными кодами.
+  &nbsp;
+2. Для текущей задачи зафиксируй приоритетный путь:
+  &nbsp;
+  - основной кейс = **product_access + condition prior_purchase**
+  - именно его доводим до рабочего состояния;
+  - entitlement оставить как advanced/internal и не использовать в этом сценарии.
+  &nbsp;
+3. В UI condition block лучше показывать не “для всех назначений безусловно”, а по правилу:
+  &nbsp;
+  - если выбран grant_target_type = product_access, блок условия доступен всегда;
+  - для остальных типов — только если это отдельно разрешено и поддержано.
+  - Иначе мы опять откроем условные правила там, где их смысл ещё не проработан.
+  &nbsp;
+4. Добавь в план, что для кейса ЦБ condition block должен называться по-человечески:
+  &nbsp;
+  - Выдавать только если ранее покупал
+  - Проверяется по оплаченным заказам
+  - выбор:
+    &nbsp;
+    - продукт-условие
+    - опционально тариф-условие
+    &nbsp;
+  - без показа технических condition_type / prior_purchase в основном UI.
+  &nbsp;
+5. В пункте про preview/explain усили отображение:
+  &nbsp;
+  - не просто строка “Только если ранее покупал…”,
+  - а явный badge/подпись в карточке правила и в explain:
+    &nbsp;
+    - Условие: ранее покупал <название продукта>
+    - если выбран тариф — Условие: ранее покупал <продукт> / <тариф>
+    &nbsp;
+  - это должно быть видно без открытия модалки.
+  &nbsp;
+6. Уточни runtime-пункт:
+  &nbsp;
+  - да, базовая проверка уже добавлена,
+  - но в этом патче нужно подтвердить, что она реально срабатывает именно для product_access rules, а не только “теоретически работает для любого типа”.
+  - То есть proof нужен именно под новый правильный UX-сценарий.
+  &nbsp;
+7. Добавь в DoD два явных proof-сценария:
+  &nbsp;
+  - правило product_access + condition создано через UI без entitlement-кодов;
+  - runtime:
+    &nbsp;
+    - без prior purchase → skipped_by_condition
+    - с prior purchase → grant выполнен.
+    &nbsp;
+  &nbsp;
+8. Добавь в план, что после этой правки rule_purpose = service больше **не требуется** для настройки кейса ЦБ.
+  &nbsp;
+  - Это важный критерий исправления неправильной модели.
+  &nbsp;
+9. В итоговой формулировке зафиксируй:
+  &nbsp;
+  - changes only in ProductAccessRulesTab.tsx для UX,
+  - runtime code не меняем в этом correction-патче,
+  - но runtime proof обязателен для уже существующей логики.
+  &nbsp;
+10. Итоговый безопасный смысл патча:
 
-# PATCH v23.1.3B — ВЫПОЛНЕН ✅
+&nbsp;
 
-## Что сделано
+&nbsp;
 
-### 1. Conditional service rule — UI
-- При выборе назначения «Служебное» появляется блок «Выдавать только если ранее покупал»
-- Переключатель `has_condition` + селект продукта-условия + опциональный тариф
-- Подпись: «Доступ будет выдан только если у покупателя есть оплаченный заказ на выбранный продукт»
-- Условие сохраняется в `conditions` JSONB (ID-based):
-  ```json
-  {
-    "rule_purpose": "service",
-    "condition_type": "prior_purchase",
-    "required_product_id": "uuid",
-    "required_tariff_id": "uuid (опционально)",
-    "match_mode": "any_paid_order"
-  }
-  ```
+&nbsp;
 
-### 2. Runtime — prior_purchase check в grant-access-for-order
-- При чтении access_rules для club grants: проверка `conditions.condition_type === "prior_purchase"`
-- Проверка по `orders_v2` (user_id + product_id + status='paid')
-- Если условие не выполнено → skip + ledger entry `status: "skipped"`, `reason_code: "condition_not_met"`
-- Если выполнено → grant как обычно
-- Безусловные правила (без conditions) продолжают работать без изменений
-- Iterates all matching rules by priority (не limit 1) — первое прошедшее условие побеждает
+- **не через служебное право**,
+- **не через entitlement-коды**,
+- а через обычный Доступ к продукту + условие ранее покупал.
 
-### 3. Edit support
-- При редактировании существующего правила с condition — состояние восстанавливается из conditions JSONB
+&nbsp;
 
-## Изменённые файлы
-- `src/components/admin/product/ProductAccessRulesTab.tsx` — UI блок условного правила
-- `supabase/functions/grant-access-for-order/index.ts` — runtime condition check + ledger skip
+&nbsp;
 
-## DoD v23.1.3B
-1. ✅ Условное правило можно создать через UI (rule_purpose=service + condition)
-2. ✅ Условие сохраняется в conditions JSONB (ID-based, без изменения schema)
-3. ✅ Runtime проверяет prior_purchase перед выдачей
-4. ✅ При невыполнении условия → skip + ledger entry skipped_by_condition
-5. ✅ Существующие безусловные правила не затронуты
-6. ✅ match_mode зафиксирован как any_paid_order (default)
+PATCH v23.1.3B correction — Conditional rule для product_access
 
-## Следующий шаг
-- Runtime proof по кейсу BUSINESS → доступ к ЦБ только при наличии prior purchase
-- Proof fixtures: создать тестовое правило → verify granted/skipped в ledger
+## Проблема
+
+Блок условия «Выдавать только если ранее покупал» сейчас показывается **только** при `rule_purpose === "service"` (строка 832). Это вынуждает админа использовать «Служебное» назначение и entitlement-коды для кейса, который по сути — обычный «Доступ к продукту» с условием.
+
+## Что сделать
+
+### 1. UI: перенести condition block с "service" на любое назначение
+
+**Файл**: `ProductAccessRulesTab.tsx`
+
+- Строка 832: заменить условие `form.rule_purpose === "service"` на более широкое — показывать блок условия для **любого** назначения, когда `grant_target_type` поддерживает условия (как минимум `product_access`, `club`, `entitlement`).
+- Простейший вариант: убрать привязку к `rule_purpose` совсем — condition block доступен всегда после секции «Назначение».
+- Альтернатива: показывать для всех назначений кроме `primary` (основной доступ обычно безусловный). Но пользователь просил не ограничивать — оставим для всех.
+
+### 2. handleSave: condition пишется независимо от rule_purpose
+
+- Строка 237-245: условие `form.has_condition` уже не привязано к purpose в коде save — **без изменений нужных**. Проверить, что `conditions.condition_type` пишется при любом purpose.
+
+### 3. openEditDialog: восстановление condition state
+
+- Строка 206: `hasCondition = conditions.condition_type === "prior_purchase"` — уже работает для любого purpose. **Без изменений.**
+
+### 4. Runtime: уже готов
+
+- `grant-access-for-order` (строка 568-620): `checkPriorPurchaseCondition` проверяет `ruleConditions.condition_type === 'prior_purchase'` — это работает для любого `grant_target_type`. **Без изменений runtime.**
+
+### 5. Preview/explain в карточках правил
+
+- Если правило имеет `conditions.condition_type === "prior_purchase"`, показывать под целью строку: «Только если ранее покупал: {название продукта}».
+- Нужно найти место отображения правил в списке и добавить эту строку.
+
+## Итог изменений
+
+
+| Файл                        | Что меняется                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProductAccessRulesTab.tsx` | Condition block: убрать `rule_purpose === "service"` guard → показывать для всех назначений. Добавить condition display в карточке правила. |
+
+
+Одно изменение в одном файле. Runtime, save, edit restore — уже работают корректно.
+
+## DoD
+
+1. Блок «Выдавать только если ранее покупал» доступен при любом назначении правила
+2. Кейс ЦБ настраивается через «Доступ к продукту» + условие, без entitlement-кодов
+3. В списке правил видно наличие условия
+4. Runtime prior_purchase check продолжает работать (add-only, без изменений)
