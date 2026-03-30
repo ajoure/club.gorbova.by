@@ -1,0 +1,103 @@
+# Phase 1 Ledger Runtime Smoke Proof
+# Generated: 2026-03-30 (PATCH v22.4)
+# Scope: Runtime validation of 3 already-wrapped paths
+
+## Query method
+
+SQL query against `access_grant_ledger` filtering by source_event_key prefixes:
+- `gafo:webhook:%` → grant-access-for-order
+- `sub-renew:%` → subscription-charge
+- `cron-reconcile:%` → subscriptions-reconcile
+
+## Results
+
+### 1. grant-access-for-order
+
+**Status: PENDING_RUNTIME_EVENT**
+
+No ledger rows found with `source_event_key LIKE 'gafo:webhook:%'`.
+Path has not been triggered since v22.3 deployment.
+
+Machine-checks deferred until first runtime event.
+
+### 2. subscription-charge
+
+**Status: PENDING_RUNTIME_EVENT**
+
+No ledger rows found with `source_event_key LIKE 'sub-renew:%'`.
+Path has not been triggered since v22.3 deployment.
+
+Machine-checks deferred until first runtime event.
+
+### 3. subscriptions-reconcile
+
+**Status: PENDING_RUNTIME_EVENT**
+
+No ledger rows found with `source_event_key LIKE 'cron-reconcile:%'`.
+Path has not been triggered since v22.3 deployment.
+
+Machine-checks deferred until first runtime event.
+
+## DB old-value guard
+
+Verified absence of forbidden values across entire `access_grant_ledger`:
+
+| Check | Query | Count | Status |
+|-------|-------|-------|--------|
+| target_type = 'telegram_access' | `WHERE target_type = 'telegram_access'` | 0 | ✅ PASS |
+| target_type = 'subscription' | `WHERE target_type = 'subscription'` | 0 | ✅ PASS |
+| status = 'completed' (non-batch) | `WHERE status = 'completed' AND action_type <> 'batch_start'` | 0 | ✅ PASS |
+
+## Machine-check template (per row, when available)
+
+For each runtime row, verify:
+1. action_type ↔ status valid per chk_action_status_compat
+2. reason_code ∈ {paid_order, trial_start, subscription_renew, subscription_extend, admin_grant, bulk_import, rule_engine_bonus, payment_failed, trial_expired, admin_cancel, subscription_expired, admin_revoke, cron_cleanup, violation_kick, duplicate_skip, already_active, no_matching_target, batch_orchestration}
+3. target_type ∈ {product, club, training_module, feature, batch, domain, menu_item, training_lesson, subscription_tier}
+4. source_subject_type ∈ {order, subscription, admin_action, import_batch, cron_job, system, rule_engine_trigger}
+5. chk_has_subject: at least one of (order_id, source_order_id, source_subscription_id, source_offer_id, source_subject_ref) IS NOT NULL
+6. result->'post_check' IS NOT NULL AND contains exactly 5 keys: {entitlement, telegram, subscription, ledger_row, target_resolution}
+7. For grant/extend: result has access_start, access_end, window_days, source_window_rule
+8. For revoke: result has revoked_from, reconcile_basis, other_active_sources_checked
+9. For skip: result has skip_reason
+10. post_check merge did NOT overwrite access window fields
+
+## source_event_key prefixes (from code)
+
+| Path | Prefix pattern |
+|------|---------------|
+| grant-access-for-order | `gafo:webhook:{orderId}` |
+| subscription-charge | `sub-renew:{subscriptionId}:{paymentId}` |
+| subscriptions-reconcile (cancel_at) | `cron-reconcile:{jobRunId}:{subId}` |
+| subscriptions-reconcile (trial) | `cron-reconcile:{jobRunId}:trial:{subId}` |
+| subscriptions-reconcile (expired) | `cron-reconcile:{jobRunId}:expired:{subId}` |
+| subscriptions-reconcile (tg sync) | `cron-reconcile:{jobRunId}:tg:{userId}:{clubId}` |
+
+## Manual smoke-test procedure
+
+If paths have not fired naturally, trigger manually:
+
+### grant-access-for-order
+Invoke edge function `grant-access-for-order` with a test order ID that has valid product mappings.
+
+### subscription-charge
+Invoke edge function `subscription-charge` with action `process_renewals` or wait for next cron cycle.
+
+### subscriptions-reconcile
+Invoke edge function `subscriptions-reconcile` or wait for next cron cycle.
+
+After each invocation, re-run the SQL query above and fill in the machine-check results.
+
+## Overall verdict
+
+**PENDING_RUNTIME_EVENT** — No runtime rows available yet.
+Cutover (phase1_ledger_cutover_at) is BLOCKED until all 3 paths produce at least 1 valid row.
+
+## Cutover guard
+
+phase1_ledger_cutover_at MUST NOT be set until ALL of:
+- runtime_smoke = PASS (all 3 paths have ≥1 valid row)
+- grep_guard = PASS
+- contract_validation = PASS
+- orphan_downstream = 0
+- missing_required_post_check = 0

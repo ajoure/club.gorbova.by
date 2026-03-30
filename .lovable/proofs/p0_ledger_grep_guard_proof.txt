@@ -1,0 +1,118 @@
+# Phase 1 Ledger Grep Guard Proof
+# Generated: 2026-03-30 (PATCH v22.4)
+# Scope: Verify absence of forbidden patterns in live ledger-writing code
+
+## Grep scope
+
+Searched files (live scope only):
+- supabase/functions/_shared/fulfillment-executor.ts
+- supabase/functions/_shared/access-revoker.ts
+- supabase/functions/grant-access-for-order/index.ts
+- supabase/functions/subscription-charge/index.ts
+- supabase/functions/subscriptions-reconcile/index.ts
+
+Excluded:
+- .lovable/proofs/
+- supabase/migrations/
+- archival/test paths
+- supabase/functions/test-payment-*/
+- supabase/functions/cleanup-*/
+
+## Forbidden pattern checks
+
+### 1. target_type = 'telegram_access' in ledger context
+
+```
+grep -n "target_type.*telegram_access\|targetType.*telegram_access" <scope>
+```
+
+**Result: 0 matches** ✅ PASS
+
+### 2. target_type = bare 'subscription' (not 'subscription_tier')
+
+```
+grep -nP "target_type\s*[:=]\s*['\"]subscription['\"]|targetType\s*[:=]\s*['\"]subscription['\"]" <scope>
+```
+
+**Result: 0 matches** ✅ PASS
+
+### 3. status = 'completed' in ledger context
+
+```
+grep -nP "status\s*[:=]\s*['\"]completed['\"]" <scope>
+```
+
+**Result: 0 matches** ✅ PASS
+
+### 4. Old-style applicable: true/false in post_check
+
+```
+grep -nP "applicable\s*:" <scope>
+```
+
+**Result: 0 matches** ✅ PASS
+
+### 5. telegram_grant as post_check key
+
+```
+grep -n "telegram_grant" <scope>
+```
+
+**Result: 0 matches** ✅ PASS
+
+Note: `telegram_grant` exists in accessValidation.ts (access-check source name, NOT ledger post_check key) and test-payment-direct/index.ts (test path, excluded from scope). These are not ledger-writing contexts.
+
+## DB old-value guard
+
+Verified in `access_grant_ledger` table:
+
+| Check | SQL | Count | Status |
+|-------|-----|-------|--------|
+| telegram_access target | `WHERE target_type = 'telegram_access'` | 0 | ✅ PASS |
+| bare subscription target | `WHERE target_type = 'subscription'` | 0 | ✅ PASS |
+| completed non-batch | `WHERE status = 'completed' AND action_type <> 'batch_start'` | 0 | ✅ PASS |
+
+## Helper Contract Freeze
+
+### writeLedgerEntry()
+
+**Contract**: Returns `{ id: string | null, execution_key: string | null, error: string | null }`
+
+Verified by grep:
+- Line 226: `execution_key: string | null;` in return type
+- Line 233: JSDoc documents "Returns { id, execution_key } for parent propagation"
+- Line 267: `.select('id, execution_key')` after insert
+
+**Status: ✅ FROZEN**
+
+### executeRevoke()
+
+**Contract**: Caller MUST provide `targetType`, `targetKey`, `targetRef`, `reasonCode`, `reconcileBasis` via RevokeContext.
+
+Verified by grep:
+- `targetType: LedgerTargetType` — required field in RevokeContext
+- `targetKey: string` — required field in RevokeContext
+- `targetRef?: string | null` — optional field in RevokeContext
+- `reasonCode: LedgerReasonCode` — required field in RevokeContext
+- `reconcileBasis: string` — required field in RevokeContext
+- Helper does NOT compute any of these internally; all come from caller.
+
+**Status: ✅ FROZEN**
+
+### buildPostCheck()
+
+**Contract**: Returns exactly 5 canonical keys: `entitlement`, `telegram`, `subscription`, `ledger_row`, `target_resolution`.
+
+Verified by grep:
+- Line 116: `entitlement: PostCheckItem;`
+- Line 117: `telegram: PostCheckItem;`
+- Line 118: `subscription: PostCheckItem;`
+- Line 119: `ledger_row: PostCheckItem;`
+- Line 120: `target_resolution: PostCheckItem;`
+- No `telegram_grant` key anywhere in fulfillment-executor.ts
+
+**Status: ✅ FROZEN**
+
+## Overall verdict
+
+**PASS** — All forbidden patterns absent from live scope. Helper contracts verified and frozen.

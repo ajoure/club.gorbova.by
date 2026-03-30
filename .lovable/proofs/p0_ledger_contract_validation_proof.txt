@@ -179,6 +179,29 @@ Not used anywhere. Replaced with 'subscription_tier' or 'product'.
 Runtime proof (actual ledger rows) will be collected after deployment of PATCH v22.3.
 Code-level proof: ✅ ALL CHECKS PASS.
 
+## Runtime Validation Gate (v22.4)
+
+Added: 2026-03-30
+
+### Status: PENDING_RUNTIME_EVENT
+
+No ledger rows exist yet for any of the 3 wrapped paths (gafo:%, sub-renew:%, cron-reconcile:%).
+DB old-value guard passed: 0 rows with telegram_access target, 0 with bare subscription target, 0 with completed non-batch.
+
+### Linked proofs
+- `p0_ledger_runtime_smoke_proof.txt` — runtime row validation (PENDING)
+- `p0_ledger_grep_guard_proof.txt` — code grep + helper contract freeze (PASS)
+- `p0_runtime_manual_smoke_steps.txt` — manual smoke-test procedure
+
+### Cutover guard
+phase1_ledger_cutover_at MUST NOT be set until:
+- runtime_smoke = PASS (all 3 paths ≥1 valid row)
+- grep_guard = PASS ✅
+- contract_validation = PASS ✅
+- orphan_downstream = 0
+- missing_required_post_check = 0
+
 ## Conclusion
-PATCH v22.3 foundation fix brings all 3 wrapped paths into full DDL compatibility.
-Safe to proceed with Steps 4–10 after deployment verification.
+PATCH v22.3 foundation fix brings all 3 wrapped paths into full DDL compatibility (code-level).
+PATCH v22.4 runtime validation gate is PENDING — cutover blocked until runtime smoke passes.
+Safe to proceed with Steps 4–10 ONLY after runtime smoke PASS.
