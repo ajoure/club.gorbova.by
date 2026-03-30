@@ -15,6 +15,8 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +24,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -30,6 +32,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // === UI Labels & Config ===
 
@@ -99,6 +104,136 @@ const DURATION_PRESETS = [
   { label: "12 месяцев", days: 365 },
 ];
 
+// === Multi-select product checkbox component ===
+function ProductCheckboxList({
+  products,
+  selected,
+  onChange,
+  placeholder = "Поиск продукта…",
+}: {
+  products: Array<{ id: string; name: string; code: string }>;
+  selected: string[];
+  onChange: (ids: string[]) => void;
+  placeholder?: string;
+}) {
+  const [search, setSearch] = useState("");
+  const filtered = useMemo(() => {
+    if (!search.trim()) return products;
+    const q = search.toLowerCase();
+    return products.filter(p => p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q));
+  }, [products, search]);
+
+  const toggle = (id: string) => {
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+  };
+
+  return (
+    <div className="space-y-2">
+      {/* Selected chips */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selected.map(id => {
+            const p = products.find(x => x.id === id);
+            return (
+              <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
+                {p?.name || id}
+                <button onClick={() => toggle(id)} className="ml-0.5 hover:text-destructive">
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            );
+          })}
+        </div>
+      )}
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={placeholder}
+          className="h-8 text-xs pl-7"
+        />
+      </div>
+      {/* Counter */}
+      <div className="text-[10px] text-muted-foreground">
+        Выбрано: {selected.length} из {products.length}
+      </div>
+      {/* Checkbox list */}
+      <ScrollArea className="max-h-[200px] border rounded-md">
+        <div className="p-1 space-y-0.5">
+          {filtered.length === 0 ? (
+            <div className="text-xs text-muted-foreground text-center py-3">Ничего не найдено</div>
+          ) : (
+            filtered.map(p => (
+              <label
+                key={p.id}
+                className={cn(
+                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs hover:bg-muted/50 transition-colors",
+                  selected.includes(p.id) && "bg-primary/5"
+                )}
+              >
+                <Checkbox
+                  checked={selected.includes(p.id)}
+                  onCheckedChange={() => toggle(p.id)}
+                />
+                <span className="flex-1 min-w-0 truncate">{p.name}</span>
+              </label>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+// === Expandable product list for rule cards ===
+function ProductListBadge({
+  productIds,
+  products,
+  prefix,
+  className,
+}: {
+  productIds: string[];
+  products: Array<{ id: string; name: string }>;
+  prefix: string;
+  className?: string;
+}) {
+  const names = productIds.map(id => products.find(p => p.id === id)?.name || id);
+  const [expanded, setExpanded] = useState(false);
+
+  if (productIds.length === 0) return null;
+  if (productIds.length === 1) {
+    return (
+      <Badge variant="outline" className={cn("text-[10px]", className)}>
+        {prefix} {names[0]}
+      </Badge>
+    );
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge
+            variant="outline"
+            className={cn("text-[10px] cursor-pointer", className)}
+            onClick={() => setExpanded(!expanded)}
+          >
+            {prefix} {productIds.length} продуктов
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-[300px]">
+          <div className="space-y-0.5 text-xs">
+            {names.map((n, i) => <div key={i}>• {n}</div>)}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+
 interface Props {
   productId: string;
   tariffs: Array<{ id: string; name: string }>;
@@ -135,10 +270,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
     notes: "",
-    // Conditional service rule fields
+    // Multi-product target (for product_access)
+    target_product_ids: [] as string[],
+    // Conditional rule fields
     has_condition: false,
-    condition_required_product_id: "",
-    condition_required_tariff_id: "",
+    condition_use_same_list: true,
+    condition_required_product_ids: [] as string[],
   });
 
   // Filtered rules
@@ -176,6 +313,27 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     return tariffDurations.find(t => t.id === tariffId)?.access_days ?? null;
   };
 
+  // === Helpers to extract multi-product data from conditions ===
+  const getTargetProductIds = (rule: AccessRule): string[] => {
+    const cond = (rule.conditions || {}) as Record<string, unknown>;
+    if (Array.isArray(cond.target_product_ids) && cond.target_product_ids.length > 0) {
+      return cond.target_product_ids as string[];
+    }
+    // Fallback to single target_ref for legacy rules
+    return rule.target_ref ? [rule.target_ref] : [];
+  };
+
+  const getConditionProductIds = (rule: AccessRule): string[] => {
+    const cond = (rule.conditions || {}) as Record<string, unknown>;
+    if (cond.condition_type !== "prior_purchase") return [];
+    if (Array.isArray(cond.required_product_ids) && cond.required_product_ids.length > 0) {
+      return cond.required_product_ids as string[];
+    }
+    // Fallback to single required_product_id
+    if (cond.required_product_id) return [cond.required_product_id as string];
+    return [];
+  };
+
   // === Dialog handlers ===
   const openCreateDialog = () => {
     setEditing(null);
@@ -191,9 +349,10 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: "",
       rule_purpose: "primary",
       notes: "",
+      target_product_ids: [],
       has_condition: false,
-      condition_required_product_id: "",
-      condition_required_tariff_id: "",
+      condition_use_same_list: true,
+      condition_required_product_ids: [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -204,6 +363,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     const purpose = getRulePurpose(rule);
     const conditions = (rule.conditions || {}) as Record<string, unknown>;
     const hasCondition = conditions.condition_type === "prior_purchase";
+
+    const targetIds = getTargetProductIds(rule);
+    const conditionIds = getConditionProductIds(rule);
+
+    // Determine if condition uses same list as targets
+    const useSameList = hasCondition && targetIds.length > 0 && conditionIds.length > 0 &&
+      targetIds.length === conditionIds.length &&
+      targetIds.every(id => conditionIds.includes(id));
+
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -216,16 +384,23 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
       notes: rule.notes || "",
+      target_product_ids: rule.grant_target_type === "product_access" ? targetIds : [],
       has_condition: hasCondition,
-      condition_required_product_id: (conditions.required_product_id as string) || "",
-      condition_required_tariff_id: (conditions.required_tariff_id as string) || "",
+      condition_use_same_list: useSameList,
+      condition_required_product_ids: useSameList ? [] : conditionIds,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
   };
 
   const handleSave = async () => {
-    if (!form.target_ref) {
+    // Validate: for product_access multi-select, need at least one product
+    if (form.grant_target_type === "product_access") {
+      if (form.target_product_ids.length === 0) {
+        toast.error("Выберите хотя бы один продукт для выдачи");
+        return;
+      }
+    } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
     }
@@ -234,14 +409,28 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     if (form.rule_purpose !== "primary") {
       conditions.rule_purpose = form.rule_purpose;
     }
-    // Conditional service rule: prior_purchase
-    if (form.has_condition && form.condition_required_product_id) {
+
+    // Multi-product target storage (add-only JSONB)
+    if (form.grant_target_type === "product_access" && form.target_product_ids.length > 0) {
+      conditions.target_product_ids = form.target_product_ids;
+    }
+
+    // Conditional prior_purchase
+    if (form.has_condition && form.grant_target_type === "product_access") {
       conditions.condition_type = "prior_purchase";
-      conditions.required_product_id = form.condition_required_product_id;
-      if (form.condition_required_tariff_id) {
-        conditions.required_tariff_id = form.condition_required_tariff_id;
+      conditions.match_mode = "per_product";
+
+      const effectiveConditionIds = form.condition_use_same_list
+        ? form.target_product_ids
+        : form.condition_required_product_ids;
+
+      if (effectiveConditionIds.length > 0) {
+        conditions.required_product_ids = effectiveConditionIds;
+        // Backward-compatible: also write single field for legacy readers
+        if (effectiveConditionIds.length === 1) {
+          conditions.required_product_id = effectiveConditionIds[0];
+        }
       }
-      conditions.match_mode = "any_paid_order";
     }
 
     // Parse string fields to numbers on save
@@ -250,12 +439,26 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       ? (form.duration_days.trim() === "" ? null : (parseInt(form.duration_days, 10) || null))
       : null;
 
+    // For multi-product: target_ref = first product (backward-compatible), target_label = summary
+    let targetRef = form.target_ref;
+    let targetLabel = form.target_label;
+    if (form.grant_target_type === "product_access" && form.target_product_ids.length > 0) {
+      targetRef = form.target_product_ids[0];
+      if (form.target_product_ids.length === 1) {
+        targetLabel = availableProducts.find(p => p.id === targetRef)?.name || targetRef;
+      } else {
+        const names = form.target_product_ids
+          .map(id => availableProducts.find(p => p.id === id)?.name || id);
+        targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
+      }
+    }
+
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
       tariff_id: form.scope === "tariff" ? form.tariff_id : null,
       grant_target_type: form.grant_target_type,
-      target_ref: form.target_ref,
-      target_label: form.target_label || null,
+      target_ref: targetRef,
+      target_label: targetLabel || null,
       is_active: form.is_active,
       priority: parsedPriority,
       duration_days: parsedDuration,
@@ -271,14 +474,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     setDialogOpen(false);
   };
 
-  // Auto-set target_label when selecting target
+  // Auto-set target_label when selecting target (non-product_access types)
   const handleTargetRefChange = (ref: string) => {
     let label = ref;
     if (form.grant_target_type === "club") {
       const club = availableClubs.find((c) => c.id === ref);
       label = club ? `${club.club_name} (${getClubAccessLabel(club)})` : ref;
-    } else if (form.grant_target_type === "product_access") {
-      label = availableProducts.find((p) => p.id === ref)?.name || ref;
     } else if (form.grant_target_type === "entitlement") {
       label = ref;
     }
@@ -299,30 +500,24 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     durationSource: string,
     sourceType: string,
   ): string => {
-    // 1. Explicit duration from rule
     if (durationDays != null && durationSource === "rule") {
       return `${formatDuration(durationDays)} (из правила)`;
     }
-    // 2. Duration from tariff
     if (durationDays != null && durationSource === "tariff") {
       return `${formatDuration(durationDays)} (из тарифа)`;
     }
-    // 3. Duration from legacy
     if (durationDays != null && durationSource === "legacy") {
       return `${formatDuration(durationDays)} (старая настройка)`;
     }
-    // 4. Duration present but source unknown
     if (durationDays != null) {
       return formatDuration(durationDays)!;
     }
-    // 5. No duration — distinguish unresolved vs truly unlimited
     if (sourceType === "rule" && durationSource === "unknown") {
       return "По сроку тарифа покупки";
     }
     if (sourceType === "rule") {
       return "По сроку тарифа покупки";
     }
-    // Legacy with null duration — unknown at preview time
     if (sourceType === "legacy") {
       return "Срок не задан";
     }
@@ -428,6 +623,11 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             const defaultDuration = rule.tariff_id ? getDefaultDuration(rule.tariff_id) : null;
             const effectiveDuration = rule.duration_days ?? defaultDuration;
 
+            // Multi-product data
+            const targetIds = rule.grant_target_type === "product_access" ? getTargetProductIds(rule) : [];
+            const conditionIds = getConditionProductIds(rule);
+            const isMultiProduct = targetIds.length > 1;
+
             return (
               <Card
                 key={rule.id}
@@ -445,7 +645,17 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-sm">{rule.target_label || rule.target_ref}</span>
+                        {/* Title: show multi-product badge or single name */}
+                        {isMultiProduct ? (
+                          <ProductListBadge
+                            productIds={targetIds}
+                            products={availableProducts}
+                            prefix="Доступ к"
+                            className="text-primary border-primary/30"
+                          />
+                        ) : (
+                          <span className="font-medium text-sm">{rule.target_label || rule.target_ref}</span>
+                        )}
                         <Badge variant="outline" className="text-[10px]">
                           {TARGET_TYPE_LABELS[rule.grant_target_type]}
                         </Badge>
@@ -469,17 +679,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                             Дублирует старую настройку
                           </Badge>
                         )}
-                        {(() => {
-                          const cond = (rule.conditions || {}) as Record<string, unknown>;
-                          if (cond.condition_type !== "prior_purchase") return null;
-                          const condProduct = availableProducts.find(p => p.id === cond.required_product_id);
-                          const condLabel = condProduct?.name || (cond.required_product_id as string) || "—";
-                          return (
-                            <Badge variant="outline" className="text-[10px] text-orange-600 border-orange-300">
-                              Условие: ранее покупал {condLabel}
-                            </Badge>
-                          );
-                        })()}
+                        {/* Condition badge: multi-product aware */}
+                        {conditionIds.length > 0 && (
+                          <ProductListBadge
+                            productIds={conditionIds}
+                            products={availableProducts}
+                            prefix="Условие: ранее покупал"
+                            className="text-orange-600 border-orange-300"
+                          />
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
@@ -559,11 +767,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             </p>
           ) : (
             <div className="space-y-2">
-              {/* Active grants */}
               {effectiveGrants.filter(g => g.effective_status === "active").map((g, idx) => (
                 <EffectiveGrantCard key={`active-${idx}`} grant={g} getDurationDisplay={getDurationDisplay} />
               ))}
-              {/* Overridden grants (collapsed) */}
               {effectiveGrants.filter(g => g.effective_status === "overridden").length > 0 && (
                 <Collapsible>
                   <CollapsibleTrigger asChild>
@@ -687,7 +893,16 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
               </div>
               <Select
                 value={form.grant_target_type}
-                onValueChange={(v: GrantTargetType) => setForm({ ...form, grant_target_type: v, target_ref: "", target_label: "" })}
+                onValueChange={(v: GrantTargetType) => setForm({
+                  ...form,
+                  grant_target_type: v,
+                  target_ref: "",
+                  target_label: "",
+                  target_product_ids: [],
+                  has_condition: false,
+                  condition_use_same_list: true,
+                  condition_required_product_ids: [],
+                })}
               >
                 <SelectTrigger className="h-9">
                   <SelectValue />
@@ -745,17 +960,14 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 </div>
               )}
 
+              {/* Multi-select product list for product_access */}
               {form.grant_target_type === "product_access" && (
-                <Select value={form.target_ref} onValueChange={handleTargetRefChange}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Выберите продукт" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableProducts.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ProductCheckboxList
+                  products={availableProducts}
+                  selected={form.target_product_ids}
+                  onChange={(ids) => setForm({ ...form, target_product_ids: ids })}
+                  placeholder="Поиск продукта для выдачи…"
+                />
               )}
 
               {form.grant_target_type === "entitlement" && (
@@ -797,16 +1009,18 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 </div>
               )}
 
-              {/* Label override */}
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
-                <Input
-                  value={form.target_label}
-                  onChange={(e) => setForm({ ...form, target_label: e.target.value })}
-                  placeholder="Автоматически из выбранной цели"
-                  className="h-9"
-                />
-              </div>
+              {/* Label override — hide for product_access multi-select (auto-generated) */}
+              {form.grant_target_type !== "product_access" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
+                  <Input
+                    value={form.target_label}
+                    onChange={(e) => setForm({ ...form, target_label: e.target.value })}
+                    placeholder="Автоматически из выбранной цели"
+                    className="h-9"
+                  />
+                </div>
+              )}
             </div>
 
             <Separator />
@@ -850,41 +1064,58 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     <Label className="text-xs">Выдавать только если ранее покупал</Label>
                   </div>
                   {form.has_condition && (
-                    <div className="space-y-2 pl-1">
-                      <div className="space-y-1">
-                        <Label className="text-[11px] text-muted-foreground">Требуемый продукт</Label>
-                        <Select
-                          value={form.condition_required_product_id}
-                          onValueChange={(v) => setForm({ ...form, condition_required_product_id: v, condition_required_tariff_id: "" })}
-                        >
-                          <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder="Выберите продукт-условие" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {availableProducts.map((p) => (
-                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {form.condition_required_product_id && (
-                        <div className="space-y-1">
-                          <Label className="text-[11px] text-muted-foreground">Конкретный тариф (необязательно)</Label>
-                          <Select
-                            value={form.condition_required_tariff_id || "__any__"}
-                            onValueChange={(v) => setForm({ ...form, condition_required_tariff_id: v === "__any__" ? "" : v })}
+                    <div className="space-y-3 pl-1">
+                      {/* Same-list toggle */}
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setForm({ ...form, condition_use_same_list: true })}
+                            className={cn(
+                              "flex-1 px-3 py-1.5 rounded-md border text-xs transition-all",
+                              form.condition_use_same_list
+                                ? "border-primary bg-primary/5 text-primary"
+                                : "border-border text-muted-foreground hover:text-foreground"
+                            )}
                           >
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__any__">Любой тариф</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            Проверять эти же продукты
+                          </button>
+                          <button
+                            onClick={() => setForm({ ...form, condition_use_same_list: false })}
+                            className={cn(
+                              "flex-1 px-3 py-1.5 rounded-md border text-xs transition-all",
+                              !form.condition_use_same_list
+                                ? "border-primary bg-primary/5 text-primary"
+                                : "border-border text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            Выбрать отдельный список
+                          </button>
                         </div>
+                      </div>
+
+                      {form.condition_use_same_list ? (
+                        <div className="text-[11px] text-muted-foreground bg-muted/30 rounded-md px-3 py-2">
+                          {form.target_product_ids.length > 0 ? (
+                            <>
+                              Проверка по {form.target_product_ids.length} выбранным продуктам.
+                              Доступ будет выдан только к тем, которые ранее покупались.
+                            </>
+                          ) : (
+                            "Сначала выберите продукты для выдачи (шаг 3)"
+                          )}
+                        </div>
+                      ) : (
+                        <ProductCheckboxList
+                          products={availableProducts}
+                          selected={form.condition_required_product_ids}
+                          onChange={(ids) => setForm({ ...form, condition_required_product_ids: ids })}
+                          placeholder="Поиск продукта-условия…"
+                        />
                       )}
+
                       <p className="text-[10px] text-muted-foreground">
-                        Доступ будет выдан только если у покупателя есть оплаченный заказ на выбранный продукт. Проверяется по истории заказов.
+                        Из выбранных целевых продуктов будут выданы только те, которые ранее были куплены (оплаченный заказ).
+                        Остальные будут пропущены.
                       </p>
                     </div>
                   )}
@@ -902,7 +1133,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => setForm({ ...form, duration_mode: "tariff", duration_days: null })}
+                  onClick={() => setForm({ ...form, duration_mode: "tariff", duration_days: null as any })}
                   className={cn(
                     "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
                     form.duration_mode === "tariff"
@@ -964,7 +1195,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                       onChange={(e) => setForm({ ...form, duration_days: e.target.value.replace(/\D/g, "") })}
                       onBlur={() => {
                         const trimmed = form.duration_days.trim();
-                        if (trimmed === "") return; // allow empty
+                        if (trimmed === "") return;
                         const n = parseInt(trimmed, 10);
                         if (isNaN(n) || n < 1) setForm(f => ({ ...f, duration_days: "" }));
                       }}
