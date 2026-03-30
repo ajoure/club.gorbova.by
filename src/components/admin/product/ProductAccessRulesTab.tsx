@@ -877,6 +877,47 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* === Delete Confirmation Dialog === */}
+      <AlertDialog open={!!deletingRule} onOpenChange={(open) => { if (!open) setDeletingRule(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить правило?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingRule && (
+                <>
+                  Будет удалено правило: <strong>{deletingRule.target_label || deletingRule.target_ref}</strong>
+                  {" "}({TARGET_TYPE_LABELS[deletingRule.grant_target_type]}).
+                  <br />
+                  Это действие необратимо.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletePending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeletePending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!deletingRule || isDeletePending) return;
+                setIsDeletePending(true);
+                try {
+                  await deleteRule(deletingRule.id);
+                  setDeletingRule(null);
+                } catch {
+                  // toast already handled by mutation
+                } finally {
+                  setIsDeletePending(false);
+                }
+              }}
+            >
+              {isDeletePending ? "Удаление…" : "Удалить правило"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
