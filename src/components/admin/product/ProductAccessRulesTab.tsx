@@ -223,6 +223,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       conditions.rule_purpose = form.rule_purpose;
     }
 
+    // Parse string fields to numbers on save
+    const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
+    const parsedDuration = form.duration_mode === "manual"
+      ? (form.duration_days.trim() === "" ? null : (parseInt(form.duration_days, 10) || null))
+      : null;
+
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
       tariff_id: form.scope === "tariff" ? form.tariff_id : null,
@@ -230,8 +236,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: form.target_ref,
       target_label: form.target_label || null,
       is_active: form.is_active,
-      priority: form.priority,
-      duration_days: form.duration_mode === "manual" ? form.duration_days : null,
+      priority: parsedPriority,
+      duration_days: parsedDuration,
       notes: form.notes || null,
       conditions: Object.keys(conditions).length > 0 ? conditions : null,
     };
