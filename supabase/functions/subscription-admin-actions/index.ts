@@ -1112,13 +1112,21 @@ Deno.serve(async (req) => {
 
     const auditLogId = auditRow?.id || subscription_id;
 
-    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete, refund+revoke)
+    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete)
+    // refund+revoke is handled inline in its own branch above
     const revokeBranches = ['cancel', 'revoke_access', 'delete'];
     if (revokeBranches.includes(action)) {
       try {
-        // Pre-state guard: if subscription was already canceled before this action, write skip
-        const beforeStatus = subscription.status;
-        const alreadyCanceled = beforeStatus === 'canceled' || beforeStatus === 'expired';
+        // Pre-state guard: before/after projection diff
+        const projectionChanged = (
+          beforeSnapshot.status !== 'canceled' &&
+          beforeSnapshot.status !== 'expired'
+        ) && (
+          beforeSnapshot.canceled_at === null ||
+          beforeSnapshot.access_end_at !== new Date().toISOString()
+        );
+        // Simplified: if before was already canceled/expired → no projection change
+        const alreadyCanceled = beforeSnapshot.status === 'canceled' || beforeSnapshot.status === 'expired';
 
         const reasonCodeMap: Record<string, string> = {
           cancel: 'admin_cancel',
@@ -1136,10 +1144,13 @@ Deno.serve(async (req) => {
           delete: 'admin_delete',
         };
 
+        // Use branch-specific auditId (from within the case), fallback to generic
+        const discriminatorId = branchAuditId || auditLogId;
+
         if (alreadyCanceled) {
           const skipEntry: LedgerEntry = {
             source_event_type: 'admin',
-            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
             source_subject_type: 'admin_action',
             source_subject_ref: adminUserId,
             source_subscription_id: subscription_id,
@@ -1153,11 +1164,16 @@ Deno.serve(async (req) => {
             status: 'skipped',
             result: {
               skip_reason: 'already_canceled',
-              before_status: beforeStatus,
+              branch_decision_source: 'before_after_projection_diff',
+              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
+              before_status: beforeSnapshot.status,
+              before_canceled_at: beforeSnapshot.canceled_at,
+              before_access_end_at: beforeSnapshot.access_end_at,
               reconcile_basis: reconcileMap[action],
             },
           };
           await writeLedgerEntry(supabase, skipEntry);
+          console.log(`[subscription-admin-actions] Ledger ${action}: skipped (already_canceled), before_status=${beforeSnapshot.status}`);
         } else {
           const revokeCtx: RevokeContext = {
             userId: subscription.user_id,
@@ -1169,9 +1185,16 @@ Deno.serve(async (req) => {
             reasonCode: reasonCodeMap[action] as any,
             reconcileBasis: reconcileMap[action],
             sourceEventType: 'admin',
-            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${discriminatorId}`,
             sourceSubjectType: 'admin_action',
             sourceSubjectRef: adminUserId,
+            metadata: {
+              branch_decision_source: 'before_after_projection_diff',
+              audit_discriminator_source: branchAuditId ? 'branch_audit_id' : 'generic_audit_id',
+              before_status: beforeSnapshot.status,
+              before_canceled_at: beforeSnapshot.canceled_at,
+              before_access_end_at: beforeSnapshot.access_end_at,
+            },
           };
           const revokeResult = await executeRevoke(supabase, revokeCtx);
           console.log(`[subscription-admin-actions] Ledger ${action}: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
@@ -1179,6 +1202,15 @@ Deno.serve(async (req) => {
       } catch (ledgerErr) {
         console.error(`[subscription-admin-actions] Ledger error for ${action} (non-blocking):`, ledgerErr);
       }
+    }
+
+    // Deferred physical delete: AFTER audit + ledger writes to preserve traceability
+    if (pendingPhysicalDelete) {
+      await supabase
+        .from('subscriptions_v2')
+        .delete()
+        .eq('id', subscription_id);
+      console.log(`[subscription-admin-actions] Physical delete completed for ${subscription_id}`);
     }
 
     console.log(`Admin action ${action} completed for subscription ${subscription_id}`);
