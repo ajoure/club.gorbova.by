@@ -1196,6 +1196,16 @@ export default function AdminProductDetailV2() {
           <TabsContent value="composition" className="space-y-4 mt-6">
             {productId && <ProductCompositionTab productId={productId} />}
           </TabsContent>
+
+          {/* Access Rules Tab */}
+          <TabsContent value="access_rules" className="space-y-4 mt-6">
+            {productId && (
+              <ProductAccessRulesTab
+                productId={productId}
+                tariffs={(tariffs || []).map((t: any) => ({ id: t.id, name: t.name }))}
+              />
+            )}
+          </TabsContent>
         </Tabs>
       </div>
 
