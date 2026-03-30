@@ -979,7 +979,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
 // === Effective Grant Card Component ===
 
-function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGrant; formatDuration: (d: number | null) => string }) {
+function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: EffectiveGrant; getDurationDisplay: (d: number | null, ds: string, st: string) => string }) {
   const Icon = TARGET_TYPE_ICONS[g.grant_target_type] || Shield;
   const isOverridden = g.effective_status === "overridden";
 
@@ -1014,12 +1014,7 @@ function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGran
             {g.source_label}
           </Badge>
           <Badge variant="outline" className="text-[10px]">
-            {formatDuration(g.duration_days)}
-            {g.duration_source !== "unknown" && (
-              <span className="ml-0.5 text-muted-foreground">
-                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "старая настройка"})
-              </span>
-            )}
+            {getDurationDisplay(g.duration_days, g.duration_source, g.source_type)}
           </Badge>
           {g.runtime_support !== "full" && (
             <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
