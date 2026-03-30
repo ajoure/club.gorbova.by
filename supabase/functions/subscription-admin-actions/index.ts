@@ -662,6 +662,16 @@ Deno.serve(async (req) => {
 
     let result: Record<string, any> = { success: true };
 
+    // Phase 1: Pre-state snapshot for revoke branches (before any DB update)
+    const beforeSnapshot = {
+      status: subscription.status,
+      canceled_at: subscription.canceled_at,
+      access_end_at: subscription.access_end_at,
+      cancel_at: subscription.cancel_at,
+    };
+    let branchAuditId: string | null = null;
+    let pendingPhysicalDelete = false;
+
     switch (action) {
       case 'cancel': {
         const cancelAt = subscription.access_end_at || new Date().toISOString();
@@ -675,6 +685,20 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq('id', subscription_id);
+
+        // Branch-specific audit for ledger discriminator
+        const { data: cancelAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.cancel.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+          },
+        }).select('id').single();
+        branchAuditId = cancelAudit?.id || null;
 
         // Send Telegram notification about cancellation (access_ending)
         const endDate = new Date(cancelAt).toLocaleDateString('ru-RU');
