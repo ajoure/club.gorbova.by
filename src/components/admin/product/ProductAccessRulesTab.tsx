@@ -131,18 +131,20 @@ function ProductCheckboxList({
     <div className="space-y-2">
       {/* Selected chips */}
       {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selected.map(id => {
-            const p = products.find(x => x.id === id);
-            return (
-              <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
-                {p?.name || id}
-                <button onClick={() => toggle(id)} className="ml-0.5 hover:text-destructive">
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
-            );
-          })}
+        <div className="max-h-[80px] overflow-y-auto px-1">
+          <div className="flex flex-wrap gap-1">
+            {selected.map(id => {
+              const p = products.find(x => x.id === id);
+              return (
+                <Badge key={id} variant="secondary" className="text-[11px] gap-1 pr-1">
+                  {p?.name || id}
+                  <button onClick={() => toggle(id)} className="ml-0.5 hover:text-destructive">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              );
+            })}
+          </div>
         </div>
       )}
       {/* Search */}
@@ -159,9 +161,9 @@ function ProductCheckboxList({
       <div className="text-[10px] text-muted-foreground">
         Выбрано: {selected.length} из {products.length}
       </div>
-      {/* Checkbox list */}
-      <ScrollArea className="max-h-[200px] border rounded-md">
-        <div className="p-1 space-y-0.5">
+      {/* Checkbox list — plain div with overflow instead of Radix ScrollArea */}
+      <div className="max-h-[200px] overflow-y-auto border rounded-md bg-background">
+        <div className="p-2 space-y-0.5">
           {filtered.length === 0 ? (
             <div className="text-xs text-muted-foreground text-center py-3">Ничего не найдено</div>
           ) : (
@@ -169,7 +171,8 @@ function ProductCheckboxList({
               <label
                 key={p.id}
                 className={cn(
-                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs hover:bg-muted/50 transition-colors",
+                  "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs",
+                  "hover:bg-muted/50 transition-colors leading-normal",
                   selected.includes(p.id) && "bg-primary/5"
                 )}
               >
@@ -182,7 +185,7 @@ function ProductCheckboxList({
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
