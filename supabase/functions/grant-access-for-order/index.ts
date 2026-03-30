@@ -672,11 +672,13 @@ Deno.serve(async (req) => {
     
     const postCheck = buildPostCheck({
       entitlement: { status: results.entitlement?.action || 'unknown', ref: results.entitlement?.id },
-      telegramGrant: grantTelegram ? { status: results.telegram ? 'queued' : 'skipped' } : undefined,
+      telegram: grantTelegram ? { status: results.telegram ? 'queued' : 'skipped' } : undefined,
       subscription: { status: results.subscription?.action || 'unknown', ref: results.subscription?.id },
       ledgerRow: { status: 'written' },
       targetResolution: { status: 'matched', ref: productId },
     });
+
+    const ledgerStatus = actionType === 'grant' ? 'granted' : 'extended';
 
     await writeLedgerEntry(supabase, {
       source_event_type: 'webhook',
@@ -686,14 +688,14 @@ Deno.serve(async (req) => {
       source_order_id: orderId,
       source_offer_id: order.offer_id || null,
       action_type: actionType,
-      reason_code: 'order_grant',
-      target_type: 'subscription',
+      reason_code: 'paid_order',
+      target_type: 'product',
       target_key: `${userId}:${productId}`,
       target_ref: results.subscription?.id || null,
       user_id: userId,
       profile_id: profileId || null,
       order_id: orderId,
-      status: 'completed',
+      status: ledgerStatus,
       result: {
         access_start: accessStartAt.toISOString(),
         access_end: accessEndAt.toISOString(),
