@@ -72,13 +72,17 @@ Deno.serve(async (req) => {
         const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
         const revokeResult = await executeRevoke(supabase, {
           userId: sub.user_id,
-          clubId,
+          targetType: 'subscription_tier',
+          targetKey: `${sub.user_id}:${sub.product_id}`,
+          targetRef: sub.id,
           subscriptionId: sub.id,
-          reason: 'subscription_expired',
+          reasonCode: 'subscription_expired',
+          reconcileBasis: 'cancel_at_passed',
           sourceEventType: 'cron',
           sourceEventKey: `cron-reconcile:${jobRunId}:${sub.id}`,
           sourceSubjectType: 'subscription',
           sourceSubjectRef: sub.id,
+          clubId: clubId,
         });
 
         if (revokeResult.revoked) {
@@ -139,13 +143,17 @@ Deno.serve(async (req) => {
           const clubId = await getClubIdForSubscription(sub.user_id, sub.product_id);
           const revokeResult = await executeRevoke(supabase, {
             userId: sub.user_id,
-            clubId,
+            targetType: 'subscription_tier',
+            targetKey: `${sub.user_id}:${sub.product_id}`,
+            targetRef: sub.id,
             subscriptionId: sub.id,
-            reason: 'trial_canceled',
+            reasonCode: 'trial_expired',
+            reconcileBasis: 'trial_end_at_passed_and_canceled',
             sourceEventType: 'cron',
             sourceEventKey: `cron-reconcile:${jobRunId}:trial:${sub.id}`,
             sourceSubjectType: 'subscription',
             sourceSubjectRef: sub.id,
+            clubId: clubId,
           });
 
           if (revokeResult.revoked) {
@@ -199,13 +207,17 @@ Deno.serve(async (req) => {
         
         const revokeResult = await executeRevoke(supabase, {
           userId: sub.user_id,
-          clubId,
+          targetType: 'subscription_tier',
+          targetKey: `${sub.user_id}:${sub.product_id}`,
+          targetRef: sub.id,
           subscriptionId: sub.id,
-          reason: 'access_expired',
+          reasonCode: 'subscription_expired',
+          reconcileBasis: 'access_end_at_passed',
           sourceEventType: 'cron',
           sourceEventKey: `cron-reconcile:${jobRunId}:expired:${sub.id}`,
           sourceSubjectType: 'subscription',
           sourceSubjectRef: sub.id,
+          clubId: clubId,
           metadata: { preserve_pricing: preservePricing, grace_period_status: sub.grace_period_status },
         });
 
@@ -245,12 +257,16 @@ Deno.serve(async (req) => {
         // Phase 1: Use AccessRevoker with ledger
         const revokeResult = await executeRevoke(supabase, {
           userId: access.user_id,
-          clubId: access.club_id,
-          reason: 'no_valid_access',
+          targetType: 'club',
+          targetKey: `${access.user_id}:${access.club_id}`,
+          targetRef: access.id,
+          reasonCode: 'cron_cleanup',
+          reconcileBasis: 'no_valid_access_for_telegram_member',
           sourceEventType: 'cron',
           sourceEventKey: `cron-reconcile:${jobRunId}:tg:${access.user_id}:${access.club_id}`,
-          sourceSubjectType: 'telegram_access',
+          sourceSubjectType: 'cron_job',
           sourceSubjectRef: access.id,
+          clubId: access.club_id,
         });
 
         if (revokeResult.revoked) {
