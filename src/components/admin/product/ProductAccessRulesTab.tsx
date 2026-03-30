@@ -364,12 +364,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             <CardHeader className="py-3 px-4">
               <div className="flex items-center gap-3">
                 <Label className="text-xs">Тариф:</Label>
-                <Select value={previewTariffId} onValueChange={setPreviewTariffId}>
+                <Select value={previewTariffId || "__all__"} onValueChange={(v) => setPreviewTariffId(v === "__all__" ? "" : v)}>
                   <SelectTrigger className="w-[200px] h-8 text-xs">
                     <SelectValue placeholder="Все тарифы" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все тарифы (product-level)</SelectItem>
+                    <SelectItem value="__all__">Все тарифы (product-level)</SelectItem>
                     {tariffs.map((t) => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                     ))}
