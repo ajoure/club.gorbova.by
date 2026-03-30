@@ -1,5 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
+import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -84,8 +87,9 @@ function getPricingUrl(): string {
   return `${getSiteUrl()}/#pricing`;
 }
 
-async function logAudit(supabase: any, event: any) {
-  await supabase.from('telegram_access_audit').insert(event);
+async function logAudit(supabase: any, event: any): Promise<string | null> {
+  const { data } = await supabase.from('telegram_access_audit').insert(event).select('id').single();
+  return data?.id || null;
 }
 
 // Helper to find club_id if not provided
@@ -213,6 +217,9 @@ Deno.serve(async (req) => {
     const body: RevokeAccessRequest = await req.json();
     let { user_id, telegram_user_id, club_id, reason, is_manual, admin_id } = body;
     const forceRevoke = (body as any).force_revoke === true;
+    // Phase 1: read parent keys from body for downstream lineage (nullable, backward compat)
+    const parentEventKey: string | null = (body as any).parent_event_key || null;
+    const parentExecutionKey: string | null = (body as any).parent_execution_key || null;
 
     // PATCH: явное admin-действие = is_manual:true ИЛИ admin_id передан
     const isAdminAction = is_manual === true || (typeof admin_id === 'string' && admin_id.length > 0);
@@ -269,6 +276,34 @@ Deno.serve(async (req) => {
             original_revoke_reason: reason,
           }
         });
+
+        // Phase 1 Ledger: blocked revoke → skip
+        try {
+          const skipEntry: LedgerEntry = {
+            source_event_type: 'system',
+            source_event_key: `tg-revoke-blocked:${user_id}:${club_id || 'unknown'}:${accessResult.subscriptionId || accessResult.entitlementId || accessResult.manualAccessId || 'unknown'}`,
+            source_subject_type: 'system',
+            source_subject_ref: user_id,
+            action_type: 'skip',
+            reason_code: 'already_active',
+            target_type: 'club',
+            target_key: `${user_id}:${club_id || 'unknown'}`,
+            target_ref: club_id || null,
+            user_id: user_id,
+            status: 'skipped',
+            result: {
+              skip_reason: 'access_still_valid',
+              access_source: accessSource,
+              access_end_at: accessEndAt,
+              reconcile_basis: 'revoke_blocked_valid_access',
+            },
+            parent_event_key: parentEventKey,
+            parent_execution_key: parentExecutionKey,
+          };
+          await writeLedgerEntry(supabase, skipEntry);
+        } catch (ledgerErr) {
+          console.error('[telegram-revoke-access] Ledger skip write error (non-blocking):', ledgerErr);
+        }
 
         return new Response(JSON.stringify({
           success: false,
@@ -390,7 +425,7 @@ Deno.serve(async (req) => {
       }).eq('user_id', profileUserId).eq('club_id', club_id).eq('status', 'active');
 
       // Log audit + legacy
-      await logAudit(supabase, {
+      const noTgAuditId = await logAudit(supabase, {
         club_id,
         user_id: profileUserId,
         telegram_user_id: null,
@@ -409,6 +444,29 @@ Deno.serve(async (req) => {
         status: emailSent ? 'email_only' : 'error',
         meta: { reason, email_sent: emailSent, note: 'no_telegram_linked' },
       });
+
+      // Phase 1 Ledger: one row for no-telegram-linked revoke outcome
+      try {
+        const revokeCtx: RevokeContext = {
+          userId: profileUserId!,
+          targetType: 'club',
+          targetKey: `${profileUserId}:${club_id}`,
+          targetRef: club_id,
+          reasonCode: isAdminAction ? 'admin_revoke' : 'subscription_expired',
+          reconcileBasis: isAdminAction ? 'admin_manual_revoke' : (reason || 'no_telegram_linked'),
+          sourceEventType: isAdminAction ? 'admin' : 'system',
+          sourceEventKey: `tg-revoke:${profileUserId}:${club_id}:${noTgAuditId || 'no-audit'}`,
+          sourceSubjectType: isAdminAction ? 'admin_action' : 'system',
+          sourceSubjectRef: admin_id || profileUserId || null,
+          parentEventKey: parentEventKey,
+          parentExecutionKey: parentExecutionKey,
+          clubId: club_id,
+        };
+        const revokeResult = await executeRevoke(supabase, revokeCtx);
+        console.log(`[telegram-revoke-access] Ledger (no-tg): revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+      } catch (ledgerErr) {
+        console.error('[telegram-revoke-access] Ledger error (non-blocking):', ledgerErr);
+      }
 
       return new Response(JSON.stringify({
         success: true,
@@ -587,7 +645,7 @@ Deno.serve(async (req) => {
     }
 
     // Log audit
-    await logAudit(supabase, {
+    const mainAuditId = await logAudit(supabase, {
       club_id,
       user_id: profileUserId,
       telegram_user_id: telegramUserId,
@@ -610,6 +668,28 @@ Deno.serve(async (req) => {
       meta: { telegram_user_id: telegramUserId, chat_revoked: chatRevoked, channel_revoked: channelRevoked, reason },
     });
 
+    // Phase 1 Ledger: one row for final revoke outcome
+    try {
+      const revokeCtx: RevokeContext = {
+        userId: profileUserId || user_id!,
+        targetType: 'club',
+        targetKey: `${profileUserId || user_id}:${club_id}`,
+        targetRef: club_id,
+        reasonCode: isAdminAction ? 'admin_revoke' : (reason === 'subscription_expired' ? 'subscription_expired' : reason === 'violation_kick' ? 'violation_kick' : reason === 'cron_cleanup' ? 'cron_cleanup' : 'admin_revoke'),
+        reconcileBasis: isAdminAction ? 'admin_manual_revoke' : (reason || 'system_revoke'),
+        sourceEventType: isAdminAction ? 'admin' : 'system',
+        sourceEventKey: `tg-revoke:${profileUserId || user_id}:${club_id}:${mainAuditId || 'no-audit'}`,
+        sourceSubjectType: isAdminAction ? 'admin_action' : ((body as any).source_subject_type || 'system'),
+        sourceSubjectRef: admin_id || profileUserId || null,
+        parentEventKey: parentEventKey,
+        parentExecutionKey: parentExecutionKey,
+        clubId: club_id,
+      };
+      const revokeResult = await executeRevoke(supabase, revokeCtx);
+      console.log(`[telegram-revoke-access] Ledger: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+    } catch (ledgerErr) {
+      console.error('[telegram-revoke-access] Ledger error (non-blocking):', ledgerErr);
+    }
 
     console.log('Revoke completed:', { telegramUserId, chatRevoked, channelRevoked, dm_sent: dmResult?.ok });
 

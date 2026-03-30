@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
@@ -2010,6 +2011,7 @@ Deno.serve(async (req) => {
     }
 
     // ========== EXECUTE mode - actually charge subscriptions ==========
+    const chargeRunId = crypto.randomUUID();
     
     // PATCH: Select ALL candidates due today (with or without card) for accurate statistics
     const { data: allCandidates, error: queryError } = await supabase
@@ -2156,6 +2158,27 @@ Deno.serve(async (req) => {
               reason: 'trial_ended_no_payment',
             },
           });
+
+          // Phase 1 Ledger: trial_ended_no_payment revoke
+          try {
+            const revokeCtx: RevokeContext = {
+              userId: sub.user_id,
+              targetType: 'subscription_tier',
+              targetKey: `${sub.user_id}:${sub.tariff_id || sub.product_id || 'unknown'}`,
+              targetRef: sub.product_id || null,
+              subscriptionId: sub.id,
+              reasonCode: 'trial_expired',
+              reconcileBasis: 'trial_ended_no_payment',
+              sourceEventType: 'cron',
+              sourceEventKey: `sub-trial-expire:${sub.id}:${chargeRunId}`,
+              sourceSubjectType: 'subscription',
+              sourceSubjectRef: sub.id,
+            };
+            const revokeResult = await executeRevoke(supabase, revokeCtx);
+            console.log(`[subscription-charge] Ledger trial-expire: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+          } catch (ledgerErr) {
+            console.error('[subscription-charge] Ledger error (non-blocking):', ledgerErr);
+          }
         }
 
         results.push({ 

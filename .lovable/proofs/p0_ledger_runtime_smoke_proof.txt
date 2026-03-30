@@ -1,6 +1,12 @@
 # Phase 1 Ledger Runtime Smoke Proof
 # Generated: 2026-03-30 (PATCH v22.4)
 # Updated: 2026-03-30 — PATCH v22.5 reconcile fixture smoke
+# Updated: 2026-03-30 — PATCH v22.6 Sub-patch A decision block
+
+## Decision (v22.6)
+# BLOCKED_SAFE_GUARD on subscription-charge is ACCEPTED as non-blocking for implementation.
+# Remains blocking for final cutover.
+# 9 revoke paths wrapped_in_code, runtime_verified = deferred (runtime_deferred_non_blocking).
 
 ## Proof metadata
 

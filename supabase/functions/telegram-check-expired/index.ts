@@ -1,5 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
+import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
+import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -61,6 +64,7 @@ Deno.serve(async (req) => {
     console.log('Starting expired access and violator check...');
 
     const now = new Date().toISOString();
+    const jobRunId = crypto.randomUUID();
 
     // 1. Find all active telegram_access records that have expired
     const { data: expiredAccess, error: queryError } = await supabase
@@ -110,6 +114,33 @@ Deno.serve(async (req) => {
             })
             .eq('id', access.id);
         }
+
+        // Phase 1 Ledger: skip — decision already made outside, write directly
+        try {
+          const skipEntry: LedgerEntry = {
+            source_event_type: 'cron',
+            source_event_key: `cron-expire:${jobRunId}:${access.id}`,
+            source_subject_type: 'cron_job',
+            source_subject_ref: jobRunId,
+            action_type: 'skip',
+            reason_code: 'already_active',
+            target_type: 'club',
+            target_key: `${access.user_id}:${access.club_id}`,
+            target_ref: access.club_id,
+            user_id: access.user_id,
+            status: 'skipped',
+            result: {
+              skip_reason: 'valid_access_detected',
+              access_source: accessCheck.source,
+              access_end_at: accessCheck.endAt,
+              reconcile_basis: 'access_expired_but_valid',
+            },
+          };
+          await writeLedgerEntry(supabase, skipEntry);
+        } catch (ledgerErr) {
+          console.error('[telegram-check-expired] Ledger skip error (non-blocking):', ledgerErr);
+        }
+
         results.skipped++;
         continue;
       }
@@ -131,6 +162,27 @@ Deno.serve(async (req) => {
           results.errors++;
         } else {
           results.revoked++;
+        }
+
+        // Phase 1 Ledger: revoke via executeRevoke
+        try {
+          const revokeCtx: RevokeContext = {
+            userId: access.user_id,
+            targetType: 'club',
+            targetKey: `${access.user_id}:${access.club_id}`,
+            targetRef: access.club_id,
+            reasonCode: 'cron_cleanup',
+            reconcileBasis: 'access_expired',
+            sourceEventType: 'cron',
+            sourceEventKey: `cron-expire:${jobRunId}:${access.id}`,
+            sourceSubjectType: 'cron_job',
+            sourceSubjectRef: jobRunId,
+            clubId: access.club_id,
+          };
+          const revokeResult = await executeRevoke(supabase, revokeCtx);
+          console.log(`[telegram-check-expired] Ledger revoke: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+        } catch (ledgerErr) {
+          console.error('[telegram-check-expired] Ledger revoke error (non-blocking):', ledgerErr);
         }
 
         // Update telegram_access_grants status

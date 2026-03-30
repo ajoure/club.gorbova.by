@@ -1,6 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
+import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -492,6 +494,28 @@ Deno.serve(async (req) => {
             console.log('[refund] telegram-revoke-access result:', JSON.stringify(revokeRes.data));
           } else {
             console.warn('[refund] No telegram_club_id on product — telegram revoke skipped');
+          }
+
+          // Phase 1 Ledger: refund+revoke
+          try {
+            const revokeCtx: RevokeContext = {
+              userId: order.user_id,
+              orderId: order_id,
+              targetType: 'subscription_tier',
+              targetKey: `${order.user_id}:${relatedSubscription.tariff_id || relatedSubscription.product_id || 'unknown'}`,
+              targetRef: relatedSubscription.product_id || null,
+              subscriptionId: relatedSubscription.id,
+              reasonCode: 'admin_revoke',
+              reconcileBasis: 'admin_refund_revoke',
+              sourceEventType: 'admin',
+              sourceEventKey: `admin-refund-revoke:${relatedSubscription.id}:${order_id}`,
+              sourceSubjectType: 'admin_action',
+              sourceSubjectRef: adminUserId,
+            };
+            const revokeResult = await executeRevoke(supabase, revokeCtx);
+            console.log(`[refund+revoke] Ledger: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+          } catch (ledgerErr) {
+            console.error('[refund+revoke] Ledger error (non-blocking):', ledgerErr);
           }
 
           console.log(`Access revoked for subscription ${relatedSubscription.id}`);
@@ -1020,8 +1044,8 @@ Deno.serve(async (req) => {
         });
     }
 
-    // Log the admin action
-    await supabase.from('audit_logs').insert({
+    // Log the admin action (BEFORE ledger write to get auditLogId)
+    const { data: auditRow } = await supabase.from('audit_logs').insert({
       actor_user_id: adminUserId,
       target_user_id: subscription.user_id,
       action: `admin.subscription.${action}`,
@@ -1032,7 +1056,78 @@ Deno.serve(async (req) => {
         new_end_date,
         ...result,
       },
-    });
+    }).select('id').single();
+
+    const auditLogId = auditRow?.id || subscription_id;
+
+    // Phase 1 Ledger: revoke branches only (cancel, revoke_access, delete, refund+revoke)
+    const revokeBranches = ['cancel', 'revoke_access', 'delete'];
+    if (revokeBranches.includes(action)) {
+      try {
+        // Pre-state guard: if subscription was already canceled before this action, write skip
+        const beforeStatus = subscription.status;
+        const alreadyCanceled = beforeStatus === 'canceled' || beforeStatus === 'expired';
+
+        const reasonCodeMap: Record<string, string> = {
+          cancel: 'admin_cancel',
+          revoke_access: 'admin_revoke',
+          delete: 'admin_revoke',
+        };
+        const keyPrefixMap: Record<string, string> = {
+          cancel: 'admin-cancel',
+          revoke_access: 'admin-revoke',
+          delete: 'admin-delete',
+        };
+        const reconcileMap: Record<string, string> = {
+          cancel: 'admin_cancel',
+          revoke_access: 'admin_revoke_access',
+          delete: 'admin_delete',
+        };
+
+        if (alreadyCanceled) {
+          const skipEntry: LedgerEntry = {
+            source_event_type: 'admin',
+            source_event_key: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            source_subject_type: 'admin_action',
+            source_subject_ref: adminUserId,
+            source_subscription_id: subscription_id,
+            action_type: 'skip',
+            reason_code: reasonCodeMap[action] as any,
+            target_type: 'subscription_tier',
+            target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+            target_ref: subscription.product_id || null,
+            user_id: subscription.user_id,
+            order_id: subscription.order_id || null,
+            status: 'skipped',
+            result: {
+              skip_reason: 'already_canceled',
+              before_status: beforeStatus,
+              reconcile_basis: reconcileMap[action],
+            },
+          };
+          await writeLedgerEntry(supabase, skipEntry);
+        } else {
+          const revokeCtx: RevokeContext = {
+            userId: subscription.user_id,
+            orderId: subscription.order_id || null,
+            targetType: 'subscription_tier',
+            targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+            targetRef: subscription.product_id || null,
+            subscriptionId: subscription_id,
+            reasonCode: reasonCodeMap[action] as any,
+            reconcileBasis: reconcileMap[action],
+            sourceEventType: 'admin',
+            sourceEventKey: `${keyPrefixMap[action]}:${subscription_id}:${auditLogId}`,
+            sourceSubjectType: 'admin_action',
+            sourceSubjectRef: adminUserId,
+          };
+          const revokeResult = await executeRevoke(supabase, revokeCtx);
+          console.log(`[subscription-admin-actions] Ledger ${action}: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+        }
+      } catch (ledgerErr) {
+        console.error(`[subscription-admin-actions] Ledger error for ${action} (non-blocking):`, ledgerErr);
+      }
+    }
 
     console.log(`Admin action ${action} completed for subscription ${subscription_id}`);
 
