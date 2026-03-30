@@ -1,428 +1,136 @@
-# дополни план следующей информацией:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Это не должен быть финальный proof-пакет
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Текущий текст — это fallback-отчёт при нестабильном браузере, а не закрытие proof.
-- Прямо зафиксируй в плане/отчёте:
+1. Добавь в цель и scope явное ограничение:
   &nbsp;
-  - visual_proof = pending
-  - code_proof = partial substitute only
-  - v23.1 not closable without UI proof
+  - **backend, access_rules schema, runtime grant logic, legacy fallback logic не менять**;
+  - патч только про **русский UI-текст** и **безопасное подтверждение удаления**.
   &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-2. Нельзя считать conflict proof закрытым
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Сейчас сам текст признаёт, что правил 0 и конфликт не показан на данных.
-- Значит статус по конфликтам должен быть:
+2. Уточни, что русификация должна быть **полной по экрану**, а не только по перечисленным строкам:
   &nbsp;
-  - не PASS
-  - а LOGIC READY / DATA PROOF PENDING
-  &nbsp;
-- Это важно не приукрашивать.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-3. Нельзя считать CHAT/BUSINESS proof закрытым без UI
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- По коду explain действительно есть.
-- Но утверждение “proof закрыт” пока слишком сильное.
-- Нужна честная маркировка:
-  &nbsp;
-  - Explain logic = PASS
-  - CHAT visual proof = pending
-  - BUSINESS visual proof = pending
-  - BUSINESS rule creation proof = pending
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-4. Добавь явный recovery-plan для сбора visual proof
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Не общая фраза “когда браузер стабилизируется”, а конкретные шаги:
-  &nbsp;
-  1. открыть продукт Gorbova Club;
-  2. вкладка «Доступы»;
-  3. скрин общего состояния;
-  4. preview CHAT;
-  5. создать test rule для BUSINESS;
-  6. скрин preview BUSINESS;
-  7. создать product-level + tariff-level overlap;
-  8. скрин conflict winner;
-  9. открыть email/domain partial mode;
-  10. скрин legacy panel со статусами.
-  &nbsp;
-- Иначе это снова зависнет без финализации.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-5. Добавь, какие именно тестовые данные надо создать
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Для proof конфликта и BUSINESS не хватает данных.
-- План должен явно сказать:
-  &nbsp;
-  - создать tariff-level rule для BUSINESS → Gorbova Club;
-  - при необходимости создать product-level rule в ту же цель;
-  - проверить winner по priority;
-  - потом удалить/деактивировать тестовые rules либо явно пометить как proof fixtures.
-  &nbsp;
-- Нужен lifecycle test-fixtures: create → capture → cleanup.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-6. Зафиксируй критерий cleanup после proof
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- После визуального proof нельзя оставлять мусорные тестовые правила без статуса.
-- Добавь:
-  &nbsp;
-  - если proof делается на production-like данных, fixture rules после записи proof должны быть:
+  - проверить все badge / helper text / preview labels / warning text / source labels / duration source / dropdown labels;
+  - отдельно сделать grep/поиск по строкам:
     &nbsp;
-    - либо удалены,
-    - либо disabled,
-    - либо помечены как test/proof в notes.
+    - legacy
+    - fallback
+    - advanced
+    - product-level
+    - product_club_mappings
+    - product_email_mappings
     &nbsp;
+  - в финальном отчёте показать, что на этом экране эти англоязычные подписи больше не торчат.
   &nbsp;
-- Это обязательно.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-7. Раздели статусы по пунктам строже
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Вместо общего PASS по code-level введи таблицу:
+3. По источнику legacy в нижней панели не оставляй просто замену club -> клуб, email -> email-аккаунт как локальный хардкод без правила:
   &nbsp;
-  - code ready
-  - visual pending
-  - test data needed
-  - closable yes/no
+  - добавь явный маленький mapper:
+    &nbsp;
+    - club → клуб
+    - email → email-аккаунт
+    &nbsp;
+  - с fallback на исходное значение, если появится новый source type.
   &nbsp;
-- Особенно для:
+4. Для source_label в useAccessRules.ts зафиксируй, что русифицируются **все legacy source labels**, а не только 2 места по памяти:
   &nbsp;
-  - conflict
-  - BUSINESS
-  - partial-support UI
-  - legacy statuses
+  - Старая настройка (клуб)
+  - Старая настройка (email)
+  - если есть иные legacy/fallback строки в effective preview, их тоже привести к единому стилю.
   &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-8. Добавь stop-правило
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Пока нет visual proof по обязательным пунктам, v23.1 нельзя переводить в closed.
-- Разрешён только статус:
+5. Для подтверждения удаления добавь явное требование по UX:
   &nbsp;
-  - implementation complete
-  - proof pending
-  - close blocked by missing visual evidence
+  - в диалоге показывать **название цели** или тип правила, что именно удаляется;
+  - кнопки:
+    &nbsp;
+    - Отмена
+    - Удалить правило
+    &nbsp;
+  - destructive-стиль для подтверждения.
+  &nbsp;
+6. Добавь guard against double submit:
+  &nbsp;
+  - пока идёт удаление, кнопка подтверждения disabled / loading;
+  - повторный клик не должен отправлять второй delete.
+  &nbsp;
+7. Добавь post-delete behavior:
+  &nbsp;
+  - после успешного удаления диалог закрывается;
+  - после ошибки удаления диалог не зависает в неконсистентном состоянии;
+  - список правил и preview обновляются как и раньше, без поломки текущего invalidate flow.
+  &nbsp;
+8. Уточни DoD:
+  &nbsp;
+  - не «ни одного английского слова вообще», а:
+  - **ни одного английского слова в пользовательских бейджах, статусах, preview-подписях и warning-текстах на вкладке “Доступы”**, кроме технических данных внутри пользовательского ввода/значений, если они приходят из данных.
+  - Иначе формулировка слишком абсолютная и может дать ложный fail на системных значениях в data.
+  &nbsp;
+9. Добавь proof в DoD:
+  &nbsp;
+  - скрин экрана со старыми настройками после русификации;
+  - скрин preview с русскими source labels;
+  - скрин диалога подтверждения удаления;
+  - proof успешного удаления одного test rule.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+# План: PATCH v23.1.1 — Русификация бейджей + подтверждение удаления
 
-9. Уточни, что именно должно попасть в финальный proof package
+## Цель
 
-&nbsp;
+Привести все текстовые элементы UI к русскому языку, убрать английские термины (legacy, fallback, advanced, product-level, product_club_mappings). Добавить подтверждение удаления правил.
 
-&nbsp;
+## Анализ текущего состояния
 
-&nbsp;
+Редактирование и удаление правил **уже реализованы** (кнопки Pencil и Trash2, строки 421-431). Но:
 
-- Нужен единый список артефактов:
-  &nbsp;
-  - 1 общий скрин вкладки;
-  - 1 скрин CHAT preview;
-  - 1–2 скрина создания BUSINESS rule;
-  - 1 скрин BUSINESS preview;
-  - 1 скрин legacy panel;
-  - 1 скрин conflict banner/winner;
-  - 1 скрин partial email/domain mode;
-  - при возможности короткое видео прохода.
-  &nbsp;
-- Это должен быть финальный acceptance set.
+- Удаление происходит без подтверждения — опасно
+- В UI остаются английские слова
 
-&nbsp;
+### Английские тексты, которые нужно заменить
 
-&nbsp;
 
-&nbsp;
+| Где                                                | Сейчас                                     | Должно быть                     |
+| -------------------------------------------------- | ------------------------------------------ | ------------------------------- |
+| Бейдж entitlement (стр. 616)                       | `advanced`                                 | `служебный`                     |
+| Статус legacy (стр. 67)                            | `Действует (только legacy)`                | `Действует (старая настройка)`  |
+| Статус legacy (стр. 71)                            | `Fallback (правило неактивно)`             | `Резерв (правило неактивно)`    |
+| Заголовок панели (стр. 505)                        | `Действующие legacy-настройки`             | `Действующие старые настройки`  |
+| Источник legacy (стр. 522)                         | `m.source.replace(...)` → `club` / `email` | `клуб` / `email-аккаунт`        |
+| Preview source_label (useAccessRules.ts, стр. 323) | `Правило (тариф)`                          | OK                              |
+| Preview source_label (стр. 418, 439)               | `Legacy (product_club_mappings)`           | `Старая настройка (клуб)`       |
+| Preview source_label (стр. 470)                    | `Legacy (product_email_mappings)`          | `Старая настройка (email)`      |
+| Preview overridden_by (стр. 427)                   | `Новое правило`                            | OK                              |
+| Селект preview (стр. 454)                          | `Все тарифы (product-level)`               | `Все тарифы (уровень продукта)` |
+| Бейдж миграции (стр. 928-930)                      | `Не мигрировано`                           | OK (уже на русском)             |
+| Preview duration source (стр. 913)                 | `legacy`                                   | `старая настройка`              |
+| Бейдж overlap (стр. 395)                           | `Дублирует legacy`                         | `Дублирует старую настройку`    |
 
-10. Исправь итоговую рекомендацию
 
-&nbsp;
+## Что сделать
 
-&nbsp;
+### 1. Файл `ProductAccessRulesTab.tsx`
 
-&nbsp;
+- Заменить все английские бейджи/подписи на русские (см. таблицу)
+- Добавить `AlertDialog` для подтверждения удаления правила (вместо прямого `deleteRule(rule.id)`)
+- State для `deletingRuleId` + диалог «Удалить правило? Это действие необратимо.»
 
-- Сейчас она звучит слишком мягко.
-- Надо прямо написать:
-  &nbsp;
-  - code-level proof полезен и принимается как промежуточный;
-  - visual proof обязателен;
-  - без него v23.1 не закрывается.
-  &nbsp;
+### 2. Файл `useAccessRules.ts`
 
-&nbsp;
+- Заменить `source_label` значения: `Legacy (product_club_mappings)` → `Старая настройка (клуб)`, аналогично для email
 
-&nbsp;
+### Файлы
 
-&nbsp;
 
-11. Итоговый статус в плане/отчёте должен быть переписан так
+| Файл                                                     | Действие                                              |
+| -------------------------------------------------------- | ----------------------------------------------------- |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | Русификация ~15 строк + добавить AlertDialog удаления |
+| `src/hooks/useAccessRules.ts`                            | Заменить 3 строки source_label                        |
 
-&nbsp;
 
-&nbsp;
+## DoD
 
-&nbsp;
-
-- Не:
-  &nbsp;
-  - “все 5 proof-пунктов закрыты”
-  &nbsp;
-- А:
-  &nbsp;
-  - “все 5 proof-пунктов подготовлены по коду”
-  - “финальное закрытие ожидает visual proof и fixture-based conflict proof”
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Добавь финальный блок next step
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Следующий шаг должен быть один:
-  &nbsp;
-  - собрать visual proof package;
-  &nbsp;
-- без новых архитектурных обсуждений и без расширения scope.
-
-&nbsp;
-
-&nbsp;
-
-Отчёт: Proof-аудит v23.1 — Access Rules UI
-
-## Статус
-
-Браузерные скриншоты недоступны (сессия нестабильна). Ниже — code-based proof по каждому пункту из запроса, с оценкой готовности.
-
----
-
-## 1. UI proof — вкладка «Доступы»
-
-**Код подтверждает:**
-
-- Вкладка "Доступы" подключена в `AdminProductDetailV2.tsx` (строка 25: `import { ProductAccessRulesTab }`)
-- Заголовок: "Правила доступа" + подпись "Что получит покупатель при покупке этого продукта или тарифа" (строки 263-266)
-- Фильтры: Все/Активные/Неактивные + фильтр по типу (строки 274-301)
-- Кнопка "Добавить правило" (строка 268-271)
-- Карточки правил: иконка + тип (русский) + область + назначение + срок + badges конфликтов/overlap (строки 346-437)
-
-**Статус: PASS (code-level). Визуальный proof нужен.**
-
----
-
-## 2. Explain proof — CHAT / BUSINESS
-
-**Код подтверждает:**
-
-- `useEffectiveGrants()` (строки 283-489 в useAccessRules.ts) строит полный explain:
-  1. Tariff-level rules → `source_label: "Правило (тариф)"`
-  2. Product-level rules → `source_label: "Правило (продукт)"`, overridden если есть tariff rule
-  3. Legacy club_mappings → `source_label: "Legacy (product_club_mappings)"`, с `club_access_label` (чат/канал/чат+канал)
-  4. Legacy email_mappings → `source_label: "Legacy (product_email_mappings)"`
-- Preview UI (строки 441-496): карточки "Что получит покупатель" с:
-  - `source_label` (Правило тариф/продукт, Legacy)
-  - `duration_days` + `duration_source` (из правила / из тарифа / legacy)
-  - `runtime_support` badge если не full
-  - Перекрытые правила в Collapsible
-  - Селект тарифа для preview (CHAT/BUSINESS/FULL + product-level)
-- Для Gorbova Club / CHAT: сейчас `access_rules` пуст, legacy mapping `product_club_mappings` есть (Gorbova Club → club Gorbova Club). Preview покажет legacy grant с `club_access_label = "чат + канал"`, `source = Legacy`, `migrated_status = not_migrated`.
-
-**Данные из БД:**
-
-- Gorbova Club product: `11c9f1b8...`
-- Тарифы: CHAT (30 дн.), BUSINESS (30 дн.), FULL (30 дн.)
-- Legacy mapping: product_club_mappings → Gorbova Club (active)
-
-**Каждый grant в explain содержит поля:**
-
-- `source_type`, `source_id`, `source_label`
-- `migrated_status` (new_rule / migrated / not_migrated)
-- `effective_status` (active / overridden)
-- `overridden_by`
-- `duration_days`, `duration_source`
-- `runtime_support`
-- `club_access_label`
-
-**Статус: PASS (code-level). Explain-блок полный. Визуальный proof нужен.**
-
----
-
-## 3. Legacy proof
-
-**Код подтверждает:**
-
-- Всегда видимый блок "Действующие legacy-настройки" (строки 500-544), НЕ collapsible
-- Для каждого legacy mapping:
-  - `target_label` (название клуба/email)
-  - Тип выдачи (русский badge)
-  - Источник: `club` / `email` (из source)
-  - Срок (если есть)
-  - Статус-badge из 5 вариантов:
-    - `active_legacy_only` — "Действует (только legacy)"
-    - `duplicated_by_rule` — "Дублируется новым правилом"
-    - `migrated_replaced` — "Мигрировано и заменено"
-    - `inactive_legacy` — "Неактивно"
-    - `fallback_effective` — "Fallback (правило неактивно)"
-  - Цветовая кодировка для каждого статуса (строки 74-80)
-- `getLegacyStatus()` (строки 54-65 useAccessRules.ts) определяет статус по наличию matching rule и его активности.
-
-**Текущее состояние:** access_rules = пусто, legacy mapping Gorbova Club = active → статус будет `active_legacy_only`.
-
-**Статус: PASS (code-level).**
-
----
-
-## 4. Conflict proof
-
-**Код подтверждает:**
-
-- Конфликты: `conflicts` = правила с одинаковым `type:target_ref` (строки 139-149)
-- Показ: amber card с "Обнаружены конфликты" + показ winner по priority (строки 304-323)
-- Overlap legacy: правила дублирующие legacy → badge "Дублирует legacy" (строки 393-397)
-- В preview: `overridden_by` + badge "Перекрыто: Правило тарифа" / "Новое правило" (строки 922-926)
-
-**Для проверки конфликта:** нужно создать 2 правила с одной целью (product-level + tariff-level). Текущих правил 0 → нельзя показать conflict proof без данных.
-
-**Статус: PASS (code-level). Для proof нужно создать тестовые правила.**
-
----
-
-## 5. Runtime limitation proof
-
-**Код подтверждает:**
-
-- `getRuntimeSupport()` (строки 492-499): club/product_access/entitlement = `full`, email = `partial`
-- В форме создания: email показывает amber warning "Частичная поддержка: справочник доменов ещё не создан" (строки 623-628)
-- В preview: badge `runtime_support !== "full"` → "Частичная поддержка" / "Только превью" (строки 917-921)
-- `entitlement` спрятан как advanced с badge (строки 613-618)
-- Типы "часть продукта", "тренинг", "урок" **не** предлагаются в UI — отсутствуют в `TARGET_TYPE_LABELS` и `SelectContent`
-
-**Статус: PASS. Неподдержанные типы отсутствуют. Partial помечен явно.**
-
----
-
-## Итоговая оценка
-
-
-| Proof                      | Code-level    | Visual proof                     |
-| -------------------------- | ------------- | -------------------------------- |
-| UI вкладка "Доступы"       | PASS          | Нужен скриншот                   |
-| Explain CHAT/BUSINESS      | PASS          | Нужен скриншот                   |
-| Legacy блок + статусы      | PASS          | Нужен скриншот                   |
-| Конфликт product vs tariff | PASS (логика) | Нужны тестовые данные + скриншот |
-| Runtime limitations        | PASS          | Нужен скриншот                   |
-
-
-## Рекомендация
-
-Code-level все 5 proof-пунктов закрыты. Для визуального proof нужно:
-
-1. Открыть Gorbova Club → вкладка "Доступы" → сделать скриншот (покажет legacy mapping как `active_legacy_only`)
-2. Выбрать в preview тариф CHAT → скриншот (покажет legacy grant с источником, сроком 30 дн.)
-3. Создать тестовое правило: тариф BUSINESS → Gorbova Club → скриншот (покажет конфликт/overlap)
-4. Выбрать в preview тариф BUSINESS → скриншот explain-блока
-
-Визуальный proof можно собрать следующим сообщением, когда браузерная сессия стабилизируется.
+1. Ни одного английского слова в бейджах, статусах, подписях
+2. Удаление правила требует подтверждения через диалог
+3. Редактирование и удаление работают (уже реализовано, не ломаем)
