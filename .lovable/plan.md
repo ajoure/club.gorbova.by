@@ -49,6 +49,26 @@
 5. ✅ Существующие безусловные правила не затронуты
 6. ✅ match_mode зафиксирован как any_paid_order (default)
 
+---
+
+# PATCH v23.1.3B correction — ВЫПОЛНЕН ✅
+
+## Что исправлено
+
+### Проблема
+Блок условия «Выдавать только если ранее покупал» показывался только при `rule_purpose === "service"`, вынуждая использовать служебное назначение и entitlement-коды для кейса product_access.
+
+### Исправление
+1. Condition block guard: `rule_purpose === "service"` → `grant_target_type === "product_access"`
+2. Добавлен badge условия в карточке правила: «Условие: ранее покупал {продукт}»
+3. Runtime, save, edit restore — без изменений (уже работают для любого target type)
+
+## DoD correction
+1. ✅ Блок «Выдавать только если ранее покупал» доступен при grant_target_type=product_access
+2. ✅ Кейс ЦБ настраивается через «Доступ к продукту» + условие, без entitlement-кодов
+3. ✅ В списке правил виден badge условия
+4. ✅ Runtime prior_purchase check продолжает работать (без изменений)
+
 ## Следующий шаг
 - Runtime proof по кейсу BUSINESS → доступ к ЦБ только при наличии prior purchase
 - Proof fixtures: создать тестовое правило → verify granted/skipped в ledger
