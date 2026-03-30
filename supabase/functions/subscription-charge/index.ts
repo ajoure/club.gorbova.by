@@ -2209,7 +2209,7 @@ Deno.serve(async (req) => {
         source,
         mode,
         run_at: nowIso,
-        today_utc: todayUtc,
+        today_utc: todayKey,
         total_candidates: allCandidates?.length || 0,
         total_after_gate: subscriptionsToProcess.length,
         skipped_already_attempted_count: skippedAlreadyAttempted,
