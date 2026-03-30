@@ -828,8 +828,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
               </div>
               </div>
 
-              {/* Conditional rule block — shown for "service" purpose */}
-              {form.rule_purpose === "service" && (
+              {/* Conditional rule block — shown for product_access target type */}
+              {form.grant_target_type === "product_access" && (
                 <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/30 p-3 bg-muted/20">
                   <div className="flex items-center gap-2">
                     <Switch
