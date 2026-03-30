@@ -3,12 +3,36 @@
 # Updated: 2026-03-30 — PATCH v22.5 reconcile fixture smoke
 # Updated: 2026-03-30 — PATCH v22.6 Sub-patch A decision block
 # Updated: 2026-03-30 — PATCH v22.6 Sub-patch B finish
+# Updated: 2026-03-30 — v22.8 Dead Code Resolution (Path A)
 
 ## Decision (v22.6)
-# BLOCKED_SAFE_GUARD on subscription-charge is ACCEPTED as non-blocking for implementation.
-# Remains blocking for final cutover.
+# BLOCKED_SAFE_GUARD on subscription-charge was ACCEPTED as non-blocking for implementation.
+# v22.8 UPDATE: subscription-charge extend = EXCLUDED_FROM_CUTOVER (dead code).
 # 9 revoke paths wrapped_in_code, runtime_verified = deferred (runtime_deferred_non_blocking).
 # Sub-patch B parent propagation wrapped_in_code, runtime_verified = deferred.
+
+## v22.8 Dead Code Finding
+
+subscription-charge/index.ts contains two mutually exclusive guards at lines 554–574:
+
+```
+Lines 556-563: if (billing_type === 'provider_managed')
+  → return { skipped: true, skip_reason: 'provider_managed' }
+
+Lines 566-573: if (billing_type !== 'provider_managed')
+  → return { skipped: true, skip_reason: 'mit_disabled' }
+```
+
+Both branches are exhaustive (X === Y || X !== Y) and both return `skipped`.
+Code after line 574 — including extend ledger write at lines 1520–1556 — is **unreachable dead code**.
+
+Production renewal source of truth:
+  bepaid-webhook → payment_reconcile_queue → bepaid-auto-process → grant-access-for-order
+  This path writes action_type='grant', status='granted' and has runtime PASS from v22.6.
+
+Decision: extend path EXCLUDED_FROM_CUTOVER. Sandbox billing requirement REMOVED.
+unreachable_extend_coverage = excluded_from_runtime_matrix
+extend ledger rows expected in current production = 0
 
 ## Proof metadata
 
@@ -103,17 +127,19 @@ Only 1 candidate with past-due next_charge_at: e53c5c45-60d3-4d58-aab1-10a01bd97
 Excluded by gates: auto_renew=false (gate 3), billing_type=mit (gate 6).
 See p0_runtime_candidate_eligibility_proof.txt for full gate table.
 
-### v22.5 Status: BLOCKED_SAFE_GUARD
+### v22.8 Status: EXCLUDED_FROM_CUTOVER (dead code)
 
-No sandbox/test billing available:
-- BEPAID_SECRET_KEY is production
-- No test_mode app_setting exists
-- Creating a provider_managed fixture risks real billing charge
-- A payment-failure ledger row does NOT prove the extend success path
+v22.5 status was BLOCKED_SAFE_GUARD. v22.8 analysis revealed the extend path is **unreachable dead code**:
 
-Fixture A was NOT created. Renew success path requires sandbox billing infrastructure.
+- Lines 556-563: billing_type === 'provider_managed' → return skipped
+- Lines 566-573: billing_type !== 'provider_managed' → return skipped
+- Both branches exhaust all possible values and return before any extend logic
+- Extend ledger write at lines 1520-1556 can never execute
 
-### Verdict: ⏸ BLOCKED_SAFE_GUARD
+Production renewals go through: bepaid-webhook → grant-access-for-order (runtime PASS).
+Sandbox billing is NOT required — the extend path does not execute in production.
+
+### Verdict: ⛔ EXCLUDED_FROM_CUTOVER (dead code, unreachable)
 
 ---
 
@@ -219,23 +245,24 @@ Post-cleanup: 0 remaining fixtures. Ledger row preserved (immutable audit).
 
 | Path | Status | Ledger rows | Detail |
 |------|--------|-------------|--------|
-| grant-access-for-order | ✅ PASS | 1 (b604ba7c) | extend/extended, DDL valid, post_check 5 keys |
-| subscription-charge | ⏸ BLOCKED_SAFE_GUARD | 0 | No sandbox billing; extend path cannot be safely tested |
+| grant-access-for-order | ✅ PASS | 1 (b604ba7c) | extend/extended, DDL valid, post_check 5 keys; live renewal-equivalent path |
+| subscription-charge | ⛔ EXCLUDED_FROM_CUTOVER | 0 | Dead code: extend path unreachable under current guards (v22.8 finding) |
 | subscriptions-reconcile | ✅ PASS | 1 (9578416b) | revoke/revoked via cancel_at_passed, DDL valid |
 
-## Cutover guard
+## Cutover guard (updated v22.8)
 
 phase1_ledger_cutover_at MUST NOT be set until ALL of:
 - grant-access-for-order runtime_smoke = PASS ✅
 - subscriptions-reconcile runtime_smoke = PASS ✅
-- subscription-charge runtime_smoke = PASS or BLOCKED_SAFE_GUARD with explicit approval ⏸
+- subscription-charge extend = EXCLUDED_FROM_CUTOVER (dead code, no runtime proof needed) ✅
 - grep_guard = PASS ✅
 - contract_validation = PASS ✅
-- orphan_downstream = 0
-- missing_required_post_check = 0
+- orphan_downstream = 0 ✅
+- missing_required_post_check = 0 ✅ (1 revoke = by design)
+- phase1_ledger_schema_ready_at = SET ✅
 
-Current status: 2/3 PASS + 1 BLOCKED_SAFE_GUARD.
-Decision required: accept BLOCKED_SAFE_GUARD for cutover or provision sandbox billing.
+Current status: 2/3 PASS + 1 EXCLUDED_FROM_CUTOVER. All cutover prerequisites met.
+Formal approval required to set phase1_ledger_cutover_at.
 
 ## Bug found and fixed (v22.4)
 
@@ -249,15 +276,14 @@ Audit-log only, no ledger impact. Deployed 2026-03-30.
 Added: 2026-03-30
 
 Runtime smoke sufficient for sprint close: **YES**
-Cutover allowed: **NO**
-Reason: subscription-charge extend path lacks safe sandbox billing proof
+Cutover allowed: **PENDING FORMAL APPROVAL** (v22.8: all technical blockers resolved)
 
 Deferred runtime paths:
 - 9 revoke wrapper paths (Sub-patch A) = runtime_deferred_non_blocking
 - parent propagation paths (Sub-patch B) = runtime_deferred_non_blocking
 - batch/import paths (Sub-patch C) = runtime_deferred_non_blocking
 
-Sprint status: implementation-complete, cutover-blocked.
+Sprint status: v22.6 implementation-complete, v22.7 readiness-complete, v22.8 cutover-ready.
 See `p0_invariant_report.txt` for consolidated deferred list and decision block.
 
 ---
@@ -279,13 +305,13 @@ Added: 2026-03-30 (v22.7)
 Reason: No eligible candidates for any grant/revoke/extend path in current production data.
 This is data-state, not code-bug. All invoked functions ran their full logic path and correctly found 0 actionable items.
 
-### Runtime status per path
+### Runtime status per path (updated v22.8)
 
 | # | Path | Invoked | Candidates | Ledger written | Status |
 |---|------|---------|-----------|---------------|--------|
 | R1 | grant-access-for-order | v22.6 | 1 | 1 (b604ba7c) | ✅ PASS |
 | R2 | subscriptions-reconcile (cancel_at) | v22.6 | 1 (fixture) | 1 (9578416b) | ✅ PASS |
-| R3 | subscription-charge (renew) | v22.7 | 0 | 0 | ⏸ BLOCKED_SAFE_GUARD |
+| R3 | subscription-charge (renew) | v22.7 | 0 | 0 | ⛔ EXCLUDED_FROM_CUTOVER (dead code) |
 | R4 | subscriptions-reconcile (trial) | v22.7 | 1 (no cancel_at) | 0 (by design) | ⏸ DEFERRED_NON_BLOCKING |
 | R5 | subscriptions-reconcile (expired) | v22.7 | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
 | R6 | subscriptions-reconcile (tg sync) | v22.7 | 0 | 0 | ⏸ DEFERRED_NON_BLOCKING |
@@ -307,10 +333,12 @@ This is data-state, not code-bug. All invoked functions ran their full logic pat
 | action_status_mismatch | 0 | ✅ |
 | source_event_key_duplicates | 0 | ✅ |
 
-### v22.7 Verdict
+### v22.8 Verdict
 
-CUTOVER_ALLOWED = **NO**
-BLOCKERS: R3 BLOCKED_SAFE_GUARD + S13 watermark missing
+CUTOVER_ALLOWED = **PENDING FORMAL APPROVAL**
+TECHNICAL_BLOCKERS = **NONE** (R3 EXCLUDED_FROM_CUTOVER, S13 watermark set)
 DEFERRED_NON_BLOCKING: 15 paths (all code-verified, no runtime trigger available)
 FAIL: 0
 NEW CODE PATCHES: NO
+CURRENT_RENEWAL_LEDGER_CLASSIFICATION = grant
+EXTEND_PATH_RUNTIME_EXPECTATION = none (dead code)
