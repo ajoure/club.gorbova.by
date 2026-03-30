@@ -122,7 +122,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
   const { data: effectiveGrants = [] } = useEffectiveGrants(productId, previewTariffId || undefined);
 
-  // Form state
+  // Form state — priority and duration_days stored as strings for natural editing
   const [form, setForm] = useState({
     scope: "product" as "product" | "tariff",
     tariff_id: "",
@@ -130,9 +130,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     target_ref: "",
     target_label: "",
     is_active: true,
-    priority: 0,
+    priority: "0",
     duration_mode: "tariff" as "tariff" | "manual",
-    duration_days: null as number | null,
+    duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
     notes: "",
   });
@@ -182,9 +182,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: "",
       target_label: "",
       is_active: true,
-      priority: 0,
+      priority: "0",
       duration_mode: "tariff",
-      duration_days: null,
+      duration_days: "",
       rule_purpose: "primary",
       notes: "",
     });
@@ -202,9 +202,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: rule.target_ref,
       target_label: rule.target_label || "",
       is_active: rule.is_active,
-      priority: rule.priority,
+      priority: String(rule.priority),
       duration_mode: rule.duration_days != null ? "manual" : "tariff",
-      duration_days: rule.duration_days,
+      duration_days: rule.duration_days != null ? String(rule.duration_days) : "",
       rule_purpose: purpose,
       notes: rule.notes || "",
     });
@@ -223,6 +223,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       conditions.rule_purpose = form.rule_purpose;
     }
 
+    // Parse string fields to numbers on save
+    const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
+    const parsedDuration = form.duration_mode === "manual"
+      ? (form.duration_days.trim() === "" ? null : (parseInt(form.duration_days, 10) || null))
+      : null;
+
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
       tariff_id: form.scope === "tariff" ? form.tariff_id : null,
@@ -230,8 +236,8 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       target_ref: form.target_ref,
       target_label: form.target_label || null,
       is_active: form.is_active,
-      priority: form.priority,
-      duration_days: form.duration_mode === "manual" ? form.duration_days : null,
+      priority: parsedPriority,
+      duration_days: parsedDuration,
       notes: form.notes || null,
       conditions: Object.keys(conditions).length > 0 ? conditions : null,
     };
@@ -258,12 +264,48 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     setForm({ ...form, target_ref: ref, target_label: label });
   };
 
-  // Format duration display
-  const formatDuration = (days: number | null, source?: string) => {
-    if (days == null) return "Бессрочно";
+  // Format duration — pure number formatter, no business logic
+  const formatDuration = (days: number | null) => {
+    if (days == null) return null;
     if (days >= 365 && days % 365 === 0) return `${days / 365} г.`;
     if (days >= 30 && days % 30 === 0) return `${days / 30} мес.`;
     return `${days} дн.`;
+  };
+
+  // Context-aware duration display with business resolution
+  const getDurationDisplay = (
+    durationDays: number | null,
+    durationSource: string,
+    sourceType: string,
+  ): string => {
+    // 1. Explicit duration from rule
+    if (durationDays != null && durationSource === "rule") {
+      return `${formatDuration(durationDays)} (из правила)`;
+    }
+    // 2. Duration from tariff
+    if (durationDays != null && durationSource === "tariff") {
+      return `${formatDuration(durationDays)} (из тарифа)`;
+    }
+    // 3. Duration from legacy
+    if (durationDays != null && durationSource === "legacy") {
+      return `${formatDuration(durationDays)} (старая настройка)`;
+    }
+    // 4. Duration present but source unknown
+    if (durationDays != null) {
+      return formatDuration(durationDays)!;
+    }
+    // 5. No duration — distinguish unresolved vs truly unlimited
+    if (sourceType === "rule" && durationSource === "unknown") {
+      return "По сроку тарифа покупки";
+    }
+    if (sourceType === "rule") {
+      return "По сроку тарифа покупки";
+    }
+    // Legacy with null duration — unknown at preview time
+    if (sourceType === "legacy") {
+      return "Срок не задан";
+    }
+    return "По сроку тарифа покупки";
   };
 
   return (
@@ -410,9 +452,12 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                       <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {effectiveDuration != null ? formatDuration(effectiveDuration) : "Из тарифа"}
-                          {rule.duration_days != null && <span className="text-[10px]">(из правила)</span>}
-                          {rule.duration_days == null && effectiveDuration != null && <span className="text-[10px]">(из тарифа)</span>}
+                          {rule.duration_days != null
+                            ? `${formatDuration(rule.duration_days)} (из правила)`
+                            : effectiveDuration != null
+                              ? `${formatDuration(effectiveDuration)} (из тарифа)`
+                              : "По сроку тарифа покупки"
+                          }
                         </span>
                         {rule.notes && (
                           <>
@@ -484,7 +529,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
             <div className="space-y-2">
               {/* Active grants */}
               {effectiveGrants.filter(g => g.effective_status === "active").map((g, idx) => (
-                <EffectiveGrantCard key={`active-${idx}`} grant={g} formatDuration={formatDuration} />
+                <EffectiveGrantCard key={`active-${idx}`} grant={g} getDurationDisplay={getDurationDisplay} />
               ))}
               {/* Overridden grants (collapsed) */}
               {effectiveGrants.filter(g => g.effective_status === "overridden").length > 0 && (
@@ -497,7 +542,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-1 space-y-1">
                     {effectiveGrants.filter(g => g.effective_status === "overridden").map((g, idx) => (
-                      <EffectiveGrantCard key={`over-${idx}`} grant={g} formatDuration={formatDuration} />
+                      <EffectiveGrantCard key={`over-${idx}`} grant={g} getDurationDisplay={getDurationDisplay} />
                     ))}
                   </CollapsibleContent>
                 </Collapsible>
@@ -808,10 +853,10 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                     {DURATION_PRESETS.map((p) => (
                       <button
                         key={p.days}
-                        onClick={() => setForm({ ...form, duration_days: p.days })}
+                        onClick={() => setForm({ ...form, duration_days: String(p.days) })}
                         className={cn(
                           "px-2.5 py-1 rounded-md border text-xs transition-all",
-                          form.duration_days === p.days
+                          form.duration_days !== "" && Number(form.duration_days) === p.days
                             ? "border-primary bg-primary/10 text-primary"
                             : "border-border text-muted-foreground hover:text-foreground"
                         )}
@@ -822,10 +867,16 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   </div>
                   <div className="flex items-center gap-2">
                     <Input
-                      type="number"
-                      min={1}
-                      value={form.duration_days ?? ""}
-                      onChange={(e) => setForm({ ...form, duration_days: e.target.value ? parseInt(e.target.value) : null })}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={form.duration_days}
+                      onChange={(e) => setForm({ ...form, duration_days: e.target.value.replace(/\D/g, "") })}
+                      onBlur={() => {
+                        const trimmed = form.duration_days.trim();
+                        if (trimmed === "") return; // allow empty
+                        const n = parseInt(trimmed, 10);
+                        if (isNaN(n) || n < 1) setForm(f => ({ ...f, duration_days: "" }));
+                      }}
                       placeholder="Кол-во дней"
                       className="h-9 w-[120px]"
                     />
@@ -848,9 +899,13 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 <div className="space-y-1.5">
                   <Label className="text-xs">Приоритет (выше = важнее)</Label>
                   <Input
-                    type="number"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     value={form.priority}
-                    onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
+                    onChange={(e) => setForm({ ...form, priority: e.target.value.replace(/\D/g, "") })}
+                    onBlur={() => {
+                      if (form.priority.trim() === "") setForm(f => ({ ...f, priority: "0" }));
+                    }}
                     className="h-9 w-[100px]"
                   />
                 </div>
@@ -924,7 +979,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
 // === Effective Grant Card Component ===
 
-function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGrant; formatDuration: (d: number | null) => string }) {
+function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: EffectiveGrant; getDurationDisplay: (d: number | null, ds: string, st: string) => string }) {
   const Icon = TARGET_TYPE_ICONS[g.grant_target_type] || Shield;
   const isOverridden = g.effective_status === "overridden";
 
@@ -959,12 +1014,7 @@ function EffectiveGrantCard({ grant: g, formatDuration }: { grant: EffectiveGran
             {g.source_label}
           </Badge>
           <Badge variant="outline" className="text-[10px]">
-            {formatDuration(g.duration_days)}
-            {g.duration_source !== "unknown" && (
-              <span className="ml-0.5 text-muted-foreground">
-                ({g.duration_source === "rule" ? "из правила" : g.duration_source === "tariff" ? "из тарифа" : "старая настройка"})
-              </span>
-            )}
+            {getDurationDisplay(g.duration_days, g.duration_source, g.source_type)}
           </Badge>
           {g.runtime_support !== "full" && (
             <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
