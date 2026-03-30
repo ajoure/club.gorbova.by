@@ -708,6 +708,205 @@ Deno.serve(async (req) => {
       }
     }
 
+    // 3b. Process product_access rules — grant access to additional products
+    try {
+      let productAccessRules: any[] = [];
+
+      // Tariff-level rules first (higher precedence)
+      if (tariffId) {
+        const { data: tariffRules } = await supabase
+          .from("access_rules")
+          .select("id, target_ref, conditions, priority, duration_days")
+          .eq("tariff_id", tariffId)
+          .eq("grant_target_type", "product_access")
+          .eq("is_active", true)
+          .order("priority", { ascending: false });
+        if (tariffRules?.length) productAccessRules = tariffRules;
+      }
+
+      // Product-level rules (fallback if no tariff rules)
+      if (productAccessRules.length === 0 && productId) {
+        const { data: prodRules } = await supabase
+          .from("access_rules")
+          .select("id, target_ref, conditions, priority, duration_days")
+          .eq("product_id", productId)
+          .is("tariff_id", null)
+          .eq("grant_target_type", "product_access")
+          .eq("is_active", true)
+          .order("priority", { ascending: false });
+        if (prodRules?.length) productAccessRules = prodRules;
+      }
+
+      if (productAccessRules.length > 0) {
+        console.log(`[grant-access] Found ${productAccessRules.length} product_access rules`);
+        const productAccessResults: any[] = [];
+
+        for (const rule of productAccessRules) {
+          const ruleConditions = rule.conditions || {};
+          
+          // Resolve target product IDs: multi-product (new) or single (legacy)
+          const targetProductIds: string[] = Array.isArray(ruleConditions.target_product_ids)
+            ? ruleConditions.target_product_ids
+            : (rule.target_ref ? [rule.target_ref] : []);
+
+          if (targetProductIds.length === 0) continue;
+
+          // Check if rule has prior_purchase condition
+          const hasPriorPurchaseCondition = ruleConditions.condition_type === 'prior_purchase';
+
+          // Resolve condition product IDs for per-product filtering
+          let conditionProductIds: string[] = [];
+          if (hasPriorPurchaseCondition) {
+            conditionProductIds = Array.isArray(ruleConditions.required_product_ids)
+              ? ruleConditions.required_product_ids
+              : (ruleConditions.required_product_id ? [ruleConditions.required_product_id] : []);
+            
+            // If match_mode is per_product and no explicit condition list, use target list
+            if (conditionProductIds.length === 0 && ruleConditions.match_mode === 'per_product') {
+              conditionProductIds = targetProductIds;
+            }
+          }
+
+          // Process each target product
+          for (const targetProdId of targetProductIds) {
+            const eventKey = `gafo:product_access:${orderId}:${rule.id}:${targetProdId}`;
+            
+            // Per-product prior purchase check
+            if (hasPriorPurchaseCondition) {
+              // Check if this specific target product was previously purchased
+              const productToCheck = conditionProductIds.includes(targetProdId) 
+                ? targetProdId 
+                : null;
+
+              if (productToCheck) {
+                const { data: priorOrder } = await supabase
+                  .from('orders_v2')
+                  .select('id')
+                  .eq('user_id', userId)
+                  .eq('product_id', productToCheck)
+                  .eq('status', 'paid')
+                  .neq('id', orderId) // Exclude current order
+                  .limit(1)
+                  .maybeSingle();
+
+                if (!priorOrder) {
+                  console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (no prior purchase)`);
+                  try {
+                    await writeLedgerEntry(supabase, {
+                      source_event_type: 'webhook',
+                      source_event_key: eventKey,
+                      source_subject_type: 'order',
+                      source_subject_ref: orderId,
+                      source_order_id: orderId,
+                      action_type: 'grant',
+                      reason_code: 'condition_not_met',
+                      target_type: 'product_access',
+                      target_key: `${userId}:${targetProdId}`,
+                      user_id: userId,
+                      profile_id: profileId || null,
+                      order_id: orderId,
+                      status: 'skipped',
+                      result: {
+                        rule_id: rule.id,
+                        condition_type: 'prior_purchase',
+                        target_product_id: targetProdId,
+                        check_result: false,
+                      },
+                    });
+                  } catch (ledgerErr) {
+                    console.error('[grant-access] Ledger write for product_access skip failed:', ledgerErr);
+                  }
+                  productAccessResults.push({ target_product_id: targetProdId, status: 'skipped', reason: 'condition_not_met' });
+                  continue;
+                }
+              } else {
+                // Target product not in condition list — skip
+                console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (not in condition product list)`);
+                productAccessResults.push({ target_product_id: targetProdId, status: 'skipped', reason: 'not_in_condition_list' });
+                continue;
+              }
+            }
+
+            // Grant: write entitlement for this target product
+            console.log(`[grant-access] product_access: GRANTING access to product ${targetProdId}`);
+            try {
+              // Look up target product code
+              const { data: targetProduct } = await supabase
+                .from('products_v2')
+                .select('code')
+                .eq('id', targetProdId)
+                .maybeSingle();
+
+              const productCode = targetProduct?.code || targetProdId;
+
+              // Upsert entitlement
+              const expiresAt = rule.duration_days
+                ? new Date(Date.now() + rule.duration_days * 86400000).toISOString()
+                : null;
+
+              const { error: entError } = await supabase
+                .from('entitlements')
+                .upsert({
+                  user_id: userId,
+                  product_code: productCode,
+                  product_id: targetProdId,
+                  profile_id: profileId || null,
+                  order_id: orderId,
+                  status: 'active',
+                  expires_at: expiresAt,
+                  meta: { source_rule_id: rule.id, source_order_id: orderId },
+                  updated_at: new Date().toISOString(),
+                }, {
+                  onConflict: 'user_id,product_code',
+                  ignoreDuplicates: false,
+                });
+
+              if (entError) {
+                console.error(`[grant-access] Entitlement upsert failed for ${targetProdId}:`, entError);
+                productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: entError.message });
+              } else {
+                // Ledger: granted
+                try {
+                  await writeLedgerEntry(supabase, {
+                    source_event_type: 'webhook',
+                    source_event_key: eventKey,
+                    source_subject_type: 'order',
+                    source_subject_ref: orderId,
+                    source_order_id: orderId,
+                    action_type: 'grant',
+                    reason_code: 'product_access_rule',
+                    target_type: 'product_access',
+                    target_key: `${userId}:${targetProdId}`,
+                    user_id: userId,
+                    profile_id: profileId || null,
+                    order_id: orderId,
+                    status: 'granted',
+                    result: {
+                      rule_id: rule.id,
+                      target_product_id: targetProdId,
+                      product_code: productCode,
+                      expires_at: expiresAt,
+                    },
+                  });
+                } catch (ledgerErr) {
+                  console.error('[grant-access] Ledger write for product_access grant failed:', ledgerErr);
+                }
+                productAccessResults.push({ target_product_id: targetProdId, status: 'granted', product_code: productCode });
+              }
+            } catch (grantErr) {
+              console.error(`[grant-access] product_access grant error for ${targetProdId}:`, grantErr);
+              productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: String(grantErr) });
+            }
+          }
+        }
+
+        results.product_access = productAccessResults;
+      }
+    } catch (productAccessError) {
+      console.error("Product access rules error (non-critical):", productAccessError);
+      results.product_access = { error: String(productAccessError) };
+    }
+
     // 4. Try to sync with GetCourse if applicable
     if (grantGetcourse && order.offer_id) {
       try {
