@@ -462,7 +462,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 <SelectValue placeholder="Все тарифы" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">Все тарифы (product-level)</SelectItem>
+                <SelectItem value="__all__">Все тарифы (уровень продукта)</SelectItem>
                 {tariffs.map((t) => {
                   const dur = tariffDurations.find(td => td.id === t.id);
                   return (
