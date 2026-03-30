@@ -578,8 +578,9 @@ async function createOrder(
   }
   
   // Также проверяем по order_number
-  // Avoid double prefix: if deal_number already starts with GC- or HASH-, handle accordingly
-  const gcOrderNumber = String(deal.deal_number).startsWith('GC-') ? String(deal.deal_number) : `GC-${deal.deal_number}`;
+  // Avoid double prefix: if deal_number already starts with GC- or HASH-, use as-is or add GC- once
+  const dealNumStr = String(deal.deal_number);
+  const gcOrderNumber = dealNumStr.startsWith('GC-') ? dealNumStr : `GC-${dealNumStr}`;
   const { data: byNumber } = await supabase
     .from('orders_v2')
     .select('id')
@@ -809,12 +810,32 @@ async function processFileDeals(
       await new Promise(r => setTimeout(r, 100));
     }
 
-    // Compute deterministic row source event key
+    // Compute canonical hash from raw business payload (no runtime entropy, no index, no operator settings)
+    const canonicalHash = await stableRowHash({
+      source: 'gc_file',
+      email: (deal.user_email || '').toLowerCase().trim(),
+      phone: (deal.user_phone || '').trim(),
+      first_name: (deal.user_first_name || '').trim(),
+      last_name: (deal.user_last_name || '').trim(),
+      amount: String(deal.amount || 0),
+      paid_at: deal.paidAt || deal.createdAt || '',
+      tariff_code: deal.tariffCode || '',
+      access_start: deal.accessStartAt || '',
+      access_end: deal.accessEndAt || '',
+    });
+
+    // Deterministic row identity: externalId when available, otherwise canonical hash only
     const externalId = deal.externalId || deal.id;
     const rowSourceEventKey = externalId
       ? `gc-import:${batchId}:row:${externalId}`
-      : `gc-import:${batchId}:row:${index}:${await stableRowHash(deal as Record<string, unknown>)}`;
-    const rowSubjectRef = externalId ? String(externalId) : `row:${index}`;
+      : `gc-import:${batchId}:row:hash:${canonicalHash}`;
+    const rowSubjectRef = externalId ? String(externalId) : `hash:${canonicalHash}`;
+
+    // Deterministic deal_number: externalId or HASH-based (no Date.now, no Math.random)
+    // Two identical rows without externalId → same hash → conscious dedup (second is duplicate)
+    const stableDealNumber = externalId ? String(externalId) : `HASH-${canonicalHash}`;
+
+    let currentStep = 'row_parse';
 
     try {
       const tariffCode = deal.tariffCode;
@@ -836,7 +857,7 @@ async function processFileDeals(
           target_key: `unknown:unknown`,
           parent_event_key: batchSourceEventKey,
           parent_execution_key: batchStartResult?.execution_key || null,
-          result: { skip_reason: 'tariff_not_determined', tariff_code: tariffCode || null },
+          result: { skip_reason: 'tariff_not_determined', tariff_code: tariffCode || null, row_index: index },
         });
         continue;
       }
@@ -845,12 +866,19 @@ async function processFileDeals(
       let productId: string | null = null;
       let isArchiveDeal = false;
       
-      // Handle ARCHIVE_UNKNOWN - create order without tariff (for old club memberships)
+      // ARCHIVE PSEUDO-TARGET CONTRACT (sanctioned temporary):
+      // While no canonical archive product_id exists in products_v2:
+      //   target_type = 'product', target_key = '{userId}:archive'
+      //   result.is_archive_deal = true, result.archive_target_contract = 'pseudo_target_v1'
+      // When canonical archive product_id is added to products_v2:
+      //   switch to target_key = '{userId}:{archiveProductId}'
+      //   document change as "archive_target_contract_v2" in proof
       if (tariffCode === 'ARCHIVE_UNKNOWN') {
         console.log(`[File Import] Archive deal (no tariff) for ${deal.user_email}`);
         isArchiveDeal = true;
       } else {
-        // Find tariff by code
+        // Find tariff by code (DB SoT via tariffs.getcourse_offer_id — no hardcoded map)
+        currentStep = 'profile_resolve';
         const tariff = await findTariffByCode(supabase, tariffCode);
         if (!tariff) {
           console.log(`[File Import] Tariff not found: ${tariffCode}, creating order without tariff`);
@@ -861,10 +889,11 @@ async function processFileDeals(
         }
       }
       
-      // Normalize the deal structure with access dates
+      // Normalize the deal structure with access dates — deterministic identity only
+      currentStep = 'profile_resolve';
       const normalizedDeal: DealWithAccessDates = {
-        id: deal.externalId || Date.now() + Math.random(),
-        deal_number: deal.externalId || `IMP-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        id: externalId || canonicalHash,
+        deal_number: stableDealNumber,
         deal_created_at: deal.createdAt || new Date().toISOString(),
         deal_payed_at: deal.paidAt || deal.createdAt,
         deal_cost: parseFloat(deal.amount) || 0,
@@ -908,14 +937,14 @@ async function processFileDeals(
           status: 'skipped',
           reason_code: 'duplicate_skip',
           target_type: tariffId ? 'subscription_tier' : 'product',
-          target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+          target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${isArchiveDeal ? 'archive' : (productId || 'unknown')}`,
           user_id: userIdForRecords,
           profile_id: profile.id,
           order_id: order.id,
           source_order_id: order.id,
           parent_event_key: batchSourceEventKey,
           parent_execution_key: batchStartResult?.execution_key || null,
-          result: { skip_reason: 'order_already_exists', existing_order_id: order.id },
+          result: { skip_reason: 'order_already_exists', existing_order_id: order.id, row_index: index, ...(isArchiveDeal ? { is_archive_deal: true, archive_target_contract: 'pseudo_target_v1' } : {}) },
         });
         continue; // Skip subscription creation for duplicate orders
       }
@@ -940,7 +969,7 @@ async function processFileDeals(
         status: 'granted',
         reason_code: 'bulk_import',
         target_type: tariffId ? 'subscription_tier' : 'product',
-        target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${productId || 'archive'}`,
+        target_key: tariffId ? `${userIdForRecords}:${tariffId}` : `${userIdForRecords}:${isArchiveDeal ? 'archive' : (productId || 'unknown')}`,
         user_id: userIdForRecords,
         profile_id: profile.id,
         order_id: order.id,
@@ -950,8 +979,10 @@ async function processFileDeals(
         parent_execution_key: batchStartResult?.execution_key || null,
         result: {
           is_archive_deal: isArchiveDeal,
+          ...(isArchiveDeal ? { archive_target_contract: 'pseudo_target_v1' } : {}),
           subscription_created: subscription?.isNew || false,
           subscription_active: subscription?.isActive || false,
+          row_index: index,
         },
       });
 
