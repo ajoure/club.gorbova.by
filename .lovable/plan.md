@@ -1,284 +1,428 @@
-# Sprint v23.1 — Access Rules UI completion
+# дополни план следующей информацией:
+
+&nbsp;
+
+1. Это не должен быть финальный proof-пакет
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Текущий текст — это fallback-отчёт при нестабильном браузере, а не закрытие proof.
+- Прямо зафиксируй в плане/отчёте:
+  &nbsp;
+  - visual_proof = pending
+  - code_proof = partial substitute only
+  - v23.1 not closable without UI proof
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+2. Нельзя считать conflict proof закрытым
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Сейчас сам текст признаёт, что правил 0 и конфликт не показан на данных.
+- Значит статус по конфликтам должен быть:
+  &nbsp;
+  - не PASS
+  - а LOGIC READY / DATA PROOF PENDING
+  &nbsp;
+- Это важно не приукрашивать.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+3. Нельзя считать CHAT/BUSINESS proof закрытым без UI
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- По коду explain действительно есть.
+- Но утверждение “proof закрыт” пока слишком сильное.
+- Нужна честная маркировка:
+  &nbsp;
+  - Explain logic = PASS
+  - CHAT visual proof = pending
+  - BUSINESS visual proof = pending
+  - BUSINESS rule creation proof = pending
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+4. Добавь явный recovery-plan для сбора visual proof
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Не общая фраза “когда браузер стабилизируется”, а конкретные шаги:
+  &nbsp;
+  1. открыть продукт Gorbova Club;
+  2. вкладка «Доступы»;
+  3. скрин общего состояния;
+  4. preview CHAT;
+  5. создать test rule для BUSINESS;
+  6. скрин preview BUSINESS;
+  7. создать product-level + tariff-level overlap;
+  8. скрин conflict winner;
+  9. открыть email/domain partial mode;
+  10. скрин legacy panel со статусами.
+  &nbsp;
+- Иначе это снова зависнет без финализации.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+5. Добавь, какие именно тестовые данные надо создать
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Для proof конфликта и BUSINESS не хватает данных.
+- План должен явно сказать:
+  &nbsp;
+  - создать tariff-level rule для BUSINESS → Gorbova Club;
+  - при необходимости создать product-level rule в ту же цель;
+  - проверить winner по priority;
+  - потом удалить/деактивировать тестовые rules либо явно пометить как proof fixtures.
+  &nbsp;
+- Нужен lifecycle test-fixtures: create → capture → cleanup.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+6. Зафиксируй критерий cleanup после proof
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- После визуального proof нельзя оставлять мусорные тестовые правила без статуса.
+- Добавь:
+  &nbsp;
+  - если proof делается на production-like данных, fixture rules после записи proof должны быть:
+    &nbsp;
+    - либо удалены,
+    - либо disabled,
+    - либо помечены как test/proof в notes.
+    &nbsp;
+  &nbsp;
+- Это обязательно.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+7. Раздели статусы по пунктам строже
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Вместо общего PASS по code-level введи таблицу:
+  &nbsp;
+  - code ready
+  - visual pending
+  - test data needed
+  - closable yes/no
+  &nbsp;
+- Особенно для:
+  &nbsp;
+  - conflict
+  - BUSINESS
+  - partial-support UI
+  - legacy statuses
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+8. Добавь stop-правило
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Пока нет visual proof по обязательным пунктам, v23.1 нельзя переводить в closed.
+- Разрешён только статус:
+  &nbsp;
+  - implementation complete
+  - proof pending
+  - close blocked by missing visual evidence
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+9. Уточни, что именно должно попасть в финальный proof package
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Нужен единый список артефактов:
+  &nbsp;
+  - 1 общий скрин вкладки;
+  - 1 скрин CHAT preview;
+  - 1–2 скрина создания BUSINESS rule;
+  - 1 скрин BUSINESS preview;
+  - 1 скрин legacy panel;
+  - 1 скрин conflict banner/winner;
+  - 1 скрин partial email/domain mode;
+  - при возможности короткое видео прохода.
+  &nbsp;
+- Это должен быть финальный acceptance set.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+10. Исправь итоговую рекомендацию
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Сейчас она звучит слишком мягко.
+- Надо прямо написать:
+  &nbsp;
+  - code-level proof полезен и принимается как промежуточный;
+  - visual proof обязателен;
+  - без него v23.1 не закрывается.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+11. Итоговый статус в плане/отчёте должен быть переписан так
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Не:
+  &nbsp;
+  - “все 5 proof-пунктов закрыты”
+  &nbsp;
+- А:
+  &nbsp;
+  - “все 5 proof-пунктов подготовлены по коду”
+  - “финальное закрытие ожидает visual proof и fixture-based conflict proof”
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. Добавь финальный блок next step
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Следующий шаг должен быть один:
+  &nbsp;
+  - собрать visual proof package;
+  &nbsp;
+- без новых архитектурных обсуждений и без расширения scope.
+
+&nbsp;
+
+&nbsp;
+
+Отчёт: Proof-аудит v23.1 — Access Rules UI
 
 ## Статус
 
-```
-SPRINT = v23.1
-PHASE_0 = DONE (discovery / SoT audit)
-PHASE_1 = DONE (UI taxonomy + mapping matrix)
-PHASE_2 = DONE (form redesign + selectors)
-PHASE_3 = DONE (effective preview / explain / source resolution)
-PHASE_4 = DONE (legacy/fallback visibility + conflict states)
-PHASE_5 = DONE (duration model)
-PHASE_6 = DONE (advanced/settings cleanup)
-```
-
-## Цель
-
-Довести вкладку «Доступы» до полноценного админского интерфейса, где видно бизнес-смысл: что именно получит покупатель при покупке продукта/тарифа.
+Браузерные скриншоты недоступны (сессия нестабильна). Ниже — code-based proof по каждому пункту из запроса, с оценкой готовности.
 
 ---
 
-## Phase 0 — Discovery / SoT Audit
+## 1. UI proof — вкладка «Доступы»
 
-### Источники данных для селекторов
+**Код подтверждает:**
 
-| Тип выдачи | Источник данных | Кол-во записей | Поля |
-|---|---|---|---|
-| Telegram-клуб | `telegram_clubs` | 2 | id, club_name, chat_id, channel_id, access_mode |
-| Продукт | `products_v2` | 23 | id, name, code |
-| Entitlement | `entitlements` (product_code) | 9 уникальных | product_code |
-| Email/домен | `email_accounts` | 2 placeholder | id, email |
+- Вкладка "Доступы" подключена в `AdminProductDetailV2.tsx` (строка 25: `import { ProductAccessRulesTab }`)
+- Заголовок: "Правила доступа" + подпись "Что получит покупатель при покупке этого продукта или тарифа" (строки 263-266)
+- Фильтры: Все/Активные/Неактивные + фильтр по типу (строки 274-301)
+- Кнопка "Добавить правило" (строка 268-271)
+- Карточки правил: иконка + тип (русский) + область + назначение + срок + badges конфликтов/overlap (строки 346-437)
 
-### Legacy mappings
-
-| Таблица | Записей | Описание |
-|---|---|---|
-| `product_club_mappings` | 2 | Gorbova Club → product Gorbova Club, Бухгалтерия → product Бухгалтерия |
-| `product_email_mappings` | 0 | Нет записей |
-
-### Gaps (обнаружены)
-
-- **Справочник доменов/разделов** — НЕ существует. `email_accounts` содержит placeholder emails, не бизнес-разделы.
-- **access_rules** — таблица пустая, правила ещё не создавались.
-- **runtime для "часть продукта / тренинг / урок"** — НЕ поддержан. Нет edge function handlers.
-
-### Effective access compute path
-
-1. `access_rules` (tariff-level) → приоритет 1
-2. `access_rules` (product-level, tariff_id IS NULL) → приоритет 2
-3. `product_club_mappings` → legacy fallback
-4. `product_email_mappings` → legacy fallback
-
-### Файлы, участвующие в access grant flow
-
-| Файл | Роль |
-|---|---|
-| `src/hooks/useAccessRules.ts` | CRUD + effective grants + legacy mappings |
-| `src/hooks/useAccessRuleSelectors.ts` | Selector hooks (clubs, products, entitlements, tariff durations) |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | UI компонент |
-| `supabase/functions/grant-access-for-order/index.ts` | Runtime: rules → legacy fallback |
+**Статус: PASS (code-level). Визуальный proof нужен.**
 
 ---
 
-## Phase 1 — UI Taxonomy + Mapping Matrix
+## 2. Explain proof — CHAT / BUSINESS
 
-### Mapping matrix
+**Код подтверждает:**
 
-| UI тип | DB `grant_target_type` | Storage | Runtime support | Selector source |
-|---|---|---|---|---|
-| Доступ в Telegram-клуб | `club` | target_ref = club UUID | **full** | `telegram_clubs` |
-| Доступ к продукту | `product_access` | target_ref = product UUID | **full** | `products_v2` |
-| Системное право доступа | `entitlement` | target_ref = product_code | **full** | `entitlements` distinct codes |
-| Доступ к домену / разделу | `email` | target_ref = string | **partial** (нет справочника) | ручной ввод |
+- `useEffectiveGrants()` (строки 283-489 в useAccessRules.ts) строит полный explain:
+  1. Tariff-level rules → `source_label: "Правило (тариф)"`
+  2. Product-level rules → `source_label: "Правило (продукт)"`, overridden если есть tariff rule
+  3. Legacy club_mappings → `source_label: "Legacy (product_club_mappings)"`, с `club_access_label` (чат/канал/чат+канал)
+  4. Legacy email_mappings → `source_label: "Legacy (product_email_mappings)"`
+- Preview UI (строки 441-496): карточки "Что получит покупатель" с:
+  - `source_label` (Правило тариф/продукт, Legacy)
+  - `duration_days` + `duration_source` (из правила / из тарифа / legacy)
+  - `runtime_support` badge если не full
+  - Перекрытые правила в Collapsible
+  - Селект тарифа для preview (CHAT/BUSINESS/FULL + product-level)
+- Для Gorbova Club / CHAT: сейчас `access_rules` пуст, legacy mapping `product_club_mappings` есть (Gorbova Club → club Gorbova Club). Preview покажет legacy grant с `club_access_label = "чат + канал"`, `source = Legacy`, `migrated_status = not_migrated`.
 
-### НЕ реализовано в runtime (preview-only / deferred)
+**Данные из БД:**
 
-| UI тип | Причина |
-|---|---|
-| Доступ к части продукта | Нет runtime handler |
-| Доступ к тренингу | Нет runtime handler |
-| Доступ к части тренинга | Нет runtime handler |
-| Доступ к уроку | Нет runtime handler |
+- Gorbova Club product: `11c9f1b8...`
+- Тарифы: CHAT (30 дн.), BUSINESS (30 дн.), FULL (30 дн.)
+- Legacy mapping: product_club_mappings → Gorbova Club (active)
 
-Эти типы **не добавляются** в текущий UI, чтобы не создавать ложное ощущение готовности.
+**Каждый grant в explain содержит поля:**
 
----
+- `source_type`, `source_id`, `source_label`
+- `migrated_status` (new_rule / migrated / not_migrated)
+- `effective_status` (active / overridden)
+- `overridden_by`
+- `duration_days`, `duration_source`
+- `runtime_support`
+- `club_access_label`
 
-## Phase 2 — Form Redesign + Selectors
-
-### Реализовано
-
-- Форма разбита на 6 логических секций:
-  1. Где действует (продукт/тариф + выбор тарифа с показом access_days)
-  2. Что выдаём (русские типы, entitlement помечен как advanced)
-  3. Куда выдаём (связанные селекторы по типу)
-  4. Назначение (основной/бонус/дополнительный/служебный)
-  5. Срок (из тарифа / вручную + пресеты)
-  6. Дополнительно (приоритет, заметка, активность — collapsed)
-
-### Selectors по типу
-
-| Тип | Селектор | Fallback |
-|---|---|---|
-| `club` | `<Select>` из `telegram_clubs` с показом chat/channel | — |
-| `product_access` | `<Select>` из `products_v2` | — |
-| `entitlement` | `<Select>` из unique product_codes | — |
-| `email` | `<Input>` с пояснением (справочник не создан) | ручной ввод |
+**Статус: PASS (code-level). Explain-блок полный. Визуальный proof нужен.**
 
 ---
 
-## Phase 3 — Effective Preview / Explain / Source Resolution
+## 3. Legacy proof
 
-### Алгоритм сборки explain-блока
+**Код подтверждает:**
 
-Для каждого grant в preview:
+- Всегда видимый блок "Действующие legacy-настройки" (строки 500-544), НЕ collapsible
+- Для каждого legacy mapping:
+  - `target_label` (название клуба/email)
+  - Тип выдачи (русский badge)
+  - Источник: `club` / `email` (из source)
+  - Срок (если есть)
+  - Статус-badge из 5 вариантов:
+    - `active_legacy_only` — "Действует (только legacy)"
+    - `duplicated_by_rule` — "Дублируется новым правилом"
+    - `migrated_replaced` — "Мигрировано и заменено"
+    - `inactive_legacy` — "Неактивно"
+    - `fallback_effective` — "Fallback (правило неактивно)"
+  - Цветовая кодировка для каждого статуса (строки 74-80)
+- `getLegacyStatus()` (строки 54-65 useAccessRules.ts) определяет статус по наличию matching rule и его активности.
 
-```
-source_type:      "rule" | "legacy" | "fallback"
-source_id:        UUID правила или маппинга
-source_label:     "Правило (тариф)" | "Правило (продукт)" | "Legacy (product_club_mappings)"
-migrated_status:  "new_rule" | "migrated" | "not_migrated" | "n/a"
-effective_status: "active" | "overridden" | "inactive"
-overridden_by:    string | undefined
-duplicated_with:  string | undefined
-duration_days:    resolved итоговый срок
-duration_source:  "rule" | "tariff" | "legacy" | "unknown"
-rule_purpose:     "primary" | "bonus" | "additional" | "service"
-runtime_support:  "full" | "partial" | "preview_only"
-club_access_label: "чат" | "канал" | "чат + канал" (для клубов)
-```
+**Текущее состояние:** access_rules = пусто, legacy mapping Gorbova Club = active → статус будет `active_legacy_only`.
 
-### Приоритет разрешения
-
-1. Tariff-level rules (active) → effective
-2. Product-level rules (active) → effective если не перекрыто tariff-level
-3. Legacy club mappings (active) → fallback если не перекрыто rules
-4. Legacy email mappings → fallback
-
-Перекрытые правила показываются в collapsed секции "Перекрытые правила".
+**Статус: PASS (code-level).**
 
 ---
 
-## Phase 4 — Legacy/Fallback Visibility + Conflict States
+## 4. Conflict proof
 
-### Legacy статусы
+**Код подтверждает:**
 
-| Статус | Описание | Цвет |
-|---|---|---|
-| `active_legacy_only` | Действует (только legacy) | amber |
-| `duplicated_by_rule` | Дублируется новым правилом | blue |
-| `migrated_replaced` | Мигрировано и заменено | green |
-| `inactive_legacy` | Неактивно | muted |
-| `fallback_effective` | Fallback (правило неактивно) | orange |
+- Конфликты: `conflicts` = правила с одинаковым `type:target_ref` (строки 139-149)
+- Показ: amber card с "Обнаружены конфликты" + показ winner по priority (строки 304-323)
+- Overlap legacy: правила дублирующие legacy → badge "Дублирует legacy" (строки 393-397)
+- В preview: `overridden_by` + badge "Перекрыто: Правило тарифа" / "Новое правило" (строки 922-926)
 
-### Конфликтные состояния
+**Для проверки конфликта:** нужно создать 2 правила с одной целью (product-level + tariff-level). Текущих правил 0 → нельзя показать conflict proof без данных.
 
-- Одна цель из нескольких правил → warning badge + показ победителя по приоритету
-- Дублирование rule + legacy → badge "Дублирует legacy" в карточке правила
-- Inactive rule + active legacy fallback → статус "fallback_effective"
+**Статус: PASS (code-level). Для proof нужно создать тестовые правила.**
 
 ---
 
-## Phase 5 — Duration Model
+## 5. Runtime limitation proof
 
-### Источники срока (precedence)
+**Код подтверждает:**
 
-| Приоритет | Источник | Описание |
-|---|---|---|
-| 1 | `access_rules.duration_days` | Явно задан в правиле |
-| 2 | `tariffs.access_days` | Из тарифа покупки |
-| 3 | `product_club_mappings.duration_days` | Legacy mapping |
-| 4 | null | Бессрочно / не настроено |
+- `getRuntimeSupport()` (строки 492-499): club/product_access/entitlement = `full`, email = `partial`
+- В форме создания: email показывает amber warning "Частичная поддержка: справочник доменов ещё не создан" (строки 623-628)
+- В preview: badge `runtime_support !== "full"` → "Частичная поддержка" / "Только превью" (строки 917-921)
+- `entitlement` спрятан как advanced с badge (строки 613-618)
+- Типы "часть продукта", "тренинг", "урок" **не** предлагаются в UI — отсутствуют в `TARGET_TYPE_LABELS` и `SelectContent`
 
-### UX
-
-- Переключатель: "По умолчанию из тарифа" / "Задать вручную"
-- При выборе "из тарифа" — показ текущего значения access_days
-- При access_days = null — отображается "не задан"
-- Пресеты: 7/14/30/60/90/180/365 дней
-- В preview: итоговый срок + источник (из правила / из тарифа / legacy)
+**Статус: PASS. Неподдержанные типы отсутствуют. Partial помечен явно.**
 
 ---
 
-## Phase 6 — Advanced/Settings Cleanup
+## Итоговая оценка
 
-- Priority скрыт в collapsible "Дополнительные настройки"
-- Notes в advanced секции
-- Active/inactive toggle в advanced
-- target_ref в сыром виде не показывается (заменён селекторами)
-- entitlement помечен как "advanced" в списке типов
 
----
+| Proof                      | Code-level    | Visual proof                     |
+| -------------------------- | ------------- | -------------------------------- |
+| UI вкладка "Доступы"       | PASS          | Нужен скриншот                   |
+| Explain CHAT/BUSINESS      | PASS          | Нужен скриншот                   |
+| Legacy блок + статусы      | PASS          | Нужен скриншот                   |
+| Конфликт product vs tariff | PASS (логика) | Нужны тестовые данные + скриншот |
+| Runtime limitations        | PASS          | Нужен скриншот                   |
 
-## rule_purpose storage
 
-Хранится в `conditions` JSON как `conditions.rule_purpose`.
-Проверено: поле `conditions` в `access_rules` типа JSONB, nullable, default null.
-Существующих записей нет → нет конфликта ключей.
-Допустимые значения: "primary" | "bonus" | "additional" | "service".
-Default (если отсутствует): "primary".
+## Рекомендация
 
----
+Code-level все 5 proof-пунктов закрыты. Для визуального proof нужно:
 
-## Add-only mapping по полям
+1. Открыть Gorbova Club → вкладка "Доступы" → сделать скриншот (покажет legacy mapping как `active_legacy_only`)
+2. Выбрать в preview тариф CHAT → скриншот (покажет legacy grant с источником, сроком 30 дн.)
+3. Создать тестовое правило: тариф BUSINESS → Gorbova Club → скриншот (покажет конфликт/overlap)
+4. Выбрать в preview тариф BUSINESS → скриншот explain-блока
 
-### DB fields (без изменений)
-
-- `access_rules.*` — все поля остаются как есть
-- `conditions` JSONB — используется для `rule_purpose`
-- Legacy таблицы — не модифицируются
-
-### Новые computed/UI-only поля
-
-| Поле | Тип | Где живёт |
-|---|---|---|
-| `duration_mode` | UI-only | form state |
-| `rule_purpose` | JSON key | `conditions.rule_purpose` |
-| `effective_status` | computed | useEffectiveGrants |
-| `duration_source` | computed | useEffectiveGrants |
-| `migrated_status` | computed | useEffectiveGrants |
-| `runtime_support` | computed | useEffectiveGrants |
-| `club_access_label` | computed | useEffectiveGrants |
-| `legacy_status` | computed | getLegacyStatus() |
-
-### Runtime — не меняется
-
-- `grant-access-for-order` — без изменений
-- Legacy fallback — без изменений
-
----
-
-## Ограничения UI
-
-| Тип | Статус в UI |
-|---|---|
-| `club` | Доступно для настройки + preview + runtime |
-| `product_access` | Доступно для настройки + preview + runtime |
-| `entitlement` | Доступно (advanced) + preview + runtime |
-| `email` | Ручной ввод + preview. Справочник не создан |
-| Часть продукта | **НЕ добавлено в UI** — нет runtime |
-| Тренинг / часть тренинга | **НЕ добавлено в UI** — нет runtime |
-| Урок | **НЕ добавлено в UI** — нет runtime |
-
----
-
-## Файлы
-
-| Файл | Действие |
-|---|---|
-| `src/hooks/useAccessRules.ts` | Переработан: types, CRUD, effective grants с full source resolution |
-| `src/hooks/useAccessRuleSelectors.ts` | **Новый**: selector hooks для clubs, products, entitlements, tariff durations |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | **Полная переработка**: форма, preview, legacy, конфликты |
-
----
-
-## DoD
-
-1. ✅ Все тексты на русском, без технических ID/slug в основном UX
-2. ✅ Для 3 типов (club, product, entitlement) — связанные селекторы
-3. ✅ Для клубов видно чат/канал/чат+канал
-4. ✅ Срок: из тарифа / вручную / пресеты с показом источника
-5. ✅ Назначение правила: основной/бонус/доп/служебный
-6. ✅ Preview отвечает на «что получит покупатель» с source resolution
-7. ✅ Legacy видны без скрытия, с 5 статусами миграции
-8. ✅ Priority скрыт в advanced
-9. ✅ Каждый grant в preview: source_type, source_label, duration_source, migrated_status, effective_status
-10. ✅ Runtime support отображается в UI (partial/preview_only badges)
-11. ✅ Конфликты: conflict badge + effective winner + legacy overlap
-12. ✅ Перекрытые правила показываются отдельно
-
----
-
-## Deferred / Follow-up
-
-### Follow-up sprint (после v23.1)
-
-| Задача | Причина отложения |
-|---|---|
-| Часть продукта / тренинг / урок | Нет runtime handler |
-| Полноценный domain/section registry | Нет таблицы справочника |
-| grant vs extend semantic refactor | Вне scope |
-| Dead code cleanup | Вне scope |
-| Cutover legacy → rules-only | Требует миграции данных |
-| Массовый bulk-edit всех продуктов | Вне scope |
+Визуальный proof можно собрать следующим сообщением, когда браузерная сессия стабилизируется.
