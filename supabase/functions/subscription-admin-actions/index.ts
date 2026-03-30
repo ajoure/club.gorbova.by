@@ -861,6 +861,21 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription_id);
 
+        // Branch-specific audit for ledger discriminator
+        const { data: revokeAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.revoke_access.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+            before_access_end_at: beforeSnapshot.access_end_at,
+          },
+        }).select('id').single();
+        branchAuditId = revokeAudit?.id || null;
+
         // Revoke Telegram access with club_id
         const productForRevoke = subscription.products_v2 as any;
         if (productForRevoke?.telegram_club_id) {
@@ -919,8 +934,7 @@ Deno.serve(async (req) => {
       }
 
       case 'delete': {
-        // PATCH: порядок операций — сначала UPDATE статуса, потом revoke, потом DELETE.
-        // Это устраняет race condition где revoke видит "active" подписку.
+        // PATCH: порядок операций — сначала UPDATE статуса, потом audit+ledger, потом revoke, потом DELETE.
 
         // 1. Обновляем статус до revoke (чтобы guard в telegram-revoke-access не видел active)
         await supabase
@@ -934,10 +948,27 @@ Deno.serve(async (req) => {
           })
           .eq('id', subscription_id);
 
-        // 2. Send Telegram notification
+        // 2. Branch-specific audit for ledger discriminator (BEFORE physical delete)
+        const { data: deleteAudit } = await supabase.from('audit_logs').insert({
+          actor_user_id: adminUserId,
+          target_user_id: subscription.user_id,
+          action: 'admin.subscription.delete.ledger',
+          actor_type: 'admin',
+          meta: {
+            subscription_id,
+            before_status: beforeSnapshot.status,
+            before_canceled_at: beforeSnapshot.canceled_at,
+            before_access_end_at: beforeSnapshot.access_end_at,
+            tariff_id: subscription.tariff_id,
+            product_id: subscription.product_id,
+          },
+        }).select('id').single();
+        branchAuditId = deleteAudit?.id || null;
+
+        // 3. Send Telegram notification
         await sendTelegramNotification(supabase, subscription.user_id, 'access_revoked');
 
-        // 3. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
+        // 4. Revoke Telegram access — PATCH: is_manual:true + club_id обязательны
         const productForDelete = subscription.products_v2 as any;
         if (productForDelete?.telegram_club_id) {
           const revokeResult = await supabase.functions.invoke('telegram-revoke-access', {
@@ -954,7 +985,7 @@ Deno.serve(async (req) => {
           console.warn('[delete] No telegram_club_id on product — telegram revoke skipped');
         }
 
-        // 4. Cancel in GetCourse
+        // 5. Cancel in GetCourse
         const tariffForDelete = subscription.tariffs as any;
         const gcOfferIdDelete = tariffForDelete?.getcourse_offer_id || tariffForDelete?.getcourse_offer_code;
         const orderForDelete = subscription.orders_v2 as any;
@@ -972,11 +1003,8 @@ Deno.serve(async (req) => {
           result.getcourse_cancel = gcResult;
         }
 
-        // 5. Физически удаляем запись подписки
-        await supabase
-          .from('subscriptions_v2')
-          .delete()
-          .eq('id', subscription_id);
+        // 6. Physical delete is DEFERRED until after ledger write
+        pendingPhysicalDelete = true;
 
         result.deleted = true;
         break;
