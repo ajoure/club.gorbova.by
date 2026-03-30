@@ -122,7 +122,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
   const { data: effectiveGrants = [] } = useEffectiveGrants(productId, previewTariffId || undefined);
 
-  // Form state
+  // Form state — priority and duration_days stored as strings for natural editing
   const [form, setForm] = useState({
     scope: "product" as "product" | "tariff",
     tariff_id: "",
@@ -130,9 +130,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     target_ref: "",
     target_label: "",
     is_active: true,
-    priority: 0,
+    priority: "0",
     duration_mode: "tariff" as "tariff" | "manual",
-    duration_days: null as number | null,
+    duration_days: "" as string,
     rule_purpose: "primary" as RulePurpose,
     notes: "",
   });
