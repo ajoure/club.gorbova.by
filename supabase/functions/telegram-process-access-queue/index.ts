@@ -15,6 +15,7 @@ interface QueueItem {
   subscription_id: string | null;
   action: "grant" | "revoke";
   attempts: number;
+  meta: { parent_event_key?: string; parent_execution_key?: string } | null;
 }
 
 serve(async (req) => {
@@ -32,7 +33,7 @@ serve(async (req) => {
     // Get pending items (limit to 10 to avoid timeouts)
     const { data: pendingItems, error: fetchError } = await supabase
       .from("telegram_access_queue")
-      .select("id, user_id, club_id, subscription_id, action, attempts")
+      .select("id, user_id, club_id, subscription_id, action, attempts, meta")
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .limit(10);
@@ -220,6 +221,10 @@ serve(async (req) => {
             }
           }
           
+          // Sub-patch B: Extract parent lineage from queue meta
+          const queueParentEventKey = (item.meta as any)?.parent_event_key || null;
+          const queueParentExecutionKey = (item.meta as any)?.parent_execution_key || null;
+
           // Call telegram-grant-access
           const { data: grantResult, error: grantError } = await supabase.functions.invoke(
             "telegram-grant-access",
@@ -232,6 +237,9 @@ serve(async (req) => {
                 source_id: item.subscription_id,
                 tariff_name: tariffName,
                 product_name: productName,
+                // Sub-patch B: Forward parent lineage (nullable, queue is not primary)
+                parent_event_key: queueParentEventKey,
+                parent_execution_key: queueParentExecutionKey,
               },
               headers: {
                 Authorization: `Bearer ${supabaseKey}`,
@@ -260,6 +268,10 @@ serve(async (req) => {
           results.push({ id: item.id, success: true, decision: "granted" });
 
         } else if (item.action === "revoke") {
+          // Sub-patch B: Extract parent lineage from queue meta for revoke
+          const revokeParentEventKey = (item.meta as any)?.parent_event_key || null;
+          const revokeParentExecutionKey = (item.meta as any)?.parent_execution_key || null;
+
           // Call telegram-revoke-access
           const { data: revokeResult, error: revokeError } = await supabase.functions.invoke(
             "telegram-revoke-access",
@@ -267,6 +279,9 @@ serve(async (req) => {
               body: {
                 user_id: item.user_id,
                 club_id: item.club_id,
+                // Sub-patch B: Forward parent lineage (nullable)
+                parent_event_key: revokeParentEventKey,
+                parent_execution_key: revokeParentExecutionKey,
               },
               headers: {
                 Authorization: `Bearer ${supabaseKey}`,
