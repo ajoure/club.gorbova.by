@@ -1,74 +1,63 @@
-# PATCH v23.1.3A — ВЫПОЛНЕН ✅
+# PATCH v23.1.4 — Multi-product access rule + per-product prior purchase filter — В РАБОТЕ
 
-## Что сделано
-1. **Numeric input fix**: priority `""` вместо `"0"`, убран onBlur normalize, placeholder="0"
-2. **Entitlement display**: человекочитаемые названия + код мелким шрифтом
-3. **Domain/section rollback**: тип `email` убран из селектора типа цели
-
----
-
-# PATCH v23.1.3B — ВЫПОЛНЕН ✅
+## Discovery результат
+- **Projection table**: `entitlements` (user_id, product_code, product_id, status, expires_at, order_id, profile_id)
+- **Prior purchase evidence**: `orders_v2` с `status = 'paid'` и `product_id` = целевой продукт
+- **Grant contract**: upsert в `entitlements` с `user_id + product_code` unique constraint
 
 ## Что сделано
 
-### 1. Conditional service rule — UI
-- При выборе назначения «Служебное» появляется блок «Выдавать только если ранее покупал»
-- Переключатель `has_condition` + селект продукта-условия + опциональный тариф
-- Подпись: «Доступ будет выдан только если у покупателя есть оплаченный заказ на выбранный продукт»
-- Условие сохраняется в `conditions` JSONB (ID-based):
-  ```json
-  {
-    "rule_purpose": "service",
-    "condition_type": "prior_purchase",
-    "required_product_id": "uuid",
-    "required_tariff_id": "uuid (опционально)",
-    "match_mode": "any_paid_order"
-  }
-  ```
+### UI (ProductAccessRulesTab.tsx)
+1. ✅ Multi-select для target products (чекбоксы + поиск + chips + счётчик + scroll area)
+2. ✅ Condition prior_purchase multi-select с toggle "Проверять эти же продукты" / "Выбрать отдельный список"
+3. ✅ Save: `conditions.target_product_ids`, `conditions.required_product_ids`, `match_mode: "per_product"`
+4. ✅ Edit restore: восстановление multi-product state из conditions JSONB
+5. ✅ Backward-compatible: single target_ref + required_product_id для legacy
+6. ✅ Rule card: ProductListBadge с tooltip для multi-product targets и conditions
+7. ✅ Label auto-generation для multi-product rules
 
-### 2. Runtime — prior_purchase check в grant-access-for-order
-- При чтении access_rules для club grants: проверка `conditions.condition_type === "prior_purchase"`
-- Проверка по `orders_v2` (user_id + product_id + status='paid')
-- Если условие не выполнено → skip + ledger entry `status: "skipped"`, `reason_code: "condition_not_met"`
-- Если выполнено → grant как обычно
-- Безусловные правила (без conditions) продолжают работать без изменений
-- Iterates all matching rules by priority (не limit 1) — первое прошедшее условие побеждает
+### Runtime (grant-access-for-order/index.ts)
+1. ✅ Новая секция 3b: product_access rules processing
+2. ✅ Resolve rules: tariff-level first, fallback to product-level
+3. ✅ Multi-target: `conditions.target_product_ids` → массив, fallback на `[target_ref]`
+4. ✅ Per-product prior purchase filter: каждый target проверяется индивидуально
+5. ✅ Grant executor: upsert в `entitlements` с product_code, product_id, expires_at
+6. ✅ Ledger per product: `status: "granted"` / `status: "skipped"`, `reason_code: "condition_not_met"`
+7. ✅ Backward-compatible: single target_ref rules работают как массив из одного
 
-### 3. Edit support
-- При редактировании существующего правила с condition — состояние восстанавливается из conditions JSONB
+### Storage contract (add-only JSONB)
+```json
+{
+  "rule_purpose": "service",
+  "target_product_ids": ["uuid-1", "uuid-2"],
+  "condition_type": "prior_purchase",
+  "required_product_ids": ["uuid-1", "uuid-2"],
+  "match_mode": "per_product"
+}
+```
+Precedence: массив → используем массив; нет массива → fallback на старое одиночное поле.
 
-## Изменённые файлы
-- `src/components/admin/product/ProductAccessRulesTab.tsx` — UI блок условного правила
-- `supabase/functions/grant-access-for-order/index.ts` — runtime condition check + ledger skip
+## Scope exclusion
+- Domain/section access (email type) — disabled/rollback, не трогаем
+- Tariff-level conditions (required_tariff_ids) — deferred
+- Модуль `module_access` — не используется в этом патче
+- Club и entitlement rules — без изменений
 
-## DoD v23.1.3B
-1. ✅ Условное правило можно создать через UI (rule_purpose=service + condition)
-2. ✅ Условие сохраняется в conditions JSONB (ID-based, без изменения schema)
-3. ✅ Runtime проверяет prior_purchase перед выдачей
-4. ✅ При невыполнении условия → skip + ledger entry skipped_by_condition
-5. ✅ Существующие безусловные правила не затронуты
-6. ✅ match_mode зафиксирован как any_paid_order (default)
+## DoD v23.1.4
+1. ✅ Одно правило позволяет выбрать несколько продуктов на выдачу
+2. ✅ Condition prior_purchase поддерживает множественный выбор продуктов
+3. ✅ Default mode: "проверять эти же продукты" (не нужно выбирать дважды)
+4. ✅ Runtime проходит по каждому target product и проверяет prior purchase per product
+5. ✅ Продукт A куплен ранее → access granted; Продукт B не куплен → skipped
+6. ✅ Ledger entry per product: granted / skipped (reason_code: condition_not_met)
+7. ✅ Старые single-target правила не ломаются
+8. ✅ Club, entitlement rules не затронуты
+9. ✅ В карточке правила видно количество и список продуктов (tooltip)
+10. ✅ match_mode = per_product зафиксирован как default
+11. ⬜ Runtime proof: stop-guard pending
 
----
-
-# PATCH v23.1.3B correction — ВЫПОЛНЕН ✅
-
-## Что исправлено
-
-### Проблема
-Блок условия «Выдавать только если ранее покупал» показывался только при `rule_purpose === "service"`, вынуждая использовать служебное назначение и entitlement-коды для кейса product_access.
-
-### Исправление
-1. Condition block guard: `rule_purpose === "service"` → `grant_target_type === "product_access"`
-2. Добавлен badge условия в карточке правила: «Условие: ранее покупал {продукт}»
-3. Runtime, save, edit restore — без изменений (уже работают для любого target type)
-
-## DoD correction
-1. ✅ Блок «Выдавать только если ранее покупал» доступен при grant_target_type=product_access
-2. ✅ Кейс ЦБ настраивается через «Доступ к продукту» + условие, без entitlement-кодов
-3. ✅ В списке правил виден badge условия
-4. ✅ Runtime prior_purchase check продолжает работать (без изменений)
-
-## Следующий шаг
-- Runtime proof по кейсу BUSINESS → доступ к ЦБ только при наличии prior purchase
-- Proof fixtures: создать тестовое правило → verify granted/skipped в ledger
+## Stop-guard (перед финальным approve)
+- [ ] product_access rules реально исполняются runtime
+- [ ] multi-target не ломает single-target rules
+- [ ] per-product filtering реально работает
+- [ ] ledger entries корректны
