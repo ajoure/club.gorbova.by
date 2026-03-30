@@ -311,6 +311,32 @@ Deno.serve(async (req) => {
             },
           });
 
+          // Phase 1 Ledger: skip — valid access detected
+          try {
+            const skipEntry: LedgerEntry = {
+              source_event_type: 'cron',
+              source_event_key: `cron-kick:${jobRunId}:${member.id}`,
+              source_subject_type: 'cron_job',
+              source_subject_ref: jobRunId,
+              action_type: 'skip',
+              reason_code: 'already_active',
+              target_type: 'club',
+              target_key: `${userId || member.telegram_user_id}:${club.id}`,
+              target_ref: club.id,
+              user_id: userId || null,
+              status: 'skipped',
+              result: {
+                skip_reason: 'valid_access_detected',
+                access_source: accessCheck.source,
+                access_end_at: accessCheck.endAt,
+                reconcile_basis: 'no_valid_access',
+              },
+            };
+            await writeLedgerEntry(supabase, skipEntry);
+          } catch (ledgerErr) {
+            console.error('[telegram-kick-violators] Ledger skip error (non-blocking):', ledgerErr);
+          }
+
           continue; // Skip to next member
         }
 
