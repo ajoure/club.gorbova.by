@@ -232,8 +232,8 @@ Deno.serve(async (req) => {
       console.log(`[cancel-trial] Missing data for GC sync: email=${email}, gcOfferId=${gcOfferId}, orderNumber=${order?.order_number}`);
     }
 
-    // Log the cancellation
-    await supabase.from("audit_logs").insert({
+    // Log the cancellation BEFORE ledger write (need auditLogId for discriminator)
+    const { data: auditLogRow } = await supabase.from("audit_logs").insert({
       action: "trial_canceled",
       actor_user_id: subscription.user_id,
       target_user_id: subscription.user_id,
@@ -245,7 +245,70 @@ Deno.serve(async (req) => {
         keep_access_until_trial_end: subscription.keep_access_until_trial_end,
         getcourse_cancel: gcResult,
       },
-    });
+    }).select('id').single();
+
+    const auditLogId = auditLogRow?.id || subscriptionId;
+
+    // ==================== Phase 1 Ledger Write ====================
+    // Machine-rule: keep_access_until_trial_end determines revoke vs skip
+    try {
+      if (subscription.keep_access_until_trial_end) {
+        // Deferred cancel: projection unchanged by design. Future revoke expected from cron path.
+        const skipEntry: LedgerEntry = {
+          source_event_type: 'system',
+          source_event_key: `trial-cancel-defer:${subscriptionId}:${auditLogId}`,
+          source_subject_type: 'subscription',
+          source_subject_ref: subscriptionId,
+          source_subscription_id: subscriptionId,
+          action_type: 'skip',
+          reason_code: 'trial_expired',
+          target_type: 'subscription_tier',
+          target_key: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+          target_ref: subscription.product_id || null,
+          user_id: subscription.user_id,
+          profile_id: null,
+          order_id: subscription.order_id || null,
+          status: 'skipped',
+          result: {
+            skip_reason: 'trial_cancel_deferred',
+            projection_unchanged: true,
+            future_revoke_expected: 'cron_path',
+            trial_end_at: subscription.trial_end_at,
+            keep_access_until_trial_end: true,
+            reconcile_basis: 'trial_cancel_deferred',
+          },
+          parent_event_key: null,
+          parent_execution_key: null,
+        };
+        const ledgerResult = await writeLedgerEntry(supabase, skipEntry);
+        console.log(`[cancel-trial] Ledger skip (deferred): id=${ledgerResult.id}, key=${ledgerResult.execution_key}`);
+      } else {
+        // Immediate cancel: projection changes now → executeRevoke
+        const revokeCtx: RevokeContext = {
+          userId: subscription.user_id,
+          profileId: null,
+          orderId: subscription.order_id || null,
+          targetType: 'subscription_tier',
+          targetKey: `${subscription.user_id}:${subscription.tariff_id || subscription.product_id || 'unknown'}`,
+          targetRef: subscription.product_id || null,
+          subscriptionId: subscriptionId,
+          reasonCode: 'trial_expired',
+          reconcileBasis: 'trial_cancel_immediate',
+          sourceEventType: 'system',
+          sourceEventKey: `trial-cancel:${subscriptionId}:${auditLogId}`,
+          sourceSubjectType: 'subscription',
+          sourceSubjectRef: subscriptionId,
+          parentEventKey: null,
+          parentExecutionKey: null,
+          clubId: (subscription.products_v2 as any)?.telegram_club_id || null,
+        };
+        const revokeResult = await executeRevoke(supabase, revokeCtx);
+        console.log(`[cancel-trial] Ledger revoke: revoked=${revokeResult.revoked}, id=${revokeResult.ledgerId}`);
+      }
+    } catch (ledgerErr) {
+      // Non-blocking: ledger write failure should not break the cancel flow
+      console.error('[cancel-trial] Ledger write error (non-blocking):', ledgerErr);
+    }
 
     console.log(`[cancel-trial] Successfully canceled trial for subscription: ${subscriptionId}`);
 
