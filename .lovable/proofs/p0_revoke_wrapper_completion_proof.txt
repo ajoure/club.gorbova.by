@@ -8,20 +8,25 @@ cutover_allowed = no
 SAFE_TO_CONTINUE_IMPLEMENTATION = YES
 CUTOVER_ALLOWED = NO
 
+## Correction Note
+Previous claim "9/9 wrapped" was corrected after code-review.
+3 branches (cancel, revoke_access, delete) in subscription-admin-actions were NOT wrapped.
+Status: wrapped_claim_removed → re-wrapped in this patch.
+
 ## Wrapped Paths
 
-| # | path | type | wrapped_in_code | runtime_verified | source_event_key pattern | target_type | reason_code | status mapping | uses_executeRevoke | notes |
-|---|------|------|-----------------|------------------|--------------------------|-------------|-------------|----------------|--------------------|----|
-| 1 | telegram-revoke-access | standalone | yes | runtime_deferred_non_blocking | tg-revoke:{userId}:{clubId}:{auditId} | club | dynamic (admin_revoke/subscription_expired/violation_kick/cron_cleanup) | revoked/skipped | yes | dynamic fields by caller context; reads parent keys from body (nullable) |
-| 2 | telegram-check-expired | standalone | yes | runtime_deferred_non_blocking | cron-expire:{jobRunId}:{accessId} | club | cron_cleanup (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | jobRunId = crypto.randomUUID() per cron run |
-| 3 | telegram-kick-violators | standalone | yes | runtime_deferred_non_blocking | cron-kick:{jobRunId}:{memberId} | club | violation_kick (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | jobRunId = crypto.randomUUID() per cron run |
-| 4 | cancel-trial (immediate) | standalone | yes | runtime_deferred_non_blocking | trial-cancel:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | revoked | yes | keep_access_until_trial_end = false → revoke |
-| 4b | cancel-trial (deferred) | standalone | yes | runtime_deferred_non_blocking | trial-cancel-defer:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | skipped | no (writeLedgerEntry) | keep_access_until_trial_end = true → skip; intentional non-revoke event; projection unchanged by design; future revoke expected from cron path |
-| 5 | subscription-charge:trial_ended_no_payment | embedded | yes | runtime_deferred_non_blocking | sub-trial-expire:{subId}:{chargeRunId} | subscription_tier | trial_expired | revoked | yes | reconcile_basis = trial_ended_no_payment |
-| 6 | subscription-admin-actions:cancel | embedded | yes | runtime_deferred_non_blocking | admin-cancel:{subId}:{auditLogId} | subscription_tier | admin_cancel | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
-| 7 | subscription-admin-actions:revoke_access | embedded | yes | runtime_deferred_non_blocking | admin-revoke:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
-| 8 | subscription-admin-actions:delete | embedded | yes | runtime_deferred_non_blocking | admin-delete:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | pre-state guard: already_canceled → skip |
-| 9 | subscription-admin-actions:refund+revoke | embedded | yes | runtime_deferred_non_blocking | admin-refund-revoke:{subId}:{orderId} | subscription_tier | admin_revoke | revoked | yes | effectiveAccessAction === 'revoke' only |
+| # | path | type | wrapped_in_code | runtime_verified | source_event_key pattern | target_type | reason_code | status mapping | uses_executeRevoke | branch_decision_source | audit_discriminator_source | notes |
+|---|------|------|-----------------|------------------|--------------------------|-------------|-------------|----------------|--------------------|-----------------------|---------------------------|-------|
+| 1 | telegram-revoke-access | standalone | yes | runtime_deferred_non_blocking | tg-revoke:{userId}:{clubId}:{auditId} | club | dynamic (admin_revoke/subscription_expired/violation_kick/cron_cleanup) | revoked/skipped | yes | explicit_guard | branch_audit_id | dynamic fields by caller context; reads parent keys from body (nullable) |
+| 2 | telegram-check-expired | standalone | yes | runtime_deferred_non_blocking | cron-expire:{jobRunId}:{accessId} | club | cron_cleanup (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | explicit_guard | jobRunId_per_run | jobRunId = crypto.randomUUID() per cron run |
+| 3 | telegram-kick-violators | standalone | yes | runtime_deferred_non_blocking | cron-kick:{jobRunId}:{memberId} | club | violation_kick (revoke) / already_active (skip) | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | explicit_guard | jobRunId_per_run | jobRunId = crypto.randomUUID() per cron run |
+| 4 | cancel-trial (immediate) | standalone | yes | runtime_deferred_non_blocking | trial-cancel:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | revoked | yes | explicit_guard | branch_audit_id | keep_access_until_trial_end = false → revoke |
+| 4b | cancel-trial (deferred) | standalone | yes | runtime_deferred_non_blocking | trial-cancel-defer:{subscriptionId}:{auditLogId} | subscription_tier | trial_expired | skipped | no (writeLedgerEntry) | explicit_guard | branch_audit_id | keep_access_until_trial_end = true → skip; intentional non-revoke event; projection unchanged by design; future revoke expected from cron path |
+| 5 | subscription-charge:trial_ended_no_payment | embedded | yes | runtime_deferred_non_blocking | sub-trial-expire:{subId}:{chargeRunId} | subscription_tier | trial_expired | revoked | yes | explicit_guard | chargeRunId | reconcile_basis = trial_ended_no_payment |
+| 6 | subscription-admin-actions:cancel | embedded | yes | runtime_deferred_non_blocking | admin-cancel:{subId}:{auditLogId} | subscription_tier | admin_cancel | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | before_after_projection_diff | branch_audit_id | pre-state guard: already_canceled → skip; branch-specific audit_log insert before ledger |
+| 7 | subscription-admin-actions:revoke_access | embedded | yes | runtime_deferred_non_blocking | admin-revoke:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | before_after_projection_diff | branch_audit_id | pre-state guard: already_canceled → skip; branch-specific audit_log insert before ledger |
+| 8 | subscription-admin-actions:delete | embedded | yes | runtime_deferred_non_blocking | admin-delete:{subId}:{auditLogId} | subscription_tier | admin_revoke | revoked/skipped | yes (revoke), writeLedgerEntry (skip) | before_after_projection_diff | branch_audit_id | pre-state guard: already_canceled → skip; ledger+audit written BEFORE physical delete; branch-specific audit_log insert |
+| 9 | subscription-admin-actions:refund+revoke | embedded | yes | runtime_deferred_non_blocking | admin-refund-revoke:{subId}:{orderId} | subscription_tier | admin_revoke | revoked | yes | explicit_guard | orderId | effectiveAccessAction === 'revoke' only |
 
 ## Explicitly Excluded from v22.6
 - subscription-admin-actions:grant_access → not in this patch
@@ -39,6 +44,44 @@ CUTOVER_ALLOWED = NO
 6. cancel-trial machine-rule: keep_access_until_trial_end=true → ONLY skip; false → ONLY revoke
 7. subscription-admin-actions pre-state guard: already canceled → skip, not revoke
 8. Parent keys read from body (nullable, backward compat) — Sub-patch B will add propagation
+9. delete branch: audit+ledger written BEFORE physical delete to preserve traceability
+
+## Mini-proof: subscription-admin-actions branch matrix
+
+| branch | pre_state_guard | revoke_path | skip_path | audit_discriminator | excluded |
+|--------|----------------|-------------|-----------|--------------------|----|
+| cancel | before_status !== canceled/expired | executeRevoke(admin-cancel:{subId}:{branchAuditId}) | writeLedgerEntry(skip, already_canceled) | branch_audit_id (admin.subscription.cancel.ledger) | no |
+| revoke_access | before_status !== canceled/expired | executeRevoke(admin-revoke:{subId}:{branchAuditId}) | writeLedgerEntry(skip, already_canceled) | branch_audit_id (admin.subscription.revoke_access.ledger) | no |
+| delete | before_status !== canceled/expired | executeRevoke(admin-delete:{subId}:{branchAuditId}) | writeLedgerEntry(skip, already_canceled) | branch_audit_id (admin.subscription.delete.ledger) | no |
+| refund+revoke | effectiveAccessAction === 'revoke' | executeRevoke(admin-refund-revoke:{subId}:{orderId}) | — | orderId | no |
+| refund+reduce | — | — | — | — | excluded_from_v22_6_scope |
+
+## Mini-proof: telegram-revoke-access outcome matrix
+
+| outcome | handler | ledger_call | action_type | status | notes |
+|---------|---------|------------|------------|--------|-------|
+| success revoke | main flow after ban/update/audit | executeRevoke | revoke | revoked | dynamic fields from caller context |
+| blocked / valid-access skip | hasValidAccess=true inside executeRevoke | executeRevoke (returns skip) | skip | skipped | other_active_source in result |
+| no-telegram-linked | no TG user found | executeRevoke | revoke | revoked | revokes subscription-level access even without TG link |
+| one ledger row per request | enforced | — | — | — | no duplicate rows per single invocation |
+
+## Mini-proof: telegram-check-expired & telegram-kick-violators
+
+| function | revoke_path | skip_path | jobRunId |
+|----------|------------|-----------|---------|
+| telegram-check-expired | executeRevoke(cron-expire:{jobRunId}:{accessId}) | writeLedgerEntry(skip, access still valid) | crypto.randomUUID() per cron run, NOT per item |
+| telegram-kick-violators | executeRevoke(cron-kick:{jobRunId}:{memberId}) | writeLedgerEntry(skip, has valid access) | crypto.randomUUID() per cron run, NOT per item |
+
+## Mini-proof: subscription-charge:trial_ended_no_payment
+
+| field | value |
+|-------|-------|
+| canonical_branch_name | subscription-charge:trial_ended_no_payment |
+| source_event_key | sub-trial-expire:{subId}:{chargeRunId} |
+| reason_code | trial_expired |
+| reconcile_basis | trial_ended_no_payment |
+| target_type | subscription_tier |
+| uses_executeRevoke | yes |
 
 ## ОТЛОЖЕНО НА ПОСЛЕ СПРИНТА
 - runtime smoke 9 revoke paths

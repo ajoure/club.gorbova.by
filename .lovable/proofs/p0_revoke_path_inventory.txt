@@ -1,25 +1,30 @@
 # Phase 1 Revoke Path Inventory
-# Updated: 2026-03-30 (PATCH v22.6 Sub-patch A)
+# Updated: 2026-03-30 (PATCH v22.6 Sub-patch A — Consolidated)
 
-## Statuses: pending | wrapped_in_code | runtime_verified | excluded_from_scope
+## Statuses: pending | wrapped_in_code_verified | wrapped_claim_removed | runtime_deferred_non_blocking | excluded_from_scope | pending_next_subpatch
 
-## Revoke paths
+## Correction Note
+Previous inventory claimed 13 paths "wrapped_in_code".
+After code-review, 3 branches (cancel, revoke_access, delete) were found NOT wrapped.
+Status corrected: wrapped_claim_removed → re-wrapped and verified in this consolidated patch.
 
-| # | Path | source_event_key pattern | Status |
-|---|------|------------------------|--------|
-| 1 | subscriptions-reconcile (expired cancellations) | `cron-reconcile:{jobRunId}:{subId}` | ✅ wrapped_in_code |
-| 2 | subscriptions-reconcile (trial canceled) | `cron-reconcile:{jobRunId}:trial:{subId}` | ✅ wrapped_in_code |
-| 3 | subscriptions-reconcile (access expired) | `cron-reconcile:{jobRunId}:expired:{subId}` | ✅ wrapped_in_code |
-| 4 | subscriptions-reconcile (telegram sync) | `cron-reconcile:{jobRunId}:tg:{userId}:{clubId}` | ✅ wrapped_in_code |
-| 5 | telegram-revoke-access | `tg-revoke:{userId}:{clubId}:{auditId}` | ✅ wrapped_in_code |
-| 6 | telegram-check-expired | `cron-expire:{jobRunId}:{accessId}` | ✅ wrapped_in_code |
-| 7 | telegram-kick-violators | `cron-kick:{jobRunId}:{memberId}` | ✅ wrapped_in_code |
-| 8 | cancel-trial | `trial-cancel:{subId}:{auditLogId}` / `trial-cancel-defer:{subId}:{auditLogId}` | ✅ wrapped_in_code |
-| 9 | subscription-charge:trial_ended_no_payment | `sub-trial-expire:{subId}:{chargeRunId}` | ✅ wrapped_in_code |
-| 10 | subscription-admin-actions:cancel | `admin-cancel:{subId}:{auditLogId}` | ✅ wrapped_in_code |
-| 11 | subscription-admin-actions:revoke_access | `admin-revoke:{subId}:{auditLogId}` | ✅ wrapped_in_code |
-| 12 | subscription-admin-actions:delete | `admin-delete:{subId}:{auditLogId}` | ✅ wrapped_in_code |
-| 13 | subscription-admin-actions:refund+revoke | `admin-refund-revoke:{subId}:{orderId}` | ✅ wrapped_in_code |
+## Sub-patch A: Revoke paths (9 paths)
+
+| # | Path | source_event_key pattern | Status | Code-verified |
+|---|------|------------------------|--------|---------------|
+| 1 | subscriptions-reconcile (expired cancellations) | `cron-reconcile:{jobRunId}:{subId}` | ✅ wrapped_in_code_verified | yes |
+| 2 | subscriptions-reconcile (trial canceled) | `cron-reconcile:{jobRunId}:trial:{subId}` | ✅ wrapped_in_code_verified | yes |
+| 3 | subscriptions-reconcile (access expired) | `cron-reconcile:{jobRunId}:expired:{subId}` | ✅ wrapped_in_code_verified | yes |
+| 4 | subscriptions-reconcile (telegram sync) | `cron-reconcile:{jobRunId}:tg:{userId}:{clubId}` | ✅ wrapped_in_code_verified | yes |
+| 5 | telegram-revoke-access | `tg-revoke:{userId}:{clubId}:{auditId}` | ✅ wrapped_in_code_verified | yes |
+| 6 | telegram-check-expired | `cron-expire:{jobRunId}:{accessId}` | ✅ wrapped_in_code_verified | yes |
+| 7 | telegram-kick-violators | `cron-kick:{jobRunId}:{memberId}` | ✅ wrapped_in_code_verified | yes |
+| 8 | cancel-trial | `trial-cancel:{subId}:{auditLogId}` / `trial-cancel-defer:{subId}:{auditLogId}` | ✅ wrapped_in_code_verified | yes |
+| 9 | subscription-charge:trial_ended_no_payment | `sub-trial-expire:{subId}:{chargeRunId}` | ✅ wrapped_in_code_verified | yes |
+| 10 | subscription-admin-actions:cancel | `admin-cancel:{subId}:{auditLogId}` | ✅ wrapped_in_code_verified (was wrapped_claim_removed, re-wrapped) | yes |
+| 11 | subscription-admin-actions:revoke_access | `admin-revoke:{subId}:{auditLogId}` | ✅ wrapped_in_code_verified (was wrapped_claim_removed, re-wrapped) | yes |
+| 12 | subscription-admin-actions:delete | `admin-delete:{subId}:{auditLogId}` | ✅ wrapped_in_code_verified (was wrapped_claim_removed, re-wrapped) | yes |
+| 13 | subscription-admin-actions:refund+revoke | `admin-refund-revoke:{subId}:{orderId}` | ✅ wrapped_in_code_verified | yes |
 
 ## Excluded from scope
 - subscription-admin-actions:grant_access → excluded_from_scope (Sub-patch B grant paths)
@@ -28,7 +33,13 @@
 - subscription-admin-actions:refund+reduce → excluded_from_v22_6_scope
 - subscription-admin-actions:pause/resume/toggle_auto_renew → excluded_from_scope (no projection change)
 
+## Pending next subpatch
+- Grant/extend paths → pending_next_subpatch (Sub-patch B)
+- Batch/import paths → pending_next_subpatch (Sub-patch C)
+- Parent propagation → pending_next_subpatch (Sub-patch B)
+
 ## Additional admin branches mapping
-- subscription-admin-actions:revoke_access → uses executeRevoke directly
-- subscription-admin-actions:delete → uses executeRevoke directly
+- subscription-admin-actions:revoke_access → uses executeRevoke directly + branch audit
+- subscription-admin-actions:delete → uses executeRevoke directly + branch audit; physical delete AFTER ledger
 - subscription-admin-actions:refund+revoke → uses executeRevoke directly
+- subscription-admin-actions:cancel → uses executeRevoke directly + branch audit
