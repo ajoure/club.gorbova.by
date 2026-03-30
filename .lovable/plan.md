@@ -2,270 +2,915 @@
 
 &nbsp;
 
-1. Добавь шаг **“proof sync sweep”**: перед финальным decision block сделать grep/поиск по всем proof-файлам и readiness summary на старые формулировки:
+&nbsp;
+
+## **1. Убрать неопределённость по scope v23**
+
+&nbsp;
+
+&nbsp;
+
+В текущем виде план смешивает **новую продуктовую функцию** и **технический cleanup**. Это снова создаст расползание scope.
+
+&nbsp;
+
+Зафиксировать:
+
+&nbsp;
+
+&nbsp;
+
+### **В v23 включить как основной scope:**
+
+&nbsp;
+
+&nbsp;
+
+1. **Access Rules UI**
+2. **Mapping Rules consolidation**
+3. **Visual controls**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Вынести из основного scope v23 в follow-up sprint:**
+
+&nbsp;
+
+&nbsp;
+
+4. **Semantic cleanup: grant vs extend**
+5. **Dead code cleanup in subscription-charge**
+
+&nbsp;
+
+&nbsp;
+
+Причина:
+
+&nbsp;
+
+- блоки 1/2/5 дают пользователю видимый результат;
+- блоки 3/4 — это уже техническая семаника/рефакторинг backend, они легко опять затянут спринт и вернут нас в бесконечную backend-пересборку.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **2. Уточнить, что именно должен дать v23 пользователю**
+
+&nbsp;
+
+&nbsp;
+
+Нужен не абстрактный “UI / access rules”, а конкретный пользовательский результат.
+
+&nbsp;
+
+Добавить в цель спринта:
+
+&nbsp;
+
+&nbsp;
+
+### **Цель v23**
+
+&nbsp;
+
+&nbsp;
+
+Сделать так, чтобы админ **визуально управлял тем, что получает покупатель** при покупке продукта/тарифа, без ручного чтения edge functions и без SQL.
+
+&nbsp;
+
+&nbsp;
+
+### **Пользовательский результат после v23**
+
+&nbsp;
+
+&nbsp;
+
+Админ в интерфейсе должен уметь:
+
+&nbsp;
+
+- открыть продукт / тариф;
+- увидеть, какие доступы сейчас будут выданы покупателю;
+- добавить / убрать правила выдачи;
+- выбрать тип выдачи:
   &nbsp;
-  - BLOCKED_SAFE_GUARD
-  - sandbox billing
-  - subscription-charge renew blocker
-  - R3 = blocked
-    И обновить **все** затронутые файлы add-only, не только 4 перечисленных. Иначе останутся противоречия между proof-слоем и новым решением Path A.
+  - entitlement
+  - telegram club
+  - email/domain access
+  - subscription tier / product-level grant
   &nbsp;
-2. В шаге 5 зафиксируй жёсткий порядок:
+- видеть источник правила: product-level / tariff-level / legacy mapping;
+- понимать, что сработает при покупке конкретного тарифа.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **3. Зафиксировать основной UI-модуль, а не распылять правки**
+
+&nbsp;
+
+&nbsp;
+
+Сейчас в плане нет решения, **где именно** будет главный экран управления rules.
+
+&nbsp;
+
+Нужно явно выбрать один SoT-экран:
+
+&nbsp;
+
+&nbsp;
+
+### **Основной экран v23**
+
+&nbsp;
+
+&nbsp;
+
+**/admin/products-v2 → Product editor → вкладка Access Rules**
+
+&nbsp;
+
+И только как вспомогательные:
+
+&nbsp;
+
+- entitlements
+- club mappings
+- email/domain mappings
+
+&nbsp;
+
+&nbsp;
+
+Правило:
+
+&nbsp;
+
+- **не делать 3–4 равноправных места настройки одной и той же логики**;
+- основной UX — через карточку продукта/тарифа;
+- старые экраны пока остаются, но либо:
   &nbsp;
-  - сначала обновление proof-файлов,
-  - потом **idempotent** запись phase1_ledger_schema_ready_at,
-  - потом финальный SQL recheck,
-  - потом финальный decision block.
-    Не оставляй формулировку “если решено”. Для текущего плана решение уже должно быть определено.
-  &nbsp;
-3. Отдельно пропиши, что в v22.8:
-  &nbsp;
-  - phase1_ledger_schema_ready_at можно записывать,
-  - phase1_ledger_cutover_at **не записывается**,
-  - readiness/cutover approval и cutover watermark — это разные вещи.
-    Это нужно явно, чтобы не смешать schema_ready и cutover_at.
-  &nbsp;
-4. В блоке “Production Truth / Source of Renewal” добавь не только narrative, но и **контрактное следствие**:
-  &nbsp;
-  - текущий production renewal ledger classification = grant
-  - это временно считается допустимым для cutover
-  - semantic mismatch renewal classified as grant, not extend не blocker текущего релиза, а deferred design debt
-  &nbsp;
-5. В “Dead-Code Proof Package” добавь отдельный подпункт:
-  &nbsp;
-  - unreachable_extend_coverage = excluded_from_runtime_matrix
-  - extend ledger rows expected in current production = 0
-    Это должно быть записано явно, иначе потом снова появится старое ожидание runtime-proof по extend.
-  &nbsp;
-6. В remaining blockers запиши точнее:
-  &nbsp;
-  - если после записи phase1_ledger_schema_ready_at и финального SQL recheck всё PASS, то
-    remaining_cutover_blockers = only formal approval
-    Сейчас формулировка немного смешивает текущие и будущие blockers.
-  &nbsp;
-7. Добавь отдельный machine-check для v22.8:
-  &nbsp;
-  - после proof sync sweep проверить, что нигде в актуальных proof-файлах не осталось старого статуса R3 = BLOCKED_SAFE_GUARD
-  - и что subscription-charge extend везде помечен как EXCLUDED_FROM_CUTOVER / dead code
-    Это нужен как финальный anti-drift check.
-  &nbsp;
-8. В deferred list добавь ещё один пункт:
-  &nbsp;
-  - semantic reporting / analytics impact: renewals currently counted as grant in ledger
-    Чтобы потом не забыть, что это влияет не только на код, но и на интерпретацию отчётов.
-  &nbsp;
-9. В decision block добавь ещё две строки:
-  &nbsp;
-  - CURRENT_RENEWAL_LEDGER_CLASSIFICATION = grant
-  - EXTEND_PATH_RUNTIME_EXPECTATION = none (dead code)
-    Тогда итоговый статус будет полностью однозначным.
+  - становятся read-only / diagnostic,
+  - либо получают ссылки “открыть в Access Rules”.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-После этих правок план уже можно считать финальным и не возвращаться к пересогласованию.
+---
 
 &nbsp;
 
-План: v22.8 — Dead Code Resolution + Cutover Finalization
+&nbsp;
 
-## Статус
+## **4. Нужен единый SoT для правил выдачи**
 
-```
-CURRENT_PATH = A (dead code recognition, no sandbox billing)
-NEW_CODE_IN_V22.8 = NO
-DEAD_CODE_CLEANUP_NOW = NO
-SUBSCRIPTION_CHARGE_EXTEND_RUNTIME_REQUIREMENT = REMOVED
-CUTOVER_DECISION = proceed_to_final_readiness_check
-FOLLOW_UP_SPRINT = semantics refactor / dead code cleanup
-```
+&nbsp;
 
----
+&nbsp;
 
-## 1. Production Truth / Source of Renewal
+Сейчас в плане сказано, что offer_grant_rules отсутствует, но не зафиксировано, вводим ли мы его как новый SoT.
 
-**Факт**: `subscription-charge` содержит два взаимоисключающих guard на строках 554–574, которые делают весь код ниже (включая extend ledger write на строках 1520–1556) **недостижимым**:
+&nbsp;
 
-```text
-Line 556: if (billing_type === 'provider_managed')
-            → return { skipped: true, skip_reason: 'provider_managed' }
+Это нужно решить прямо в плане.
 
-Line 566: if (billing_type !== 'provider_managed')
-            → return { skipped: true, skip_reason: 'mit_disabled' }
-```
+&nbsp;
 
-Обе ветки возвращают `skipped`. Код после строки 574 — **dead code**.
+Добавить:
 
-**Production renewal source of truth:**
+&nbsp;
 
-```text
-bePaid webhook → bepaid-webhook → payment_reconcile_queue
-  → bepaid-queue-cron / bepaid-auto-process
-    → grant-access-for-order (action_type='grant', status='granted')
-```
+&nbsp;
 
-Этот путь (`grant-access-for-order`) уже имеет **runtime PASS** из v22.6/v22.7.
+### **Новый источник истины**
 
-**Решения:**
+&nbsp;
 
-- `subscription-charge` renew/extend path = dead code / unreachable under current guards
-- Production renewal = webhook pipeline через `grant-access-for-order`
-- Cutover readiness оценивается по живому пути, а не по unreachable ветке
-- Требование sandbox billing для v22.7/v22.8 **отменяется** как не относящееся к реальному production path
+&nbsp;
 
----
+Ввести единый слой правил, например:
 
-## 2. Cutover Impact of Dead Code Finding
+&nbsp;
 
-### Что меняется в readiness-оценке
+- offer_grant_rules или
+- access_rules
 
+&nbsp;
 
-| Аспект                      | Было (v22.7)                 | Стало (v22.8)                                |
-| --------------------------- | ---------------------------- | -------------------------------------------- |
-| subscription-charge extend  | BLOCKED_SAFE_GUARD           | **EXCLUDED_FROM_CUTOVER** (dead code)        |
-| Sandbox billing requirement | Обязательное условие cutover | **Снято**                                    |
-| Renewal runtime proof       | Отсутствует                  | **Покрыт через grant-access-for-order PASS** |
+&nbsp;
 
+С чётким контрактом:
 
-### Какой blocker снимается
+&nbsp;
 
-- **R3 subscription-charge renew** — больше не blocker, т.к. extend path = unreachable dead code
+- rule scope: product_id или tariff_id
+- grant target type:
+  &nbsp;
+  - entitlement
+  - club
+  - domain
+  - email_template / email_access
+  - subscription_tier / product access
+  &nbsp;
+- target_ref / target_key
+- is_active
+- priority / evaluation_order
+- conditions (если нужны)
+- meta / notes
+- created_by / updated_by
 
-### Какие blockers остаются
+&nbsp;
 
-```
-remaining_cutover_blockers:
-  1. S13: phase1_ledger_schema_ready_at watermark not set in app_settings
-  2. Final SQL recheck after watermark is set
-  3. Formal cutover approval
-```
+&nbsp;
 
-Других blockers нет. Все SQL invariants S1–S12 = PASS. Runtime PASS для живых путей уже получен.
+&nbsp;
 
----
+### **Правило приоритета**
 
-## 3. No-New-Code Decision
+&nbsp;
 
-Для текущего спринта жёстко зафиксировано:
+&nbsp;
 
-- **Код не меняем** — ни edge functions, ни shared helpers, ни DDL
-- **Dead code не чистим** — cleanup deferred
-- **Ledger semantics**: `grant` используется для renewals в текущем production pipeline — принимаем как operational reality
-- **Semantic refactor** grant vs extend — переносится в отдельный будущий спринт
+- tariff-level rule имеет приоритет над product-level
+- legacy mappings не удаляем сразу, а читаем как fallback на переходный период
+
+&nbsp;
+
+&nbsp;
+
+Без этого UI будет просто красивой обёрткой над разрозненными таблицами.
+
+&nbsp;
 
 ---
 
-## 4. Обновлённая Runtime Матрица
+&nbsp;
 
+&nbsp;
 
-| #      | Path                       | Status (v22.8)            | Основание                                      |
-| ------ | -------------------------- | ------------------------- | ---------------------------------------------- |
-| R1     | grant-access-for-order     | **PASS**                  | Runtime verified; live renewal-equivalent path |
-| R2     | subscriptions-reconcile    | **PASS**                  | Runtime verified v22.6                         |
-| R3     | subscription-charge extend | **EXCLUDED_FROM_CUTOVER** | Dead code, unreachable under current guards    |
-| R4–R18 | Revoke/admin/import paths  | DEFERRED_NON_BLOCKING     | Functions invoked where possible, 0 candidates |
+## **5. Добавить migration strategy, иначе сломаем текущую логику**
 
+&nbsp;
 
-**Важно**: R3 больше не `BLOCKED_SAFE_GUARD`, а `EXCLUDED_FROM_CUTOVER as dead code`. Это принципиальное изменение статуса.
+&nbsp;
+
+Сейчас план не говорит, как жить со старыми таблицами:
+
+&nbsp;
+
+- product_club_mappings
+- bepaid_product_mappings
+- product_email_mappings
+
+&nbsp;
+
+&nbsp;
+
+Нужно добавить переходную модель:
+
+&nbsp;
+
+&nbsp;
+
+### **Переходный режим v23**
+
+&nbsp;
+
+&nbsp;
+
+1. Новые правила сохраняются в новом rule-layer
+2. Legacy tables пока не удаляются
+3. Runtime сначала читает новый rule-layer
+4. Если rules не найдены — использует legacy mappings fallback
+5. В UI показывать происхождение:
+  &nbsp;
+  - new_rule
+  - legacy_mapping
+  - mixed
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Отдельный DoD**
+
+&nbsp;
+
+&nbsp;
+
+Для каждого legacy mapping должно быть видно:
+
+&nbsp;
+
+- мигрирован он в новый rules-layer или ещё нет.
+
+&nbsp;
+
+&nbsp;
 
 ---
 
-## 5. Proof-файлы для обновления
+&nbsp;
 
+&nbsp;
 
-| Файл                                | Что обновляется                                                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `p0_ledger_runtime_smoke_proof.txt` | Заменить blocker по sandbox/renew → EXCLUDED_FROM_CUTOVER; добавить dead-code finding с excerpt guard-веток                    |
-| `p0_ledger_path_coverage_proof.txt` | Пометить subscription-charge extend как dead/unreachable, excluded from live coverage; обновить итоговую таблицу               |
-| `p0_invariant_report.txt`           | Добавить finding + decision block по dead code; обновить deferred list и decision block; снять sandbox requirement             |
-| `.lovable/v22.7_readiness_plan.md`  | Синхронизировать итоговый cutover status; обновить R3 статус; убрать формулировки про sandbox billing как обязательное условие |
+## **6. Нужен конкретный runtime-contract**
 
+&nbsp;
+
+&nbsp;
+
+Сейчас план про UI, но не описано, **кто именно** будет читать rules в runtime.
+
+&nbsp;
+
+Добавить явный scope runtime integration:
+
+&nbsp;
+
+&nbsp;
+
+### **В v23 должны читать новый rules-layer:**
+
+&nbsp;
+
+&nbsp;
+
+- grant-access-for-order
+- импортные пути, где создаются доступы
+- admin grant flows, если они реально выдают доступ
+- telegram grant path — через уже разрешённую логику downstream
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Вне scope v23:**
+
+&nbsp;
+
+&nbsp;
+
+- менять ledger-архитектуру;
+- делать новый cutover;
+- пересобирать phase1 backend;
+- чистить dead code.
+
+&nbsp;
+
+&nbsp;
 
 ---
 
-## 6. Dead-Code Proof Package
+&nbsp;
 
-Обязательные доказательства для записи в proof-файлы:
+&nbsp;
 
-### 6.1 Guard-ветки (excerpt из subscription-charge/index.ts:554–574)
+## **7. Добавить конкретные UI-сценарии, которые должны заработать**
 
-```text
-Lines 556-563: if (billing_type === 'provider_managed')
-  → return { skipped: true, skip_reason: 'provider_managed' }
+&nbsp;
 
-Lines 566-573: if (billing_type !== 'provider_managed')
-  → return { skipped: true, skip_reason: 'mit_disabled' }
+&nbsp;
+
+Сейчас нет ни одного user-story с проверяемым результатом.
+
+&nbsp;
+
+Добавить минимум 5 сценариев:
+
+&nbsp;
+
+&nbsp;
+
+### **Сценарий 1**
+
+&nbsp;
+
+&nbsp;
+
+Админ открывает продукт **«Ценная бухгалтер 2.0»** и видит список всех текущих grants.
+
+&nbsp;
+
+&nbsp;
+
+### **Сценарий 2**
+
+&nbsp;
+
+&nbsp;
+
+Админ добавляет rule на тариф **Business**:
+
+&nbsp;
+
+- при покупке выдать доступ в **Gorbova Club**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Сценарий 3**
+
+&nbsp;
+
+&nbsp;
+
+Админ добавляет domain access:
+
+&nbsp;
+
+- при покупке открыть доступ к определённому домену / разделу платформы
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Сценарий 4**
+
+&nbsp;
+
+&nbsp;
+
+Админ видит preview:
+
+&nbsp;
+
+- что получит покупатель по конкретному тарифу после применения всех rules
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Сценарий 5**
+
+&nbsp;
+
+&nbsp;
+
+Админ отключает rule и понимает, что legacy fallback всё ещё активен или уже нет.
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **8. Обязательно нужен Preview / Explain Mode**
+
+&nbsp;
+
+&nbsp;
+
+Без этого админ не поймёт, что реально сработает.
+
+&nbsp;
+
+Добавить в v23:
+
+&nbsp;
+
+&nbsp;
+
+### **Preview / Explain panel**
+
+&nbsp;
+
+&nbsp;
+
+Для выбранного продукта / тарифа показывать:
+
+&nbsp;
+
+- итоговый список grants;
+- откуда взялся каждый grant;
+- какой rule победил;
+- какие legacy mappings ещё участвуют;
+- что будет выдано новому покупателю.
+
+&nbsp;
+
+&nbsp;
+
+Это один из самых важных пунктов спринта.
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **9. Visual controls нужно конкретизировать**
+
+&nbsp;
+
+&nbsp;
+
+Сейчас блок “Visual controls” слишком общий.
+
+&nbsp;
+
+Уточнить, что именно входит:
+
+&nbsp;
+
+&nbsp;
+
+### **Входит**
+
+&nbsp;
+
+&nbsp;
+
+- таблица правил
+- фильтры по типу rule
+- фильтр active/inactive
+- поиск
+- inline badges:
+  &nbsp;
+  - product-level
+  - tariff-level
+  - legacy
+  - fallback
+  &nbsp;
+- drawer/modal для создания и редактирования rule
+- preview panel
+- warning badges для конфликтов
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Не входит**
+
+&nbsp;
+
+&nbsp;
+
+- большой UI-рефактор всей админки
+- drag&drop-конструктор
+- массовый bulk-edit всех продуктов сразу
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **10. Нужен conflict model**
+
+&nbsp;
+
+&nbsp;
+
+Если не описать конфликты, правила начнут дублироваться.
+
+&nbsp;
+
+Добавить:
+
+&nbsp;
+
+&nbsp;
+
+### **Конфликтные случаи**
+
+&nbsp;
+
+&nbsp;
+
+- одинаковый target выдается и на product-level, и на tariff-level
+- legacy mapping и new rule дублируют друг друга
+- inactive rule перекрывается active fallback
+- один тариф выдаёт 2 несовместимых grants
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Что должен делать UI**
+
+&nbsp;
+
+&nbsp;
+
+- показывать conflict badge
+- показывать effective winner
+- не молча применять конфликтную конфигурацию
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **11. Semantic cleanup и dead code вынести в отдельный follow-up sprint явно**
+
+&nbsp;
+
+&nbsp;
+
+Не просто “отложить”, а зафиксировать отдельным блоком:
+
+&nbsp;
+
+&nbsp;
+
+### **Follow-up sprint after v23**
+
+&nbsp;
+
+&nbsp;
+
+1. grant vs extend semantic refactor
+2. dead code cleanup in subscription-charge
+3. semantic analytics/reporting alignment
+4. optional cutover of legacy mappings → rules-only mode
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **12. Нужен переписанный итоговый порядок v23**
+
+&nbsp;
+
+&nbsp;
+
+Добавить в план такой порядок:
+
+&nbsp;
+
+&nbsp;
+
+### **Фаза A — Rule model + runtime read path**
+
+&nbsp;
+
+&nbsp;
+
+- новый rules-layer
+- read-path integration
+- legacy fallback
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Фаза B — Product UI**
+
+&nbsp;
+
+&nbsp;
+
+- вкладка Access Rules в /admin/products-v2
+- список / create / edit / disable
+- preview / explain
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Фаза C — Mapping consolidation**
+
+&nbsp;
+
+&nbsp;
+
+- связывание legacy mappings с новым rules-layer
+- indicators source-of-truth / fallback / migrated
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Фаза D — Visual polish + proof**
+
+&nbsp;
+
+&nbsp;
+
+- фильтры
+- badges
+- conflict states
+- proof / DoD / runtime examples
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **13. DoD нужно усилить**
+
+&nbsp;
+
+&nbsp;
+
+Сейчас DoD отсутствует как проверяемый результат.
+
+&nbsp;
+
+Добавить:
+
+&nbsp;
+
+&nbsp;
+
+### **DoD v23**
+
+&nbsp;
+
+&nbsp;
+
+1. У продукта и тарифа есть экран Access Rules
+2. Можно создать минимум 4 типа grants через UI
+3. Preview показывает effective grants до покупки
+4. Runtime умеет читать новый rules-layer
+5. Legacy mappings не ломаются и видны как fallback
+6. Для тарифа Business можно настроить выдачу Gorbova Club без SQL
+7. Для домена / раздела платформы можно создать rule без ручного кода
+8. Конфликты отображаются явно
+9. Есть минимум один proof сценарий на реальном продукте
+10. Старый backend sprint не переоткрывается
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **14. Итог: что именно запускать в работу**
+
+&nbsp;
+
+&nbsp;
+
+Не оставлять вопрос “какие из 5 блоков входят”, а зафиксировать сразу:
+
+&nbsp;
+
+&nbsp;
+
+### **Запускаем в v23:**
+
+&nbsp;
+
+&nbsp;
+
+- Access Rules UI
+- Mapping Rules consolidation
+- Visual controls
+- Preview / Explain
+- New rules-layer + legacy fallback
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Не включаем в v23:**
+
+&nbsp;
+
+&nbsp;
+
+- grant vs extend semantic refactor
+- dead code cleanup
+- cutover
+- новый backend sprint по ledger
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+План: Sprint v23 — UI / Access Rules / Semantic Cleanup
+
+## Фиксация закрытия v22.6–v22.8
+
+```
+IMPLEMENTATION = COMPLETE
+READINESS = COMPLETE  
+CUTOVER = DEFERRED MANUALLY
+phase1_ledger_cutover_at = NOT SET
+RETURN_TO_BACKEND = only on critical new fact
 ```
 
-Обе ветки взаимоисключающие и исчерпывающие (X === Y || X !== Y). Обе возвращают `skipped`. **Код после строки 574 недостижим.**
-
-### 6.2 Extend ledger write (строки 1520–1556)
-
-Содержит `action_type: 'extend'`, `status: 'extended'`, `reason_code: 'subscription_renew'`. Этот код **никогда не выполняется** при текущем control flow.
-
-### 6.3 Живой renewal path
-
-```text
-bepaid-webhook (получает callback от bePaid)
-  → записывает в payment_reconcile_queue
-bepaid-queue-cron / bepaid-auto-process
-  → обрабатывает очередь
-  → вызывает grant-access-for-order
-    → action_type='grant', status='granted'
-    → runtime PASS подтверждён в v22.6
-```
+Спринты v22.6 / v22.7 / v22.8 закрыты. Backend не дробим и не пересогласовываем.
 
 ---
 
-## 7. Deferred List (не блокирует cutover)
+## Scope следующего спринта (v23)
+
+На основе анализа кодовой базы — уже существуют:
+
+- `AdminProductsV2` — каталог продуктов (766 строк)
+- `AdminEntitlements` — управление entitlements (548 строк)
+- `ProductClubMappings` — маппинг продукт → клуб (369 строк)
+- `bepaid_product_mappings` — маппинг bePaid → продукт
+- `product_email_mappings` — маппинг продукт → email
+- `has_valid_access_for_club()` — RPC проверки доступа через маппинги
+
+Отсутствует: `offer_grant_rules` / универсальные access rules / semantic extend path.
+
+### Предлагаемые блоки (для уточнения приоритетов)
 
 
-| #   | Item                                                          | Sprint       | Priority        |
-| --- | ------------------------------------------------------------- | ------------ | --------------- |
-| 1   | Semantic split: grant vs extend в live renewal path           | Post-cutover | Medium          |
-| 2   | Cleanup/removal dead code в subscription-charge (~1200 строк) | Post-cutover | Low             |
-| 3   | Optional sandbox program для future semantic verification     | Post-cutover | Low             |
-| 4   | Cross-product access rules / offer_grant_rules UI             | Post-cutover | Separate sprint |
+| #   | Блок                                  | Описание                                                                                                                                |
+| --- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Access Rules UI**                   | Визуальный редактор правил "продукт/оффер → что выдаётся" (entitlement, telegram club, tier). Сейчас логика размазана по edge functions |
+| 2   | **Mapping Rules consolidation**       | Объединить разрозненные маппинги (product_club, bepaid_product, product_email) в единый UI или хотя бы единую навигацию                 |
+| 3   | **Semantic cleanup: grant vs extend** | Добавить `action_type='extend'` в `grant-access-for-order` при повторной покупке/продлении                                              |
+| 4   | **Dead code cleanup**                 | Удалить ~1200 строк unreachable кода в `subscription-charge`                                                                            |
+| 5   | **Visual controls**                   | Улучшения UI: фильтры, статусы, batch-операции в admin-панели                                                                           |
 
 
 ---
 
-## 8. Задачи v22.8
+## Вопрос перед стартом
 
-1. Обновить `p0_ledger_runtime_smoke_proof.txt` — dead-code finding, excerpt, EXCLUDED_FROM_CUTOVER
-2. Обновить `p0_ledger_path_coverage_proof.txt` — extend = dead/unreachable, excluded
-3. Обновить `p0_invariant_report.txt` — finding, decision, deferred list, снять sandbox requirement
-4. Обновить `.lovable/v22.7_readiness_plan.md` — синхронизировать cutover status
-5. Установить `phase1_ledger_schema_ready_at` watermark в `app_settings` (если решено)
-6. Финальный SQL recheck
-7. Decision block: CUTOVER_ALLOWED = YES/NO
+Нужно определить приоритет и порядок блоков. Предлагаю уточнить:
 
----
+- какие из 5 блоков входят в первый спринт, а какие откладываются
+- есть ли конкретные UI-задачи, которые нужны прямо сейчас (пользователь на странице `/admin/products-v2`)
 
-## 9. Финальный Decision Block
-
-```
-CURRENT_PATH = A
-NEW_CODE_IN_V22.8 = NO
-DEAD_CODE_CLEANUP_NOW = NO
-SUBSCRIPTION_CHARGE_EXTEND_RUNTIME_REQUIREMENT = REMOVED
-PRODUCTION_RENEWAL_PATH = bepaid-webhook → grant-access-for-order (PASS)
-SANDBOX_BILLING_REQUIREMENT = REMOVED (not applicable to live path)
-CUTOVER_DECISION = proceed_to_final_readiness_check
-REMAINING_BLOCKERS = schema_ready watermark + final SQL recheck + formal approval
-FOLLOW_UP_SPRINT = semantics refactor / dead code cleanup / access rules UI
-```
-
----
-
-## Что НЕ входит в v22.8
-
-- Новый код / code patches
-- Dead code cleanup
-- Schema changes / DDL
-- UI / admin panels
-- Cross-product access rules
-- Semantic refactor grant vs extend
-- Sandbox billing setup
+После уточнения — разобью выбранные блоки на конкретные задачи с DoD.
