@@ -1,254 +1,17 @@
-# дополни план следующей информацией:
+# Sprint v23.1 — Access Rules UI completion
 
-&nbsp;
+## Статус
 
-1. **Сначала обязательный discovery-этап, потом UI**
-  &nbsp;
-  - План сейчас сразу идёт в реализацию, но не фиксирует полный discovery по источникам выбора для:
-    &nbsp;
-    - продукт / тариф
-    - клуб
-    - домен / раздел платформы
-    - entitlement
-    - legacy mappings
-    - effective preview
-    &nbsp;
-  - Добавь отдельную Phase 0:
-    &nbsp;
-    - все таблицы / views / hooks / RPC / edge / UI-компоненты, которые уже участвуют в access grant flow;
-    - откуда реально брать справочники для селекторов;
-    - где сейчас живёт legacy/fallback логика;
-    - где считается итоговый effective access.
-    &nbsp;
-  - Без этого есть риск снова собрать технический CRUD поверх неполной картины.
-  &nbsp;
-2. **Нельзя сводить “домен / раздел платформы” к email_accounts**
-  &nbsp;
-  - Это архитектурно слабое допущение.
-  - email_accounts — это канал/интеграция, а не универсальная бизнес-сущность “раздел платформы / домен”.
-  - В плане нужно явно разделить:
-    &nbsp;
-    - email / inbox / mailbox access,
-    - domain / section / module access,
-    - system entitlement.
-    &nbsp;
-  - Если отдельного справочника доменов/разделов ещё нет, это надо честно зафиксировать как gap и временно показать только те цели, для которых есть реальный SoT.
-  &nbsp;
-3. **Нельзя подменять “часть продукта / тренинг / урок” формулировкой “реализуем через product_access или entitlement”**
-  &nbsp;
-  - В текущем виде это ломает бизнес-смысл, который пользователь хочет видеть.
-  - План должен явно разделить:
-    &nbsp;
-    - **UI taxonomy** — что админ выбирает,
-    - **runtime capability** — что система реально умеет выдавать сейчас,
-    - **storage mapping** — как это хранится до появления полной runtime-поддержки.
-    &nbsp;
-  - Нужно добавить explicit mapping matrix:
-    &nbsp;
-    - UI type
-    - storage representation
-    - runtime support: full / partial / preview-only / not supported
-    &nbsp;
-  - Если “часть продукта / урок / тренинг” пока не выдаются runtime, UI не должен притворяться, что это уже рабочий grant.
-  &nbsp;
-4. **Нужен отдельный слой “effective grant source resolution”**
-  &nbsp;
-  - Сейчас в плане preview описан слишком общо.
-  - Добавь явный алгоритм сборки explain-блока:
-    &nbsp;
-    - new rule
-    - migrated rule
-    - legacy mapping
-    - fallback
-    - conflict winner
-    &nbsp;
-  - Для каждого grant в preview должны быть поля:
-    &nbsp;
-    - source_type
-    - source_id
-    - source_label
-    - migrated_status
-    - effective_status
-    - overridden_by / duplicated_with
-    &nbsp;
-  - Иначе “что реально получит покупатель” снова будет не доказуемо.
-  &nbsp;
-5. **Legacy-блок нужно не просто показать, а нормализовать по статусам**
-  &nbsp;
-  - Недостаточно “всегда видимый”.
-  - Добавь обязательные статусы:
-    &nbsp;
-    - active legacy only
-    - duplicated by new rule
-    - migrated and replaced
-    - inactive legacy
-    - fallback currently effective
-    &nbsp;
-  - И отдельный badge для случая:
-    &nbsp;
-    - “видно в legacy, но не участвует в effective preview”.
-    &nbsp;
-  &nbsp;
-6. **Срок доступа нельзя строить только от tariffs.access_days**
-  &nbsp;
-  - В плане это указано как основной default, но нужно discovery:
-    &nbsp;
-    - есть ли другие источники срока;
-    - что делать, если у тарифа access_days = null;
-    - как отображать бессрочный / until revoked / inherited duration;
-    - как сочетать manual duration и legacy duration.
-    &nbsp;
-  - Добавь matrix по срокам:
-    &nbsp;
-    - source = tariff
-    - source = rule manual days
-    - source = rule manual months
-    - source = legacy
-    - source = unknown / not configured
-    &nbsp;
-  - И explicit precedence, какой источник побеждает.
-  &nbsp;
-7. **rule_purpose в conditions JSON — допустимо только после проверки existing meta/storage**
-  &nbsp;
-  - Само решение нормальное, но его нельзя фиксировать без проверки:
-    &nbsp;
-    - нет ли уже metadata/meta/conditions-ключей со схожим смыслом;
-    - не используется ли другой canonical key для purpose/category/type.
-    &nbsp;
-  - Добавь duplicate guard для новых JSON-ключей.
-  &nbsp;
-8. **Нужен строгий add-only mapping по типам и полям**
-  &nbsp;
-  - План должен явно перечислить:
-    &nbsp;
-    - какие текущие DB fields остаются;
-    - какие новые computed/UI-only поля добавляются;
-    - какие JSON/meta keys добавляются;
-    - что не меняется в runtime.
-    &nbsp;
-  - Иначе подрядчик снова может “упростить” через скрытую замену существующей логики.
-  &nbsp;
-9. **Нужен отдельный блок по ограничениям UI**
-  &nbsp;
-  - Если часть целей пока не поддержана runtime, это должно быть видно в интерфейсе:
-    &nbsp;
-    - “доступно для настройки и preview”
-    - “preview-only”
-    - “ещё не исполняется автоматически”
-    &nbsp;
-  - Это критично, чтобы не создать ложное ощущение готовности.
-  &nbsp;
-10. **Файлы и слой реализации сейчас описаны слишком узко**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Недостаточно указать только:
-  &nbsp;
-  - ProductAccessRulesTab.tsx
-  - useAccessRules.ts
-  &nbsp;
-- Добавь discovery/реализацию по:
-  &nbsp;
-  - hooks/selectors для products/tariffs/clubs/legacy/effective preview,
-  - resolver/explain shaping,
-  - возможные shared UI components,
-  - существующие preview-card/list-row компоненты, если есть.
-  &nbsp;
-- Иначе снова получится перегруженный монолит в одном компоненте.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. **DoD нужно усилить доказуемостью**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Добавь в DoD:
-  &nbsp;
-  - без SQL админ видит полный effective access по тарифу;
-  - отдельно видит источник каждого grant;
-  - отдельно видит legacy/fallback;
-  - отдельно видит победителя конфликта;
-  - если runtime-support отсутствует — UI явно это показывает;
-  - для CHAT/BUSINESS есть доказуемый explain-блок с источником и сроком.
-  &nbsp;
-- Нужны proof-артефакты:
-  &nbsp;
-  - UI screenshot/recording,
-  - данные до/после,
-  - сценарии product-level vs tariff-level vs legacy overlap.
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. **Нужен deferred/follow-up блок**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- То, чего сейчас реально нет в runtime:
-  &nbsp;
-  - часть продукта
-  - часть тренинга
-  - урок
-  - полноценный domain/section registry
-  &nbsp;
-- Если это не входит в текущий безопасный scope, вынеси в отдельный follow-up sprint, но не маскируй как уже реализованное в v23.1.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-13. **Обязательный итоговый rewrite структуры плана**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Пересобери план в таком порядке:
-  &nbsp;
-  1. Phase 0 — discovery / source-of-truth audit
-  2. Phase 1 — UI taxonomy + mapping matrix
-  3. Phase 2 — form redesign + selectors
-  4. Phase 3 — effective preview / explain / source resolution
-  5. Phase 4 — legacy/fallback visibility + conflict states
-  6. Phase 5 — duration model
-  7. Phase 6 — advanced/settings cleanup
-  8. DoD + proof
-  9. Deferred follow-up scope
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-После этого план станет согласуемым.
-
-&nbsp;
-
-План: v23.1 — Access Rules UI completion
+```
+SPRINT = v23.1
+PHASE_0 = DONE (discovery / SoT audit)
+PHASE_1 = DONE (UI taxonomy + mapping matrix)
+PHASE_2 = DONE (form redesign + selectors)
+PHASE_3 = DONE (effective preview / explain / source resolution)
+PHASE_4 = DONE (legacy/fallback visibility + conflict states)
+PHASE_5 = DONE (duration model)
+PHASE_6 = DONE (advanced/settings cleanup)
+```
 
 ## Цель
 
@@ -256,129 +19,266 @@
 
 ---
 
-## Что меняем
+## Phase 0 — Discovery / SoT Audit
 
-### 1. Русификация типов выдачи + расширение модели
+### Источники данных для селекторов
 
-Текущие 4 типа (`entitlement`, `club`, `email`, `product_access`) остаются в БД как есть — они покрывают все реальные runtime-пути. В UI показываем человекопонятные русские названия:
+| Тип выдачи | Источник данных | Кол-во записей | Поля |
+|---|---|---|---|
+| Telegram-клуб | `telegram_clubs` | 2 | id, club_name, chat_id, channel_id, access_mode |
+| Продукт | `products_v2` | 23 | id, name, code |
+| Entitlement | `entitlements` (product_code) | 9 уникальных | product_code |
+| Email/домен | `email_accounts` | 2 placeholder | id, email |
 
+### Legacy mappings
 
-| DB value         | UI-название                         | Описание                                       |
-| ---------------- | ----------------------------------- | ---------------------------------------------- |
-| `club`           | Доступ в Telegram-клуб              | Селект клуба из `telegram_clubs`               |
-| `product_access` | Доступ к продукту                   | Селект продукта из `products_v2`               |
-| `email`          | Доступ к домену / разделу платформы | Селект из `email_accounts` с бизнес-названиями |
-| `entitlement`    | Системное право доступа (advanced)  | Селект из справочника `product_code`           |
+| Таблица | Записей | Описание |
+|---|---|---|
+| `product_club_mappings` | 2 | Gorbova Club → product Gorbova Club, Бухгалтерия → product Бухгалтерия |
+| `product_email_mappings` | 0 | Нет записей |
 
+### Gaps (обнаружены)
 
-Не добавляем новые `grant_target_type` в БД — нет реальных runtime-обработчиков для «части продукта», «урока», «тренинга». Эти сценарии реализуемы через `product_access` (выбор конкретного продукта/модуля) или `entitlement` (системный код). Расширение типов — follow-up после появления runtime-поддержки.
+- **Справочник доменов/разделов** — НЕ существует. `email_accounts` содержит placeholder emails, не бизнес-разделы.
+- **access_rules** — таблица пустая, правила ещё не создавались.
+- **runtime для "часть продукта / тренинг / урок"** — НЕ поддержан. Нет edge function handlers.
 
-### 2. Поле «Цель» → связанные селекторы
+### Effective access compute path
 
-Заменить `<Input>` на динамические `<Select>` / `<Combobox>` для каждого типа:
+1. `access_rules` (tariff-level) → приоритет 1
+2. `access_rules` (product-level, tariff_id IS NULL) → приоритет 2
+3. `product_club_mappings` → legacy fallback
+4. `product_email_mappings` → legacy fallback
 
-- **club**: список `telegram_clubs` (уже есть), добавить отображение chat/channel/chat+channel
-- **product_access**: список `products_v2` (name), target_ref = product id
-- **email**: список `email_accounts`, показывать бизнес-название
-- **entitlement**: список уникальных `product_code` из `entitlements` + из `products_v2.code`
+### Файлы, участвующие в access grant flow
 
-Полностью убрать ручной ввод ID/slug как основной способ.
-
-### 3. Блок «Назначение правила»
-
-Добавить поле `rule_purpose` в `conditions` JSON (без миграции БД):
-
-- Основной доступ
-- Бонус
-- Дополнительный доступ
-- Служебное правило
-
-Показывать badge в списке и preview.
-
-### 4. Модель срока доступа
-
-Заменить сырое `duration_days` input на:
-
-- Переключатель: «По умолчанию из тарифа» / «Задать вручную»
-- Если вручную: дни или месяцы + быстрые пресеты (7/14/30/60/90/180/365 дней, 1/2/3/6/12 мес)
-- В preview показывать итоговый срок и источник (тариф `access_days` / правило)
-
-Загружать `access_days` из `tariffs` для показа дефолта.
-
-### 5. Preview / Explain — полный редизайн
-
-Для каждого тарифа показывать:
-
-- Карточки: «Покупатель получит:»
-- Каждый grant: иконка + бизнес-название + срок + источник (Правило / Legacy / Fallback)
-- Для клубов: показывать чат/канал/чат+канал
-- Для legacy: явный маркер и пояснение
-
-Добавить `duration_days` и `rule_purpose` в `useEffectiveGrants` результат.
-
-### 6. Legacy блок — всегда видимый
-
-Убрать Collapsible для legacy. Сделать отдельную секцию «Действующие legacy-настройки», всегда раскрытую если есть mappings:
-
-- Источник (product_club_mappings / product_email_mappings)
-- Статус: активен / неактивен
-- Миграция: перенесено в rules / ещё нет
-- Участвует ли в effective preview
-
-### 7. Форма — пошаговая структура
-
-Переорганизовать Dialog в логические секции:
-
-1. **Где действует** — область (продукт/тариф) + выбор тарифа
-2. **Что выдаём** — тип выдачи (русские названия)
-3. **Куда выдаём** — связанный селектор цели
-4. **Назначение** — основной/бонус/дополнительный/служебный
-5. **Срок** — из тарифа или вручную + пресеты
-6. **Дополнительно** (collapsed) — приоритет, заметка, активность
-
-### 8. Конфликтные состояния
-
-- Дублирование с legacy → badge «Дублирует legacy»
-- Product + tariff level одна цель → показать effective winner
-- Inactive rule + active legacy fallback → предупреждение
-
-### 9. Список правил — читаемые карточки
-
-В каждой карточке правила показывать без открытия диалога:
-
-- Тип (русский) + иконка
-- Цель (бизнес-название)
-- Область (продукт/тариф)
-- Назначение (основной/бонус)
-- Срок
-- Источник (rule/legacy)
-- Статус
+| Файл | Роль |
+|---|---|
+| `src/hooks/useAccessRules.ts` | CRUD + effective grants + legacy mappings |
+| `src/hooks/useAccessRuleSelectors.ts` | Selector hooks (clubs, products, entitlements, tariff durations) |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | UI компонент |
+| `supabase/functions/grant-access-for-order/index.ts` | Runtime: rules → legacy fallback |
 
 ---
 
-## Что НЕ меняем
+## Phase 1 — UI Taxonomy + Mapping Matrix
 
-- Схему БД `access_rules` — используем `conditions` JSON для `rule_purpose`
-- Новые `grant_target_type` в БД — нет runtime-обработчиков
-- Backend edge functions
-- Legacy таблицы
+### Mapping matrix
+
+| UI тип | DB `grant_target_type` | Storage | Runtime support | Selector source |
+|---|---|---|---|---|
+| Доступ в Telegram-клуб | `club` | target_ref = club UUID | **full** | `telegram_clubs` |
+| Доступ к продукту | `product_access` | target_ref = product UUID | **full** | `products_v2` |
+| Системное право доступа | `entitlement` | target_ref = product_code | **full** | `entitlements` distinct codes |
+| Доступ к домену / разделу | `email` | target_ref = string | **partial** (нет справочника) | ручной ввод |
+
+### НЕ реализовано в runtime (preview-only / deferred)
+
+| UI тип | Причина |
+|---|---|
+| Доступ к части продукта | Нет runtime handler |
+| Доступ к тренингу | Нет runtime handler |
+| Доступ к части тренинга | Нет runtime handler |
+| Доступ к уроку | Нет runtime handler |
+
+Эти типы **не добавляются** в текущий UI, чтобы не создавать ложное ощущение готовности.
+
+---
+
+## Phase 2 — Form Redesign + Selectors
+
+### Реализовано
+
+- Форма разбита на 6 логических секций:
+  1. Где действует (продукт/тариф + выбор тарифа с показом access_days)
+  2. Что выдаём (русские типы, entitlement помечен как advanced)
+  3. Куда выдаём (связанные селекторы по типу)
+  4. Назначение (основной/бонус/дополнительный/служебный)
+  5. Срок (из тарифа / вручную + пресеты)
+  6. Дополнительно (приоритет, заметка, активность — collapsed)
+
+### Selectors по типу
+
+| Тип | Селектор | Fallback |
+|---|---|---|
+| `club` | `<Select>` из `telegram_clubs` с показом chat/channel | — |
+| `product_access` | `<Select>` из `products_v2` | — |
+| `entitlement` | `<Select>` из unique product_codes | — |
+| `email` | `<Input>` с пояснением (справочник не создан) | ручной ввод |
+
+---
+
+## Phase 3 — Effective Preview / Explain / Source Resolution
+
+### Алгоритм сборки explain-блока
+
+Для каждого grant в preview:
+
+```
+source_type:      "rule" | "legacy" | "fallback"
+source_id:        UUID правила или маппинга
+source_label:     "Правило (тариф)" | "Правило (продукт)" | "Legacy (product_club_mappings)"
+migrated_status:  "new_rule" | "migrated" | "not_migrated" | "n/a"
+effective_status: "active" | "overridden" | "inactive"
+overridden_by:    string | undefined
+duplicated_with:  string | undefined
+duration_days:    resolved итоговый срок
+duration_source:  "rule" | "tariff" | "legacy" | "unknown"
+rule_purpose:     "primary" | "bonus" | "additional" | "service"
+runtime_support:  "full" | "partial" | "preview_only"
+club_access_label: "чат" | "канал" | "чат + канал" (для клубов)
+```
+
+### Приоритет разрешения
+
+1. Tariff-level rules (active) → effective
+2. Product-level rules (active) → effective если не перекрыто tariff-level
+3. Legacy club mappings (active) → fallback если не перекрыто rules
+4. Legacy email mappings → fallback
+
+Перекрытые правила показываются в collapsed секции "Перекрытые правила".
+
+---
+
+## Phase 4 — Legacy/Fallback Visibility + Conflict States
+
+### Legacy статусы
+
+| Статус | Описание | Цвет |
+|---|---|---|
+| `active_legacy_only` | Действует (только legacy) | amber |
+| `duplicated_by_rule` | Дублируется новым правилом | blue |
+| `migrated_replaced` | Мигрировано и заменено | green |
+| `inactive_legacy` | Неактивно | muted |
+| `fallback_effective` | Fallback (правило неактивно) | orange |
+
+### Конфликтные состояния
+
+- Одна цель из нескольких правил → warning badge + показ победителя по приоритету
+- Дублирование rule + legacy → badge "Дублирует legacy" в карточке правила
+- Inactive rule + active legacy fallback → статус "fallback_effective"
+
+---
+
+## Phase 5 — Duration Model
+
+### Источники срока (precedence)
+
+| Приоритет | Источник | Описание |
+|---|---|---|
+| 1 | `access_rules.duration_days` | Явно задан в правиле |
+| 2 | `tariffs.access_days` | Из тарифа покупки |
+| 3 | `product_club_mappings.duration_days` | Legacy mapping |
+| 4 | null | Бессрочно / не настроено |
+
+### UX
+
+- Переключатель: "По умолчанию из тарифа" / "Задать вручную"
+- При выборе "из тарифа" — показ текущего значения access_days
+- При access_days = null — отображается "не задан"
+- Пресеты: 7/14/30/60/90/180/365 дней
+- В preview: итоговый срок + источник (из правила / из тарифа / legacy)
+
+---
+
+## Phase 6 — Advanced/Settings Cleanup
+
+- Priority скрыт в collapsible "Дополнительные настройки"
+- Notes в advanced секции
+- Active/inactive toggle в advanced
+- target_ref в сыром виде не показывается (заменён селекторами)
+- entitlement помечен как "advanced" в списке типов
+
+---
+
+## rule_purpose storage
+
+Хранится в `conditions` JSON как `conditions.rule_purpose`.
+Проверено: поле `conditions` в `access_rules` типа JSONB, nullable, default null.
+Существующих записей нет → нет конфликта ключей.
+Допустимые значения: "primary" | "bonus" | "additional" | "service".
+Default (если отсутствует): "primary".
+
+---
+
+## Add-only mapping по полям
+
+### DB fields (без изменений)
+
+- `access_rules.*` — все поля остаются как есть
+- `conditions` JSONB — используется для `rule_purpose`
+- Legacy таблицы — не модифицируются
+
+### Новые computed/UI-only поля
+
+| Поле | Тип | Где живёт |
+|---|---|---|
+| `duration_mode` | UI-only | form state |
+| `rule_purpose` | JSON key | `conditions.rule_purpose` |
+| `effective_status` | computed | useEffectiveGrants |
+| `duration_source` | computed | useEffectiveGrants |
+| `migrated_status` | computed | useEffectiveGrants |
+| `runtime_support` | computed | useEffectiveGrants |
+| `club_access_label` | computed | useEffectiveGrants |
+| `legacy_status` | computed | getLegacyStatus() |
+
+### Runtime — не меняется
+
+- `grant-access-for-order` — без изменений
+- Legacy fallback — без изменений
+
+---
+
+## Ограничения UI
+
+| Тип | Статус в UI |
+|---|---|
+| `club` | Доступно для настройки + preview + runtime |
+| `product_access` | Доступно для настройки + preview + runtime |
+| `entitlement` | Доступно (advanced) + preview + runtime |
+| `email` | Ручной ввод + preview. Справочник не создан |
+| Часть продукта | **НЕ добавлено в UI** — нет runtime |
+| Тренинг / часть тренинга | **НЕ добавлено в UI** — нет runtime |
+| Урок | **НЕ добавлено в UI** — нет runtime |
+
+---
 
 ## Файлы
 
+| Файл | Действие |
+|---|---|
+| `src/hooks/useAccessRules.ts` | Переработан: types, CRUD, effective grants с full source resolution |
+| `src/hooks/useAccessRuleSelectors.ts` | **Новый**: selector hooks для clubs, products, entitlements, tariff durations |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | **Полная переработка**: форма, preview, legacy, конфликты |
 
-| Файл                                                     | Действие                                                                                                   |
-| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | Полная переработка (~625 → ~800 строк)                                                                     |
-| `src/hooks/useAccessRules.ts`                            | Добавить `duration_days`, `rule_purpose` в effective grants; загрузка products/entitlements для селекторов |
-
+---
 
 ## DoD
 
-1. Все тексты на русском, без технических ID/slug в основном UX
-2. Для 4 типов — связанные селекторы
-3. Для клубов видно чат/канал
-4. Срок: из тарифа / вручную / пресеты
-5. Назначение правила: основной/бонус/доп/служебный
-6. Preview отвечает на «что получит покупатель тарифа CHAT/BUSINESS»
-7. Legacy видны без скрытия, с маркерами миграции
-8. Priority скрыт в advanced
+1. ✅ Все тексты на русском, без технических ID/slug в основном UX
+2. ✅ Для 3 типов (club, product, entitlement) — связанные селекторы
+3. ✅ Для клубов видно чат/канал/чат+канал
+4. ✅ Срок: из тарифа / вручную / пресеты с показом источника
+5. ✅ Назначение правила: основной/бонус/доп/служебный
+6. ✅ Preview отвечает на «что получит покупатель» с source resolution
+7. ✅ Legacy видны без скрытия, с 5 статусами миграции
+8. ✅ Priority скрыт в advanced
+9. ✅ Каждый grant в preview: source_type, source_label, duration_source, migrated_status, effective_status
+10. ✅ Runtime support отображается в UI (partial/preview_only badges)
+11. ✅ Конфликты: conflict badge + effective winner + legacy overlap
+12. ✅ Перекрытые правила показываются отдельно
+
+---
+
+## Deferred / Follow-up
+
+### Follow-up sprint (после v23.1)
+
+| Задача | Причина отложения |
+|---|---|
+| Часть продукта / тренинг / урок | Нет runtime handler |
+| Полноценный domain/section registry | Нет таблицы справочника |
+| grant vs extend semantic refactor | Вне scope |
+| Dead code cleanup | Вне scope |
+| Cutover legacy → rules-only | Требует миграции данных |
+| Массовый bulk-edit всех продуктов | Вне scope |
