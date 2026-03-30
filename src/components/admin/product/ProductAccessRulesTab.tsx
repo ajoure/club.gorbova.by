@@ -542,7 +542,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-1 space-y-1">
                     {effectiveGrants.filter(g => g.effective_status === "overridden").map((g, idx) => (
-                      <EffectiveGrantCard key={`over-${idx}`} grant={g} formatDuration={formatDuration} />
+                      <EffectiveGrantCard key={`over-${idx}`} grant={g} getDurationDisplay={getDurationDisplay} />
                     ))}
                   </CollapsibleContent>
                 </Collapsible>
