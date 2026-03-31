@@ -1,16 +1,14 @@
 import { useState } from "react";
-import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics } from "@/hooks/useProductTrainings";
+import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview } from "@/hooks/useProductTrainings";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, RefreshCw, Shield } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { RebindPreview } from "@/hooks/useProductTrainings";
 
 interface Props {
   productId: string;
@@ -59,16 +57,11 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
           {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
         </span>
 
-        {/* Diagnostics badges for root */}
-        {level === 0 && diagnostics && (
-          <>
-            {diagnostics.legacy_module_access_count > 0 && (
-              <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 shrink-0">
-                <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-                legacy
-              </Badge>
-            )}
-          </>
+        {level === 0 && diagnostics && diagnostics.legacy_module_access_count > 0 && (
+          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 shrink-0">
+            <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+            legacy
+          </Badge>
         )}
 
         {level === 0 && onUnbind && (
@@ -95,12 +88,164 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
   );
 }
 
-// --- Bind Dialog ---
-function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
+// --- Preview Stat Row ---
+function PreviewRow({ label, value, warning, danger }: { label: string; value: string | number; warning?: boolean; danger?: boolean }) {
+  return (
+    <div className={cn(
+      "flex items-center justify-between py-1.5 px-3 rounded-md text-sm",
+      danger ? "bg-destructive/10 text-destructive" : warning ? "bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-200" : "bg-muted/30"
+    )}>
+      <span>{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+// --- Rebind Preview Dialog ---
+function RebindPreviewDialog({ open, onOpenChange, preview, trainingTitle, onConfirm, isExecuting }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  preview: RebindPreview | null;
+  trainingTitle: string;
+  onConfirm: () => void;
+  isExecuting: boolean;
+}) {
+  if (!preview) return null;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Перепривязка тренинга</DialogTitle>
+          <DialogDescription>Тренинг «{trainingTitle}» будет перемещён к другому продукту</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {/* Product transition */}
+          <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/40 border border-border/30">
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-muted-foreground">Текущий продукт</p>
+              <p className="text-sm font-medium truncate">{preview.current_product?.name || "—"}</p>
+              {preview.current_product?.public_id && (
+                <p className="text-[10px] font-mono text-muted-foreground">{preview.current_product.public_id}</p>
+              )}
+            </div>
+            <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] text-muted-foreground">Новый продукт</p>
+              <p className="text-sm font-medium truncate">{preview.new_product.name}</p>
+              {preview.new_product.public_id && (
+                <p className="text-[10px] font-mono text-muted-foreground">{preview.new_product.public_id}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="space-y-1">
+            <PreviewRow label="Дочерних модулей получат новый product_id" value={preview.descendant_count} />
+            <PreviewRow label="Уроков затронуто" value={preview.lesson_count} />
+            <PreviewRow
+              label="Правил доступа будет деактивировано"
+              value={preview.training_content_rules_count}
+              warning={preview.training_content_rules_count > 0}
+            />
+            <PreviewRow
+              label="Legacy module_access записей"
+              value={preview.legacy_module_access_count}
+              warning={preview.legacy_module_access_count > 0}
+            />
+            {preview.has_active_entitlements && (
+              <PreviewRow
+                label="У пользователей есть активные entitlements на старый продукт"
+                value="⚠ Да"
+                warning
+              />
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isExecuting}>Отмена</Button>
+          <Button onClick={onConfirm} disabled={isExecuting} className="gap-1.5">
+            {isExecuting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Перепривязать
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Unbind Preview Dialog ---
+function UnbindPreviewDialog({ open, onOpenChange, preview, onConfirm, isExecuting }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  preview: UnbindPreview | null;
+  onConfirm: () => void;
+  isExecuting: boolean;
+}) {
+  if (!preview) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Отвязать тренинг</DialogTitle>
+          <DialogDescription>Тренинг «{preview.training_title}» и все дочерние модули будут отвязаны от продукта</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-1">
+          <PreviewRow label="Дочерних модулей" value={preview.descendant_count} />
+          <PreviewRow label="Уроков" value={preview.lesson_count} />
+          <PreviewRow
+            label="Активных правил доступа к контенту"
+            value={preview.training_content_rules_count}
+            danger={preview.training_content_rules_count > 0}
+          />
+          <PreviewRow
+            label="Legacy module_access записей"
+            value={preview.legacy_module_access_count}
+            warning={preview.legacy_module_access_count > 0}
+          />
+          {preview.has_active_entitlements && (
+            <PreviewRow
+              label="Активные entitlements на продукт"
+              value="⚠ Есть — пользователи потеряют доступ"
+              warning
+            />
+          )}
+        </div>
+
+        {!preview.can_unbind && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+            <Ban className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>Невозможно отвязать: есть активные правила доступа к контенту. Сначала деактивируйте их.</span>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isExecuting}>Отмена</Button>
+          <Button
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={isExecuting || !preview.can_unbind}
+            className="gap-1.5"
+          >
+            {isExecuting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Отвязать
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Bind Dialog (with rebind support) ---
+function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindRequest }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string;
   onBind: (trainingId: string) => Promise<void>;
+  onRebindRequest: (trainingId: string, trainingTitle: string) => void;
 }) {
   const { data } = useAvailableTrainingsForBind(productId);
   const [search, setSearch] = useState("");
@@ -117,10 +262,17 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
     return m.title.toLowerCase().includes(q) || (m.public_id || "").toLowerCase().includes(q);
   });
 
-  const handleBind = async (id: string) => {
+  const handleClick = async (m: { id: string; title: string; product_id: string | null }) => {
+    const isOtherProduct = m.product_id && m.product_id !== productId;
+    if (isOtherProduct) {
+      // Open rebind preview instead of blocking
+      onRebindRequest(m.id, m.title);
+      onOpenChange(false);
+      return;
+    }
     setBinding(true);
     try {
-      await onBind(id);
+      await onBind(m.id);
       onOpenChange(false);
     } finally {
       setBinding(false);
@@ -135,7 +287,6 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
           <DialogDescription>Выберите тренинг для привязки к продукту</DialogDescription>
         </DialogHeader>
 
-        {/* Filters */}
         <div className="flex gap-1 p-0.5 rounded-full bg-muted/40 border border-border/20 w-fit">
           {([
             { key: "free", label: `Свободные (${data?.free?.length || 0})` },
@@ -174,16 +325,19 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
             <div className="p-1.5 space-y-0.5">
               {filtered.map(m => {
                 const isOtherProduct = m.product_id && m.product_id !== productId;
+                const isCurrent = m.product_id === productId;
                 return (
                   <button
                     key={m.id}
-                    onClick={() => !isOtherProduct && handleBind(m.id)}
-                    disabled={binding || !!isOtherProduct}
+                    onClick={() => !isCurrent && handleClick(m)}
+                    disabled={binding || isCurrent}
                     className={cn(
                       "w-full flex items-center gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
-                      isOtherProduct
+                      isCurrent
                         ? "opacity-50 cursor-not-allowed"
-                        : "hover:bg-muted/50 cursor-pointer"
+                        : isOtherProduct
+                          ? "hover:bg-amber-50/50 dark:hover:bg-amber-900/10 cursor-pointer border border-transparent hover:border-amber-200/50"
+                          : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
                     <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
@@ -196,7 +350,13 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
                     )}
                     {isOtherProduct && (
                       <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 shrink-0">
-                        Другой продукт
+                        Другой продукт → перепривязать
+                      </Badge>
+                    )}
+                    {isCurrent && (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">
+                        <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                        Уже привязан
                       </Badge>
                     )}
                   </button>
@@ -210,21 +370,153 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind }: {
   );
 }
 
+// --- Matrix View ---
+function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
+  trainings: LinkedTraining[];
+  diagnostics: Record<string, TrainingBindingDiagnostics>;
+  viewMode: "summary" | "expanded";
+}) {
+  if (trainings.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="grid gap-2">
+        {trainings.map(t => {
+          const d = diagnostics[t.id];
+          const totalLessons = t.lesson_count + t.children.reduce((s, c) => s + c.lesson_count, 0);
+          const totalModules = t.children.length;
+          const hasRules = d && d.training_content_rules_count > 0;
+
+          return (
+            <div key={t.id} className="border rounded-lg overflow-hidden">
+              {/* Root training row */}
+              <div className="flex items-center gap-3 px-3 py-2 bg-muted/20">
+                <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium">{t.title}</span>
+                  {t.public_id && (
+                    <span className="ml-2 text-[10px] font-mono text-muted-foreground">{t.public_id}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!t.is_active && (
+                    <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
+                  )}
+                  <Badge variant="outline" className="text-[9px]">
+                    {totalModules} {totalModules === 1 ? "модуль" : totalModules >= 2 && totalModules <= 4 ? "модуля" : "модулей"}
+                  </Badge>
+                  <Badge variant="outline" className="text-[9px]">
+                    {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
+                  </Badge>
+                  <Badge variant="outline" className={cn("text-[9px]", hasRules ? "text-blue-600 border-blue-300" : "text-muted-foreground")}>
+                    {hasRules ? "Гранулярные правила настроены" : "Полный доступ через продукт"}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Expanded: children */}
+              {viewMode === "expanded" && t.children.length > 0 && (
+                <div className="border-t">
+                  {t.children.map(child => (
+                    <div key={child.id} className="flex items-center gap-2 px-3 py-1.5 pl-8 text-sm border-b last:border-b-0 bg-background">
+                      <BookOpen className="h-3 w-3 text-muted-foreground shrink-0" />
+                      <span className="flex-1 min-w-0 truncate text-muted-foreground">{child.title}</span>
+                      {child.public_id && (
+                        <span className="text-[10px] font-mono text-muted-foreground">{child.public_id}</span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {child.lesson_count} {child.lesson_count === 1 ? "урок" : child.lesson_count >= 2 && child.lesson_count <= 4 ? "урока" : "уроков"}
+                      </span>
+                      {!child.is_active && (
+                        <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // --- Main Block ---
 export function ProductLinkedTrainingsBlock({ productId }: Props) {
-  const { trainings, diagnostics, isLoading, bindTraining, unbindTraining } = useProductTrainings(productId);
+  const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const [bindOpen, setBind] = useState(false);
-  const [unbindTarget, setUnbindTarget] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(true);
+  const [viewMode, setViewMode] = useState<"tree" | "matrix-summary" | "matrix-expanded">("tree");
+
+  // Rebind state
+  const [rebindPreview, setRebindPreview] = useState<RebindPreview | null>(null);
+  const [rebindTrainingId, setRebindTrainingId] = useState<string | null>(null);
+  const [rebindTrainingTitle, setRebindTrainingTitle] = useState("");
+  const [rebindDialogOpen, setRebindDialogOpen] = useState(false);
+  const [rebindLoading, setRebindLoading] = useState(false);
+  const [rebindExecuting, setRebindExecuting] = useState(false);
+
+  // Unbind state
+  const [unbindPreview, setUnbindPreview] = useState<UnbindPreview | null>(null);
+  const [unbindTrainingId, setUnbindTrainingId] = useState<string | null>(null);
+  const [unbindDialogOpen, setUnbindDialogOpen] = useState(false);
+  const [unbindLoading, setUnbindLoading] = useState(false);
+  const [unbindExecuting, setUnbindExecuting] = useState(false);
 
   const handleBind = async (trainingId: string) => {
     await bindTraining({ trainingId, productId });
   };
 
-  const handleUnbind = async () => {
-    if (!unbindTarget) return;
-    await unbindTraining(unbindTarget);
-    setUnbindTarget(null);
+  const handleRebindRequest = async (trainingId: string, trainingTitle: string) => {
+    setRebindTrainingId(trainingId);
+    setRebindTrainingTitle(trainingTitle);
+    setRebindDialogOpen(true);
+    setRebindLoading(true);
+    try {
+      const preview = await getRebindPreview(trainingId, productId);
+      setRebindPreview(preview);
+    } finally {
+      setRebindLoading(false);
+    }
+  };
+
+  const handleRebindConfirm = async () => {
+    if (!rebindTrainingId) return;
+    setRebindExecuting(true);
+    try {
+      await rebindTraining({ trainingId: rebindTrainingId, newProductId: productId });
+      setRebindDialogOpen(false);
+      setRebindPreview(null);
+      setRebindTrainingId(null);
+    } finally {
+      setRebindExecuting(false);
+    }
+  };
+
+  const handleUnbindRequest = async (trainingId: string) => {
+    const training = trainings.find(t => t.id === trainingId);
+    setUnbindTrainingId(trainingId);
+    setUnbindDialogOpen(true);
+    setUnbindLoading(true);
+    try {
+      const preview = await getUnbindPreview(trainingId);
+      setUnbindPreview(preview);
+    } finally {
+      setUnbindLoading(false);
+    }
+  };
+
+  const handleUnbindConfirm = async () => {
+    if (!unbindTrainingId) return;
+    setUnbindExecuting(true);
+    try {
+      await unbindTraining(unbindTrainingId);
+      setUnbindDialogOpen(false);
+      setUnbindPreview(null);
+      setUnbindTrainingId(null);
+    } finally {
+      setUnbindExecuting(false);
+    }
   };
 
   if (isLoading) {
@@ -247,7 +539,26 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
               <CardTitle className="text-sm">Тренинги этого продукта</CardTitle>
               <Badge variant="outline" className="text-[10px]">{trainings.length}</Badge>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              {/* View mode toggle */}
+              {trainings.length > 0 && (
+                <div className="flex gap-0.5 p-0.5 rounded-md bg-muted/40 border border-border/20">
+                  <button
+                    onClick={() => setViewMode("tree")}
+                    className={cn("p-1 rounded", viewMode === "tree" ? "bg-background shadow-sm" : "hover:bg-muted/60")}
+                    title="Дерево"
+                  >
+                    <List className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode(viewMode === "matrix-expanded" ? "matrix-summary" : "matrix-expanded")}
+                    className={cn("p-1 rounded", viewMode.startsWith("matrix") ? "bg-background shadow-sm" : "hover:bg-muted/60")}
+                    title="Матрица"
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
               <Button variant="outline" size="sm" onClick={() => setBind(true)} className="gap-1.5">
                 <Link2 className="h-3.5 w-3.5" />
                 Привязать
@@ -265,38 +576,41 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                 Привязать тренинг
               </Button>
             </div>
+          ) : viewMode === "tree" ? (
+            <div className="space-y-0.5">
+              {trainings.map(t => (
+                <TrainingTreeItem
+                  key={t.id}
+                  training={t}
+                  diagnostics={diagnostics[t.id]}
+                  onUnbind={handleUnbindRequest}
+                />
+              ))}
+            </div>
           ) : (
-            <Collapsible open={expanded} onOpenChange={setExpanded}>
-              <CollapsibleTrigger asChild>
-                <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-2">
-                  <ChevronDown className={cn("h-3 w-3 transition-transform", !expanded && "-rotate-90")} />
-                  {expanded ? "Свернуть" : "Развернуть"} дерево
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="space-y-0.5">
-                  {trainings.map(t => (
-                    <TrainingTreeItem
-                      key={t.id}
-                      training={t}
-                      diagnostics={diagnostics[t.id]}
-                      onUnbind={(id) => setUnbindTarget(id)}
-                    />
-                  ))}
-                </div>
-              </CollapsibleContent>
-              {!expanded && (
-                <div className="space-y-0.5">
-                  {trainings.map(t => (
-                    <div key={t.id} className="flex items-center gap-2 py-1 px-2">
-                      <BookOpen className="h-3.5 w-3.5 text-primary" />
-                      <span className="text-sm">{t.title}</span>
-                      {t.public_id && <Badge variant="outline" className="text-[10px] font-mono">{t.public_id}</Badge>}
-                    </div>
-                  ))}
+            <>
+              {viewMode.startsWith("matrix") && (
+                <div className="flex items-center gap-1.5 mb-2">
+                  <button
+                    onClick={() => setViewMode("matrix-summary")}
+                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    Summary
+                  </button>
+                  <button
+                    onClick={() => setViewMode("matrix-expanded")}
+                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-expanded" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    Развёрнутый
+                  </button>
                 </div>
               )}
-            </Collapsible>
+              <TrainingMatrixView
+                trainings={trainings}
+                diagnostics={diagnostics}
+                viewMode={viewMode === "matrix-expanded" ? "expanded" : "summary"}
+              />
+            </>
           )}
 
           {/* Layer 2 placeholder — training_content rules (PATCH B) */}
@@ -306,7 +620,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Shield className="h-3.5 w-3.5" />
                 <span>Правила гранулярности доступа к контенту</span>
-                <Badge variant="outline" className="text-[9px]">Запланировано</Badge>
+                <Badge variant="outline" className="text-[9px]">Не настроены</Badge>
               </div>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Настройка частичного доступа к урокам и модулям по тарифам будет доступна в следующем обновлении.
@@ -333,6 +647,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                     return (
                       <div key={t.id} className="flex items-center gap-2 text-[11px] text-muted-foreground px-2 py-1 rounded-md bg-muted/30">
                         <span className="font-medium">{t.title}</span>
+                        {t.public_id && <span className="font-mono text-[9px]">{t.public_id}</span>}
                         <Badge variant="outline" className="text-[9px]">{d.binding_source}</Badge>
                         {d.legacy_module_access_count > 0 && (
                           <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300">
@@ -360,23 +675,53 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
         onOpenChange={setBind}
         productId={productId}
         onBind={handleBind}
+        onRebindRequest={handleRebindRequest}
       />
 
-      {/* Unbind Confirm */}
-      <AlertDialog open={!!unbindTarget} onOpenChange={(open) => !open && setUnbindTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Отвязать тренинг?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Тренинг и все дочерние модули будут отвязаны от этого продукта. Пользователи потеряют доступ к нему через этот продукт.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleUnbind}>Отвязать</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Rebind Preview Dialog */}
+      {rebindDialogOpen && (
+        rebindLoading ? (
+          <Dialog open onOpenChange={() => { setRebindDialogOpen(false); setRebindPreview(null); }}>
+            <DialogContent className="sm:max-w-md">
+              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Загрузка preview…</span>
+              </div>
+            </DialogContent>
+          </Dialog>
+        ) : (
+          <RebindPreviewDialog
+            open={rebindDialogOpen}
+            onOpenChange={(open) => { setRebindDialogOpen(open); if (!open) { setRebindPreview(null); setRebindTrainingId(null); } }}
+            preview={rebindPreview}
+            trainingTitle={rebindTrainingTitle}
+            onConfirm={handleRebindConfirm}
+            isExecuting={rebindExecuting}
+          />
+        )
+      )}
+
+      {/* Unbind Preview Dialog */}
+      {unbindDialogOpen && (
+        unbindLoading ? (
+          <Dialog open onOpenChange={() => { setUnbindDialogOpen(false); setUnbindPreview(null); }}>
+            <DialogContent className="sm:max-w-md">
+              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Загрузка preview…</span>
+              </div>
+            </DialogContent>
+          </Dialog>
+        ) : (
+          <UnbindPreviewDialog
+            open={unbindDialogOpen}
+            onOpenChange={(open) => { setUnbindDialogOpen(open); if (!open) { setUnbindPreview(null); setUnbindTrainingId(null); } }}
+            preview={unbindPreview}
+            onConfirm={handleUnbindConfirm}
+            isExecuting={unbindExecuting}
+          />
+        )
+      )}
     </>
   );
 }
