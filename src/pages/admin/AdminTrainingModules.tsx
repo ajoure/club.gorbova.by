@@ -804,6 +804,7 @@ export default function AdminTrainingModules() {
                 formData={formData}
                 setFormData={setFormData}
                 productsWithTariffs={productsWithTariffs || []}
+                editingModule={editingModule}
               />
             </div>
             <DialogFooter className="shrink-0 border-t pt-4 pb-[env(safe-area-inset-bottom)]">
