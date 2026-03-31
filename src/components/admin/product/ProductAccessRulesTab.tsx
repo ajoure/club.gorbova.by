@@ -255,6 +255,23 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const { data: availableEntitlements = [] } = useAvailableEntitlements();
   const { data: tariffDurations = [] } = useTariffDurations(productId);
 
+  // Root trainings for this product (for training_content selector)
+  const { data: rootTrainings = [] } = useQuery({
+    queryKey: ["root-trainings-for-product", productId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, sort_order")
+        .eq("product_id", productId)
+        .is("parent_module_id", null)
+        .order("is_active", { ascending: false })
+        .order("sort_order");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!productId,
+  });
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
