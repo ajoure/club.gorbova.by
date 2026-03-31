@@ -134,11 +134,16 @@ export function useTrainingModules() {
         const moduleAccess = accessData?.filter(a => a.module_id === mod.id) || [];
         const accessibleTariffs = moduleAccess.map(a => (a.tariffs as any)?.name || "");
         
-        // СТРОГО: Админы имеют полный доступ, остальные — только по настройкам модуля (module_access)
-        // Если moduleAccess пустой — модуль публичный. Иначе — проверяем tariff_id пользователя.
+        // Access precedence:
+        // 1. admin bypass (applied below in normalizedModules)
+        // 2. public module (no module_access entries) → true
+        // 3. tariff-based: module_access ∩ subscriptions_v2 → true
+        // 4. entitlement-based: module.product_id ∈ userEntitlementProductIds → true
+        // module.product_id = null → entitlement path не применяется
         const baseAccess = 
           moduleAccess.length === 0 || 
-          moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
+          moduleAccess.some(a => userTariffIds.includes(a.tariff_id)) ||
+          (mod.product_id != null && userEntitlementProductIds.has(mod.product_id));
 
         // Group by product for compact display
         const productMap: Record<string, { product_name: string; tariff_count: number }> = {};

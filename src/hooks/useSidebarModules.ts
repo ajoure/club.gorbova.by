@@ -109,16 +109,25 @@ export function useSidebarModules() {
       const parentProductMap = new Map<string, string>();
 
       // 4. Determine access for each module
+      // First pass: build parent product_id map
+      modulesData?.forEach(m => {
+        if ((m as any).product_id && !m.parent_module_id) {
+          parentProductMap.set(m.id, (m as any).product_id);
+        }
+      });
+
       const modules = modulesData?.map(m => {
         const moduleAccess = accessByModule[m.id] || { tariffIds: [], tariffNames: [] };
         
-        // Access logic:
-        // - Admins always have access
-        // - If no tariffs defined (empty array) → public module
-        // - Otherwise check if user has any of the required tariffs
+        // Resolve effective product_id: own or fallback to parent
+        const effectiveProductId = (m as any).product_id ?? 
+          (m.parent_module_id ? parentProductMap.get(m.parent_module_id) : null) ?? null;
+
+        // Access precedence: admin → public → tariff → entitlement
         const hasAccess = isAdminUser || 
           moduleAccess.tariffIds.length === 0 || 
-          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid));
+          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid)) ||
+          (effectiveProductId != null && userEntitlementProductIds.has(effectiveProductId));
 
         return {
           ...m,

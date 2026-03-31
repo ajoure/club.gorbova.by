@@ -185,9 +185,11 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           moduleTariffs = accessByContainer[childMod.parent_module_id] || [];
         }
       }
+      // Access precedence: admin → public → tariff → entitlement
       const hasAccess = isAdminUser || 
         moduleTariffs.length === 0 || 
-        moduleTariffs.some((tid: string) => userTariffIds.includes(tid));
+        moduleTariffs.some((tid: string) => userTariffIds.includes(tid)) ||
+        (container.productId != null && entitlementProductIds.has(container.productId));
 
       // Collect restricted tariff names for banner
       if (!hasAccess && moduleTariffs.length > 0) {
