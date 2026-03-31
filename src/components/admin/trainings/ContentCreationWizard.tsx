@@ -905,7 +905,7 @@ export function ContentCreationWizard({
       if (step === 1) {
         return (
           <div className="space-y-6">
-            <CompactAccessSelector
+            <ProductTariffAccessSelector
               selectedTariffIds={wizardData.tariffIds}
               onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
               products={productsWithTariffs || []}
