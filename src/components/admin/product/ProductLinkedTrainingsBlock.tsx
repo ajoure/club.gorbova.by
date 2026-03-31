@@ -744,7 +744,6 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                       <div key={t.id} className="flex items-center gap-2 text-[11px] text-muted-foreground px-2 py-1 rounded-md bg-muted/30">
                         <span className="font-medium">{t.title}</span>
                         {t.public_id && <span className="font-mono text-[9px]">{t.public_id}</span>}
-                        <Badge variant="outline" className="text-[9px]">{d.binding_source}</Badge>
                          {d.legacy_module_access_count > 0 && (
                           <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300">
                             старые настройки: {d.legacy_module_access_count}
