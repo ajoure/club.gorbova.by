@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
 import {
   useAccessRules, useEffectiveGrants,
@@ -10,6 +10,9 @@ import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
   useTariffDurations, getClubAccessLabel,
 } from "@/hooks/useAccessRuleSelectors";
+import { useTrainingContentTree, type TreeModule, type TreeLesson } from "@/hooks/useTrainingContentRules";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -25,7 +28,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -44,6 +47,7 @@ const TARGET_TYPE_LABELS: Record<GrantTargetType, string> = {
   product_access: "Доступ к продукту",
   entitlement: "Системное право доступа",
   email: "Доступ к домену / разделу",
+  training_content: "Доступ к контенту тренинга",
 };
 
 const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
@@ -51,6 +55,7 @@ const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
   product_access: Package,
   entitlement: Shield,
   email: Zap,
+  training_content: BookOpen,
 };
 
 const PURPOSE_LABELS: Record<RulePurpose, string> = {
@@ -250,6 +255,23 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
   const { data: availableEntitlements = [] } = useAvailableEntitlements();
   const { data: tariffDurations = [] } = useTariffDurations(productId);
 
+  // Root trainings for this product (for training_content selector)
+  const { data: rootTrainings = [] } = useQuery({
+    queryKey: ["root-trainings-for-product", productId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, sort_order")
+        .eq("product_id", productId)
+        .is("parent_module_id", null)
+        .order("is_active", { ascending: false })
+        .order("sort_order");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!productId,
+  });
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
@@ -280,7 +302,16 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     has_condition: false,
     condition_use_same_list: true,
     condition_required_product_ids: [] as string[],
+    // training_content fields
+    tc_access_mode: "full" as "full" | "partial",
+    tc_allowed_module_ids: [] as string[],
+    tc_allowed_lesson_ids: [] as string[],
   });
+
+  // Tree picker for training_content
+  const { data: trainingTree } = useTrainingContentTree(
+    form.grant_target_type === "training_content" ? form.target_ref : undefined
+  );
 
   // Filtered rules
   const filteredRules = useMemo(() => {
@@ -357,6 +388,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       has_condition: false,
       condition_use_same_list: true,
       condition_required_product_ids: [],
+      tc_access_mode: "full",
+      tc_allowed_module_ids: [],
+      tc_allowed_lesson_ids: [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -376,6 +410,11 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       targetIds.length === conditionIds.length &&
       targetIds.every(id => conditionIds.includes(id));
 
+    // Extract training_content fields from conditions
+    const tcAccessMode = (conditions.access_mode as "full" | "partial") || "full";
+    const tcAllowedModuleIds = (Array.isArray(conditions.allowed_module_ids) ? conditions.allowed_module_ids : []) as string[];
+    const tcAllowedLessonIds = (Array.isArray(conditions.allowed_lesson_ids) ? conditions.allowed_lesson_ids : []) as string[];
+
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -392,6 +431,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       has_condition: hasCondition,
       condition_use_same_list: useSameList,
       condition_required_product_ids: useSameList ? [] : conditionIds,
+      tc_access_mode: tcAccessMode,
+      tc_allowed_module_ids: tcAllowedModuleIds,
+      tc_allowed_lesson_ids: tcAllowedLessonIds,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
@@ -402,6 +444,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     if (form.grant_target_type === "product_access") {
       if (form.target_product_ids.length === 0) {
         toast.error("Выберите хотя бы один продукт для выдачи");
+        return;
+      }
+    } else if (form.grant_target_type === "training_content") {
+      if (!form.target_ref) {
+        toast.error("Выберите тренинг");
+        return;
+      }
+      if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
+        toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
         return;
       }
     } else if (!form.target_ref) {
@@ -437,6 +488,13 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       }
     }
 
+    // training_content conditions
+    if (form.grant_target_type === "training_content") {
+      conditions.access_mode = form.tc_access_mode;
+      conditions.allowed_module_ids = form.tc_access_mode === "partial" ? form.tc_allowed_module_ids : [];
+      conditions.allowed_lesson_ids = form.tc_access_mode === "partial" ? form.tc_allowed_lesson_ids : [];
+    }
+
     // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
     const parsedDuration = form.duration_mode === "manual"
@@ -455,6 +513,11 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           .map(id => availableProducts.find(p => p.id === id)?.name || id);
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
+    }
+    // training_content: target_label = training title
+    if (form.grant_target_type === "training_content" && form.target_ref) {
+      const training = rootTrainings.find(t => t.id === form.target_ref);
+      targetLabel = training?.title || form.target_label || form.target_ref;
     }
 
     const payload: any = {

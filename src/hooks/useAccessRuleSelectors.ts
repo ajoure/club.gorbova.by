@@ -69,12 +69,21 @@ export function useAvailableEntitlements() {
   return useQuery({
     queryKey: ["access-rule-entitlements"],
     queryFn: async () => {
+      // Get entitlements with product_id for name resolution
       const { data, error } = await supabase
         .from("entitlements")
-        .select("product_code")
+        .select("product_code, product_id")
         .not("product_code", "is", null)
         .order("product_code");
       if (error) throw error;
+
+      // Get all products for name resolution
+      const { data: products } = await supabase
+        .from("products_v2")
+        .select("id, name");
+
+      const productNameMap = new Map<string, string>();
+      (products || []).forEach(p => productNameMap.set(p.id, p.name));
 
       // Deduplicate
       const seen = new Set<string>();
@@ -82,7 +91,9 @@ export function useAvailableEntitlements() {
       (data || []).forEach((row: any) => {
         if (row.product_code && !seen.has(row.product_code)) {
           seen.add(row.product_code);
-          const humanLabel = getProductName(row.product_code);
+          // Priority: products_v2.name (via product_id) → getProductName(code) → raw code
+          const productName = row.product_id ? productNameMap.get(row.product_id) : null;
+          const humanLabel = productName || getProductName(row.product_code);
           result.push({
             product_code: row.product_code,
             label: humanLabel,

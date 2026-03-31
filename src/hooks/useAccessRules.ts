@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-export type GrantTargetType = "entitlement" | "club" | "email" | "product_access";
+export type GrantTargetType = "entitlement" | "club" | "email" | "product_access" | "training_content";
 
 export type RulePurpose = "primary" | "bonus" | "additional" | "service";
 
@@ -494,6 +494,7 @@ function getRuntimeSupport(type: GrantTargetType): "full" | "partial" | "preview
     case "club": return "full";
     case "product_access": return "full";
     case "entitlement": return "full";
+    case "training_content": return "full";
     case "email": return "partial";
     default: return "preview_only";
   }
