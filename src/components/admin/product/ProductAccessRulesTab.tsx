@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
+import { TrainingContentTreePicker, normalizeTrainingContentPayload } from "./TrainingContentTreePicker";
 import {
   useAccessRules, useEffectiveGrants,
   type AccessRule, type GrantTargetType, type RulePurpose,
