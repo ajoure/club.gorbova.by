@@ -25,7 +25,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
