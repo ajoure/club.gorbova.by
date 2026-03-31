@@ -63,7 +63,7 @@ function findModule(tree: TreeModule, id: string): TreeModule | null {
  * - if all lessons of a module are selected individually, module auto-checks
  * - partial selection = indeterminate
  */
-export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons }: Props) {
+export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLessonIds, onChange }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
     const set = new Set<string>();
     set.add(tree.id);
