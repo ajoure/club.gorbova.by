@@ -944,11 +944,15 @@ export function ContentCreationWizard({
       if (step === 1) {
         return (
           <div className="space-y-6">
-            <ProductTariffAccessSelector
-              selectedTariffIds={wizardData.tariffIds}
-              onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-              products={productsWithTariffs || []}
-            />
+            {targetModuleProduct ? (
+              <ProductAccessInfoBlock productId={targetModuleProduct} />
+            ) : (
+              <ProductTariffAccessSelector
+                selectedTariffIds={wizardData.tariffIds}
+                onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
+                products={productsWithTariffs || []}
+              />
+            )}
             <LessonSaleConfig
               config={wizardData.saleConfig}
               onChange={(cfg) => setWizardData((prev) => ({ ...prev, saleConfig: cfg }))}
