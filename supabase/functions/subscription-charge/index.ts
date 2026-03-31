@@ -4,6 +4,7 @@ import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
