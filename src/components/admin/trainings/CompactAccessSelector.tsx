@@ -2,18 +2,13 @@ import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ChevronRight, Package, Check, Minus, X } from "lucide-react";
+import { ChevronRight, Package, Check, Minus, X, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 
@@ -45,12 +40,20 @@ export function CompactAccessSelector({
 }: CompactAccessSelectorProps) {
   const [open, setOpen] = useState(false);
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Filter products with tariffs
   const productsWithTariffs = useMemo(
     () => products.filter((p) => p.tariffs.length > 0),
     [products]
   );
+
+  // Filter by search query
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return productsWithTariffs;
+    const q = searchQuery.toLowerCase();
+    return productsWithTariffs.filter((p) => p.name.toLowerCase().includes(q));
+  }, [productsWithTariffs, searchQuery]);
 
   // Get product selection state
   const getProductState = (product: Product): ProductState => {
@@ -161,88 +164,98 @@ export function CompactAccessSelector({
           align="start"
           sideOffset={4}
         >
-          <ScrollArea className="max-h-[300px]">
-            <div className="py-1">
-              {productsWithTariffs.length === 0 ? (
-                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  Нет продуктов с тарифами
-                </div>
-              ) : (
-                productsWithTariffs.map((product) => {
-                  const state = getProductState(product);
-                  const isExpanded = expandedProductId === product.id;
+          {/* Search input */}
+          <div className="p-2 border-b border-border/30">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Поиск продуктов..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-8 text-sm"
+              />
+            </div>
+          </div>
+          <div className="max-h-[300px] overflow-y-auto py-1">
+            {filteredProducts.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                {searchQuery ? "Ничего не найдено" : "Нет продуктов с тарифами"}
+              </div>
+            ) : (
+              filteredProducts.map((product) => {
+                const state = getProductState(product);
+                const isExpanded = expandedProductId === product.id;
 
-                  return (
-                    <div key={product.id} className="border-b border-border/30 last:border-0">
-                      {/* Product row */}
-                      <div
+                return (
+                  <div key={product.id} className="border-b border-border/30 last:border-0">
+                    {/* Product row */}
+                    <div
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors",
+                        state !== "none" && "bg-primary/5"
+                      )}
+                    >
+                      {/* Checkbox for product */}
+                      <Checkbox
+                        checked={state === "all"}
+                        onCheckedChange={() => toggleProduct(product)}
                         className={cn(
-                          "flex items-center gap-2 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors",
-                          state !== "none" && "bg-primary/5"
+                          "shrink-0",
+                          state === "partial" && "data-[state=unchecked]:bg-primary/20"
                         )}
+                      />
+
+                      {/* Product name - click to expand/collapse */}
+                      <div
+                        className="flex-1 flex items-center justify-between min-w-0"
+                        onClick={() =>
+                          setExpandedProductId(isExpanded ? null : product.id)
+                        }
                       >
-                        {/* Checkbox for product */}
-                        <Checkbox
-                          checked={state === "all"}
-                          onCheckedChange={() => toggleProduct(product)}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium truncate">
+                            {product.name}
+                          </span>
+                          {state === "partial" && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                              {product.tariffs.filter((t) =>
+                                selectedTariffIds.includes(t.id)
+                              ).length}
+                              /{product.tariffs.length}
+                            </Badge>
+                          )}
+                        </div>
+                        <ChevronRight
                           className={cn(
-                            "shrink-0",
-                            state === "partial" && "data-[state=unchecked]:bg-primary/20"
+                            "h-4 w-4 text-muted-foreground shrink-0 transition-transform",
+                            isExpanded && "rotate-90"
                           )}
                         />
-
-                        {/* Product name - click to expand/collapse */}
-                        <div
-                          className="flex-1 flex items-center justify-between min-w-0"
-                          onClick={() =>
-                            setExpandedProductId(isExpanded ? null : product.id)
-                          }
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-medium truncate">
-                              {product.name}
-                            </span>
-                            {state === "partial" && (
-                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                {product.tariffs.filter((t) =>
-                                  selectedTariffIds.includes(t.id)
-                                ).length}
-                                /{product.tariffs.length}
-                              </Badge>
-                            )}
-                          </div>
-                          <ChevronRight
-                            className={cn(
-                              "h-4 w-4 text-muted-foreground shrink-0 transition-transform",
-                              isExpanded && "rotate-90"
-                            )}
-                          />
-                        </div>
                       </div>
-
-                      {/* Tariffs (expanded) */}
-                      {isExpanded && (
-                        <div className="bg-muted/30 border-t border-border/30">
-                          {product.tariffs.map((tariff) => (
-                            <label
-                              key={tariff.id}
-                              className="flex items-center gap-2 px-3 pl-9 py-2 hover:bg-muted/50 cursor-pointer"
-                            >
-                              <Checkbox
-                                checked={selectedTariffIds.includes(tariff.id)}
-                                onCheckedChange={() => toggleTariff(tariff.id)}
-                              />
-                              <span className="text-sm truncate">{tariff.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      )}
                     </div>
-                  );
-                })
-              )}
-            </div>
-          </ScrollArea>
+
+                    {/* Tariffs (expanded) */}
+                    {isExpanded && (
+                      <div className="bg-muted/30 border-t border-border/30">
+                        {product.tariffs.map((tariff) => (
+                          <label
+                            key={tariff.id}
+                            className="flex items-center gap-2 px-3 pl-9 py-2 hover:bg-muted/50 cursor-pointer"
+                          >
+                            <Checkbox
+                              checked={selectedTariffIds.includes(tariff.id)}
+                              onCheckedChange={() => toggleTariff(tariff.id)}
+                            />
+                            <span className="text-sm truncate">{tariff.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
 
           {/* Footer with clear action */}
           {selectedTariffIds.length > 0 && (
