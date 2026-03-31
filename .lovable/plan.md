@@ -2,239 +2,277 @@
 
 &nbsp;
 
-1. В этот PATCH B обязательно включить **оба направления**: не только создание нового training_content rule, но и **полноценное редактирование существующего** rule из списка правил. Это уже было зафиксировано ранее и не должно потеряться:
+1. **Убрать английское слово legacy из UI полностью**
+  Во всех местах заменить на русский понятный термин:
   &nbsp;
-  - open existing rule in edit mode;
-  - восстановление target_ref, access_mode, allowed_module_ids, allowed_lesson_ids;
-  - сохранение без потери scope (product_id / tariff_id);
-  - delete / deactivate через штатный список правил.
+  - legacy → старый контур
+  - legacy module_access: N записей → старые настройки доступа: N записей
+  - любые badge/label/tooltips только на русском языке.
+    Это относится и к ProductAccessInfoBlock, и к ProductLinkedTrainingsBlock, и к карточкам/диалогам.
   &nbsp;
-2. В BindTrainingDialog из скриншота довести UI до читаемого состояния как отдельный обязательный deliverable:
+2. **Исправить непонятный 0 уроков в списке тренингов продукта**
+  Сейчас по скрину это выглядит как сломанная или пустая статистика.
+  Нужно:
   &nbsp;
-  - фиксированная высота списка;
-  - внутренний scroll только у списка;
-  - sticky search + sticky filter tabs;
-  - длинные названия line-clamp-2, не ломают бейджи справа;
-  - правая колонка (TRN-..., inactive, “Другой продукт → перепривязать”) выровнена и не прыгает;
-  - на маленькой высоте окна footer/dialog actions остаются доступными.
+  - либо показывать реальное количество уроков внутри root-тренинга/контейнера;
+  - либо, если счётчик сейчас не умеет корректно считаться для контейнеров, временно не показывать его вообще;
+  - запрещено оставлять массовые ложные 0 уроков, если уроки фактически существуют.
+    Добавить отдельный PATCH на корректный подсчёт:
+  - для root-тренинга считать все дочерние модули и все уроки внутри них;
+  - для leaf-модуля считать только его уроки;
+  - для пустого тренинга показывать нет уроков только если это подтверждено фактически.
   &nbsp;
-3. Для entitlement selector fix в useAccessRuleSelectors.ts зафиксировать точный приоритет label resolution:
+3. **Добавить PATCH: редактирование правил из блока тренинга должно быть доступно**
+  По сути сейчас readonly-блок есть, но перейти к реальной настройке неудобно/нельзя.
+  Нужно добавить в ProductAccessInfoBlock явные действия:
   &nbsp;
-  - products_[v2.name](http://v2.name) по entitlements.product_id;
-  - fallback: getProductName(product_code);
-  - fallback 2: raw product_code.
-    И в UI:
-  - primary = human-readable name;
-  - secondary = technical code мелким текстом;
-  - raw code никогда не должен быть primary label, если найдено имя.
+  - Открыть продукт
+  - Открыть вкладку "Доступы"
+  - если для этого тренинга уже есть training_content rule — Редактировать правило
+  - если правила нет — Создать правило для этого тренинга
+    То есть это должен быть не просто информационный блок, а рабочая точка перехода к настройке.
   &nbsp;
-4. В wizard для training_content rule жёстко сохранить guard’ы не только на фронте, но и на backend/DB:
+4. **Расширить ProductAccessInfoBlock не просто summary, а actionable summary**
+  Сейчас недостаточно показать count. Нужно для конкретного модуля/тренинга показывать:
   &nbsp;
-  - target только root module;
-  - target training должен принадлежать текущему продукту;
-  - partial + пустой allowlist = reject;
-  - lesson/module ids только из дерева выбранного root training;
-  - один rule на (scope + target_ref) без merge-магии.
+  - есть ли правило именно для этого target_ref;
+  - режим: полный доступ / частичный доступ;
+  - scope: весь продукт / тариф: {название};
+  - статус: активно / неактивно;
+  - кнопка перехода к редактированию правила.
+    Если правил несколько, показывать список правил по этому тренингу, а не общий count по продукту.
   &nbsp;
-5. В tree-picker добавить UX, который уже просили и который сейчас отсутствует в плане:
+5. **Исправить UI списка “Тренинги этого продукта”**
+  По скрину там сейчас неочевидно:
   &nbsp;
-  - root checkbox “Весь тренинг”;
-  - bulk actions “выбрать всё / снять всё”;
-  - indeterminate state;
-  - если модуль выбран целиком, не заставлять выбирать все его уроки вручную;
-  - перед save делать нормализацию payload без дублей и без “лишних” lesson ids внутри полностью выбранного module.
+  - почему часть строк с badge, часть без;
+  - что означает старый контур;
+  - почему у root одна логика, у children другая.
+    Нужно сделать единый русский и понятный формат:
+  - TRN-xxxxx
+  - активен / неактивен
+  - N уроков только если count корректен
+  - badge старый контур только если модуль реально ещё не переведён
+  - badge через продукт / через старые настройки — если нужно явно показать источник доступа
   &nbsp;
-6. В runtime-хуках (useTrainingModules.tsx, useContainerLessons.ts, useSidebarModules.ts) зафиксировать единое правило:
+6. **Уточнить в плане: скрин 3 — это не “нормально”, а переходное состояние, которое нужно сделать понятным**
+  Да, legacy selector для модуля без product_id допустим временно, но UI должен это честно объяснять:
   &nbsp;
-  - training_content filter применяется **только после** подтверждённого entitlement/subscription access;
-  - precedence: tariff_id rule > product_id rule;
-  - если rule нет, доступ остаётся полным;
-  - пустые модули/контейнеры/секции скрываются;
-  - lesson_count, completed_count, progress пересчитываются только по видимому контенту;
-  - admin bypass полностью игнорирует training_content filtering.
+  - почему здесь старый режим;
+  - почему в другом модуле новый режим;
+  - что нужно сделать, чтобы перевести модуль в новый режим.
+    Добавить поясняющий блок:
+    Этот тренинг ещё не привязан к продукту. Пока используются старые настройки доступа.
   &nbsp;
-7. ProductLinkedTrainingsBlock.tsx нужно довести до живого readonly-слоя по правилам, а не просто списка:
+7. **Баг 1 и 2 в useTrainingModules.tsx — оставить, но дополнить proof**
+  Нужно не просто исправить скрытие пустых root и пересчёт counts, но и доказать на UI:
   &nbsp;
-  - тренинг;
-  - scope: весь продукт / конкретный тариф;
-  - режим full / partial;
-  - count разрешённых модулей / уроков;
-  - active / inactive;
-  - клик “редактировать” должен открывать wizard на этом rule.
+  - partial rule скрывает пустые root;
+  - счётчики root меняются после фильтрации;
+  - после исправления не остаётся ложных 0 уроков у непустых тренингов.
   &nbsp;
-8. В план явно вернуть сохранённые ранее требования по proof:
+8. **Баг 3 в useSidebarModules.ts — оставить, но дополнить проверкой навигации**
+  Нужно доказать, что после фикса:
   &nbsp;
-  - DB-proof: duplicate scope rule, child-target, foreign-training, empty partial allowlist;
-  - UI-proof: bind dialog scroll/readability/search/rebind;
-  - edit-proof: создать partial rule → открыть на редактирование → изменить allowlist → сохранить → повторно открыть и доказать восстановление состояния;
-  - runtime-proof: один тариф видит часть уроков, другой — все, и это подтверждено в 3 хуках.
+  - root без видимых children исчезает из sidebar;
+  - root с хотя бы одним доступным child остаётся;
+  - admin bypass не ломается.
   &nbsp;
-9. grant-access-for-order, entitlement/backfill/renewal paths и product_access rules для клуба не трогать. Это нужно явно повторить в stop-guards для подрядчика, чтобы PATCH B не разросся в новый контур доступа.
-10. После PATCH B сразу следующим обязательным патчем оставить PATCH C на сворачивание legacy module_access. Не backlog “когда-нибудь”, а immediate follow-up после стабилизации PATCH B.
+9. **Добавить отдельный PATCH на русификацию всего контура training/product access**
+  Не точечно, а системно проверить:
+  &nbsp;
+  - блоки в тренингах;
+  - блоки в продуктах;
+  - badges в списках;
+  - тултипы и helper-тексты;
+  - диагностику.
+    Требование: ни одного английского слова в пользовательском UI.
+  &nbsp;
+10. **В DoD добавить явные пользовательские критерии по твоим скринам**
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH B — полный scope с UI-polish и runtime
+&nbsp;
 
-## Диагностика текущего состояния
+- в продукте список тренингов показывает понятные русские статусы;
+- ложных 0 уроков нет;
+- readonly-блок не тупиковый, из него можно перейти к настройке;
+- для product-linked тренинга видно, какое именно правило действует;
+- для legacy-тренинга видно, почему он legacy и что с ним делать.
 
-### Что реально в коде (проверено)
+&nbsp;
 
-- `GrantTargetType` = `"entitlement" | "club" | "email" | "product_access"` — **training_content НЕ добавлен**
-- `useTrainingContentRules.ts` — **не существует**
-- SQL миграция с indexes/trigger — **не существует** (ни одного .sql файла с `training_content`)
-- `ProductAccessRulesTab.tsx` — wizard на 5 шагов, entitlement selector показывает raw коды
-- `ProductLinkedTrainingsBlock.tsx` — placeholder «PATCH B» на строке 626-638, BindTrainingDialog работает базово
-- `useTrainingModules.tsx`, `useContainerLessons.ts`, `useSidebarModules.ts` — **без runtime фильтрации**
+&nbsp;
 
-### Проблема из скриншота
+&nbsp;
 
-Entitlement selector (шаг 3 wizard) показывает raw `product_code` как primary label (`1769009596189-398a`, `cb_2_step`). Маппинг `getProductName()` в `product-names.ts` покрывает не все коды. Нужно: для кодов с product_id в `entitlements` → резолвить через `products_v2.name`, для остальных → `getProductName()` fallback.
+11. **Не считать PATCH закрытым без proof на этих 3 вопросах**
 
----
+&nbsp;
 
-## Scope PATCH B (полный)
+&nbsp;
 
-### Блок 1: SQL миграция
+&nbsp;
 
-- 3 partial unique indexes для training_content rules
-- Validation trigger: root-only, product match, conditions schema
-- Без изменения grant_target_type (уже TEXT)
+- русификация legacy закрыта;
+- счётчики уроков показываются корректно;
+- из тренинга реально можно попасть в настройку правил, а не только “идите в продукты”.
 
-### Блок 2: Entitlement selector fix (из скриншота)
+&nbsp;
 
-- `useAvailableEntitlements()` в `useAccessRuleSelectors.ts`: join `entitlements` → `products_v2` через `product_id`, для получения human-readable name
-- Приоритет: `products_v2.name` → `getProductName(code)` → raw code
-- Primary label = name, secondary = код (мелким шрифтом)
+&nbsp;
 
-### Блок 3: `useAccessRules.ts`
+&nbsp;
 
-- Добавить `"training_content"` в `GrantTargetType`
-- `getRuntimeSupport()` → `"full"` для training_content
+12. **Скрин из продукта добавить в acceptance criteria**
+  На скрине Тренинги этого продукта именно этот экран должен стать понятным и рабочим:
 
-### Блок 4: Новый хук `useTrainingContentRules.ts`
+&nbsp;
 
-- `useTrainingContentTree(trainingId)` — дерево модулей + уроков для tree-picker
-- `useActiveTrainingContentRules()` — runtime: active rules по product_ids пользователя
-- `resolveTrainingContentFilter(rules, productId, userTariffIds)` — pure function: tariff > product, возвращает `{ mode, allowedModuleIds, allowedLessonIds } | null`
+&nbsp;
 
-### Блок 5: Wizard training_content в `ProductAccessRulesTab.tsx`
+&nbsp;
 
-- Labels/icons для training_content
-- Step 3 «Куда выдаём»: selector root-тренингов текущего продукта (title primary, TRN-xxx secondary, inactive с бейджем, child-модули не показывать)
-- Access mode toggle: full / partial
-- Tree-picker при partial: чекбокс root «Весь тренинг», indeterminate state, массовые действия, нормализация payload
-- Save validation: partial + пустой allowlist = reject
-- **Edit mode**: загрузка access_mode, target_ref, allowed_module_ids, allowed_lesson_ids из conditions; сохранение с сохранением scope
+- русские статусы;
+- корректные счётчики;
+- понятный источник доступа;
+- возможность открыть/редактировать настройки для конкретного тренинга.
 
-### Блок 6: BindTrainingDialog UI polish в `ProductLinkedTrainingsBlock.tsx`
+&nbsp;
 
-- Фиксированная высота списка (`max-h-[400px]` с `overflow-y-auto`)
-- Sticky search + sticky фильтры сверху
-- Title: max 2 строки, затем ellipsis (`line-clamp-2`)
-- public_id, статус, бейдж «Другой продукт» — выровнены по колонкам (flex с shrink-0)
-- hover/selected state без конфликта с badge
-- На маленькой высоте — список и кнопки остаются доступными
+&nbsp;
 
-### Блок 7: Readonly блок training_content rules
+План: PATCH B.1 hotfix + PATCH B.2 единая сквозная настройка
 
-- Заменить placeholder (строки 626-638) на живой блок
-- Список rules из access_rules where grant_target_type = 'training_content' AND target_ref IN (linked training ids)
-- Scope: product-wide / тариф
-- Режим: full / partial
-- Count модулей / уроков
-- active / inactive
+## Диагностика по скринам
 
-### Блок 8: Runtime фильтрация
+**Скрин 1-2**: product-linked модули — показывается `ProductAccessInfoBlock` (readonly). Корректно.
+**Скрин 3**: модуль без `product_id` — показывается legacy `ProductTariffAccessSelector`. Это ожидаемое поведение для непривязанных модулей, но может быть неконсистентно если модуль должен быть привязан.
+**Скрин 4**: wizard в продукте — training_content rule, selector тренингов. Работает.
 
-**Архитектурное правило**: фильтрация ТОЛЬКО ПОСЛЕ подтверждённого entitlement/subscription. Rule не открывает доступ.
+## Подтверждённые баги (PATCH B.1)
 
-#### `useTrainingModules.tsx`
+### Баг 1: `useTrainingModules.tsx` строки 204-218
 
-- После has_access=true: загрузить training_content rules, найти most specific (tariff > product)
-- Если partial → фильтр по allowedModuleIds / allowedLessonIds
-- Пересчёт lesson_count, completed_count
-- Скрытие пустых child/root модулей
-- Admin bypass
+`finalModules.filter()` всегда возвращает `true`. Root-контейнеры без видимых children НЕ скрываются.
 
-#### `useContainerLessons.ts`
+**Fix**: при `lesson_count === 0` и отсутствии видимых children → `return false`.
 
-- Аналогичная логика после access check
-- Скрытие пустых sections
+### Баг 2: `useTrainingModules.tsx`
 
-#### `useSidebarModules.ts`
+`lesson_count` / `completed_count` root-модулей не пересчитываются по видимым children после partial-фильтра.
 
-- Фильтрация модулей без видимого контента
-- Скрытие пустых секций из modulesBySection
+**Fix**: после фильтрации, пересчитать root counts как сумму видимых children.
 
----
+### Баг 3: `useSidebarModules.ts` строка 178
 
-## Файлы
+Root-модули всегда `return true`, даже если все children отфильтрованы.
 
+**Fix**: проверить наличие видимых children; если нет и root не в allowlist → скрыть.
 
-| Файл                                                           | Действие                                     |
-| -------------------------------------------------------------- | -------------------------------------------- |
-| SQL миграция                                                   | **Создать**: indexes + trigger               |
-| `src/hooks/useAccessRuleSelectors.ts`                          | Fix entitlement selector: join products_v2   |
-| `src/hooks/useAccessRules.ts`                                  | Добавить training_content                    |
-| `src/hooks/useTrainingContentRules.ts`                         | **Создать**: tree + runtime + resolver       |
-| `src/components/admin/product/ProductAccessRulesTab.tsx`       | Wizard step для training_content + edit mode |
-| `src/components/admin/product/ProductLinkedTrainingsBlock.tsx` | BindDialog UI polish + readonly rules блок   |
-| `src/hooks/useTrainingModules.tsx`                             | Runtime allowlist                            |
-| `src/hooks/useContainerLessons.ts`                             | Runtime allowlist                            |
-| `src/hooks/useSidebarModules.ts`                               | Runtime allowlist                            |
+## PATCH B.2: Единая сквозная настройка
+
+### 1. Расширить `ProductAccessInfoBlock`
+
+Сейчас показывает: продукт, ссылку, legacy count, rules count (как число).
+**Добавить**: реальный summary training_content rules:
+
+- «Полный доступ» / «Частичный: N модулей, M уроков»
+- Scope: продукт / тариф (название тарифа)
+- Active / inactive
+Данные брать через `useTrainingContentRulesForProduct(productId)`, фильтр по `target_ref = moduleId`.
+
+### 2. Убедиться что `ProductAccessInfoBlock` используется везде
+
+Проверено: `ModuleAccessForm` (строка 347) и `ContentCreationWizard` (строки 948, 1054) уже проверяют `product_id` и показывают `ProductAccessInfoBlock`. Логика корректна — если `product_id` есть, legacy selector не рендерится.
+
+Скрин 3 не является багом — это модуль без `product_id`, legacy selector ожидаем.
+
+### 3. Readonly-блок в продукте уже живой
+
+`ProductLinkedTrainingsBlock.tsx` строки 634-689: блок «Правила гранулярности доступа» уже показывает live rules из `useTrainingContentRulesForProduct`. Scope, режим, counts, active/inactive — всё отображается.
+
+## Файлы и изменения
 
 
-## Что НЕ меняется
+| Файл                                                        | Действие                                     |
+| ----------------------------------------------------------- | -------------------------------------------- |
+| `src/hooks/useTrainingModules.tsx`                          | Fix: скрытие пустых root + пересчёт counts   |
+| `src/hooks/useSidebarModules.ts`                            | Fix: скрытие root без видимых children       |
+| `src/components/admin/trainings/ProductAccessInfoBlock.tsx` | Добавить live summary training_content rules |
 
-- `grant-access-for-order` — архитектурное правило: training_content = фильтр, не грант
-- `useProductTrainings.ts` — readonly diagnostics работает
-- `ProductAccessInfoBlock.tsx` — без изменений
-- Entitlement-модель, club rules — без изменений
 
-## Порядок выполнения
+## Детали изменений
 
-1. SQL миграция (DB guards)
-2. `useAccessRuleSelectors.ts` (entitlement selector fix)
-3. `useAccessRules.ts` (type)
-4. `useTrainingContentRules.ts` (новый)
-5. `ProductAccessRulesTab.tsx` (wizard + edit)
-6. `ProductLinkedTrainingsBlock.tsx` (bind dialog + readonly rules)
-7. `useTrainingModules.tsx` (runtime)
-8. `useContainerLessons.ts` (runtime)
-9. `useSidebarModules.ts` (runtime)
+### `useTrainingModules.tsx` строки 204-219
 
-## STOP-guards
+Заменить noop-фильтр:
 
-- Если grant_target_type окажется postgres ENUM → нужна ALTER TYPE миграция
-- partial + пустой allowlist → DB trigger reject + UI reject
-- rule для child-module → DB trigger reject
-- Если entitlements.product_id не заполнен массово → fallback на getProductName
+```typescript
+const finalModules = normalizedModules.filter(m => {
+  if (isAdminUser) return true;
+  if (!m.has_access && m.parent_module_id !== null) return true;
+  if (m.parent_module_id === null && m.has_access) {
+    const ownLessons = m.lesson_count || 0;
+    const hasVisibleChildren = normalizedModules.some(
+      child => child.parent_module_id === m.id && child.has_access && (child.lesson_count || 0) > 0
+    );
+    if (ownLessons === 0 && !hasVisibleChildren) return false;
+  }
+  return true;
+});
+
+// Recalc root counts from visible children
+finalModules.forEach(m => {
+  if (isAdminUser || m.parent_module_id !== null || !m.has_access) return;
+  const visibleChildren = finalModules.filter(
+    c => c.parent_module_id === m.id && c.has_access
+  );
+  if (visibleChildren.length > 0) {
+    m.lesson_count = visibleChildren.reduce((s, c) => s + (c.lesson_count || 0), 0);
+    m.completed_count = visibleChildren.reduce((s, c) => s + (c.completed_count || 0), 0);
+  }
+});
+```
+
+### `useSidebarModules.ts` строка 178
+
+Заменить `if (!m.parent_module_id) return true;` на:
+
+```typescript
+if (!m.parent_module_id) {
+  const hasVisibleChildren = modules.some(
+    child => child.parent_module_id === m.id && child.has_access && isModAllowed(filter, child.id)
+  );
+  return hasVisibleChildren || isModAllowed(filter, m.id);
+}
+```
+
+### `ProductAccessInfoBlock.tsx`
+
+Добавить `useTrainingContentRulesForProduct(productId)` и вместо простого `rulesCount` badge показать:
+
+- Если нет rules: «Не настроено — полный доступ»
+- Если есть rules, для каждого matching `target_ref === moduleId`:
+  - `full` → «Полный доступ» (badge green)
+  - `partial` → «Частичный: N мод. M ур.» (badge amber)
+  - Scope: «Продукт» / «Тариф: {name}»
+  - Active/inactive
+
+## Порядок
+
+1. Fix `useTrainingModules.tsx` (баг 1+2)
+2. Fix `useSidebarModules.ts` (баг 3)
+3. Расширить `ProductAccessInfoBlock` (live summary)
 
 ## DoD
 
-1. Entitlement selector показывает человеческие названия продуктов
-2. training_content rule создаётся / редактируется через wizard
-3. Tree-picker с indeterminate state и массовыми действиями
-4. BindTrainingDialog: scroll, sticky search, line-clamp, aligned badges
-5. Readonly блок rules в карточке продукта
-6. Runtime фильтрация в 3 хуках
-7. Пересчёт counts после allowlist
-8. Скрытие пустых модулей/контейнеров/sidebar-секций
-9. Admin bypass
-10. grant-access-for-order не затронут
-
-## DB-proof
-
-- duplicate rule → unique index violation
-- rule для чужого тренинга → trigger reject
-- rule на child-module → trigger reject
-- partial + пустой allowlist → trigger reject
-
-## Regression proof
-
-1. Продукт без training_content rule → полный доступ
-2. product_access для клуба → работает
-3. partial rule по тарифу → ограничение применилось в 3 хуках
+- Пустые root скрываются при partial filter (non-admin)
+- Root lesson_count/completed_count пересчитаны по видимым children
+- Sidebar скрывает root без видимых children
+- ProductAccessInfoBlock показывает реальные rules, а не просто count
+- Admin bypass сохраняется
+- Регрессия: без training_content rules всё работает как раньше
+- Для product-linked модулей старый selector не появляется (уже работает)
