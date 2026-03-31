@@ -50,7 +50,8 @@ export function useSidebarModules() {
           icon,
           sort_order,
           is_container,
-          parent_module_id
+          parent_module_id,
+          product_id
         `)
         .eq("is_active", true)
         .order("sort_order");
