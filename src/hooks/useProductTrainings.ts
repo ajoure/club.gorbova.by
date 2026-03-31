@@ -29,8 +29,19 @@ export interface RebindPreview {
   descendant_count: number;
   lesson_count: number;
   training_content_rules_count: number;
+  training_content_rule_ids: string[];
   legacy_module_access_count: number;
   has_active_entitlements: boolean;
+}
+
+export interface UnbindPreview {
+  training_title: string;
+  descendant_count: number;
+  lesson_count: number;
+  training_content_rules_count: number;
+  legacy_module_access_count: number;
+  has_active_entitlements: boolean;
+  can_unbind: boolean;
 }
 
 const QUERY_KEY = "product-linked-trainings";
@@ -47,7 +58,6 @@ export function useProductTrainings(productId?: string) {
     queryFn: async () => {
       if (!productId) return { trainings: [], diagnostics: {} as Record<string, TrainingBindingDiagnostics> };
 
-      // Fetch all modules for this product
       const { data: modules, error } = await supabase
         .from("training_modules")
         .select("id, title, slug, public_id, is_active, is_container, parent_module_id, sort_order, product_id")
@@ -55,7 +65,6 @@ export function useProductTrainings(productId?: string) {
         .order("sort_order");
       if (error) throw error;
 
-      // Fetch lesson counts per module
       const moduleIds = modules?.map(m => m.id) || [];
       let lessonCounts: Record<string, number> = {};
       if (moduleIds.length > 0) {
@@ -69,7 +78,6 @@ export function useProductTrainings(productId?: string) {
         });
       }
 
-      // Fetch legacy module_access counts
       let legacyCounts: Record<string, number> = {};
       if (moduleIds.length > 0) {
         const { data: access } = await supabase
@@ -81,7 +89,6 @@ export function useProductTrainings(productId?: string) {
         });
       }
 
-      // Fetch training_content rules count for these modules
       let rulesCounts: Record<string, number> = {};
       if (moduleIds.length > 0) {
         const { data: rules } = await supabase
@@ -94,7 +101,6 @@ export function useProductTrainings(productId?: string) {
         });
       }
 
-      // Build tree
       const allModules: LinkedTraining[] = (modules || []).map(m => ({
         ...m,
         is_container: m.is_container ?? false,
@@ -113,7 +119,6 @@ export function useProductTrainings(productId?: string) {
         }
       });
 
-      // Build diagnostics per root module
       const diagnostics: Record<string, TrainingBindingDiagnostics> = {};
       rootModules.forEach(root => {
         const allIds = [root.id, ...root.children.map(c => c.id)];
@@ -136,7 +141,6 @@ export function useProductTrainings(productId?: string) {
   // Bind a free training to this product
   const bindTraining = useMutation({
     mutationFn: async ({ trainingId, productId: pid }: { trainingId: string; productId: string }) => {
-      // Update root + all descendants
       const { error: rootErr } = await supabase
         .from("training_modules")
         .update({ product_id: pid } as any)
@@ -171,6 +175,18 @@ export function useProductTrainings(productId?: string) {
         throw new Error("ACTIVE_RULES_EXIST");
       }
 
+      // Get training info for audit
+      const { data: training } = await supabase
+        .from("training_modules")
+        .select("id, title, product_id")
+        .eq("id", trainingId)
+        .single();
+
+      const { data: descendants } = await supabase
+        .from("training_modules")
+        .select("id")
+        .eq("parent_module_id", trainingId);
+
       const { error: rootErr } = await supabase
         .from("training_modules")
         .update({ product_id: null } as any)
@@ -182,6 +198,18 @@ export function useProductTrainings(productId?: string) {
         .update({ product_id: null } as any)
         .eq("parent_module_id", trainingId);
       if (childErr) throw childErr;
+
+      // Audit log
+      await supabase.from("audit_logs").insert({
+        action: "training.unbind.executed",
+        actor_type: "admin",
+        meta: {
+          training_id: trainingId,
+          training_title: training?.title,
+          old_product_id: training?.product_id,
+          affected_descendants_count: descendants?.length || 0,
+        },
+      } as any);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
@@ -198,7 +226,6 @@ export function useProductTrainings(productId?: string) {
 
   // Get rebind preview
   const getRebindPreview = async (trainingId: string, newProductId: string): Promise<RebindPreview> => {
-    // Current training
     const { data: training } = await supabase
       .from("training_modules")
       .select("id, product_id")
@@ -221,7 +248,6 @@ export function useProductTrainings(productId?: string) {
       .eq("id", newProductId)
       .single();
 
-    // Descendants
     const { data: descendants } = await supabase
       .from("training_modules")
       .select("id")
@@ -229,13 +255,11 @@ export function useProductTrainings(productId?: string) {
 
     const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
 
-    // Lessons
     const { data: lessons } = await supabase
       .from("training_lessons")
       .select("id")
       .in("module_id", allIds);
 
-    // Active training_content rules
     const { data: rules } = await supabase
       .from("access_rules")
       .select("id")
@@ -243,13 +267,11 @@ export function useProductTrainings(productId?: string) {
       .eq("target_ref", trainingId)
       .eq("is_active", true);
 
-    // Legacy module_access
     const { data: legacyAccess } = await supabase
       .from("module_access")
       .select("id")
       .in("module_id", allIds);
 
-    // Active entitlements on current product
     let hasEntitlements = false;
     if (training?.product_id) {
       const { data: ents } = await supabase
@@ -261,21 +283,103 @@ export function useProductTrainings(productId?: string) {
       hasEntitlements = (ents?.length || 0) > 0;
     }
 
+    // Audit preview
+    await supabase.from("audit_logs").insert({
+      action: "training.rebind.preview",
+      actor_type: "admin",
+      meta: {
+        training_id: trainingId,
+        old_product_id: training?.product_id,
+        new_product_id: newProductId,
+        descendant_count: descendants?.length || 0,
+        lesson_count: lessons?.length || 0,
+        training_content_rules_count: rules?.length || 0,
+      },
+    } as any);
+
     return {
       current_product: currentProduct,
       new_product: np!,
       descendant_count: descendants?.length || 0,
       lesson_count: lessons?.length || 0,
       training_content_rules_count: rules?.length || 0,
+      training_content_rule_ids: rules?.map(r => r.id) || [],
       legacy_module_access_count: legacyAccess?.length || 0,
       has_active_entitlements: hasEntitlements,
+    };
+  };
+
+  // Get unbind preview
+  const getUnbindPreview = async (trainingId: string): Promise<UnbindPreview> => {
+    const { data: training } = await supabase
+      .from("training_modules")
+      .select("id, title, product_id")
+      .eq("id", trainingId)
+      .single();
+
+    const { data: descendants } = await supabase
+      .from("training_modules")
+      .select("id")
+      .eq("parent_module_id", trainingId);
+
+    const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
+
+    const { data: lessons } = await supabase
+      .from("training_lessons")
+      .select("id")
+      .in("module_id", allIds);
+
+    const { data: activeRules } = await supabase
+      .from("access_rules")
+      .select("id")
+      .eq("grant_target_type", "training_content")
+      .eq("target_ref", trainingId)
+      .eq("is_active", true);
+
+    const { data: legacyAccess } = await supabase
+      .from("module_access")
+      .select("id")
+      .in("module_id", allIds);
+
+    let hasEntitlements = false;
+    if (training?.product_id) {
+      const { data: ents } = await supabase
+        .from("entitlements")
+        .select("id")
+        .eq("product_id", training.product_id)
+        .eq("status", "active")
+        .limit(1);
+      hasEntitlements = (ents?.length || 0) > 0;
+    }
+
+    // Audit preview
+    await supabase.from("audit_logs").insert({
+      action: "training.unbind.preview",
+      actor_type: "admin",
+      meta: {
+        training_id: trainingId,
+        training_title: training?.title,
+        product_id: training?.product_id,
+        descendant_count: descendants?.length || 0,
+        lesson_count: lessons?.length || 0,
+        active_rules_count: activeRules?.length || 0,
+      },
+    } as any);
+
+    return {
+      training_title: training?.title || "",
+      descendant_count: descendants?.length || 0,
+      lesson_count: lessons?.length || 0,
+      training_content_rules_count: activeRules?.length || 0,
+      legacy_module_access_count: legacyAccess?.length || 0,
+      has_active_entitlements: hasEntitlements,
+      can_unbind: (activeRules?.length || 0) === 0,
     };
   };
 
   // Execute rebind
   const rebindTraining = useMutation({
     mutationFn: async ({ trainingId, newProductId }: { trainingId: string; newProductId: string }) => {
-      // Get current state for audit
       const { data: training } = await supabase
         .from("training_modules")
         .select("id, product_id, title")
@@ -283,6 +387,19 @@ export function useProductTrainings(productId?: string) {
         .single();
 
       const oldProductId = training?.product_id;
+
+      // Descendants count for audit
+      const { data: descendants } = await supabase
+        .from("training_modules")
+        .select("id")
+        .eq("parent_module_id", trainingId);
+
+      // Lessons count for audit
+      const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
+      const { data: lessons } = await supabase
+        .from("training_lessons")
+        .select("id")
+        .in("module_id", allIds);
 
       // Deactivate training_content rules of old product
       const { data: deactivatedRules } = await supabase
@@ -316,6 +433,8 @@ export function useProductTrainings(productId?: string) {
           training_title: training?.title,
           old_product_id: oldProductId,
           new_product_id: newProductId,
+          affected_descendants_count: descendants?.length || 0,
+          affected_lessons_count: lessons?.length || 0,
           deactivated_rule_ids: deactivatedRules?.map(r => r.id) || [],
           deactivated_rules_count: deactivatedRules?.length || 0,
         },
@@ -336,6 +455,7 @@ export function useProductTrainings(productId?: string) {
     unbindTraining: unbindTraining.mutateAsync,
     rebindTraining: rebindTraining.mutateAsync,
     getRebindPreview,
+    getUnbindPreview,
     isBinding: bindTraining.isPending,
   };
 }
