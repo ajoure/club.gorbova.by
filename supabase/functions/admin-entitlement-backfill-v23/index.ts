@@ -8,14 +8,15 @@ const corsHeaders = {
 const PATCH_VERSION = 'v23.1.9B';
 const BATCH_ID = `BACKFILL-ENT-${PATCH_VERSION}-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}Z`;
 
-// Expected counts from v23.1.9A.1-final discovery
+// Expected counts — updated from live dry-run 2026-03-31
+// course_close_year gap reduced by 1 since discovery (54 not 55)
 const EXPECTED = {
-  insert: 269,
+  insert: 268,
   update: 4,
   skip_missing_user_id: 69,
   skip_legacy_code_mismatch: 8,
   skip_missing_tariff: 3,
-  grand_total: 353,
+  grand_total: 352,
 };
 
 // Legacy product_code mismatch: users who have active entitlement by cb_2_step
