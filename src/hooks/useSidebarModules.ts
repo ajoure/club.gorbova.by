@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useActiveTrainingContentRules, resolveTrainingContentFilter, isModuleVisible as isModAllowed } from "@/hooks/useTrainingContentRules";
 import { useMemo } from "react";
 
 export interface SidebarModule {
