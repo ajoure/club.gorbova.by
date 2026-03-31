@@ -55,9 +55,17 @@ const QUERY_KEY = "product-linked-trainings";
  */
 async function getAllDescendantIds(rootId: string): Promise<string[]> {
   const allIds: string[] = [];
+  const visited = new Set<string>([rootId]);
   let currentParentIds = [rootId];
+  const MAX_ITERATIONS = 50;
+  let iteration = 0;
 
   while (currentParentIds.length > 0) {
+    if (++iteration > MAX_ITERATIONS) {
+      console.error("[getAllDescendantIds] hard-stop: exceeded max iterations, possible cycle in tree data");
+      break;
+    }
+
     const { data: children, error } = await supabase
       .from("training_modules")
       .select("id")
@@ -65,9 +73,12 @@ async function getAllDescendantIds(rootId: string): Promise<string[]> {
     if (error) throw error;
     if (!children || children.length === 0) break;
 
-    const childIds = children.map(c => c.id);
-    allIds.push(...childIds);
-    currentParentIds = childIds;
+    const newChildIds = children.map(c => c.id).filter(id => !visited.has(id));
+    if (newChildIds.length === 0) break;
+
+    newChildIds.forEach(id => visited.add(id));
+    allIds.push(...newChildIds);
+    currentParentIds = newChildIds;
   }
 
   return allIds;
