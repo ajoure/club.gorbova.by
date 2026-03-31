@@ -1,63 +1,94 @@
-# PATCH v23.1.6 — Training/Product access alignment to product SoT
+# PATCH v23.1.7 — Продолжение перевода training access на продуктовый SoT
 
 ## Статус: ВЫПОЛНЕН
 
 ## Архитектурное решение
 
 - **Канонический SoT** = `access_rules` → runtime → `entitlements`
-- `module_access` больше не используется как write-path для модулей с `product_id`
-- Временно сохраняется только как переходный read/write path для модулей без `product_id`
-- Read-path из PATCH v23.1.5 (entitlements) не переписан — сделан реально рабочим через заполнение `product_id`
+- `module_access` = переходный legacy/fallback path, только для модулей без `product_id`
+- Read-path через entitlements не менялся — работает из v23.1.5
+
+## Результат
+
+| Категория | До патча | После патча |
+|---|---|---|
+| product SoT | 10 | **29** |
+| legacy (NO_MAPPING) | 70 | **51** |
+| conflict | 0 | 0 |
+| unresolved | — | **51** |
 
 ## Выполненные шаги
 
-### Шаг 1: Dry-run discovery
-- 10 модулей с записями в module_access
-- Все 10 имеют однозначный маппинг (product_count = 1)
-- 0 конфликтных модулей
+### Шаг 1: Dry-run — 19 дочерних модулей для наследования product_id
 
-### Шаг 2: Data patch — product_id проставлен
-- 10 модулей получили product_id (идемпотентный UPDATE)
-- 6 модулей → Gorbova Club
-- 4 модуля → индивидуальные продукты
-- 70 модулей без module_access → product_id = NULL (legacy)
+Все 70 legacy-модулей не имеют записей в `module_access` → автомаппинг через tariff→product невозможен.
+Однако 19 модулей являются дочерними к модулям с уже установленным `product_id`:
 
-### Шаг 3: Readonly UI блок
-- `ProductAccessInfoBlock` — новый компонент:
-  - Бейдж «Новый контур доступа»
-  - Название продукта
-  - Кнопка «Открыть продукт» → `/admin/products-v2/{id}`
-  - Пояснение про вкладку «Доступы»
-- Используется в:
-  - `AdminTrainingModules.tsx` (ModuleAccessForm — edit dialog)
-  - `ContentCreationWizard.tsx` (access step для lesson и module flows)
+| Родитель | Продукт | Дочерних |
+|---|---|---|
+| Вебинары | Gorbova Club | 11 |
+| Закрой год 2025-2026 | ЗАКРОЙ ГОД | 6 |
+| Квесты | Gorbova Club | 2 |
 
-### Шаг 4: Write-path guard (все 4 точки)
-1. `useTrainingModules.tsx` — createModule/updateModule: skip module_access if effective product_id
-2. `ContentCreationWizard.tsx` — handleSubmitLesson: fetch container.product_id, skip if set
-3. `ContentCreationWizard.tsx` — handleSaveAccess: fetch module.product_id, skip if set
-4. `ContentSectionSelector.tsx` — copy access from container: skip if container.product_id
+Конфликтов: 0. Все 19 маппятся однозначно.
 
-### Шаг 5: training-copy-move guard
-- `training-copy-move/index.ts` — skip module_access copy if source.product_id
-- product_id сохраняется при копировании через `...rest` spread
+### Шаг 2: Execute — UPDATE product_id для 19 модулей
 
-### Шаг 6: Read-path — без изменений
-- useTrainingModules, useSidebarModules, useContainerLessons — entitlement read-path уже был
+```sql
+UPDATE training_modules child
+SET product_id = parent.product_id
+FROM training_modules parent
+WHERE child.parent_module_id = parent.id
+  AND parent.product_id IS NOT NULL
+  AND child.product_id IS NULL;
+```
+
+Результат: 19 строк обновлено. Post-check: 29 product SoT, 51 legacy.
+
+### Шаг 3: Write-path guards — proof (код не менялся)
+
+| Write-point | Guard | product_id != null | product_id == null |
+|---|---|---|---|
+| `useTrainingModules` / createModule | `if (!effectiveProductId && tariff_ids...)` | skip module_access | legacy insert |
+| `useTrainingModules` / updateModule | `if (tariff_ids !== undefined && !effectiveProductId)` | skip module_access | legacy delete+insert |
+| `ContentCreationWizard` / handleSubmitLesson | fetch container.product_id → `if (!containerProductId)` | skip module_access | legacy delete+insert |
+| `ContentCreationWizard` / handleSaveAccess | fetch mod.product_id → `skipModuleAccess = !!mod?.product_id` | skip module_access | legacy delete+insert |
+| `ContentSectionSelector` | `if (newModule && !containerModule.product_id)` | skip copy | legacy copy |
+| `training-copy-move` | `if (!mod.product_id)` | skip copy | legacy copy |
+
+### Шаг 4: Readonly UI — proof (код не менялся)
+
+Все 3 точки используют единый `ProductAccessInfoBlock`:
+
+1. `AdminTrainingModules.tsx` (строка 346-348): `effectiveProductId` → `ProductAccessInfoBlock`
+2. `ContentCreationWizard.tsx` (строка 947-948): `targetModuleProduct` → `ProductAccessInfoBlock`
+3. `ContentCreationWizard.tsx` (строка 1053-1054): `targetModuleProduct` → `ProductAccessInfoBlock`
+
+Один компонент, единый UX: бейдж «Новый контур доступа», название продукта, кнопка «Открыть продукт», пояснение.
+
+### Шаг 5: Unresolved list — 51 модуль
+
+**Top-level контейнеры без product_id (12):**
+- Бонус-вебинар, Бухгалтер маркетплейсов, Деньги BY, Деньги BY 2, Марафон, Подоходный налог для физ лиц, ТЕСТ, Ценный бухгалтер | 1 ступень 2.0, Ценный бухгалтер | 2 ступень | 3 поток, и др.
+
+**Дочерние без product_id (39):**
+- ~20 подмодулей «Ценный бухгалтер | 1 ступень 2.0»
+- 3 подмодуля «Подоходный налог для физ лиц»
+- остальные — подмодули неактивных контейнеров
+
+Причина: нет записей в `module_access`, нет связи с products_v2, нет родителя с product_id.
 
 ## Файлы изменены
 
 | Файл | Изменение |
 |---|---|
-| `ProductAccessInfoBlock.tsx` | Новый компонент — readonly info-блок |
-| `AdminTrainingModules.tsx` | Import + ModuleAccessForm с product_id guard |
-| `ContentCreationWizard.tsx` | Import + UI readonly blocks + write-path guards |
-| `ContentSectionSelector.tsx` | Select product_id + skip module_access copy |
-| `useTrainingModules.tsx` | createModule/updateModule write-path guards |
-| `training-copy-move/index.ts` | Skip module_access copy if product_id |
+| SQL (data patch) | UPDATE product_id для 19 дочерних модулей |
+| `.lovable/plan.md` | Обновлён отчёт |
 
-## Deferred (после v23.1.6)
+Код НЕ менялся — все guards и readonly UI работают из v23.1.6.
 
-- Миграция оставшихся 70 модулей без product_id
-- Постепенное сворачивание legacy module_access write-path
-- Полное удаление прямой записи в module_access
+## Deferred (следующий патч)
+
+- Ручное решение по привязке 51 оставшегося модуля к продуктам
+- Для «Ценный бухгалтер 1 ступень 2.0» — создать/найти продукт в products_v2 и привязать
+- Постепенное сворачивание legacy module_access
