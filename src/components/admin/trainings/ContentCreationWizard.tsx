@@ -773,31 +773,7 @@ export function ContentCreationWizard({
 
     setIsCreating(true);
     try {
-      // PATCH v23.1.6: Check effective product_id before writing to module_access
-      let skipModuleAccess = false;
-      if (createdModuleId) {
-        const { data: mod } = await supabase
-          .from("training_modules")
-          .select("product_id")
-          .eq("id", createdModuleId)
-          .single();
-        skipModuleAccess = !!mod?.product_id;
-      }
-
-      if (!skipModuleAccess) {
-        await supabase.from("module_access").delete().eq("module_id", createdModuleId);
-
-        if (wizardData.tariffIds.length > 0) {
-          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-            module_id: createdModuleId,
-            tariff_id: tariffId,
-          }));
-
-          const { error } = await supabase.from("module_access").insert(accessRecords);
-          if (error) throw error;
-        }
-      }
-
+      // Access is managed via product linkage (access_rules). No legacy module_access writes.
       toast.success("Настройки доступа сохранены");
       setStep(isLessonFlow ? 3 : 4);
     } catch (error: any) {
