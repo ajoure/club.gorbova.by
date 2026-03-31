@@ -250,13 +250,14 @@ function UnbindPreviewDialog({ open, onOpenChange, preview, onConfirm, isExecuti
   );
 }
 
-// --- Bind Dialog (with rebind support) ---
-function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindRequest }: {
+// --- Bind Dialog (with rebind & unbind support) ---
+function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindRequest, onUnbindRequest }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string;
   onBind: (trainingId: string) => Promise<void>;
   onRebindRequest: (trainingId: string, trainingTitle: string) => void;
+  onUnbindRequest: (trainingId: string) => void;
 }) {
   const { data } = useAvailableTrainingsForBind(productId);
   const [search, setSearch] = useState("");
@@ -275,8 +276,9 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
 
   const handleClick = async (m: { id: string; title: string; product_id: string | null }) => {
     const isOtherProduct = m.product_id && m.product_id !== productId;
+    const isCurrent = m.product_id === productId;
+    if (isCurrent) return; // Already bound — actions are inline
     if (isOtherProduct) {
-      // Open rebind preview instead of blocking
       onRebindRequest(m.id, m.title);
       onOpenChange(false);
       return;
@@ -342,21 +344,24 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                 const isOtherProduct = m.product_id && m.product_id !== productId;
                 const isCurrent = m.product_id === productId;
                 return (
-                  <button
+                  <div
                     key={m.id}
-                    onClick={() => !isCurrent && handleClick(m)}
-                    disabled={binding || isCurrent}
                     className={cn(
                       "w-full flex items-start gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
                       isCurrent
-                        ? "opacity-50 cursor-not-allowed"
+                        ? "bg-muted/30"
                         : isOtherProduct
                           ? "hover:bg-amber-50/50 dark:hover:bg-amber-900/10 cursor-pointer border border-transparent hover:border-amber-200/50"
                           : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
                     <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                    <span className="flex-1 min-w-0 line-clamp-2 leading-snug">{m.title}</span>
+                    <span
+                      className={cn("flex-1 min-w-0 line-clamp-2 leading-snug", !isCurrent && "cursor-pointer")}
+                      onClick={() => !isCurrent && handleClick(m)}
+                    >
+                      {m.title}
+                    </span>
                     <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
                       {m.public_id && (
                         <Badge variant="outline" className="text-[10px] font-mono">{m.public_id}</Badge>
@@ -365,18 +370,46 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
                       )}
                       {isOtherProduct && (
-                        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
-                          Другой продукт → перепривязать
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-amber-600 border-amber-300 cursor-pointer"
+                          onClick={() => handleClick(m)}
+                        >
+                          Перепривязать к этому продукту
                         </Badge>
                       )}
                       {isCurrent && (
-                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                          <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
-                          Привязан
+                        <div className="flex items-center gap-1">
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                            <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                            Привязан
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-[10px] gap-0.5 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUnbindRequest(m.id);
+                              onOpenChange(false);
+                            }}
+                          >
+                            <Unlink className="h-2.5 w-2.5" />
+                            Отвязать
+                          </Button>
+                        </div>
+                      )}
+                      {!isCurrent && !isOtherProduct && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-primary cursor-pointer"
+                          onClick={() => handleClick(m)}
+                        >
+                          Привязать
                         </Badge>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
