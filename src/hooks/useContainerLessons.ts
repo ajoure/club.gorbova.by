@@ -153,6 +153,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     const accessByContainer = data.accessByContainer || {};
     const userTariffIds = data.userTariffIds || [];
     const tariffNames = data.tariffNames || {};
+    const entitlementProductIds = new Set(data.userEntitlementProductIds || []);
 
     for (const lesson of data.lessons) {
       const container = containerMap.get(lesson.module_id);
