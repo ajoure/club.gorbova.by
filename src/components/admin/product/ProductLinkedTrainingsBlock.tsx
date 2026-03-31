@@ -209,7 +209,7 @@ function UnbindPreviewDialog({ open, onOpenChange, preview, onConfirm, isExecuti
             danger={preview.training_content_rules_count > 0}
           />
           <PreviewRow
-            label="Старые настройки доступа (module_access)"
+            label="Старые настройки доступа"
             value={preview.legacy_module_access_count}
             warning={preview.legacy_module_access_count > 0}
           />
