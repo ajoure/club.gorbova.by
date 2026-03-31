@@ -282,19 +282,6 @@ const LessonFormContent = memo(function LessonFormContent({
         )}
       </div>
 
-      {/* === ВИДЕО === */}
-      <div className="border-t pt-4 mt-4">
-        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Видео</div>
-        <div className="space-y-2">
-          <Label htmlFor="lesson-video-url">Ссылка на видео Kinescope</Label>
-          <Input
-            id="lesson-video-url"
-            value={formData.video_url || ""}
-            onChange={(e) => onFormDataChange(prev => ({ ...prev, video_url: e.target.value }))}
-            placeholder="https://kinescope.io/..."
-          />
-        </div>
-      </div>
 
       {/* === ПРОХОЖДЕНИЕ === */}
       <div className="border-t pt-4 mt-4">
