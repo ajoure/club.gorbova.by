@@ -462,6 +462,7 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 // --- Main Block ---
 export function ProductLinkedTrainingsBlock({ productId }: Props) {
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
+  const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const [bindOpen, setBind] = useState(false);
   const [viewMode, setViewMode] = useState<"tree" | "matrix-summary" | "matrix-expanded">("tree");
 
