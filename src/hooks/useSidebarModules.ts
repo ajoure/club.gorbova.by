@@ -13,6 +13,7 @@ export interface SidebarModule {
   sort_order: number;
   is_container?: boolean;
   parent_module_id?: string | null;
+  product_id?: string | null;
   has_access?: boolean;
   accessible_tariffs?: string[];
 }
