@@ -32,7 +32,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       // 1. Get all container modules
       const { data: containers, error: containerError } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key")
+        .select("id, slug, menu_section_key, product_id")
         .eq("is_active", true)
         .eq("is_container", true);
 
