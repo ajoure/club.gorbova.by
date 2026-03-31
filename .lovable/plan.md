@@ -664,9 +664,72 @@ Row-level preview для v23.1.9B должен содержать следующ
 | **v23.1.9A.1-final** | Row-level conflict preview с категориями, 5-way split, stop-guards | **ВЫПОЛНЕН** |
 | **v23.1.9B** | Execute backfill: 254 entitlements created/updated | **ВЫПОЛНЕН** |
 | **v23.1.9C** | Cleanup legacy code mismatch (`cb_2_step` → `prd_0d01a2fdc477` normalization) — 8 users | Планируется |
-| **v23.1.9D** | **Deferred entitlement issuance after profile→user claim** — **87 total** (69 CB20 + 18 sub-based ghost user_ids). Source of truth уже есть, доступ не теряется, выдача откладывается до появления `user_id` | Планируется |
-| **v23.1.10** | Fix root cause — creation paths должны создавать entitlements | Планируется |
+| **v23.1.9D** | Deferred entitlement issuance after profile→user claim — handle_new_user generic sync | **ВЫПОЛНЕН** |
+| **v23.1.10** | Entitlement sync for renewal/admin/claim paths — shared helper + guards | **ВЫПОЛНЕН** |
 | **v23.1.11** | Product/training code normalization + admin-readable naming | Планируется |
+
+---
+
+## v23.1.9D + v23.1.10 — Отчёт о выполнении
+
+### Что создано
+
+1. **`supabase/functions/_shared/entitlement-sync.ts`** — общий helper с контрактом:
+   - `syncEntitlement()` — upsert по ON CONFLICT (user_id, product_code)
+   - `hasOtherActiveAccessSource()` — pre-revoke guard
+   - Правило срока: `expires_at = GREATEST(existing, new)` — никогда не уменьшать
+   - mode_filter: `subscription_based` блокирует sync для `cb20` (order-based only)
+   - Skip: `cb_2_step` (legacy), пустой product_code, неизвестные коды
+
+2. **SQL migration: `handle_new_user` trigger обновлён (v23.1.9D)**:
+   - Hardcoded club entitlement creation удалён
+   - Generic loop по всем active subscriptions при claim archived/imported profile
+   - ON CONFLICT (user_id, product_code) DO UPDATE с GREATEST(expires_at)
+   - Явно исключены: `cb20` (order-based), `cb_2_step` (legacy)
+   - Audit log с `entitlements_synced` count и `entitlement_product_codes`
+
+3. **`subscription-charge` обновлён (v23.1.10)**:
+   - После successful renewal → syncEntitlement с mode_filter='subscription_based'
+   - product_code берётся из products_v2.code
+   - Non-blocking (try/catch)
+
+4. **`subscription-admin-actions` обновлён (v23.1.10)**:
+   - Pre-revoke guard в `revoke_access`: hasOtherActiveAccessSource проверяет другие подписки, order-based продукты, entitlements с другим source
+   - Entitlement sync в `extend`, `set_end_date`, `grant_access`
+   - Audit log при skip revoke: `admin.subscription.revoke_entitlement_skipped`
+
+5. **`subscription-actions` обновлён (v23.1.10)**:
+   - Entitlement sync при `resume`
+   - `cancel` — entitlement не трогается (access до cancel_at)
+
+### Режимы продуктов
+
+| Режим | product_codes | Поведение |
+|---|---|---|
+| `subscription_based` | club, buh_business, cb_module_ip, prd_0d01a2fdc477, course_close_year, 1769009596189-398a | sync при renewal/claim/admin |
+| `order_based_only` | cb20 | **НЕ sync** из subscription paths |
+| `legacy_skip` | cb_2_step | skip (v23.1.9C) |
+
+### Deferred-хвост
+
+| Категория | Count | Механизм |
+|---|---|---|
+| `resolved_now` (v23.1.9B) | 254 | Backfill executed |
+| `deferred_missing_user_id` | 69 | CB20 archived profiles → cron/worker при claim |
+| `deferred_ghost_user_id` | 18 | Sub-based ghost user_ids → отдельный repair |
+| `skipped_legacy_code_mismatch` | 8 | v23.1.9C |
+
+### Stop-guards реализованы
+
+| Guard | Реализация |
+|---|---|
+| syncEntitlement никогда не уменьшает expires_at | GREATEST в UPDATE path |
+| ON CONFLICT (user_id, product_code) | В helper и SQL trigger |
+| product_code IS NULL → skip | Guard в syncEntitlement |
+| cb20 не sync из subscription paths | ORDER_BASED_ONLY_CODES set |
+| cb_2_step → skip | LEGACY_SKIP_CODES set |
+| revoke path: pre-check другой активный источник | hasOtherActiveAccessSource в revoke_access |
+| handle_new_user не ломает existing claim flow | Сохранена вся логика ban check, profile claim, orders/subs/entitlements rebind |
 
 ---
 
@@ -674,10 +737,14 @@ Row-level preview для v23.1.9B должен содержать следующ
 
 | Компонент | Изменение |
 |---|---|
-| `.lovable/plan.md` | Discovery report + v23.1.9B execute report |
-| `supabase/functions/admin-entitlement-backfill-v23/index.ts` | Edge function для backfill |
-| `entitlements` (data) | **254 rows** created/updated |
-| `audit_logs` (data) | 1 audit record |
+| `.lovable/plan.md` | Discovery report + v23.1.9B execute report + v23.1.9D/v23.1.10 report |
+| `supabase/functions/_shared/entitlement-sync.ts` | **Новый**: общий helper |
+| `supabase/functions/admin-entitlement-backfill-v23/index.ts` | Edge function для backfill (v23.1.9B) |
+| `supabase/functions/subscription-charge/index.ts` | Entitlement sync после renewal |
+| `supabase/functions/subscription-admin-actions/index.ts` | Pre-revoke guard + sync при extend/grant/set_end_date |
+| `supabase/functions/subscription-actions/index.ts` | Sync при resume |
+| `handle_new_user` trigger (SQL migration) | Generic sub-based sync |
+| `entitlements` (data) | **254 rows** created/updated (v23.1.9B) |
 
 ---
 
@@ -698,3 +765,24 @@ Row-level preview для v23.1.9B должен содержать следующ
 13. ✅ Ни один active entitlement не был сокращён по expires_at
 14. ✅ BLOCKED_BY_LEGACY_CODE_MISMATCH: 8 users пропущены (no second entitlement created)
 15. ✅ v23.1.9D scope обновлён: 87 deferred (69 CB20 + 18 sub-based ghost)
+
+## DoD (v23.1.9D)
+
+1. ✅ handle_new_user: при claim archived profile → entitlements создаются для всех active subscriptions (не только club)
+2. ✅ Hardcoded club entitlement creation удалён, заменён generic loop
+3. ✅ CB20 order-based deferred: NOT в trigger, определяется динамически через LEFT JOIN
+4. ✅ cb20 и cb_2_step явно исключены из trigger loop
+5. ✅ Audit log с entitlements_synced count и product_codes
+6. ✅ ON CONFLICT (user_id, product_code) DO UPDATE с GREATEST(expires_at)
+
+## DoD (v23.1.10)
+
+1. ✅ При subscription renewal → entitlement sync через shared helper
+2. ✅ syncEntitlement никогда не уменьшает expires_at
+3. ✅ Повторный вызов идемпотентен (ON CONFLICT)
+4. ✅ При admin revoke → pre-check hasOtherActiveAccessSource
+5. ✅ При admin extend/grant/set_end_date → entitlement синхронизирован
+6. ✅ При user resume → entitlement синхронизирован
+7. ✅ cb20 не затронут из subscription paths (mode_filter guard)
+8. ✅ audit_logs с actor_type='system', actor_label заполнен
+9. ✅ Все edge functions задеплоены
