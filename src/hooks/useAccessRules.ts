@@ -183,10 +183,19 @@ export function useAccessRules(productId?: string) {
       toast.success("Правило создано");
     },
     onError: (e: any) => {
+      const msg = e?.message || "";
       if (e?.code === "23505") {
         toast.error("Такое правило уже существует");
+      } else if (msg.includes("must be a root training module")) {
+        toast.error("Тренинг должен быть корневым модулем (не дочерним)");
+      } else if (msg.includes("product must match") || msg.includes("product_id does not match")) {
+        toast.error("Тренинг не привязан к этому продукту. Сначала привяжите тренинг.");
+      } else if (msg.includes("must have access_mode")) {
+        toast.error("Не указан режим доступа (полный / частичный)");
+      } else if (msg.includes("non-empty allowed_module_ids") || msg.includes("non-empty allowed_lesson_ids")) {
+        toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
       } else {
-        toast.error("Ошибка создания правила");
+        toast.error(`Ошибка создания правила: ${msg || "неизвестная ошибка"}`);
       }
     },
   });
