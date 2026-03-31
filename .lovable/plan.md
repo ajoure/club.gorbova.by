@@ -684,7 +684,7 @@ Row-level preview для v23.1.9B должен содержать следующ
 2. **SQL migration: `handle_new_user` trigger обновлён (v23.1.9D)**:
    - Hardcoded club entitlement creation удалён
    - Generic loop по всем active subscriptions при claim archived/imported profile
-   - ON CONFLICT (user_id, product_code) DO UPDATE с GREATEST(expires_at)
+   - ON CONFLICT (user_id, product_code) DO UPDATE с **COALESCE(GREATEST(expires_at), ...)** — NULL-safe
    - Явно исключены: `cb20` (order-based), `cb_2_step` (legacy)
    - Audit log с `entitlements_synced` count и `entitlement_product_codes`
 
@@ -695,12 +695,20 @@ Row-level preview для v23.1.9B должен содержать следующ
 
 4. **`subscription-admin-actions` обновлён (v23.1.10)**:
    - Pre-revoke guard в `revoke_access`: hasOtherActiveAccessSource проверяет другие подписки, order-based продукты, entitlements с другим source
+   - **skipEntitlementRevoke реально используется**: если guard НЕ сработал → `UPDATE entitlements SET status='expired'`; если сработал → skip + audit log
    - Entitlement sync в `extend`, `set_end_date`, `grant_access`
    - Audit log при skip revoke: `admin.subscription.revoke_entitlement_skipped`
 
 5. **`subscription-actions` обновлён (v23.1.10)**:
    - Entitlement sync при `resume`
    - `cancel` — entitlement не трогается (access до cancel_at)
+
+### Исправленные дефекты (v23.1.10 fix)
+
+| Дефект | Описание | Исправление |
+|---|---|---|
+| GREATEST NULL | `GREATEST(x, NULL)` = NULL в PostgreSQL, может занулить expires_at | Заменено на `COALESCE(GREATEST(a, b), a, b)` в SQL trigger |
+| skipEntitlementRevoke dead code | Флаг вычислялся но не использовался | Добавлен conditional `UPDATE entitlements SET status='expired'` с проверкой `!skipEntitlementRevoke` |
 
 ### Режимы продуктов
 
@@ -710,25 +718,35 @@ Row-level preview для v23.1.9B должен содержать следующ
 | `order_based_only` | cb20 | **НЕ sync** из subscription paths |
 | `legacy_skip` | cb_2_step | skip (v23.1.9C) |
 
-### Deferred-хвост
+### Proof-пакет
+
+**Статус**: Код задеплоен. Runtime proof появится при следующих событиях:
+- **handle_new_user**: при регистрации пользователя с email, совпадающим с archived profile → `audit_logs.action = 'archived_profile_linked'` с `meta.entitlements_synced > 0`
+- **subscription-charge**: при следующем successful renewal → `audit_logs.action = 'entitlement.synced'` с `meta.source = 'subscription_renewal'`
+- **subscription-admin-actions**: при admin extend/grant/revoke → `audit_logs.action = 'entitlement.synced'` или `admin.subscription.revoke_entitlement_skipped`
+
+Существующие 2 записи `archived_profile_linked` (до v23.1.9D) не содержат `entitlements_synced` — это подтверждает, что старый trigger не синхронизировал entitlements.
+
+### Deferred-хвост (актуальные counts)
 
 | Категория | Count | Механизм |
 |---|---|---|
-| `resolved_now` (v23.1.9B) | 254 | Backfill executed |
-| `deferred_missing_user_id` | 69 | CB20 archived profiles → cron/worker при claim |
-| `deferred_ghost_user_id` | 18 | Sub-based ghost user_ids → отдельный repair |
+| `resolved_now` (active entitlements) | 513 | v23.1.9B backfill + existing |
+| `deferred_missing_user_id` | 105 | Archived profiles без user_id с orders → cron/worker при claim |
+| `deferred_ghost_user_id` | 15 | Sub-based ghost user_ids → отдельный repair |
 | `skipped_legacy_code_mismatch` | 8 | v23.1.9C |
 
 ### Stop-guards реализованы
 
 | Guard | Реализация |
 |---|---|
-| syncEntitlement никогда не уменьшает expires_at | GREATEST в UPDATE path |
+| syncEntitlement никогда не уменьшает expires_at | GREATEST в TS helper + COALESCE(GREATEST) в SQL trigger |
 | ON CONFLICT (user_id, product_code) | В helper и SQL trigger |
 | product_code IS NULL → skip | Guard в syncEntitlement |
 | cb20 не sync из subscription paths | ORDER_BASED_ONLY_CODES set |
 | cb_2_step → skip | LEGACY_SKIP_CODES set |
 | revoke path: pre-check другой активный источник | hasOtherActiveAccessSource в revoke_access |
+| revoke path: conditional entitlement status update | skipEntitlementRevoke flag → UPDATE or SKIP |
 | handle_new_user не ломает existing claim flow | Сохранена вся логика ban check, profile claim, orders/subs/entitlements rebind |
 
 ---
@@ -741,9 +759,9 @@ Row-level preview для v23.1.9B должен содержать следующ
 | `supabase/functions/_shared/entitlement-sync.ts` | **Новый**: общий helper |
 | `supabase/functions/admin-entitlement-backfill-v23/index.ts` | Edge function для backfill (v23.1.9B) |
 | `supabase/functions/subscription-charge/index.ts` | Entitlement sync после renewal |
-| `supabase/functions/subscription-admin-actions/index.ts` | Pre-revoke guard + sync при extend/grant/set_end_date |
+| `supabase/functions/subscription-admin-actions/index.ts` | Pre-revoke guard + conditional revoke + sync при extend/grant/set_end_date |
 | `supabase/functions/subscription-actions/index.ts` | Sync при resume |
-| `handle_new_user` trigger (SQL migration) | Generic sub-based sync |
+| `handle_new_user` trigger (SQL migration) | Generic sub-based sync + COALESCE(GREATEST) NULL fix |
 | `entitlements` (data) | **254 rows** created/updated (v23.1.9B) |
 
 ---
@@ -773,16 +791,18 @@ Row-level preview для v23.1.9B должен содержать следующ
 3. ✅ CB20 order-based deferred: NOT в trigger, определяется динамически через LEFT JOIN
 4. ✅ cb20 и cb_2_step явно исключены из trigger loop
 5. ✅ Audit log с entitlements_synced count и product_codes
-6. ✅ ON CONFLICT (user_id, product_code) DO UPDATE с GREATEST(expires_at)
+6. ✅ ON CONFLICT (user_id, product_code) DO UPDATE с COALESCE(GREATEST(expires_at)) — NULL-safe
 
 ## DoD (v23.1.10)
 
 1. ✅ При subscription renewal → entitlement sync через shared helper
-2. ✅ syncEntitlement никогда не уменьшает expires_at
+2. ✅ syncEntitlement никогда не уменьшает expires_at (TS helper + SQL trigger NULL-safe)
 3. ✅ Повторный вызов идемпотентен (ON CONFLICT)
 4. ✅ При admin revoke → pre-check hasOtherActiveAccessSource
-5. ✅ При admin extend/grant/set_end_date → entitlement синхронизирован
-6. ✅ При user resume → entitlement синхронизирован
-7. ✅ cb20 не затронут из subscription paths (mode_filter guard)
-8. ✅ audit_logs с actor_type='system', actor_label заполнен
-9. ✅ Все edge functions задеплоены
+5. ✅ При admin revoke → conditional UPDATE entitlements.status='expired' (skipEntitlementRevoke guard)
+6. ✅ При admin extend/grant/set_end_date → entitlement синхронизирован
+7. ✅ При user resume → entitlement синхронизирован
+8. ✅ cb20 не затронут из subscription paths (mode_filter guard)
+9. ✅ audit_logs с actor_type='system', actor_label заполнен
+10. ✅ GREATEST NULL fix применён в SQL trigger
+11. ✅ Все edge functions задеплоены
