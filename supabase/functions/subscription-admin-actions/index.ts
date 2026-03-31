@@ -3,6 +3,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { syncEntitlement, hasOtherActiveAccessSource } from '../_shared/entitlement-sync.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
