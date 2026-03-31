@@ -590,19 +590,29 @@ export function ContentCreationWizard({
       const containerSlug = containerData?.slug || "container";
 
       // SAVE ACCESS (previously was separate step)
-      // Clear existing access first
-      await supabase.from("module_access").delete().eq("module_id", containerId);
+      // PATCH v23.1.6: Skip module_access write if container has product_id
+      const { data: containerMod } = await supabase
+        .from("training_modules")
+        .select("product_id")
+        .eq("id", containerId)
+        .single();
+      const containerProductId = containerMod?.product_id;
 
-      if (wizardData.tariffIds.length > 0) {
-        const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-          module_id: containerId,
-          tariff_id: tariffId,
-        }));
+      if (!containerProductId) {
+        // Legacy path: write to module_access only for modules without product_id
+        await supabase.from("module_access").delete().eq("module_id", containerId);
 
-        const { error: accessError } = await supabase.from("module_access").insert(accessRecords);
-        if (accessError) {
-          console.error("Error saving access:", accessError);
-          toast.error("Урок создан, но не удалось сохранить настройки доступа");
+        if (wizardData.tariffIds.length > 0) {
+          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
+            module_id: containerId,
+            tariff_id: tariffId,
+          }));
+
+          const { error: accessError } = await supabase.from("module_access").insert(accessRecords);
+          if (accessError) {
+            console.error("Error saving access:", accessError);
+            toast.error("Урок создан, но не удалось сохранить настройки доступа");
+          }
         }
       }
 
