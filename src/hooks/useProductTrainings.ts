@@ -219,6 +219,9 @@ export function useProductTrainings(productId?: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["module-legacy-access-count"] });
+      queryClient.invalidateQueries({ queryKey: ["module-training-content-rules-count"] });
+      queryClient.invalidateQueries({ queryKey: ["product-name-extended"] });
       toast.success("Тренинг привязан к продукту");
     },
     onError: () => toast.error("Ошибка привязки тренинга"),
