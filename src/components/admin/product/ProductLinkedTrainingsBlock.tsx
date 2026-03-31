@@ -710,14 +710,14 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                         <span className="font-medium">{t.title}</span>
                         {t.public_id && <span className="font-mono text-[9px]">{t.public_id}</span>}
                         <Badge variant="outline" className="text-[9px]">{d.binding_source}</Badge>
-                        {d.legacy_module_access_count > 0 && (
+                         {d.legacy_module_access_count > 0 && (
                           <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300">
-                            legacy: {d.legacy_module_access_count}
+                            старые настройки: {d.legacy_module_access_count}
                           </Badge>
                         )}
                         {d.training_content_rules_count > 0 && (
                           <Badge variant="outline" className="text-[9px]">
-                            rules: {d.training_content_rules_count}
+                            правил: {d.training_content_rules_count}
                           </Badge>
                         )}
                       </div>
