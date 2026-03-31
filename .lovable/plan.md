@@ -1,89 +1,86 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В план нужно явно добавить **корень бага tree picker**: проблема не только в рекурсивной логике, а в том, что сейчас используются **два раздельных колбэка** (onChangeModules и onChangeLessons), которые вызывают два setForm подряд с одним и тем же stale snapshot формы. Из-за этого второй вызов затирает результат первого. Исправление делать через **единый атомарный API**:
+1. В **legacy cleanup** добавить два режима:
   &nbsp;
-  - onChange(moduleIds, lessonIds)
-  - в ProductAccessRulesTab только setForm(prev => ({ ...prev, tc_allowed_module_ids, tc_allowed_lesson_ids }))
+  - preview с точным списком module_access по root + descendants;
+  - execute с обязательным **post-check = 0**.
+    И отдельно сохранить в результате:
+  - сколько записей удалено;
+  - для какого root-тренинга;
+  - сколько descendants затронуто.
+    Это нужно для proof и чтобы не было “очистили что-то непонятное”.
   &nbsp;
-2. В DoD по tree picker нужно добавить отдельные пункты:
+2. В cleanupLegacyAccess добавить **жесткий guard по дереву**:
   &nbsp;
-  - клик по модулю выбирает **всю ветку**: сам модуль, все дочерние модули и все уроки в поддереве;
-  - снятие модуля снимает **всю ветку**;
-  - ручной выбор всех уроков внутри модуля переводит модуль в checked;
-  - Весь тренинг, Выбрать всё, Снять всё меняют state реально, а не только UI.
+  - удалять только module_access для rootId + getAllDescendantIds(rootId);
+  - не трогать ничего вне дерева;
+  - перед execute повторно получать список id из preview, чтобы execute работал по подтвержденному набору.
   &nbsp;
-3. Блок с **0 уроков** нужно исправлять не “в целом”, а в конкретном месте:
+3. В пользовательском UI полностью убрать технические слова:
   &nbsp;
-  - в ProductLinkedTrainingsBlock для children в matrix/list view заменить использование прямого child.lesson_count на **единый helper** подсчёта по дереву (countTreeLessons(child) или вынесенный shared helper);
-  - если корректный count недоступен, count **не показывать**, а не выводить ложный 0.
+  - mixed_conflict
+  - binding_source
+  - module_access
+  - legacy
+    Они допустимы только внутри свернутого debug-блока или в логах.
+    В основном UI оставить только человеческие состояния:
+  - Обнаружены старые настройки доступа
+  - Тренинг управляется через продукт
+  - Ограничение доступа внутри тренинга
   &nbsp;
-4. В план добавить явную проверку, что **оба экрана используют одинаковую формулу lesson counts**:
+4. Для **ProductAccessInfoBlock** зафиксировать финальный сценарий:
   &nbsp;
-  - “Тренинги этого продукта”
-  - “Привязать тренинг”
-    Иначе после hotfix один экран будет исправлен, а второй останется с ложными нулями.
+  - если legacyCount > 0 → показать предупреждение + кнопку Очистить старые настройки;
+  - если legacyCount = 0 → никаких конфликтов/диагностик в основном UI не показывать;
+  - если правил нет → Полный доступ ко всем разделам и урокам;
+  - если правило есть → показать режим и scope без технических деталей.
   &nbsp;
-5. По BindTrainingDialog добавить, что нужно убрать не только disabled-тупик, но и сделать **три явных action-state** на одной карточке:
+5. В **ProductLinkedTrainingsBlock** не просто русифицировать, а изменить логику бейджей:
   &nbsp;
-  - Привязать
-  - Перепривязать к этому продукту
-  - Отвязать
-    без скрытых/неявных сценариев и без необходимости сначала закрывать один диалог и потом открывать другой вручную.
+  - старый контур не держать как постоянный бейдж рядом с названием;
+  - вместо этого показывать компактное предупреждение только если legacyCount > 0;
+  - после cleanup это предупреждение должно исчезать полностью без перезагрузки страницы.
   &nbsp;
-6. В части deep-link/navigation добавить guard:
+6. По **lesson counts**:
   &nbsp;
-  - страница продукта должна понимать tab=access_rules;
-  - для create/edit rule нельзя терять location.state.accessRulesAction при первом рендере/переключении таба;
-  - после открытия create/edit нужного сценария state должен быть **одноразово** consumed, чтобы диалог не открывался повторно при refresh/повторном рендере.
+  - не ограничиваться “скрыть 0 уроков”;
+  - сначала использовать единый рекурсивный helper во всех поверхностях;
+  - скрывать count только если дерево/данные еще не готовы;
+  - если реально уроков нет, тогда показывать 0 уроков.
+    Иначе будет маскировка бага вместо исправления.
   &nbsp;
-7. В ProductAccessInfoBlock добавить в план не просто “рабочие кнопки”, а **разведение сценариев**:
+7. Добавить в план **отдельный dry-run для root с ложными нулями**:
   &nbsp;
-  - Открыть продукт → карточка продукта;
-  - Вкладка «Доступы» → tab access_rules;
-  - Создать правило → create-dialog training_content с предзаполненным target_ref = moduleId;
-  - Редактировать правило → edit-dialog по [rule.id](http://rule.id);
-  - если правил несколько, не открывать “первое попавшееся”, а либо открывать конкретное релевантное для moduleId, либо сначала показывать список.
+  - взять конкретный TRN-000018;
+  - вывести:
+    &nbsp;
+    - root id,
+    - descendants,
+    - lessons по каждому descendant,
+    - итоговую сумму,
+    - что именно приходит в useProductTrainings.
+      Без этого нельзя считать проблему 0 уроков закрытой.
+    &nbsp;
   &nbsp;
-8. В русификации добавить отдельный подпункт:
+8. В **ошибках create/update rules** добавить отдельный маппинг для уникальности:
   &nbsp;
-  - убрать из UI все надписи вида legacy, summary, binding_source, rules, diagnostics в пользовательском слое;
-  - заменить бейдж legacy в списке тренингов продукта на понятный русский текст, например старый контур.
+  - 23505 → Такое правило уже существует.
+    И один общий fallback:
+  - Ошибка создания правила: <текст>
+  - Ошибка обновления правила: <текст>
+    Чтобы не терять реальные DB messages.
   &nbsp;
-9. В план нужно добавить **proof по payload**:
+9. В cleanup-диалоге сделать тот же UX, что и в существующих confirm/cleanup сценариях:
   &nbsp;
-  - после выбора ветки / всего тренинга / отдельных уроков проверить, что в access_rules.conditions сохраняются корректные allowed_module_ids и allowed_lesson_ids;
-  - уроки, покрытые выбранным модулем, не дублируются в allowed_lesson_ids.
+  - понятный заголовок;
+  - preview количества;
+  - список затрагиваемых модулей;
+  - явные кнопки Проверить, Очистить, Отмена;
+  - после execute — toast с результатом и автоматический refresh.
   &nbsp;
-10. В финальный DoD добавить два обязательных пункта:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- на скрине/в UI больше нет массовых ложных 0 уроков;
-- partial-access tree picker полностью рабочий не только визуально, но и по фактически сохраненному payload в БД.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. Scope лучше сузить и явно разделить:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- **B.1 hotfix**: tree picker + lesson counts + bind/rebind/unbind + русификация;
-- **B.2 navigation/workflow**: deep-link, create/edit rule from product/training surfaces.
-  Так будет проще проверять и не смешивать UI-fix с routing-state логикой в один нечитаемый proof.
+10. В DoD добавить два обязательных proof-пункта:
 
 &nbsp;
 
@@ -91,7 +88,8 @@
 
 &nbsp;
 
-12. В STOP-guards добавить:
+- **после cleanup** у выбранного product-linked тренинга legacy_module_access_count = 0, предупреждение исчезло;
+- **после cleanup** повторная привязка/отвязка/редактирование не возвращает старый контур самопроизвольно.
 
 &nbsp;
 
@@ -99,86 +97,186 @@
 
 &nbsp;
 
-- если для counts потребуется дублировать разную логику в нескольких местах, сначала вынести **один shared helper**, а не чинить вручную каждый экран отдельно;
-- если create/edit rule из readonly-блока нельзя открыть без второго параллельного workflow, не плодить новый wizard, а расширить существующий ProductAccessRulesTab.
+11. В Scope добавить, что патч **не должен**:
 
 &nbsp;
 
 &nbsp;
 
-План: Hotfix для tree picker, lesson counts и консистентности
+&nbsp;
 
-## 1. Корневая причина неработающего tree picker
+- снова создавать module_access для product-linked тренингов;
+- показывать технические diagnostics по умолчанию;
+- подменять реальную проблему counts простым скрытием цифр без проверки дерева.
 
-**Подтверждённый баг**: в `ProductAccessRulesTab.tsx` (строки 1216-1217) два колбэка `onChangeModules` и `onChangeLessons` вызываются последовательно из одного `toggleModule` / `toggleLesson`, но каждый делает `setForm({ ...form, ... })` с одним и тем же снимком `form`. Второй вызов перезаписывает результат первого.
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. Итоговый ожидаемый результат сформулировать явно:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- у product-linked тренинга админ видит только новый управляемый сценарий;
+- старый контур можно очистить в один понятный клик;
+- после очистки конфликт исчезает;
+- количество уроков считается одинаково везде;
+- ошибки создания правила понятны на русском.
+
+&nbsp;
+
+&nbsp;
+
+# План: Очистка legacy-контура + ручной workflow + lesson counts + русификация
+
+## 1. Проблема
+
+Система живёт в двух контурах одновременно: product_id (новый) + module_access (старый). Пока старые записи не очищены, UI показывает `mixed_conflict`, ложные диагностики и непонятные метки. Также остаются ложные `0 уроков` и англоязычные/технические подписи в пользовательском слое.
+
+## 2. Решение — 5 подзадач
+
+### A. Очистка legacy module_access для product-linked тренингов
+
+**Новая функция в `useProductTrainings.ts**`: `cleanupLegacyAccess` — мутация с dry-run/execute:
 
 ```text
-toggleModule → onChangeModules(newMods)  → setForm({...form, tc_allowed_module_ids: newMods})
-             → onChangeLessons(newLess)  → setForm({...form, tc_allowed_lesson_ids: newLess})
-                                            ↑ form ещё старый, tc_allowed_module_ids откатился
+dry-run:
+  1. getAllDescendantIds(rootId)
+  2. SELECT id, module_id FROM module_access WHERE module_id IN (root + descendants)
+  3. Вернуть preview: { count, sample_ids }
+
+execute:
+  1. DELETE FROM module_access WHERE module_id IN (root + descendants)
+  2. audit_log: action = "training.legacy_cleanup.executed"
+  3. invalidate queries
+  4. post-check: SELECT count(*) FROM module_access WHERE module_id IN (...) = 0
 ```
 
-**Решение**: изменить API `TrainingContentTreePicker` на единый колбэк `onChange(moduleIds, lessonIds)`, который вызывается один раз. В `ProductAccessRulesTab` обработчик будет `setForm(prev => ({ ...prev, tc_allowed_module_ids: mods, tc_allowed_lesson_ids: lessons }))`.
+**UI**: В `ProductAccessInfoBlock` — при `legacyCount > 0`:
 
-### Изменения
+- Блок-предупреждение: «Обнаружены старые настройки доступа: N записей»
+- Кнопка **«Очистить старые настройки»** → диалог dry-run/execute (по образцу `CleanupDialog`)
 
-`**TrainingContentTreePicker.tsx**`:
+**UI**: В `ProductLinkedTrainingsBlock` — аналогичная кнопка рядом с бейджем «старый контур» у root-тренинга.
 
-- Заменить `onChangeModules` + `onChangeLessons` на единый `onChange: (moduleIds: string[], lessonIds: string[]) => void`
-- Все внутренние операции (`toggleModule`, `toggleLesson`, `handleSelectAll`, `Выбрать всё`, `Снять всё`) вызывают `onChange(newMods, newLess)` атомарно
+### B. ProductAccessInfoBlock → рабочая панель действий
 
-`**ProductAccessRulesTab.tsx**`:
+Заменить текущие технические тексты:
 
-- Заменить два колбэка на один:
+
+| Было                                             | Стало                                                                   |
+| ------------------------------------------------ | ----------------------------------------------------------------------- |
+| `Продуктовый контур`                             | убрать бейдж, заменить на заголовок «Тренинг управляется через продукт» |
+| `Правила доступа к контенту`                     | «Ограничение доступа к разделам и урокам»                               |
+| `Не настроено — полный доступ по продукту`       | «Полный доступ ко всем разделам и урокам»                               |
+| Диагностика: `binding_source: mixed_conflict`    | Убрать из основного UI                                                  |
+| `Старые настройки доступа: N записей`            | «Обнаружены старые настройки доступа» + кнопка «Очистить»               |
+| `⚠ Конфликт: старый контур + продуктовый контур` | Убрать, вместо этого кнопка очистки                                     |
+
+
+Кнопки (полный набор):
+
+1. **Открыть продукт**
+2. **Открыть доступы** (→ tab `access_rules`)
+3. **Создать правило** (если нет правил для этого moduleId)
+4. **Редактировать правило** (если есть)
+5. **Очистить старые настройки** (если `legacyCount > 0`)
+
+Диагностика — только в свёрнутом debug-блоке, без технических терминов в основном UI.
+
+### C. Lesson counts — единый helper
+
+**Проблема**: `useProductTrainings` на строке 145 считает `lesson_count` только прямые уроки модуля. Рекурсивный `countTreeLessons(child)` в UI работает корректно — проблема в том, что `lesson_count` в данных плоский.
+
+**Проверка**: нужно удостовериться, что `countTreeLessons(child)` действительно работает рекурсивно. Потенциальный баг: дерево строится с максимальной глубиной 1 (только direct children). Если в данных есть вложенность > 1, дочерние модули второго уровня могут не попадать в `children` → `countTreeLessons` вернёт 0.
+
+**Фикс**: В `useProductTrainings` при построении дерева (строки 149-158) — проверить, что рекурсивная сборка работает для произвольной глубины. Текущий код:
 
 ```typescript
-onChange={(mods, lessons) => setForm(prev => ({
-  ...prev,
-  tc_allowed_module_ids: mods,
-  tc_allowed_lesson_ids: lessons,
-}))}
+allModules.forEach(m => {
+  if (m.parent_module_id && byId.has(m.parent_module_id)) {
+    byId.get(m.parent_module_id)!.children.push(m);
+  } else if (!m.parent_module_id) {
+    rootModules.push(m);
+  }
+});
 ```
 
-## 2. Ложные «0 уроков»
+Это корректно для произвольной глубины, **но** только если все уровни вложенности имеют `product_id = productId`. Если промежуточный child не имеет product_id, он не попадёт в выборку → ветка оборвётся → children будут пустые → `countTreeLessons` вернёт 0.
 
-**Причина**: `useProductTrainings` (строка 145) считает `lesson_count` только прямые уроки модуля (`lessonCounts[m.id] || 0`). Для child-модулей, у которых уроки во вложенных подмодулях, показывается 0.
+**Решение**: При привязке/перепривязке уже каскадно ставится product_id. Но для существующих данных нужно проверить, нет ли «дыр» в каскаде. Добавить в UI: если `lesson_count === 0` и `children.length === 0` у child, **скрывать** бейдж вместо показа `0 уроков`.
 
-**Решение**:
-
-- В `TrainingTreeItem` (строка 37) уже используется `countTreeLessons(training)` для root — это сумма по всему поддереву. Для children тоже надо использовать `countTreeLessons` вместо `child.lesson_count`
-- В `TrainingMatrixView` (строка 478) заменить `child.lesson_count` на `countTreeLessons(child)`
-- Это единый helper, один источник подсчёта для обоих экранов
-
-## 3. Файлы и изменения
+### D. Русификация
 
 
-| Файл                              | Изменение                                                                |
-| --------------------------------- | ------------------------------------------------------------------------ |
-| `TrainingContentTreePicker.tsx`   | Заменить dual-callback API на единый `onChange(mods, lessons)`           |
-| `ProductAccessRulesTab.tsx`       | Адаптировать вызов TreePicker под новый API                              |
-| `ProductLinkedTrainingsBlock.tsx` | В matrix view заменить `child.lesson_count` на `countTreeLessons(child)` |
+| Файл                                       | Было                                       | Стало                                     |
+| ------------------------------------------ | ------------------------------------------ | ----------------------------------------- |
+| `ProductLinkedTrainingsBlock` строка 462   | «Гранулярные правила настроены»            | «Ограничение доступа настроено»           |
+| `ProductLinkedTrainingsBlock` строка 462   | «Полный доступ через продукт»              | «Полный доступ»                           |
+| `ProductLinkedTrainingsBlock` строка 674   | «Правила гранулярности доступа»            | «Ограничение доступа внутри тренинга»     |
+| `ProductLinkedTrainingsBlock` строка 745   | `{d.binding_source}` в бейдже              | Убрать или заменить на русское описание   |
+| `ProductLinkedTrainingsBlock` строка 748   | «старые настройки: N»                      | «Старые настройки: N» + кнопка «Очистить» |
+| `ProductAccessInfoBlock` строка 91         | «Продуктовый контур»                       | «Управляется через продукт»               |
+| Rebind/Unbind dialogs строки 165, 169, 217 | «Старые настройки доступа (module_access)» | «Старые настройки доступа»                |
+| Rebind dialog строка 170                   | «⚠ Да»                                     | «⚠ Есть»                                  |
 
 
-## 4. Русификация (остатки)
+### E. Ошибки создания/обновления правил
 
-В `ProductLinkedTrainingsBlock.tsx` проверить и заменить оставшиеся английские метки:
+**Файл**: `src/hooks/useAccessRules.ts`, строки 185-191 и 210
 
-- строка 169: `"⚠ Да"` → `"⚠ Есть"`  (уже на русском, ок)
-- строка 176: `"binding_source"` — внутренний тип, не отображается в UI
-- Убедиться что в diagnostics-секции нет английских слов
+Маппинг DB-ошибок триггера на русские сообщения:
 
-## 5. Порядок выполнения
+- `must be a root training module` → «Тренинг должен быть корневым модулем»
+- `product must match` → «Тренинг не привязан к этому продукту»
+- `must have access_mode` → «Не указан режим доступа»
+- `non-empty allowed_module_ids` → «Для частичного доступа выберите хотя бы один модуль или урок»
+- fallback: показать `e.message`
 
-1. Переписать API TreePicker на единый `onChange`
-2. Адаптировать ProductAccessRulesTab
-3. Исправить lesson counts в matrix view
-4. Проверить русификацию
+То же для `updateRule.onError`.
+
+## 3. Изменяемые файлы
+
+
+| Файл                                                           | Изменение                                                                              |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `src/hooks/useProductTrainings.ts`                             | Добавить `getLegacyCleanupPreview` + `cleanupLegacyAccess` мутация                     |
+| `src/components/admin/trainings/ProductAccessInfoBlock.tsx`    | Русификация, кнопка «Очистить старые настройки», убрать mixed_conflict из основного UI |
+| `src/components/admin/product/ProductLinkedTrainingsBlock.tsx` | Русификация, кнопка очистки, скрыть бейдж при 0 уроков без данных                      |
+| `src/hooks/useAccessRules.ts`                                  | Маппинг DB-ошибок на русские сообщения                                                 |
+
+
+## 4. Что не меняется
+
+- Source of Truth: `training_modules.product_id`
+- Формат `access_rules` и `training_content`
+- `TrainingContentTreePicker` (уже починен)
+- `client.ts`, `types.ts`
+
+## 5. STOP-guards
+
+- Если DELETE FROM module_access требует привилегий, которых нет у клиентского SDK (RLS) — нужно делать через edge function
+- Если в данных есть «дыры» в каскаде product_id (промежуточные дети без product_id) — сначала починить каскад, потом чинить counts
 
 ## 6. DoD
 
-- Весь тренинг / Выбрать всё / Снять всё реально меняют state
-- Клик по модулю выбирает всю ветку
-- Снятие модуля снимает всю ветку
-- Partial = indeterminate
-- В matrix view нет ложных массовых «0 уроков»
-- Все пользовательские подписи на русском
+- У product-linked тренинга `legacy_module_access_count = 0` после очистки
+- `mixed_conflict` не отображается в основном UI
+- Кнопка «Очистить старые настройки» работает через dry-run → execute
+- Все подписи на русском, без `binding_source`, `legacy`, `module_access` в пользовательском слое
+- «Правила гранулярности доступа» → «Ограничение доступа внутри тренинга»
+- Ошибки создания правил — конкретные русские сообщения
+- Lesson counts: 0 уроков скрыт при отсутствии достоверных данных
+
+## 7. Порядок выполнения
+
+1. `useProductTrainings.ts`: legacy cleanup preview + execute
+2. `ProductAccessInfoBlock.tsx`: русификация + кнопка очистки
+3. `ProductLinkedTrainingsBlock.tsx`: русификация + кнопка очистки + скрытие ложных counts
+4. `useAccessRules.ts`: маппинг ошибок
