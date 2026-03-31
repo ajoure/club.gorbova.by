@@ -10,8 +10,7 @@ interface Props {
   tree: TreeModule;
   selectedModuleIds: string[];
   selectedLessonIds: string[];
-  onChangeModules: (ids: string[]) => void;
-  onChangeLessons: (ids: string[]) => void;
+  onChange: (moduleIds: string[], lessonIds: string[]) => void;
 }
 
 // === Recursive tree helpers ===

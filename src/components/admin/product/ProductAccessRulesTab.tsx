@@ -1213,8 +1213,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                         tree={trainingTree}
                         selectedModuleIds={form.tc_allowed_module_ids}
                         selectedLessonIds={form.tc_allowed_lesson_ids}
-                        onChangeModules={(ids) => setForm({ ...form, tc_allowed_module_ids: ids })}
-                        onChangeLessons={(ids) => setForm({ ...form, tc_allowed_lesson_ids: ids })}
+                        onChange={(mods, lessons) => setForm(prev => ({ ...prev, tc_allowed_module_ids: mods, tc_allowed_lesson_ids: lessons }))}
                       />
                     ) : (
                       <div className="text-xs text-muted-foreground text-center py-4">Загрузка дерева…</div>

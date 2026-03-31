@@ -475,7 +475,7 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
                         <span className="text-[10px] font-mono text-muted-foreground">{child.public_id}</span>
                       )}
                       <span className="text-[10px] text-muted-foreground shrink-0">
-                        {child.lesson_count} {child.lesson_count === 1 ? "урок" : child.lesson_count >= 2 && child.lesson_count <= 4 ? "урока" : "уроков"}
+                        {countTreeLessons(child)} {countTreeLessons(child) === 1 ? "урок" : countTreeLessons(child) >= 2 && countTreeLessons(child) <= 4 ? "урока" : "уроков"}
                       </span>
                       {!child.is_active && (
                         <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
