@@ -170,10 +170,53 @@ export function useTrainingModules() {
       }) || [];
 
       // PATCH-1: Admin bypass — force has_access=true for all modules for admins
-      const normalizedModules = enrichedModules.map(m => ({
-        ...m,
-        has_access: isAdminUser ? true : m.has_access,
-      }));
+      // PATCH B: Apply training_content filter for non-admins
+      const tcRules = tcData?.rules || [];
+      const tcUserTariffIds = tcData?.userTariffIds || [];
+
+      const normalizedModules = enrichedModules.map(m => {
+        if (isAdminUser) return { ...m, has_access: true };
+        if (!m.has_access) return m;
+
+        // Apply training_content filter only for modules with confirmed access
+        if (m.product_id && tcRules.length > 0) {
+          // Find the root training for this module (parent_module_id = null means it IS root)
+          const rootId = m.parent_module_id 
+            ? enrichedModules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id
+            : m.id;
+          
+          const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds);
+          if (filter && filter.mode === "partial") {
+            // For root/container: check if this module or any child is allowed
+            if (m.parent_module_id === null) {
+              // Root module: keep visible (children will be filtered individually)
+              return m;
+            }
+            // Child module: check if visible
+            if (!isModuleVisible(filter, m.id)) {
+              return { ...m, has_access: false, lesson_count: 0, completed_count: 0 };
+            }
+          }
+        }
+        return m;
+      });
+
+      // Hide empty containers (non-admin): modules with lesson_count=0 and no visible children
+      const finalModules = normalizedModules.filter(m => {
+        if (isAdminUser) return true;
+        if (!m.has_access && m.parent_module_id !== null) return true; // Keep locked items visible
+        // For root modules with partial filter: check if any children remain
+        if (m.parent_module_id === null && m.lesson_count === 0) {
+          const hasVisibleChildren = normalizedModules.some(
+            child => child.parent_module_id === m.id && child.has_access && (child.lesson_count || 0) > 0
+          );
+          if (!hasVisibleChildren && m.has_access) {
+            // Check if this root itself has visible lessons (no children case)
+            // Keep it; individual lesson filtering happens in container hooks
+          }
+        }
+        return true;
+      });
 
       setModules(normalizedModules);
     } catch (error) {
