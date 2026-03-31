@@ -65,15 +65,11 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
         )}
 
         <span className="text-[11px] text-muted-foreground shrink-0">
-          {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
+          {totalLessons > 0
+            ? `${totalLessons} ${totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}`
+            : training.children.length === 0 ? "—" : `${totalLessons} уроков`
+          }
         </span>
-
-        {level === 0 && diagnostics && diagnostics.legacy_module_access_count > 0 && (
-          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 shrink-0">
-            <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-            старый контур
-          </Badge>
-        )}
 
         {level === 0 && onUnbind && (
           <Button
