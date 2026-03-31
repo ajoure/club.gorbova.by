@@ -88,6 +88,26 @@ export function useSidebarModules() {
         userTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
       }
 
+      // PATCH v23.1.5: bulk-query entitlements for product-based access
+      const userEntitlementProductIds = new Set<string>();
+      if (user) {
+        const { data: entsData } = await supabase
+          .from("entitlements")
+          .select("product_id, expires_at")
+          .eq("user_id", user.id)
+          .eq("status", "active");
+
+        const now = new Date();
+        (entsData || []).forEach(e => {
+          if (e.product_id && (!e.expires_at || new Date(e.expires_at) > now)) {
+            userEntitlementProductIds.add(e.product_id);
+          }
+        });
+      }
+
+      // Build parent product_id map for fallback
+      const parentProductMap = new Map<string, string>();
+
       // 4. Determine access for each module
       const modules = modulesData?.map(m => {
         const moduleAccess = accessByModule[m.id] || { tariffIds: [], tariffNames: [] };
