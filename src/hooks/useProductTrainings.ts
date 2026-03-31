@@ -55,9 +55,17 @@ const QUERY_KEY = "product-linked-trainings";
  */
 async function getAllDescendantIds(rootId: string): Promise<string[]> {
   const allIds: string[] = [];
+  const visited = new Set<string>([rootId]);
   let currentParentIds = [rootId];
+  const MAX_ITERATIONS = 50;
+  let iteration = 0;
 
   while (currentParentIds.length > 0) {
+    if (++iteration > MAX_ITERATIONS) {
+      console.error("[getAllDescendantIds] hard-stop: exceeded max iterations, possible cycle in tree data");
+      break;
+    }
+
     const { data: children, error } = await supabase
       .from("training_modules")
       .select("id")
@@ -65,9 +73,12 @@ async function getAllDescendantIds(rootId: string): Promise<string[]> {
     if (error) throw error;
     if (!children || children.length === 0) break;
 
-    const childIds = children.map(c => c.id);
-    allIds.push(...childIds);
-    currentParentIds = childIds;
+    const newChildIds = children.map(c => c.id).filter(id => !visited.has(id));
+    if (newChildIds.length === 0) break;
+
+    newChildIds.forEach(id => visited.add(id));
+    allIds.push(...newChildIds);
+    currentParentIds = newChildIds;
   }
 
   return allIds;
@@ -146,11 +157,20 @@ export function useProductTrainings(productId?: string) {
         }
       });
 
+      // Recursively collect all IDs from in-memory tree
+      const collectAllTreeIds = (node: LinkedTraining): string[] => {
+        const ids = [node.id];
+        for (const child of node.children) {
+          ids.push(...collectAllTreeIds(child));
+        }
+        return ids;
+      };
+
       const diagnostics: Record<string, TrainingBindingDiagnostics> = {};
       rootModules.forEach(root => {
-        const allIds = [root.id, ...root.children.map(c => c.id)];
+        const allIds = collectAllTreeIds(root);
         const legacyCount = allIds.reduce((sum, id) => sum + (legacyCounts[id] || 0), 0);
-        const rulesCount = rulesCounts[root.id] || 0;
+        const rulesCount = allIds.reduce((sum, id) => sum + (rulesCounts[id] || 0), 0);
 
         diagnostics[root.id] = {
           binding_source: root.product_id ? (legacyCount > 0 ? "mixed_conflict" : "product_id") : (legacyCount > 0 ? "legacy_only" : "none"),
@@ -199,6 +219,9 @@ export function useProductTrainings(productId?: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["module-legacy-access-count"] });
+      queryClient.invalidateQueries({ queryKey: ["module-training-content-rules-count"] });
+      queryClient.invalidateQueries({ queryKey: ["product-name-extended"] });
       toast.success("Тренинг привязан к продукту");
     },
     onError: () => toast.error("Ошибка привязки тренинга"),
@@ -271,6 +294,9 @@ export function useProductTrainings(productId?: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["module-legacy-access-count"] });
+      queryClient.invalidateQueries({ queryKey: ["module-training-content-rules-count"] });
+      queryClient.invalidateQueries({ queryKey: ["product-name-extended"] });
       toast.success("Тренинг отвязан от продукта");
     },
     onError: (e: any) => {
@@ -510,6 +536,9 @@ export function useProductTrainings(productId?: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["module-legacy-access-count"] });
+      queryClient.invalidateQueries({ queryKey: ["module-training-content-rules-count"] });
+      queryClient.invalidateQueries({ queryKey: ["product-name-extended"] });
       toast.success("Тренинг перепривязан к другому продукту");
     },
     onError: () => toast.error("Ошибка перепривязки тренинга"),

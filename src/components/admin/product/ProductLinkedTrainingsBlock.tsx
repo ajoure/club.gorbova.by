@@ -14,6 +14,16 @@ interface Props {
   productId: string;
 }
 
+/** Recursively count all lessons in a training subtree */
+function countTreeLessons(node: LinkedTraining): number {
+  return node.lesson_count + node.children.reduce((sum, child) => sum + countTreeLessons(child), 0);
+}
+
+/** Recursively count all modules (children) in a training subtree (excluding root) */
+function countTreeModules(node: LinkedTraining): number {
+  return node.children.reduce((sum, child) => sum + 1 + countTreeModules(child), 0);
+}
+
 // --- Training tree item ---
 function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
   training: LinkedTraining;
@@ -23,7 +33,7 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
 }) {
   const [expanded, setExpanded] = useState(level === 0 && training.children.length > 0);
   const hasChildren = training.children.length > 0;
-  const totalLessons = training.lesson_count + training.children.reduce((s, c) => s + c.lesson_count, 0);
+  const totalLessons = countTreeLessons(training);
 
   return (
     <div>
@@ -383,8 +393,8 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
       <div className="grid gap-2">
         {trainings.map(t => {
           const d = diagnostics[t.id];
-          const totalLessons = t.lesson_count + t.children.reduce((s, c) => s + c.lesson_count, 0);
-          const totalModules = t.children.length;
+          const totalLessons = countTreeLessons(t);
+          const totalModules = countTreeModules(t);
           const hasRules = d && d.training_content_rules_count > 0;
 
           return (
