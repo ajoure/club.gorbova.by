@@ -44,6 +44,7 @@ const TARGET_TYPE_LABELS: Record<GrantTargetType, string> = {
   product_access: "Доступ к продукту",
   entitlement: "Системное право доступа",
   email: "Доступ к домену / разделу",
+  training_content: "Доступ к контенту тренинга",
 };
 
 const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
@@ -51,6 +52,7 @@ const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
   product_access: Package,
   entitlement: Shield,
   email: Zap,
+  training_content: BookOpen,
 };
 
 const PURPOSE_LABELS: Record<RulePurpose, string> = {
