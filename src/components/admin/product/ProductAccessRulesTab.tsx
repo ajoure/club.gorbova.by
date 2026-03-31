@@ -302,7 +302,16 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
     has_condition: false,
     condition_use_same_list: true,
     condition_required_product_ids: [] as string[],
+    // training_content fields
+    tc_access_mode: "full" as "full" | "partial",
+    tc_allowed_module_ids: [] as string[],
+    tc_allowed_lesson_ids: [] as string[],
   });
+
+  // Tree picker for training_content
+  const { data: trainingTree } = useTrainingContentTree(
+    form.grant_target_type === "training_content" ? form.target_ref : undefined
+  );
 
   // Filtered rules
   const filteredRules = useMemo(() => {
