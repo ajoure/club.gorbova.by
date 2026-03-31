@@ -646,7 +646,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                     onClick={() => setViewMode("matrix-summary")}
                     className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
                   >
-                    Summary
+                    Сводка
                   </button>
                   <button
                     onClick={() => setViewMode("matrix-expanded")}
