@@ -287,6 +287,46 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   const [deletingRule, setDeletingRule] = useState<AccessRule | null>(null);
   const [isDeletePending, setIsDeletePending] = useState(false);
 
+  // Handle external action (create/edit from ProductAccessInfoBlock)
+  const initialActionHandled = useRef(false);
+  useEffect(() => {
+    if (!initialAction || initialActionHandled.current) return;
+    initialActionHandled.current = true;
+
+    if (initialAction.type === "create_training_content") {
+      // Open create dialog pre-filled for training_content
+      setEditing(null);
+      setForm(prev => ({
+        ...prev,
+        scope: "product",
+        tariff_id: tariffs[0]?.id || "",
+        grant_target_type: "training_content" as GrantTargetType,
+        target_ref: initialAction.targetRef || "",
+        target_label: "",
+        is_active: true,
+        priority: "",
+        duration_mode: "tariff",
+        duration_days: "",
+        rule_purpose: "primary" as RulePurpose,
+        notes: "",
+        target_product_ids: [],
+        has_condition: false,
+        condition_use_same_list: true,
+        condition_required_product_ids: [],
+        tc_access_mode: "full",
+        tc_allowed_module_ids: [],
+        tc_allowed_lesson_ids: [],
+      }));
+      setAdvancedOpen(false);
+      setDialogOpen(true);
+    } else if (initialAction.type === "edit_rule") {
+      const rule = rules.find(r => r.id === initialAction.ruleId);
+      if (rule) {
+        openEditDialog(rule);
+      }
+    }
+  }, [initialAction, rules, tariffs]);
+
   const { data: effectiveGrants = [] } = useEffectiveGrants(productId, previewTariffId || undefined);
 
   // Form state — priority and duration_days stored as strings for natural editing
