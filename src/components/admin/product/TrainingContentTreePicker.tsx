@@ -119,11 +119,9 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
 
   const handleSelectAll = () => {
     if (rootState === "checked") {
-      onChangeModules([]);
-      onChangeLessons([]);
+      onChange([], []);
     } else {
-      onChangeModules([...allModuleIds]);
-      onChangeLessons([]);
+      onChange([...allModuleIds], []);
     }
   };
 
@@ -135,18 +133,22 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
       const branch = collectBranchIds(mod);
       const toRemoveModules = new Set([mod.id, ...branch.moduleIds]);
       const toRemoveLessons = new Set([...mod.lessons.map(l => l.id), ...branch.lessonIds]);
-      onChangeModules(selectedModuleIds.filter(id => !toRemoveModules.has(id)));
-      onChangeLessons(selectedLessonIds.filter(id => !toRemoveLessons.has(id)));
+      onChange(
+        selectedModuleIds.filter(id => !toRemoveModules.has(id)),
+        selectedLessonIds.filter(id => !toRemoveLessons.has(id))
+      );
     } else {
       // Select entire branch: add this module + all descendant modules
       const branch = collectBranchIds(mod);
       const newModules = new Set([...selectedModuleIds, mod.id, ...branch.moduleIds]);
       // Remove individual lesson selections covered by modules
       const coveredLessons = new Set([...mod.lessons.map(l => l.id), ...branch.lessonIds]);
-      onChangeModules([...newModules]);
-      onChangeLessons(selectedLessonIds.filter(id => !coveredLessons.has(id)));
+      onChange(
+        [...newModules],
+        selectedLessonIds.filter(id => !coveredLessons.has(id))
+      );
     }
-  }, [selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons, getModuleCheckState]);
+  }, [selectedModuleIds, selectedLessonIds, onChange, getModuleCheckState]);
 
   const toggleLesson = useCallback((lessonId: string, moduleId: string) => {
     if (modSet.has(moduleId)) {
@@ -154,15 +156,16 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
       const mod = findModule(tree, moduleId);
       if (!mod) return;
       const otherLessons = mod.lessons.filter(l => l.id !== lessonId).map(l => l.id);
-      // Also keep descendant modules selected, remove just this module
-      onChangeModules(selectedModuleIds.filter(id => id !== moduleId));
-      onChangeLessons([...selectedLessonIds, ...otherLessons]);
+      onChange(
+        selectedModuleIds.filter(id => id !== moduleId),
+        [...selectedLessonIds, ...otherLessons]
+      );
     } else if (lesSet.has(lessonId)) {
-      onChangeLessons(selectedLessonIds.filter(id => id !== lessonId));
+      onChange(selectedModuleIds, selectedLessonIds.filter(id => id !== lessonId));
     } else {
-      onChangeLessons([...selectedLessonIds, lessonId]);
+      onChange(selectedModuleIds, [...selectedLessonIds, lessonId]);
     }
-  }, [modSet, lesSet, selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons, tree]);
+  }, [modSet, lesSet, selectedModuleIds, selectedLessonIds, onChange, tree]);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
