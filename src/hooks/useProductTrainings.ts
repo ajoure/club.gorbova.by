@@ -46,6 +46,33 @@ export interface UnbindPreview {
 
 const QUERY_KEY = "product-linked-trainings";
 
+/* ── Recursive descendant helper ──────────────────────────── */
+
+/**
+ * Iteratively collects ALL descendant module IDs for a root training.
+ * Walks the tree level by level until no more children are found.
+ * Used by both preview and execute to guarantee consistent counts.
+ */
+async function getAllDescendantIds(rootId: string): Promise<string[]> {
+  const allIds: string[] = [];
+  let currentParentIds = [rootId];
+
+  while (currentParentIds.length > 0) {
+    const { data: children, error } = await supabase
+      .from("training_modules")
+      .select("id")
+      .in("parent_module_id", currentParentIds);
+    if (error) throw error;
+    if (!children || children.length === 0) break;
+
+    const childIds = children.map(c => c.id);
+    allIds.push(...childIds);
+    currentParentIds = childIds;
+  }
+
+  return allIds;
+}
+
 /**
  * Fetches training modules linked to a product via training_modules.product_id (SoT).
  * Builds hierarchy: root → children, counts lessons.
@@ -141,17 +168,34 @@ export function useProductTrainings(productId?: string) {
   // Bind a free training to this product
   const bindTraining = useMutation({
     mutationFn: async ({ trainingId, productId: pid }: { trainingId: string; productId: string }) => {
+      // Collect ALL descendants recursively
+      const descendantIds = await getAllDescendantIds(trainingId);
+
       const { error: rootErr } = await supabase
         .from("training_modules")
         .update({ product_id: pid } as any)
         .eq("id", trainingId);
       if (rootErr) throw rootErr;
 
-      const { error: childErr } = await supabase
-        .from("training_modules")
-        .update({ product_id: pid } as any)
-        .eq("parent_module_id", trainingId);
-      if (childErr) throw childErr;
+      if (descendantIds.length > 0) {
+        const { error: childErr } = await supabase
+          .from("training_modules")
+          .update({ product_id: pid } as any)
+          .in("id", descendantIds);
+        if (childErr) throw childErr;
+      }
+
+      // Post-check: no descendants with NULL product_id
+      if (descendantIds.length > 0) {
+        const { data: badRows } = await supabase
+          .from("training_modules")
+          .select("id")
+          .in("id", descendantIds)
+          .is("product_id", null);
+        if (badRows && badRows.length > 0) {
+          console.error("[bind proof] descendants with NULL product_id after bind:", badRows.map(r => r.id));
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
@@ -163,7 +207,7 @@ export function useProductTrainings(productId?: string) {
   // Unbind training from product
   const unbindTraining = useMutation({
     mutationFn: async (trainingId: string) => {
-      // Check for active training_content rules
+      // Guard: check for active training_content rules on THIS root training only
       const { data: activeRules } = await supabase
         .from("access_rules")
         .select("id")
@@ -182,22 +226,35 @@ export function useProductTrainings(productId?: string) {
         .eq("id", trainingId)
         .single();
 
-      const { data: descendants } = await supabase
-        .from("training_modules")
-        .select("id")
-        .eq("parent_module_id", trainingId);
+      // Collect ALL descendants recursively
+      const descendantIds = await getAllDescendantIds(trainingId);
 
+      // Update root
       const { error: rootErr } = await supabase
         .from("training_modules")
         .update({ product_id: null } as any)
         .eq("id", trainingId);
       if (rootErr) throw rootErr;
 
-      const { error: childErr } = await supabase
+      // Update all descendants
+      if (descendantIds.length > 0) {
+        const { error: childErr } = await supabase
+          .from("training_modules")
+          .update({ product_id: null } as any)
+          .in("id", descendantIds);
+        if (childErr) throw childErr;
+      }
+
+      // Post-check: no descendants with non-null product_id
+      const allCheckIds = [trainingId, ...descendantIds];
+      const { data: badRows } = await supabase
         .from("training_modules")
-        .update({ product_id: null } as any)
-        .eq("parent_module_id", trainingId);
-      if (childErr) throw childErr;
+        .select("id, product_id")
+        .in("id", allCheckIds)
+        .not("product_id", "is", null);
+      if (badRows && badRows.length > 0) {
+        console.error("[unbind proof] modules with non-null product_id after unbind:", badRows.map(r => r.id));
+      }
 
       // Audit log
       await supabase.from("audit_logs").insert({
@@ -207,7 +264,8 @@ export function useProductTrainings(productId?: string) {
           training_id: trainingId,
           training_title: training?.title,
           old_product_id: training?.product_id,
-          affected_descendants_count: descendants?.length || 0,
+          affected_descendants_count: descendantIds.length,
+          proof_orphan_count: badRows?.length || 0,
         },
       } as any);
     },
@@ -248,12 +306,9 @@ export function useProductTrainings(productId?: string) {
       .eq("id", newProductId)
       .single();
 
-    const { data: descendants } = await supabase
-      .from("training_modules")
-      .select("id")
-      .eq("parent_module_id", trainingId);
-
-    const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
+    // Use shared recursive helper
+    const descendantIds = await getAllDescendantIds(trainingId);
+    const allIds = [trainingId, ...descendantIds];
 
     const { data: lessons } = await supabase
       .from("training_lessons")
@@ -291,7 +346,7 @@ export function useProductTrainings(productId?: string) {
         training_id: trainingId,
         old_product_id: training?.product_id,
         new_product_id: newProductId,
-        descendant_count: descendants?.length || 0,
+        descendant_count: descendantIds.length,
         lesson_count: lessons?.length || 0,
         training_content_rules_count: rules?.length || 0,
       },
@@ -300,7 +355,7 @@ export function useProductTrainings(productId?: string) {
     return {
       current_product: currentProduct,
       new_product: np!,
-      descendant_count: descendants?.length || 0,
+      descendant_count: descendantIds.length,
       lesson_count: lessons?.length || 0,
       training_content_rules_count: rules?.length || 0,
       training_content_rule_ids: rules?.map(r => r.id) || [],
@@ -317,18 +372,16 @@ export function useProductTrainings(productId?: string) {
       .eq("id", trainingId)
       .single();
 
-    const { data: descendants } = await supabase
-      .from("training_modules")
-      .select("id")
-      .eq("parent_module_id", trainingId);
-
-    const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
+    // Use shared recursive helper
+    const descendantIds = await getAllDescendantIds(trainingId);
+    const allIds = [trainingId, ...descendantIds];
 
     const { data: lessons } = await supabase
       .from("training_lessons")
       .select("id")
       .in("module_id", allIds);
 
+    // Guard check: only training_content rules on THIS root training
     const { data: activeRules } = await supabase
       .from("access_rules")
       .select("id")
@@ -360,7 +413,7 @@ export function useProductTrainings(productId?: string) {
         training_id: trainingId,
         training_title: training?.title,
         product_id: training?.product_id,
-        descendant_count: descendants?.length || 0,
+        descendant_count: descendantIds.length,
         lesson_count: lessons?.length || 0,
         active_rules_count: activeRules?.length || 0,
       },
@@ -368,7 +421,7 @@ export function useProductTrainings(productId?: string) {
 
     return {
       training_title: training?.title || "",
-      descendant_count: descendants?.length || 0,
+      descendant_count: descendantIds.length,
       lesson_count: lessons?.length || 0,
       training_content_rules_count: activeRules?.length || 0,
       legacy_module_access_count: legacyAccess?.length || 0,
@@ -388,27 +441,29 @@ export function useProductTrainings(productId?: string) {
 
       const oldProductId = training?.product_id;
 
-      // Descendants count for audit
-      const { data: descendants } = await supabase
-        .from("training_modules")
-        .select("id")
-        .eq("parent_module_id", trainingId);
+      // Collect ALL descendants recursively (same helper as preview)
+      const descendantIds = await getAllDescendantIds(trainingId);
+      const allIds = [trainingId, ...descendantIds];
 
       // Lessons count for audit
-      const allIds = [trainingId, ...(descendants?.map(d => d.id) || [])];
       const { data: lessons } = await supabase
         .from("training_lessons")
         .select("id")
         .in("module_id", allIds);
 
-      // Deactivate training_content rules of old product
-      const { data: deactivatedRules } = await supabase
-        .from("access_rules")
-        .update({ is_active: false } as any)
-        .eq("grant_target_type", "training_content")
-        .eq("target_ref", trainingId)
-        .eq("is_active", true)
-        .select("id");
+      // Deactivate training_content rules scoped to OLD product only
+      let deactivatedRules: { id: string }[] = [];
+      if (oldProductId) {
+        const { data } = await supabase
+          .from("access_rules")
+          .update({ is_active: false } as any)
+          .eq("grant_target_type", "training_content")
+          .eq("target_ref", trainingId)
+          .eq("is_active", true)
+          .eq("product_id", oldProductId)
+          .select("id");
+        deactivatedRules = data || [];
+      }
 
       // Update root
       const { error: rootErr } = await supabase
@@ -418,11 +473,23 @@ export function useProductTrainings(productId?: string) {
       if (rootErr) throw rootErr;
 
       // Update all descendants
-      const { error: childErr } = await supabase
+      if (descendantIds.length > 0) {
+        const { error: childErr } = await supabase
+          .from("training_modules")
+          .update({ product_id: newProductId } as any)
+          .in("id", descendantIds);
+        if (childErr) throw childErr;
+      }
+
+      // Post-check: no modules in tree with old/NULL product_id
+      const { data: badRows } = await supabase
         .from("training_modules")
-        .update({ product_id: newProductId } as any)
-        .eq("parent_module_id", trainingId);
-      if (childErr) throw childErr;
+        .select("id, product_id")
+        .in("id", allIds)
+        .neq("product_id", newProductId);
+      if (badRows && badRows.length > 0) {
+        console.error("[rebind proof] modules with wrong product_id after rebind:", badRows.map(r => ({ id: r.id, product_id: r.product_id })));
+      }
 
       // Audit log
       await supabase.from("audit_logs").insert({
@@ -433,10 +500,11 @@ export function useProductTrainings(productId?: string) {
           training_title: training?.title,
           old_product_id: oldProductId,
           new_product_id: newProductId,
-          affected_descendants_count: descendants?.length || 0,
+          affected_descendants_count: descendantIds.length,
           affected_lessons_count: lessons?.length || 0,
-          deactivated_rule_ids: deactivatedRules?.map(r => r.id) || [],
-          deactivated_rules_count: deactivatedRules?.length || 0,
+          deactivated_rule_ids: deactivatedRules.map(r => r.id),
+          deactivated_rules_count: deactivatedRules.length,
+          proof_orphan_count: badRows?.length || 0,
         },
       } as any);
     },
