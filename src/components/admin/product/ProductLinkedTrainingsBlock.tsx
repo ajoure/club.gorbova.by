@@ -770,6 +770,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
         productId={productId}
         onBind={handleBind}
         onRebindRequest={handleRebindRequest}
+        onUnbindRequest={handleUnbindRequest}
       />
 
       {/* Rebind Preview Dialog */}
