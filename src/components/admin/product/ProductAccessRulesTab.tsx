@@ -410,6 +410,11 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       targetIds.length === conditionIds.length &&
       targetIds.every(id => conditionIds.includes(id));
 
+    // Extract training_content fields from conditions
+    const tcAccessMode = (conditions.access_mode as "full" | "partial") || "full";
+    const tcAllowedModuleIds = (Array.isArray(conditions.allowed_module_ids) ? conditions.allowed_module_ids : []) as string[];
+    const tcAllowedLessonIds = (Array.isArray(conditions.allowed_lesson_ids) ? conditions.allowed_lesson_ids : []) as string[];
+
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -426,6 +431,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       has_condition: hasCondition,
       condition_use_same_list: useSameList,
       condition_required_product_ids: useSameList ? [] : conditionIds,
+      tc_access_mode: tcAccessMode,
+      tc_allowed_module_ids: tcAllowedModuleIds,
+      tc_allowed_lesson_ids: tcAllowedLessonIds,
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
