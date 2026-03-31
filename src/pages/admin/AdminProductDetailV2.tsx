@@ -1235,6 +1235,7 @@ export default function AdminProductDetailV2() {
               <ProductAccessRulesTab
                 productId={productId}
                 tariffs={(tariffs || []).map((t: any) => ({ id: t.id, name: t.name }))}
+                initialAction={activeTab === "access_rules" ? accessRulesAction : undefined}
               />
             )}
           </TabsContent>
