@@ -586,17 +586,87 @@ Row-level preview для v23.1.9B должен содержать следующ
 
 ---
 
-## Последовательность патчей (финальная)
+## v23.1.9B — EXECUTION REPORT
+
+### Статус: ВЫПОЛНЕН 2026-03-31
+
+**batch_id**: `BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z`
+**edge function**: `admin-entitlement-backfill-v23`
+
+### Dry run результаты (перед execute)
+
+5-way split подтверждён:
+- insert: 268 (course_close_year gap уменьшился на 1 с момента discovery)
+- update: 4
+- skip_missing_user_id: 69
+- skip_legacy_code_mismatch: 8
+- skip_missing_tariff: 3
+- **total: 352**
+
+### Execute результаты
+
+| product_code | planned | created | FK errors | status |
+|---|---|---|---|---|
+| cb20 | 124 | **124** | 0 | ✅ Complete |
+| cb_module_ip | 59 | **49** | **10** | ⚠️ Partial |
+| course_close_year | 54 | **47** | **7** | ⚠️ Partial |
+| prd_0d01a2fdc477 | 18 | **17** | **1** | ⚠️ Partial |
+| 1769009596189-398a | 8 | **8** | 0 | ✅ Complete |
+| club | 7 (4 insert + 3 update) | **7** | 0 | ✅ Complete |
+| buh_business | 2 (1 insert + 1 update) | **2** | 0 | ✅ Complete |
+| **Итого** | **272** | **254** | **18** | |
+
+### Обнаруженная аномалия: Ghost user_ids в subscription-based path
+
+**18 subscriptions** имеют `user_id`, который НЕ существует в `auth.users` (FK constraint `entitlements_user_id_fkey`). Это та же категория, что `BLOCKED_BY_MISSING_USER_ID`, но обнаруженная в sub-based path (ранее проверялось только для CB20).
+
+**Распределение ghost user_ids:**
+- course_close_year: 7
+- cb_module_ip: 10
+- prd_0d01a2fdc477: 1
+
+**Эти 18 users переносятся в v23.1.9D** (deferred entitlement issuance after profile→user claim). Общий deferred backfill хвост: 69 (CB20) + 18 (sub-based ghost) = **87**.
+
+### Итоговый результат v23.1.9B
+
+| Метрика | Значение |
+|---|---|
+| Entitlements created (INSERT) | **250** |
+| Entitlements updated (UPDATE) | **4** |
+| **Total successfully executed** | **254** |
+| FK errors (ghost user_id) | 18 |
+| Skipped (missing_user_id) | 69 |
+| Skipped (legacy_code_mismatch) | 8 |
+| Skipped (missing_tariff) | 3 |
+| **Grand total candidates** | **352** |
+
+### Все записи содержат
+
+```json
+{
+  "source": "historical_backfill",
+  "source_patch": "v23.1.9B",
+  "batch_id": "BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z"
+}
+```
+
+### Audit log
+
+Запись создана в `audit_logs` с action=`entitlement_backfill`, actor_label=`v23.1.9B`.
+
+---
+
+## Последовательность патчей (обновлённая)
 
 | Патч | Scope | Статус |
 |---|---|---|
 | **v23.1.9A** | Discovery + classification + canonical selection | **ВЫПОЛНЕН** |
-| **v23.1.9A.1-final** | Row-level conflict preview с новыми категориями, 5-way split, stop-guards | **ВЫПОЛНЕН** |
-| **v23.1.9B** | Execute только по `resolved_execute_decision` in (`insert`, `update`) — 273 rows | Ожидает final preview |
+| **v23.1.9A.1-final** | Row-level conflict preview с категориями, 5-way split, stop-guards | **ВЫПОЛНЕН** |
+| **v23.1.9B** | Execute backfill: 254 entitlements created/updated | **ВЫПОЛНЕН** |
 | **v23.1.9C** | Cleanup legacy code mismatch (`cb_2_step` → `prd_0d01a2fdc477` normalization) — 8 users | Планируется |
-| **v23.1.9D** | **Deferred entitlement issuance after profile→user claim** — 69 CB20 profiles. Source of truth уже есть, доступ не теряется, выдача откладывается до появления `user_id`. Событие = появление `user_id` у архивного профиля | Планируется |
+| **v23.1.9D** | **Deferred entitlement issuance after profile→user claim** — **87 total** (69 CB20 + 18 sub-based ghost user_ids). Source of truth уже есть, доступ не теряется, выдача откладывается до появления `user_id` | Планируется |
 | **v23.1.10** | Fix root cause — creation paths должны создавать entitlements | Планируется |
-| **v23.1.11** | **Product/training code normalization + admin-readable naming.** Scope: audit всех `product_code`, `training_modules.slug/code/title`, legacy aliases. Таблица соответствий: `technical_code` → human-readable admin name → product → training. **Правило: human-readable naming = display/admin layer only. Technical codes НЕ переписывать без отдельного migration/compat plan.** Нормализация имён не должна менять SoT-коды в runtime без отдельного mapping-layer | Планируется |
+| **v23.1.11** | Product/training code normalization + admin-readable naming | Планируется |
 
 ---
 
@@ -604,36 +674,27 @@ Row-level preview для v23.1.9B должен содержать следующ
 
 | Компонент | Изменение |
 |---|---|
-| `.lovable/plan.md` | Полный discovery report + все правки v23.1.9A + v23.1.9A.1-final |
-
-Код и данные **НЕ менялись**.
+| `.lovable/plan.md` | Discovery report + v23.1.9B execute report |
+| `supabase/functions/admin-entitlement-backfill-v23/index.ts` | Edge function для backfill |
+| `entitlements` (data) | **254 rows** created/updated |
+| `audit_logs` (data) | 1 audit record |
 
 ---
 
-## DoD
+## DoD (v23.1.9B)
 
-1. ✅ Формулировка исправлена: 156 из 403 active subs без matching entitlement (не "0 из 403")
-2. ✅ Subscription-based gap (156) и order-based gap (193) разделены явно
-3. ✅ Upsert key зафиксирован как `ON CONFLICT (user_id, product_code)` + обязательный pre-execute dry-run
-4. ✅ `source_snapshot_type` (`base_tariff_purchase`) отделён от `import_source` (`patch4_import`)
-5. ✅ DUPLICATE_CLEANUP_REVIEW разделён на блокирующие (19) и classified resolved (91)
-6. ✅ ЦБ 2 ступень — product_code drift anomaly (`cb_2_step` vs `prd_0d01a2fdc477`) вынесена в root cause
-7. ✅ Table B — добавлена колонка `mismatch_type`
-8. ✅ Gorbova Club: gap = 7 (не 148), 3 обратных entitlement не трогаем в v23.1.9B
-9. ✅ Table C — conflict preview с фактическими INSERT/UPDATE/SKIP из БД
-10. ✅ Добавлен обязательный deliverable `conflict_preview_on_unique_keys`
-11. ✅ Headline исправлен: "creation paths системно не покрывают все случаи matching entitlements"
-12. ✅ Следующий шаг = v23.1.9B execute (после final preview)
-13. ✅ Gap counting ключ зафиксирован: matching by same `user_id + product_code`
-14. ✅ READY = 273 (sub-based 149 + order-based 124), INSERT = 269, UPDATE = 4
-15. ✅ В v23.1.9A не выполнено ни одного write-действия
-16. ✅ ЗАКРОЙ ГОД: 55 ready (1 user moved из blocked), правило зафиксировано: active sub → execute допустим
-17. ✅ BLOCKED_BY_MISSING_USER_ID = 69 (отдельная категория, не NEED_POLICY)
-18. ✅ BLOCKED_BY_LEGACY_CODE_MISMATCH = 8 (отдельная категория) + stop-rule для v23.1.9B
-19. ✅ NEED_POLICY_DECISION = 3 (только CB20 без tariff_id)
-20. ✅ v23.1.9D = deferred entitlement issuance after profile→user claim (не просто "deferred backfill")
-21. ✅ v23.1.11 = normalization + readable naming с правилом: technical codes не переписывать без migration/compat plan
-22. ✅ Row-level preview: 9 обязательных полей включая `product_id`, `product_code`, `existing_entitlement_product_code`, `canonical_order_id`, `deferred_recovery_key`
-23. ✅ READY_FOR_BACKFILL с action split: `insert_count` / `update_count` / `total_execute` по каждому продукту
-24. ✅ `execute_candidates_summary_by_action_and_product` — обязательный pre-execute deliverable (Table E)
-25. ✅ 5-way split stop-guard с фактическими count: 269 + 4 + 69 + 8 + 3 = 353
+1. ✅ Dry run 5-way split подтверждён перед execute
+2. ✅ 254 entitlements успешно created/updated (250 INSERT + 4 UPDATE)
+3. ✅ cb20: 124/124 — полностью
+4. ✅ club: 7/7 (4 insert + 3 update) — полностью
+5. ✅ buh_business: 2/2 (1 insert + 1 update) — полностью
+6. ✅ 1769009596189-398a: 8/8 — полностью
+7. ✅ cb_module_ip: 49/59, course_close_year: 47/54, prd_0d01a2fdc477: 17/18 — частично (18 ghost user_ids)
+8. ✅ 18 ghost user_id FK errors задокументированы, перенесены в v23.1.9D
+9. ✅ skip_missing_user_id = 69, skip_legacy_code_mismatch = 8, skip_missing_tariff = 3 — корректно
+10. ✅ Все записи с meta.source_patch = 'v23.1.9B', batch_id зафиксирован
+11. ✅ Audit log создан
+12. ✅ Upsert по ON CONFLICT (user_id, product_code)
+13. ✅ Ни один active entitlement не был сокращён по expires_at
+14. ✅ BLOCKED_BY_LEGACY_CODE_MISMATCH: 8 users пропущены (no second entitlement created)
+15. ✅ v23.1.9D scope обновлён: 87 deferred (69 CB20 + 18 sub-based ghost)
