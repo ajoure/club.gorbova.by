@@ -915,6 +915,45 @@ Deno.serve(async (req) => {
       }
 
       case 'revoke_access': {
+        // ============= v23.1.10: PRE-REVOKE GUARD =============
+        // Check if there's another active access source before revoking entitlement
+        let skipEntitlementRevoke = false;
+        let preRevokeCheckResult: any = null;
+        if (subscription.product_id) {
+          const { data: productForRevoke } = await supabase
+            .from('products_v2')
+            .select('code')
+            .eq('id', subscription.product_id)
+            .maybeSingle();
+
+          if (productForRevoke?.code) {
+            preRevokeCheckResult = await hasOtherActiveAccessSource(
+              supabase,
+              subscription.user_id,
+              productForRevoke.code,
+              subscription_id,
+            );
+            if (preRevokeCheckResult.has_other) {
+              skipEntitlementRevoke = true;
+              console.log(`[subscription-admin-actions] Pre-revoke guard: skipping entitlement revoke for ${productForRevoke.code}, other sources: ${preRevokeCheckResult.sources.join(', ')}`);
+              
+              await supabase.from('audit_logs').insert({
+                actor_user_id: adminUserId,
+                target_user_id: subscription.user_id,
+                action: 'admin.subscription.revoke_entitlement_skipped',
+                actor_type: 'admin',
+                meta: {
+                  subscription_id,
+                  product_code: productForRevoke.code,
+                  other_sources: preRevokeCheckResult.sources,
+                  reason: 'has_other_active_access_source',
+                },
+              });
+            }
+          }
+        }
+        // ============= END PRE-REVOKE GUARD =============
+
         await supabase
           .from('subscriptions_v2')
           .update({
