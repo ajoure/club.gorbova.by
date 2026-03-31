@@ -14,14 +14,55 @@ interface Props {
   onChangeLessons: (ids: string[]) => void;
 }
 
+// === Recursive tree helpers ===
+
+/** Collect all descendant module IDs (excluding root itself) */
+function collectAllModuleIds(node: TreeModule): string[] {
+  const ids: string[] = [];
+  node.children.forEach(c => { ids.push(c.id); ids.push(...collectAllModuleIds(c)); });
+  return ids;
+}
+
+/** Collect all lesson IDs under a subtree */
+function collectAllLessonIds(node: TreeModule): string[] {
+  const ids: string[] = [];
+  node.lessons.forEach(l => ids.push(l.id));
+  node.children.forEach(c => ids.push(...collectAllLessonIds(c)));
+  return ids;
+}
+
+/** Collect all descendant module IDs + all lesson IDs under a module (the whole branch) */
+function collectBranchIds(node: TreeModule): { moduleIds: string[]; lessonIds: string[] } {
+  const moduleIds: string[] = [];
+  const lessonIds: string[] = [];
+  const walk = (n: TreeModule) => {
+    n.lessons.forEach(l => lessonIds.push(l.id));
+    n.children.forEach(c => {
+      moduleIds.push(c.id);
+      walk(c);
+    });
+  };
+  walk(node);
+  return { moduleIds, lessonIds };
+}
+
+function findModule(tree: TreeModule, id: string): TreeModule | null {
+  if (tree.id === id) return tree;
+  for (const child of tree.children) {
+    const found = findModule(child, id);
+    if (found) return found;
+  }
+  return null;
+}
+
 /**
  * Tree picker for partial training_content access.
- * Supports:
- * - Root checkbox "Весь тренинг"
- * - Indeterminate state for modules
- * - Bulk select/deselect
- * - Module selection implies all lessons
- * - Normalization: if module fully selected, lessons not duplicated
+ * Hierarchical selection:
+ * - root checkbox = entire training
+ * - module checkbox = all lessons in the branch
+ * - lesson checkbox = single lesson
+ * - if all lessons of a module are selected individually, module auto-checks
+ * - partial selection = indeterminate
  */
 export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(() => {
@@ -31,53 +72,54 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
     return set;
   });
 
-  // Collect all module/lesson IDs for bulk actions
-  const allModuleIds = useMemo(() => {
-    const ids: string[] = [];
-    const collect = (node: TreeModule) => {
-      node.children.forEach(c => { ids.push(c.id); collect(c); });
-    };
-    collect(tree);
-    return ids;
-  }, [tree]);
+  const modSet = useMemo(() => new Set(selectedModuleIds), [selectedModuleIds]);
+  const lesSet = useMemo(() => new Set(selectedLessonIds), [selectedLessonIds]);
 
-  const allLessonIds = useMemo(() => {
-    const ids: string[] = [];
-    const collect = (node: TreeModule) => {
-      node.lessons.forEach(l => ids.push(l.id));
-      node.children.forEach(c => collect(c));
-    };
-    collect(tree);
-    return ids;
-  }, [tree]);
+  // All module IDs (excluding root)
+  const allModuleIds = useMemo(() => collectAllModuleIds(tree), [tree]);
+  const allLessonIds = useMemo(() => collectAllLessonIds(tree), [tree]);
 
-  // Check state helpers
-  const isModuleSelected = (id: string) => selectedModuleIds.includes(id);
+  // === Check state for a module (recursive) ===
+  const getModuleCheckState = useCallback((mod: TreeModule): "checked" | "unchecked" | "indeterminate" => {
+    // If explicitly selected as module
+    if (modSet.has(mod.id)) return "checked";
 
-  const getModuleLessonIds = (mod: TreeModule): string[] => mod.lessons.map(l => l.id);
-
-  const getModuleCheckState = (mod: TreeModule): "checked" | "unchecked" | "indeterminate" => {
-    if (isModuleSelected(mod.id)) return "checked";
-    const lessonIds = getModuleLessonIds(mod);
+    const ownLessonIds = mod.lessons.map(l => l.id);
     const childStates = mod.children.map(c => getModuleCheckState(c));
-    const selectedLessonsCount = lessonIds.filter(id => selectedLessonIds.includes(id)).length;
-    const hasSelectedChildren = childStates.some(s => s !== "unchecked");
-    const allChildrenChecked = mod.children.length > 0 && childStates.every(s => s === "checked");
-    const allLessonsSelected = lessonIds.length > 0 && selectedLessonsCount === lessonIds.length;
 
-    if (allChildrenChecked && allLessonsSelected && (mod.children.length > 0 || lessonIds.length > 0)) {
-      return "checked";
+    const allOwnLessonsSelected = ownLessonIds.length > 0 && ownLessonIds.every(id => lesSet.has(id));
+    const someOwnLessonsSelected = ownLessonIds.some(id => lesSet.has(id));
+    const allChildrenChecked = mod.children.length > 0 && childStates.every(s => s === "checked");
+    const someChildrenSelected = childStates.some(s => s !== "unchecked");
+
+    const hasContent = ownLessonIds.length > 0 || mod.children.length > 0;
+
+    // All content checked → auto-promote to checked
+    if (hasContent) {
+      const ownOk = ownLessonIds.length === 0 || allOwnLessonsSelected;
+      const childOk = mod.children.length === 0 || allChildrenChecked;
+      if (ownOk && childOk) return "checked";
     }
-    if (hasSelectedChildren || selectedLessonsCount > 0) return "indeterminate";
+
+    // Partial selection
+    if (someOwnLessonsSelected || someChildrenSelected) return "indeterminate";
+
     return "unchecked";
-  };
+  }, [modSet, lesSet]);
 
   // Root "all" state
-  const allSelected = allModuleIds.length > 0 && allModuleIds.every(id => selectedModuleIds.includes(id));
-  const someSelected = selectedModuleIds.length > 0 || selectedLessonIds.length > 0;
+  const rootState = useMemo(() => {
+    if (allModuleIds.length === 0 && allLessonIds.length === 0) return "unchecked" as const;
+    const allModsSelected = allModuleIds.every(id => modSet.has(id));
+    if (allModsSelected && allModuleIds.length > 0) return "checked" as const;
+    if (modSet.size > 0 || lesSet.size > 0) return "indeterminate" as const;
+    return "unchecked" as const;
+  }, [allModuleIds, allLessonIds, modSet, lesSet]);
+
+  // === Actions ===
 
   const handleSelectAll = () => {
-    if (allSelected) {
+    if (rootState === "checked") {
       onChangeModules([]);
       onChangeLessons([]);
     } else {
@@ -88,41 +130,40 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
 
   const toggleModule = useCallback((mod: TreeModule) => {
     const state = getModuleCheckState(mod);
+
     if (state === "checked" || state === "indeterminate") {
-      // Deselect module + its lessons + children recursively
-      const toRemoveModules = new Set<string>([mod.id]);
-      const toRemoveLessons = new Set<string>();
-      const removeRecursive = (node: TreeModule) => {
-        toRemoveModules.add(node.id);
-        node.lessons.forEach(l => toRemoveLessons.add(l.id));
-        node.children.forEach(c => removeRecursive(c));
-      };
-      removeRecursive(mod);
+      // Deselect entire branch
+      const branch = collectBranchIds(mod);
+      const toRemoveModules = new Set([mod.id, ...branch.moduleIds]);
+      const toRemoveLessons = new Set([...mod.lessons.map(l => l.id), ...branch.lessonIds]);
       onChangeModules(selectedModuleIds.filter(id => !toRemoveModules.has(id)));
       onChangeLessons(selectedLessonIds.filter(id => !toRemoveLessons.has(id)));
     } else {
-      // Select entire module
-      onChangeModules([...selectedModuleIds, mod.id]);
-      // Remove individual lesson selections for this module (module covers all)
-      const moduleLessons = new Set(getModuleLessonIds(mod));
-      onChangeLessons(selectedLessonIds.filter(id => !moduleLessons.has(id)));
+      // Select entire branch: add this module + all descendant modules
+      const branch = collectBranchIds(mod);
+      const newModules = new Set([...selectedModuleIds, mod.id, ...branch.moduleIds]);
+      // Remove individual lesson selections covered by modules
+      const coveredLessons = new Set([...mod.lessons.map(l => l.id), ...branch.lessonIds]);
+      onChangeModules([...newModules]);
+      onChangeLessons(selectedLessonIds.filter(id => !coveredLessons.has(id)));
     }
-  }, [selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons]);
+  }, [selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons, getModuleCheckState]);
 
   const toggleLesson = useCallback((lessonId: string, moduleId: string) => {
-    if (isModuleSelected(moduleId)) {
-      // Module was fully selected; now deselect this lesson = select module's other lessons individually
+    if (modSet.has(moduleId)) {
+      // Module was fully selected; deselect this lesson = select module's other lessons individually
       const mod = findModule(tree, moduleId);
       if (!mod) return;
       const otherLessons = mod.lessons.filter(l => l.id !== lessonId).map(l => l.id);
+      // Also keep descendant modules selected, remove just this module
       onChangeModules(selectedModuleIds.filter(id => id !== moduleId));
       onChangeLessons([...selectedLessonIds, ...otherLessons]);
-    } else if (selectedLessonIds.includes(lessonId)) {
+    } else if (lesSet.has(lessonId)) {
       onChangeLessons(selectedLessonIds.filter(id => id !== lessonId));
     } else {
       onChangeLessons([...selectedLessonIds, lessonId]);
     }
-  }, [selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons, tree]);
+  }, [modSet, lesSet, selectedModuleIds, selectedLessonIds, onChangeModules, onChangeLessons, tree]);
 
   const toggleExpand = (id: string) => {
     setExpanded(prev => {
@@ -132,19 +173,18 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
     });
   };
 
+  const isLessonChecked = (lessonId: string, moduleId: string): boolean =>
+    modSet.has(moduleId) || lesSet.has(lessonId);
+
   const renderModule = (mod: TreeModule, depth: number) => {
     const state = getModuleCheckState(mod);
     const hasContent = mod.children.length > 0 || mod.lessons.length > 0;
     const isExpanded = expanded.has(mod.id);
-    const isLessonVisible = (lessonId: string) =>
-      isModuleSelected(mod.id) || selectedLessonIds.includes(lessonId);
 
     return (
       <div key={mod.id}>
         <div
-          className={cn(
-            "flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50 transition-colors",
-          )}
+          className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50 transition-colors"
           style={{ paddingLeft: `${depth * 20 + 8}px` }}
         >
           {hasContent ? (
@@ -180,7 +220,7 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
               >
                 <span className="w-[18px] shrink-0" />
                 <Checkbox
-                  checked={isLessonVisible(lesson.id)}
+                  checked={isLessonChecked(lesson.id, mod.id)}
                   onCheckedChange={() => toggleLesson(lesson.id, mod.id)}
                   className="shrink-0"
                 />
@@ -198,15 +238,13 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
     );
   };
 
-  const totalSelected = selectedModuleIds.length + selectedLessonIds.length;
-
   return (
     <div className="space-y-2">
       {/* Bulk actions */}
       <div className="flex items-center justify-between">
         <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
           <Checkbox
-            checked={allSelected ? true : someSelected ? "indeterminate" : false}
+            checked={rootState === "checked" ? true : rootState === "indeterminate" ? "indeterminate" : false}
             onCheckedChange={handleSelectAll}
           />
           Весь тренинг
@@ -249,7 +287,7 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
               >
                 <span className="w-[18px] shrink-0" />
                 <Checkbox
-                  checked={selectedLessonIds.includes(lesson.id)}
+                  checked={isLessonChecked(lesson.id, tree.id)}
                   onCheckedChange={() => toggleLesson(lesson.id, tree.id)}
                   className="shrink-0"
                 />
@@ -263,7 +301,7 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
       </div>
 
       <div className="text-[11px] text-muted-foreground">
-        Выбрано: {totalSelected > 0 ? `${selectedModuleIds.length} модулей, ${selectedLessonIds.length} уроков` : "ничего"}
+        Выбрано: {selectedModuleIds.length > 0 || selectedLessonIds.length > 0 ? `${selectedModuleIds.length} модулей, ${selectedLessonIds.length} уроков` : "ничего"}
       </div>
     </div>
   );
@@ -277,11 +315,14 @@ export function normalizeTrainingContentPayload(
 ): { allowed_module_ids: string[]; allowed_lesson_ids: string[] } {
   const moduleSet = new Set(moduleIds);
 
-  // Collect all lesson IDs belonging to selected modules
+  // Collect all lesson IDs belonging to selected modules (recursively)
   const coveredLessonIds = new Set<string>();
   const collectCovered = (node: TreeModule) => {
     if (moduleSet.has(node.id)) {
       node.lessons.forEach(l => coveredLessonIds.add(l.id));
+      // Also mark all descendant lessons as covered
+      const allDescLessons = collectAllLessonIds(node);
+      allDescLessons.forEach(id => coveredLessonIds.add(id));
     }
     node.children.forEach(c => collectCovered(c));
   };
@@ -291,13 +332,4 @@ export function normalizeTrainingContentPayload(
     allowed_module_ids: [...new Set(moduleIds)],
     allowed_lesson_ids: [...new Set(lessonIds.filter(id => !coveredLessonIds.has(id)))],
   };
-}
-
-function findModule(tree: TreeModule, id: string): TreeModule | null {
-  if (tree.id === id) return tree;
-  for (const child of tree.children) {
-    const found = findModule(child, id);
-    if (found) return found;
-  }
-  return null;
 }

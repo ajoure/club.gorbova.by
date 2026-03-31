@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ExternalLink, ShieldCheck, AlertTriangle, Info, ChevronDown, Settings, Plus, CheckCircle2, EyeOff } from "lucide-react";
+import { ExternalLink, ShieldCheck, AlertTriangle, Info, ChevronDown, Settings, Plus, CheckCircle2, EyeOff, Pencil } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
@@ -17,12 +17,9 @@ interface ProductAccessInfoBlockProps {
 }
 
 /**
- * Actionable readonly info block for training modules linked to a product.
- * Shows:
- *   Layer 1: linked product info + navigation
- *   Layer 2: live training_content rules for this specific module
- *   Layer 3: legacy diagnostics
- *   Actions: navigate to product, edit/create rules
+ * Actionable info block for training modules linked to a product.
+ * Shows linked product, live training_content rules, diagnostics.
+ * All navigation uses location.state for deep-linking into access_rules tab.
  */
 export function ProductAccessInfoBlock({ productId, moduleId, className }: ProductAccessInfoBlockProps) {
   const navigate = useNavigate();
@@ -68,6 +65,22 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
     ? (legacyCount > 0 ? "mixed_conflict" : "product_id")
     : (legacyCount > 0 ? "legacy_only" : "none");
 
+  // Navigation helpers — unified via location.state
+  const goToProduct = () => navigate(`/admin/products-v2/${productId}`);
+
+  const goToAccessTab = () =>
+    navigate(`/admin/products-v2/${productId}?tab=access_rules`);
+
+  const goToCreateRule = () =>
+    navigate(`/admin/products-v2/${productId}?tab=access_rules`, {
+      state: { accessRulesAction: { type: "create_training_content", targetRef: moduleId } },
+    });
+
+  const goToEditRule = (ruleId: string) =>
+    navigate(`/admin/products-v2/${productId}?tab=access_rules`, {
+      state: { accessRulesAction: { type: "edit_rule", ruleId } },
+    });
+
   return (
     <Alert className={cn("border-primary/30 bg-primary/5", className)}>
       <ShieldCheck className="h-4 w-4 text-primary" />
@@ -102,7 +115,7 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
             ) : (
               <div className="space-y-1">
                 {moduleRules.map(rule => (
-                  <RuleSummaryRow key={rule.id} rule={rule} onEdit={() => navigate(`/admin/products-v2/${productId}?tab=access`)} />
+                  <RuleSummaryRow key={rule.id} rule={rule} onEdit={() => goToEditRule(rule.id)} />
                 ))}
               </div>
             )}
@@ -111,33 +124,24 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
 
         {/* Actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => navigate(`/admin/products-v2/${productId}`)}
-          >
+          <Button variant="outline" size="sm" className="gap-2" onClick={goToProduct}>
             <ExternalLink className="h-3.5 w-3.5" />
             Открыть продукт
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => navigate(`/admin/products-v2/${productId}?tab=access`)}
-          >
+          <Button variant="outline" size="sm" className="gap-2" onClick={goToAccessTab}>
             <Settings className="h-3.5 w-3.5" />
             Вкладка «Доступы»
           </Button>
           {moduleId && moduleRules.length === 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 text-primary"
-              onClick={() => navigate(`/admin/products-v2/${productId}?tab=access`)}
-            >
+            <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={goToCreateRule}>
               <Plus className="h-3.5 w-3.5" />
               Создать правило
+            </Button>
+          )}
+          {moduleId && moduleRules.length > 0 && (
+            <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={() => goToEditRule(moduleRules[0].id)}>
+              <Pencil className="h-3.5 w-3.5" />
+              Редактировать правило
             </Button>
           )}
         </div>
@@ -162,9 +166,9 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-1 text-[10px] text-muted-foreground space-y-0.5 bg-muted/30 rounded-md px-2 py-1.5">
               <div>product_id: {productId}</div>
-              <div>binding_source: {bindingSource}</div>
-              <div>training_content правил (всего по продукту): {totalRulesCount}</div>
-              <div>training_content правил (для этого тренинга): {moduleRules.length}</div>
+              <div>источник привязки: {bindingSource}</div>
+              <div>правил доступа к контенту (всего по продукту): {totalRulesCount}</div>
+              <div>правил доступа к контенту (для этого тренинга): {moduleRules.length}</div>
               <div>старые настройки (module_access): {legacyCount}</div>
               {legacyCount > 0 && productId && (
                 <div className="text-amber-600">⚠ Конфликт: старый контур + продуктовый контур</div>
@@ -188,12 +192,10 @@ function RuleSummaryRow({ rule, onEdit }: { rule: TrainingContentRule; onEdit: (
       "flex items-center gap-2 p-2 rounded-md border text-xs",
       rule.is_active ? "bg-muted/20" : "bg-muted/10 opacity-60"
     )}>
-      {/* Scope */}
       <Badge variant="outline" className="text-[9px] shrink-0">
         {rule.tariff_id ? "Тариф" : "Продукт"}
       </Badge>
 
-      {/* Mode */}
       <Badge variant="outline" className={cn(
         "text-[9px] shrink-0",
         cond.access_mode === "partial" ? "text-amber-600 border-amber-300" : "text-green-600 border-green-300"
@@ -201,7 +203,6 @@ function RuleSummaryRow({ rule, onEdit }: { rule: TrainingContentRule; onEdit: (
         {cond.access_mode === "full" ? "Полный доступ" : `Частичный: ${mCount} мод. ${lCount} ур.`}
       </Badge>
 
-      {/* Status */}
       {!rule.is_active && (
         <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
           <EyeOff className="h-2.5 w-2.5 mr-0.5" />
@@ -211,10 +212,9 @@ function RuleSummaryRow({ rule, onEdit }: { rule: TrainingContentRule; onEdit: (
 
       <div className="flex-1" />
 
-      {/* Edit button */}
       <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px] gap-1" onClick={onEdit}>
-        <Settings className="h-2.5 w-2.5" />
-        Настроить
+        <Pencil className="h-2.5 w-2.5" />
+        Редактировать
       </Button>
     </div>
   );

@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +68,38 @@ import { isFeatureVisible, type TariffFeature } from "@/hooks/useTariffFeatures"
 export default function AdminProductDetailV2() {
   const { productId } = useParams<{ productId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+
+  // Deep-link: read tab from query params
+  const tabFromQuery = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(tabFromQuery || "tariffs");
+
+  // Sync tab from query params on navigation
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t && ["tariffs", "offers", "flows", "preview", "custom_fields", "composition", "access_rules"].includes(t)) {
+      setActiveTab(t);
+    }
+  }, [searchParams]);
+
+  // Controlled open for access rules tab (create/edit from external navigation)
+  const accessRulesAction = (location.state as any)?.accessRulesAction as
+    | { type: "create_training_content"; targetRef?: string }
+    | { type: "edit_rule"; ruleId: string }
+    | undefined;
+
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    // Update URL without full navigation
+    const newParams = new URLSearchParams(searchParams);
+    if (value === "tariffs") {
+      newParams.delete("tab");
+    } else {
+      newParams.set("tab", value);
+    }
+    setSearchParams(newParams, { replace: true });
+  };
 
   const { data: product, isLoading: productLoading } = useProductV2(productId || null);
   const { data: tariffs } = useTariffs(productId);
@@ -701,7 +733,7 @@ export default function AdminProductDetailV2() {
         </GlassCard>
 
         {/* Pill-style tabs */}
-        <Tabs defaultValue="tariffs">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <div className="px-1 overflow-x-auto scrollbar-none">
             <TabsList className="w-full sm:w-auto">
               <TabsTrigger value="tariffs" className="gap-1.5 text-xs">
@@ -1203,6 +1235,7 @@ export default function AdminProductDetailV2() {
               <ProductAccessRulesTab
                 productId={productId}
                 tariffs={(tariffs || []).map((t: any) => ({ id: t.id, name: t.name }))}
+                initialAction={activeTab === "access_rules" ? accessRulesAction : undefined}
               />
             )}
           </TabsContent>
