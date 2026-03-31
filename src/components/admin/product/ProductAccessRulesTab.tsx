@@ -242,13 +242,6 @@ function ProductListBadge({
   );
 }
 
-    // training_content conditions
-    if (form.grant_target_type === "training_content") {
-      conditions.access_mode = form.tc_access_mode;
-      conditions.allowed_module_ids = form.tc_access_mode === "partial" ? form.tc_allowed_module_ids : [];
-      conditions.allowed_lesson_ids = form.tc_access_mode === "partial" ? form.tc_allowed_lesson_ids : [];
-    }
-
 
 interface Props {
   productId: string;
