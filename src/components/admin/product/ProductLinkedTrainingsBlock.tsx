@@ -65,15 +65,11 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
         )}
 
         <span className="text-[11px] text-muted-foreground shrink-0">
-          {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
+          {totalLessons > 0
+            ? `${totalLessons} ${totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}`
+            : training.children.length === 0 ? "—" : `${totalLessons} уроков`
+          }
         </span>
-
-        {level === 0 && diagnostics && diagnostics.legacy_module_access_count > 0 && (
-          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 shrink-0">
-            <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-            старый контур
-          </Badge>
-        )}
 
         {level === 0 && onUnbind && (
           <Button
@@ -160,14 +156,14 @@ function RebindPreviewDialog({ open, onOpenChange, preview, trainingTitle, onCon
               warning={preview.training_content_rules_count > 0}
             />
             <PreviewRow
-              label="Старые настройки доступа (module_access)"
+              label="Старые настройки доступа"
               value={preview.legacy_module_access_count}
               warning={preview.legacy_module_access_count > 0}
             />
             {preview.has_active_entitlements && (
               <PreviewRow
                 label="У пользователей есть активные entitlements на старый продукт"
-                value="⚠ Да"
+                value="⚠ Есть"
                 warning
               />
             )}
@@ -213,7 +209,7 @@ function UnbindPreviewDialog({ open, onOpenChange, preview, onConfirm, isExecuti
             danger={preview.training_content_rules_count > 0}
           />
           <PreviewRow
-            label="Старые настройки доступа (module_access)"
+            label="Старые настройки доступа"
             value={preview.legacy_module_access_count}
             warning={preview.legacy_module_access_count > 0}
           />
@@ -455,11 +451,13 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
                   <Badge variant="outline" className="text-[9px]">
                     {totalModules} {totalModules === 1 ? "модуль" : totalModules >= 2 && totalModules <= 4 ? "модуля" : "модулей"}
                   </Badge>
-                  <Badge variant="outline" className="text-[9px]">
-                    {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
-                  </Badge>
+                  {totalLessons > 0 || t.children.length > 0 ? (
+                    <Badge variant="outline" className="text-[9px]">
+                      {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
+                    </Badge>
+                  ) : null}
                   <Badge variant="outline" className={cn("text-[9px]", hasRules ? "text-blue-600 border-blue-300" : "text-muted-foreground")}>
-                    {hasRules ? "Гранулярные правила настроены" : "Полный доступ через продукт"}
+                    {hasRules ? "Ограничение доступа настроено" : "Полный доступ"}
                   </Badge>
                 </div>
               </div>
@@ -474,9 +472,13 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
                       {child.public_id && (
                         <span className="text-[10px] font-mono text-muted-foreground">{child.public_id}</span>
                       )}
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {countTreeLessons(child)} {countTreeLessons(child) === 1 ? "урок" : countTreeLessons(child) >= 2 && countTreeLessons(child) <= 4 ? "урока" : "уроков"}
-                      </span>
+                      {countTreeLessons(child) > 0 ? (
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {countTreeLessons(child)} {countTreeLessons(child) === 1 ? "урок" : countTreeLessons(child) >= 2 && countTreeLessons(child) <= 4 ? "урока" : "уроков"}
+                        </span>
+                      ) : child.children.length > 0 ? null : (
+                        <span className="text-[10px] text-muted-foreground shrink-0">—</span>
+                      )}
                       {!child.is_active && (
                         <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
                       )}
@@ -671,7 +673,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   <Shield className="h-3.5 w-3.5" />
-                  <span>Правила гранулярности доступа</span>
+                  <span>Ограничение доступа внутри тренинга</span>
                   <Badge variant="outline" className="text-[9px]">{contentRules.length}</Badge>
                 </div>
                 {contentRules.length === 0 ? (
@@ -742,7 +744,6 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
                       <div key={t.id} className="flex items-center gap-2 text-[11px] text-muted-foreground px-2 py-1 rounded-md bg-muted/30">
                         <span className="font-medium">{t.title}</span>
                         {t.public_id && <span className="font-mono text-[9px]">{t.public_id}</span>}
-                        <Badge variant="outline" className="text-[9px]">{d.binding_source}</Badge>
                          {d.legacy_module_access_count > 0 && (
                           <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300">
                             старые настройки: {d.legacy_module_access_count}

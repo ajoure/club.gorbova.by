@@ -544,6 +544,85 @@ export function useProductTrainings(productId?: string) {
     onError: () => toast.error("Ошибка перепривязки тренинга"),
   });
 
+  // Legacy cleanup: preview
+  const getLegacyCleanupPreview = async (rootId: string) => {
+    const descendantIds = await getAllDescendantIds(rootId);
+    const allIds = [rootId, ...descendantIds];
+
+    const { data: legacyRows, error } = await supabase
+      .from("module_access")
+      .select("id, module_id")
+      .in("module_id", allIds);
+    if (error) throw error;
+
+    return {
+      root_id: rootId,
+      all_tree_ids: allIds,
+      descendant_count: descendantIds.length,
+      legacy_rows: legacyRows || [],
+      total_count: legacyRows?.length || 0,
+      sample_ids: (legacyRows || []).slice(0, 10).map(r => r.id),
+    };
+  };
+
+  // Legacy cleanup: execute (uses confirmed set from preview)
+  const cleanupLegacyAccess = useMutation({
+    mutationFn: async ({ rootId, confirmedModuleIds }: { rootId: string; confirmedModuleIds: string[] }) => {
+      // Delete only within confirmed tree
+      const { data: deleted, error } = await supabase
+        .from("module_access")
+        .delete()
+        .in("module_id", confirmedModuleIds)
+        .select("id");
+      if (error) throw error;
+
+      // Post-check
+      const { data: remaining } = await supabase
+        .from("module_access")
+        .select("id", { count: "exact", head: true })
+        .in("module_id", confirmedModuleIds);
+
+      const remainingCount = remaining ? 1 : 0; // head query — if data returned means still exists
+
+      // Post-check with count
+      const { count: postCheckCount } = await supabase
+        .from("module_access")
+        .select("id", { count: "exact", head: true })
+        .in("module_id", confirmedModuleIds);
+
+      // Audit
+      await supabase.from("audit_logs").insert({
+        action: "training.legacy_cleanup.executed",
+        actor_type: "admin",
+        actor_label: "legacy_cleanup",
+        meta: {
+          root_id: rootId,
+          confirmed_module_ids_count: confirmedModuleIds.length,
+          deleted_count: deleted?.length || 0,
+          post_check_remaining: postCheckCount || 0,
+          sample_deleted_ids: (deleted || []).slice(0, 10).map(r => r.id),
+        },
+      } as any);
+
+      return {
+        deleted_count: deleted?.length || 0,
+        post_check_remaining: postCheckCount || 0,
+        root_id: rootId,
+        descendants_count: confirmedModuleIds.length - 1,
+      };
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: [QUERY_KEY] });
+      queryClient.invalidateQueries({ queryKey: ["module-legacy-access-count"] });
+      if (result.post_check_remaining === 0) {
+        toast.success(`Старые настройки очищены: удалено ${result.deleted_count} записей`);
+      } else {
+        toast.warning(`Удалено ${result.deleted_count} записей, но осталось ${result.post_check_remaining}. Обратитесь к разработчику.`);
+      }
+    },
+    onError: () => toast.error("Ошибка очистки старых настроек"),
+  });
+
   return {
     trainings: data?.trainings || [],
     diagnostics: data?.diagnostics || {},
@@ -553,6 +632,9 @@ export function useProductTrainings(productId?: string) {
     rebindTraining: rebindTraining.mutateAsync,
     getRebindPreview,
     getUnbindPreview,
+    getLegacyCleanupPreview,
+    cleanupLegacyAccess: cleanupLegacyAccess.mutateAsync,
+    isCleaningLegacy: cleanupLegacyAccess.isPending,
     isBinding: bindTraining.isPending,
   };
 }
