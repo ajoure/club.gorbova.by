@@ -8,6 +8,7 @@ interface ContainerModule {
   id: string;
   slug: string;
   menu_section_key: string;
+  product_id?: string | null;
 }
 
 interface LessonsBySectionResult {
