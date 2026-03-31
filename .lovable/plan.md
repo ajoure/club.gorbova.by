@@ -1,6 +1,6 @@
 # PATCH v23.1.9A — Historical entitlement gap discovery + Canonical order selection + Pipeline verification
 
-## Статус: ВЫПОЛНЕН (discovery only, без execute). Правки 1-10 применены.
+## Статус: ВЫПОЛНЕН (discovery only, без execute). Правки 1-10 применены. v23.1.9A.1-final правки применены.
 
 ## Цель
 
@@ -159,9 +159,17 @@ Gap разделён на две независимые группы:
 - Если `date_spread = 0` и `distinct_tariffs <= 1` → одна логическая покупка.
 - Если `date_spread > 60 дней` → возможно разные периоды (2024 vs 2025).
 
-#### 20 users с multi_different_periods
+#### 20 users с multi_different_periods — ПРАВИЛО БЛОКИРОВКИ
 
-Средний разброс дат: 96 дней. Вероятно: покупка в октябре-ноябре 2025 + повторная/доп в марте 2026. Нужна ручная проверка, включаются в DUPLICATE_CLEANUP_REVIEW (блокирующие).
+Средний разброс дат: 96 дней. Вероятно: покупка в октябре-ноябре 2025 + повторная/доп в марте 2026.
+
+**ЗАФИКСИРОВАННОЕ ПРАВИЛО**: 19 blocked — это только **order-based ambiguity**, а НЕ subscription-based blocker:
+- Если у пользователя есть active subscription → execute допустим
+- Even if historical orders are ambiguous → `expires_at` берётся из `sub.access_end_at`
+- 1 user из multi_different_periods с active subscription **уже включён в READY** (course_close_year = 55)
+- Оставшиеся **19** — это users БЕЗ active subscription, где order ambiguity реально блокирует
+
+Чтобы в будущем эти 19 не вернулись в blocked при наличии active subscription.
 
 #### Canonical для active sub users (64 users)
 
@@ -178,10 +186,10 @@ Gap разделён на две независимые группы:
 
 | Вопрос | Ответ |
 |---|---|
-| Можно ли делать backfill? | **Да частично**: 54 active sub users ready (expires_at из подписки) |
-| Что блокирует? | 20 users с multi_different_periods → DUPLICATE_CLEANUP_REVIEW (блокирующие) |
-| Ready users (active sub) | **54** |
-| В DUPLICATE_CLEANUP_REVIEW (блокирующие) | **20** (multi_different_periods) |
+| Можно ли делать backfill? | **Да частично**: **55** active sub users ready (expires_at из подписки) |
+| Что блокирует? | **19** users с multi_different_periods БЕЗ active sub → DUPLICATE_CLEANUP_REVIEW (блокирующие) |
+| Ready users (active sub) | **55** |
+| В DUPLICATE_CLEANUP_REVIEW (блокирующие) | **19** (multi_different_periods, order-based ambiguity only) |
 | DO_NOT_BACKFILL | **72** (no_sub_no_entitlement, бывшие покупатели) |
 
 ---
@@ -279,7 +287,7 @@ Gap разделён на две независимые группы:
 | ЦБ 2.0: Учет у ИП | sync_from_subscription | `sub.access_end_at` (= 2026-06-25) | Нет |
 | Бухгалтерия как бизнес | sync_from_subscription | `sub.access_end_at` | Нет |
 | Подоходный налог ИП | sync_from_subscription | `sub.access_end_at` (= 2026-06-25) | Нет |
-| ЗАКРОЙ ГОД | sync_from_subscription | `sub.access_end_at` (= 2026-03-31/04-01) | **Да** (20 users multi_different_periods) |
+| ЗАКРОЙ ГОД | sync_from_subscription | `sub.access_end_at` (= 2026-03-31/04-01) | **Да** (19 users multi_different_periods) |
 | Ценный бухгалтер 2.0 | fixed_from_order | `order.created_at + tariff.access_days` | **Да** (canonical selection done for 193/196) |
 
 ---
@@ -288,16 +296,32 @@ Gap разделён на две независимые группы:
 
 ### 1. READY_FOR_BACKFILL (user_id × product_id × canonical_order_id)
 
-| Продукт | Users | Mode | expires_at source | Блокирующие зависимости |
-|---|---|---|---|---|
-| Gorbova Club | **7** | sync_from_subscription | sub.access_end_at | Нет |
-| ЦБ 2 ступень | **26** | sync_from_subscription | 2026-08-30 | Нет |
-| ЦБ 2.0: Учет у ИП | **59** | sync_from_subscription | 2026-06-25 | Нет |
-| ЗАКРОЙ ГОД | **54** | sync_from_subscription | sub.access_end_at | Нет (sub-based, canonical order не нужен) |
-| Бухгалтерия как бизнес | **2** | sync_from_subscription | sub.access_end_at | Нет |
-| Ценный бухгалтер 2.0 | **193** | fixed_from_order | order.created_at + access_days | Canonical order определён |
-| Подоходный налог ИП | **8** | sync_from_subscription | 2026-06-25 | Нет |
-| **Итого** | **349** | | | |
+**Итоговые числа:**
+
+- **sub-based READY = 149**
+- **order-based READY (CB20) = 124**
+- **total READY = 273**
+
+**Execute split:**
+
+- **INSERT = 269**
+- **UPDATE = 4**
+- **TOTAL EXECUTE = 273**
+
+| Продукт | product_code | Users | insert_count | update_count | total_execute | Mode | expires_at source | Блокирующие зависимости |
+|---|---|---|---|---|---|---|---|---|
+| ЦБ 2.0: Учет у ИП | cb_module_ip | **59** | 59 | 0 | 59 | sync_from_subscription | sub.access_end_at (2026-06-25) | Нет |
+| ЗАКРОЙ ГОД | course_close_year | **55** | 55 | 0 | 55 | sync_from_subscription | sub.access_end_at | Нет |
+| Ценный бухгалтер 2.0 | cb20 | **124** | 124 | 0 | 124 | fixed_from_order | order.created_at + access_days | Canonical order определён |
+| ЦБ 2 ступень | prd_0d01a2fdc477 | **18** | 18 | 0 | 18 | sync_from_subscription | sub.access_end_at (2026-08-30) | Нет |
+| Подоходный налог ИП | 1769009596189-398a | **8** | 8 | 0 | 8 | sync_from_subscription | sub.access_end_at (2026-06-25) | Нет |
+| Gorbova Club | club | **7** | 4 | 3 | 7 | sync_from_subscription | sub.access_end_at | Нет |
+| Бухгалтерия как бизнес | buh_business | **2** | 1 | 1 | 2 | sync_from_subscription | sub.access_end_at | Нет |
+| **Итого** | | **273** | **269** | **4** | **273** | | | |
+
+**UPDATE cases (4 шт):**
+- **club**: 3 users с expired entitlement (expires_at < access_end_at) → UPDATE status='active', expires_at=access_end_at
+- **buh_business**: 1 user с expired entitlement → UPDATE status='active', expires_at=access_end_at
 
 **Для ЦБ 2.0**: в READY_FOR_BACKFILL включены ТОЛЬКО users, где canonical order выбран из `base_tariff_purchase` (заказ с `tariff_id IS NOT NULL`). `module_child_purchase` и `module_only_standalone` не включаются.
 
@@ -307,7 +331,42 @@ Gap разделён на две независимые группы:
 |---|---|---|
 | Ценный бухгалтер 2.0 (без tariff_id) | **3** | `missing_tariff` — нет ни одного заказа с tariff_id, невозможно вычислить access_days |
 
-### 3. DO_NOT_BACKFILL (~156 users)
+**Это единственная policy-категория.** Всё остальное вынесено в отдельные категории блокировки (см. ниже).
+
+### 3. BLOCKED_BY_MISSING_USER_ID (69 profiles)
+
+| Продукт | Profiles | Причина |
+|---|---|---|
+| Ценный бухгалтер 2.0 (CB20) | **69** | Profile без привязки к auth.users. `entitlements.user_id` обязателен → INSERT невозможен |
+
+**Правила:**
+- В v23.1.9B эти записи **не backfill-ятся** (entitlements.user_id обязателен)
+- Сохраняются как отложенный **pending-backfill** хвост
+- После появления `user_id` (auto-claim / first-login) — отдельный follow-up механизм выдачи доступа
+- **Source of truth для этих людей уже есть** (orders, tariffs, canonical selection)
+- **Доступ не теряется** — выдача entitlements откладывается до момента появления `user_id`
+- Каждый deferred row должен сохранять `deferred_recovery_key` = `profile_id + product_id + canonical_order_id` — это основа для v23.1.9D
+
+**Row-level source key для deferred хвоста:**
+
+| Поле | Описание |
+|---|---|
+| `deferred_recovery_key` | `profile_id + product_id + canonical_order_id` |
+| Назначение | Уникальный ключ для последующего auto-claim в v23.1.9D |
+
+### 4. BLOCKED_BY_LEGACY_CODE_MISMATCH (8 users)
+
+| Продукт | Users | Причина |
+|---|---|---|
+| ЦБ 2 ступень | **8** | legacy entitlement по `cb_2_step` при active subscription по `prd_0d01a2fdc477` |
+
+**Stop-rule для v23.1.9B:**
+- Эти 8 строк должны иметь **только** `resolved_execute_decision = skip_legacy_code_mismatch`
+- **Никакого INSERT** второго active entitlement по тому же `product_id`
+- **Никакого auto-rename** `cb_2_step` → `prd_0d01a2fdc477` в этом патче
+- Решение — отдельный cleanup/normalization patch **v23.1.9C**
+
+### 5. DO_NOT_BACKFILL (~156 users)
 
 | Продукт | Users | Причина |
 |---|---|---|
@@ -320,15 +379,16 @@ Gap разделён на две независимые группы:
 | Подоходный налог с физлиц | 0 | Нет заказов |
 | **Итого** | **~155** | |
 
-### 4. DUPLICATE_CLEANUP_REVIEW
+### 6. DUPLICATE_CLEANUP_REVIEW
 
 #### Блокирующие (мешают execute)
 
 | Продукт | Users | problem_type | blocked_backfill_reason | Описание |
 |---|---|---|---|---|
-| ЗАКРОЙ ГОД | 20 | `multi_different_periods` | `ambiguous_canonical_order` | Заказы в разные периоды (avg spread 96d), нужна ручная классификация |
-| ЦБ 2.0 | 3 | `missing_tariff` | `missing_tariff` | Нет ни одного заказа с tariff_id |
-| **Итого блокирующих** | **23** | | | |
+| ЗАКРОЙ ГОД | **19** | `multi_different_periods` | `ambiguous_canonical_order` | Заказы в разные периоды (order-based ambiguity only), users БЕЗ active subscription |
+| **Итого блокирующих** | **19** | | | |
+
+**Важно**: CB20 `missing_tariff` (3 users) теперь в отдельной категории NEED_POLICY_DECISION, не здесь.
 
 #### Classified duplicates (resolved, НЕ блокируют execute)
 
@@ -338,7 +398,7 @@ Gap разделён на две независимые группы:
 | ЦБ 2.0 (diff_tariffs upgrade) | 5 | `possible_upgrade` | Canonical = max access_days, НЕ блокирует |
 | ЦБ 2.0 (mixed tariff+no-tariff) | 67 | `mixed_base_and_module_purchases` | Canonical = best tariff order, НЕ блокирует |
 
-### 5. CANONICAL_ORDER_CANDIDATES
+### 7. CANONICAL_ORDER_CANDIDATES
 
 #### Ценный бухгалтер 2.0 (193 canonical)
 
@@ -355,9 +415,9 @@ Gap разделён на две независимые группы:
 | Продукт | Users | canonical_reason | source |
 |---|---|---|---|
 | Gorbova Club | 7 | sync_from_active_subscription | sub.access_end_at |
-| ЦБ 2 ступень | 26 | sync_from_active_subscription | sub.access_end_at = 2026-08-30 |
+| ЦБ 2 ступень | 18 | sync_from_active_subscription | sub.access_end_at = 2026-08-30 |
 | ЦБ 2.0: Учет у ИП | 59 | sync_from_active_subscription | sub.access_end_at = 2026-06-25 |
-| ЗАКРОЙ ГОД | 54 | sync_from_active_subscription | sub.access_end_at |
+| ЗАКРОЙ ГОД | 55 | sync_from_active_subscription | sub.access_end_at |
 | Бухгалтерия как бизнес | 2 | sync_from_active_subscription | sub.access_end_at |
 | Подоходный налог ИП | 8 | sync_from_active_subscription | sub.access_end_at = 2026-06-25 |
 
@@ -372,12 +432,14 @@ Matching by: same `user_id + product_code`.
 | Продукт | product_code | active_subs_without_ent |
 |---|---|---|
 | ЦБ 2.0: Учет у ИП | cb_module_ip | 59 |
-| ЗАКРОЙ ГОД | course_close_year | 54 |
+| ЗАКРОЙ ГОД | course_close_year | 55 |
 | ЦБ 2 ступень | prd_0d01a2fdc477 | 26 |
 | Подоходный налог ИП | 1769009596189-398a | 8 |
 | Gorbova Club | club | 7 |
 | Бухгалтерия как бизнес | buh_business | 2 |
-| **Итого** | | **156** |
+| **Итого** | | **157** |
+
+*Примечание: из 26 по prd_0d01a2fdc477 в READY включены 18 (8 исключены как BLOCKED_BY_LEGACY_CODE_MISMATCH)*
 
 ### Table B: existing_active_entitlements_without_matching_active_subscription
 
@@ -395,32 +457,82 @@ Matching by: same `user_id + product_code`.
 
 **Обратный рассинхрон НЕ входит в scope v23.1.9B execute.**
 
-### Table C: READY_FOR_BACKFILL — expected counts (предварительная оценка)
+### Table C: conflict_preview_on_unique_keys (фактические данные из БД)
 
-| Продукт | expected_insert_or_update_preview | expected_SKIP | Примечание |
-|---|---|---|---|
-| ЦБ 2.0: Учет у ИП | 59 | 0 | Предварительная оценка; финальное split INSERT/UPDATE — по результатам conflict_preview |
-| ЗАКРОЙ ГОД | 54 | 0 | Предварительная оценка |
-| ЦБ 2 ступень | 26 | 0 | Предварительная оценка |
-| Подоходный налог ИП | 8 | 0 | Предварительная оценка |
-| Gorbova Club | 7 | 0 | Предварительная оценка |
-| Бухгалтерия как бизнес | 2 | 0 | Предварительная оценка |
-| Ценный бухгалтер 2.0 | 193 | 0 | Предварительная оценка (order-based) |
-| **Итого** | **349** | **0** | Точный split INSERT/UPDATE определяется conflict_preview |
+#### Subscription-based
+
+| product_code | INSERT | UPDATE | SKIP | product_id_mismatch | order_id_conflict |
+|---|---|---|---|---|---|
+| cb_module_ip | 59 | 0 | 0 | 0 | 0 |
+| course_close_year | 55 | 0 | 0 | 0 | 0 |
+| prd_0d01a2fdc477 | 18 | 0 | 0 | 0 | 0 |
+| 1769009596189-398a | 8 | 0 | 0 | 0 | 0 |
+| club | 4 | 3 | 0 | 0 | 0 |
+| buh_business | 1 | 1 | 0 | 0 | 0 |
+| **Итого sub-based** | **145** | **4** | **0** | **0** | **0** |
+
+#### Order-based CB20
+
+| product_code | INSERT | SKIP (no user_id) | SKIP (no tariff) | product_id_mismatch | order_id_conflict |
+|---|---|---|---|---|---|
+| cb20 | **124** | **69** | **3** | 0 | 0 |
+
+**Нет ни одного product_id mismatch. Нет ни одного order_id conflict.**
+
+### Table D: Row-level preview — обязательные поля
+
+Row-level preview для v23.1.9B должен содержать следующие поля:
+
+| Поле | Описание |
+|---|---|
+| `has_user_id` | bool — есть ли user_id у profile |
+| `profile_id` | ID профиля |
+| `user_id` | ID auth user (null для BLOCKED_BY_MISSING_USER_ID) |
+| `product_id` | ID продукта |
+| `product_code` | Код продукта для upsert |
+| `existing_entitlement_product_code` | Код продукта существующего entitlement (для cb_2_step mismatch detection) |
+| `canonical_order_id` | ID канонического заказа |
+| `resolved_execute_decision` | `insert` / `update` / `skip_missing_user_id` / `skip_legacy_code_mismatch` / `skip_missing_tariff` |
+| `deferred_recovery_key` | `profile_id + product_id + canonical_order_id` (для BLOCKED_BY_MISSING_USER_ID) |
+
+### Table E: execute_candidates_summary_by_action_and_product
+
+**Обязательный pre-execute deliverable. Без этой таблицы execute не утверждать.**
+
+| product_code | resolved_execute_decision | row_count |
+|---|---|---|
+| cb_module_ip | insert | 59 |
+| course_close_year | insert | 55 |
+| cb20 | insert | 124 |
+| prd_0d01a2fdc477 | insert | 18 |
+| 1769009596189-398a | insert | 8 |
+| club | insert | 4 |
+| club | update | 3 |
+| buh_business | insert | 1 |
+| buh_business | update | 1 |
+| cb20 | skip_missing_user_id | 69 |
+| cb20 | skip_missing_tariff | 3 |
+| prd_0d01a2fdc477 | skip_legacy_code_mismatch | 8 |
+| **TOTAL insert** | | **269** |
+| **TOTAL update** | | **4** |
+| **TOTAL skip_missing_user_id** | | **69** |
+| **TOTAL skip_legacy_code_mismatch** | | **8** |
+| **TOTAL skip_missing_tariff** | | **3** |
+| **GRAND TOTAL** | | **353** |
+
+**5-way split verification**: 269 + 4 + 69 + 8 + 3 = **353** (все row-level строки)
 
 ---
 
-## Сводный вывод по продуктам
+## Сводный вывод по категориям
 
-| Продукт | Статус | Ready users | Blocked | Причина блокировки |
-|---|---|---|---|---|
-| Gorbova Club | **ready now** | 7 | 0 | — |
-| ЦБ 2 ступень | **ready now** | 26 | 0 | — |
-| ЦБ 2.0: Учет у ИП | **ready now** | 59 | 0 | — |
-| Бухгалтерия как бизнес | **ready now** | 2 | 0 | — |
-| Подоходный налог ИП | **ready now** | 8 | 0 | — |
-| ЗАКРОЙ ГОД | **ready partially** | 54 (sub-based) | 20 (multi_different_periods) | ambiguous_canonical_order |
-| Ценный бухгалтер 2.0 | **ready partially** | 193 (with tariff) | 3 (no tariff) | missing_tariff |
+| Категория | Count |
+|---|---|
+| **READY_FOR_BACKFILL** | **273** (149 sub-based + 124 order-based CB20) |
+| **NEED_POLICY_DECISION** | **3** (CB20 без tariff_id) |
+| **BLOCKED_BY_MISSING_USER_ID** | **69** (CB20 profiles без auth user) |
+| **BLOCKED_BY_LEGACY_CODE_MISMATCH** | **8** (ЦБ 2 ступень cb_2_step) |
+| **DUPLICATE_CLEANUP_REVIEW (blocking)** | **19** (ЗАКРОЙ ГОД multi_different_periods) |
 
 ---
 
@@ -428,9 +540,12 @@ Matching by: same `user_id + product_code`.
 
 | Guard | Правило |
 |---|---|
+| `execute_candidates_summary_by_action_and_product` не собрана → execute запрещён | **Обязательно** |
+| Row-level preview не содержит 5-way split → execute запрещён | **Обязательно** |
+| Сумма row-level строк ≠ summary counts → STOP | **Обязательно** |
 | `canonical_order_candidates` не утверждена → execute запрещён | Обязательно |
 | `DUPLICATE_CLEANUP_REVIEW` (блокирующие) не утверждён → execute запрещён | Обязательно |
-| По продукту не завершена классификация дублей → backfill запрещён | Для ЗАКРОЙ ГОД (20 users) |
+| По продукту не завершена классификация дублей → backfill запрещён | Для ЗАКРОЙ ГОД (19 users) |
 | ROW_COUNT per product ≠ expected → STOP | Обязательно |
 | Не трогать active entitlement с expires_at > computed | Обязательно |
 | Не сокращать существующий expires_at | Обязательно |
@@ -439,6 +554,20 @@ Matching by: same `user_id + product_code`.
 | Pre-execute dry-run: проверить нет ли кейсов где `user_id + product_code` уже связан с другим `product_id` или `order_id` | Обязательно |
 | `conflict_preview_on_unique_keys` должен быть утверждён до execute | Обязательно |
 | Все записи: `meta.source = 'historical_backfill'`, `meta.source_patch = 'v23.1.9B'` | Обязательно |
+| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: 8 строк = только `skip_legacy_code_mismatch` | **Обязательно** |
+| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: никакого INSERT второго active entitlement по тому же product_id | **Обязательно** |
+| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: никакого auto-rename в этом патче | **Обязательно** |
+
+### 5-way split stop-guard
+
+**Execute запрещён**, если row-level preview не разделяет строки минимум на:
+- `insert` — ожидаемый count: **269**
+- `update` — ожидаемый count: **4**
+- `skip_missing_user_id` — ожидаемый count: **69**
+- `skip_legacy_code_mismatch` — ожидаемый count: **8**
+- `skip_missing_tariff` — ожидаемый count: **3**
+
+Сумма всех row-level строк должна сходиться с итоговыми summary counts: **353**.
 
 ### Upsert key — зафиксированные правила
 
@@ -457,41 +586,17 @@ Matching by: same `user_id + product_code`.
 
 ---
 
-## Обязательный pre-execute deliverable: conflict_preview_on_unique_keys
-
-Перед утверждением v23.1.9B необходимо собрать таблицу:
-
-| user_id | product_code | existing_entitlement_id | existing_status | existing_expires_at | planned_action (insert / update / skip) |
-|---|---|---|---|---|---|
-
-Без этой таблицы v23.1.9B не запускать.
-
-**Следующий шаг: v23.1.9A.1-final — execute preview / unique-key conflict preview, и только потом утверждать v23.1.9B.**
-
----
-
-## Что НЕ выполнено в v23.1.9A
-
-- ❌ Архивирование
-- ❌ Удаление
-- ❌ Merge
-- ❌ Rewrite orders/subscriptions
-- ❌ Entitlement backfill
-- ❌ Изменение кода
-- ❌ Изменение access_rules, grant-access-for-order, training read/write path
-
-**Только**: discovery, classification, canonical selection.
-
----
-
-## Последовательность патчей
+## Последовательность патчей (финальная)
 
 | Патч | Scope | Статус |
 |---|---|---|
 | **v23.1.9A** | Discovery + classification + canonical selection | **ВЫПОЛНЕН** |
-| **v23.1.9A.1-final** | Execute preview / unique-key conflict preview | **Следующий шаг** |
-| **v23.1.9B** | Execute backfill только по утверждённому canonical_order_candidates + conflict_preview | Ожидает v23.1.9A.1-final |
+| **v23.1.9A.1-final** | Row-level conflict preview с новыми категориями, 5-way split, stop-guards | **ВЫПОЛНЕН** |
+| **v23.1.9B** | Execute только по `resolved_execute_decision` in (`insert`, `update`) — 273 rows | Ожидает final preview |
+| **v23.1.9C** | Cleanup legacy code mismatch (`cb_2_step` → `prd_0d01a2fdc477` normalization) — 8 users | Планируется |
+| **v23.1.9D** | **Deferred entitlement issuance after profile→user claim** — 69 CB20 profiles. Source of truth уже есть, доступ не теряется, выдача откладывается до появления `user_id`. Событие = появление `user_id` у архивного профиля | Планируется |
 | **v23.1.10** | Fix root cause — creation paths должны создавать entitlements | Планируется |
+| **v23.1.11** | **Product/training code normalization + admin-readable naming.** Scope: audit всех `product_code`, `training_modules.slug/code/title`, legacy aliases. Таблица соответствий: `technical_code` → human-readable admin name → product → training. **Правило: human-readable naming = display/admin layer only. Technical codes НЕ переписывать без отдельного migration/compat plan.** Нормализация имён не должна менять SoT-коды в runtime без отдельного mapping-layer | Планируется |
 
 ---
 
@@ -499,7 +604,7 @@ Matching by: same `user_id + product_code`.
 
 | Компонент | Изменение |
 |---|---|
-| `.lovable/plan.md` | Полный discovery report + 10 правок |
+| `.lovable/plan.md` | Полный discovery report + все правки v23.1.9A + v23.1.9A.1-final |
 
 Код и данные **НЕ менялись**.
 
@@ -511,14 +616,24 @@ Matching by: same `user_id + product_code`.
 2. ✅ Subscription-based gap (156) и order-based gap (193) разделены явно
 3. ✅ Upsert key зафиксирован как `ON CONFLICT (user_id, product_code)` + обязательный pre-execute dry-run
 4. ✅ `source_snapshot_type` (`base_tariff_purchase`) отделён от `import_source` (`patch4_import`)
-5. ✅ DUPLICATE_CLEANUP_REVIEW разделён на блокирующие (23) и classified resolved (91)
+5. ✅ DUPLICATE_CLEANUP_REVIEW разделён на блокирующие (19) и classified resolved (91)
 6. ✅ ЦБ 2 ступень — product_code drift anomaly (`cb_2_step` vs `prd_0d01a2fdc477`) вынесена в root cause
 7. ✅ Table B — добавлена колонка `mismatch_type`
 8. ✅ Gorbova Club: gap = 7 (не 148), 3 обратных entitlement не трогаем в v23.1.9B
-9. ✅ Table C — формулировка `expected_insert_or_update_preview` (предварительная оценка, не guarantee)
+9. ✅ Table C — conflict preview с фактическими INSERT/UPDATE/SKIP из БД
 10. ✅ Добавлен обязательный deliverable `conflict_preview_on_unique_keys`
 11. ✅ Headline исправлен: "creation paths системно не покрывают все случаи matching entitlements"
-12. ✅ Следующий шаг = v23.1.9A.1-final (conflict preview), не сразу v23.1.9B execute
+12. ✅ Следующий шаг = v23.1.9B execute (после final preview)
 13. ✅ Gap counting ключ зафиксирован: matching by same `user_id + product_code`
-14. ✅ Expected counts пересчитаны: 349 вместо 595
+14. ✅ READY = 273 (sub-based 149 + order-based 124), INSERT = 269, UPDATE = 4
 15. ✅ В v23.1.9A не выполнено ни одного write-действия
+16. ✅ ЗАКРОЙ ГОД: 55 ready (1 user moved из blocked), правило зафиксировано: active sub → execute допустим
+17. ✅ BLOCKED_BY_MISSING_USER_ID = 69 (отдельная категория, не NEED_POLICY)
+18. ✅ BLOCKED_BY_LEGACY_CODE_MISMATCH = 8 (отдельная категория) + stop-rule для v23.1.9B
+19. ✅ NEED_POLICY_DECISION = 3 (только CB20 без tariff_id)
+20. ✅ v23.1.9D = deferred entitlement issuance after profile→user claim (не просто "deferred backfill")
+21. ✅ v23.1.11 = normalization + readable naming с правилом: technical codes не переписывать без migration/compat plan
+22. ✅ Row-level preview: 9 обязательных полей включая `product_id`, `product_code`, `existing_entitlement_product_code`, `canonical_order_id`, `deferred_recovery_key`
+23. ✅ READY_FOR_BACKFILL с action split: `insert_count` / `update_count` / `total_execute` по каждому продукту
+24. ✅ `execute_candidates_summary_by_action_and_product` — обязательный pre-execute deliverable (Table E)
+25. ✅ 5-way split stop-guard с фактическими count: 269 + 4 + 69 + 8 + 3 = 353
