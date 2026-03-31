@@ -1,81 +1,63 @@
-# Не меняй сейчас архитектуру селектора и не уходи в замену одного компонента на другой как “оптимизацию”.
+# PATCH v23.1.6 — Training/Product access alignment to product SoT
 
-Текущий scope остаётся прежним:
+## Статус: ВЫПОЛНЕН
 
-1. сначала доведи до рабочего состояния текущий selector в тренингах;
+## Архитектурное решение
 
-2. почини scroll;
+- **Канонический SoT** = `access_rules` → runtime → `entitlements`
+- `module_access` больше не используется как write-path для модулей с `product_id`
+- Временно сохраняется только как переходный read/write path для модулей без `product_id`
+- Read-path из PATCH v23.1.5 (entitlements) не переписан — сделан реально рабочим через заполнение `product_id`
 
-3. покажи визуальный proof, что список реально прокручивается, ничего не обрезается и все продукты доступны для выбора.
+## Выполненные шаги
 
-Важно:
+### Шаг 1: Dry-run discovery
+- 10 модулей с записями в module_access
+- Все 10 имеют однозначный маппинг (product_count = 1)
+- 0 конфликтных модулей
 
-вопрос переиспользования одного и того же компонента/одной и той же функции между Access Rules и тренингами я не снимаю, но это следующий патч после закрытия текущего UI-бага.
+### Шаг 2: Data patch — product_id проставлен
+- 10 модулей получили product_id (идемпотентный UPDATE)
+- 6 модулей → Gorbova Club
+- 4 модуля → индивидуальные продукты
+- 70 модулей без module_access → product_id = NULL (legacy)
 
-То есть сейчас:
+### Шаг 3: Readonly UI блок
+- `ProductAccessInfoBlock` — новый компонент:
+  - Бейдж «Новый контур доступа»
+  - Название продукта
+  - Кнопка «Открыть продукт» → `/admin/products-v2/{id}`
+  - Пояснение про вкладку «Доступы»
+- Используется в:
+  - `AdminTrainingModules.tsx` (ModuleAccessForm — edit dialog)
+  - `ContentCreationWizard.tsx` (access step для lesson и module flows)
 
-- не делать рефакторинг ради рефакторинга;
+### Шаг 4: Write-path guard (все 4 точки)
+1. `useTrainingModules.tsx` — createModule/updateModule: skip module_access if effective product_id
+2. `ContentCreationWizard.tsx` — handleSubmitLesson: fetch container.product_id, skip if set
+3. `ContentCreationWizard.tsx` — handleSaveAccess: fetch module.product_id, skip if set
+4. `ContentSectionSelector.tsx` — copy access from container: skip if container.product_id
 
-- не подменять задачу;
+### Шаг 5: training-copy-move guard
+- `training-copy-move/index.ts` — skip module_access copy if source.product_id
+- product_id сохраняется при копировании через `...rest` spread
 
-- сначала закрыть баг со scroll и dropdown в текущем месте использования;
+### Шаг 6: Read-path — без изменений
+- useTrainingModules, useSidebarModules, useContainerLessons — entitlement read-path уже был
 
-- после этого отдельно вернуться к сквозному переиспользованию одного механизма/компонента для продукта и тренинга.
+## Файлы изменены
 
-&nbsp;
+| Файл | Изменение |
+|---|---|
+| `ProductAccessInfoBlock.tsx` | Новый компонент — readonly info-блок |
+| `AdminTrainingModules.tsx` | Import + ModuleAccessForm с product_id guard |
+| `ContentCreationWizard.tsx` | Import + UI readonly blocks + write-path guards |
+| `ContentSectionSelector.tsx` | Select product_id + skip module_access copy |
+| `useTrainingModules.tsx` | createModule/updateModule write-path guards |
+| `training-copy-move/index.ts` | Skip module_access copy if product_id |
 
-План: Заменить CompactAccessSelector на ProductTariffAccessSelector
+## Deferred (после v23.1.6)
 
-## Диагноз
-
-- `CompactAccessSelector` — popover-based dropdown, scroll не работает корректно (Radix Popover ограничивает высоту).
-- `ProductTariffAccessSelector` — уже существует в проекте, **не используется нигде**, но имеет рабочий scroll (`max-h-[50vh] overflow-y-auto`), Collapsible-аккордеон, quick-selector (Все/Выборочно/Нет).
-- Оба компонента имеют **идентичный интерфейс**: `selectedTariffIds`, `onChange`, `products`, `className`.
-
-## Что делаем
-
-### Шаг 1: Заменить импорт в двух файлах
-
-`**src/pages/admin/AdminTrainingModules.tsx**` (строка 65):
-
-```diff
-- import { CompactAccessSelector } from "@/components/admin/trainings/CompactAccessSelector";
-+ import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
-```
-
-JSX: `<CompactAccessSelector` → `<ProductTariffAccessSelector` (props идентичны).
-
-`**src/components/admin/trainings/ContentCreationWizard.tsx**` (строка 32):
-
-```diff
-- import { CompactAccessSelector } from "./CompactAccessSelector";
-+ import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
-```
-
-JSX: замена в 2 местах (строки ~908, ~1011).
-
-### Шаг 2: Удалить CompactAccessSelector.tsx
-
-Файл `src/components/admin/trainings/CompactAccessSelector.tsx` больше не используется — удалить.
-
-## Файлы
-
-
-| Файл                        | Изменение                                        |
-| --------------------------- | ------------------------------------------------ |
-| `AdminTrainingModules.tsx`  | Импорт + JSX → `ProductTariffAccessSelector`     |
-| `ContentCreationWizard.tsx` | Импорт + JSX × 2 → `ProductTariffAccessSelector` |
-| `CompactAccessSelector.tsx` | Удалить                                          |
-
-
-## Почему это безопасно
-
-- Интерфейс props идентичен: `selectedTariffIds`, `onChange`, `products`, `className`.
-- `ProductTariffAccessSelector` уже имеет рабочий scroll и поиск не нужен — список inline с аккордеоном, а не popover.
-- Write-path не меняется: оба компонента просто передают `tariffIds` наверх, запись в `module_access` происходит в родительских компонентах.
-
-## DoD
-
-1. Dropdown «Доступ к контенту» скроллится нормально
-2. Все продукты видны и доступны для выбора
-3. Write-path не изменён (всё ещё `module_access`)
+- Миграция оставшихся 70 модулей без product_id
+- Постепенное сворачивание legacy module_access write-path
+- Полное удаление прямой записи в module_access
