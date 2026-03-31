@@ -48,6 +48,13 @@ export function CompactAccessSelector({
     [products]
   );
 
+  // Filter by search query
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return productsWithTariffs;
+    const q = searchQuery.toLowerCase();
+    return productsWithTariffs.filter((p) => p.name.toLowerCase().includes(q));
+  }, [productsWithTariffs, searchQuery]);
+
   // Get product selection state
   const getProductState = (product: Product): ProductState => {
     const selectedCount = product.tariffs.filter((t) =>
