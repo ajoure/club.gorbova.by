@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useActiveTrainingContentRules, resolveTrainingContentFilter, isModuleVisible as isModAllowed } from "@/hooks/useTrainingContentRules";
 import { useMemo } from "react";
 
 export interface SidebarModule {
@@ -36,6 +37,8 @@ export function useSidebarModules() {
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
+  const { data: tcRawData } = useActiveTrainingContentRules();
+  const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ["sidebar-modules", user?.id, isAdminUser],
@@ -144,12 +147,46 @@ export function useSidebarModules() {
 
   const modules = data || [];
 
-  // Group modules by exact section key (no parent mapping)
-  // Modules are displayed inside page tabs, not in sidebar dropdown
-  const modulesBySection = useMemo<ModulesBySection>(() => {
-    if (!modules.length) return {};
+  // PATCH B: Apply training_content filter for non-admins
+  const filteredModules = useMemo(() => {
+    if (isAdminUser || !tcData || !tcData.rules.length) return modules;
 
-    return modules.reduce((acc, module) => {
+    const parentProductMap = new Map<string, string>();
+    modules.forEach(m => {
+      if (m.product_id && !m.parent_module_id) {
+        parentProductMap.set(m.id, m.product_id);
+      }
+    });
+
+    return modules.filter(m => {
+      if (!m.has_access) return true; // Already no access, keep for lock display
+
+      const effectiveProductId = m.product_id ?? 
+        (m.parent_module_id ? parentProductMap.get(m.parent_module_id) : null) ?? null;
+
+      if (!effectiveProductId) return true;
+
+      // Find root training
+      const rootId = m.parent_module_id 
+        ? (modules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id)
+        : m.id;
+
+      const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds);
+      if (!filter || filter.mode === "full") return true;
+
+      // For root modules: keep visible (container)
+      if (!m.parent_module_id) return true;
+
+      // Child module: check allowlist
+      return isModAllowed(filter, m.id);
+    });
+  }, [modules, isAdminUser, tcData]);
+
+  // Group modules by exact section key
+  const modulesBySection = useMemo<ModulesBySection>(() => {
+    if (!filteredModules.length) return {};
+
+    return filteredModules.reduce((acc, module) => {
       const key = module.menu_section_key || "products";
       if (!acc[key]) {
         acc[key] = [];
@@ -157,7 +194,7 @@ export function useSidebarModules() {
       acc[key].push(module);
       return acc;
     }, {} as ModulesBySection);
-  }, [modules]);
+  }, [filteredModules]);
 
   return {
     modules,

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview } from "@/hooks/useProductTrainings";
+import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List, Pencil, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -291,42 +292,46 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>Привязать тренинг</DialogTitle>
           <DialogDescription>Выберите тренинг для привязки к продукту</DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-1 p-0.5 rounded-full bg-muted/40 border border-border/20 w-fit">
-          {([
-            { key: "free", label: `Свободные (${data?.free?.length || 0})` },
-            { key: "current", label: `Этого продукта (${data?.currentProduct?.length || 0})` },
-            { key: "all", label: "Все" },
-          ] as const).map(f => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                "px-3 py-1 rounded-full text-xs font-medium transition-all",
-                filter === f.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
+        {/* Sticky filters */}
+        <div className="flex-shrink-0 space-y-2">
+          <div className="flex gap-1 p-0.5 rounded-full bg-muted/40 border border-border/20 w-fit">
+            {([
+              { key: "free", label: `Свободные (${data?.free?.length || 0})` },
+              { key: "current", label: `Этого продукта (${data?.currentProduct?.length || 0})` },
+              { key: "all", label: "Все" },
+            ] as const).map(f => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={cn(
+                  "px-3 py-1 rounded-full text-xs font-medium transition-all",
+                  filter === f.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Поиск тренинга..."
+              className="pl-8 h-9"
+            />
+          </div>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Поиск тренинга..."
-            className="pl-8 h-9"
-          />
-        </div>
-
-        <div className="max-h-[300px] overflow-y-auto border rounded-md">
+        {/* Scrollable list */}
+        <div className="flex-1 min-h-0 max-h-[400px] overflow-y-auto border rounded-md">
           {filtered.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-8">
               {filter === "free" ? "Нет свободных тренингов" : "Ничего не найдено"}
@@ -342,7 +347,7 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                     onClick={() => !isCurrent && handleClick(m)}
                     disabled={binding || isCurrent}
                     className={cn(
-                      "w-full flex items-center gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
+                      "w-full flex items-start gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
                       isCurrent
                         ? "opacity-50 cursor-not-allowed"
                         : isOtherProduct
@@ -350,25 +355,27 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                           : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
-                    <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
-                    <span className="flex-1 min-w-0 truncate">{m.title}</span>
-                    {m.public_id && (
-                      <Badge variant="outline" className="text-[10px] font-mono shrink-0">{m.public_id}</Badge>
-                    )}
-                    {!m.is_active && (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">Неактивен</Badge>
-                    )}
-                    {isOtherProduct && (
-                      <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 shrink-0">
-                        Другой продукт → перепривязать
-                      </Badge>
-                    )}
-                    {isCurrent && (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">
-                        <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
-                        Уже привязан
-                      </Badge>
-                    )}
+                    <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                    <span className="flex-1 min-w-0 line-clamp-2 leading-snug">{m.title}</span>
+                    <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
+                      {m.public_id && (
+                        <Badge variant="outline" className="text-[10px] font-mono">{m.public_id}</Badge>
+                      )}
+                      {!m.is_active && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+                      )}
+                      {isOtherProduct && (
+                        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                          Другой продукт → перепривязать
+                        </Badge>
+                      )}
+                      {isCurrent && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                          Привязан
+                        </Badge>
+                      )}
+                    </div>
                   </button>
                 );
               })}
@@ -455,6 +462,7 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 // --- Main Block ---
 export function ProductLinkedTrainingsBlock({ productId }: Props) {
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
+  const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const [bindOpen, setBind] = useState(false);
   const [viewMode, setViewMode] = useState<"tree" | "matrix-summary" | "matrix-expanded">("tree");
 
@@ -623,18 +631,61 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
             </>
           )}
 
-          {/* Layer 2 placeholder — training_content rules (PATCH B) */}
+          {/* Training content rules summary */}
           {trainings.length > 0 && (
             <>
               <Separator className="my-4" />
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Shield className="h-3.5 w-3.5" />
-                <span>Правила гранулярности доступа к контенту</span>
-                <Badge variant="outline" className="text-[9px]">Не настроены</Badge>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <Shield className="h-3.5 w-3.5" />
+                  <span>Правила гранулярности доступа</span>
+                  <Badge variant="outline" className="text-[9px]">{contentRules.length}</Badge>
+                </div>
+                {contentRules.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Нет настроенных правил — покупатели получают полный доступ ко всем тренингам продукта.
+                    Настройте правила во вкладке «Правила доступа».
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {contentRules.map(rule => {
+                      const training = trainings.find(t => t.id === rule.target_ref);
+                      const cond = rule.conditions;
+                      const mCount = cond.allowed_module_ids?.length || 0;
+                      const lCount = cond.allowed_lesson_ids?.length || 0;
+                      return (
+                        <div
+                          key={rule.id}
+                          className={cn(
+                            "flex items-center gap-2 p-2 rounded-md border text-sm",
+                            rule.is_active ? "bg-muted/20" : "bg-muted/10 opacity-60"
+                          )}
+                        >
+                          <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                          <span className="flex-1 min-w-0 truncate text-xs font-medium">
+                            {training?.title || rule.target_label || rule.target_ref}
+                          </span>
+                          <Badge variant="outline" className="text-[9px] shrink-0">
+                            {rule.tariff_id ? "Тариф" : "Продукт"}
+                          </Badge>
+                          <Badge variant="outline" className={cn(
+                            "text-[9px] shrink-0",
+                            cond.access_mode === "partial" ? "text-amber-600 border-amber-300" : ""
+                          )}>
+                            {cond.access_mode === "full" ? "Полный" : `Частичный: ${mCount} мод. ${lCount} ур.`}
+                          </Badge>
+                          {!rule.is_active && (
+                            <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
+                              <EyeOff className="h-2.5 w-2.5 mr-0.5" />
+                              Неактивно
+                            </Badge>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Настройка частичного доступа к урокам и модулям по тарифам будет доступна в следующем обновлении.
-              </p>
             </>
           )}
 

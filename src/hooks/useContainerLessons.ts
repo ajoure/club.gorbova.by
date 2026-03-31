@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useActiveTrainingContentRules, resolveTrainingContentFilter, isLessonVisible as isLessonAllowed } from "@/hooks/useTrainingContentRules";
 import { LessonCardData } from "@/components/training/LessonCard";
 
 interface ContainerModule {
@@ -26,6 +27,8 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
+  const { data: tcRawData } = useActiveTrainingContentRules();
+  const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ["container-lessons", user?.id, isAdminUser],
@@ -192,6 +195,30 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         moduleTariffs.some((tid: string) => userTariffIds.includes(tid)) ||
         (container.productId != null && entitlementProductIds.has(container.productId));
 
+      // PATCH B: training_content filter (only for users with confirmed access, non-admin)
+      let filteredOut = false;
+      if (hasAccess && !isAdminUser && container.productId && tcData) {
+        // Find root training for this container
+        const rootContainer = data.containers.find(c => c.id === lesson.module_id) || 
+          (() => {
+            const child = data.childModules?.find(c => c.id === lesson.module_id);
+            return child ? data.containers.find(c => c.id === child.parent_module_id) : null;
+          })();
+        
+        if (rootContainer) {
+          const filter = resolveTrainingContentFilter(
+            tcData.rules, rootContainer.id, container.productId, tcData.userTariffIds
+          );
+          if (filter && filter.mode === "partial") {
+            if (!isLessonAllowed(filter, lesson.id, lesson.module_id)) {
+              filteredOut = true;
+            }
+          }
+        }
+      }
+
+      if (filteredOut) continue;
+
       // Collect restricted tariff names for banner
       if (!hasAccess && moduleTariffs.length > 0) {
         moduleTariffs.forEach((tid: string) => {
@@ -213,6 +240,13 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         sort_order: lesson.sort_order ?? 0,
         has_access: hasAccess,
       });
+    }
+
+    // PATCH B: Remove empty sections after filtering
+    for (const key of Object.keys(lessonsBySection)) {
+      if (lessonsBySection[key].lessons.length === 0) {
+        delete lessonsBySection[key];
+      }
     }
   }
 

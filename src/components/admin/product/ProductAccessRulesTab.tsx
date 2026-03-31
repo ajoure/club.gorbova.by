@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
+import { TrainingContentTreePicker, normalizeTrainingContentPayload } from "./TrainingContentTreePicker";
 import {
   useAccessRules, useEffectiveGrants,
   type AccessRule, type GrantTargetType, type RulePurpose,
@@ -488,11 +489,17 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       }
     }
 
-    // training_content conditions
+    // training_content conditions — normalize payload
     if (form.grant_target_type === "training_content") {
       conditions.access_mode = form.tc_access_mode;
-      conditions.allowed_module_ids = form.tc_access_mode === "partial" ? form.tc_allowed_module_ids : [];
-      conditions.allowed_lesson_ids = form.tc_access_mode === "partial" ? form.tc_allowed_lesson_ids : [];
+      if (form.tc_access_mode === "partial" && trainingTree) {
+        const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
+        conditions.allowed_module_ids = normalized.allowed_module_ids;
+        conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+      } else {
+        conditions.allowed_module_ids = [];
+        conditions.allowed_lesson_ids = [];
+      }
     }
 
     // Parse string fields to numbers on save
@@ -1079,8 +1086,100 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
                 </div>
               )}
 
-              {/* Label override — hide for product_access multi-select (auto-generated) */}
-              {form.grant_target_type !== "product_access" && (
+              {/* training_content: root training selector + access mode + tree picker */}
+              {form.grant_target_type === "training_content" && (
+                <div className="space-y-3">
+                  {/* Root training selector */}
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Тренинг</Label>
+                    {rootTrainings.length === 0 ? (
+                      <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
+                        К продукту не привязано ни одного тренинга. Сначала привяжите тренинг.
+                      </div>
+                    ) : (
+                      <Select
+                        value={form.target_ref}
+                        onValueChange={(v) => setForm({
+                          ...form,
+                          target_ref: v,
+                          target_label: rootTrainings.find(t => t.id === v)?.title || v,
+                          tc_allowed_module_ids: [],
+                          tc_allowed_lesson_ids: [],
+                        })}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Выберите тренинг" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {rootTrainings.map(t => (
+                            <SelectItem key={t.id} value={t.id}>
+                              <div className="flex items-center gap-2">
+                                <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                                <span>{t.title}</span>
+                                {t.public_id && (
+                                  <span className="text-[10px] text-muted-foreground font-mono">{t.public_id}</span>
+                                )}
+                                {!t.is_active && (
+                                  <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
+                                )}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+
+                  {/* Access mode toggle */}
+                  {form.target_ref && (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Режим доступа</Label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setForm({ ...form, tc_access_mode: "full", tc_allowed_module_ids: [], tc_allowed_lesson_ids: [] })}
+                          className={cn(
+                            "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                            form.tc_access_mode === "full"
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          Полный доступ
+                        </button>
+                        <button
+                          onClick={() => setForm({ ...form, tc_access_mode: "partial" })}
+                          className={cn(
+                            "flex-1 px-3 py-2 rounded-lg border text-sm transition-all",
+                            form.tc_access_mode === "partial"
+                              ? "border-primary bg-primary/5 text-primary"
+                              : "border-border text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          Частичный доступ
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tree picker for partial */}
+                  {form.target_ref && form.tc_access_mode === "partial" && (
+                    trainingTree ? (
+                      <TrainingContentTreePicker
+                        tree={trainingTree}
+                        selectedModuleIds={form.tc_allowed_module_ids}
+                        selectedLessonIds={form.tc_allowed_lesson_ids}
+                        onChangeModules={(ids) => setForm({ ...form, tc_allowed_module_ids: ids })}
+                        onChangeLessons={(ids) => setForm({ ...form, tc_allowed_lesson_ids: ids })}
+                      />
+                    ) : (
+                      <div className="text-xs text-muted-foreground text-center py-4">Загрузка дерева…</div>
+                    )
+                  )}
+                </div>
+              )}
+
+              {/* Label override — hide for product_access/training_content (auto-generated) */}
+              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
                   <Input
