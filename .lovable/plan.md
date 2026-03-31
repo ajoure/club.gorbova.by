@@ -1,94 +1,236 @@
-# PATCH v23.1.7 — Продолжение перевода training access на продуктовый SoT
+да, согласен, с учетом правок:
 
-## Статус: ВЫПОЛНЕН
+&nbsp;
 
-## Архитектурное решение
+1. SKIP_ARCHIVE переименовать по смыслу, чтобы не было ложного впечатления, что эти модули надо архивировать сейчас.  
 
-- **Канонический SoT** = `access_rules` → runtime → `entitlements`
-- `module_access` = переходный legacy/fallback path, только для модулей без `product_id`
-- Read-path через entitlements не менялся — работает из v23.1.5
+  - Вместо SKIP_ARCHIVE использовать:  
 
-## Результат
+    - SKIP_NO_PRODUCT_YET
+    - или SKIP_DEFERRED_PRODUCT
+  - &nbsp;
+  - Смысл: не архивировать, а временно пропустить, потому что для них ещё не создан продукт в products_v2.
+2. &nbsp;
+3. Явно зафиксировать в плане:  
 
-| Категория | До патча | После патча |
-|---|---|---|
-| product SoT | 10 | **29** |
-| legacy (NO_MAPPING) | 70 | **51** |
-| conflict | 0 | 0 |
-| unresolved | — | **51** |
+  - если для тренинга/модуля ещё нет продукта, его сейчас не трогаем;
+  - позже создаём продукт;
+  - после создания продукта просто проставляем product_id;
+  - после этого модуль автоматически сможет работать через новый продуктовый контур доступа.
+4. &nbsp;
+5. В секции “Что НЕ делаем” добавить:  
 
-## Выполненные шаги
+  - не архивируем модули без продукта;
+  - не удаляем их;
+  - не пытаемся привязать их к неподходящему продукту “для галочки”.
+6. &nbsp;
+7. В секции по оставшимся 6 legacy-модулям изменить трактовку:  
 
-### Шаг 1: Dry-run — 19 дочерних модулей для наследования product_id
+  - эти 5 модулей — не “архив к удалению”, а:  
 
-Все 70 legacy-модулей не имеют записей в `module_access` → автомаппинг через tariff→product невозможен.
-Однако 19 модулей являются дочерними к модулям с уже установленным `product_id`:
+    - отложено до создания продукта
+    - либо неактуальный legacy-модуль, решение позже
+  - &nbsp;
+  - То есть они просто остаются без product_id до отдельного решения.
+8. &nbsp;
+9. Для Марафон по безопасности оставить NEED_MANUAL_DECISION как есть.
+10. В итоговом выводе после execute добавить явную фразу:  
 
-| Родитель | Продукт | Дочерних |
-|---|---|---|
-| Вебинары | Gorbova Club | 11 |
-| Закрой год 2025-2026 | ЗАКРОЙ ГОД | 6 |
-| Квесты | Gorbova Club | 2 |
+  - оставшиеся модули без product_id не блокируют работу нового контура;
+  - после создания соответствующих продуктов их можно будет отдельно довязать без переделки уже сделанного.
+11. &nbsp;
+12. В deferred секции v23.1.9 уточнить:  
 
-Конфликтов: 0. Все 19 маппятся однозначно.
+  - отдельно:  
 
-### Шаг 2: Execute — UPDATE product_id для 19 модулей
+    - backfill entitlements по историческим покупкам;
+    - создание недостающих продуктов для legacy training-модулей;
+    - последующая привязка этих модулей через product_id.
+  - &nbsp;
+13. &nbsp;
+14. Итоговая правильная трактовка патча:  
+
+  - сейчас переводим всё, что уже можно уверенно привязать;
+  - всё, для чего продукта ещё нет, просто пропускаем до следующего этапа;
+  - потом создаём продукт и довязываем модуль к нему без возврата к старой архитектуре.
+15. &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+# План: PATCH v23.1.8 — Ручная привязка оставшихся 51 training-модуля к продуктам
+
+## Диагностика
+
+### Текущее состояние
+
+- **29** модулей на product SoT (после v23.1.7)
+- **51** модуль без `product_id` (legacy)
+- **80** всего
+
+### Полный реестр 51 legacy-модуля
+
+#### TOP-LEVEL (12 модулей, все `is_active = false`)
+
+
+| #   | module_id  | title                                  | proposed_product          | product_id     | status               |
+| --- | ---------- | -------------------------------------- | ------------------------- | -------------- | -------------------- |
+| 1   | `c9f7e9b8` | Ценный бухгалтер | 1 ступень 2.0       | Ценный бухгалтер 2.0      | `7101ed3c-...` | READY_FOR_BIND       |
+| 2   | `51d18060` | ЦБ 1 ступень 2.0 | Предобучение 2024   | Ценный бухгалтер 2.0      | `7101ed3c-...` | READY_FOR_BIND       |
+| 3   | `12602c8b` | ЦБ 1 ступень 2.0 | Предобучение 2025   | Ценный бухгалтер 2.0      | `7101ed3c-...` | READY_FOR_BIND       |
+| 4   | `89def5db` | Ценный бухгалтер | 2 ступень | 3 поток | ЦБ 2 ступень              | `87a8870f-...` | READY_FOR_BIND       |
+| 5   | `533aaa3f` | Подоходный налог для физ лиц           | Подоходный налог с физлиц | `4fc18564-...` | READY_FOR_BIND       |
+| 6   | `62d09668` | Закрой год 2024-2025                   | ЗАКРОЙ ГОД                | `73c29914-...` | READY_FOR_BIND       |
+| 7   | `a1258959` | Бонус-вебинар (Татьяна Рыбак)          | —                         | —              | SKIP_ARCHIVE         |
+| 8   | `ab196350` | Бухгалтер маркетплейсов                | —                         | —              | SKIP_ARCHIVE         |
+| 9   | `c21fcd81` | Деньги BY 1 тариф                      | —                         | —              | SKIP_ARCHIVE         |
+| 10  | `3d1dcf37` | Деньги BY 2 тариф                      | —                         | —              | SKIP_ARCHIVE         |
+| 11  | `f78a8821` | ТЕСТ                                   | —                         | —              | SKIP_ARCHIVE         |
+| 12  | `4e63c714` | Марафон по безопасности                | —                         | —              | NEED_MANUAL_DECISION |
+
+
+#### ДОЧЕРНИЕ (39 модулей, все `is_active = true`)
+
+**Дети «Ценный бухгалтер  1 ступень 2.0» → Ценный бухгалтер 2.0 (`7101ed3c`) — 35 шт.**
+Все подмодули (№1–20 + отраслевые + конференции + доп. темы) наследуют продукт от контейнера.
+
+**Дети «Подоходный налог для физ лиц» → Подоходный налог с физлиц (`4fc18564`) — 3 шт.**
+Обратная связь, Практический блок, Теоретический блок.
+
+**Дети «ЦБ 2 ступень  3 поток» → ЦБ 2 ступень (`87a8870f`) — 1 шт.**
+Конференции и прямые эфиры.
+
+---
+
+### Сводка по статусам
+
+
+| Статус               | Количество | Из них top-level | Из них дочерних |
+| -------------------- | ---------- | ---------------- | --------------- |
+| READY_FOR_BIND       | **45**     | 6                | 39              |
+| SKIP_ARCHIVE         | **5**      | 5                | 0               |
+| NEED_MANUAL_DECISION | **1**      | 1                | 0               |
+| **Итого**            | **51**     | 12               | 39              |
+
+
+---
+
+## Предлагаемое решение
+
+### Шаг 1: Dry-run — показать маппинг (выше)
+
+Маппинг основан на:
+
+- **Название контейнера** → однозначное соответствие продукту в `products_v2`
+- **Наследование** — дочерние модули получают `product_id` от родителя
+
+### Шаг 2: Execute — SQL data patch для 45 модулей
+
+Три отдельных UPDATE (по группам product_id):
 
 ```sql
-UPDATE training_modules child
-SET product_id = parent.product_id
-FROM training_modules parent
-WHERE child.parent_module_id = parent.id
-  AND parent.product_id IS NOT NULL
-  AND child.product_id IS NULL;
+-- Группа 1: Ценный бухгалтер 2.0 (контейнер + предобучения + 35 детей = 38 строк)
+UPDATE training_modules
+SET product_id = '7101ed3c-7839-4a74-ad95-aa0660369b22'
+WHERE product_id IS NULL
+  AND id IN (
+    'c9f7e9b8-e613-459a-91e3-38bbcfe424d8',  -- контейнер
+    '51d18060-6f88-47b5-baef-9d84a0326237',  -- предобучение 2024
+    '12602c8b-d66c-416d-907a-a90ed9c58c58'   -- предобучение 2025
+  )
+  OR (product_id IS NULL AND parent_module_id = 'c9f7e9b8-e613-459a-91e3-38bbcfe424d8');
+
+-- Группа 2: ЦБ 2 ступень (контейнер + 1 ребёнок = 2 строки)
+UPDATE training_modules
+SET product_id = '87a8870f-d426-419a-9f15-faa76c3f2be3'
+WHERE product_id IS NULL
+  AND (id = '89def5db-88b5-44e3-b634-37faa3290196'
+    OR parent_module_id = '89def5db-88b5-44e3-b634-37faa3290196');
+
+-- Группа 3: Подоходный налог с физлиц (контейнер + 3 ребёнка = 4 строки)
+UPDATE training_modules
+SET product_id = '4fc18564-774e-43dd-9444-26681c9b40a0'
+WHERE product_id IS NULL
+  AND (id = '533aaa3f-d08b-484f-a6bc-87d688c82433'
+    OR parent_module_id = '533aaa3f-d08b-484f-a6bc-87d688c82433');
+
+-- Группа 4: ЗАКРОЙ ГОД (1 строка)
+UPDATE training_modules
+SET product_id = '73c29914-63a3-4f4f-ac42-9f5287e58696'
+WHERE product_id IS NULL
+  AND id = '62d09668-1f2a-4812-824f-c8d2224a6cc3';
 ```
 
-Результат: 19 строк обновлено. Post-check: 29 product SoT, 51 legacy.
+**STOP-guard**: ожидаемый суммарный rowcount = 38 + 2 + 4 + 1 = **45**. Если любой UPDATE затрагивает больше ожидаемого — остановить.
 
-### Шаг 3: Write-path guards — proof (код не менялся)
+### Шаг 3: Post-check
 
-| Write-point | Guard | product_id != null | product_id == null |
-|---|---|---|---|
-| `useTrainingModules` / createModule | `if (!effectiveProductId && tariff_ids...)` | skip module_access | legacy insert |
-| `useTrainingModules` / updateModule | `if (tariff_ids !== undefined && !effectiveProductId)` | skip module_access | legacy delete+insert |
-| `ContentCreationWizard` / handleSubmitLesson | fetch container.product_id → `if (!containerProductId)` | skip module_access | legacy delete+insert |
-| `ContentCreationWizard` / handleSaveAccess | fetch mod.product_id → `skipModuleAccess = !!mod?.product_id` | skip module_access | legacy delete+insert |
-| `ContentSectionSelector` | `if (newModule && !containerModule.product_id)` | skip copy | legacy copy |
-| `training-copy-move` | `if (!mod.product_id)` | skip copy | legacy copy |
+После execute показать:
 
-### Шаг 4: Readonly UI — proof (код не менялся)
+- Итоговое распределение: product SoT vs legacy
+- Список 45 обновлённых модулей (module_id, title, product_id, product_name)
+- Список 6 оставшихся без product_id (5 SKIP_ARCHIVE + 1 NEED_MANUAL_DECISION)
 
-Все 3 точки используют единый `ProductAccessInfoBlock`:
+---
 
-1. `AdminTrainingModules.tsx` (строка 346-348): `effectiveProductId` → `ProductAccessInfoBlock`
-2. `ContentCreationWizard.tsx` (строка 947-948): `targetModuleProduct` → `ProductAccessInfoBlock`
-3. `ContentCreationWizard.tsx` (строка 1053-1054): `targetModuleProduct` → `ProductAccessInfoBlock`
+## Изменяемые компоненты
 
-Один компонент, единый UX: бейдж «Новый контур доступа», название продукта, кнопка «Открыть продукт», пояснение.
 
-### Шаг 5: Unresolved list — 51 модуль
+| Компонент      | Изменение                        |
+| -------------- | -------------------------------- |
+| SQL data patch | UPDATE product_id для 45 модулей |
 
-**Top-level контейнеры без product_id (12):**
-- Бонус-вебинар, Бухгалтер маркетплейсов, Деньги BY, Деньги BY 2, Марафон, Подоходный налог для физ лиц, ТЕСТ, Ценный бухгалтер | 1 ступень 2.0, Ценный бухгалтер | 2 ступень | 3 поток, и др.
 
-**Дочерние без product_id (39):**
-- ~20 подмодулей «Ценный бухгалтер | 1 ступень 2.0»
-- 3 подмодуля «Подоходный налог для физ лиц»
-- остальные — подмодули неактивных контейнеров
+**Код не меняется** — все write-guards и readonly UI уже работают из v23.1.6.
 
-Причина: нет записей в `module_access`, нет связи с products_v2, нет родителя с product_id.
+## Что НЕ делаем
 
-## Файлы изменены
+- Не меняем код (guards и UI уже работают)
+- Не трогаем `grant-access-for-order`, `access_rules`, entitlements
+- Не делаем backfill entitlements (следующий патч)
+- Не удаляем `module_access`
+- Не обновляем SKIP_ARCHIVE и NEED_MANUAL_DECISION модули
 
-| Файл | Изменение |
-|---|---|
-| SQL (data patch) | UPDATE product_id для 19 дочерних модулей |
-| `.lovable/plan.md` | Обновлён отчёт |
+## STOP-guards
 
-Код НЕ менялся — все guards и readonly UI работают из v23.1.6.
+- Суммарный rowcount UPDATE ≠ 45 → остановить
+- UPDATE затрагивает строки с `product_id IS NOT NULL` → невозможно (WHERE clause)
 
-## Deferred (следующий патч)
+## DoD
 
-- Ручное решение по привязке 51 оставшегося модуля к продуктам
-- Для «Ценный бухгалтер 1 ступень 2.0» — создать/найти продукт в products_v2 и привязать
-- Постепенное сворачивание legacy module_access
+1. Полный реестр 51 модуля показан с ручным маппингом
+2. Каждый модуль получил статус: READY_FOR_BIND / SKIP_ARCHIVE / NEED_MANUAL_DECISION
+3. Выполнен UPDATE только для 45 READY_FOR_BIND
+4. Post-check: итоговое распределение
+5. Список обновлённых и оставшихся модулей
+6. Ничего не сломано
+
+## Ожидаемый итог после execute
+
+
+| Категория               | До патча | После патча |
+| ----------------------- | -------- | ----------- |
+| product SoT             | 29       | **74**      |
+| legacy (без product_id) | 51       | **6**       |
+| conflict                | 0        | 0           |
+
+
+## Оставшиеся 6 модулей (legacy)
+
+
+| title                   | status               | причина                             |
+| ----------------------- | -------------------- | ----------------------------------- |
+| Бонус-вебинар           | SKIP_ARCHIVE         | inactive, нет продукта              |
+| Бухгалтер маркетплейсов | SKIP_ARCHIVE         | inactive, нет продукта              |
+| Деньги BY 1 тариф       | SKIP_ARCHIVE         | inactive, нет продукта              |
+| Деньги BY 2 тариф       | SKIP_ARCHIVE         | inactive, нет продукта              |
+| ТЕСТ                    | SKIP_ARCHIVE         | тестовый модуль                     |
+| Марафон по безопасности | NEED_MANUAL_DECISION | неоднозначное соответствие продукту |
+
+
+## Deferred (следующий патч v23.1.9)
+
+- Backfill entitlements по историческим покупкам для продуктов, к которым привязаны training-модули
+- Ручное решение по «Марафону по безопасности»
+- Решение по 5 archived модулям (нужны ли продукты или soft-delete)
