@@ -29,7 +29,7 @@ import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./Kb
 import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
 import { ModuleTreeSelector } from "./ModuleTreeSelector";
-import { CompactAccessSelector } from "./CompactAccessSelector";
+import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
@@ -905,7 +905,7 @@ export function ContentCreationWizard({
       if (step === 1) {
         return (
           <div className="space-y-6">
-            <CompactAccessSelector
+            <ProductTariffAccessSelector
               selectedTariffIds={wizardData.tariffIds}
               onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
               products={productsWithTariffs || []}
@@ -1008,7 +1008,7 @@ export function ContentCreationWizard({
       }
       if (step === 3) {
         return (
-          <CompactAccessSelector
+          <ProductTariffAccessSelector
             selectedTariffIds={wizardData.tariffIds}
             onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
             products={productsWithTariffs || []}
