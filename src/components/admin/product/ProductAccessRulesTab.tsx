@@ -244,12 +244,17 @@ function ProductListBadge({
 }
 
 
+type AccessRulesAction =
+  | { type: "create_training_content"; targetRef?: string }
+  | { type: "edit_rule"; ruleId: string };
+
 interface Props {
   productId: string;
   tariffs: Array<{ id: string; name: string }>;
+  initialAction?: AccessRulesAction;
 }
 
-export function ProductAccessRulesTab({ productId, tariffs }: Props) {
+export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Props) {
   const { rules, legacyMappings, isLoading, createRule, updateRule, deleteRule, toggleRule } = useAccessRules(productId);
   const { data: availableClubs = [] } = useAvailableClubs();
   const { data: availableProducts = [] } = useAvailableProducts();
