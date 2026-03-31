@@ -388,6 +388,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       has_condition: false,
       condition_use_same_list: true,
       condition_required_product_ids: [],
+      tc_access_mode: "full",
+      tc_allowed_module_ids: [],
+      tc_allowed_lesson_ids: [],
     });
     setAdvancedOpen(false);
     setDialogOpen(true);
