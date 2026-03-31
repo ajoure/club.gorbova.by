@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview } from "@/hooks/useProductTrainings";
+import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List, Pencil, Eye, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
