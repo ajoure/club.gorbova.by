@@ -340,7 +340,13 @@ interface ModuleAccessFormProps {
   }>;
 }
 
-function ModuleAccessForm({ formData, setFormData, productsWithTariffs }: ModuleAccessFormProps) {
+function ModuleAccessForm({ formData, setFormData, productsWithTariffs, editingModule }: ModuleAccessFormProps & { editingModule?: TrainingModule | null }) {
+  // PATCH v23.1.6: If module has product_id, show readonly info block instead of selector
+  const effectiveProductId = editingModule?.product_id || formData.product_id;
+  if (effectiveProductId) {
+    return <ProductAccessInfoBlock productId={effectiveProductId} />;
+  }
+
   const handleChange = (tariffIds: string[]) => {
     setFormData(prev => ({ ...prev, tariff_ids: tariffIds }));
   };
