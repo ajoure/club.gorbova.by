@@ -143,7 +143,7 @@ export function useTrainingContentRulesForProduct(productId?: string) {
 
       return (data || []).map(r => ({
         ...r,
-        conditions: (r.conditions || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] }) as TrainingContentConditions,
+        conditions: (r.conditions as unknown as TrainingContentConditions) || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] },
       })) as TrainingContentRule[];
     },
     enabled: !!productId,
