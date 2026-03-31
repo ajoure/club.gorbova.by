@@ -1078,6 +1078,26 @@ Deno.serve(async (req) => {
           console.error('[subscription-admin-actions] Ledger error for revoke_access (non-blocking):', ledgerErr);
         }
 
+        // ============= v23.1.10: Conditional entitlement revoke =============
+        if (!skipEntitlementRevoke && subscription.product_id) {
+          const productCodeForRevoke = (subscription.products_v2 as any)?.code;
+          if (productCodeForRevoke) {
+            const { error: revokeEntErr } = await supabase
+              .from('entitlements')
+              .update({ status: 'expired', updated_at: new Date().toISOString(), meta: { ...({} as any), revoked_by: 'subscription-admin-actions', revoke_source: 'admin_revoke_access', revoked_at: new Date().toISOString() } })
+              .eq('user_id', subscription.user_id)
+              .eq('product_code', productCodeForRevoke);
+            if (revokeEntErr) {
+              console.error('[subscription-admin-actions] Entitlement revoke error:', revokeEntErr);
+            } else {
+              console.log(`[subscription-admin-actions] Entitlement revoked for ${productCodeForRevoke}`);
+            }
+          }
+        } else if (skipEntitlementRevoke) {
+          console.log(`[subscription-admin-actions] Entitlement revoke SKIPPED due to pre-revoke guard`);
+        }
+        // ============= END v23.1.10 =============
+
         // Revoke Telegram access with club_id + parent keys
         const productForRevoke = subscription.products_v2 as any;
         if (productForRevoke?.telegram_club_id) {
