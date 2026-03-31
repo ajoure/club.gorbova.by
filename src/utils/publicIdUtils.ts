@@ -12,6 +12,7 @@ export interface ParsedPublicId {
 const PREFIX_MAP: Record<string, PublicIdEntity> = {
   "PRD-": "product",
   "T-": "tariff",
+  "TRN-": "training_module",
 };
 
 export function parsePublicId(input: string): ParsedPublicId {
