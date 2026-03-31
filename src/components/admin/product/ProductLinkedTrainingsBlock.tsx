@@ -631,18 +631,61 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
             </>
           )}
 
-          {/* Layer 2 placeholder — training_content rules (PATCH B) */}
+          {/* Training content rules summary */}
           {trainings.length > 0 && (
             <>
               <Separator className="my-4" />
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Shield className="h-3.5 w-3.5" />
-                <span>Правила гранулярности доступа к контенту</span>
-                <Badge variant="outline" className="text-[9px]">Не настроены</Badge>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  <Shield className="h-3.5 w-3.5" />
+                  <span>Правила гранулярности доступа</span>
+                  <Badge variant="outline" className="text-[9px]">{contentRules.length}</Badge>
+                </div>
+                {contentRules.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    Нет настроенных правил — покупатели получают полный доступ ко всем тренингам продукта.
+                    Настройте правила во вкладке «Правила доступа».
+                  </p>
+                ) : (
+                  <div className="space-y-1">
+                    {contentRules.map(rule => {
+                      const training = trainings.find(t => t.id === rule.target_ref);
+                      const cond = rule.conditions;
+                      const mCount = cond.allowed_module_ids?.length || 0;
+                      const lCount = cond.allowed_lesson_ids?.length || 0;
+                      return (
+                        <div
+                          key={rule.id}
+                          className={cn(
+                            "flex items-center gap-2 p-2 rounded-md border text-sm",
+                            rule.is_active ? "bg-muted/20" : "bg-muted/10 opacity-60"
+                          )}
+                        >
+                          <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                          <span className="flex-1 min-w-0 truncate text-xs font-medium">
+                            {training?.title || rule.target_label || rule.target_ref}
+                          </span>
+                          <Badge variant="outline" className="text-[9px] shrink-0">
+                            {rule.tariff_id ? "Тариф" : "Продукт"}
+                          </Badge>
+                          <Badge variant="outline" className={cn(
+                            "text-[9px] shrink-0",
+                            cond.access_mode === "partial" ? "text-amber-600 border-amber-300" : ""
+                          )}>
+                            {cond.access_mode === "full" ? "Полный" : `Частичный: ${mCount} мод. ${lCount} ур.`}
+                          </Badge>
+                          {!rule.is_active && (
+                            <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
+                              <EyeOff className="h-2.5 w-2.5 mr-0.5" />
+                              Неактивно
+                            </Badge>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Настройка частичного доступа к урокам и модулям по тарифам будет доступна в следующем обновлении.
-              </p>
             </>
           )}
 
