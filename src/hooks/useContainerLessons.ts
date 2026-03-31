@@ -44,7 +44,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       // 1b. Get child modules of containers (non-container children only)
       const { data: childModules } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key, parent_module_id")
+        .select("id, slug, menu_section_key, parent_module_id, product_id")
         .in("parent_module_id", containerIds)
         .eq("is_active", true)
         .eq("is_container", false);
