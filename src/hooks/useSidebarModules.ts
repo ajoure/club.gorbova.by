@@ -37,6 +37,8 @@ export function useSidebarModules() {
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
+  const { data: tcRawData } = useActiveTrainingContentRules();
+  const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ["sidebar-modules", user?.id, isAdminUser],
