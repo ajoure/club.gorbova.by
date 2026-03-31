@@ -900,6 +900,24 @@ Deno.serve(async (req) => {
           .eq('id', subscription_id);
 
         result.new_end_date = new_end_date;
+
+        // ============= v23.1.10: Entitlement sync after set_end_date =============
+        if (subscription.product_id) {
+          try {
+            const { data: prdSync } = await supabase.from('products_v2').select('code').eq('id', subscription.product_id).maybeSingle();
+            if (prdSync?.code) {
+              const { data: profileSync } = await supabase.from('profiles').select('id').eq('user_id', subscription.user_id).maybeSingle();
+              const sr = await syncEntitlement({
+                supabase, user_id: subscription.user_id, profile_id: profileSync?.id || null,
+                product_id: subscription.product_id, product_code: prdSync.code,
+                access_end_at: new_end_date, source: 'admin_action',
+                subscription_id, actor_label: 'subscription-admin-actions', mode_filter: 'subscription_based',
+              });
+              console.log(`[subscription-admin-actions] Entitlement sync (set_end_date): ${sr.action}`);
+            }
+          } catch (e) { console.error('[subscription-admin-actions] Entitlement sync error (set_end_date):', e); }
+        }
+
         break;
       }
 
