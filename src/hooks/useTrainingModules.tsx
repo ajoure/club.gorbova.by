@@ -236,8 +236,11 @@ export function useTrainingModules() {
 
       if (error) throw error;
 
-      // Update tariff access if provided
-      if (tariff_ids !== undefined) {
+      // PATCH v23.1.6: Check effective product_id — skip module_access for product-linked modules
+      const effectiveProductId = data.product_id ?? modules.find(m => m.id === id)?.product_id;
+
+      // Update tariff access if provided and module is NOT product-linked
+      if (tariff_ids !== undefined && !effectiveProductId) {
         // Remove existing access
         await supabase
           .from("module_access")
