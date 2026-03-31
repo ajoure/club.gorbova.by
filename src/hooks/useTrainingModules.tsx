@@ -199,8 +199,10 @@ export function useTrainingModules() {
 
       if (error) throw error;
 
-      // Add tariff access if provided
-      if (tariff_ids && tariff_ids.length > 0 && newModule) {
+      // PATCH v23.1.6: Skip module_access write if module has product_id
+      // Access is managed via product SoT for product-linked modules
+      const effectiveProductId = data.product_id || newModule?.product_id;
+      if (!effectiveProductId && tariff_ids && tariff_ids.length > 0 && newModule) {
         const accessRecords = tariff_ids.map(tariffId => ({
           module_id: newModule.id,
           tariff_id: tariffId,
