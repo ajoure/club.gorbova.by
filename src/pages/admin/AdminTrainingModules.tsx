@@ -62,8 +62,8 @@ import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard"
 import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersModal";
 import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
-import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
 import { ProductAccessInfoBlock } from "@/components/admin/trainings/ProductAccessInfoBlock";
+import { TrainingUnlinkedBlock } from "@/components/admin/trainings/TrainingUnlinkedBlock";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
