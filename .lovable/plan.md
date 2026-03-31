@@ -2,149 +2,228 @@
 
 &nbsp;
 
-1. **Правильно, лучше уйти от Radix ScrollArea в этих внутренних списках**
+1. В bulk-query к entitlements сейчас не хватает поля expires_at.
   &nbsp;
-  - Для такого встроенного чекбокс-списка внутри модалки обычный div с overflow-y-auto действительно безопаснее и предсказуемее.
-  - Зафиксируй это прямо как сознательное решение для этого компонента, а не временный workaround.
-  &nbsp;
-2. **Ширину модалки лучше задать не просто sm:max-w-2xl, а в логике “как у других крупных редакторов”**
-  &nbsp;
-  - Добавь:
+  - Нельзя делать:
     &nbsp;
-    - max-h-[85vh]
-    - flex flex-col
-    - scrollable body + фиксированный footer
+    - select("product_id")
+    - и потом фильтровать по expires_at, которого нет в результате.
     &nbsp;
-  - Чтобы модалка вела себя так же, как крупные editor/dialog окна платформы, а не просто стала шире.
-  &nbsp;
-3. **Нужен явный scrollable body для всей модалки**
-  &nbsp;
-  - Не только списки внутри.
-  - Если контента много, верх и низ модалки должны оставаться управляемыми:
+  - Нужно минимум:
     &nbsp;
-    - header фиксирован,
-    - body скроллится,
-    - footer с кнопками всегда доступен.
+    - select("product_id, expires_at")
+    - eq("status", "active")
     &nbsp;
-  - Это важно для длинных форм с multi-select и conditions.
+  - Затем уже в коде отфильтровать истёкшие записи и собрать Set<string>.
   &nbsp;
-4. **Для chips блока лучше зафиксировать guard от вертикального раздувания**
+2. Лучше сразу использовать Set, а не массив.
   &nbsp;
-  - Согласен с max-h-[80px] overflow-y-auto.
-  - Добавь также:
-    &nbsp;
-    - pr-1 / px-1
-    - нормальные gap
-    - чтобы длинный список выбранных не ломал ширину и высоту секции.
-    &nbsp;
+  - Не userEntitlementProductIds: string[],
+  - а userEntitlementProductIds = new Set<string>().
+  - Тогда доступ проверяется через set.has(productId) без лишних .includes().
   &nbsp;
-5. **Список чекбоксов лучше сделать визуально более стабильным**
+3. Для useContainerLessons.ts добавь важный fallback:
   &nbsp;
-  - Добавь в план:
-    &nbsp;
-    - border + rounded-md + background
-    - hover state строк
-    - нормальную line-height
-    - достаточный vertical padding на item
-    &nbsp;
-  - Иначе скролл может заработать, но список останется визуально “сбитым”.
+  - если у дочернего модуля product_id = null,
+  - нужно проверить, есть ли product_id у родительского контейнера,
+  - и использовать его как fallback для entitlement-based access.
+  - Иначе часть уроков/вложенных модулей может остаться закрытой, даже если entitlement на продукт есть.
   &nbsp;
-6. **Уточни одинаковый layout для двух списков**
+4. Аналогично проверь useSidebarModules.ts:
   &nbsp;
-  - Один и тот же компонент/паттерн должен использоваться и для:
-    &nbsp;
-    - target products,
-    - condition products.
-    &nbsp;
-  - Чтобы не получить два слегка разных поведения и два набора багов.
+  - если в sidebar есть дочерние элементы с parent_module_id,
+  - а их product_id пустой,
+  - нужен fallback на product_id родителя, если sidebar строится по иерархии.
+  - Не внедрять вслепую, но discovery этого кейса обязателен.
   &nbsp;
-7. **Нужен отдельный пункт про mobile/smaller viewport**
+5. В access formula зафиксируй:
   &nbsp;
-  - После расширения модалки проверить:
-    &nbsp;
-    - на меньшей высоте окна body действительно скроллится;
-    - footer не уезжает за низ;
-    - список не перекрывает кнопки.
-    &nbsp;
-  - Это добавить в proof.
+  - moduleAccess.length === 0 как public access сохраняется,
+  - но entitlement-based путь идёт add-only и не заменяет старую логику.
+  - Это нужно явно указать как invariant.
   &nbsp;
-8. **В DoD усили визуальные критерии**
+6. Добавь stop-check:
   &nbsp;
-  - Не только “scroll работает”, но и:
-    &nbsp;
-    - footer модалки всегда виден;
-    - список не вылезает за границы;
-    - chips не наезжают на input/границы;
-    - обе зоны multi-select выглядят одинаково и аккуратно.
-    &nbsp;
+  - после правки всех 3 reader-хуков проверить, нет ли ещё других read-path мест, где training UI решает hasAccess.
+  - Иначе можно синхронизировать 3 хука, но оставить ещё одну скрытую точку рассинхрона.
   &nbsp;
-9. **Scope exclusion оставить жёстким**
+7. В proof-пакет добавь сценарий с expiry:
   &nbsp;
-  - Да, runtime/storage/logic не трогаем.
-  - Это чистый UI/layout patch.
+  - active entitlement без expires_at → доступ есть;
+  - active entitlement с будущим expires_at → доступ есть;
+  - active entitlement с прошедшим expires_at → доступа нет.
+  - Это важно, иначе read-path будет слишком широким.
   &nbsp;
+8. Для useContainerLessons.ts и useSidebarModules.ts прямо укажи:
+  &nbsp;
+  - сначала расширяем select, чтобы подтянуть product_id,
+  - потом уже меняем access check.
+  - Это нужно как отдельный шаг, чтобы не потерять root cause.
+  &nbsp;
+9. Добавь в DoD ещё один пункт:
+  &nbsp;
+  - для ЦБ 2.0 и его модулей подтверждено, что product_id реально проставлен корректно в данных.
+  - Иначе код может быть правильным, но кейс всё равно не заработает из-за дырявых данных.
+  &nbsp;
+10. Финально сформулируй смысл патча так:
 
 &nbsp;
 
 &nbsp;
 
-PATCH v23.1.4A — Access Rules modal layout + scroll fix
+&nbsp;
 
-## Проблема
+- это **read-path sync через entitlements**,
+- не новая модель доступа,
+- не замена module_access,
+- а add-only выравнивание training access с уже существующим runtime product_access grant.
 
-1. `ScrollArea` (Radix) не скроллит — использует `max-h-[200px]` без явной высоты. Radix ScrollArea требует фиксированную `h-*` на viewport, `max-h` не работает.
-2. Модалка `sm:max-w-lg` (32rem / 512px) — слишком узкая для multi-select с chips.
-3. Chips и чекбокс-листы упираются в края — нет запасных padding.
-4. Стиль модалки не соответствует другим модалкам платформы (например, `LinkPaymentDialog` использует `sm:max-w-[600px] max-h-[85vh] flex flex-col`).
+&nbsp;
 
-## Изменения
+&nbsp;
 
-**Один файл**: `src/components/admin/product/ProductAccessRulesTab.tsx`
+PATCH v23.1.5 — Add-only training access read-path sync with entitlements
 
-### 1. ProductCheckboxList — scroll fix (строки 130-186)
-
-- Заменить `<ScrollArea className="max-h-[200px] border rounded-md">` на обычный `div` с `overflow-y-auto max-h-[200px]` — это надёжнее, чем Radix ScrollArea, для встроенных списков внутри модалки.
-- Добавить `p-2` внутрь контейнера вместо `p-1` — увеличить внутренние отступы.
-- Chips блок: добавить `max-h-[80px] overflow-y-auto` чтобы при 10+ выбранных элементах chips не растягивали модалку.
-
-### 2. Модалка — ширина и layout (строка 842)
-
-- Заменить `sm:max-w-lg` на `sm:max-w-2xl` (42rem / 672px) — ближе к `LinkPaymentDialog` и `BroadcastTemplateDialog`.
-- Добавить `flex flex-col` для правильной структуры flex.
-- Контент внутри `space-y-5 py-2` обернуть в scrollable body: добавить `overflow-y-auto flex-1 min-h-0` чтобы footer всегда был видим.
-
-### 3. Внутренние отступы
-
-- В condition block (строка 1058): `p-3` → `p-4` для единообразия с другими card-секциями.
-- Chips внутри `ProductCheckboxList`: добавить `px-1` на обёртку `flex-wrap` чтобы не упирались в края.
-
-### 4. Итоговый layout ProductCheckboxList
+## Критический architectural gap
 
 ```text
-┌─────────────────────────────────┐
-│ [chip1] [chip2] [chip3] [×]    │  ← max-h-[80px] overflow-y-auto
-├─────────────────────────────────┤
-│ 🔍 Поиск продукта…              │  ← input с иконкой
-├─────────────────────────────────┤
-│ Выбрано: 3 из 47                │  ← счётчик
-├─────────────────────────────────┤
-│ ☐ Продукт 1                     │
-│ ☑ Продукт 2                     │  ← overflow-y-auto max-h-[200px]
-│ ☐ Продукт 3                     │     border rounded-md p-2
-│ ...                              │
-└─────────────────────────────────┘
+WRITE PATH (runtime):
+  grant-access-for-order → product_access rule → entitlements ✓
+
+READ PATH (training gates):
+  useTrainingModules    → module_access + subscriptions_v2 ✗ entitlements
+  useContainerLessons   → module_access + subscriptions_v2 ✗ entitlements
+  useSidebarModules     → module_access + subscriptions_v2 ✗ entitlements
 ```
+
+Контуры разорваны. Runtime пишет в `entitlements`, но ни один training access reader его не читает.
+
+## Stop-check: полный список training access readers
+
+Найдено **3 reader-хука** (не 2):
+
+1. `**useTrainingModules.tsx**` — основной список модулей, select `*` → **содержит `product_id**`
+2. `**useContainerLessons.ts**` — уроки контейнеров, select **без `product_id**` → нужно добавить в select
+3. `**useSidebarModules.ts**` — sidebar, select **без `product_id**` → нужно добавить в select
+
+Все три нужно расширить, иначе синхронизация будет частичной.
+
+## Что делаем
+
+### Общий паттерн (один bulk-query, без N+1)
+
+В каждом из 3 хуков, после получения `userTariffIds`, добавить:
+
+```ts
+let userEntitlementProductIds: string[] = [];
+if (user) {
+  const { data: ents } = await supabase
+    .from("entitlements")
+    .select("product_id")
+    .eq("user_id", user.id)
+    .eq("status", "active");
+  
+  userEntitlementProductIds = (ents || [])
+    .filter(e => e.product_id && (!e.expires_at || new Date(e.expires_at) > new Date()))
+    .map(e => e.product_id);
+}
+```
+
+Один запрос на пользователя → Set в памяти → O(1) lookup.
+
+### Access formula precedence (явный, фиксированный)
+
+```text
+1. admin bypass → true
+2. public module (no module_access entries) → true
+3. tariff-based: module_access ∩ subscriptions_v2 → true
+4. entitlement-based: module.product_id ∈ userEntitlementProductIds → true
+5. иначе → false
+```
+
+Не заменяем старую логику, только расширяем шаг 4.
+
+### Файл 1: `useTrainingModules.tsx`
+
+- `select("*")` — уже содержит `product_id` ✓
+- После строки 97 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
+- В строке 124-126 расширить `baseAccess`:
+  ```ts
+  const baseAccess = 
+    moduleAccess.length === 0 || 
+    moduleAccess.some(a => userTariffIds.includes(a.tariff_id)) ||
+    (mod.product_id != null && userEntitlementProductIds.includes(mod.product_id));
+  ```
+
+### Файл 2: `useContainerLessons.ts`
+
+- В select контейнеров (строка 35) добавить `product_id`:
+  ```ts
+  .select("id, slug, menu_section_key, product_id")
+  ```
+- В select дочерних модулей (строка 47) добавить `product_id`:
+  ```ts
+  .select("id, slug, menu_section_key, parent_module_id, product_id")
+  ```
+- После строки 106 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
+- В `containerMap` хранить `productId` наряду с `slug` и `sectionKey`
+- В access check (строки 160-170) расширить `hasAccess`:
+  ```ts
+  const hasAccess = isAdminUser || 
+    moduleTariffs.length === 0 || 
+    moduleTariffs.some(tid => userTariffIds.includes(tid)) ||
+    (container.productId != null && userEntitlementProductIds.includes(container.productId));
+  ```
+
+### Файл 3: `useSidebarModules.ts`
+
+- В select модулей (строка 45) добавить `product_id`:
+  ```ts
+  .select(`id, title, slug, menu_section_key, icon, sort_order, is_container, parent_module_id, product_id`)
+  ```
+- После строки 87 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
+- В строке 98-100 расширить `hasAccess`:
+  ```ts
+  const hasAccess = isAdminUser || 
+    moduleAccess.tariffIds.length === 0 || 
+    moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid)) ||
+    (m.product_id != null && userEntitlementProductIds.includes(m.product_id));
+  ```
+
+## Edge cases
+
+- `module.product_id = null` → entitlement path не применяется, поведение как раньше
+- `entitlement.expires_at` не null и в прошлом → фильтруется при сборе `userEntitlementProductIds`
+- `entitlement.status != 'active'` → фильтруется запросом
+
+## Deferred (не в этом патче)
+
+- `required_tariff_ids` / per-tariff prior purchase в conditions
+- Domain/section access
 
 ## Scope exclusion
 
-- Runtime не трогаем
-- Storage contract не меняем
-- Новых типов правил не добавляем
+- `grant-access-for-order` runtime — не трогаем
+- `module_access`, `subscriptions_v2` — не трогаем
+- UI Access Rules — не трогаем
+- Только add-only расширение read-path
+
+## Файлы
+
+
+| Файл                               | Изменения                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| `src/hooks/useTrainingModules.tsx` | +bulk entitlements query, +entitlement access check                       |
+| `src/hooks/useContainerLessons.ts` | +product_id в select, +bulk entitlements query, +entitlement access check |
+| `src/hooks/useSidebarModules.ts`   | +product_id в select, +bulk entitlements query, +entitlement access check |
+
 
 ## DoD
 
-1. Вертикальный scroll работает в обоих multi-select списках
-2. Chips не выходят за границы, есть scroll при переполнении
-3. Модалка шире, footer всегда виден
-4. Внутренние отступы выровнены
-5. Длинные списки не ломают layout
+1. Active entitlement с валидным `expires_at` открывает модуль с matching `product_id`
+2. Истёкший entitlement модуль не открывает
+3. Старый tariff-based доступ не ломается
+4. Модули без `product_id` ведут себя как раньше
+5. Все 3 reader-хука синхронизированы (не только 2)
+6. Один bulk-query к entitlements, без N+1
+7. Admin bypass сохраняется
