@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
 import {
   useAccessRules, useEffectiveGrants,
   type AccessRule, type GrantTargetType, type RulePurpose,
