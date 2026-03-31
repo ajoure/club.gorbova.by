@@ -29,7 +29,7 @@ import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./Kb
 import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
 import { ModuleTreeSelector } from "./ModuleTreeSelector";
-import { CompactAccessSelector } from "./CompactAccessSelector";
+import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
