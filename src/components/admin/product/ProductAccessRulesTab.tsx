@@ -489,11 +489,17 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       }
     }
 
-    // training_content conditions
+    // training_content conditions — normalize payload
     if (form.grant_target_type === "training_content") {
       conditions.access_mode = form.tc_access_mode;
-      conditions.allowed_module_ids = form.tc_access_mode === "partial" ? form.tc_allowed_module_ids : [];
-      conditions.allowed_lesson_ids = form.tc_access_mode === "partial" ? form.tc_allowed_lesson_ids : [];
+      if (form.tc_access_mode === "partial" && trainingTree) {
+        const normalized = normalizeTrainingContentPayload(form.tc_allowed_module_ids, form.tc_allowed_lesson_ids, trainingTree);
+        conditions.allowed_module_ids = normalized.allowed_module_ids;
+        conditions.allowed_lesson_ids = normalized.allowed_lesson_ids;
+      } else {
+        conditions.allowed_module_ids = [];
+        conditions.allowed_lesson_ids = [];
+      }
     }
 
     // Parse string fields to numbers on save
