@@ -2,228 +2,192 @@
 
 &nbsp;
 
-1. В bulk-query к entitlements сейчас не хватает поля expires_at.
+1. Правильно, что ты **исправил опору на memory** и явно зафиксировал: access_links и projection function **сейчас не существуют в коде**. Это важно. Нельзя строить текущий correction plan так, будто canonical SoT уже реализован.
+2. В discovery добавь ещё один явный вывод:
   &nbsp;
-  - Нельзя делать:
+  - после PATCH v23.1.5 training read-path уже стал **гибридным**:
     &nbsp;
-    - select("product_id")
-    - и потом фильтровать по expires_at, которого нет в результате.
+    - module_access + subscriptions_v2
+    - плюс entitlements
     &nbsp;
-  - Нужно минимум:
+  - а training write-path остался прямым в module_access.
+  - Это нужно прямо назвать **частично смешанной моделью**, потому что риск теперь не только в дубле, но и в частично разъехавшихся чтении и записи.
+  &nbsp;
+3. В блоке про UI-fix CompactAccessSelector добавь обязательный proof записи:
+  &nbsp;
+  - после выбора продукта в dropdown и сохранения модуля показать, что запись действительно уходит в module_access.
+  - Это пригодится как доказательство текущего старого write-path перед переходом к v23.1.6.
+  &nbsp;
+4. В correction plan для v23.1.6 не фиксируй пока жёстко только access_links.
+  &nbsp;
+  - Так как discovery показал, что этой таблицы нет, формулируй аккуратнее:
     &nbsp;
-    - select("product_id, expires_at")
-    - eq("status", "active")
+    - сначала выбрать и спроектировать canonical SoT;
+    - это может быть новая таблица access_links
+    - или расширение существующей модели, если это окажется безопаснее.
     &nbsp;
-  - Затем уже в коде отфильтровать истёкшие записи и собрать Set<string>.
+  - То есть в v23.1.6 сначала schema/write-path design, потом migration path.
   &nbsp;
-2. Лучше сразу использовать Set, а не массив.
+5. Добавь в plan для v23.1.6 отдельный discovery-пункт:
   &nbsp;
-  - Не userEntitlementProductIds: string[],
-  - а userEntitlementProductIds = new Set<string>().
-  - Тогда доступ проверяется через set.has(productId) без лишних .includes().
+  - как маппится:
+    &nbsp;
+    - product
+    - tariff
+    - training module
+    - lesson/container
+    &nbsp;
+  - потому что без этого нельзя корректно построить projection/write-path alignment.
+  - Особенно важно понять, как из продуктовой настройки однозначно получить тренировочную проекцию доступа.
   &nbsp;
-3. Для useContainerLessons.ts добавь важный fallback:
+6. В risk statement усили формулировку:
   &nbsp;
-  - если у дочернего модуля product_id = null,
-  - нужно проверить, есть ли product_id у родительского контейнера,
-  - и использовать его как fallback для entitlement-based access.
-  - Иначе часть уроков/вложенных модулей может остаться закрытой, даже если entitlement на продукт есть.
+  - сейчас админ может настроить доступ в одном месте и не увидеть идентичного состояния в другом;
+  - после v23.1.5 это может выглядеть как “частично работает”, что ещё опаснее полного рассинхрона.
+  - Это надо подчеркнуть как бизнес-риск неправильной выдачи доступа.
   &nbsp;
-4. Аналогично проверь useSidebarModules.ts:
+7. В DoD добавь ещё один пункт:
   &nbsp;
-  - если в sidebar есть дочерние элементы с parent_module_id,
-  - а их product_id пустой,
-  - нужен fallback на product_id родителя, если sidebar строится по иерархии.
-  - Не внедрять вслепую, но discovery этого кейса обязателен.
+  - подтверждено, что CompactAccessSelector **не использует** продуктовый access_rules write-path и пишет напрямую в module_access.
+  - Это ключевой факт discovery.
   &nbsp;
-5. В access formula зафиксируй:
+8. Scope exclusion хороший, но добавь отдельно:
   &nbsp;
-  - moduleAccess.length === 0 как public access сохраняется,
-  - но entitlement-based путь идёт add-only и не заменяет старую логику.
-  - Это нужно явно указать как invariant.
+  - не делать в этом патче никакой скрытой синхронизации между module_access и access_rules;
+  - только UI-fix + фиксация фактической архитектуры + подготовка следующего патча.
   &nbsp;
-6. Добавь stop-check:
+9. Итоговый смысл патча сформулируй так:
   &nbsp;
-  - после правки всех 3 reader-хуков проверить, нет ли ещё других read-path мест, где training UI решает hasAccess.
-  - Иначе можно синхронизировать 3 хука, но оставить ещё одну скрытую точку рассинхрона.
+  - сейчас чиним dropdown тренингов;
+  - параллельно **доказываем**, что продуктовый и тренировочный доступ — это не один SoT;
+  - и готовим отдельный архитектурный патч v23.1.6 на выравнивание write-path, а не пытаемся чинить это незаметно в рамках UI-фикса.
   &nbsp;
-7. В proof-пакет добавь сценарий с expiry:
-  &nbsp;
-  - active entitlement без expires_at → доступ есть;
-  - active entitlement с будущим expires_at → доступ есть;
-  - active entitlement с прошедшим expires_at → доступа нет.
-  - Это важно, иначе read-path будет слишком широким.
-  &nbsp;
-8. Для useContainerLessons.ts и useSidebarModules.ts прямо укажи:
-  &nbsp;
-  - сначала расширяем select, чтобы подтянуть product_id,
-  - потом уже меняем access check.
-  - Это нужно как отдельный шаг, чтобы не потерять root cause.
-  &nbsp;
-9. Добавь в DoD ещё один пункт:
-  &nbsp;
-  - для ЦБ 2.0 и его модулей подтверждено, что product_id реально проставлен корректно в данных.
-  - Иначе код может быть правильным, но кейс всё равно не заработает из-за дырявых данных.
-  &nbsp;
-10. Финально сформулируй смысл патча так:
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: PATCH v23.1.5A — Training access dropdown UI fix + SoT discovery
 
-- это **read-path sync через entitlements**,
-- не новая модель доступа,
-- не замена module_access,
-- а add-only выравнивание training access с уже существующим runtime product_access grant.
+## Критический architectural gap (обновлённый)
 
-&nbsp;
-
-&nbsp;
-
-PATCH v23.1.5 — Add-only training access read-path sync with entitlements
-
-## Критический architectural gap
+### Текущее фактическое состояние (не целевое, не из memory — из кода)
 
 ```text
-WRITE PATH (runtime):
-  grant-access-for-order → product_access rule → entitlements ✓
+ЭКРАН ТРЕНИНГА ("Доступ к контенту" / CompactAccessSelector):
+  WRITE: AdminTrainingModules / ContentCreationWizard
+         → supabase.from("module_access").delete() + .insert()
+         → ПРЯМАЯ ЗАПИСЬ в module_access
+  READ:  useTrainingModules → module_access + subscriptions_v2
+         + (после v23.1.5) entitlements
 
-READ PATH (training gates):
-  useTrainingModules    → module_access + subscriptions_v2 ✗ entitlements
-  useContainerLessons   → module_access + subscriptions_v2 ✗ entitlements
-  useSidebarModules     → module_access + subscriptions_v2 ✗ entitlements
+ЭКРАН ПРОДУКТА ("Access Rules" / ProductAccessRulesTab):
+  WRITE: useAccessRules → access_rules
+  READ:  grant-access-for-order → access_rules → entitlements
+         → (после v23.1.5) useTrainingModules читает entitlements
 ```
 
-Контуры разорваны. Runtime пишет в `entitlements`, но ни один training access reader его не читает.
+### Частично смешанная модель (после PATCH v23.1.5)
 
-## Stop-check: полный список training access readers
+Это опаснее обычного дублирования:
 
-Найдено **3 reader-хука** (не 2):
+- **Training read-path** уже частично новый — читает и `module_access`, и `entitlements`
+- **Training write-path** всё ещё старый — пишет напрямую в `module_access`
+- **Product write-path** — пишет в `access_rules`, runtime пишет в `entitlements`
+- Между `module_access` и `entitlements` **нет автоматической синхронизации write-path**
 
-1. `**useTrainingModules.tsx**` — основной список модулей, select `*` → **содержит `product_id**`
-2. `**useContainerLessons.ts**` — уроки контейнеров, select **без `product_id**` → нужно добавить в select
-3. `**useSidebarModules.ts**` — sidebar, select **без `product_id**` → нужно добавить в select
+### Risk statement
 
-Все три нужно расширить, иначе синхронизация будет частичной.
+Пока тренинговый UI пишет напрямую в `module_access`, а продуктовый UI — в `access_rules`, админ может получить **два разных результата** при настройке одного и того же доступа в разных местах. Это не просто технический gap, а **реальный риск неконсистентной настройки доступа**.
 
-## Что делаем
+### Критическое уточнение по correction plan
 
-### Общий паттерн (один bulk-query, без N+1)
+Discovery показал: `**access_links` таблица и SECURITY DEFINER projection function НЕ существуют в коде**. Memory описывает целевую архитектуру, но она ещё не реализована:
 
-В каждом из 3 хуков, после получения `userTariffIds`, добавить:
+- Нет таблицы `access_links`
+- Нет REVOKE на `module_access`
+- Нет projection function
+- `module_access` по-прежнему доступна для прямой записи
 
-```ts
-let userEntitlementProductIds: string[] = [];
-if (user) {
-  const { data: ents } = await supabase
-    .from("entitlements")
-    .select("product_id")
-    .eq("user_id", user.id)
-    .eq("status", "active");
-  
-  userEntitlementProductIds = (ents || [])
-    .filter(e => e.product_id && (!e.expires_at || new Date(e.expires_at) > new Date()))
-    .map(e => e.product_id);
-}
-```
+Это значит, что canonical write-path через `access_links` **ещё предстоит создать**, а не просто "переключить тренинговый UI на него".
 
-Один запрос на пользователя → Set в памяти → O(1) lookup.
+---
 
-### Access formula precedence (явный, фиксированный)
+## Что делаем в этом патче
 
-```text
-1. admin bypass → true
-2. public module (no module_access entries) → true
-3. tariff-based: module_access ∩ subscriptions_v2 → true
-4. entitlement-based: module.product_id ∈ userEntitlementProductIds → true
-5. иначе → false
-```
+### Часть 1: UI-fix CompactAccessSelector
 
-Не заменяем старую логику, только расширяем шаг 4.
+**Файл**: `src/components/admin/trainings/CompactAccessSelector.tsx`
 
-### Файл 1: `useTrainingModules.tsx`
+1. **Scroll fix**: `<ScrollArea className="max-h-[300px]">` → `<div className="max-h-[300px] overflow-y-auto">`
+2. **Поиск**: добавить input с фильтрацией по `product.name` в header popover
+3. **Удалить** неиспользуемый import `ScrollArea`, `HoverCard*`
 
-- `select("*")` — уже содержит `product_id` ✓
-- После строки 97 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
-- В строке 124-126 расширить `baseAccess`:
-  ```ts
-  const baseAccess = 
-    moduleAccess.length === 0 || 
-    moduleAccess.some(a => userTariffIds.includes(a.tariff_id)) ||
-    (mod.product_id != null && userEntitlementProductIds.includes(mod.product_id));
-  ```
+### Часть 2: Зафиксировать architectural gap
 
-### Файл 2: `useContainerLessons.ts`
+Явно задокументировать:
 
-- В select контейнеров (строка 35) добавить `product_id`:
-  ```ts
-  .select("id, slug, menu_section_key, product_id")
-  ```
-- В select дочерних модулей (строка 47) добавить `product_id`:
-  ```ts
-  .select("id, slug, menu_section_key, parent_module_id, product_id")
-  ```
-- После строки 106 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
-- В `containerMap` хранить `productId` наряду с `slug` и `sectionKey`
-- В access check (строки 160-170) расширить `hasAccess`:
-  ```ts
-  const hasAccess = isAdminUser || 
-    moduleTariffs.length === 0 || 
-    moduleTariffs.some(tid => userTariffIds.includes(tid)) ||
-    (container.productId != null && userEntitlementProductIds.includes(container.productId));
-  ```
 
-### Файл 3: `useSidebarModules.ts`
+| &nbsp;              | Экран тренинга                                        | Экран продукта          |
+| ------------------- | ----------------------------------------------------- | ----------------------- |
+| UI компонент        | `CompactAccessSelector`                               | `ProductAccessRulesTab` |
+| Таблица записи      | `module_access` (прямая)                              | `access_rules`          |
+| Runtime запись      | —                                                     | `entitlements`          |
+| Read path           | `module_access` + `subscriptions_v2` + `entitlements` | `entitlements`          |
+| Синхронизация write | **НЕТ**                                               | **НЕТ**                 |
 
-- В select модулей (строка 45) добавить `product_id`:
-  ```ts
-  .select(`id, title, slug, menu_section_key, icon, sort_order, is_container, parent_module_id, product_id`)
-  ```
-- После строки 87 (`userTariffIds = ...`) добавить bulk-query к `entitlements`
-- В строке 98-100 расширить `hasAccess`:
-  ```ts
-  const hasAccess = isAdminUser || 
-    moduleAccess.tariffIds.length === 0 || 
-    moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid)) ||
-    (m.product_id != null && userEntitlementProductIds.includes(m.product_id));
-  ```
 
-## Edge cases
+Подтверждено:
 
-- `module.product_id = null` → entitlement path не применяется, поведение как раньше
-- `entitlement.expires_at` не null и в прошлом → фильтруется при сборе `userEntitlementProductIds`
-- `entitlement.status != 'active'` → фильтруется запросом
+- Пишут в **разные таблицы**
+- Читаются **разными путями** (частично пересекаются после v23.1.5)
+- Между ними **нет автоматической синхронизации write-path**
 
-## Deferred (не в этом патче)
+### Часть 3: Correction plan → PATCH v23.1.6
 
-- `required_tariff_ids` / per-tariff prior purchase в conditions
-- Domain/section access
+**PATCH v23.1.6 — Training access write-path alignment to canonical SoT**
+
+Целевое состояние:
+
+- `access_links` (или `access_rules`) = единый SoT для write
+- `module_access` = read-only projection, обновляется только через SECURITY DEFINER function
+- Тренинговый UI переключается на запись через canonical path
+- Прямая запись в `module_access` блокируется (REVOKE)
+
+Предварительные шаги v23.1.6:
+
+1. Создать таблицу `access_links` (если не существует) или определить, достаточно ли `access_rules`
+2. Создать SECURITY DEFINER projection function `access_links → module_access`
+3. REVOKE INSERT/UPDATE/DELETE на `module_access` для runtime-ролей
+4. Переключить `AdminTrainingModules`, `ContentCreationWizard`, `ContentSectionSelector` на canonical write path
+5. Проверить `training-copy-move` edge function
+
+**Важно**: v23.1.6 требует отдельного discovery по точной схеме `access_links` и маппингу `tariff_id → product → module`. Не реализовывать в этом патче.
+
+---
+
+## Файлы (этот патч)
+
+
+| Файл                        | Изменения                                                 |
+| --------------------------- | --------------------------------------------------------- |
+| `CompactAccessSelector.tsx` | ScrollArea → div overflow-y-auto, +поиск, -unused imports |
+
 
 ## Scope exclusion
 
-- `grant-access-for-order` runtime — не трогаем
-- `module_access`, `subscriptions_v2` — не трогаем
-- UI Access Rules — не трогаем
-- Только add-only расширение read-path
-
-## Файлы
-
-
-| Файл                               | Изменения                                                                 |
-| ---------------------------------- | ------------------------------------------------------------------------- |
-| `src/hooks/useTrainingModules.tsx` | +bulk entitlements query, +entitlement access check                       |
-| `src/hooks/useContainerLessons.ts` | +product_id в select, +bulk entitlements query, +entitlement access check |
-| `src/hooks/useSidebarModules.ts`   | +product_id в select, +bulk entitlements query, +entitlement access check |
-
+- **Не менять** runtime entitlements sync из v23.1.5
+- **Не менять** `grant-access-for-order`
+- **Не менять** `access_rules` / product access rules
+- **Не менять** логику тренинговой записи в `module_access` — только UI-fix + discovery + correction plan
+- Выравнивание write-path = отдельный PATCH v23.1.6
 
 ## DoD
 
-1. Active entitlement с валидным `expires_at` открывает модуль с matching `product_id`
-2. Истёкший entitlement модуль не открывает
-3. Старый tariff-based доступ не ломается
-4. Модули без `product_id` ведут себя как раньше
-5. Все 3 reader-хука синхронизированы (не только 2)
-6. Один bulk-query к entitlements, без N+1
-7. Admin bypass сохраняется
+1. Dropdown «Доступ к контенту» скроллится нормально
+2. Все продукты видны и доступны для выбора
+3. Есть поиск по названию продукта
+4. Подтверждено: тренинговый и продуктовый доступы **пишут в разные таблицы** (`module_access` vs `access_rules`)
+5. Подтверждено: **читаются разными путями** (частично пересекаются после v23.1.5)
+6. Подтверждено: между ними **нет автоматической синхронизации write-path**
+7. Зафиксирован correction plan: **PATCH v23.1.6 — Training access write-path alignment to canonical SoT**
