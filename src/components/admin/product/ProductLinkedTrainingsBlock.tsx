@@ -292,42 +292,46 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>Привязать тренинг</DialogTitle>
           <DialogDescription>Выберите тренинг для привязки к продукту</DialogDescription>
         </DialogHeader>
 
-        <div className="flex gap-1 p-0.5 rounded-full bg-muted/40 border border-border/20 w-fit">
-          {([
-            { key: "free", label: `Свободные (${data?.free?.length || 0})` },
-            { key: "current", label: `Этого продукта (${data?.currentProduct?.length || 0})` },
-            { key: "all", label: "Все" },
-          ] as const).map(f => (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={cn(
-                "px-3 py-1 rounded-full text-xs font-medium transition-all",
-                filter === f.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {f.label}
-            </button>
-          ))}
+        {/* Sticky filters */}
+        <div className="flex-shrink-0 space-y-2">
+          <div className="flex gap-1 p-0.5 rounded-full bg-muted/40 border border-border/20 w-fit">
+            {([
+              { key: "free", label: `Свободные (${data?.free?.length || 0})` },
+              { key: "current", label: `Этого продукта (${data?.currentProduct?.length || 0})` },
+              { key: "all", label: "Все" },
+            ] as const).map(f => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={cn(
+                  "px-3 py-1 rounded-full text-xs font-medium transition-all",
+                  filter === f.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Поиск тренинга..."
+              className="pl-8 h-9"
+            />
+          </div>
         </div>
 
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Поиск тренинга..."
-            className="pl-8 h-9"
-          />
-        </div>
-
-        <div className="max-h-[300px] overflow-y-auto border rounded-md">
+        {/* Scrollable list */}
+        <div className="flex-1 min-h-0 max-h-[400px] overflow-y-auto border rounded-md">
           {filtered.length === 0 ? (
             <div className="text-sm text-muted-foreground text-center py-8">
               {filter === "free" ? "Нет свободных тренингов" : "Ничего не найдено"}
@@ -343,7 +347,7 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                     onClick={() => !isCurrent && handleClick(m)}
                     disabled={binding || isCurrent}
                     className={cn(
-                      "w-full flex items-center gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
+                      "w-full flex items-start gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors",
                       isCurrent
                         ? "opacity-50 cursor-not-allowed"
                         : isOtherProduct
@@ -351,25 +355,27 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                           : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
-                    <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
-                    <span className="flex-1 min-w-0 truncate">{m.title}</span>
-                    {m.public_id && (
-                      <Badge variant="outline" className="text-[10px] font-mono shrink-0">{m.public_id}</Badge>
-                    )}
-                    {!m.is_active && (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">Неактивен</Badge>
-                    )}
-                    {isOtherProduct && (
-                      <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 shrink-0">
-                        Другой продукт → перепривязать
-                      </Badge>
-                    )}
-                    {isCurrent && (
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">
-                        <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
-                        Уже привязан
-                      </Badge>
-                    )}
+                    <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                    <span className="flex-1 min-w-0 line-clamp-2 leading-snug">{m.title}</span>
+                    <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
+                      {m.public_id && (
+                        <Badge variant="outline" className="text-[10px] font-mono">{m.public_id}</Badge>
+                      )}
+                      {!m.is_active && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+                      )}
+                      {isOtherProduct && (
+                        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                          Другой продукт → перепривязать
+                        </Badge>
+                      )}
+                      {isCurrent && (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                          <CheckCircle2 className="h-2.5 w-2.5 mr-0.5" />
+                          Привязан
+                        </Badge>
+                      )}
+                    </div>
                   </button>
                 );
               })}
