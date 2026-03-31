@@ -218,7 +218,7 @@ export function useTrainingModules() {
         return true;
       });
 
-      setModules(normalizedModules);
+      setModules(finalModules);
     } catch (error) {
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");
