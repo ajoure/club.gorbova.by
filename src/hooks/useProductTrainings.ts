@@ -157,11 +157,20 @@ export function useProductTrainings(productId?: string) {
         }
       });
 
+      // Recursively collect all IDs from in-memory tree
+      const collectAllTreeIds = (node: LinkedTraining): string[] => {
+        const ids = [node.id];
+        for (const child of node.children) {
+          ids.push(...collectAllTreeIds(child));
+        }
+        return ids;
+      };
+
       const diagnostics: Record<string, TrainingBindingDiagnostics> = {};
       rootModules.forEach(root => {
-        const allIds = [root.id, ...root.children.map(c => c.id)];
+        const allIds = collectAllTreeIds(root);
         const legacyCount = allIds.reduce((sum, id) => sum + (legacyCounts[id] || 0), 0);
-        const rulesCount = rulesCounts[root.id] || 0;
+        const rulesCount = allIds.reduce((sum, id) => sum + (rulesCounts[id] || 0), 0);
 
         diagnostics[root.id] = {
           binding_source: root.product_id ? (legacyCount > 0 ? "mixed_conflict" : "product_id") : (legacyCount > 0 ? "legacy_only" : "none"),
