@@ -451,11 +451,13 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
                   <Badge variant="outline" className="text-[9px]">
                     {totalModules} {totalModules === 1 ? "модуль" : totalModules >= 2 && totalModules <= 4 ? "модуля" : "модулей"}
                   </Badge>
-                  <Badge variant="outline" className="text-[9px]">
-                    {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
-                  </Badge>
+                  {totalLessons > 0 || t.children.length > 0 ? (
+                    <Badge variant="outline" className="text-[9px]">
+                      {totalLessons} {totalLessons === 1 ? "урок" : totalLessons >= 2 && totalLessons <= 4 ? "урока" : "уроков"}
+                    </Badge>
+                  ) : null}
                   <Badge variant="outline" className={cn("text-[9px]", hasRules ? "text-blue-600 border-blue-300" : "text-muted-foreground")}>
-                    {hasRules ? "Гранулярные правила настроены" : "Полный доступ через продукт"}
+                    {hasRules ? "Ограничение доступа настроено" : "Полный доступ"}
                   </Badge>
                 </div>
               </div>
