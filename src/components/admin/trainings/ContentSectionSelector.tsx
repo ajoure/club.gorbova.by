@@ -191,7 +191,7 @@ export function ContentSectionSelector({
           // Find the Knowledge Base container module
           const { data: containerModule } = await supabase
             .from("training_modules")
-            .select("id")
+            .select("id, product_id")
             .eq("slug", "container-knowledge-videos")
             .eq("is_container", true)
             .maybeSingle();
@@ -243,7 +243,8 @@ export function ContentSectionSelector({
                 .single();
 
               // Copy access from container
-              if (newModule) {
+              // PATCH v23.1.6: Skip module_access copy if container has product_id
+              if (newModule && !containerModule.product_id) {
                 const { data: containerAccess } = await supabase
                   .from("module_access")
                   .select("tariff_id")

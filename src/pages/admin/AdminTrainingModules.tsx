@@ -63,6 +63,7 @@ import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersMo
 import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
 import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
+import { ProductAccessInfoBlock } from "@/components/admin/trainings/ProductAccessInfoBlock";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
@@ -340,7 +341,13 @@ interface ModuleAccessFormProps {
   }>;
 }
 
-function ModuleAccessForm({ formData, setFormData, productsWithTariffs }: ModuleAccessFormProps) {
+function ModuleAccessForm({ formData, setFormData, productsWithTariffs, editingModule }: ModuleAccessFormProps & { editingModule?: TrainingModule | null }) {
+  // PATCH v23.1.6: If module has product_id, show readonly info block instead of selector
+  const effectiveProductId = editingModule?.product_id || formData.product_id;
+  if (effectiveProductId) {
+    return <ProductAccessInfoBlock productId={effectiveProductId} />;
+  }
+
   const handleChange = (tariffIds: string[]) => {
     setFormData(prev => ({ ...prev, tariff_ids: tariffIds }));
   };
@@ -797,6 +804,7 @@ export default function AdminTrainingModules() {
                 formData={formData}
                 setFormData={setFormData}
                 productsWithTariffs={productsWithTariffs || []}
+                editingModule={editingModule}
               />
             </div>
             <DialogFooter className="shrink-0 border-t pt-4 pb-[env(safe-area-inset-bottom)]">

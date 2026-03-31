@@ -205,19 +205,21 @@ async function copyModule(
     .single();
   if (insErr) throw new Error(`Insert module failed: ${insErr.message}`);
 
-  // 3. Copy module_access
-  const { data: accessRows } = await svc
-    .from("module_access")
-    .select("*")
-    .eq("module_id", sourceId);
+  // 3. Copy module_access — PATCH v23.1.6: skip if source has product_id (access via product SoT)
+  if (!mod.product_id) {
+    const { data: accessRows } = await svc
+      .from("module_access")
+      .select("*")
+      .eq("module_id", sourceId);
 
-  if (accessRows && accessRows.length > 0) {
-    for (const a of accessRows) {
-      const { id: _aid, created_at: _ac, ...aRest } = a;
-      await svc.from("module_access").insert({
-        ...aRest,
-        module_id: newMod.id,
-      });
+    if (accessRows && accessRows.length > 0) {
+      for (const a of accessRows) {
+        const { id: _aid, created_at: _ac, ...aRest } = a;
+        await svc.from("module_access").insert({
+          ...aRest,
+          module_id: newMod.id,
+        });
+      }
     }
   }
 

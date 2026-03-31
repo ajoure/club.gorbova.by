@@ -30,6 +30,7 @@ import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
 import { ModuleTreeSelector } from "./ModuleTreeSelector";
 import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
+import { ProductAccessInfoBlock } from "./ProductAccessInfoBlock";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
@@ -269,7 +270,22 @@ export function ContentCreationWizard({
     enabled: open,
   });
 
-  // Reset wizard when closed
+  // PATCH v23.1.6: Query product_id for target module to decide readonly vs selector
+  const targetModuleForAccess = isLessonFlow ? wizardData.targetModuleId : createdModuleId;
+  const { data: targetModuleProduct } = useQuery({
+    queryKey: ["target-module-product", targetModuleForAccess],
+    queryFn: async () => {
+      if (!targetModuleForAccess) return null;
+      const { data } = await supabase
+        .from("training_modules")
+        .select("product_id")
+        .eq("id", targetModuleForAccess)
+        .single();
+      return data?.product_id || null;
+    },
+    enabled: !!targetModuleForAccess && open,
+  });
+
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
       if (!newOpen) {
@@ -589,19 +605,29 @@ export function ContentCreationWizard({
       const containerSlug = containerData?.slug || "container";
 
       // SAVE ACCESS (previously was separate step)
-      // Clear existing access first
-      await supabase.from("module_access").delete().eq("module_id", containerId);
+      // PATCH v23.1.6: Skip module_access write if container has product_id
+      const { data: containerMod } = await supabase
+        .from("training_modules")
+        .select("product_id")
+        .eq("id", containerId)
+        .single();
+      const containerProductId = containerMod?.product_id;
 
-      if (wizardData.tariffIds.length > 0) {
-        const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-          module_id: containerId,
-          tariff_id: tariffId,
-        }));
+      if (!containerProductId) {
+        // Legacy path: write to module_access only for modules without product_id
+        await supabase.from("module_access").delete().eq("module_id", containerId);
 
-        const { error: accessError } = await supabase.from("module_access").insert(accessRecords);
-        if (accessError) {
-          console.error("Error saving access:", accessError);
-          toast.error("Урок создан, но не удалось сохранить настройки доступа");
+        if (wizardData.tariffIds.length > 0) {
+          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
+            module_id: containerId,
+            tariff_id: tariffId,
+          }));
+
+          const { error: accessError } = await supabase.from("module_access").insert(accessRecords);
+          if (accessError) {
+            console.error("Error saving access:", accessError);
+            toast.error("Урок создан, но не удалось сохранить настройки доступа");
+          }
         }
       }
 
@@ -772,16 +798,29 @@ export function ContentCreationWizard({
 
     setIsCreating(true);
     try {
-      await supabase.from("module_access").delete().eq("module_id", createdModuleId);
+      // PATCH v23.1.6: Check effective product_id before writing to module_access
+      let skipModuleAccess = false;
+      if (createdModuleId) {
+        const { data: mod } = await supabase
+          .from("training_modules")
+          .select("product_id")
+          .eq("id", createdModuleId)
+          .single();
+        skipModuleAccess = !!mod?.product_id;
+      }
 
-      if (wizardData.tariffIds.length > 0) {
-        const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-          module_id: createdModuleId,
-          tariff_id: tariffId,
-        }));
+      if (!skipModuleAccess) {
+        await supabase.from("module_access").delete().eq("module_id", createdModuleId);
 
-        const { error } = await supabase.from("module_access").insert(accessRecords);
-        if (error) throw error;
+        if (wizardData.tariffIds.length > 0) {
+          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
+            module_id: createdModuleId,
+            tariff_id: tariffId,
+          }));
+
+          const { error } = await supabase.from("module_access").insert(accessRecords);
+          if (error) throw error;
+        }
       }
 
       toast.success("Настройки доступа сохранены");
@@ -905,11 +944,15 @@ export function ContentCreationWizard({
       if (step === 1) {
         return (
           <div className="space-y-6">
-            <ProductTariffAccessSelector
-              selectedTariffIds={wizardData.tariffIds}
-              onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-              products={productsWithTariffs || []}
-            />
+            {targetModuleProduct ? (
+              <ProductAccessInfoBlock productId={targetModuleProduct} />
+            ) : (
+              <ProductTariffAccessSelector
+                selectedTariffIds={wizardData.tariffIds}
+                onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
+                products={productsWithTariffs || []}
+              />
+            )}
             <LessonSaleConfig
               config={wizardData.saleConfig}
               onChange={(cfg) => setWizardData((prev) => ({ ...prev, saleConfig: cfg }))}
@@ -1007,7 +1050,9 @@ export function ContentCreationWizard({
         );
       }
       if (step === 3) {
-        return (
+        return targetModuleProduct ? (
+          <ProductAccessInfoBlock productId={targetModuleProduct} />
+        ) : (
           <ProductTariffAccessSelector
             selectedTariffIds={wizardData.tariffIds}
             onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
