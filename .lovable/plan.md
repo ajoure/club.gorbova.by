@@ -1,80 +1,233 @@
-# PATCH v23.1.8 — Ручная привязка оставшихся training-модулей к продуктам
+# да, согласен, с учетом правок:
 
-## Статус: ВЫПОЛНЕН
+&nbsp;
 
-## Архитектурное решение
+1. В canonical_order_candidates добавь ещё поле source_snapshot_type, чтобы было видно, из какого типа исторической покупки выбран canonical order:
+  &nbsp;
+  - base_tariff_purchase
+  - module_child_purchase
+  - module_only_standalone
+  - и т.д.
+  &nbsp;
+2. Для **ЦБ 2.0** в READY_FOR_BACKFILL прямо зафиксируй, что туда могут попадать только пары, где canonical order выбран из base_tariff_purchase.
+  module_child_purchase и module_only_standalone в основной backfill по cb20 не включать.
+3. Для **ЗАКРОЙ ГОД** в dry-run отчёте по grouping key добавь отдельное поле same_batch_same_tariff_same_amount, чтобы сразу было видно, какие batch-группы выглядят как чистые технические дубли.
+4. В DUPLICATE_CLEANUP_REVIEW добавь поле blocked_backfill_reason, чтобы для каждого кандидата было понятно, что именно мешает execute:
+  &nbsp;
+  - missing_tariff
+  - ambiguous_canonical_order
+  - mixed_purchase_types
+  - batch_duplicates_not_resolved
+  - и т.д.
+  &nbsp;
+5. В E2E pipeline proof отдельно покажи, какие creation paths сейчас продолжают создавать gap:
+  &nbsp;
+  - admin_from_payment
+  - batch imports
+  - и есть ли ещё другие живые пути помимо этих двух.
+  &nbsp;
+6. В финальном deliverable добавь короткий сводный вывод по каждому продукту в формате:
+  &nbsp;
+  - ready now
+  - ready partially
+  - blocked
+    чтобы следующий проход сразу был про approve/execute, без повторной аналитики.
+  &nbsp;
 
-- **Канонический SoT** = `access_rules` → runtime → `entitlements`
-- `module_access` = переходный legacy/fallback path, только для модулей без `product_id`
-- Оставшиеся модули без `product_id` не блокируют работу нового контура
-- После создания соответствующих продуктов их можно будет отдельно довязать без переделки уже сделанного
+&nbsp;
 
-## Результат
+&nbsp;
 
-| Категория | До патча | После патча |
-|---|---|---|
-| product SoT | 29 | **74** |
-| legacy (без product_id) | 51 | **6** |
-| conflict | 0 | 0 |
+В остальном план правильный: сначала canonical/de-dup discovery, потом только v23.1.9B execute.
 
-## Выполненные шаги
+&nbsp;
 
-### Шаг 1: Dry-run — 45 модулей для ручной привязки
+План: PATCH v23.1.9A (финальная версия) — Gap discovery + Canonical order selection + Pipeline verification
 
-Все 51 legacy-модулей проанализированы. Из них:
-- **45 READY_FOR_BIND** — однозначно привязаны к продуктам
-- **5 SKIP_NO_PRODUCT_YET** — отложены до создания продукта
-- **1 NEED_MANUAL_DECISION** — Марафон по безопасности
+## Статус: план на утверждение
 
-#### Маппинг по группам
+## Цель
 
-| Группа | Продукт | product_id | Модулей |
-|---|---|---|---|
-| ЦБ 1 ступень 2.0 (контейнер + предобучения + 35 детей) | Ценный бухгалтер 2.0 | `7101ed3c-7839-4a74-ad95-aa0660369b22` | 38 |
-| ЦБ 2 ступень 3 поток (контейнер + 1 ребёнок) | ЦБ 2 ступень | `87a8870f-d426-419a-9f15-faa76c3f2be3` | 2 |
-| Подоходный налог для физ лиц (контейнер + 3 ребёнка) | Подоходный налог с физлиц | `4fc18564-774e-43dd-9444-26681c9b40a0` | 4 |
-| Закрой год 2024-2025 | ЗАКРОЙ ГОД | `73c29914-63a3-4f4f-ac42-9f5287e58696` | 1 |
-| **Итого** | | | **45** |
+Полная discovery-фаза перед historical entitlement backfill: gap analysis, duplicate/installment classification, canonical order selection, root cause, policy matrix. **Без execute.**
 
-### Шаг 2: Execute — UPDATE product_id для 45 модулей
+---
 
-4 отдельных UPDATE, каждый с guard `product_id IS NULL`:
-- Группа 1: 38 строк (ЦБ 2.0)
-- Группа 2: 2 строки (ЦБ 2 ступень)
-- Группа 3: 4 строки (Подоходный налог)
-- Группа 4: 1 строка (ЗАКРОЙ ГОД)
+## Структура
 
-Post-check: 74 product SoT, 6 legacy. ✅
 
-### Шаг 3: Оставшиеся 6 модулей (legacy)
+| Блок           | Содержание                                                       |
+| -------------- | ---------------------------------------------------------------- |
+| **v23.1.9A.1** | Entitlement gap discovery (без изменений от предыдущего плана)   |
+| **v23.1.9A.2** | Duplicate/installment deal discovery + canonical order selection |
+| **v23.1.9A.3** | Root cause + policy matrix                                       |
+| **v23.1.9A.4** | 5 итоговых списков                                               |
 
-| title | status | причина |
-|---|---|---|
-| Бонус-вебинар (Татьяна Рыбак) | SKIP_NO_PRODUCT_YET | inactive, продукт ещё не создан |
-| Бухгалтер маркетплейсов | SKIP_NO_PRODUCT_YET | inactive, продукт ещё не создан |
-| Деньги BY 1 тариф | SKIP_NO_PRODUCT_YET | inactive, продукт ещё не создан |
-| Деньги BY 2 тариф | SKIP_NO_PRODUCT_YET | inactive, продукт ещё не создан |
-| ТЕСТ | SKIP_NO_PRODUCT_YET | тестовый модуль, продукт не нужен |
-| Марафон по безопасности | NEED_MANUAL_DECISION | неоднозначное соответствие продукту |
 
-Эти модули:
-- не архивируются и не удаляются
-- не привязываются к неподходящему продукту «для галочки»
-- остаются без product_id до отдельного решения
-- после создания соответствующих продуктов можно довязать без переделки архитектуры
+---
 
-## Файлы изменены
+## v23.1.9A.2 — Duplicate/installment deal discovery (обновлённый)
 
-| Файл | Изменение |
-|---|---|
-| SQL (data patch) | UPDATE product_id для 45 модулей |
-| `.lovable/plan.md` | Обновлён отчёт |
+### ЦБ 2.0: правила канонической покупки
 
-Код НЕ менялся — все guards и readonly UI работают из v23.1.6.
+**Каноническая покупка для основного entitlement** определяется **только среди `base_tariff_purchase**`. Типы `module_child_purchase` и `module_only_standalone` **не участвуют** в расчёте основного entitlement.
 
-## Deferred (следующий патч v23.1.9)
+#### Upgrade policy (ЦБ 2.0)
 
-- Backfill entitlements по историческим покупкам для продуктов с training-модулями
-- Создание недостающих продуктов для legacy training-модулей (5 шт.)
-- Последующая привязка этих модулей через product_id
-- Ручное решение по «Марафону по безопасности»
+- Несколько `base_tariff_purchase` с **разными** тарифами у одного пользователя — **не дубль по умолчанию**, а вероятный апгрейд.
+- Каноническая покупка = `base_tariff_purchase` с **максимальным `access_days**` (Бизнес-леди 270 > Главный бухгалтер 180 > Бухгалтер 90). При равном `access_days` — самая поздняя по `created_at`.
+- Более ранние `base_tariff_purchase` помечаются как `leave_as_is` или `exclude_from_backfill`, но **не как дубли** без явного доказательства идентичности (тариф + дата + сумма + batch).
+
+#### Мини-итог по ЦБ 2.0 (обязательный deliverable)
+
+- Можно ли уже делать backfill: да/нет
+- Что именно блокирует (если нет)
+- Сколько пользователей реально ready после очистки дублей
+- Сколько остаются в `DUPLICATE_CLEANUP_REVIEW`
+
+### ЗАКРОЙ ГОД: grouping key + dry-run
+
+**Grouping key для одной логической покупки:**
+
+- Если batch есть: `profile_id + product_id + batch_id`
+- Если batch нет: `profile_id + product_id` + эвристика по периоду/выпуску (разнос дат > 60 дней = отдельная покупка)
+
+**Dry-run обязан показать для каждой группы** (а не просто «первая сделка по created_at»):
+
+- earliest order (id, created_at, amount, tariff)
+- latest order (id, created_at, amount, tariff)
+- число дублей в batch
+- совпадают ли tariff / amount / metadata между сделками в группе
+
+Каноническая сделка утверждается **только после** этого dry-run, а не заранее.
+
+#### Мини-итог по ЗАКРОЙ ГОД (обязательный deliverable)
+
+- Можно ли уже делать backfill: да/нет
+- Что именно блокирует
+- Сколько пользователей реально ready после очистки дублей
+
+### Подоходный налог ИП
+
+**Явный вывод:**
+
+- Duplicate discovery completed: no duplicate pattern found (0 пользователей с 2+ сделками)
+- Продукт не блокирует backfill по причине дублей
+- Остаётся в общем policy matrix (policy по expires_at решается отдельно)
+
+---
+
+## Duplicate cleanup policy matrix (обновлённый)
+
+
+| Продукт             | Допустимы ли повторные | Определение «одной покупки»                | Лишний дубль                                                | Что нельзя удалять                           | Действие по дублям    | **canonical_order_selection_rule**                                           |
+| ------------------- | ---------------------- | ------------------------------------------ | ----------------------------------------------------------- | -------------------------------------------- | --------------------- | ---------------------------------------------------------------------------- |
+| ЦБ 2.0              | Да (module/upgrade)    | `base_tariff_purchase` с max `access_days` | Несколько base с одинаковым тарифом + датой + batch         | module_child, module_only, единственный base | exclude_from_backfill | max(access_days) среди base_tariff_purchase, при равенстве — max(created_at) |
+| ЗАКРОЙ ГОД          | Да (разные периоды)    | `profile_id + product_id + batch_id`       | Несколько paid orders из одного batch у одного пользователя | Первую сделку из группы, органические        | exclude_from_backfill | После dry-run: по совпадению tariff/amount/meta внутри группы                |
+| Подоходный налог ИП | N/A (0 дублей)         | Единственный order                         | —                                                           | —                                            | leave_as_is           | Единственный paid order                                                      |
+
+
+---
+
+## v23.1.9A.3 — Root cause (дополненный)
+
+К ранее зафиксированным причинам добавить:
+
+> Исторические импорты смешали главные покупки, модульные покупки и batch-дубли в одном контуре orders_v2, поэтому backfill нельзя строить только от `count(paid orders)`. Каждый order должен быть классифицирован, и только каноническая сделка используется для расчёта `expires_at`.
+
+**Policy matrix зависит от cleanup discovery**: сначала каноническая сделка → потом `expires_at` → потом backfill.
+
+---
+
+## v23.1.9A.4 — 5 итоговых списков
+
+
+| #   | Список                         | Содержание                                                                                                                                         |
+| --- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **READY_FOR_BACKFILL**         | Пары `user_id × product_id × canonical_order_id` (не продукт целиком). Внутри одного продукта часть пользователей может быть ready, а часть — нет. |
+| 2   | **NEED_POLICY_DECISION**       | Продукт/пользователи, где не определена policy по expires_at (напр. ЦБ 2.0 без tariff_id)                                                          |
+| 3   | **DO_NOT_BACKFILL**            | Бывшие подписчики, expired access, нет тренингов                                                                                                   |
+| 4   | **DUPLICATE_CLEANUP_REVIEW**   | С указанием типа проблемы: `batch_duplicate`, `possible_upgrade`, `possible_installment`, `mixed_base_and_module_purchases`, `missing_tariff`      |
+| 5   | **CANONICAL_ORDER_CANDIDATES** | user_id, product_id, canonical_order_id, canonical_reason, duplicate_count, cleanup_action                                                         |
+
+
+---
+
+## Deliverables v23.1.9A (полный список)
+
+1. Entitlement gap discovery (продуктовый реестр + разбивка gap users по 5 категориям)
+2. Duplicate deal discovery по ЦБ 2.0, ЗАКРОЙ ГОД, Подоходный налог ИП
+3. Upgrade policy для ЦБ 2.0
+4. Grouping key dry-run для ЗАКРОЙ ГОД
+5. Duplicate cleanup policy matrix с `canonical_order_selection_rule`
+6. Root cause analysis (дополненный)
+7. Policy matrix по expires_at (с зависимостью от cleanup)
+8. **canonical_order_candidates** (user_id, product_id, canonical_order_id, canonical_reason, duplicate_count, cleanup_action)
+9. 5 итоговых списков
+10. Мини-итоги по ЦБ 2.0 и ЗАКРОЙ ГОД (ready/blocked/count)
+11. E2E pipeline proof (read-only)
+
+---
+
+## Что НЕ выполняется в v23.1.9A
+
+- Архивирование
+- Удаление
+- Merge
+- Rewrite orders/subscriptions
+- Entitlement backfill
+- Изменение кода
+- Изменение access_rules, grant-access-for-order, training read/write path
+
+**Только**: discovery, classification, canonical selection.
+
+---
+
+## STOP-guards для v23.1.9B
+
+
+| Guard                                                                     | Правило                          |
+| ------------------------------------------------------------------------- | -------------------------------- |
+| Таблица `canonical_order_candidates` не утверждена → execute запрещён     | Обязательно                      |
+| Список `DUPLICATE_CLEANUP_REVIEW` не утверждён → execute запрещён         | Обязательно                      |
+| По продукту не завершена классификация дублей → backfill по нему запрещён | Особенно для ЦБ 2.0 и ЗАКРОЙ ГОД |
+| ROW_COUNT per product ≠ expected → STOP                                   | Обязательно                      |
+
+
+---
+
+## Последовательность патчей
+
+
+| Патч         | Scope                                                               |
+| ------------ | ------------------------------------------------------------------- |
+| **v23.1.9A** | Discovery + classification + canonical selection (этот патч)        |
+| **v23.1.9B** | Execute backfill только по утверждённому canonical_order_candidates |
+| **v23.1.10** | Fix root cause в creation paths (admin_from_payment, batch imports) |
+
+
+---
+
+## Изменяемые компоненты
+
+
+| Компонент          | Изменение                |
+| ------------------ | ------------------------ |
+| `.lovable/plan.md` | Обновление статуса патча |
+
+
+Код и данные **не меняются**.
+
+## DoD
+
+1. Entitlement gap discovery — полный продуктовый реестр
+2. Duplicate deal discovery по 3 продуктам — завершён
+3. Upgrade policy для ЦБ 2.0 — зафиксирована
+4. Grouping key + dry-run для ЗАКРОЙ ГОД — выполнен
+5. Подоходный налог ИП — duplicate discovery completed, no pattern found
+6. Duplicate cleanup policy matrix с canonical_order_selection_rule — готова
+7. canonical_order_candidates — собран
+8. Root cause дополнен (batch import дубли + смешение типов покупок)
+9. 5 итоговых списков — готовы
+10. Мини-итоги по ЦБ 2.0 и ЗАКРОЙ ГОД — даны
+11. E2E pipeline proof — собран
+12. В v23.1.9A не выполнено ни одного write-действия
