@@ -40,6 +40,7 @@ export function CompactAccessSelector({
 }: CompactAccessSelectorProps) {
   const [open, setOpen] = useState(false);
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Filter products with tariffs
   const productsWithTariffs = useMemo(
