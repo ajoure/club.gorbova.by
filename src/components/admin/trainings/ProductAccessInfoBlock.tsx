@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -6,9 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ExternalLink, ShieldCheck, AlertTriangle, Info, ChevronDown, Settings, Plus, CheckCircle2, EyeOff, Pencil } from "lucide-react";
-import { useState } from "react";
+import { ExternalLink, ShieldCheck, AlertTriangle, Info, ChevronDown, Settings, Plus, CheckCircle2, EyeOff, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LegacyCleanupDialog } from "./LegacyCleanupDialog";
+import { useProductTrainings } from "@/hooks/useProductTrainings";
 
 interface ProductAccessInfoBlockProps {
   productId: string;
@@ -16,14 +18,10 @@ interface ProductAccessInfoBlockProps {
   className?: string;
 }
 
-/**
- * Actionable info block for training modules linked to a product.
- * Shows linked product, live training_content rules, diagnostics.
- * All navigation uses location.state for deep-linking into access_rules tab.
- */
 export function ProductAccessInfoBlock({ productId, moduleId, className }: ProductAccessInfoBlockProps) {
   const navigate = useNavigate();
   const [diagOpen, setDiagOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
 
   const { data: product } = useQuery({
     queryKey: ["product-name-extended", productId],
@@ -37,6 +35,20 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
       return data;
     },
     enabled: !!productId,
+  });
+
+  const { data: training } = useQuery({
+    queryKey: ["training-title-for-info", moduleId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title")
+        .eq("id", moduleId!)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!moduleId,
   });
 
   // Legacy module_access count
@@ -54,130 +66,133 @@ export function ProductAccessInfoBlock({ productId, moduleId, className }: Produ
     enabled: !!moduleId,
   });
 
+  const { getLegacyCleanupPreview, cleanupLegacyAccess } = useProductTrainings(productId);
+
   // Live training_content rules for this product
   const { data: allRules = [] } = useTrainingContentRulesForProduct(productId);
-
-  // Filter rules relevant to this specific module (as target_ref)
   const moduleRules = moduleId ? allRules.filter(r => r.target_ref === moduleId) : [];
-  const totalRulesCount = allRules.length;
 
-  const bindingSource = productId
-    ? (legacyCount > 0 ? "mixed_conflict" : "product_id")
-    : (legacyCount > 0 ? "legacy_only" : "none");
-
-  // Navigation helpers — unified via location.state
+  // Navigation helpers
   const goToProduct = () => navigate(`/admin/products-v2/${productId}`);
-
-  const goToAccessTab = () =>
-    navigate(`/admin/products-v2/${productId}?tab=access_rules`);
-
+  const goToAccessTab = () => navigate(`/admin/products-v2/${productId}?tab=access_rules`);
   const goToCreateRule = () =>
     navigate(`/admin/products-v2/${productId}?tab=access_rules`, {
       state: { accessRulesAction: { type: "create_training_content", targetRef: moduleId } },
     });
-
   const goToEditRule = (ruleId: string) =>
     navigate(`/admin/products-v2/${productId}?tab=access_rules`, {
       state: { accessRulesAction: { type: "edit_rule", ruleId } },
     });
 
   return (
-    <Alert className={cn("border-primary/30 bg-primary/5", className)}>
-      <ShieldCheck className="h-4 w-4 text-primary" />
-      <AlertDescription className="ml-2 space-y-3">
-        {/* Layer 1: Linked product */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="outline" className="border-primary/40 text-primary text-xs">
-            Продуктовый контур
-          </Badge>
-          {product?.public_id && (
-            <Badge variant="outline" className="text-[10px] font-mono">{product.public_id}</Badge>
-          )}
-        </div>
-        <p className="text-sm">
-          Доступ управляется через продукт:{" "}
-          <strong>{product?.name || "Загрузка..."}</strong>
-        </p>
+    <>
+      <Alert className={cn("border-primary/30 bg-primary/5", className)}>
+        <ShieldCheck className="h-4 w-4 text-primary" />
+        <AlertDescription className="ml-2 space-y-3">
+          {/* Header */}
+          <p className="text-sm font-medium">
+            Тренинг управляется через продукт: {product?.name || "Загрузка…"}
+          </p>
 
-        {/* Layer 2: Live training_content rules for this module */}
-        {moduleId && (
-          <div className="space-y-1.5 pt-1">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3 w-3" />
-              <span>Правила доступа к контенту</span>
+          {/* Legacy warning */}
+          {legacyCount > 0 && (
+            <div className="flex items-center gap-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/30">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+              <span className="text-xs text-amber-800 dark:text-amber-200 flex-1">
+                Обнаружены старые настройки доступа: {legacyCount} записей
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-amber-600 border-amber-300 h-7 text-xs"
+                onClick={() => setCleanupOpen(true)}
+              >
+                <Trash2 className="h-3 w-3" />
+                Очистить
+              </Button>
             </div>
+          )}
 
-            {moduleRules.length === 0 ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 rounded-md px-2 py-1.5">
-                <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
-                <span>Не настроено — полный доступ по продукту</span>
+          {/* Content access rules */}
+          {moduleId && (
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <ShieldCheck className="h-3 w-3" />
+                <span>Ограничение доступа к разделам и урокам</span>
               </div>
-            ) : (
-              <div className="space-y-1">
-                {moduleRules.map(rule => (
-                  <RuleSummaryRow key={rule.id} rule={rule} onEdit={() => goToEditRule(rule.id)} />
-                ))}
-              </div>
+
+              {moduleRules.length === 0 ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/30 rounded-md px-2 py-1.5">
+                  <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
+                  <span>Полный доступ ко всем разделам и урокам</span>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {moduleRules.map(rule => (
+                    <RuleSummaryRow key={rule.id} rule={rule} onEdit={() => goToEditRule(rule.id)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" className="gap-2" onClick={goToProduct}>
+              <ExternalLink className="h-3.5 w-3.5" />
+              Открыть продукт
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2" onClick={goToAccessTab}>
+              <Settings className="h-3.5 w-3.5" />
+              Открыть доступы
+            </Button>
+            {moduleId && moduleRules.length === 0 && (
+              <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={goToCreateRule}>
+                <Plus className="h-3.5 w-3.5" />
+                Создать правило
+              </Button>
+            )}
+            {moduleId && moduleRules.length > 0 && (
+              <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={() => goToEditRule(moduleRules[0].id)}>
+                <Pencil className="h-3.5 w-3.5" />
+                Редактировать правило
+              </Button>
             )}
           </div>
-        )}
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" className="gap-2" onClick={goToProduct}>
-            <ExternalLink className="h-3.5 w-3.5" />
-            Открыть продукт
-          </Button>
-          <Button variant="outline" size="sm" className="gap-2" onClick={goToAccessTab}>
-            <Settings className="h-3.5 w-3.5" />
-            Вкладка «Доступы»
-          </Button>
-          {moduleId && moduleRules.length === 0 && (
-            <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={goToCreateRule}>
-              <Plus className="h-3.5 w-3.5" />
-              Создать правило
-            </Button>
+          {/* Debug diagnostics — collapsed */}
+          {moduleId && (
+            <Collapsible open={diagOpen} onOpenChange={setDiagOpen}>
+              <CollapsibleTrigger asChild>
+                <button className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground mt-1">
+                  <Info className="h-3 w-3" />
+                  Диагностика
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-1 text-[10px] text-muted-foreground space-y-0.5 bg-muted/30 rounded-md px-2 py-1.5">
+                <div>product_id: {productId}</div>
+                <div>module_id: {moduleId}</div>
+                <div>правил доступа (всего по продукту): {allRules.length}</div>
+                <div>правил доступа (для этого тренинга): {moduleRules.length}</div>
+                <div>старые настройки (module_access): {legacyCount}</div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
-          {moduleId && moduleRules.length > 0 && (
-            <Button variant="outline" size="sm" className="gap-2 text-primary" onClick={() => goToEditRule(moduleRules[0].id)}>
-              <Pencil className="h-3.5 w-3.5" />
-              Редактировать правило
-            </Button>
-          )}
-        </div>
+        </AlertDescription>
+      </Alert>
 
-        {/* Legacy warning */}
-        {legacyCount > 0 && (
-          <div className="flex items-center gap-1.5 text-[11px] text-amber-600 mt-1">
-            <AlertTriangle className="h-3 w-3 shrink-0" />
-            Старые настройки доступа: {legacyCount} записей
-          </div>
-        )}
-
-        {/* Diagnostics */}
-        {moduleId && (
-          <Collapsible open={diagOpen} onOpenChange={setDiagOpen}>
-            <CollapsibleTrigger asChild>
-              <button className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground mt-1">
-                <Info className="h-3 w-3" />
-                Диагностика
-                <ChevronDown className="h-3 w-3" />
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-1 text-[10px] text-muted-foreground space-y-0.5 bg-muted/30 rounded-md px-2 py-1.5">
-              <div>product_id: {productId}</div>
-              <div>источник привязки: {bindingSource}</div>
-              <div>правил доступа к контенту (всего по продукту): {totalRulesCount}</div>
-              <div>правил доступа к контенту (для этого тренинга): {moduleRules.length}</div>
-              <div>старые настройки (module_access): {legacyCount}</div>
-              {legacyCount > 0 && productId && (
-                <div className="text-amber-600">⚠ Конфликт: старый контур + продуктовый контур</div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-      </AlertDescription>
-    </Alert>
+      {/* Legacy cleanup dialog */}
+      {moduleId && (
+        <LegacyCleanupDialog
+          open={cleanupOpen}
+          onOpenChange={setCleanupOpen}
+          rootTrainingTitle={training?.title || ""}
+          onGetPreview={() => getLegacyCleanupPreview(moduleId)}
+          onExecute={(confirmedModuleIds) => cleanupLegacyAccess({ rootId: moduleId, confirmedModuleIds })}
+        />
+      )}
+    </>
   );
 }
 
