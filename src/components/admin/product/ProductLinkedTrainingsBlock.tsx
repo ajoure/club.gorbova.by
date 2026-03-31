@@ -673,7 +673,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   <Shield className="h-3.5 w-3.5" />
-                  <span>Правила гранулярности доступа</span>
+                  <span>Ограничение доступа внутри тренинга</span>
                   <Badge variant="outline" className="text-[9px]">{contentRules.length}</Badge>
                 </div>
                 {contentRules.length === 0 ? (
