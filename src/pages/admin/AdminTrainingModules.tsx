@@ -345,7 +345,7 @@ function ModuleAccessForm({ formData, setFormData, productsWithTariffs, editingM
   // PATCH v23.1.6: If module has product_id, show readonly info block instead of selector
   const effectiveProductId = editingModule?.product_id || formData.product_id;
   if (effectiveProductId) {
-    return <ProductAccessInfoBlock productId={effectiveProductId} />;
+    return <ProductAccessInfoBlock productId={effectiveProductId} moduleId={editingModule?.id} />;
   }
 
   const handleChange = (tariffIds: string[]) => {

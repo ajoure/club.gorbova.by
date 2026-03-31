@@ -10690,6 +10690,7 @@ export type Database = {
           menu_section_key: string | null
           parent_module_id: string | null
           product_id: string | null
+          public_id: string | null
           published_at: string | null
           slug: string
           sort_order: number | null
@@ -10709,6 +10710,7 @@ export type Database = {
           menu_section_key?: string | null
           parent_module_id?: string | null
           product_id?: string | null
+          public_id?: string | null
           published_at?: string | null
           slug: string
           sort_order?: number | null
@@ -10728,6 +10730,7 @@ export type Database = {
           menu_section_key?: string | null
           parent_module_id?: string | null
           product_id?: string | null
+          public_id?: string | null
           published_at?: string | null
           slug?: string
           sort_order?: number | null

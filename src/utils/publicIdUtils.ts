@@ -2,7 +2,7 @@
  * Parse a public_id string and determine the entity type by prefix.
  * PRD- = product, T- = tariff
  */
-export type PublicIdEntity = "product" | "tariff" | "unknown";
+export type PublicIdEntity = "product" | "tariff" | "training_module" | "unknown";
 
 export interface ParsedPublicId {
   entity: PublicIdEntity;
@@ -12,6 +12,7 @@ export interface ParsedPublicId {
 const PREFIX_MAP: Record<string, PublicIdEntity> = {
   "PRD-": "product",
   "T-": "tariff",
+  "TRN-": "training_module",
 };
 
 export function parsePublicId(input: string): ParsedPublicId {
