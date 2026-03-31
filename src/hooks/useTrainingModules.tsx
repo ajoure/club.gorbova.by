@@ -60,6 +60,8 @@ export function useTrainingModules() {
   const [loading, setLoading] = useState(true);
   const isAdminUser = isAdmin();
   const hasLoadedOnceRef = useRef(false);
+  const { data: tcData } = useActiveTrainingContentRules();
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchModules = useCallback(async () => {
     try {
