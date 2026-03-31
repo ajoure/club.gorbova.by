@@ -488,6 +488,13 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
       }
     }
 
+    // training_content conditions
+    if (form.grant_target_type === "training_content") {
+      conditions.access_mode = form.tc_access_mode;
+      conditions.allowed_module_ids = form.tc_access_mode === "partial" ? form.tc_allowed_module_ids : [];
+      conditions.allowed_lesson_ids = form.tc_access_mode === "partial" ? form.tc_allowed_lesson_ids : [];
+    }
+
     // Parse string fields to numbers on save
     const parsedPriority = form.priority.trim() === "" ? 0 : (parseInt(form.priority, 10) || 0);
     const parsedDuration = form.duration_mode === "manual"
@@ -506,6 +513,11 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
           .map(id => availableProducts.find(p => p.id === id)?.name || id);
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
+    }
+    // training_content: target_label = training title
+    if (form.grant_target_type === "training_content" && form.target_ref) {
+      const training = rootTrainings.find(t => t.id === form.target_ref);
+      targetLabel = training?.title || form.target_label || form.target_ref;
     }
 
     const payload: any = {
