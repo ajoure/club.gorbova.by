@@ -393,8 +393,8 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
       <div className="grid gap-2">
         {trainings.map(t => {
           const d = diagnostics[t.id];
-          const totalLessons = t.lesson_count + t.children.reduce((s, c) => s + c.lesson_count, 0);
-          const totalModules = t.children.length;
+          const totalLessons = countTreeLessons(t);
+          const totalModules = countTreeModules(t);
           const hasRules = d && d.training_content_rules_count > 0;
 
           return (
