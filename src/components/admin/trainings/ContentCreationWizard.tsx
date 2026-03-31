@@ -29,8 +29,8 @@ import { KbLessonFormFields, KbLessonFormData, generateKbLessonSlug } from "./Kb
 import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
 import { ModuleTreeSelector } from "./ModuleTreeSelector";
-import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
 import { ProductAccessInfoBlock } from "./ProductAccessInfoBlock";
+import { TrainingUnlinkedBlock } from "./TrainingUnlinkedBlock";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
@@ -604,32 +604,7 @@ export function ContentCreationWizard({
         .single();
       const containerSlug = containerData?.slug || "container";
 
-      // SAVE ACCESS (previously was separate step)
-      // PATCH v23.1.6: Skip module_access write if container has product_id
-      const { data: containerMod } = await supabase
-        .from("training_modules")
-        .select("product_id")
-        .eq("id", containerId)
-        .single();
-      const containerProductId = containerMod?.product_id;
-
-      if (!containerProductId) {
-        // Legacy path: write to module_access only for modules without product_id
-        await supabase.from("module_access").delete().eq("module_id", containerId);
-
-        if (wizardData.tariffIds.length > 0) {
-          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-            module_id: containerId,
-            tariff_id: tariffId,
-          }));
-
-          const { error: accessError } = await supabase.from("module_access").insert(accessRecords);
-          if (accessError) {
-            console.error("Error saving access:", accessError);
-            toast.error("Урок создан, но не удалось сохранить настройки доступа");
-          }
-        }
-      }
+      // Access is managed via product linkage (access_rules). No legacy module_access writes.
 
       // CREATE PRODUCT FOR LESSON MONETIZATION (if enabled)
       if (wizardData.saleConfig.enabled && wizardData.saleConfig.basePrice > 0) {
@@ -798,31 +773,7 @@ export function ContentCreationWizard({
 
     setIsCreating(true);
     try {
-      // PATCH v23.1.6: Check effective product_id before writing to module_access
-      let skipModuleAccess = false;
-      if (createdModuleId) {
-        const { data: mod } = await supabase
-          .from("training_modules")
-          .select("product_id")
-          .eq("id", createdModuleId)
-          .single();
-        skipModuleAccess = !!mod?.product_id;
-      }
-
-      if (!skipModuleAccess) {
-        await supabase.from("module_access").delete().eq("module_id", createdModuleId);
-
-        if (wizardData.tariffIds.length > 0) {
-          const accessRecords = wizardData.tariffIds.map((tariffId) => ({
-            module_id: createdModuleId,
-            tariff_id: tariffId,
-          }));
-
-          const { error } = await supabase.from("module_access").insert(accessRecords);
-          if (error) throw error;
-        }
-      }
-
+      // Access is managed via product linkage (access_rules). No legacy module_access writes.
       toast.success("Настройки доступа сохранены");
       setStep(isLessonFlow ? 3 : 4);
     } catch (error: any) {
@@ -947,11 +898,7 @@ export function ContentCreationWizard({
             {targetModuleProduct ? (
               <ProductAccessInfoBlock productId={targetModuleProduct} />
             ) : (
-              <ProductTariffAccessSelector
-                selectedTariffIds={wizardData.tariffIds}
-                onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-                products={productsWithTariffs || []}
-              />
+              <TrainingUnlinkedBlock />
             )}
             <LessonSaleConfig
               config={wizardData.saleConfig}
@@ -1053,11 +1000,7 @@ export function ContentCreationWizard({
         return targetModuleProduct ? (
           <ProductAccessInfoBlock productId={targetModuleProduct} />
         ) : (
-          <ProductTariffAccessSelector
-            selectedTariffIds={wizardData.tariffIds}
-            onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-            products={productsWithTariffs || []}
-          />
+          <TrainingUnlinkedBlock />
         );
       }
       if (step === 4) {

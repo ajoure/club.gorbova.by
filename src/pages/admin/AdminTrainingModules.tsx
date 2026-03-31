@@ -62,8 +62,8 @@ import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard"
 import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersModal";
 import { CopyMoveDialog } from "@/components/admin/trainings/CopyMoveDialog";
 import TrainingSettingsPanel, { ViewDensity } from "@/components/admin/trainings/TrainingSettingsPanel";
-import { ProductTariffAccessSelector } from "@/components/admin/trainings/ProductTariffAccessSelector";
 import { ProductAccessInfoBlock } from "@/components/admin/trainings/ProductAccessInfoBlock";
+import { TrainingUnlinkedBlock } from "@/components/admin/trainings/TrainingUnlinkedBlock";
 import { ContentSectionSelector } from "@/components/admin/trainings/ContentSectionSelector";
 import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/components/admin/trainings/DisplayLayoutSelector";
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
@@ -342,23 +342,12 @@ interface ModuleAccessFormProps {
 }
 
 function ModuleAccessForm({ formData, setFormData, productsWithTariffs, editingModule }: ModuleAccessFormProps & { editingModule?: TrainingModule | null }) {
-  // PATCH v23.1.6: If module has product_id, show readonly info block instead of selector
   const effectiveProductId = editingModule?.product_id || formData.product_id;
   if (effectiveProductId) {
     return <ProductAccessInfoBlock productId={effectiveProductId} moduleId={editingModule?.id} />;
   }
 
-  const handleChange = (tariffIds: string[]) => {
-    setFormData(prev => ({ ...prev, tariff_ids: tariffIds }));
-  };
-
-  return (
-    <ProductTariffAccessSelector
-      selectedTariffIds={formData.tariff_ids || []}
-      onChange={handleChange}
-      products={productsWithTariffs}
-    />
-  );
+  return <TrainingUnlinkedBlock moduleId={editingModule?.id} />;
 }
 
 export default function AdminTrainingModules() {
