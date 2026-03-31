@@ -156,14 +156,14 @@ function RebindPreviewDialog({ open, onOpenChange, preview, trainingTitle, onCon
               warning={preview.training_content_rules_count > 0}
             />
             <PreviewRow
-              label="Старые настройки доступа (module_access)"
+              label="Старые настройки доступа"
               value={preview.legacy_module_access_count}
               warning={preview.legacy_module_access_count > 0}
             />
             {preview.has_active_entitlements && (
               <PreviewRow
                 label="У пользователей есть активные entitlements на старый продукт"
-                value="⚠ Да"
+                value="⚠ Есть"
                 warning
               />
             )}
