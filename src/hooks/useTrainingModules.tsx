@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useActiveTrainingContentRules, resolveTrainingContentFilter, isModuleVisible } from "@/hooks/useTrainingContentRules";
 import { toast } from "sonner";
 
 export interface AccessibleProduct {
