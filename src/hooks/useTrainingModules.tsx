@@ -87,6 +87,7 @@ export function useTrainingModules() {
 
       // Fetch user subscriptions if logged in
       let userTariffIds: string[] = [];
+      let userEntitlementProductIds = new Set<string>();
       if (user) {
         const { data: subsData } = await supabase
           .from("subscriptions_v2")
@@ -95,6 +96,20 @@ export function useTrainingModules() {
           .eq("status", "active");
         
         userTariffIds = subsData?.map(s => s.tariff_id) || [];
+
+        // PATCH v23.1.5: bulk-query entitlements for product-based access
+        const { data: entsData } = await supabase
+          .from("entitlements")
+          .select("product_id, expires_at")
+          .eq("user_id", user.id)
+          .eq("status", "active");
+
+        const now = new Date();
+        (entsData || []).forEach(e => {
+          if (e.product_id && (!e.expires_at || new Date(e.expires_at) > now)) {
+            userEntitlementProductIds.add(e.product_id);
+          }
+        });
       }
 
       // Fetch user progress
