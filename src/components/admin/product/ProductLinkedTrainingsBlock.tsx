@@ -71,7 +71,7 @@ function TrainingTreeItem({ training, diagnostics, level = 0, onUnbind }: {
         {level === 0 && diagnostics && diagnostics.legacy_module_access_count > 0 && (
           <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300 shrink-0">
             <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
-            legacy
+            старый контур
           </Badge>
         )}
 
