@@ -1050,7 +1050,9 @@ export function ContentCreationWizard({
         );
       }
       if (step === 3) {
-        return (
+        return targetModuleProduct ? (
+          <ProductAccessInfoBlock productId={targetModuleProduct} />
+        ) : (
           <ProductTariffAccessSelector
             selectedTariffIds={wizardData.tariffIds}
             onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}

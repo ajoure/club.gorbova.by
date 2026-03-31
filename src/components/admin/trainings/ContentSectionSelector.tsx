@@ -243,7 +243,8 @@ export function ContentSectionSelector({
                 .single();
 
               // Copy access from container
-              if (newModule) {
+              // PATCH v23.1.6: Skip module_access copy if container has product_id
+              if (newModule && !containerModule.product_id) {
                 const { data: containerAccess } = await supabase
                   .from("module_access")
                   .select("tariff_id")
