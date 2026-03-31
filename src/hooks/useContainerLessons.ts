@@ -8,6 +8,7 @@ interface ContainerModule {
   id: string;
   slug: string;
   menu_section_key: string;
+  product_id?: string | null;
 }
 
 interface LessonsBySectionResult {
@@ -32,7 +33,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       // 1. Get all container modules
       const { data: containers, error: containerError } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key")
+        .select("id, slug, menu_section_key, product_id")
         .eq("is_active", true)
         .eq("is_container", true);
 
@@ -44,7 +45,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       // 1b. Get child modules of containers (non-container children only)
       const { data: childModules } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key, parent_module_id")
+        .select("id, slug, menu_section_key, parent_module_id, product_id")
         .in("parent_module_id", containerIds)
         .eq("is_active", true)
         .eq("is_container", false);
@@ -107,7 +108,22 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         userTariffIds = subs?.map((s) => s.tariff_id).filter(Boolean) || [];
       }
 
-      return { containers, childModules: childModules || [], lessons: lessons || [], accessByContainer, tariffNames, userTariffIds };
+      // PATCH v23.1.5: bulk-query entitlements for product-based access
+      let userEntitlementProductIds: string[] = [];
+      if (user) {
+        const { data: entsData } = await supabase
+          .from("entitlements")
+          .select("product_id, expires_at")
+          .eq("user_id", user.id)
+          .eq("status", "active");
+
+        const now = new Date();
+        userEntitlementProductIds = (entsData || [])
+          .filter(e => e.product_id && (!e.expires_at || new Date(e.expires_at) > now))
+          .map(e => e.product_id!);
+      }
+
+      return { containers, childModules: childModules || [], lessons: lessons || [], accessByContainer, tariffNames, userTariffIds, userEntitlementProductIds };
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -118,18 +134,19 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const restrictedTariffIds = new Set<string>();
 
   if (data?.containers && data?.lessons) {
-    const containerMap = new Map<string, { slug: string; sectionKey: string }>();
+    const containerMap = new Map<string, { slug: string; sectionKey: string; productId: string | null }>();
     for (const c of data.containers) {
-      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key });
+      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key, productId: (c as any).product_id ?? null });
     }
 
-    // Map child modules: use own menu_section_key, fallback to parent's
+    // Map child modules: use own menu_section_key, fallback to parent's; product_id fallback to parent
     if (data.childModules) {
       for (const child of data.childModules) {
         const parent = containerMap.get(child.parent_module_id);
         containerMap.set(child.id, {
           slug: child.slug || parent?.slug || '',
           sectionKey: child.menu_section_key || parent?.sectionKey || '',
+          productId: (child as any).product_id ?? parent?.productId ?? null,
         });
       }
     }
@@ -137,6 +154,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     const accessByContainer = data.accessByContainer || {};
     const userTariffIds = data.userTariffIds || [];
     const tariffNames = data.tariffNames || {};
+    const entitlementProductIds = new Set(data.userEntitlementProductIds || []);
 
     for (const lesson of data.lessons) {
       const container = containerMap.get(lesson.module_id);
@@ -168,9 +186,11 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
           moduleTariffs = accessByContainer[childMod.parent_module_id] || [];
         }
       }
+      // Access precedence: admin → public → tariff → entitlement
       const hasAccess = isAdminUser || 
         moduleTariffs.length === 0 || 
-        moduleTariffs.some((tid: string) => userTariffIds.includes(tid));
+        moduleTariffs.some((tid: string) => userTariffIds.includes(tid)) ||
+        (container.productId != null && entitlementProductIds.has(container.productId));
 
       // Collect restricted tariff names for banner
       if (!hasAccess && moduleTariffs.length > 0) {

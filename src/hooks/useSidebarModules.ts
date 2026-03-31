@@ -13,6 +13,7 @@ export interface SidebarModule {
   sort_order: number;
   is_container?: boolean;
   parent_module_id?: string | null;
+  product_id?: string | null;
   has_access?: boolean;
   accessible_tariffs?: string[];
 }
@@ -50,7 +51,8 @@ export function useSidebarModules() {
           icon,
           sort_order,
           is_container,
-          parent_module_id
+          parent_module_id,
+          product_id
         `)
         .eq("is_active", true)
         .order("sort_order");
@@ -87,17 +89,46 @@ export function useSidebarModules() {
         userTariffIds = subs?.map(s => s.tariff_id).filter(Boolean) || [];
       }
 
+      // PATCH v23.1.5: bulk-query entitlements for product-based access
+      const userEntitlementProductIds = new Set<string>();
+      if (user) {
+        const { data: entsData } = await supabase
+          .from("entitlements")
+          .select("product_id, expires_at")
+          .eq("user_id", user.id)
+          .eq("status", "active");
+
+        const now = new Date();
+        (entsData || []).forEach(e => {
+          if (e.product_id && (!e.expires_at || new Date(e.expires_at) > now)) {
+            userEntitlementProductIds.add(e.product_id);
+          }
+        });
+      }
+
+      // Build parent product_id map for fallback
+      const parentProductMap = new Map<string, string>();
+
       // 4. Determine access for each module
+      // First pass: build parent product_id map
+      modulesData?.forEach(m => {
+        if ((m as any).product_id && !m.parent_module_id) {
+          parentProductMap.set(m.id, (m as any).product_id);
+        }
+      });
+
       const modules = modulesData?.map(m => {
         const moduleAccess = accessByModule[m.id] || { tariffIds: [], tariffNames: [] };
         
-        // Access logic:
-        // - Admins always have access
-        // - If no tariffs defined (empty array) → public module
-        // - Otherwise check if user has any of the required tariffs
+        // Resolve effective product_id: own or fallback to parent
+        const effectiveProductId = (m as any).product_id ?? 
+          (m.parent_module_id ? parentProductMap.get(m.parent_module_id) : null) ?? null;
+
+        // Access precedence: admin → public → tariff → entitlement
         const hasAccess = isAdminUser || 
           moduleAccess.tariffIds.length === 0 || 
-          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid));
+          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid)) ||
+          (effectiveProductId != null && userEntitlementProductIds.has(effectiveProductId));
 
         return {
           ...m,
