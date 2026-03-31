@@ -30,6 +30,7 @@ import { UniversalLessonFormFields } from "./UniversalLessonFormFields";
 import { ModuleSelector } from "./ModuleSelector";
 import { ModuleTreeSelector } from "./ModuleTreeSelector";
 import { ProductTariffAccessSelector } from "./ProductTariffAccessSelector";
+import { ProductAccessInfoBlock } from "./ProductAccessInfoBlock";
 import { LessonNotificationConfig, NotificationConfig, defaultNotificationConfig } from "./LessonNotificationConfig";
 import { LessonSaleConfig, SaleConfig, defaultSaleConfig } from "./LessonSaleConfig";
 import { parseTimecode } from "@/hooks/useKbQuestions";
