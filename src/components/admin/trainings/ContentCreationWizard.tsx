@@ -270,7 +270,22 @@ export function ContentCreationWizard({
     enabled: open,
   });
 
-  // Reset wizard when closed
+  // PATCH v23.1.6: Query product_id for target module to decide readonly vs selector
+  const targetModuleForAccess = isLessonFlow ? wizardData.targetModuleId : createdModuleId;
+  const { data: targetModuleProduct } = useQuery({
+    queryKey: ["target-module-product", targetModuleForAccess],
+    queryFn: async () => {
+      if (!targetModuleForAccess) return null;
+      const { data } = await supabase
+        .from("training_modules")
+        .select("product_id")
+        .eq("id", targetModuleForAccess)
+        .single();
+      return data?.product_id || null;
+    },
+    enabled: !!targetModuleForAccess && open,
+  });
+
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
       if (!newOpen) {
