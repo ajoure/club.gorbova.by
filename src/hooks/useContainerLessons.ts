@@ -107,7 +107,22 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         userTariffIds = subs?.map((s) => s.tariff_id).filter(Boolean) || [];
       }
 
-      return { containers, childModules: childModules || [], lessons: lessons || [], accessByContainer, tariffNames, userTariffIds };
+      // PATCH v23.1.5: bulk-query entitlements for product-based access
+      let userEntitlementProductIds: string[] = [];
+      if (user) {
+        const { data: entsData } = await supabase
+          .from("entitlements")
+          .select("product_id, expires_at")
+          .eq("user_id", user.id)
+          .eq("status", "active");
+
+        const now = new Date();
+        userEntitlementProductIds = (entsData || [])
+          .filter(e => e.product_id && (!e.expires_at || new Date(e.expires_at) > now))
+          .map(e => e.product_id!);
+      }
+
+      return { containers, childModules: childModules || [], lessons: lessons || [], accessByContainer, tariffNames, userTariffIds, userEntitlementProductIds };
     },
     staleTime: 5 * 60 * 1000,
   });
