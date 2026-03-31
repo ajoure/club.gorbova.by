@@ -1,808 +1,552 @@
-# PATCH v23.1.9A — Historical entitlement gap discovery + Canonical order selection + Pipeline verification
+# да, согласен, с учетом правок:
 
-## Статус: ВЫПОЛНЕН (discovery only, без execute). Правки 1-10 применены. v23.1.9A.1-final правки применены.
+&nbsp;
 
-## Цель
+1. **PATCH A не должен добавлять training_content в GrantTargetType и не должен показывать слой 2 как рабочий блок до миграции PATCH B.**
+  В PATCH A слой 2 допустим только как planned / not configured yet placeholder или readonly empty state. Иначе получится несоответствие UI и БД.
+2. **Rebind / unbind нужно сделать add-only и с явным mapping старого состояния в новое.**
+  В плане добавь:
+  &nbsp;
+  - old_product_id -> new_product_id;
+  - список affected root/child modules;
+  - список deactivated training_content rules;
+  - подтверждение, что никакие product_access / club rules не тронуты.
+  &nbsp;
+3. **Unbind нужно запретить не только при active training_content rules, но и при наличии дочерних модулей/уроков, которые реально используются в runtime, без явного dry-run preview.**
+  Иначе можно получить “свободный” root с наследием в дереве.
+  Для unbind обязателен preview:
+  &nbsp;
+  - сколько descendants;
+  - сколько уроков;
+  - есть ли legacy module_access;
+  - есть ли active rules;
+  - есть ли entitlements у пользователей на продукт.
+  &nbsp;
+4. **В PATCH A в блоке “Привязать тренинг” добавь фильтр и пресеты.**
+  Нужны быстрые режимы:
+  &nbsp;
+  - только свободные;
+  - только текущего продукта;
+  - все;
+  - inactive отдельно.
+    Иначе на 80+ модулей UI быстро станет неудобным.
+  &nbsp;
+5. **public_id для training_modules зафиксируй как обязательный, а не факультативный, но с safe rollout.**
+  Не оставляй формулировку “если без риска”.
+  Правильно так:
+  &nbsp;
+  - сначала dry-run генерации;
+  - проверка уникальности;
+  - затем миграция;
+  - если блокер — отдельный mini-patch должен быть выполнен ДО финального proof PATCH A.
+    То есть PATCH A без TRN-XXXXXX не считается полностью закрытым.
+  &nbsp;
+6. **В PATCH A diagnostics block добавь явное поле binding_source = product_id / legacy_only / mixed_conflict.**
+  Это упростит понимание, почему конкретный тренинг открыт пользователю.
+7. **В PATCH A для rebind child inheritance добавь backend guard, что все descendants реально получат тот же product_id, а не только UI-обещание.**
+  Нужен proof query:
+  &nbsp;
+  - all descendants of root have same product_id as root;
+  - no descendants left with old_product_id.
+  &nbsp;
+8. **В PATCH B уточни, что training_content rules настраиваются только для root training, но allowlist может включать и child modules, и direct lessons root-модуля одновременно.**
+  Это нужно прямо прописать, чтобы не было путаницы в mixed tree.
+9. **Формат conditions для training_content зафиксируй явно.**
+  Не общими словами, а структурой:
+  &nbsp;
+  - access_mode;
+  - allowed_module_ids;
+  - allowed_lesson_ids;
+    плюс правило: пустой allowlist при partial запрещён.
+  &nbsp;
+10. **Добавь guard на сохранение partial, если выбран весь тренинг.**
+  Если пользователь фактически отметил всё дерево, правило должно нормализоваться в access_mode='full', а не хранить огромный allowlist.
+11. **Scope resolution нужно описать с tie-break полностью.**
+  Сейчас есть только tariff_id > product_id. Добавь:
 
-Полная discovery-фаза перед historical entitlement backfill: gap analysis, duplicate/installment classification, canonical order selection, root cause, policy matrix. **Без execute.**
+&nbsp;
 
----
+&nbsp;
 
-## v23.1.9A.1 — Entitlement gap discovery
+&nbsp;
 
-### ИСПРАВЛЕННОЕ КРИТИЧЕСКОЕ ОТКРЫТИЕ
+- если у пользователя несколько активных подписок/энтitlements на один продукт с разными тарифами, runtime берёт правило по реально активному entitlement/subscription для текущего продукта;
+- если одновременно матчится несколько тарифных правил одного уровня — hard fail конфигурации и лог в diagnostics.
 
-**Creation paths системно не покрывают все случаи matching entitlements; текущий confirmed gap = 156 active subscription pairs + 193 order-based CB20 cases.**
+&nbsp;
 
-156 из 403 активных подписок (user × product пар, matching by same `user_id + product_code`) не имеют matching active entitlement. 247 подписок уже корректно покрыты entitlements.
+&nbsp;
 
-Gap разделён на две независимые группы:
+&nbsp;
 
-#### Subscription-based gap (156 пар)
+12. **PATCH B должен включать backend validation, что root training уже привязан к продукту до сохранения rule.**
+  Не просто совпадает product_id, а product_id IS NOT NULL и equals current product.
+  Если root ещё не привязан — предложить сначала bind в PATCH A flow.
+13. **В PATCH B добавь отдельный proof на mixed structure.**
+  Нужен кейс, где:
 
-| Продукт | active_subs | subs С entitlement | subs БЕЗ entitlement | gap % |
-|---|---|---|---|---|
-| Gorbova Club | 149 | **142** | **7** | 5% |
-| ЦБ 2 ступень | 89 | **63** | **26** | 29% |
-| ЗАКРОЙ ГОД | 63 | **9** | **54** | 86% |
-| ЦБ 2.0: Учет у ИП | 59 | **0** | **59** | 100% |
-| Бухгалтерия как бизнес | 32 | **30** | **2** | 6% |
-| Подоходный налог ИП | 9 | **1** | **8** | 89% |
-| **Итого** | **401** | **245** | **156** | 39% |
+&nbsp;
 
-#### Order-based gap (193 users)
+&nbsp;
 
-| Продукт | paid_users | active_entitlements | gap |
-|---|---|---|---|
-| Ценный бухгалтер 2.0 | 196 | 0 | **193** (with tariff, ready) + 3 (no tariff, NEED_POLICY) |
+&nbsp;
 
-**Итого gap: 156 (sub-based) + 193 (order-based CB20) = 349 user×product пар.**
+- у root есть direct lessons;
+- есть child modules с lessons;
+- partial access разрешает часть direct lessons и один child module;
+  runtime должен показать именно это и не больше.
 
-### Gorbova Club — НЕ полная рассинхронизация
+&nbsp;
 
-| Категория | Кол-во |
-|---|---|
-| has_active_sub + has matching entitlement | **142** |
-| has_active_sub + NO entitlement | **7** |
-| has_active_entitlement + NO active sub | **3** |
+&nbsp;
 
-**Вывод**: 142 подписчика уже имеют active entitlement. Gap — только **7** пользователей. 3 active entitlements без active subscription **не трогаем в v23.1.9B** (обратный рассинхрон не входит в execute scope).
+&nbsp;
 
-### Полный продуктовый реестр
+14. **useSidebarModules в PATCH B не делай “если нужно”.**
+  Его нужно включить в scope PATCH B обязательно.
+  Иначе sidebar и content page будут считать доступ по-разному.
+15. **В PATCH B пересчёт lesson_count / completed_count должен быть согласован в одном helper, а не дублироваться по хукам.**
+  Иначе потом снова разъедется UI.
+  Добавь отдельный shared runtime helper для filtered tree/counts.
+16. **Нужен явный guard на product-level full rule + tariff-level partial rule для одного и того же training.**
+  Это валидный кейс, не конфликт.
+  Runtime должен отдать:
 
-| Продукт | product_code | training_modules | paid_orders | paid_users | active_subs | active_entitlements | gap |
-|---|---|---|---|---|---|---|---|
-| Ценный бухгалтер 2.0 | cb20 | 38 | 444 | 196 | 0 | 0 | **193** (order-based) |
-| Gorbova Club | club | 19 | 981 | 205 | 149 | 145 | **7** (sub-based) |
-| ЦБ 2 ступень | prd_0d01a2fdc477 | 2 | 111 | 111 | 89 | 71 | **26** (sub-based) |
-| ЗАКРОЙ ГОД | course_close_year | 8 | 308 | 156 | 63 | 11 | **54** (sub-based) |
-| ЦБ 2.0: Учет у ИП | cb_module_ip | 1 | 0 | 0 | 59 | 0 | **59** (sub-based) |
-| Бухгалтерия как бизнес | buh_business | 1 | 64 | 33 | 32 | 30 | **2** (sub-based) |
-| Подоходный налог ИП | 1769009596189-398a | 1 | 11 | 10 | 9 | 1 | **8** (sub-based) |
-| Подоходный налог с физлиц | pn_s_fl | 4 | 0 | 0 | 0 | 0 | 0 |
-| Платная консультация | consultation | 0 | 3 | 3 | 0 | 1 | 0 (нет тренингов) |
-| Остальные 14 продуктов | — | 0 | 0 | 0 | 0 | 0 | 0 |
+&nbsp;
 
----
+&nbsp;
 
-## v23.1.9A.2 — Duplicate/installment deal discovery + Canonical order selection
+&nbsp;
 
-### Ценный бухгалтер 2.0 (196 users, 444 orders)
+- для тарифа с partial — partial;
+- для остальных тарифов продукта — full по product-level rule.
+  Это надо зафиксировать как поддерживаемый сценарий.
 
-**Каноническая покупка** определяется только среди заказов **с tariff_id**. Заказы без tariff_id не участвуют в расчёте основного entitlement.
+&nbsp;
 
-#### Классификация пользователей
+&nbsp;
 
-| Классификация | Users | Orders | Описание |
-|---|---|---|---|
-| `single_order_with_tariff` | 102 | 102 | Одна покупка с тарифом. READY. |
-| `multi_order_mixed` (tariff + no-tariff) | 67 | 246 | Есть заказы с тарифом + без тарифа. Canonical = best tariff. |
-| `multi_order_same_tariff` | 19 | 70 | Несколько заказов с одним тарифом. Canonical = любой (одинаковые). |
-| `multi_order_diff_tariffs` (upgrade) | 5 | 21 | Апгрейд: разные тарифы. Canonical = max access_days. |
-| `multi_order_all_no_tariff` | 2 | 4 | Нет тарифа ни у одного заказа. NEED_POLICY. |
-| `single_order_no_tariff` | 1 | 1 | Одна покупка без тарифа. NEED_POLICY. |
-| **Итого** | **196** | **444** | |
+&nbsp;
 
-#### Canonical order candidates (193 users с тарифом)
+17. **Нужен запрет на одновременное существование двух product-level rules одного training с разным access_mode.**
+  Это уже должно закрыться unique-индексом, но пропиши это и на UI/save уровне с понятной ошибкой.
+18. **В PATCH B добавь явный empty-state UX, если у продукта пока нет связанных тренингов.**
+  Вместо пустого списка — CTA:
 
-| Тариф (canonical) | access_days | Users | Earliest | Latest |
-|---|---|---|---|---|
-| Бизнес-леди | 270 | 98 | 2026-03-28 | 2026-03-28 |
-| Главный бухгалтер | 180 | 66 | 2026-03-28 | 2026-03-28 |
-| Бухгалтер | 90 | 29 | 2026-03-28 | 2026-03-28 |
-| **Итого** | | **193** | | |
+&nbsp;
 
-**canonical_order_selection_rule**: `max(access_days)` среди заказов с `tariff_id IS NOT NULL`, при равенстве — `max(created_at)`.
+&nbsp;
 
-**Разделение source_snapshot_type и import_source**:
+&nbsp;
 
-| Поле | Значение | Смысл |
-|---|---|---|
-| `source_snapshot_type` | `base_tariff_purchase` | Тип покупки (каноническая для основного entitlement) |
-| `import_source` | `patch4_import` (batch_id = `PATCH4-20260328T230904Z`) | Откуда пришёл заказ |
+- “Сначала привяжите тренинг к продукту”;
+- кнопка перехода к bind flow.
+  Это важно, иначе снова будет ощущение “функция не работает”.
 
-`module_child_purchase` и `module_only_standalone` **не включаются** в READY_FOR_BACKFILL по ЦБ 2.0.
+&nbsp;
 
-#### Upgrade policy (ЦБ 2.0)
+&nbsp;
 
-- 5 users с `multi_order_diff_tariffs` — **не дубли**, а апгрейд (Бухгалтер → Главный бухгалтер → Бизнес-леди).
-- Canonical = заказ с max `access_days`. Остальные `base` заказы: `leave_as_is`.
-- 19 users с `multi_order_same_tariff` — canonical = любой (все с одинаковым тарифом). Дубли: `exclude_from_backfill`.
+&nbsp;
 
-#### NEED_POLICY (ЦБ 2.0): 3 users без тарифа
+19. **PATCH C зафиксируй как cleanup только после proof, что все 6 модулей без product_id либо привязаны, либо отдельно помечены как intentionally legacy/deferred.**
+  Нельзя просто удалить legacy fallback, пока эти 6 не классифицированы явно.
+20. **В roadmap добавь отдельный mini-patch на нормализацию admin labels уже в PATCH A/B deliverables.**
+  То есть:
 
-3 пользователя не имеют ни одного заказа с `tariff_id`. Невозможно вычислить `access_days` → не включать в backfill до решения.
+&nbsp;
 
-#### Мини-итог по ЦБ 2.0
+&nbsp;
 
-| Вопрос | Ответ |
-|---|---|
-| Можно ли делать backfill? | **Да, для 193 из 196 users** |
-| Что блокирует остальных? | 3 users без tariff_id → NEED_POLICY_DECISION |
-| Ready users | **193** |
-| В DUPLICATE_CLEANUP_REVIEW (блокирующие) | **0** |
-| В NEED_POLICY | **3** |
+&nbsp;
 
----
+- сейчас убрать технические коды из primary labels;
+- позже в v23.1.11 делать глубокий mapping-layer audit.
+  Это должно быть зафиксировано как обязательный UI результат, а не “потом”.
 
-### ЗАКРОЙ ГОД (156 users, 308 orders)
+&nbsp;
 
-**Важно**: В orders нет `batch_id` — все 308 заказов имеют `batch_id = null`. Grouping key строится по дате.
+&nbsp;
 
-#### Классификация по date-spread
+&nbsp;
 
-| Классификация | Users | Orders | Avg orders | same_batch_same_tariff_same_amount | Описание |
-|---|---|---|---|---|---|
-| `single_order` | 64 | 64 | 1.0 | — | Одна сделка. READY. |
-| `same_day_same_tariff_duplicates` | 72 | 177 | 2.5 | **true** (все) | Все заказы в один день, один тариф, одна сумма. Чистые техн. дубли. |
-| `multi_different_periods` (>60d spread) | 20 | 67 | 3.4 | varies | Заказы в разные периоды. Нужен анализ. |
-| **Итого** | **156** | **308** | | | |
+21. **Итоговую цель в начале усили ещё одним предложением:**
+  после внедрения админ должен иметь возможность:
 
-#### Dry-run по same_day_same_tariff_duplicates (72 users)
+&nbsp;
 
-| Показатель | Значение |
-|---|---|
-| Users | 72 |
-| Total orders | 177 |
-| Avg dups per user | 2.5 |
-| Max dups per user | 3 |
-| Tariff (все) | Стандартный |
-| same_batch_same_tariff_same_amount | **true** (все группы) |
-| С active subscription | 52 |
-| С active entitlement | 0 |
+&nbsp;
 
-**Вывод**: Все 72 группы — чистые технические дубли. Одинаковый тариф, одинаковый день, одинаковая сумма. Canonical = первый заказ по `created_at` (все равнозначны).
+&nbsp;
 
-#### Grouping key для ЗАКРОЙ ГОД
+- из продукта привязать тренинг;
+- из тренинга увидеть и поменять продукт;
+- по тарифу ограничить контент внутри уже привязанного тренинга;
+- при этом клубные и product→product доступы остаются полностью рабочими.
 
-- **Нет batch_id** → используется `profile_id + product_id + created_at::date`.
-- Если `date_spread = 0` и `distinct_tariffs <= 1` → одна логическая покупка.
-- Если `date_spread > 60 дней` → возможно разные периоды (2024 vs 2025).
+&nbsp;
 
-#### 20 users с multi_different_periods — ПРАВИЛО БЛОКИРОВКИ
+&nbsp;
 
-Средний разброс дат: 96 дней. Вероятно: покупка в октябре-ноябре 2025 + повторная/доп в марте 2026.
+&nbsp;
 
-**ЗАФИКСИРОВАННОЕ ПРАВИЛО**: 19 blocked — это только **order-based ambiguity**, а НЕ subscription-based blocker:
-- Если у пользователя есть active subscription → execute допустим
-- Even if historical orders are ambiguous → `expires_at` берётся из `sub.access_end_at`
-- 1 user из multi_different_periods с active subscription **уже включён в READY** (course_close_year = 55)
-- Оставшиеся **19** — это users БЕЗ active subscription, где order ambiguity реально блокирует
-
-Чтобы в будущем эти 19 не вернулись в blocked при наличии active subscription.
-
-#### Canonical для active sub users (64 users)
-
-| Показатель | Значение |
-|---|---|
-| Total users with active sub + no entitlement | 64 |
-| Single order users | 1 |
-| Multi-order users | 58 (нужен canonical selection) |
-| Expiry range | 2026-03-31 – 2026-04-01 |
-
-**canonical_order_selection_rule**: Для subscription products — `expires_at = subscription.access_end_at`. Canonical order не влияет на expires_at, т.к. берётся из подписки.
-
-#### Мини-итог по ЗАКРОЙ ГОД
-
-| Вопрос | Ответ |
-|---|---|
-| Можно ли делать backfill? | **Да частично**: **55** active sub users ready (expires_at из подписки) |
-| Что блокирует? | **19** users с multi_different_periods БЕЗ active sub → DUPLICATE_CLEANUP_REVIEW (блокирующие) |
-| Ready users (active sub) | **55** |
-| В DUPLICATE_CLEANUP_REVIEW (блокирующие) | **19** (multi_different_periods, order-based ambiguity only) |
-| DO_NOT_BACKFILL | **72** (no_sub_no_entitlement, бывшие покупатели) |
-
----
-
-### Подоходный налог ИП (10 users, 11 orders)
-
-**Duplicate discovery completed: no duplicate pattern found.**
-
-- 0 пользователей с 2+ сделками.
-- Продукт не блокирует backfill по причине дублей.
-- Остаётся в общем policy matrix (8 active sub без entitlement → sync_from_subscription).
+План: Одна жёсткая связь продукт ↔ тренинг через `training_modules.product_id`, видимая и редактируемая с двух сторон, плюс отдельный слой тарифной гранулярности контента без создания второго контура доступа
 
 ---
 
-### Остальные продукты (subscription-based gaps)
+## Канонические invariants
 
-| Продукт | active_sub_no_ent | Expiry range | Already expired | Still active | Proposed |
-|---|---|---|---|---|---|
-| Gorbova Club | 7 | varies | 0 | 7 | sync_from_subscription |
-| ЦБ 2 ступень | 26 | 2026-08-30 | 0 | 26 | sync_from_subscription |
-| ЦБ 2.0: Учет у ИП | 59 | 2026-06-25 | 0 | 59 | sync_from_subscription |
-| Бухгалтерия как бизнес | 2 | 2026-03-31 – 2026-05-01 | 0 | 2 | sync_from_subscription |
-| Подоходный налог ИП | 8 | 2026-06-25 | 0 | 8 | sync_from_subscription |
-
-Для subscription products дублей orders не анализируем — canonical expires_at = `subscription.access_end_at`.
-
----
-
-## Duplicate cleanup policy matrix
-
-| Продукт | Повторные допустимы? | Определение «одной покупки» | Лишний дубль | Нельзя удалять | Действие по дублям | canonical_order_selection_rule |
-|---|---|---|---|---|---|---|
-| ЦБ 2.0 | Да (разные тарифы = upgrade) | Заказ с max `access_days` (tariff IS NOT NULL) | Заказы с тем же тарифом + датой | Единственный заказ с тарифом, заказы без тарифа | exclude_from_backfill | max(access_days), при равенстве max(created_at) |
-| ЗАКРОЙ ГОД | Да (разные периоды) | `profile_id + product_id + date`, дубли = same_day_same_tariff | Несколько paid orders в один день с одним тарифом | Первый заказ из группы | exclude_from_backfill | Для sub-products: expires_at = sub.access_end_at |
-| Подоходный налог ИП | N/A (0 дублей) | Единственный order | — | — | leave_as_is | Единственный paid order |
-| Gorbova Club | N/A (sub-based) | N/A | N/A | N/A | N/A | expires_at = sub.access_end_at |
-| ЦБ 2 ступень | N/A (sub-based) | N/A | N/A | N/A | N/A | expires_at = sub.access_end_at |
-| Бухгалтерия | N/A (sub-based) | N/A | N/A | N/A | N/A | expires_at = sub.access_end_at |
+1. `**training_modules.product_id` — единственный SoT связи «продукт ↔ тренинг».** `access_rules.training_content` НЕ связывает продукт с тренингом, а ТОЛЬКО настраивает гранулярность доступа внутри уже связанного тренинга.
+2. **Один тренинг → один продукт. Один продукт → много тренингов.** UI с двух сторон, запись в одно поле.
+3. **Entitlement создаётся на продукт, не на тренинг.** Отдельной модели «entitlement на тренинг» нет и не будет. Partial access — только runtime filtering.
+4. `**training_content` rule запрещён для чужого тренинга.** Guard на UI + backend: `training_modules.product_id` ДОЛЖЕН совпадать с product_id правила. Hard fail при несовпадении.
+5. `**training_content` rule target — только root module** (`parent_module_id IS NULL`). Если target_ref указывает на child-module → reject на backend.
+6. **Partial access — только allowlist.** Правило хранит `allowed_module_ids` / `allowed_lesson_ids`. Показывается ТОЛЬКО то, что разрешено.
+7. **Legacy `module_access` — read-only хвост.** Новые записи не создаются. Не является SoT. Сворачивание — PATCH C (immediate follow-up).
+8. **Partial access НЕ меняет entitlement generation.** Ни grant-access-for-order, ни backfill, ни renewal не создают дополнительных entitlement на тренинг/урок.
 
 ---
 
-## v23.1.9A.3 — Root cause analysis
-
-### Почему возникли gap'ы
-
-| # | Причина | Масштаб | Тип |
-|---|---|---|---|
-| 1 | **Creation paths системно не покрывают все случаи matching entitlements** | 156 из 403 active subs без entitlement | **Системная**, продолжающаяся |
-| 2 | Batch import `PATCH4` (ЦБ 2.0) создал orders без entitlements | 193 users | Исторический хвост |
-| 3 | Subscriptions создавались массово (`unknown`, `bulk_grant`) без entitlements | часть из 330 + 68 subs | Исторический + продолжающийся |
-| 4 | Исторические импорты смешали main purchases, module purchases и batch-дубли в orders_v2 | ЦБ 2.0, ЗАКРОЙ ГОД | Исторический |
-| 5 | **product_code drift / legacy code mismatch** (ЦБ 2 ступень) | 8 entitlements по `cb_2_step` вместо `prd_0d01a2fdc477` | Исторический, legacy |
-
-### ЦБ 2 ступень — product_code drift anomaly
-
-| Показатель | Значение |
-|---|---|
-| Active subscriptions product_code | `prd_0d01a2fdc477` |
-| Orphaned active entitlements product_code | `cb_2_step` |
-| Кол-во orphaned entitlements | 8 |
-| Matching subscription для них | 0 |
-
-**Вывод**: legacy product_code `cb_2_step` использовался ранее для создания entitlements, но подписки идут по `prd_0d01a2fdc477`. Это отдельная проблема product_code drift, вынесена в root cause. Не блокирует backfill по текущему product_code.
-
-### Это продолжающаяся проблема?
-
-**ДА, частично.** Часть creation paths создаёт подписки без entitlements. 247 из 403 active subs уже имеют matching entitlements (т.е. для них путь работал), но для 156 — нет. Backfill без fix root cause может привести к повторному накоплению gap'ов.
-
-### E2E pipeline proof
-
-| Путь | Работает? | Доказательство |
-|---|---|---|
-| product purchase → subscription | ✅ Частично | Подписки создаются |
-| product purchase → entitlement | ⚠️ **ЧАСТИЧНО** | 247 из 403 active subs имеют entitlements, 156 — нет |
-| entitlement → training access | ✅ Read-path | `useTrainingModules` проверяет `userEntitlementProductIds.has(mod.product_id)` — код верный |
-| club rule → telegram grant | ✅ | access_rules → telegram-grant-access работает |
-| revoke/expiry path | ✅ | telegram-check-expired проверяет entitlements |
-
-#### Creation paths, создающие gap (текущие, живые):
-
-| Path | Subs created | Создаёт entitlements? |
-|---|---|---|
-| `unknown` | 330 | Не всегда (часть без entitlement) |
-| `bulk_grant` | 68 | Не всегда |
-| `preregistration_auto_charge` | 5 | Не всегда |
-
-**Других живых creation paths помимо этих трёх не обнаружено.** `grant-access-for-order` (GAFO) теоретически создаёт entitlements, но используется не во всех flow.
-
-### Policy matrix (с зависимостью от cleanup)
-
-| Продукт | backfill_mode | expires_at rule | Зависит от cleanup? |
-|---|---|---|---|
-| Gorbova Club | sync_from_subscription | `sub.access_end_at` | Нет |
-| ЦБ 2 ступень | sync_from_subscription | `sub.access_end_at` (= 2026-08-30) | Нет |
-| ЦБ 2.0: Учет у ИП | sync_from_subscription | `sub.access_end_at` (= 2026-06-25) | Нет |
-| Бухгалтерия как бизнес | sync_from_subscription | `sub.access_end_at` | Нет |
-| Подоходный налог ИП | sync_from_subscription | `sub.access_end_at` (= 2026-06-25) | Нет |
-| ЗАКРОЙ ГОД | sync_from_subscription | `sub.access_end_at` (= 2026-03-31/04-01) | **Да** (19 users multi_different_periods) |
-| Ценный бухгалтер 2.0 | fixed_from_order | `order.created_at + tariff.access_days` | **Да** (canonical selection done for 193/196) |
-
----
-
-## v23.1.9A.4 — 5 итоговых списков
-
-### 1. READY_FOR_BACKFILL (user_id × product_id × canonical_order_id)
-
-**Итоговые числа:**
-
-- **sub-based READY = 149**
-- **order-based READY (CB20) = 124**
-- **total READY = 273**
-
-**Execute split:**
-
-- **INSERT = 269**
-- **UPDATE = 4**
-- **TOTAL EXECUTE = 273**
-
-| Продукт | product_code | Users | insert_count | update_count | total_execute | Mode | expires_at source | Блокирующие зависимости |
-|---|---|---|---|---|---|---|---|---|
-| ЦБ 2.0: Учет у ИП | cb_module_ip | **59** | 59 | 0 | 59 | sync_from_subscription | sub.access_end_at (2026-06-25) | Нет |
-| ЗАКРОЙ ГОД | course_close_year | **55** | 55 | 0 | 55 | sync_from_subscription | sub.access_end_at | Нет |
-| Ценный бухгалтер 2.0 | cb20 | **124** | 124 | 0 | 124 | fixed_from_order | order.created_at + access_days | Canonical order определён |
-| ЦБ 2 ступень | prd_0d01a2fdc477 | **18** | 18 | 0 | 18 | sync_from_subscription | sub.access_end_at (2026-08-30) | Нет |
-| Подоходный налог ИП | 1769009596189-398a | **8** | 8 | 0 | 8 | sync_from_subscription | sub.access_end_at (2026-06-25) | Нет |
-| Gorbova Club | club | **7** | 4 | 3 | 7 | sync_from_subscription | sub.access_end_at | Нет |
-| Бухгалтерия как бизнес | buh_business | **2** | 1 | 1 | 2 | sync_from_subscription | sub.access_end_at | Нет |
-| **Итого** | | **273** | **269** | **4** | **273** | | | |
-
-**UPDATE cases (4 шт):**
-- **club**: 3 users с expired entitlement (expires_at < access_end_at) → UPDATE status='active', expires_at=access_end_at
-- **buh_business**: 1 user с expired entitlement → UPDATE status='active', expires_at=access_end_at
-
-**Для ЦБ 2.0**: в READY_FOR_BACKFILL включены ТОЛЬКО users, где canonical order выбран из `base_tariff_purchase` (заказ с `tariff_id IS NOT NULL`). `module_child_purchase` и `module_only_standalone` не включаются.
-
-### 2. NEED_POLICY_DECISION (3 users)
-
-| Продукт | Users | blocked_backfill_reason |
-|---|---|---|
-| Ценный бухгалтер 2.0 (без tariff_id) | **3** | `missing_tariff` — нет ни одного заказа с tariff_id, невозможно вычислить access_days |
-
-**Это единственная policy-категория.** Всё остальное вынесено в отдельные категории блокировки (см. ниже).
-
-### 3. BLOCKED_BY_MISSING_USER_ID (69 profiles)
-
-| Продукт | Profiles | Причина |
-|---|---|---|
-| Ценный бухгалтер 2.0 (CB20) | **69** | Profile без привязки к auth.users. `entitlements.user_id` обязателен → INSERT невозможен |
-
-**Правила:**
-- В v23.1.9B эти записи **не backfill-ятся** (entitlements.user_id обязателен)
-- Сохраняются как отложенный **pending-backfill** хвост
-- После появления `user_id` (auto-claim / first-login) — отдельный follow-up механизм выдачи доступа
-- **Source of truth для этих людей уже есть** (orders, tariffs, canonical selection)
-- **Доступ не теряется** — выдача entitlements откладывается до момента появления `user_id`
-- Каждый deferred row должен сохранять `deferred_recovery_key` = `profile_id + product_id + canonical_order_id` — это основа для v23.1.9D
-
-**Row-level source key для deferred хвоста:**
-
-| Поле | Описание |
-|---|---|
-| `deferred_recovery_key` | `profile_id + product_id + canonical_order_id` |
-| Назначение | Уникальный ключ для последующего auto-claim в v23.1.9D |
-
-### 4. BLOCKED_BY_LEGACY_CODE_MISMATCH (8 users)
-
-| Продукт | Users | Причина |
-|---|---|---|
-| ЦБ 2 ступень | **8** | legacy entitlement по `cb_2_step` при active subscription по `prd_0d01a2fdc477` |
-
-**Stop-rule для v23.1.9B:**
-- Эти 8 строк должны иметь **только** `resolved_execute_decision = skip_legacy_code_mismatch`
-- **Никакого INSERT** второго active entitlement по тому же `product_id`
-- **Никакого auto-rename** `cb_2_step` → `prd_0d01a2fdc477` в этом патче
-- Решение — отдельный cleanup/normalization patch **v23.1.9C**
-
-### 5. DO_NOT_BACKFILL (~156 users)
-
-| Продукт | Users | Причина |
-|---|---|---|
-| Gorbova Club (бывшие) | 56 | no_sub_no_entitlement, нет active subscription |
-| ЦБ 2 ступень (бывшие) | 22 | no_sub_no_entitlement |
-| ЗАКРОЙ ГОД (бывшие, no sub) | 72 | no_sub_no_entitlement (same_day_dups, нет active sub) |
-| Бухгалтерия как бизнес (бывшие) | 1 | no_sub_no_entitlement |
-| Подоходный налог ИП (бывшие) | 1 | no_sub_no_entitlement |
-| Платная консультация | 3 | Нет привязанных тренингов |
-| Подоходный налог с физлиц | 0 | Нет заказов |
-| **Итого** | **~155** | |
-
-### 6. DUPLICATE_CLEANUP_REVIEW
-
-#### Блокирующие (мешают execute)
-
-| Продукт | Users | problem_type | blocked_backfill_reason | Описание |
-|---|---|---|---|---|
-| ЗАКРОЙ ГОД | **19** | `multi_different_periods` | `ambiguous_canonical_order` | Заказы в разные периоды (order-based ambiguity only), users БЕЗ active subscription |
-| **Итого блокирующих** | **19** | | | |
-
-**Важно**: CB20 `missing_tariff` (3 users) теперь в отдельной категории NEED_POLICY_DECISION, не здесь.
-
-#### Classified duplicates (resolved, НЕ блокируют execute)
-
-| Продукт | Users | problem_type | Статус |
-|---|---|---|---|
-| ЦБ 2.0 (same_tariff dups) | 19 | `batch_duplicate` | Canonical определён, НЕ блокирует |
-| ЦБ 2.0 (diff_tariffs upgrade) | 5 | `possible_upgrade` | Canonical = max access_days, НЕ блокирует |
-| ЦБ 2.0 (mixed tariff+no-tariff) | 67 | `mixed_base_and_module_purchases` | Canonical = best tariff order, НЕ блокирует |
-
-### 7. CANONICAL_ORDER_CANDIDATES
-
-#### Ценный бухгалтер 2.0 (193 canonical)
-
-| Tariff (canonical) | access_days | Users | source_snapshot_type | import_source | duplicate_count (avg) | cleanup_action |
-|---|---|---|---|---|---|---|
-| Бизнес-леди | 270 | 98 | `base_tariff_purchase` | `patch4_import` | 1.6 | exclude_non_canonical |
-| Главный бухгалтер | 180 | 66 | `base_tariff_purchase` | `patch4_import` | 2.1 | exclude_non_canonical |
-| Бухгалтер | 90 | 29 | `base_tariff_purchase` | `patch4_import` | 1.3 | exclude_non_canonical |
-
-**canonical_reason**: `max(access_days)` среди заказов с tariff_id, при равенстве `max(created_at)`.
-
-#### Subscription products (Gorbova Club, ЦБ 2 ступень, ЗАКРОЙ ГОД, Бухгалтерия, ПН ИП, ЦБ 2.0 Учет у ИП)
-
-| Продукт | Users | canonical_reason | source |
-|---|---|---|---|
-| Gorbova Club | 7 | sync_from_active_subscription | sub.access_end_at |
-| ЦБ 2 ступень | 18 | sync_from_active_subscription | sub.access_end_at = 2026-08-30 |
-| ЦБ 2.0: Учет у ИП | 59 | sync_from_active_subscription | sub.access_end_at = 2026-06-25 |
-| ЗАКРОЙ ГОД | 55 | sync_from_active_subscription | sub.access_end_at |
-| Бухгалтерия как бизнес | 2 | sync_from_active_subscription | sub.access_end_at |
-| Подоходный налог ИП | 8 | sync_from_active_subscription | sub.access_end_at = 2026-06-25 |
-
----
-
-## Дополнительные таблицы
-
-### Table A: matching_active_subscriptions_without_matching_entitlement
-
-Matching by: same `user_id + product_code`.
-
-| Продукт | product_code | active_subs_without_ent |
-|---|---|---|
-| ЦБ 2.0: Учет у ИП | cb_module_ip | 59 |
-| ЗАКРОЙ ГОД | course_close_year | 55 |
-| ЦБ 2 ступень | prd_0d01a2fdc477 | 26 |
-| Подоходный налог ИП | 1769009596189-398a | 8 |
-| Gorbova Club | club | 7 |
-| Бухгалтерия как бизнес | buh_business | 2 |
-| **Итого** | | **157** |
-
-*Примечание: из 26 по prd_0d01a2fdc477 в READY включены 18 (8 исключены как BLOCKED_BY_LEGACY_CODE_MISMATCH)*
-
-### Table B: existing_active_entitlements_without_matching_active_subscription
-
-| product_code | active_ents | ents_с_sub | ents_БЕЗ_sub | mismatch_type |
-|---|---|---|---|---|
-| club | 145 | 142 | **3** | `entitlement_without_subscription` |
-| prd_0d01a2fdc477 | 63 | 63 | 0 | — |
-| buh_business | 30 | 30 | 0 | — |
-| course_close_year | 11 | 9 | **2** | `entitlement_without_subscription` |
-| cb_2_step | 8 | 0 | **8** | `legacy_product_code_mismatch` |
-| 1769009596189-398a | 1 | 1 | 0 | — |
-| consultation | 1 | 0 | **1** | `manual_or_unknown_entitlement` |
-
-Обратная рассинхронизация: **14 active entitlements** у пользователей без active subscription. Из них 8 по `cb_2_step` — legacy product_code mismatch (см. root cause #5).
-
-**Обратный рассинхрон НЕ входит в scope v23.1.9B execute.**
-
-### Table C: conflict_preview_on_unique_keys (фактические данные из БД)
-
-#### Subscription-based
-
-| product_code | INSERT | UPDATE | SKIP | product_id_mismatch | order_id_conflict |
-|---|---|---|---|---|---|
-| cb_module_ip | 59 | 0 | 0 | 0 | 0 |
-| course_close_year | 55 | 0 | 0 | 0 | 0 |
-| prd_0d01a2fdc477 | 18 | 0 | 0 | 0 | 0 |
-| 1769009596189-398a | 8 | 0 | 0 | 0 | 0 |
-| club | 4 | 3 | 0 | 0 | 0 |
-| buh_business | 1 | 1 | 0 | 0 | 0 |
-| **Итого sub-based** | **145** | **4** | **0** | **0** | **0** |
-
-#### Order-based CB20
-
-| product_code | INSERT | SKIP (no user_id) | SKIP (no tariff) | product_id_mismatch | order_id_conflict |
-|---|---|---|---|---|---|
-| cb20 | **124** | **69** | **3** | 0 | 0 |
-
-**Нет ни одного product_id mismatch. Нет ни одного order_id conflict.**
-
-### Table D: Row-level preview — обязательные поля
-
-Row-level preview для v23.1.9B должен содержать следующие поля:
-
-| Поле | Описание |
-|---|---|
-| `has_user_id` | bool — есть ли user_id у profile |
-| `profile_id` | ID профиля |
-| `user_id` | ID auth user (null для BLOCKED_BY_MISSING_USER_ID) |
-| `product_id` | ID продукта |
-| `product_code` | Код продукта для upsert |
-| `existing_entitlement_product_code` | Код продукта существующего entitlement (для cb_2_step mismatch detection) |
-| `canonical_order_id` | ID канонического заказа |
-| `resolved_execute_decision` | `insert` / `update` / `skip_missing_user_id` / `skip_legacy_code_mismatch` / `skip_missing_tariff` |
-| `deferred_recovery_key` | `profile_id + product_id + canonical_order_id` (для BLOCKED_BY_MISSING_USER_ID) |
-
-### Table E: execute_candidates_summary_by_action_and_product
-
-**Обязательный pre-execute deliverable. Без этой таблицы execute не утверждать.**
-
-| product_code | resolved_execute_decision | row_count |
-|---|---|---|
-| cb_module_ip | insert | 59 |
-| course_close_year | insert | 55 |
-| cb20 | insert | 124 |
-| prd_0d01a2fdc477 | insert | 18 |
-| 1769009596189-398a | insert | 8 |
-| club | insert | 4 |
-| club | update | 3 |
-| buh_business | insert | 1 |
-| buh_business | update | 1 |
-| cb20 | skip_missing_user_id | 69 |
-| cb20 | skip_missing_tariff | 3 |
-| prd_0d01a2fdc477 | skip_legacy_code_mismatch | 8 |
-| **TOTAL insert** | | **269** |
-| **TOTAL update** | | **4** |
-| **TOTAL skip_missing_user_id** | | **69** |
-| **TOTAL skip_legacy_code_mismatch** | | **8** |
-| **TOTAL skip_missing_tariff** | | **3** |
-| **GRAND TOTAL** | | **353** |
-
-**5-way split verification**: 269 + 4 + 69 + 8 + 3 = **353** (все row-level строки)
-
----
-
-## Сводный вывод по категориям
-
-| Категория | Count |
-|---|---|
-| **READY_FOR_BACKFILL** | **273** (149 sub-based + 124 order-based CB20) |
-| **NEED_POLICY_DECISION** | **3** (CB20 без tariff_id) |
-| **BLOCKED_BY_MISSING_USER_ID** | **69** (CB20 profiles без auth user) |
-| **BLOCKED_BY_LEGACY_CODE_MISMATCH** | **8** (ЦБ 2 ступень cb_2_step) |
-| **DUPLICATE_CLEANUP_REVIEW (blocking)** | **19** (ЗАКРОЙ ГОД multi_different_periods) |
-
----
-
-## STOP-guards для v23.1.9B
-
-| Guard | Правило |
-|---|---|
-| `execute_candidates_summary_by_action_and_product` не собрана → execute запрещён | **Обязательно** |
-| Row-level preview не содержит 5-way split → execute запрещён | **Обязательно** |
-| Сумма row-level строк ≠ summary counts → STOP | **Обязательно** |
-| `canonical_order_candidates` не утверждена → execute запрещён | Обязательно |
-| `DUPLICATE_CLEANUP_REVIEW` (блокирующие) не утверждён → execute запрещён | Обязательно |
-| По продукту не завершена классификация дублей → backfill запрещён | Для ЗАКРОЙ ГОД (19 users) |
-| ROW_COUNT per product ≠ expected → STOP | Обязательно |
-| Не трогать active entitlement с expires_at > computed | Обязательно |
-| Не сокращать существующий expires_at | Обязательно |
-| Upsert по `ON CONFLICT (user_id, product_code)` — единственный полный unique constraint | Обязательно |
-| `product_id` и `order_id` заполнять обязательно при upsert | Обязательно |
-| Pre-execute dry-run: проверить нет ли кейсов где `user_id + product_code` уже связан с другим `product_id` или `order_id` | Обязательно |
-| `conflict_preview_on_unique_keys` должен быть утверждён до execute | Обязательно |
-| Все записи: `meta.source = 'historical_backfill'`, `meta.source_patch = 'v23.1.9B'` | Обязательно |
-| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: 8 строк = только `skip_legacy_code_mismatch` | **Обязательно** |
-| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: никакого INSERT второго active entitlement по тому же product_id | **Обязательно** |
-| **BLOCKED_BY_LEGACY_CODE_MISMATCH**: никакого auto-rename в этом патче | **Обязательно** |
-
-### 5-way split stop-guard
-
-**Execute запрещён**, если row-level preview не разделяет строки минимум на:
-- `insert` — ожидаемый count: **269**
-- `update` — ожидаемый count: **4**
-- `skip_missing_user_id` — ожидаемый count: **69**
-- `skip_legacy_code_mismatch` — ожидаемый count: **8**
-- `skip_missing_tariff` — ожидаемый count: **3**
-
-Сумма всех row-level строк должна сходиться с итоговыми summary counts: **353**.
-
-### Upsert key — зафиксированные правила
-
-Таблица `entitlements` имеет **3 unique constraint**:
-
-| Constraint | Тип |
-|---|---|
-| `(user_id, product_code)` | **Основной**, всегда enforced |
-| `(user_id, product_id) WHERE product_id IS NOT NULL` | Partial unique |
-| `(order_id) WHERE order_id IS NOT NULL` | Partial unique |
-
-**Практическое правило execute:**
-- Основной `ON CONFLICT` = `(user_id, product_code)`
-- `product_id` и `order_id` заполнять обязательно
-- Перед execute отдельным dry-run проверить, нет ли кейсов, где один и тот же `user_id + product_code` уже связан с другим `product_id` или другим `order_id`
-
----
-
-## v23.1.9B — EXECUTION REPORT
-
-### Статус: ВЫПОЛНЕН 2026-03-31
-
-**batch_id**: `BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z`
-**edge function**: `admin-entitlement-backfill-v23`
-
-### Dry run результаты (перед execute)
-
-5-way split подтверждён:
-- insert: 268 (course_close_year gap уменьшился на 1 с момента discovery)
-- update: 4
-- skip_missing_user_id: 69
-- skip_legacy_code_mismatch: 8
-- skip_missing_tariff: 3
-- **total: 352**
-
-### Execute результаты
-
-| product_code | planned | created | FK errors | status |
-|---|---|---|---|---|
-| cb20 | 124 | **124** | 0 | ✅ Complete |
-| cb_module_ip | 59 | **49** | **10** | ⚠️ Partial |
-| course_close_year | 54 | **47** | **7** | ⚠️ Partial |
-| prd_0d01a2fdc477 | 18 | **17** | **1** | ⚠️ Partial |
-| 1769009596189-398a | 8 | **8** | 0 | ✅ Complete |
-| club | 7 (4 insert + 3 update) | **7** | 0 | ✅ Complete |
-| buh_business | 2 (1 insert + 1 update) | **2** | 0 | ✅ Complete |
-| **Итого** | **272** | **254** | **18** | |
-
-### Обнаруженная аномалия: Ghost user_ids в subscription-based path
-
-**18 subscriptions** имеют `user_id`, который НЕ существует в `auth.users` (FK constraint `entitlements_user_id_fkey`). Это та же категория, что `BLOCKED_BY_MISSING_USER_ID`, но обнаруженная в sub-based path (ранее проверялось только для CB20).
-
-**Распределение ghost user_ids:**
-- course_close_year: 7
-- cb_module_ip: 10
-- prd_0d01a2fdc477: 1
-
-**Эти 18 users переносятся в v23.1.9D** (deferred entitlement issuance after profile→user claim). Общий deferred backfill хвост: 69 (CB20) + 18 (sub-based ghost) = **87**.
-
-### Итоговый результат v23.1.9B
-
-| Метрика | Значение |
-|---|---|
-| Entitlements created (INSERT) | **250** |
-| Entitlements updated (UPDATE) | **4** |
-| **Total successfully executed** | **254** |
-| FK errors (ghost user_id) | 18 |
-| Skipped (missing_user_id) | 69 |
-| Skipped (legacy_code_mismatch) | 8 |
-| Skipped (missing_tariff) | 3 |
-| **Grand total candidates** | **352** |
-
-### Все записи содержат
-
-```json
-{
-  "source": "historical_backfill",
-  "source_patch": "v23.1.9B",
-  "batch_id": "BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z"
-}
+## Runtime precedence (точный)
+
+```text
+1. Нет entitlement на продукт → доступа нет (даже если rule существует)
+2. Admin bypass → полный доступ
+3. Есть entitlement, нет training_content rule → полный доступ ко всему тренингу
+4. Есть entitlement, есть training_content rule с access_mode='full' → полный доступ
+5. Есть entitlement, есть training_content rule с access_mode='partial' → только allowed модули/уроки
+6. Legacy module_access → temporary read-only fallback (только для 6 модулей без product_id)
 ```
 
-### Audit log
+### Scope resolution (PATCH B)
 
-Запись создана в `audit_logs` с action=`entitlement_backfill`, actor_label=`v23.1.9B`.
-
----
-
-## Последовательность патчей (обновлённая)
-
-| Патч | Scope | Статус |
-|---|---|---|
-| **v23.1.9A** | Discovery + classification + canonical selection | **ВЫПОЛНЕН** |
-| **v23.1.9A.1-final** | Row-level conflict preview с категориями, 5-way split, stop-guards | **ВЫПОЛНЕН** |
-| **v23.1.9B** | Execute backfill: 254 entitlements created/updated | **ВЫПОЛНЕН** |
-| **v23.1.9C** | Cleanup legacy code mismatch (`cb_2_step` → `prd_0d01a2fdc477` normalization) — 8 users | Планируется |
-| **v23.1.9D** | Deferred entitlement issuance after profile→user claim — handle_new_user generic sync | **ВЫПОЛНЕН** |
-| **v23.1.10** | Entitlement sync for renewal/admin/claim paths — shared helper + guards | **ВЫПОЛНЕН** |
-| **v23.1.11** | Product/training code normalization + admin-readable naming | Планируется |
+- `tariff_id` rule имеет приоритет над `product_id` rule (более специфичное выше)
+- Несколько правил одного уровня для одного тренинга — ошибка конфигурации, hard fail при сохранении, не merge в runtime
+- Runtime берёт scope из подписки/заказа пользователя → находит matching tariff → ищет training_content rule для этого scope
 
 ---
 
-## v23.1.9D + v23.1.10 — Отчёт о выполнении
+## Deliverables: PATCH A → proof A → PATCH B → proof B → PATCH C
 
-### Что создано
-
-1. **`supabase/functions/_shared/entitlement-sync.ts`** — общий helper с контрактом:
-   - `syncEntitlement()` — upsert по ON CONFLICT (user_id, product_code)
-   - `hasOtherActiveAccessSource()` — pre-revoke guard
-   - Правило срока: `expires_at = GREATEST(existing, new)` — никогда не уменьшать
-   - mode_filter: `subscription_based` блокирует sync для `cb20` (order-based only)
-   - Skip: `cb_2_step` (legacy), пустой product_code, неизвестные коды
-
-2. **SQL migration: `handle_new_user` trigger обновлён (v23.1.9D)**:
-   - Hardcoded club entitlement creation удалён
-   - Generic loop по всем active subscriptions при claim archived/imported profile
-   - ON CONFLICT (user_id, product_code) DO UPDATE с **COALESCE(GREATEST(expires_at), ...)** — NULL-safe
-   - Явно исключены: `cb20` (order-based), `cb_2_step` (legacy)
-   - Audit log с `entitlements_synced` count и `entitlement_product_codes`
-
-3. **`subscription-charge` обновлён (v23.1.10)**:
-   - После successful renewal → syncEntitlement с mode_filter='subscription_based'
-   - product_code берётся из products_v2.code
-   - Non-blocking (try/catch)
-
-4. **`subscription-admin-actions` обновлён (v23.1.10)**:
-   - Pre-revoke guard в `revoke_access`: hasOtherActiveAccessSource проверяет другие подписки, order-based продукты, entitlements с другим source
-   - **skipEntitlementRevoke реально используется**: если guard НЕ сработал → `UPDATE entitlements SET status='expired'`; если сработал → skip + audit log
-   - Entitlement sync в `extend`, `set_end_date`, `grant_access`
-   - Audit log при skip revoke: `admin.subscription.revoke_entitlement_skipped`
-
-5. **`subscription-actions` обновлён (v23.1.10)**:
-   - Entitlement sync при `resume`
-   - `cancel` — entitlement не трогается (access до cancel_at)
-
-### Исправленные дефекты (v23.1.10 fix)
-
-| Дефект | Описание | Исправление |
-|---|---|---|
-| GREATEST NULL | `GREATEST(x, NULL)` = NULL в PostgreSQL, может занулить expires_at | Заменено на `COALESCE(GREATEST(a, b), a, b)` в SQL trigger |
-| skipEntitlementRevoke dead code | Флаг вычислялся но не использовался | Добавлен conditional `UPDATE entitlements SET status='expired'` с проверкой `!skipEntitlementRevoke` |
-
-### Режимы продуктов
-
-| Режим | product_codes | Поведение |
-|---|---|---|
-| `subscription_based` | club, buh_business, cb_module_ip, prd_0d01a2fdc477, course_close_year, 1769009596189-398a | sync при renewal/claim/admin |
-| `order_based_only` | cb20 | **НЕ sync** из subscription paths |
-| `legacy_skip` | cb_2_step | skip (v23.1.9C) |
-
-### Proof-пакет
-
-**Статус**: Код задеплоен. Runtime proof появится при следующих событиях:
-- **handle_new_user**: при регистрации пользователя с email, совпадающим с archived profile → `audit_logs.action = 'archived_profile_linked'` с `meta.entitlements_synced > 0`
-- **subscription-charge**: при следующем successful renewal → `audit_logs.action = 'entitlement.synced'` с `meta.source = 'subscription_renewal'`
-- **subscription-admin-actions**: при admin extend/grant/revoke → `audit_logs.action = 'entitlement.synced'` или `admin.subscription.revoke_entitlement_skipped`
-
-Существующие 2 записи `archived_profile_linked` (до v23.1.9D) не содержат `entitlements_synced` — это подтверждает, что старый trigger не синхронизировал entitlements.
-
-### Deferred-хвост (актуальные counts)
-
-| Категория | Count | Механизм |
-|---|---|---|
-| `resolved_now` (active entitlements) | 513 | v23.1.9B backfill + existing |
-| `deferred_missing_user_id` | 105 | Archived profiles без user_id с orders → cron/worker при claim |
-| `deferred_ghost_user_id` | 15 | Sub-based ghost user_ids → отдельный repair |
-| `skipped_legacy_code_mismatch` | 8 | v23.1.9C |
-
-### Stop-guards реализованы
-
-| Guard | Реализация |
-|---|---|
-| syncEntitlement никогда не уменьшает expires_at | GREATEST в TS helper + COALESCE(GREATEST) в SQL trigger |
-| ON CONFLICT (user_id, product_code) | В helper и SQL trigger |
-| product_code IS NULL → skip | Guard в syncEntitlement |
-| cb20 не sync из subscription paths | ORDER_BASED_ONLY_CODES set |
-| cb_2_step → skip | LEGACY_SKIP_CODES set |
-| revoke path: pre-check другой активный источник | hasOtherActiveAccessSource в revoke_access |
-| revoke path: conditional entitlement status update | skipEntitlementRevoke flag → UPDATE or SKIP |
-| handle_new_user не ломает existing claim flow | Сохранена вся логика ban check, profile claim, orders/subs/entitlements rebind |
+**Жёсткая зависимость по порядку.** Proof каждого патча собирается отдельно.
 
 ---
 
-## Изменённые компоненты
+## PATCH A: Единая двусторонняя связь + UI + naming
 
-| Компонент | Изменение |
-|---|---|
-| `.lovable/plan.md` | Discovery report + v23.1.9B execute report + v23.1.9D/v23.1.10 report |
-| `supabase/functions/_shared/entitlement-sync.ts` | **Новый**: общий helper |
-| `supabase/functions/admin-entitlement-backfill-v23/index.ts` | Edge function для backfill (v23.1.9B) |
-| `supabase/functions/subscription-charge/index.ts` | Entitlement sync после renewal |
-| `supabase/functions/subscription-admin-actions/index.ts` | Pre-revoke guard + conditional revoke + sync при extend/grant/set_end_date |
-| `supabase/functions/subscription-actions/index.ts` | Sync при resume |
-| `handle_new_user` trigger (SQL migration) | Generic sub-based sync + COALESCE(GREATEST) NULL fix |
-| `entitlements` (data) | **254 rows** created/updated (v23.1.9B) |
+### A1. SQL migration — public_id для training_modules
+
+- `ALTER TABLE training_modules ADD COLUMN IF NOT EXISTS public_id TEXT UNIQUE`
+- Триггер auto-generate `TRN-XXXXXX` при INSERT (аналогично `PRD-` для products_v2)
+- Заполнить existing модули
+- **Правило**: если миграция не создаёт рисков — включить в PATCH A. Если создаёт — отдельный mini-patch сразу следом с тем же proof-пакетом UI. Не растворять.
+
+### A2. Карточка продукта — блок «Тренинги этого продукта» (2 слоя + 2 режима)
+
+**Слой 1 — Привязанные тренинги** (через `training_modules.product_id`):
+
+- Иерархия: root → child modules → count уроков
+- Статус active/inactive, public_id (TRN-XXXXXX)
+- Кнопка «Привязать тренинг» / «Отвязать»
+
+**Слой 2 — Правила гранулярности** (через `access_rules.training_content`, появится в PATCH B):
+
+- Отдельный блок после привязанных тренингов
+- Для каждого правила: тренинг, тариф/scope, full/partial, count разрешённых модулей/уроков
+
+**Матрица «продукт → тренинг → тариф → контент»** с 2 режимами:
+
+- **Summary**: compact-карточки с бейджами full/partial + count
+- **Expanded details**: полное дерево модулей/уроков с отметками доступности
+
+### A3. Bind / Rebind / Unbind
+
+**Bind** (свободный тренинг, `product_id IS NULL`):
+
+- Обычная привязка, `UPDATE training_modules SET product_id = ? WHERE id = ?`
+- Каскадное обновление всех descendants по `parent_module_id` одним проходом
+- Proof query: `SELECT COUNT(*) FROM training_modules WHERE parent_module_id IN (...) AND product_id != ?` = 0
+
+**Rebind** (тренинг другого продукта):
+
+- Обычный bind ЗАПРЕЩЁН
+- **Dry-run / preview перед rebind** (обязательно):
+  - текущий продукт (name + PRD-XXXXXX)
+  - новый продукт (name + PRD-XXXXXX)
+  - сколько child-модулей унаследуют новый product_id
+  - сколько training_content rules будет деактивировано
+  - есть ли legacy module_access
+- Только после preview разрешать execute
+- При execute: все `training_content` rules старого продукта с `target_ref = this training` **деактивируются** (`is_active = false`)
+- Каскадное обновление product_id у всех descendants
+
+**Rebind audit DoD:**
+
+- `audit_logs` записи: `training.rebind.preview` и `training.rebind.executed`
+- В meta: список деактивированных rule ids, старый product_id → новый product_id, count affected children
+
+**Unbind** (отвязка от продукта):
+
+- Если есть активные `training_content` rules → прямой unbind запрещён
+- Сначала deactivate/archive rules, потом unbind
+- При unbind: `UPDATE training_modules SET product_id = NULL WHERE id = ? OR parent_module_id = ?`
+
+### A4. Карточка тренинга — зеркальный обзор (2 слоя)
+
+**Слой 1 — Связанный продукт:**
+
+- Название продукта + PRD-XXXXXX
+- Кнопка «Изменить продукт» → меняет `training_modules.product_id` (тот же SoT)
+- Кнопка «Перейти к настройке доступа» → навигация в продукт
+
+**Слой 2 — Правила ограничения контента:**
+
+- Действующие training_content rules по тарифам (PATCH B)
+- Full/partial + список разрешённых уроков
+
+**Отдельный бейдж:** `⚠ legacy module_access detected` если для этого модуля есть записи в module_access.
+
+### A5. Diagnostics block (readonly, в обоих карточках)
+
+- `product_id`
+- Есть ли training_content rules (count)
+- Есть ли legacy module_access (count)
+- Есть ли конфликт scope/rules
+
+### A6. Нормализация naming (в этом патче)
+
+- Primary label: `training_modules.title` / `products_v2.name`
+- Secondary: `public_id` или `product_code` мелким текстом
+- В wizard: убрать `cb20`, `cb_module_ip`, `prd_0d01a2fdc477` из primary labels
+- Deep normalization mapping → v23.1.11
+
+### A7. Slug-декаплинг
+
+Discovery подтвердил: slug не FK, все связи по UUID. Зафиксировать в UI подсказку.
+
+### A8. Active/inactive тренинги
+
+- В селекторе привязки: показывать и active, и inactive
+- Inactive с бейджем, сортировка active выше
+- Inactive не показываются пользователю без entitlement/runtime path — это разные вещи
 
 ---
 
-## DoD (v23.1.9B)
+## PATCH A — Proof-пакет (собирается до начала PATCH B)
 
-1. ✅ Dry run 5-way split подтверждён перед execute
-2. ✅ 254 entitlements успешно created/updated (250 INSERT + 4 UPDATE)
-3. ✅ cb20: 124/124 — полностью
-4. ✅ club: 7/7 (4 insert + 3 update) — полностью
-5. ✅ buh_business: 2/2 (1 insert + 1 update) — полностью
-6. ✅ 1769009596189-398a: 8/8 — полностью
-7. ✅ cb_module_ip: 49/59, course_close_year: 47/54, prd_0d01a2fdc477: 17/18 — частично (18 ghost user_ids)
-8. ✅ 18 ghost user_id FK errors задокументированы, перенесены в v23.1.9D
-9. ✅ skip_missing_user_id = 69, skip_legacy_code_mismatch = 8, skip_missing_tariff = 3 — корректно
-10. ✅ Все записи с meta.source_patch = 'v23.1.9B', batch_id зафиксирован
-11. ✅ Audit log создан
-12. ✅ Upsert по ON CONFLICT (user_id, product_code)
-13. ✅ Ни один active entitlement не был сокращён по expires_at
-14. ✅ BLOCKED_BY_LEGACY_CODE_MISMATCH: 8 users пропущены (no second entitlement created)
-15. ✅ v23.1.9D scope обновлён: 87 deferred (69 CB20 + 18 sub-based ghost)
+1. **SoT единый**: привязали тренинг из продукта → сразу видно в тренинге; поменяли продукт у тренинга → сразу видно в продукте
+2. **UI продукта**: скриншот блока «Тренинги» с 2 слоями (summary + expanded)
+3. **UI тренинга**: скриншот зеркального блока с legacy badge + diagnostics
+4. **Rebind**: dry-run preview → execute → audit_logs записи → proof query (no orphan children)
+5. **Unbind guard**: попытка отвязать тренинг с активными rules → блокировка
+6. **No regression**: продукт с полным доступом без partial rules работает; product_access для клуба работает; public_id TRN-XXXXXX показывается
+7. **Naming**: wizard не показывает technical codes как primary label
 
-## DoD (v23.1.9D)
+---
 
-1. ✅ handle_new_user: при claim archived profile → entitlements создаются для всех active subscriptions (не только club)
-2. ✅ Hardcoded club entitlement creation удалён, заменён generic loop
-3. ✅ CB20 order-based deferred: NOT в trigger, определяется динамически через LEFT JOIN
-4. ✅ cb20 и cb_2_step явно исключены из trigger loop
-5. ✅ Audit log с entitlements_synced count и product_codes
-6. ✅ ON CONFLICT (user_id, product_code) DO UPDATE с COALESCE(GREATEST(expires_at)) — NULL-safe
+## PATCH B: Partial access к контенту уже связанного тренинга по scope продукта/тарифа без создания отдельной модели тренинговых entitlement
 
-## DoD (v23.1.10)
+### B1. SQL migration
 
-1. ✅ При subscription renewal → entitlement sync через shared helper
-2. ✅ syncEntitlement никогда не уменьшает expires_at (TS helper + SQL trigger NULL-safe)
-3. ✅ Повторный вызов идемпотентен (ON CONFLICT)
-4. ✅ При admin revoke → pre-check hasOtherActiveAccessSource
-5. ✅ При admin revoke → conditional UPDATE entitlements.status='expired' (skipEntitlementRevoke guard)
-6. ✅ При admin extend/grant/set_end_date → entitlement синхронизирован
-7. ✅ При user resume → entitlement синхронизирован
-8. ✅ cb20 не затронут из subscription paths (mode_filter guard)
-9. ✅ audit_logs с actor_type='system', actor_label заполнен
-10. ✅ GREATEST NULL fix применён в SQL trigger
-11. ✅ Все edge functions задеплоены
+```sql
+-- Расширить CHECK constraint
+ALTER TABLE access_rules
+  DROP CONSTRAINT access_rules_grant_target_type_check;
+ALTER TABLE access_rules
+  ADD CONSTRAINT access_rules_grant_target_type_check
+  CHECK (grant_target_type IN (
+    'entitlement', 'club', 'email', 'product_access', 'training_content'
+  ));
+
+-- Два UNIQUE ограничения (NULL-safe для tariff_id)
+CREATE UNIQUE INDEX access_rules_unique_training_content_product
+  ON access_rules (product_id, grant_target_type, target_ref)
+  WHERE grant_target_type = 'training_content' AND tariff_id IS NULL;
+
+CREATE UNIQUE INDEX access_rules_unique_training_content_tariff
+  ON access_rules (product_id, tariff_id, grant_target_type, target_ref)
+  WHERE grant_target_type = 'training_content' AND tariff_id IS NOT NULL;
+```
+
+Для `training_content` rules:
+
+- `target_ref` = `training_modules.id` (UUID, только root: `parent_module_id IS NULL`)
+- `conditions.access_mode` = `'full'` | `'partial'`
+- `conditions.allowed_module_ids` = UUID[] (child modules)
+- `conditions.allowed_lesson_ids` = UUID[]
+
+### B2. Backend guards
+
+**При создании/обновлении training_content rule:**
+
+1. `target_ref` → загрузить `training_modules` → проверить `parent_module_id IS NULL` → иначе reject
+2. `training_modules.product_id === rule.product_id` → иначе hard fail
+3. `allowed_lesson_ids` → все принадлежат target training tree → иначе reject
+4. `allowed_module_ids` → все принадлежат target training tree → иначе reject
+
+**Scope uniqueness:**
+
+- Один rule на комбинацию `(product_id|tariff_id) + target_ref`
+- Если несколько правил одного уровня → hard fail при save, не merge в runtime
+
+### B3. UI wizard — тип «Доступ к контенту тренинга»
+
+В wizard шаг 2 «Что выдаём»:
+
+```
+- Доступ в Telegram-клуб
+- Доступ к продукту
+- Доступ к контенту тренинга  ← НОВЫЙ
+- Системное право (служебный)  ← legacy
+```
+
+Шаг 3 «Куда выдаём»:
+
+- Только root тренинги текущего продукта (`WHERE product_id = X AND parent_module_id IS NULL`)
+- Active и inactive, inactive с бейджем, active выше
+- Отображение: title (primary) + TRN-XXXXXX (secondary)
+
+### B4. Древовидный селектор (шаг 3b)
+
+```text
+◉ Весь тренинг
+  ☐ Модуль: Итоги месяца
+    ☐ Урок 1.1
+    ☐ Урок 1.2
+  ☐ Модуль: Видеоответы
+    ☐ Урок 2.1
+```
+
+- По умолчанию: `access_mode: 'full'`
+- При снятии чекбоксов → `access_mode: 'partial'` + allowlist
+- Partial state (indeterminate) визуально
+- Lessonless root-контейнеры: full = все descendants; partial по allowed_module_ids = только выбранные descendants и их уроки
+
+### B5. Runtime — partial access enforcement
+
+Обновить `useContainerLessons`, `useTrainingModules`, `useSidebarModules`:
+
+1. Загрузить training_content rules для тренингов пользователя
+2. Scope resolution: tariff_id rule > product_id rule
+3. Allowlist фильтрация
+4. **Скрыть пустые модули/контейнеры** после фильтрации (если внутри нет разрешённых уроков → модуль не показывается)
+5. **Пересчитать lesson_count / completed_count** после фильтрации — карточки не показывают старые total
+
+### B6. grant-access-for-order НЕ меняется
+
+training_content rules не создают entitlements. Entitlement создаётся на продукт (уже работает). Rules читаются только в runtime.
+
+---
+
+## PATCH B — Proof-пакет (собирается отдельно от PATCH A)
+
+1. **Guard foreign training**: попытка создать training_content rule для чужого тренинга → hard fail
+2. **Guard child target**: попытка создать rule с target_ref = child module → reject
+3. **Guard allowlist consistency**: lesson_id не из target tree → reject
+4. **Guard scope uniqueness**: дублирующий rule → hard fail
+5. **Partial access runtime**: один тариф видит часть уроков, другой — все
+6. **Пустые модули скрываются**: модуль без разрешённых уроков не показывается
+7. **Счётчики корректны**: lesson_count / completed_count пересчитаны после фильтрации
+8. **No regression (3 сценария)**:
+  - продукт с полным доступом без partial rules → работает как раньше
+  - product_access для клуба → работает
+  - продукт с новым training_content partial rule → ограничение работает
+9. **Двусторонняя синхронность**: partial rule из продукта отражается в тренинге без дублирования
+10. **Entitlement generation не затронута**: никаких новых entitlement на тренинг/урок
+
+---
+
+## PATCH C: Сворачивание legacy module_access (immediate follow-up после стабилизации PATCH B)
+
+**Не backlog, а обязательный следующий спринт.**
+
+
+| Хук/компонент            | Действие                         |
+| ------------------------ | -------------------------------- |
+| `useTrainingModules`     | Убрать чтение module_access      |
+| `useContainerLessons`    | Убрать чтение module_access      |
+| `useSidebarModules`      | Убрать чтение module_access      |
+| `ContentCreationWizard`  | Убрать запись в module_access    |
+| `ContentSectionSelector` | Убрать копирование module_access |
+
+
+Proof: runtime не зависит от legacy-path для product-linked trainings.
+
+---
+
+## Roadmap после PATCH C
+
+**v23.1.11 — Deep naming normalization:**
+
+- Audit всех technical codes в продуктах/тренингах/доступах
+- Mapping: `technical_code → admin_label → public_label`
+- Без переписывания runtime-кодов без migration/compat plan
+
+---
+
+## Изменяемые компоненты
+
+### PATCH A
+
+
+| Компонент                    | Изменение                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------- |
+| SQL migration                | `public_id` + trigger для training_modules                                      |
+| `ProductAccessRulesTab.tsx`  | Блок «Тренинги» (2 слоя, 2 режима) + bind/rebind/unbind + матрица + diagnostics |
+| `ProductAccessInfoBlock.tsx` | Расширить: 2 слоя + legacy badge + diagnostics + кнопка изменения               |
+| `AdminTrainingModules.tsx`   | Public ID chips                                                                 |
+| `useAccessRules.ts`          | Добавить `'training_content'` в `GrantTargetType`                               |
+| Naming в wizard              | Primary = title, secondary = code                                               |
+
+
+### PATCH B
+
+
+| Компонент                   | Изменение                                 |
+| --------------------------- | ----------------------------------------- |
+| SQL migration               | CHECK constraint + 2 UNIQUE indexes       |
+| `ProductAccessRulesTab.tsx` | Новый тип в wizard + TreeCheckboxSelector |
+| `useAccessRuleSelectors.ts` | `useAvailableTrainingModules()`           |
+| `useContainerLessons.ts`    | Partial access check + count recompute    |
+| `useTrainingModules.tsx`    | Partial access check + count recompute    |
+| `useSidebarModules.ts`      | Partial access check                      |
+
+
+---
+
+## DoD
+
+### PATCH A
+
+1. Из продукта видны привязанные тренинги (слой 1) и правила гранулярности (слой 2) раздельно
+2. Bind/rebind/unbind работают с каскадным обновлением descendants
+3. Rebind: dry-run preview обязателен → audit_logs записи → no orphan children
+4. Unbind: запрещён при активных training_content rules
+5. Из тренинга видно связанный продукт + правила + legacy badge + diagnostics
+6. Изменение с одной стороны видно с другой
+7. `public_id` TRN-XXXXXX (если без риска; иначе mini-patch сразу следом)
+8. Slug можно менять без влияния на доступы
+9. В UI нормальные названия, не technical codes как primary label
+10. Product→product rules не сломаны
+11. Club access не сломан
+12. Entitlement продукта открывает тренинг
+13. Матрица summary/expanded доступна
+14. Legacy module_access не пишет новых данных
+15. Active/inactive тренинги доступны для настройки, но inactive не показываются пользователю
+
+### PATCH B
+
+16. В wizard тип «Доступ к контенту тренинга» с выбором root тренингов текущего продукта
+17. Guard: training_content rule для чужого тренинга → hard fail (UI + backend)
+18. Guard: target_ref = child module → reject (backend)
+19. Guard: allowlist consistency (уроки/модули из чужого дерева → reject)
+20. Два UNIQUE constraint (product-level + tariff-level, NULL-safe)
+21. Scope resolution: tariff_id rule > product_id rule; дубли одного уровня → hard fail при save
+22. Древовидный чекбокс-селектор с partial state
+23. Partial access — allowlist only
+24. Runtime: один тариф видит часть уроков, другой — все
+25. Пустые модули после фильтрации скрываются
+26. lesson_count / completed_count корректны после фильтрации
+27. training_content НЕ создаёт второй контур доступа
+28. Entitlement generation не затронута (ни grant-access-for-order, ни backfill, ни renewal)
+29. No regression: 3 сценария сосуществуют (полный доступ / клуб product_access / partial rule)
