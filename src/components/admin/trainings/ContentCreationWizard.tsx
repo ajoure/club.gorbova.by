@@ -947,11 +947,7 @@ export function ContentCreationWizard({
             {targetModuleProduct ? (
               <ProductAccessInfoBlock productId={targetModuleProduct} />
             ) : (
-              <ProductTariffAccessSelector
-                selectedTariffIds={wizardData.tariffIds}
-                onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
-                products={productsWithTariffs || []}
-              />
+              <TrainingUnlinkedBlock />
             )}
             <LessonSaleConfig
               config={wizardData.saleConfig}
