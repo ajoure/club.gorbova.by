@@ -4,6 +4,7 @@ import { buildAdminNotifyMessage } from '../_shared/admin-notify-message.ts';
 import { hasValidAccess } from '../_shared/accessValidation.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
+import { syncEntitlement } from '../_shared/entitlement-sync.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -1178,7 +1179,44 @@ async function chargeSubscription(
         })
         .eq('id', id);
 
-      // ============= PATCH: CREATE RENEWAL ORDER FOR EACH RECURRING CHARGE =============
+      // ============= v23.1.10: ENTITLEMENT SYNC AFTER RENEWAL =============
+      // Sync entitlement with new access_end_at (never decrease)
+      if (product_id) {
+        try {
+          const { data: productForSync } = await supabase
+            .from('products_v2')
+            .select('code')
+            .eq('id', product_id)
+            .maybeSingle();
+
+          if (productForSync?.code) {
+            const { data: profileForSync } = await supabase
+              .from('profiles')
+              .select('id')
+              .eq('user_id', user_id)
+              .maybeSingle();
+
+            const syncResult = await syncEntitlement({
+              supabase,
+              user_id,
+              profile_id: profileForSync?.id || null,
+              product_id,
+              product_code: productForSync.code,
+              access_end_at: newEndDate.toISOString(),
+              source: 'subscription_renewal',
+              subscription_id: id,
+              order_id: order_id || null,
+              actor_label: 'subscription-charge',
+              mode_filter: 'subscription_based',
+            });
+            console.log(`[subscription-charge] Entitlement sync: ${syncResult.action} for ${productForSync.code}`);
+          }
+        } catch (entSyncErr) {
+          console.error('[subscription-charge] Entitlement sync error (non-blocking):', entSyncErr);
+        }
+      }
+      // ============= END v23.1.10 ENTITLEMENT SYNC =============
+
       // Purpose: Each successful recurring charge creates a SEPARATE order (deal) in orders_v2
       // This ensures UI shows individual deals per billing cycle, not a single trial order
       let renewalOrderId: string | null = null;

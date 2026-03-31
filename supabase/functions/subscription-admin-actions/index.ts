@@ -3,6 +3,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
 import { executeRevoke, type RevokeContext } from '../_shared/access-revoker.ts';
 import { writeLedgerEntry, type LedgerEntry } from '../_shared/fulfillment-executor.ts';
+import { syncEntitlement, hasOtherActiveAccessSource } from '../_shared/entitlement-sync.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -861,6 +862,24 @@ Deno.serve(async (req) => {
         );
 
         result.new_end_date = newEndDate.toISOString();
+
+        // ============= v23.1.10: Entitlement sync after extend =============
+        if (subscription.product_id) {
+          try {
+            const { data: prdSync } = await supabase.from('products_v2').select('code').eq('id', subscription.product_id).maybeSingle();
+            if (prdSync?.code) {
+              const { data: profileSync } = await supabase.from('profiles').select('id').eq('user_id', subscription.user_id).maybeSingle();
+              const sr = await syncEntitlement({
+                supabase, user_id: subscription.user_id, profile_id: profileSync?.id || null,
+                product_id: subscription.product_id, product_code: prdSync.code,
+                access_end_at: newEndDate.toISOString(), source: 'admin_extend',
+                subscription_id, actor_label: 'subscription-admin-actions', mode_filter: 'subscription_based',
+              });
+              console.log(`[subscription-admin-actions] Entitlement sync (extend): ${sr.action}`);
+            }
+          } catch (e) { console.error('[subscription-admin-actions] Entitlement sync error (extend):', e); }
+        }
+
         break;
       }
 
@@ -881,6 +900,24 @@ Deno.serve(async (req) => {
           .eq('id', subscription_id);
 
         result.new_end_date = new_end_date;
+
+        // ============= v23.1.10: Entitlement sync after set_end_date =============
+        if (subscription.product_id) {
+          try {
+            const { data: prdSync } = await supabase.from('products_v2').select('code').eq('id', subscription.product_id).maybeSingle();
+            if (prdSync?.code) {
+              const { data: profileSync } = await supabase.from('profiles').select('id').eq('user_id', subscription.user_id).maybeSingle();
+              const sr = await syncEntitlement({
+                supabase, user_id: subscription.user_id, profile_id: profileSync?.id || null,
+                product_id: subscription.product_id, product_code: prdSync.code,
+                access_end_at: new_end_date, source: 'admin_action',
+                subscription_id, actor_label: 'subscription-admin-actions', mode_filter: 'subscription_based',
+              });
+              console.log(`[subscription-admin-actions] Entitlement sync (set_end_date): ${sr.action}`);
+            }
+          } catch (e) { console.error('[subscription-admin-actions] Entitlement sync error (set_end_date):', e); }
+        }
+
         break;
       }
 
@@ -910,10 +947,67 @@ Deno.serve(async (req) => {
             });
           }
         }
+
+        // ============= v23.1.10: Entitlement sync after grant_access =============
+        if (subscription.product_id) {
+          try {
+            const { data: prdSync } = await supabase.from('products_v2').select('code').eq('id', subscription.product_id).maybeSingle();
+            if (prdSync?.code) {
+              const { data: profileSync } = await supabase.from('profiles').select('id').eq('user_id', subscription.user_id).maybeSingle();
+              const sr = await syncEntitlement({
+                supabase, user_id: subscription.user_id, profile_id: profileSync?.id || null,
+                product_id: subscription.product_id, product_code: prdSync.code,
+                access_end_at: subscription.access_end_at, source: 'admin_grant',
+                subscription_id, actor_label: 'subscription-admin-actions', mode_filter: 'subscription_based',
+              });
+              console.log(`[subscription-admin-actions] Entitlement sync (grant_access): ${sr.action}`);
+            }
+          } catch (e) { console.error('[subscription-admin-actions] Entitlement sync error (grant_access):', e); }
+        }
+
         break;
       }
 
       case 'revoke_access': {
+        // ============= v23.1.10: PRE-REVOKE GUARD =============
+        // Check if there's another active access source before revoking entitlement
+        let skipEntitlementRevoke = false;
+        let preRevokeCheckResult: any = null;
+        if (subscription.product_id) {
+          const { data: productForRevoke } = await supabase
+            .from('products_v2')
+            .select('code')
+            .eq('id', subscription.product_id)
+            .maybeSingle();
+
+          if (productForRevoke?.code) {
+            preRevokeCheckResult = await hasOtherActiveAccessSource(
+              supabase,
+              subscription.user_id,
+              productForRevoke.code,
+              subscription_id,
+            );
+            if (preRevokeCheckResult.has_other) {
+              skipEntitlementRevoke = true;
+              console.log(`[subscription-admin-actions] Pre-revoke guard: skipping entitlement revoke for ${productForRevoke.code}, other sources: ${preRevokeCheckResult.sources.join(', ')}`);
+              
+              await supabase.from('audit_logs').insert({
+                actor_user_id: adminUserId,
+                target_user_id: subscription.user_id,
+                action: 'admin.subscription.revoke_entitlement_skipped',
+                actor_type: 'admin',
+                meta: {
+                  subscription_id,
+                  product_code: productForRevoke.code,
+                  other_sources: preRevokeCheckResult.sources,
+                  reason: 'has_other_active_access_source',
+                },
+              });
+            }
+          }
+        }
+        // ============= END PRE-REVOKE GUARD =============
+
         await supabase
           .from('subscriptions_v2')
           .update({
