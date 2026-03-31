@@ -446,6 +446,15 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
         toast.error("Выберите хотя бы один продукт для выдачи");
         return;
       }
+    } else if (form.grant_target_type === "training_content") {
+      if (!form.target_ref) {
+        toast.error("Выберите тренинг");
+        return;
+      }
+      if (form.tc_access_mode === "partial" && form.tc_allowed_module_ids.length === 0 && form.tc_allowed_lesson_ids.length === 0) {
+        toast.error("Для частичного доступа выберите хотя бы один модуль или урок");
+        return;
+      }
     } else if (!form.target_ref) {
       toast.error("Выберите цель выдачи");
       return;
