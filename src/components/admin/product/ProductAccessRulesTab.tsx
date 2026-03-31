@@ -529,6 +529,9 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* PATCH A: Linked trainings block */}
+      <ProductLinkedTrainingsBlock productId={productId} />
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <div>
