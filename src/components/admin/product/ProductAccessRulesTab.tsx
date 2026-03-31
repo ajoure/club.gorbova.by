@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
 import { TrainingContentTreePicker, normalizeTrainingContentPayload } from "./TrainingContentTreePicker";
 import {
