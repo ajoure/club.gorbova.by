@@ -733,7 +733,7 @@ export default function AdminProductDetailV2() {
         </GlassCard>
 
         {/* Pill-style tabs */}
-        <Tabs defaultValue="tariffs">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
           <div className="px-1 overflow-x-auto scrollbar-none">
             <TabsList className="w-full sm:w-auto">
               <TabsTrigger value="tariffs" className="gap-1.5 text-xs">
