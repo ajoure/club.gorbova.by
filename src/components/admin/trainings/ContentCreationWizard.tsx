@@ -1008,7 +1008,7 @@ export function ContentCreationWizard({
       }
       if (step === 3) {
         return (
-          <CompactAccessSelector
+          <ProductTariffAccessSelector
             selectedTariffIds={wizardData.tariffIds}
             onChange={(ids) => setWizardData((prev) => ({ ...prev, tariffIds: ids }))}
             products={productsWithTariffs || []}

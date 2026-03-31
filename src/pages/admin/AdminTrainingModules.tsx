@@ -346,7 +346,7 @@ function ModuleAccessForm({ formData, setFormData, productsWithTariffs }: Module
   };
 
   return (
-    <CompactAccessSelector
+    <ProductTariffAccessSelector
       selectedTariffIds={formData.tariff_ids || []}
       onChange={handleChange}
       products={productsWithTariffs}
