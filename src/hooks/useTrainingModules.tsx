@@ -201,21 +201,32 @@ export function useTrainingModules() {
         return m;
       });
 
-      // Hide empty containers (non-admin): modules with lesson_count=0 and no visible children
+      // Hide empty containers (non-admin): root modules with no visible content
       const finalModules = normalizedModules.filter(m => {
         if (isAdminUser) return true;
-        if (!m.has_access && m.parent_module_id !== null) return true; // Keep locked items visible
-        // For root modules with partial filter: check if any children remain
-        if (m.parent_module_id === null && m.lesson_count === 0) {
+        // Keep locked child items visible (for lock display)
+        if (!m.has_access && m.parent_module_id !== null) return true;
+        // Root module with access: hide if no own lessons AND no visible children
+        if (m.parent_module_id === null && m.has_access) {
+          const ownLessons = m.lesson_count || 0;
           const hasVisibleChildren = normalizedModules.some(
             child => child.parent_module_id === m.id && child.has_access && (child.lesson_count || 0) > 0
           );
-          if (!hasVisibleChildren && m.has_access) {
-            // Check if this root itself has visible lessons (no children case)
-            // Keep it; individual lesson filtering happens in container hooks
-          }
+          if (ownLessons === 0 && !hasVisibleChildren) return false;
         }
         return true;
+      });
+
+      // Recalc root lesson_count/completed_count from visible children
+      finalModules.forEach(m => {
+        if (isAdminUser || m.parent_module_id !== null || !m.has_access) return;
+        const visibleChildren = finalModules.filter(
+          c => c.parent_module_id === m.id && c.has_access
+        );
+        if (visibleChildren.length > 0) {
+          m.lesson_count = visibleChildren.reduce((s, c) => s + (c.lesson_count || 0), 0);
+          m.completed_count = visibleChildren.reduce((s, c) => s + (c.completed_count || 0), 0);
+        }
       });
 
       setModules(finalModules);

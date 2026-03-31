@@ -174,8 +174,13 @@ export function useSidebarModules() {
       const filter = resolveTrainingContentFilter(tcData.rules, rootId, effectiveProductId, tcData.userTariffIds);
       if (!filter || filter.mode === "full") return true;
 
-      // For root modules: keep visible (container)
-      if (!m.parent_module_id) return true;
+      // For root modules: check if any children survived filtering
+      if (!m.parent_module_id) {
+        const hasVisibleChildren = modules.some(
+          child => child.parent_module_id === m.id && child.has_access && isModAllowed(filter, child.id)
+        );
+        return hasVisibleChildren || isModAllowed(filter, m.id);
+      }
 
       // Child module: check allowlist
       return isModAllowed(filter, m.id);
