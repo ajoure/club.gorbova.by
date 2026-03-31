@@ -27,6 +27,8 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
+  const { data: tcRawData } = useActiveTrainingContentRules();
+  const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
     queryKey: ["container-lessons", user?.id, isAdminUser],
