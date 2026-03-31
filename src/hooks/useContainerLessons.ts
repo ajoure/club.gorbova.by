@@ -133,18 +133,19 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const restrictedTariffIds = new Set<string>();
 
   if (data?.containers && data?.lessons) {
-    const containerMap = new Map<string, { slug: string; sectionKey: string }>();
+    const containerMap = new Map<string, { slug: string; sectionKey: string; productId: string | null }>();
     for (const c of data.containers) {
-      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key });
+      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key, productId: (c as any).product_id ?? null });
     }
 
-    // Map child modules: use own menu_section_key, fallback to parent's
+    // Map child modules: use own menu_section_key, fallback to parent's; product_id fallback to parent
     if (data.childModules) {
       for (const child of data.childModules) {
         const parent = containerMap.get(child.parent_module_id);
         containerMap.set(child.id, {
           slug: child.slug || parent?.slug || '',
           sectionKey: child.menu_section_key || parent?.sectionKey || '',
+          productId: (child as any).product_id ?? parent?.productId ?? null,
         });
       }
     }
