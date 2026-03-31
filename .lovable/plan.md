@@ -2,131 +2,96 @@
 
 &nbsp;
 
-1. **Rebind preview**: в preview обязательно отдельно показать не только training_content rules, но и **сколько descendants получат новый product_id**, и после execute сделать proof-query: нет ни одного descendant со старым product_id.
-2. **Unbind preview**:
+1. Для getAllDescendantIds(rootId) зафиксируй одно правило использования: **preview и execute обязаны использовать один и тот же helper**, чтобы число descendants в preview всегда совпадало с фактическим execute.
+2. В rebindTraining деактивацию rules ограничь не только target_ref = trainingId и product_id = oldProductId, но и явно grant_target_type = 'training_content' и is_active = true оставить как обязательные guard-условия. В отчёте показать deactivated_rule_ids и deactivated_rules_count.
+3. В unbindTraining guard на active rules должен проверять именно **root training target_ref = trainingId** и только grant_target_type = 'training_content'. Это нужно явно зафиксировать в плане, чтобы unbind не блокировался посторонними rules.
+4. Для descendants proof добавь два обязательных post-check:
   &nbsp;
-  - блокировка должна быть **только** при active training_content rules;
-  - наличие active entitlements не блокирует unbind автоматически, а показывается как **warning**;
-  - после unbind нужен proof-query: root и все descendants имеют product_id = NULL.
+  - после bind/rebind: COUNT(*) модулей в полном descendant tree со старым/NULL product_id = 0;
+  - после unbind: COUNT(*) модулей в полном descendant tree с ненулевым product_id = 0.
   &nbsp;
-3. **Матрица в PATCH A**: не имитировать partial/tariff logic раньше PATCH B.
-  В PATCH A матрица должна быть **readonly current-state**:
+5. По naming зафиксируй результат заранее:
   &nbsp;
-  - продукт → root training → descendants → count уроков;
-  - для тарифов пока показывать только статус **«полный доступ через продукт»** или **«гранулярные правила не настроены»**.
-    Не добавлять псевдо-логику partial до PATCH B.
-  &nbsp;
-4. **Naming normalization**: проверить не только wizard, но и:
-  &nbsp;
-  - список уже сохранённых rules;
-  - preview dialogs bind/rebind/unbind;
-  - diagnostics block;
-  - secondary text должен быть TRN-XXXXXX / PRD-XXXXXX, а не сырой UUID по умолчанию.
-  &nbsp;
-5. **Bind dialog**: для тренинга другого продукта клик не должен быть disabled. Он должен открывать **rebind preview**, а не выглядеть как недоступный пункт.
-6. **Audit / DoD для PATCH A** добавить явно:
-  &nbsp;
-  - training.rebind.preview
-  - training.rebind.executed
-  - training.unbind.preview
-  - training.unbind.executed
-  - в meta: old_product_id, new_product_id, affected_descendants_count, affected_lessons_count, deactivated_rule_ids.
-  &nbsp;
-7. **Proof-пакет PATCH A** зафиксировать отдельно:
-  &nbsp;
-  - bind свободного тренинга;
-  - rebind тренинга другого продукта через preview;
-  - unbind с blocking-case (active rules) и success-case (без active rules);
-  - проверка, что UI продукта и UI тренинга показывают одно и то же после каждого действия.
-  &nbsp;
-8. **Scope PATCH A не расширять**:
-  &nbsp;
-  - без training_content типа,
-  - без runtime changes,
-  - без новых SQL migration кроме уже сделанной public_id,
-  - без попытки трогать module_access кроме readonly diagnostics.
+  - если проверка показывает, что primary label уже человеческий (target_label, e.label, [product.name](http://product.name), title) — **код не менять**, только отметить proof;
+  - если найдётся хотя бы одно место, где primary label = technical code, исправить точечно в этом же PATCH A без расширения scope.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План: Завершение PATCH A — rebind preview, unbind preview, матрица, naming
+План: Финализация PATCH A — глубокая иерархия, scoped deactivation, proof
 
-## Что уже сделано
+## Диагноз
 
-- `public_id` TRN-XXXXXX работает
-- Блок «Тренинги этого продукта» в карточке продукта
-- Зеркальный блок в карточке тренинга с диагностикой
-- Bind свободного тренинга + unbind с guard на active rules
-- Хук `getRebindPreview` / `rebindTraining` готовы, но UI для них нет
+Проверка кода выявила 4 конкретных проблемы:
 
-## Что нужно доделать (4 задачи)
+### 1. Обновление descendants только на 1 уровень глубины
 
-### 1. Rebind preview dialog в `ProductLinkedTrainingsBlock.tsx`
+В `bindTraining`, `unbindTraining`, `rebindTraining` — все три используют `.eq("parent_module_id", trainingId)`, что обновляет только прямых детей. Если есть child → grandchild, grandchild не получит новый `product_id`.
 
-- В `BindTrainingDialog`: если тренинг принадлежит другому продукту, не блокировать клик, а открыть **rebind preview dialog**
-- Preview показывает данные из `getRebindPreview()`:
-  - текущий продукт (name + PRD-XXXXXX) → новый продукт
-  - N дочерних модулей унаследуют новый product_id
-  - N уроков затронуто
-  - N training_content rules будет деактивировано
-  - legacy module_access: N записей
-  - есть ли активные entitlements у пользователей
-- Кнопка «Перепривязать» вызывает `rebindTraining`
-- Audit log уже пишется в хуке
+**Исправление**: использовать рекурсивный подход — сначала собрать ВСЕ descendant IDs через recursive query (или итерацию по уровням), затем обновить `.in("id", allDescendantIds)`.
 
-### 2. Unbind preview dialog в `ProductLinkedTrainingsBlock.tsx`
+### 2. Деактивация rules при rebind не ограничена старым продуктом
 
-- Заменить текущий простой `AlertDialog` на preview-диалог
-- Перед подтверждением показать:
-  - N дочерних модулей
-  - N уроков
-  - legacy module_access: N записей
-  - active training_content rules: N (если >0, кнопка «Отвязать» заблокирована)
-  - active entitlements на продукт: есть/нет (предупреждение)
-- Загрузка данных по тому же паттерну, что `getRebindPreview`, но для unbind
+Строки 405-411 в `useProductTrainings.ts`: деактивируются ВСЕ active `training_content` rules по `target_ref = trainingId`, без фильтра `product_id = oldProductId`. Если по какой-то причине есть rule нового продукта — он тоже деактивируется.
 
-### 3. Матрица «продукт → тренинг → тариф → контент» в `ProductLinkedTrainingsBlock.tsx`
+**Исправление**: добавить `.eq("product_id", oldProductId)` в запрос деактивации.
 
-- Два режима: summary (compact) и expanded (полное дерево)
-- Summary: карточки root-тренингов с бейджами count уроков, active/inactive
-- Expanded: раскрытие дерева модулей/уроков
-- Placeholder для PATCH B (колонка тарифов/partial rules пока показывает «Полный доступ» для всех)
-- Переключатель summary ↔ expanded уже есть (Collapsible), нужно добавить матричное представление с тарифами
+### 3. Preview-функции тоже считают descendants на 1 уровень
 
-### 4. Naming normalization
+`getRebindPreview` (строка 251-254) и `getUnbindPreview` (строка 320-323) — тот же `.eq("parent_module_id", trainingId)`.
 
-**В wizard `ProductAccessRulesTab.tsx`:**
+**Исправление**: собирать полное дерево descendants рекурсивно (или поуровнево до исчерпания).
 
-- Для `entitlement` selector (строки 980-1002): primary label уже показывает `e.label`, secondary — `e.product_code`. Нужно проверить, что `e.label` реально содержит человеческое название, а не техкод
-- В списке правил (строки 660-670): `rule.target_label` как primary, `rule.target_ref` только мелким текстом если отличается
+### 4. Naming в wizard — нужна проверка
 
-**В `ProductLinkedTrainingsBlock.tsx`:** уже показывает `title` — OK.
+`ProductAccessRulesTab.tsx` — нужно проверить что primary label в списке правил и в селекторах показывает человеческое название.
 
-**В `ProductAccessInfoBlock.tsx`:** уже показывает `product.name` — OK.
+---
 
-## Файлы, которые будут затронуты
+## Что будет сделано
 
+### Файл: `src/hooks/useProductTrainings.ts`
 
-| Файл                              | Изменение                                                              |
-| --------------------------------- | ---------------------------------------------------------------------- |
-| `ProductLinkedTrainingsBlock.tsx` | Rebind preview dialog, unbind preview dialog, матрица summary/expanded |
-| `useProductTrainings.ts`          | Добавить `getUnbindPreview()`                                          |
-| `ProductAccessRulesTab.tsx`       | Проверка/фикс naming в wizard и списке правил                          |
+**A. Добавить helper `getAllDescendantIds(rootId)`:**
 
+- Итерирует по уровням: загружает children → children of children → ... пока не закончатся
+- Возвращает массив всех descendant IDs (без root)
+
+**B. Обновить `bindTraining`:**
+
+- Вместо `.eq("parent_module_id", trainingId)` → собрать все descendant IDs через helper → `.in("id", descendantIds)`
+
+**C. Обновить `unbindTraining`:**
+
+- То же: рекурсивные descendants → `.in("id", descendantIds)` для `SET product_id = NULL`
+
+**D. Обновить `rebindTraining`:**
+
+- Рекурсивные descendants → `.in("id", descendantIds)` для `SET product_id = newProductId`
+- Деактивация rules: добавить `.eq("product_id", oldProductId)` — только rules старого продукта
+
+**E. Обновить `getRebindPreview` и `getUnbindPreview`:**
+
+- Использовать тот же helper для подсчёта всех descendants
+
+### Файл: `src/components/admin/product/ProductAccessRulesTab.tsx`
+
+- Проверить naming в списке правил и селекторах (скорее всего уже ок, но нужна верификация)
+
+---
 
 ## Что НЕ меняется
 
-- `useAccessRules.ts` — `training_content` НЕ добавляется в `GrantTargetType` (это PATCH B)
-- `grant-access-for-order` — без изменений
-- Runtime хуки (`useTrainingModules`, `useContainerLessons`) — без изменений
+- UI компоненты в `ProductLinkedTrainingsBlock.tsx` — логика диалогов уже корректна
 - SQL миграции — не нужны
+- Runtime хуки — не трогаем
+- `useAccessRules.ts` — без изменений (PATCH B scope)
 
-## DoD этого шага (завершение PATCH A)
+## DoD
 
-1. Rebind: dry-run preview → подтверждение → execute → audit log
-2. Unbind: preview с guard (active rules блокируют) → подтверждение
-3. Матрица summary/expanded показывает связанные тренинги по тарифам
-4. В wizard primary label — человеческое название, не техкод
-5. Product→product и club rules не затронуты
+1. bind/rebind/unbind обновляют product_id у ВСЕЙ иерархии, не только 1 уровень
+2. Деактивация rules при rebind ограничена старым продуктом
+3. Preview показывает корректное число ALL descendants
+4. Primary labels в wizard — человеческие названия
