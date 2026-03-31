@@ -10,6 +10,9 @@ import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
   useTariffDurations, getClubAccessLabel,
 } from "@/hooks/useAccessRuleSelectors";
+import { useTrainingContentTree, type TreeModule, type TreeLesson } from "@/hooks/useTrainingContentRules";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
