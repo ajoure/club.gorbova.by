@@ -1173,7 +1173,7 @@ export function ProductAccessRulesTab({ productId, tariffs }: Props) {
               )}
 
               {/* Label override — hide for product_access/training_content (auto-generated) */}
-              {form.grant_target_type !== "product_access" && (
+              {form.grant_target_type !== "product_access" && form.grant_target_type !== "training_content" && (
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Отображаемое название (необязательно)</Label>
                   <Input
