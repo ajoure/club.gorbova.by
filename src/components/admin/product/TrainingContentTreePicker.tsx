@@ -256,7 +256,7 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
             variant="ghost"
             size="sm"
             className="h-6 text-[11px] px-2"
-            onClick={() => { onChangeModules([...allModuleIds]); onChangeLessons([]); }}
+            onClick={() => onChange([...allModuleIds], [])}
           >
             <CheckSquare className="h-3 w-3 mr-1" />
             Выбрать всё
@@ -265,7 +265,7 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
             variant="ghost"
             size="sm"
             className="h-6 text-[11px] px-2"
-            onClick={() => { onChangeModules([]); onChangeLessons([]); }}
+            onClick={() => onChange([], [])}
           >
             <Square className="h-3 w-3 mr-1" />
             Снять всё
