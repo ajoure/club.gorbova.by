@@ -575,13 +575,34 @@ async function markAsExpiredReentry(
     },
   }).eq('id', subId);
 
-  // 2. Update profile — NOW mark as former member
+  // 2. Update profile — mark as former member (legacy flag kept for backward compat)
   await supabase.from('profiles').update({
     was_club_member: true,
     club_exit_at: now,
     club_exit_reason: 'grace_period_expired',
     reentry_pricing_applies_from: now,
   }).eq('user_id', userId);
+
+  // 2b. PATCH-FINAL: Write product-scoped reentry pricing record
+  // Get product_id from subscription
+  const { data: subForProduct } = await supabase
+    .from('subscriptions_v2')
+    .select('product_id')
+    .eq('id', subId)
+    .maybeSingle();
+
+  if (subForProduct?.product_id) {
+    await supabase.from('product_reentry_pricing').upsert({
+      user_id: userId,
+      product_id: subForProduct.product_id,
+      reentry_active: true,
+      applies_from: now,
+      source_subscription_id: subId,
+      reason_code: 'grace_period_expired',
+      updated_at: now,
+    }, { onConflict: 'user_id,product_id' });
+    console.log(`[REENTRY] Set product-scoped reentry pricing for user ${userId}, product ${subForProduct.product_id}`);
+  }
 
   // 3. Record notification event (idempotency)
   await supabase.from('grace_notification_events').insert({
@@ -597,10 +618,10 @@ async function markAsExpiredReentry(
     actor_type: 'system',
     actor_label: 'subscription-charge',
     target_user_id: userId,
-    meta: { subscription_id: subId },
+    meta: { subscription_id: subId, product_id: subForProduct?.product_id || null },
   });
 
-  console.log(`Subscription ${subId}: marked as expired_reentry, was_club_member=true`);
+  console.log(`Subscription ${subId}: marked as expired_reentry, product-scoped reentry pricing set`);
 }
 
 // Attempt to charge a subscription using saved payment token

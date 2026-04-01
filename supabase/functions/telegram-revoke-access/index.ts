@@ -592,14 +592,15 @@ Deno.serve(async (req) => {
       }).eq('telegram_user_id', telegramUserId).eq('club_id', club_id);
     }
 
-    // Mark user as former club member for reentry pricing
+    // PATCH-FINAL: Do NOT set was_club_member at kick/revoke time.
+    // Reentry pricing activates ONLY after grace period expires (in markAsExpiredReentry).
+    // Membership state (removed/kicked) does not affect pricing.
     if (profileUserId) {
       await supabase.from('profiles').update({
-        was_club_member: true,
         club_exit_at: new Date().toISOString(),
         club_exit_reason: reason || 'access_revoked',
       }).eq('user_id', profileUserId);
-      console.log(`Marked user ${profileUserId} as former club member`);
+      console.log(`Updated club_exit for user ${profileUserId} (no reentry pricing at kick)`);
     }
 
     // Send notification via Telegram
