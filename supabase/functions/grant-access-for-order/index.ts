@@ -804,7 +804,7 @@ Deno.serve(async (req) => {
                       source_order_id: orderId,
                       action_type: 'grant',
                       reason_code: 'condition_not_met',
-                      target_type: 'product_access',
+                      target_type: 'product',
                       target_key: `${userId}:${targetProdId}`,
                       user_id: userId,
                       profile_id: profileId || null,
