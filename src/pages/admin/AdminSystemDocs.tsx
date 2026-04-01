@@ -339,7 +339,7 @@ export default function AdminSystemDocs({
 
             {SYSTEM_DOC_DOMAINS.map((d) => (
               <TabsContent key={d.key} value={d.key}>
-                <DomainTab domain={d} mode={modeParam} version={versionParam} />
+                <DomainTab domain={d} mode={modeParam} version={versionParam} onModeChange={handleModeChange} onVersionChange={handleVersionChange} />
               </TabsContent>
             ))}
           </Tabs>
