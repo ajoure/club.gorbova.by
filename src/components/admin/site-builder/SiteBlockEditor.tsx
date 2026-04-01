@@ -94,7 +94,13 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "social": return { items: [], alignment: "center" };
     case "logos": return { items: [], logoHeight: 48, grayscale: false };
     case "spacer": return { height: 40 };
-    case "form": return { title: "", subtitle: "", buttonText: "Отправить", fields: [], placeholderMessage: "Форма будет подключена позже" };
+    case "form": return { title: "", subtitle: "", buttonText: "Отправить", redirectUrl: "", fields: [], placeholderMessage: "Форма будет подключена позже" };
+    case "accordion": return { items: [], allowMultiple: false };
+    case "tabs": return { tabs: [] };
+    case "callout": return { type: "info", content: "", title: "" };
+    case "quote": return { text: "", author: "", source: "" };
+    case "audio": return { url: "", title: "" };
+    case "embed": return { url: "", height: 400 };
     default: return {};
   }
 }
