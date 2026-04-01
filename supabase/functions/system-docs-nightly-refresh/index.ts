@@ -79,13 +79,14 @@ serve(async (req) => {
       ? 'system_docs.manual_refresh_started'
       : 'system_docs.nightly_refresh_started';
 
-    await supabase.from('audit_logs').insert({
+    const { error: auditStartErr } = await supabase.from('audit_logs').insert({
       action: auditAction,
       actor_type: source === 'manual' ? 'admin' : 'system',
       actor_user_id: null,
       actor_label: source === 'manual' ? 'admin_system_docs' : 'system_docs_nightly_refresh',
       meta: { batch_id: batchKey, source },
     });
+    if (auditStartErr) console.error('Audit start insert error:', JSON.stringify(auditStartErr));
 
     const snapshotAt = now.toISOString();
     const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
