@@ -173,6 +173,28 @@ serve(async (req) => {
             }
           }
           
+          // Fallback: resolve product via club mapping if no subscription_id
+          let productResolveSource: string | null = null;
+          if (!productName && item.club_id) {
+            const { data: clubMappings } = await supabase
+              .from("product_club_mappings")
+              .select("product_id, products_v2(name)")
+              .eq("club_id", item.club_id)
+              .eq("is_active", true);
+
+            if (clubMappings && clubMappings.length === 1) {
+              // @ts-ignore - nested join types
+              productName = clubMappings[0].products_v2?.name || null;
+              subscriptionProductId = subscriptionProductId || clubMappings[0].product_id;
+              productResolveSource = "club_mapping";
+              console.log(`[telegram-process-access-queue] Fallback: resolved product via club_mapping for club ${item.club_id}: product=${productName}, product_id=${subscriptionProductId}`);
+            } else if (clubMappings && clubMappings.length > 1) {
+              // Ambiguous: multiple active mappings for this club
+              productResolveSource = "club_mapping_ambiguous";
+              console.warn(`[telegram-process-access-queue] WARNING: ${clubMappings.length} active mappings for club ${item.club_id} — leaving product_name as UNKNOWN`);
+            }
+          }
+
           tariffName = tariffName || "UNKNOWN";
           productName = productName || "UNKNOWN";
 
