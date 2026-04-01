@@ -322,6 +322,8 @@ export default function AdminSystemDocs({
             domain={SYSTEM_DOC_DOMAINS.find((d) => d.key === presetDomain)!}
             mode={modeParam}
             version={versionParam}
+            onModeChange={handleModeChange}
+            onVersionChange={handleVersionChange}
           />
         ) : (
           <Tabs value={activeDomain} onValueChange={handleDomainChange}>
