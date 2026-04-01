@@ -67,7 +67,8 @@ async function sendGraceNotification(
   eventType: 'grace_started' | 'grace_24h_left' | 'grace_48h_left' | 'grace_expired',
   graceEndsAt: Date | null,
   amount: number,
-  currency: string
+  currency: string,
+  productName?: string
 ): Promise<{ telegram: boolean; email: boolean }> {
   const result = { telegram: false, email: false };
 
