@@ -11,14 +11,10 @@
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { toTzDateKey, dayWindowUtc } from './timezone.ts';
+import { toTzDateKey, dayWindowUtc, APP_TZ } from './timezone.ts';
 
 /** Grace period: 72 hours after access_end_at, subscription still counts as valid */
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
-
-/** Billing-day protection: if next_charge_at is today (Warsaw) and now < next_charge_at + N hours, access is valid */
-const BILLING_DAY_PROTECTION_HOURS = 12;
-const WARSAW_TZ = 'Europe/Warsaw';
 
 export interface AccessCheckResult {
   valid: boolean;
