@@ -4,11 +4,11 @@ import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import {
   GripVertical, Plus, Trash2, Type, Image, Layout, AlignLeft, MessageSquare, HelpCircle, Minus, Megaphone,
   Video, MousePointerClick, Columns, Timer, Code, GalleryHorizontal, Quote, CreditCard, Share2, Grip, Space, FileText,
-  Settings2,
+  Settings2, ChevronsUpDown, LayoutList, Info, Music, Globe,
 } from "lucide-react";
 import type { SiteBlock, BlockType } from "@/services/sitePages/types";
 import { blockSettingsSchema, type BlockSettings } from "@/services/sitePages/types";
