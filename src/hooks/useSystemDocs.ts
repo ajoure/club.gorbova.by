@@ -121,7 +121,7 @@ export function useSystemDocs({
       try {
         await supabase.from("audit_logs" as any).insert({
           action,
-          actor_type: "admin",
+          actor_type: "user",
           actor_user_id: user?.id || null,
           actor_label: "admin_system_docs",
           meta: { section_key: sectionKey, ...meta },
