@@ -13,10 +13,30 @@ interface FormSectionProps {
   pageId?: string;
 }
 
+function isSafeRedirectUrl(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith('/')) return true;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function safeRedirect(url: string) {
+  if (url.startsWith('/')) {
+    window.location.href = url;
+  } else {
+    window.open(url, '_self', 'noopener,noreferrer');
+  }
+}
+
 export function FormSection({ content, pageId }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
+  const redirectUrl = (content.redirectUrl as string) || "";
   const fields = (content.fields as FormField[]) || [];
 
   const [values, setValues] = useState<Record<number, string>>({});
@@ -34,7 +54,6 @@ export function FormSection({ content, pageId }: FormSectionProps) {
     e.preventDefault();
     setError("");
 
-    // Client-side validation
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
       const val = (values[i] || "").trim();
@@ -57,6 +76,7 @@ export function FormSection({ content, pageId }: FormSectionProps) {
     try {
       const payload = {
         page_id: pageId,
+        redirect_url: redirectUrl || undefined,
         fields: fields.map((field, i) => ({
           label: field.label,
           type: field.type,
@@ -74,7 +94,11 @@ export function FormSection({ content, pageId }: FormSectionProps) {
         console.error("Form submit error:", fnError);
         setError("Не удалось отправить форму. Попробуйте позже.");
       } else {
-        setSubmitted(true);
+        if (redirectUrl && isSafeRedirectUrl(redirectUrl)) {
+          safeRedirect(redirectUrl);
+        } else {
+          setSubmitted(true);
+        }
       }
     } catch (err) {
       console.error("Form submit exception:", err);
