@@ -293,7 +293,7 @@ Deno.serve(async (req) => {
     // Additional safety: only process if recurring_snapshot exists (to avoid accidental grace for non-subscription trials)
     const { data: newlyExpired } = await supabase
       .from('subscriptions_v2')
-      .select('id, user_id, access_end_at, meta, tariff_id')
+      .select('id, user_id, access_end_at, meta, tariff_id, product_id')
       .lt('access_end_at', nowIso)
       .is('grace_period_started_at', null)
       .in('status', ['active', 'past_due', 'trial'])  // PATCH: added 'trial'
