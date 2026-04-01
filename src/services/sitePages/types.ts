@@ -166,12 +166,54 @@ export const formContentSchema = z.object({
   title: z.string().default(""),
   subtitle: z.string().default(""),
   buttonText: z.string().default("Отправить"),
+  redirectUrl: z.string().default(""),
   fields: z.array(z.object({
     label: z.string().default(""),
     type: z.enum(["text", "email", "phone", "textarea"]).default("text"),
     required: z.boolean().default(false),
     mapping: z.string().default("none"),
   })).default([]),
+});
+
+// ─── New Site Builder Block Schemas ───
+
+export const accordionSiteContentSchema = z.object({
+  items: z.array(z.object({
+    id: z.string().default(""),
+    title: z.string().default(""),
+    content: z.string().default(""),
+  })).default([]),
+  allowMultiple: z.boolean().default(false),
+});
+
+export const tabsSiteContentSchema = z.object({
+  tabs: z.array(z.object({
+    id: z.string().default(""),
+    title: z.string().default(""),
+    content: z.string().default(""),
+  })).default([]),
+});
+
+export const calloutSiteContentSchema = z.object({
+  type: z.enum(["info", "success", "warning", "error", "tip", "quote", "summary"]).default("info"),
+  content: z.string().default(""),
+  title: z.string().default(""),
+});
+
+export const quoteSiteContentSchema = z.object({
+  text: z.string().default(""),
+  author: z.string().default(""),
+  source: z.string().default(""),
+});
+
+export const audioSiteContentSchema = z.object({
+  url: z.string().default(""),
+  title: z.string().default(""),
+});
+
+export const embedSiteContentSchema = z.object({
+  url: z.string().default(""),
+  height: z.number().default(400),
 });
 
 // ─── Block Content Schemas Map ───
@@ -197,6 +239,12 @@ export const blockContentSchemas = {
   logos: logosContentSchema,
   spacer: spacerContentSchema,
   form: formContentSchema,
+  accordion: accordionSiteContentSchema,
+  tabs: tabsSiteContentSchema,
+  callout: calloutSiteContentSchema,
+  quote: quoteSiteContentSchema,
+  audio: audioSiteContentSchema,
+  embed: embedSiteContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;

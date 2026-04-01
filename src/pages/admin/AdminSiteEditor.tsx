@@ -142,7 +142,7 @@ export default function AdminSiteEditor() {
               <SiteBlockEditor blocks={blocks} onChange={setBlocks} />
             </TabsContent>
             <TabsContent value="preview" className="flex-1 overflow-auto m-0">
-              <SitePreview blocks={blocks} themeSettings={themeSettings} />
+              <SitePreview blocks={blocks} themeSettings={themeSettings} pageId={id} />
             </TabsContent>
             <TabsContent value="settings" className="flex-1 overflow-auto m-0 p-4">
               <SiteSettingsPanel

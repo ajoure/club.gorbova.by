@@ -52,6 +52,7 @@ interface FormField {
 interface RequestBody {
   page_id: string;
   fields: FormField[];
+  redirect_url?: string;
 }
 
 // ─── Main ───
@@ -64,7 +65,7 @@ Deno.serve(async (req) => {
   try {
     // 1. Parse & validate
     const body: RequestBody = await req.json();
-    const { page_id, fields } = body;
+    const { page_id, fields, redirect_url } = body;
 
     if (!page_id || typeof page_id !== "string") {
       return json({ error: "page_id is required" }, 400);
@@ -122,7 +123,7 @@ Deno.serve(async (req) => {
         field_mapping: fieldMapping,
         status: "new",
         source: "site_form",
-        metadata: {},
+        metadata: redirect_url ? { redirect_url } : {},
       })
       .select("id, public_id")
       .single();

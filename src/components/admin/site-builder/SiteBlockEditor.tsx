@@ -4,11 +4,11 @@ import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import {
   GripVertical, Plus, Trash2, Type, Image, Layout, AlignLeft, MessageSquare, HelpCircle, Minus, Megaphone,
   Video, MousePointerClick, Columns, Timer, Code, GalleryHorizontal, Quote, CreditCard, Share2, Grip, Space, FileText,
-  Settings2,
+  Settings2, ChevronsUpDown, LayoutList, Info, Music, Globe,
 } from "lucide-react";
 import type { SiteBlock, BlockType } from "@/services/sitePages/types";
 import { blockSettingsSchema, type BlockSettings } from "@/services/sitePages/types";
@@ -34,6 +34,12 @@ import { SocialBlockEditor } from "./blocks/SocialBlockEditor";
 import { LogosBlockEditor } from "./blocks/LogosBlockEditor";
 import { SpacerBlockEditor } from "./blocks/SpacerBlockEditor";
 import { FormBlockEditor } from "./blocks/FormBlockEditor";
+import { SiteAudioBlockEditor } from "./blocks/SiteAudioBlockEditor";
+import { SiteEmbedBlockEditor } from "./blocks/SiteEmbedBlockEditor";
+import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
+import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
+import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
+import { QuoteBlock } from "@/components/admin/lesson-editor/blocks/QuoteBlock";
 import { BlockSettingsEditor } from "./blocks/BlockSettingsEditor";
 import { useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -59,6 +65,12 @@ const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] =
   { type: "logos", label: "Логотипы", icon: <Grip className="h-4 w-4" /> },
   { type: "spacer", label: "Отступ", icon: <Space className="h-4 w-4" /> },
   { type: "form", label: "Форма", icon: <FileText className="h-4 w-4" /> },
+  { type: "accordion", label: "Аккордеон", icon: <ChevronsUpDown className="h-4 w-4" /> },
+  { type: "tabs", label: "Вкладки", icon: <LayoutList className="h-4 w-4" /> },
+  { type: "callout", label: "Выноска", icon: <Info className="h-4 w-4" /> },
+  { type: "quote", label: "Цитата", icon: <Quote className="h-4 w-4" /> },
+  { type: "audio", label: "Аудио", icon: <Music className="h-4 w-4" /> },
+  { type: "embed", label: "Встраивание", icon: <Globe className="h-4 w-4" /> },
 ];
 
 function getDefaultContent(type: BlockType): Record<string, unknown> {
@@ -82,7 +94,13 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "social": return { items: [], alignment: "center" };
     case "logos": return { items: [], logoHeight: 48, grayscale: false };
     case "spacer": return { height: 40 };
-    case "form": return { title: "", subtitle: "", buttonText: "Отправить", fields: [], placeholderMessage: "Форма будет подключена позже" };
+    case "form": return { title: "", subtitle: "", buttonText: "Отправить", redirectUrl: "", fields: [], placeholderMessage: "Форма будет подключена позже" };
+    case "accordion": return { items: [], allowMultiple: false };
+    case "tabs": return { tabs: [] };
+    case "callout": return { type: "info", content: "", title: "" };
+    case "quote": return { text: "", author: "", source: "" };
+    case "audio": return { url: "", title: "" };
+    case "embed": return { url: "", height: 400 };
     default: return {};
   }
 }
@@ -109,6 +127,12 @@ function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange:
     case "logos": return <LogosBlockEditor content={block.content} onChange={onChange} />;
     case "spacer": return <SpacerBlockEditor content={block.content} onChange={onChange} />;
     case "form": return <FormBlockEditor content={block.content} onChange={onChange} />;
+    case "accordion": return <AccordionBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "tabs": return <TabsBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "callout": return <CalloutBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "quote": return <QuoteBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "audio": return <SiteAudioBlockEditor content={block.content} onChange={onChange} />;
+    case "embed": return <SiteEmbedBlockEditor content={block.content} onChange={onChange} />;
     default: return <p className="text-sm text-muted-foreground">Неизвестный тип блока: {block.type}</p>;
   }
 }

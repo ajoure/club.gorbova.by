@@ -42,6 +42,15 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
         <Label className="text-xs">Текст кнопки</Label>
         <Input value={(content.buttonText as string) || "Отправить"} onChange={(e) => onChange({ ...content, buttonText: e.target.value })} />
       </div>
+      <div>
+        <Label className="text-xs">URL перенаправления после отправки</Label>
+        <Input 
+          value={(content.redirectUrl as string) || ""} 
+          onChange={(e) => onChange({ ...content, redirectUrl: e.target.value })} 
+          placeholder="https://... или /thank-you"
+        />
+        <p className="text-[10px] text-muted-foreground mt-1">Оставьте пустым для показа сообщения «Спасибо». Допустимы только https:// или относительные пути (/...)</p>
+      </div>
 
       {fields.map((field, i) => (
         <div key={i} className="border rounded-lg p-2 space-y-1">
