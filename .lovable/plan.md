@@ -1,274 +1,420 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Патч 5 разбить на discovery → execute.  
-Нельзя заранее жёстко вписывать расширение по таблицам, пока не доказано, что они реально существуют в этой ветке и используются текущей архитектурой.  
-Добавь правило:  
+1. Вынеси в отдельный STOP-guard для narrative, что генератор не имеет права писать в документы неподтверждённые связи.  
+Пример:  
 
-  - сначала dry-run по information_schema / фактическим SELECT;
-  - только потом расширять снапшоты только подтверждёнными таблицами;
-  - если таблица не существует или legacy/deprecated — не включать её как SoT, а выносить в секцию Legacy / не подтверждено discovery.
+  - если связь не доказана по схеме/коду/discovery — писать как не подтверждено или требует проверки;
+  - не домысливать прямую связь там, где есть только косвенная.
 2. &nbsp;
-3. Уточнить список таблиц в Патче 5 как “кандидаты, требующие подтверждения discovery”.  
-Не фиксировать без проверки как обязательные:  
+3. В Phase 0 добавь не только матрицу колонок, но и матрицу join-path для спорных доменов:  
 
-  - edge_functions_registry
-  - product_relations
-  - payment_methods
-  - installment_payments
-  - lesson_progress
-  - site_page_folders
-  - integration_instances
-  - integration_logs
-  - bepaid_sync_logs
-  - email_accounts
-  - payment_reconcile_queue
-  - ban_cases
-  - duplicate_cases  
-  Для них формулировка должна быть: “если таблица/контур подтверждён discovery — включить; если нет — не выдумывать и не подменять архитектуру”.
-4. &nbsp;
-5. Добавить отдельный патч на createdDomains.push(domain.key).  
-В предыдущем патче был риск, что created_domains в audit останется пустым. Это нужно явно добить и проверить.  
-DoD:  
+  - site_domain_bindings -> site_pages
+  - products_v2 -> tariffs -> tariff_offers
+  - orders_v2 -> payments_v2
+  - training_modules -> training_lessons
+  - products_v2 -> access_rules -> entitlements
+4.   
+Это нужно, чтобы platform_master и доменные документы описывали реальные связи, а не “похожие”.
+5. Для sites_pages_forms явно зафиксируй правку narrative:  
 
-  - после seed audit_logs.meta.created_domains совпадает с реально созданными POINT A.
+  - site_domain_bindings не описывать как прямую привязку домена к продукту, если в схеме там site_page_id, а не product_id;
+  - если продукт определяется через страницу/блок/контент — так и писать;
+  - если путь неполный — маркировать как неполная доказательная связь.
 6. &nbsp;
-7. Добавить финальный proof по actor_user_id после UI-вызова.  
-Сейчас патч на getUser() правильный, но не закрыт proof.  
-Обязательно после деплоя:  
+7. Для integrations закрепи, что генератор должен брать из edge_functions_registry:  
 
-  - нажать “Обновить сейчас” из UI;
-  - проверить в audit_logs:  
+  - name
+  - enabled
+  - category
+  - tier
+  - notes
+8.   
+И в документе выводить это именно как реестр EF, а не как “все реально существующие EF платформы”, если это не доказано полностью.
+9. Для training_modules и tariffs добавь отдельный пункт в DoD:  
 
-    - manual_refresh_started
-    - manual_refresh_completed
-    - actor_type='user'
-    - actor_user_id IS NOT NULL  
-    Пока этого proof нет — пункт не закрывать.
-  - &nbsp;
-8. &nbsp;
-9. Для initialVersion fallback добавить ещё один кейс.  
-Если в URL передан version=POINT X, которого нет, и manual есть, но AUTO-CURRENT тоже есть:  
-
-  - не уходить автоматически в auto всегда;
-  - приоритет:  
-
-    - найденный manual version;
-    - active manual;
-    - первый manual;
-    - только если manual нет вообще — auto.  
-    Иначе можно потерять ожидаемое поведение manual-режима.
-  - &nbsp;
+  - в итоговом документе нигде не должно остаться слов status там, где реальная модель использует is_active;
+  - в orders_v2 нигде не должно остаться cancelled, только canceled.
 10. &nbsp;
-11. Для авто-режима нужен отдельный UI proof, не только кодовый.  
-После патча показать:  
+11. Для seed и repair добавь обязательный dry-run response до execute:  
 
-  - домен без manual сразу открывается в Автообновление;
-  - кнопки Copy / Download активны;
-  - контент реально рендерится;
-  - пустой экран больше не появляется.
-12. &nbsp;
-13. По EF entitlements — исправить не только фильтр, но и сделать fail-safe для домена trainings_access.  
-Если один из запросов домена падает:  
-
-  - не валить весь refresh;
-  - домен должен сохранить snapshot с предупреждением в тексте;
-  - warnings должны попасть в audit_logs.meta.  
-  Это особенно важно для nightly.
-14. &nbsp;
-15. Для Патча 5 добавить ограничение: не превращать AUTO-CURRENT в “счётчики ради счётчиков”.  
-В каждый домен включать:  
-
-  - SoT;
-  - реально используемые таблицы;
-  - реальные активные контуры;
-  - known issues / pending proof;
-  - только после этого статистику.  
-  Иначе документация станет шумной и бесполезной как входной артефакт.
-16. &nbsp;
-17. Добавить финальный data proof после manual refresh.  
-После запуска refresh проверить:  
-
-  - 7 AUTO-CURRENT существуют;
-  - updated_at обновился у всех 7;
-  - products_sales manual POINT A/B/C не изменены;
-  - content_text у проблемного trainings_access больше не содержит ошибку по [entitlements.is](http://entitlements.is)_active.
-18. &nbsp;
-19. Добавить явный STOP-guard на раздувание контента.  
-Если расширенный доменный snapshot становится слишком большим:  
-
-  - сначала summary + warning;
-  - не добавлять неподтверждённые блоки “про запас”;
-  - priority: platform_master, products_sales, trainings_access, orders_payments, open_tails.
-20. &nbsp;
-21. Финальный статус закрытия оформить по пунктам.  
-В отчёте после выполнения должно быть отдельно:  
-
-  - build proof;
-  - seed proof;
-  - auto-fallback proof;
-  - manual refresh actor proof;
-  - 7 AUTO-CURRENT proof;
-  - expanded content proof;
-  - незакрытые хвосты, если остались.
-22. &nbsp;
+  - какие домены будут созданы;
+  - какие будут repaired;
+  - какие skipped;
+  - какие попадают в manual review.
+12.   
+Только потом execute. Даже если это один вызов EF, логически внутри должно быть preview -> apply.
+13. Для repair-признака placeholder усили критерий:  
+placeholder = не только (Заполнить), но и совпадение с seed-scaffold сигнатурой по нескольким секциям.  
+Одной строки (Заполнить) недостаточно, чтобы не зацепить вручную испорченный/смешанный документ.
+14. Добавь в EF отдельный manual_review bucket в response:
 
 &nbsp;
 
+{
+
+  "manual_review_domains": [],
+
+  "manual_review_docs": []
+
+}
+
 &nbsp;
 
-План: Финальный патч — сборка, seed, fallback, контент документации
+8. Чтобы не терялись случаи, где авто-repair запрещён.
+9. Для products_sales закрепи ещё один guard:  
 
-## Диагностика build error
+  - если код seed/repair по ошибке получает этот домен в списке mutate-операций, EF должен не просто skip, а писать structured warning:
+10. &nbsp;
 
-**Причина:** В `src/pages/admin/AdminSystemDocs.tsx` есть неиспользуемые импорты:
+&nbsp;
 
-- `GlassCard` (строка 4)
-- `ShieldCheck` (строка 12)
+{ "type": "guard_skip", "domain": "products_sales", "message": "manual history is read-only" }
 
-TypeScript strict mode выдаёт ошибку на unused imports.
+&nbsp;
 
-## Диагностика EF `entitlements.is_active`
+9.   
 
-В `system-docs-nightly-refresh/index.ts` строка 370: `.eq('is_active', true)` — но таблица `entitlements` не имеет колонки `is_active`. Есть колонка `status`. Это вызывает ошибку при сборке снапшота `trainings_access`.
+10. В buildDomainDocument() добавь фиксированную первую секцию:  
 
-## Текущее состояние данных
+  - 0. Назначение
+  - 1. Источники истины (SoT)
+  - 2. Таблицы и связи
+  - 3. Ключевые потоки
+  - 4. Edge Functions
+  - 5. UI / маршруты
+  - 6. Legacy / deprecated
+  - 7. Текущее состояние
+  - 8. Открытые хвосты
+11.   
+Нужно, чтобы все документы имели одинаковый каркас и были сравнимы между собой.
+12. В platform_master добавь обязательную секцию “Границы доказанности”:  
+
+  - что подтверждено по БД;
+  - что подтверждено по коду;
+  - что пока описано как hypothesis/manual review.
+13.   
+Это повысит доверие к master-документу.
+14. В open_tails добавь отдельный блок “Проблемы самого генератора документации”:  
+
+  - pending proof по actor_user_id
+  - proof seed/repair
+  - proof полноты snapshot
+  - возможные schema mismatch / truncation warnings последних batch
+  - build-proof, если он ещё не зафиксирован
+15. &nbsp;
+16. Для safeSelect и live-списков зафиксируй правило:  
+
+  - если таблица большая, список в документе ограничивается top-N;
+  - в документе рядом указывать показаны первые N из M;
+  - чтобы не превращать docs в мусорный дамп.
+17. &nbsp;
+18. В AdminSystemDocs.tsx добавь отображение результата seed/repair не только toast, но и в UI:  
+
+  - created domains
+  - repaired domains
+  - skipped
+  - warnings
+  - manual review
+19.   
+Иначе после запуска непонятно, что реально произошло.
+20. В SystemDocViewer добавь для platform_master кнопку не только Скачать master, но и отдельный action:  
+
+  - Копировать master как контекст
+21.   
+Это должен быть основной UX-сценарий, раз документ задуман как входной артефакт для новых задач.
+22. В DoD добавь ещё 3 обязательных proof-пункта:  
+
+  - products_sales manual versions остались byte-to-byte неизменными
+  - repair не затронул ни один manual doc с признаками ручной правки
+  - warnings/current batch отражены в open_tails и audit_logs.meta, а не только в response EF
+23. &nbsp;
+24. actor_user_id действительно оставить pending-proof, пока не будет UI-вызова с фактом.  
+Его нельзя считать закрытым по коду.
+25. Финальный отчёт по этому патчу требуй в двух частях:  
+
+  - что исправлено в генераторе
+  - что уже реально появилось в документации
+26.   
+С отдельным SQL/UI proof по:  
+
+  - admin_docs
+  - audit_logs
+  - products_sales manual history
+  - отсутствию (Заполнить) в active manual docs.
+27. &nbsp;
+
+&nbsp;
+
+# План: Единый генератор документации — Blueprint + Live Snapshot + Repair
+
+---
+
+## Phase 0: Discovery (завершён)
+
+### Матрица: что читает генератор → реальные колонки
 
 
-| section_key       | AUTO-CURRENT | Manual                            |
-| ----------------- | ------------ | --------------------------------- |
-| platform_master   | ✅            | нет                               |
-| products_sales    | ✅            | POINT A, B (archived), C (active) |
-| sites_pages_forms | ✅            | нет                               |
-| trainings_access  | ✅            | нет                               |
-| orders_payments   | ✅            | нет                               |
-| integrations      | ✅            | нет                               |
-| open_tails        | ✅            | нет                               |
+| Таблица                   | Код EF сейчас                                                        | Реальная схема                                                                                                        | Действие                                                                 |
+| ------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `edge_functions_registry` | `select('function_name, description, is_active')`, safeCount по `id` | PK=`name`, колонки: `name, enabled, category, tier, notes`. **Нет** `id`, `function_name`, `is_active`, `description` | Исправить select на `name, notes, enabled, category`, safeCount без `id` |
+| `app_settings`            | safeCount по `id`                                                    | PK=`key`. **Нет** `id`                                                                                                | safeCount через `select('*', { count: 'exact', head: true })`            |
+| `telegram_bots`           | `select('id, bot_name, is_active')`                                  | Колонки: `bot_name, status`. **Нет** `is_active`                                                                      | `select('id, bot_name, status')`, отображать status                      |
+| `training_modules`        | safeSelect `'id, title, status'`                                     | Колонки: `is_active, title`. **Нет** `status`                                                                         | `select('id, title, is_active')`                                         |
+| `tariffs`                 | safeCount filter `status`                                            | Колонка: `is_active`. **Нет** `status`                                                                                | Фильтр по `is_active`                                                    |
+| `site_domain_bindings`    | `select('id, domain, product_id, is_active')`                        | Колонки: `id, domain, site_page_id, is_primary, is_home, public_id`. **Нет** `product_id`, `is_active`                | `select('id, domain, site_page_id, is_primary, is_home')`                |
+| `orders_v2`               | filter `status='cancelled'`                                          | Реальное значение: `canceled` (одна l)                                                                                | Заменить на `canceled`                                                   |
+| `entitlements`            | filter `status='active'`                                             | Колонка `status` **есть**                                                                                             | ОК, без изменений                                                        |
 
 
-6 доменов не имеют manual baseline — seed должен их создать.
+### safeCount — универсальное правило
 
-## Что исправляем (5 патчей)
+Генератор **не имеет права предполагать наличие `id**`. Все count-запросы через `select('*', { count: 'exact', head: true })`.
 
-### Патч 1: Build fix — убрать unused imports
+---
 
-**Файл:** `src/pages/admin/AdminSystemDocs.tsx`
+## Phase 1: Диагностика build error
 
-- Удалить `GlassCard` из импортов
-- Удалить `ShieldCheck` из импортов
+Build error: `failed to build project: build-run failed with status failed`. Точный текст ошибки недоступен из логов/LSP.
 
-### Патч 2: initialVersion fallback в useSystemDocs
+**Действие**: сделать минимальный коммит (cleanup unused import `useMemo` в AdminSystemDocs.tsx, unused `isAutoVersion` в SystemDocViewer.tsx) и проверить, проходит ли билд. Если нет — искать реальную причину по Vite output.
 
-**Файл:** `src/hooks/useSystemDocs.ts`, строки 96-105
+---
 
-Если `initialVersion` передан, но не найден среди docs, и есть AUTO-CURRENT — переключиться в auto:
+## Phase 2: Архитектура решения
+
+```text
+supabase/functions/_shared/
+  system_docs_blueprint.ts  ← Единственный SoT narrative (серверный)
+
+src/lib/systemDocsRegistry.ts ← UI-реестр (только key, title, sort, filename)
+                                НЕ дублирует архитектурный контент
+
+EF: system-docs-nightly-refresh/index.ts
+  import blueprint from '../_shared/system_docs_blueprint.ts'
+  buildDomainDocument(key, mode)
+    = blueprint narrative
+    + live DB snapshot (universal safeCount)
+    + changes 24h (только для auto_current)
+    + open tails (4 источника)
+
+  Режимы:
+    source='manual'       → mode='auto_current'
+    source='cron-hourly'  → mode='auto_current'
+    source='seed'         → mode='manual_baseline' + repair
+```
+
+---
+
+## Phase 3: Патчи (5 файлов)
+
+### 3.1. НОВЫЙ: `supabase/functions/_shared/system_docs_blueprint.ts`
+
+Единственный серверный SoT. Структура по домену:
 
 ```ts
-if (initialVersion) {
-  const found = docs.find((d) => d.version_label === initialVersion);
-  if (found) {
-    if (isAutoVersion(found)) {
-      setViewMode("auto");
-      setSelectedManualVersion("");
-    } else {
-      setViewMode("manual");
-      setSelectedManualVersion(found.version_label);
-    }
-  } else {
-    // version не найден — fallback
-    const auto = docs.find((d) => isAutoVersion(d));
-    if (auto) {
-      setViewMode("auto");
-      setSelectedManualVersion("");
-    }
-  }
+interface DomainBlueprint {
+  purpose: string;
+  sotTables: { name: string; role: string }[];
+  relatedTables: string[];
+  edgeFunctions: { name: string; role: string }[];
+  uiRoutes: { path: string; description: string }[];
+  sharedHooks: string[];
+  legacyZones: string[];
+  crossDomainLinks: string[];
+  knownIssues: string[];
+  rules: string[];
+  flows: { name: string; steps: string[] }[];
 }
 ```
 
-### Патч 3: Убрать `initialMode` default = "manual"
+Обязательные flows в blueprint:
 
-**Файл:** `src/hooks/useSystemDocs.ts`, строка 24, 29
+- product purchase → order → paid → grant-access-for-order
+- site form → profile resolve → draft order
+- product_access / prior_purchase
+- trainings_access / training_content
+- nightly docs refresh pipeline
 
-- Убрать `= "manual"` из деструктуризации
-- useState: `useState<ViewMode>(initialMode || "manual")` — оставить, но в fallback (строка 113) убрать проверку `if (!initialMode)` — всегда переключать в auto если manual.length === 0:
+Обязательные cross-domain links в platform_master:
 
-```ts
-if (manual.length === 0 && auto) {
-  setSelectedManualVersion("");
-  setViewMode("auto");
+- продукты ↔ тарифы ↔ заказы ↔ оплаты ↔ доступы
+- продукты ↔ тренинги ↔ access_rules ↔ entitlements
+- сайты/формы ↔ CRM resolve ↔ draft order
+- Telegram clubs ↔ product_club_mappings ↔ subscriptions/access
+- docs subsystem ↔ admin_docs ↔ nightly refresh
+
+Frontend НЕ импортирует blueprint. Все narrative-данные берутся только из EF-пайплайна.
+
+### 3.2. `supabase/functions/system-docs-nightly-refresh/index.ts` — полная переработка
+
+**3.2a. Import blueprint** из `../_shared/system_docs_blueprint.ts`.
+
+**3.2b. safeCount fix**: все count-запросы через `select('*', { count: 'exact', head: true })` — без зависимости от PK.
+
+**3.2c. Column fixes** (все из Phase 0 discovery matrix).
+
+**3.2d. Единый `buildDomainDocument(key, mode)**`:
+
+- **Детерминированный**: фиксированный порядок секций, фиксированный порядок таблиц/EF/роутов, stable sorting для live-списков
+- Один и тот же snapshot без изменений даёт идентичный markdown, кроме timestamp/24h changes
+- Секции: Назначение → SoT → Таблицы и связи → Flows → EF → UI/Роуты → Legacy → Текущее состояние (live) → Open tails
+- Для `auto_current`: + блок «Изменения за 24 часа» + timestamp
+- Для `manual_baseline`: без блока изменений, метка seed
+
+**3.2e. Fail-safe per domain**: если один домен падает — warning в audit, домен получает error-doc, остальные продолжают.
+
+**3.2f. Structured warnings**:
+
+```json
+{
+  "type": "schema_mismatch",
+  "domain": "trainings_access",
+  "table": "entitlements",
+  "column": "is_active",
+  "message": "column does not exist"
 }
 ```
 
-### Патч 4: EF — исправить `entitlements.is_active`
+В документе open_tails — человекочитаемая сводка.
 
-**Файл:** `supabase/functions/system-docs-nightly-refresh/index.ts`, строка 370
+**3.2g. open_tails собирается из 4 источников**:
 
-Заменить `.eq('is_active', true)` на `.eq('status', 'active')`.
+1. blueprint.knownIssues
+2. pending/failed/deferred из audit_logs
+3. warnings текущего batch
+4. известные proof gaps проекта (hardcoded в blueprint)
 
-### Патч 5: EF — расширить контент снапшотов
+**3.2h. Seed mode** (`source='seed'`):
 
-Сейчас снапшоты содержат только базовые счётчики. Нужно расширить каждый домен реальными данными из БД.
+- Для каждого домена без manual baseline → `buildDomainDocument(key, 'manual_baseline')` → INSERT POINT A
+- **products_sales STOP-guard**: исключён из seed, исключён из repair. Для products_sales разрешён ТОЛЬКО AUTO-CURRENT. Manual history read-only.
+- Собирает `createdDomains[]`
 
-Расширения по доменам:
+**3.2i. Repair mode** (часть seed pipeline):
 
-**platform_master:**
+- Если для домена есть manual doc, который одновременно:
+  - НЕ AUTO-CURRENT
+  - `meta.source = 'seed'`
+  - `content_text` содержит `(Заполнить)` или совпадает с scaffold-сигнатурой
+- И НЕТ признаков ручного редактирования (updated_by === created_by, content не изменён от шаблона):
+  - archive placeholder → create new manual version → make active
+- Если есть хоть малейшие признаки ручной правки:
+  - НЕ repair автоматически → warning + manual_review
+- Версионирование: вычислять следующую свободную manual-версию по section_key (не хардкодить POINT B)
+- Mapping в response: `old_doc_id → new_doc_id, old_version_label → new_version_label`
 
-- Добавить: количество edge_functions_registry, количество cron jobs из audit_logs, количество доменных событий
-- Добавить: список ключевых таблиц с row counts
+**3.2j. Seed response** возвращает 3 массива:
 
-**products_sales** — уже содержит данные, расширить:
+```json
+{
+  "created_domains": [],
+  "repaired_domains": [],
+  "skipped_domains": [],
+  "repair_mapping": [{ "old_doc_id": "...", "old_version_label": "...", "new_doc_id": "...", "new_version_label": "..." }],
+  "warnings": []
+}
+```
 
-- Добавить: tariff_offers count, product_relations count
-- Добавить: список тарифов по продуктам
+**3.2k. STOP-guard на размер**: если snapshot > 80KB — summary + warning. Priority: platform_master, products_sales, trainings_access, orders_payments, open_tails.
 
-**orders_payments** — расширить:
+### 3.3. `src/pages/admin/AdminSystemDocs.tsx`
 
-- Добавить: payment_methods count, installment_payments count
-- Добавить: статистику по статусам заказов
+- **Удалить hardcoded scaffold** (строка 184). Весь markdown-шаблон убрать.
+- **Seed через EF**: `handleSeed` вызывает `supabase.functions.invoke("system-docs-nightly-refresh", { body: { source: "seed" } })`.
+- **Показать результат seed**: toast с created/repaired/skipped counts.
+- **Удалить unused import** `useMemo`.
 
-**trainings_access** — расширить:
+### 3.4. `src/hooks/useSystemDocs.ts`
 
-- Добавить: подписки (subscriptions_v2), module_access counts
-- Добавить: lesson_progress statistics
+- **Placeholder detection**: добавить `isPlaceholder` boolean — true если `content_text` содержит `(Заполнить)` и `meta.source === 'seed'`.
+- **Auto-fallback расширить**: если manual — placeholder, а auto есть → по умолчанию показывать auto.
+- **Экспортировать** `isPlaceholder` для currentDoc.
+- **Unused imports** `DocMeta`, `AUTO_CURRENT_LABEL` — убрать если не используются.
 
-**sites_pages_forms** — расширить:
+### 3.5. `src/components/admin/SystemDocViewer.tsx`
 
-- Добавить: site_domain_bindings, site_page_folders counts
-- Добавить: список страниц с доменами
+- **Placeholder badge**: если currentDoc — placeholder, показать warning «placeholder — содержит только шаблон».
+- **CTA «Перегенерировать baseline»**: вызывает seed через parent.
+- **CTA «Открыть AUTO-CURRENT»**: переключает viewMode.
+- **По умолчанию auto**: если manual placeholder + auto есть → авто-переключение.
+- **Master кнопки**: для platform_master — «Скопировать master» / «Скачать master» (filename: `system-architecture-master.md`).
+- **Удалить unused import** `isAutoVersion`.
 
-**integrations** — расширить:
+---
 
-- Добавить: integration_instances, integration_logs counts
-- Добавить: bepaid_sync_logs, email_accounts counts
+## products_sales STOP-guard (отдельный блок)
 
-**open_tails** — расширить:
+- products_sales **исключён из seed**
+- products_sales **исключён из repair**
+- Для products_sales разрешено ТОЛЬКО: чтение manual history + обновление/создание AUTO-CURRENT
+- Manual history (POINT A/B/C) — **read-only**
 
-- Добавить: payment_reconcile_queue count
-- Добавить: ban_cases, duplicate_cases counts
+---
 
-### Затрагиваемые файлы
+## Затрагиваемые файлы
 
 
-| Файл                                                      | Правка                                                                    |
-| --------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `src/pages/admin/AdminSystemDocs.tsx`                     | Удалить unused imports                                                    |
-| `src/hooks/useSystemDocs.ts`                              | initialVersion fallback, initialMode default, убрать guard на auto-switch |
-| `supabase/functions/system-docs-nightly-refresh/index.ts` | entitlements fix, расширить контент всех доменов                          |
+| Файл                                                      | Действие                                      |
+| --------------------------------------------------------- | --------------------------------------------- |
+| `supabase/functions/_shared/system_docs_blueprint.ts`     | **НОВЫЙ** — единственный серверный SoT        |
+| `supabase/functions/system-docs-nightly-refresh/index.ts` | Полная переработка                            |
+| `src/pages/admin/AdminSystemDocs.tsx`                     | Seed через EF, убрать scaffold, cleanup       |
+| `src/hooks/useSystemDocs.ts`                              | Placeholder detection, auto-fallback          |
+| `src/components/admin/SystemDocViewer.tsx`                | Placeholder badge/CTA, master кнопки, cleanup |
 
 
 ### Не изменяется
 
-- `SystemDocViewer.tsx`
-- `systemDocsRegistry.ts`
-- `AdminProductsDocs.tsx`
+- `src/lib/systemDocsRegistry.ts` — UI-реестр без архитектурного контента
 - Схема БД, RLS
 
-### DoD
+---
+
+## DoD
+
+### Код
 
 1. Build проходит без ошибок
-2. entitlements query не падает в EF
-3. initialVersion fallback: если version в URL не найден — UI уходит в auto
-4. Если manual.length === 0 — UI всегда показывает auto, без пустого экрана
-5. После manual refresh все 7 доменов содержат расширенный контент
-6. Seed создаёт POINT A для 6 доменов без manual; products_sales не трогает
+2. В `AdminSystemDocs.tsx` нет hardcoded scaffold markdown
+3. Seed/repair не создают пустые manual baseline с `(Заполнить)`
+4. Manual baseline и AUTO-CURRENT строятся одним `buildDomainDocument()`
+5. Один SoT для blueprint в `_shared/`, без дублирования между frontend и EF
+6. EF column queries соответствуют discovery matrix
+7. safeCount не зависит от наличия `id`
+8. products_sales manual history не изменена (STOP-guard в seed + repair)
+9. Версионирование repair вычисляет следующую свободную версию, не хардкодит
+
+### Контент
+
+10. Ни в одном active manual doc нет `(Заполнить)`
+11. Ни в одном active manual doc нет пустых scaffold-секций
+12. Каждый домен содержит narrative + live snapshot (не только counts)
+13. platform_master содержит cross-domain map и пригоден как входной артефакт
+14. open_tails собирается из 4 источников
+
+### UI
+
+15. Placeholder badge показывается только на реальных placeholder
+16. Домен без manual открывается в auto
+17. Copy/download работают в manual и auto
+18. UI не показывает placeholder как готовую документацию
+
+### Pending proofs (после деплоя)
+
+- **actor_user_id proof**: manual refresh из UI → `actor_type='user'`, `actor_user_id IS NOT NULL` — **незакрыт до факта**
+- **Seed proof**: 6 доменов получили реальный POINT A/B
+- **UI proof**: auto-fallback, copy/download, placeholder badge
+- **Content proof**: по каждому домену — section_key, version_label, managed_by, content_len, первые 20-30 строк, список секций
+
+### Незакрытые хвосты → open_tails blueprint
+
+- actor_user_id proof для manual refresh
+- training access runtime proof
+- site pricing proof
+- duration_days = NULL
+- retroactive batch для product_access
+- manual review / wrongly_removed / shortened
+- pending live proof по renewal/access
+- proof, что docs generator реально даёт полный snapshot, а не scaffold
