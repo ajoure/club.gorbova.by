@@ -398,6 +398,12 @@ ${safeUserName}, это последнее напоминание. Подпис�
         days_left: daysLeft, product: productName, tariff: tariffName,
         subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
         has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
+        // PATCH-FINAL: structured notification meta
+        product_id: productId || null,
+        product_name: productName,
+        amount: amount || null,
+        currency: currency || null,
+        source: 'renewal_reminder',
       },
     });
     const isDuplicate = insertError?.code === '23505';

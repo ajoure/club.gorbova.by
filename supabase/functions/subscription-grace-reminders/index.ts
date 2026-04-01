@@ -157,13 +157,50 @@ ${userName}, 72 часа прошли — прежняя цена больше �
         if (tgResponse.ok) {
           result.telegram = true;
           
-          // Log to telegram_logs
+          // Log to telegram_logs with structured meta
+          // Get club mappings for this subscription's product
+          let clubId: string | null = null;
+          let clubName: string | null = null;
+          try {
+            const { data: subData } = await supabase
+              .from('subscriptions_v2')
+              .select('product_id')
+              .eq('id', subscriptionId)
+              .maybeSingle();
+            if (subData?.product_id) {
+              const { data: clubMapping } = await supabase
+                .from('product_club_mappings')
+                .select('club_id')
+                .eq('product_id', subData.product_id)
+                .limit(1)
+                .maybeSingle();
+              if (clubMapping?.club_id) {
+                clubId = clubMapping.club_id;
+                const { data: club } = await supabase
+                  .from('telegram_clubs')
+                  .select('club_name')
+                  .eq('id', clubMapping.club_id)
+                  .maybeSingle();
+                clubName = club?.club_name || null;
+              }
+            }
+          } catch {}
+
           await supabase.from('telegram_logs').insert({
             user_id: userId,
             action: 'grace_notification',
             event_type: eventType,
             status: 'success',
-            meta: { subscription_id: subscriptionId, hours_left: hoursLeft },
+            meta: {
+              subscription_id: subscriptionId,
+              hours_left: hoursLeft,
+              product_name: productName || null,
+              club_id: clubId,
+              club_name: clubName,
+              amount,
+              currency,
+              source: 'grace',
+            },
           });
         }
       }
