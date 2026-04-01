@@ -30,12 +30,28 @@ interface AdminSystemDocsProps {
   backLabel?: string;
 }
 
-function DomainTab({ domain, mode, version }: { domain: SystemDocDomain; mode: ViewMode; version?: string }) {
+function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
+  domain: SystemDocDomain;
+  mode: ViewMode;
+  version?: string;
+  onModeChange?: (m: ViewMode) => void;
+  onVersionChange?: (v: string | undefined) => void;
+}) {
   const docs = useSystemDocs({
     sectionKey: domain.key,
     initialMode: mode,
     initialVersion: version,
   });
+
+  const handleSetViewMode = (m: ViewMode) => {
+    docs.setViewMode(m);
+    onModeChange?.(m);
+  };
+
+  const handleSelectManualVersion = (v: string) => {
+    docs.setSelectedManualVersion(v);
+    onVersionChange?.(v);
+  };
 
   return (
     <SystemDocViewer
@@ -45,9 +61,9 @@ function DomainTab({ domain, mode, version }: { domain: SystemDocDomain; mode: V
       currentDoc={docs.currentDoc}
       sections={docs.sections}
       selectedManualVersion={docs.selectedManualVersion}
-      onSelectManualVersion={docs.setSelectedManualVersion}
+      onSelectManualVersion={handleSelectManualVersion}
       viewMode={docs.viewMode}
-      onSetViewMode={docs.setViewMode}
+      onSetViewMode={handleSetViewMode}
       copied={docs.copied}
       creating={docs.creating}
       activating={docs.activating}
@@ -116,12 +132,32 @@ export default function AdminSystemDocs({
     fetchRefreshStatus();
   }, [refreshing]);
 
+  // Sync URL params helper
+  const updateSearchParams = (updates: Record<string, string | undefined>) => {
+    if (presetDomain) return;
+    const params: Record<string, string> = {};
+    const current = Object.fromEntries(searchParams.entries());
+    const merged = { ...current, ...updates };
+    for (const [k, v] of Object.entries(merged)) {
+      if (v !== undefined && v !== '') params[k] = v;
+    }
+    setSearchParams(params);
+  };
+
   // Update URL on tab change (not for preset)
   const handleDomainChange = (key: string) => {
     setActiveDomain(key);
-    if (!presetDomain) {
-      setSearchParams({ domain: key });
-    }
+    // Clear version when switching domains; preserve mode
+    updateSearchParams({ domain: key, mode: modeParam, version: undefined });
+  };
+
+  const handleModeChange = (m: ViewMode) => {
+    // In auto mode, clear version from URL
+    updateSearchParams({ mode: m, version: m === 'auto' ? undefined : searchParams.get('version') || undefined });
+  };
+
+  const handleVersionChange = (v: string | undefined) => {
+    updateSearchParams({ version: v });
   };
 
   // Seed: create baseline POINT A for empty domains
@@ -156,7 +192,7 @@ export default function AdminSystemDocs({
         toast.success(`Создано ${created} baseline документов`);
         await supabase.from("audit_logs" as any).insert({
           action: "system_docs.seed_generated",
-          actor_type: "admin",
+          actor_type: "user",
           actor_user_id: user?.id || null,
           actor_label: "admin_system_docs_seed",
           meta: { affected_count: created, domains: SYSTEM_DOC_DOMAINS.filter(d => !existingKeys.has(d.key)).map(d => d.key) },
@@ -286,6 +322,8 @@ export default function AdminSystemDocs({
             domain={SYSTEM_DOC_DOMAINS.find((d) => d.key === presetDomain)!}
             mode={modeParam}
             version={versionParam}
+            onModeChange={handleModeChange}
+            onVersionChange={handleVersionChange}
           />
         ) : (
           <Tabs value={activeDomain} onValueChange={handleDomainChange}>
@@ -301,7 +339,7 @@ export default function AdminSystemDocs({
 
             {SYSTEM_DOC_DOMAINS.map((d) => (
               <TabsContent key={d.key} value={d.key}>
-                <DomainTab domain={d} mode={modeParam} version={versionParam} />
+                <DomainTab domain={d} mode={modeParam} version={versionParam} onModeChange={handleModeChange} onVersionChange={handleVersionChange} />
               </TabsContent>
             ))}
           </Tabs>
