@@ -239,6 +239,12 @@ export const blockContentSchemas = {
   logos: logosContentSchema,
   spacer: spacerContentSchema,
   form: formContentSchema,
+  accordion: accordionSiteContentSchema,
+  tabs: tabsSiteContentSchema,
+  callout: calloutSiteContentSchema,
+  quote: quoteSiteContentSchema,
+  audio: audioSiteContentSchema,
+  embed: embedSiteContentSchema,
 } as const;
 
 export type BlockType = keyof typeof blockContentSchemas;
