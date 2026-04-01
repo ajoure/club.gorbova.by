@@ -194,7 +194,7 @@ export default function AdminSystemDocs({
     setRefreshing(false);
   };
 
-  if (rbacLoading) {
+  if (rbac.loading) {
     return (
       <AdminLayout>
         <div className="flex items-center justify-center py-20">
