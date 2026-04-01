@@ -154,14 +154,19 @@ function getUtcOffsetMs(tz: string, utcMs: number): number {
 }
 
 /**
- * PATCH 1: endOfDayWarsaw — returns 23:59:59 Warsaw time for a given ISO date.
+ * endOfDayAppTz — returns 23:59:59 in APP_TZ (Europe/Minsk) for a given ISO date.
  * Used for normalizing access_end_at from bePaid truth fields.
+ * 
+ * PATCH-FOLLOWUP: Replaced endOfDayWarsaw (Europe/Warsaw) with APP_TZ to eliminate
+ * up to 2h timezone drift between access normalization and access validation.
  */
-export function endOfDayWarsaw(isoDate: string): string {
-  const WARSAW_TZ = 'Europe/Warsaw';
-  const dateKey = toTzDateKey(isoDate, WARSAW_TZ);
+export function endOfDayAppTz(isoDate: string): string {
+  const dateKey = toTzDateKey(isoDate, APP_TZ);
   const nextDateKey = addDaysToDateKey(dateKey, 1);
-  const { start: nextMidnightUtc } = dayWindowUtc(WARSAW_TZ, nextDateKey);
-  // 23:59:59 Warsaw = next midnight UTC - 1 second
+  const { start: nextMidnightUtc } = dayWindowUtc(APP_TZ, nextDateKey);
+  // 23:59:59 APP_TZ = next midnight UTC - 1 second
   return new Date(new Date(nextMidnightUtc).getTime() - 1000).toISOString();
 }
+
+/** @deprecated Use endOfDayAppTz instead. Kept for backward compatibility. */
+export const endOfDayWarsaw = endOfDayAppTz;

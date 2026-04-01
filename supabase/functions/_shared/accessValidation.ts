@@ -48,7 +48,7 @@ async function getClubProductIds(
 
 /**
  * PATCH 4: Billing-day protection secondary check.
- * Returns valid if user has a provider_managed subscription with next_charge_at = today (Warsaw)
+ * Returns valid if user has a provider_managed subscription with next_charge_at = today (APP_TZ = Europe/Minsk)
  * and now < next_charge_at + BILLING_DAY_PROTECTION_HOURS.
  * 
  * Writes audit_log when protection fires.
