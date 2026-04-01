@@ -953,7 +953,7 @@ Deno.serve(async (req) => {
           supabase, botToken, userId,
           productName, tariffName, expiryDate, daysLeft,
           amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-          sub.id, sub.order_id, sub.tariff_id
+          sub.id, sub.order_id, sub.tariff_id, productId
         );
 
         result.telegram_sent = telegramResult.sent;
