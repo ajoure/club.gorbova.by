@@ -20,7 +20,7 @@ interface UseSystemDocsOptions {
 
 export function useSystemDocs({
   sectionKey,
-  initialMode = "manual",
+  initialMode,
   initialVersion,
 }: UseSystemDocsOptions) {
   const { user } = useAuth();

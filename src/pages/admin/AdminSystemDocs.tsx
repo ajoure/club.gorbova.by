@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
-import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -9,7 +8,6 @@ import {
   BookOpen,
   Loader2,
   RefreshCw,
-  ShieldCheck,
   Sprout,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
