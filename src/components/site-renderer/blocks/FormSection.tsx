@@ -74,7 +74,10 @@ export function FormSection({ content, pageId }: FormSectionProps) {
 
     setLoading(true);
     try {
-      const payload = {
+      const productId = content.product_id as string | undefined;
+      const tariffId = content.tariff_id as string | undefined;
+
+      const payload: Record<string, unknown> = {
         page_id: pageId,
         redirect_url: redirectUrl || undefined,
         fields: fields.map((field, i) => ({
@@ -84,6 +87,9 @@ export function FormSection({ content, pageId }: FormSectionProps) {
           mapping: field.mapping || "none",
         })),
       };
+
+      if (productId) payload.product_id = productId;
+      if (tariffId) payload.tariff_id = tariffId;
 
       const { error: fnError } = await supabase.functions.invoke(
         "site-form-submit",
