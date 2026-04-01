@@ -188,7 +188,7 @@ export default function AdminSystemDocs({
           created_by: user?.id || null,
           updated_by: user?.id || null,
         } as any);
-        if (!error) created++;
+        if (!error) { created++; createdDomains.push(domain.key); }
       }
 
       if (created > 0) {
