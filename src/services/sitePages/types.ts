@@ -170,8 +170,8 @@ export const formContentSchema = z.object({
     label: z.string().default(""),
     type: z.enum(["text", "email", "phone", "textarea"]).default("text"),
     required: z.boolean().default(false),
+    mapping: z.string().default("none"),
   })).default([]),
-  placeholderMessage: z.string().default("Форма будет подключена позже"),
 });
 
 // ─── Block Content Schemas Map ───
