@@ -29,12 +29,24 @@ export function useSiteDomainBindings(pageId: string) {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const setHomeMutation = useMutation({
+    mutationFn: ({ domain, targetPageId }: { domain: string; targetPageId: string }) =>
+      SitePublicationService.setHomePage(domain, targetPageId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site-domain-bindings", pageId] });
+      toast.success("Главная страница назначена");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return {
     bindings: listQuery.data || [],
     isLoading: listQuery.isLoading,
     bindDomain: bindMutation.mutate,
     unbindDomain: unbindMutation.mutate,
+    setHome: setHomeMutation.mutate,
     isBinding: bindMutation.isPending,
     isUnbinding: unbindMutation.isPending,
+    isSettingHome: setHomeMutation.isPending,
   };
 }

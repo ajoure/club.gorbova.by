@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { SiteEventService } from "./SiteEventService";
 import { siteBlockSchema, type SitePage, type SiteDomainBinding } from "./types";
+import { normalizeDomain } from "./domainUtils";
 
 const SOURCE = "site-builder";
 
@@ -109,8 +110,18 @@ export class SitePublicationService {
     return data as SitePage;
   }
 
-  static async bindDomain(pageId: string, domain: string): Promise<SiteDomainBinding> {
+  static async bindDomain(pageId: string, rawDomain: string, isHome?: boolean): Promise<SiteDomainBinding> {
     const userId = await getCurrentUserId();
+    const domain = normalizeDomain(rawDomain);
+
+    // Auto is_home: if first binding for this domain → true
+    if (isHome === undefined) {
+      const { count } = await (supabase
+        .from("site_domain_bindings") as any)
+        .select("id", { count: "exact", head: true })
+        .eq("domain", domain);
+      isHome = (count === 0);
+    }
 
     const bindingId = crypto.randomUUID();
     const eventId = await SiteEventService.emitEvent(
@@ -125,6 +136,7 @@ export class SitePublicationService {
         site_page_id: pageId,
         domain,
         is_primary: false,
+        is_home: isHome,
         created_by: userId,
         metadata: {},
       })
@@ -137,9 +149,18 @@ export class SitePublicationService {
     }
 
     await SiteEventService.recordExecution(eventId, "insert_binding", "success");
-    await writeAudit("site.domain.bound", userId, { binding_id: bindingId, page_id: pageId, domain });
+    await writeAudit("site.domain.bound", userId, { binding_id: bindingId, page_id: pageId, domain, is_home: isHome });
 
     return data as SiteDomainBinding;
+  }
+
+  static async setHomePage(domain: string, pageId: string): Promise<void> {
+    const normalized = normalizeDomain(domain);
+    const { error } = await supabase.rpc('set_site_home_page', {
+      p_domain: normalized,
+      p_page_id: pageId,
+    });
+    if (error) throw new Error(`Failed to set home page: ${error.message}`);
   }
 
   static async unbindDomain(bindingId: string): Promise<void> {

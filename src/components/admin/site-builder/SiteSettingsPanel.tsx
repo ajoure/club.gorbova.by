@@ -4,8 +4,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSiteDomainBindings } from "@/hooks/useSiteDomainBindings";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Globe } from "lucide-react";
+import { Plus, Trash2, Globe, Home } from "lucide-react";
 import { useState } from "react";
+import { normalizeDomain } from "@/services/sitePages/domainUtils";
+import { Badge } from "@/components/ui/badge";
 
 interface SiteSettingsPanelProps {
   pageId: string;
@@ -23,13 +25,33 @@ export function SiteSettingsPanel({
   pageId, title, slug, seoSettings, themeSettings,
   onTitleChange, onSlugChange, onSeoChange, onThemeChange,
 }: SiteSettingsPanelProps) {
-  const { bindings, bindDomain, unbindDomain, isBinding } = useSiteDomainBindings(pageId);
+  const { bindings, bindDomain, unbindDomain, setHome, isBinding, isSettingHome } = useSiteDomainBindings(pageId);
   const [newDomain, setNewDomain] = useState("");
 
   const handleAddDomain = () => {
     if (!newDomain.trim()) return;
-    bindDomain(newDomain.trim());
-    setNewDomain("");
+    try {
+      const normalized = normalizeDomain(newDomain);
+      bindDomain(normalized);
+      setNewDomain("");
+    } catch {
+      // normalizeDomain throws if empty after cleanup
+    }
+  };
+
+  const handleDomainInput = (value: string) => {
+    // Strip protocol/path on paste
+    let cleaned = value.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    setNewDomain(cleaned);
+  };
+
+  const handleUnbind = (binding: typeof bindings[0]) => {
+    if (binding.is_home) {
+      if (!confirm("Это главная страница домена. После удаления корневой адрес (/) будет отдавать 404. Продолжить?")) {
+        return;
+      }
+    }
+    unbindDomain(binding.id);
   };
 
   return (
@@ -125,16 +147,36 @@ export function SiteSettingsPanel({
               <div className="flex items-center gap-2">
                 <Globe className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm">{b.domain}</span>
+                {b.is_home && (
+                  <Badge variant="secondary" className="text-xs gap-1">
+                    <Home className="h-3 w-3" />
+                    Главная
+                  </Badge>
+                )}
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => unbindDomain(b.id)}>
-                <Trash2 className="h-3.5 w-3.5 text-destructive" />
-              </Button>
+              <div className="flex items-center gap-1">
+                {!b.is_home && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    disabled={isSettingHome}
+                    onClick={() => setHome({ domain: b.domain, targetPageId: pageId })}
+                  >
+                    <Home className="h-3 w-3 mr-1" />
+                    Сделать главной
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleUnbind(b)}>
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                </Button>
+              </div>
             </div>
           ))}
           <div className="flex gap-2">
             <Input
               value={newDomain}
-              onChange={(e) => setNewDomain(e.target.value)}
+              onChange={(e) => handleDomainInput(e.target.value)}
               placeholder="example.gorbova.by"
               className="flex-1"
             />

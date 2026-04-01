@@ -335,6 +335,7 @@ export interface SiteDomainBinding {
   site_page_id: string;
   domain: string;
   is_primary: boolean;
+  is_home: boolean;
   created_by: string;
   updated_by: string | null;
   metadata: Record<string, unknown>;
