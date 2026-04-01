@@ -193,7 +193,8 @@ async function sendTelegramReminder(
   subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
-  tariffId: string | null
+  tariffId: string | null,
+  productId?: string | null
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
