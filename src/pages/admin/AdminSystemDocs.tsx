@@ -132,12 +132,32 @@ export default function AdminSystemDocs({
     fetchRefreshStatus();
   }, [refreshing]);
 
+  // Sync URL params helper
+  const updateSearchParams = (updates: Record<string, string | undefined>) => {
+    if (presetDomain) return;
+    const params: Record<string, string> = {};
+    const current = Object.fromEntries(searchParams.entries());
+    const merged = { ...current, ...updates };
+    for (const [k, v] of Object.entries(merged)) {
+      if (v !== undefined && v !== '') params[k] = v;
+    }
+    setSearchParams(params);
+  };
+
   // Update URL on tab change (not for preset)
   const handleDomainChange = (key: string) => {
     setActiveDomain(key);
-    if (!presetDomain) {
-      setSearchParams({ domain: key });
-    }
+    // Clear version when switching domains; preserve mode
+    updateSearchParams({ domain: key, mode: modeParam, version: undefined });
+  };
+
+  const handleModeChange = (m: ViewMode) => {
+    // In auto mode, clear version from URL
+    updateSearchParams({ mode: m, version: m === 'auto' ? undefined : searchParams.get('version') || undefined });
+  };
+
+  const handleVersionChange = (v: string | undefined) => {
+    updateSearchParams({ version: v });
   };
 
   // Seed: create baseline POINT A for empty domains
