@@ -388,6 +388,22 @@ ${safeUserName}, это последнее напоминание. Подпис�
       };
     }
 
+    // SUCCESS - Resolve club mapping for structured meta
+    let logClubId: string | null = null;
+    let logClubName: string | null = null;
+    if (productId) {
+      try {
+        const { data: cm } = await supabase.from('product_club_mappings')
+          .select('club_id').eq('product_id', productId).eq('is_active', true).limit(1).maybeSingle();
+        if (cm?.club_id) {
+          logClubId = cm.club_id;
+          const { data: cl } = await supabase.from('telegram_clubs')
+            .select('club_name').eq('id', cm.club_id).maybeSingle();
+          logClubName = cl?.club_name || null;
+        }
+      } catch {}
+    }
+
     // SUCCESS - Log
     const { error: insertError } = await supabase.from('telegram_logs').insert({
       action: 'SEND_REMINDER',
@@ -402,8 +418,8 @@ ${safeUserName}, это последнее напоминание. Подпис�
         // PATCH-FINAL-v2: full structured notification meta (10-field contract)
         product_id: productId || null,
         product_name: productName,
-        club_id: null as string | null, // resolved below
-        club_name: null as string | null, // resolved below
+        club_id: logClubId,
+        club_name: logClubName,
         effective_end_at: expiryDate?.toISOString() || null,
         amount: amount || null,
         currency: currency || null,
