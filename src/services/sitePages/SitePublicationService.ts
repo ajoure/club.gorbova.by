@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { SiteEventService } from "./SiteEventService";
 import { siteBlockSchema, type SitePage, type SiteDomainBinding } from "./types";
+import { normalizeDomain } from "./domainUtils";
 
 const SOURCE = "site-builder";
 
