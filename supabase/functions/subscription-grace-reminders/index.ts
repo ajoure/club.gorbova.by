@@ -428,7 +428,7 @@ Deno.serve(async (req) => {
         }
 
         // Send grace_started notification
-        const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_started', graceEndsAt, amount, currency);
+        const sent = await sendGraceNotification(supabase, sub.user_id, sub.id, 'grace_started', graceEndsAt, amount, currency, productName);
         if (sent.telegram || sent.email) results.grace_started++;
         results.total_processed++;
       } catch (err) {
