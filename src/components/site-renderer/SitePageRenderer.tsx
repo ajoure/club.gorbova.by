@@ -222,7 +222,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId }:
       case "social": return <SocialSection content={block.content} />;
       case "logos": return <LogosSection content={block.content} />;
       case "spacer": return <SpacerSection content={block.content} />;
-      case "form": return <FormSection content={block.content} />;
+      case "form": return <FormSection content={block.content} pageId={pageId} />;
       default: return null;
     }
   };
