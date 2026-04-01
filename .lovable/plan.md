@@ -1,111 +1,88 @@
 
 
-# План: Многостраничный домен — финальная версия с правками безопасности
+# План: Привязка продукта к форме + создание сделки (финальная версия)
 
 ## Правки к предыдущей версии
 
-### 1. `set_site_home_page()` — авторизация внутри SECURITY DEFINER
+### 1. Без fallback для `order_number`
+Если `generate_order_number` вернул ошибку — шаг `create_order` завершается `failed`. Никакого альтернативного формата.
+
+### 2. NULL-safe дедупликация по `tariff_id`
+Каноническое условие:
 ```sql
-CREATE OR REPLACE FUNCTION set_site_home_page(p_domain TEXT, p_page_id UUID)
-RETURNS void LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  -- Авторизация: только admin/super_admin
-  IF NOT (
-    public.has_role_v2(auth.uid(), 'admin') OR
-    public.has_role_v2(auth.uid(), 'super_admin')
-  ) THEN
-    RAISE EXCEPTION 'Access denied: admin role required';
-  END IF;
-
-  UPDATE site_domain_bindings SET is_home = false WHERE domain = p_domain AND is_home = true;
-  UPDATE site_domain_bindings SET is_home = true WHERE domain = p_domain AND site_page_id = p_page_id;
-END;
-$$;
+profile_id = $1 AND product_id = $2 
+AND reconcile_source = 'site_form'
+AND status IN ('draft', 'pending')
+AND (
+  (tariff_id IS NULL AND $3 IS NULL) 
+  OR tariff_id = $3
+)
 ```
-
-### 2. Нормализация домена — hostname only
-Запрет path/query/fragment/port. Canonical normalizer:
-```typescript
-function normalizeDomain(input: string): string {
-  let d = input.trim().toLowerCase();
-  d = d.replace(/^https?:\/\//, '');  // strip protocol
-  d = d.replace(/\/.*$/, '');          // strip path/query/fragment
-  d = d.replace(/:[\d]+$/, '');        // strip port
-  d = d.replace(/\.+$/, '');           // strip trailing dot
-  if (!d) throw new Error("Domain cannot be empty");
-  return d;
-}
-```
-Применяется в `bindDomain`, UI input, и SQL cleanup migration.
-
-### 3. `SET search_path = public` на SECURITY DEFINER функции
-Уже включён в шаблон выше.
+В коде edge function — два отдельных запроса или `.is('tariff_id', null)` / `.eq('tariff_id', tariff_id)` в зависимости от наличия.
 
 ---
 
-## Полный scope
+## Шаги
 
-### Шаг 1: SQL миграция
+### 1. SQL миграция
+```sql
+ALTER TABLE site_form_submissions 
+  ADD COLUMN order_id UUID REFERENCES orders_v2(id);
+```
 
-1. Cleanup существующих данных (нормализация доменов: strip protocol, path, port, trailing dot; удаление дублей)
-2. DROP unique constraint на `domain`
-3. ADD `is_home BOOLEAN NOT NULL DEFAULT false`
-4. Backfill: single-binding домены → `is_home = true`
-5. New constraints: `UNIQUE(domain, site_page_id)`, partial unique `(domain) WHERE is_home = true`
-6. RPC `set_site_home_page` с RBAC-проверкой внутри + `SET search_path = public`
+### 2. FormBlockEditor — секция «Привязка к продукту»
+- Под полями формы — опциональная секция
+- Select «Продукт» → `products_v2` (`is_active = true`), паттерн из `PricingBlockEditor`
+- Select «Тариф» → `tariffs` по выбранному `product_id` (`is_active = true`)
+- Кнопка «Убрать привязку» для сброса
+- Сохраняются в `content.product_id`, `content.tariff_id`
 
-### Шаг 2: `SiteRenderService` — `resolveByDomainAndPath(hostname, path)`
+### 3. FormSection — передача в payload
+- Из `content` извлечь `product_id`, `tariff_id`
+- Добавить в тело запроса к edge function (только если заданы)
 
-- `/` → binding с `is_home = true` → published page
-- `/slug` → все `site_page_id` для домена → match по slug (без lowercase на path — slug уже canonical)
-- >1 match → null (404) + console.error
-- Старый `resolveByDomain()` → alias для `resolveByDomainAndPath(hostname, '/')`
+### 4. site-form-submit — расширение
 
-### Шаг 3: `DomainRouter.tsx` — передача pathname
+**Валидация (если product_id передан):**
+1. `products_v2` — `id = product_id AND is_active = true` → иначе 400
+2. Если `tariff_id` — `tariffs` — `id = tariff_id AND product_id = product_id AND is_active = true` → иначе 400
+3. Workspace: `// products_v2 has no workspace_id (legacy model)` — явный комментарий
 
-- `SiteRenderService.resolveByDomainAndPath(hostname, window.location.pathname)`
-- Trim trailing `/` (без lowercase — slug уже canonical)
+**Создание заказа (после CRM resolve, если profileId И product_id):**
+1. Domain event `site_form_order_requested`
+2. Дедупликация с NULL-safe условием:
+   - `tariff_id` задан → `.eq('tariff_id', tariff_id)`
+   - `tariff_id` не задан → `.is('tariff_id', null)`
+   - Плюс: `profile_id`, `product_id`, `reconcile_source = 'site_form'`, `status IN ('draft','pending')`
+3. Найден → **reuse**: `submission.order_id = existing.id` + execution `reuse_order` + audit `site_form_order_reused`
+4. Не найден → **create**:
+   - `generate_order_number` RPC. **Если ошибка → execution `create_order` = failed, заказ НЕ создаётся**
+   - Цена: `tariff_offers` (is_active, is_primary) → `base_price/final_price`; без offer → 0; без тарифа → 0
+   - INSERT `orders_v2` (status=draft, reconcile_source=site_form)
+   - UPDATE `submission.order_id`
+   - Execution `create_order` (completed) + audit `site_form_order_created`
 
-### Шаг 4: `SitePublicationService.bindDomain` — нормализация и is_home
+**Без profileId** → заказ не создаётся, execution `create_order` = skipped
 
-- `normalizeDomain()` (hostname only: strip protocol, path, query, fragment, port, trailing dot)
-- Параметр `isHome?: boolean`; auto `true` для первого binding домена
-- Смена home: RPC `set_site_home_page`
-
-### Шаг 5: UI — `SiteSettingsPanel`
-
-- Badge «Главная» рядом с home-binding
-- Кнопка «Сделать главной» у не-home binding'ов
-- Input: автоматический strip protocol/path/port при вводе
-- При удалении home: confirm с предупреждением «/ будет отдавать 404»
-
-### Шаг 6: `types.ts` — `is_home: boolean` в `SiteDomainBinding`
-
-### Шаг 7: `useSiteDomainBindings` — `setHome` mutation (вызов RPC)
+### 5. Обратная совместимость
+- Формы без `product_id` → без изменений
+- Старые submissions без `order_id` → NULL
 
 ## Изменяемые файлы
 
 | Файл | Действие |
 |---|---|
-| SQL миграция | Cleanup, is_home, constraints, RPC с RBAC |
-| `SiteRenderService.ts` | `resolveByDomainAndPath()` |
-| `DomainRouter.tsx` | Передача pathname |
-| `SitePublicationService.ts` | `normalizeDomain()`, isHome, setHome через RPC |
-| `useSiteDomainBindings.tsx` | `setHome` mutation |
-| `SiteSettingsPanel.tsx` | Badge, кнопка, нормализация ввода |
-| `types.ts` | `is_home` в SiteDomainBinding |
+| SQL миграция | ADD `order_id` FK |
+| `FormBlockEditor.tsx` | Select продукта + тарифа |
+| `FormSection.tsx` | Передача product_id/tariff_id |
+| `site-form-submit/index.ts` | Валидация, event, NULL-safe dedup, order creation, audit |
 
 ## DoD
-
-- Домен привязан к нескольким страницам без ошибок
-- `/` → home (is_home=true); без home → 404
-- `/slug` → matching page; ambiguous → 404
-- `set_site_home_page` проверяет `has_role_v2` внутри функции
-- Домен хранится как hostname only (без protocol/path/query/port)
-- Старые single-page binding'и → backfill is_home=true → `/` работает
-- Удаление home → `/` = 404 (явное поведение)
-- Смена home атомарна через RPC
+- Выбор продукта/тарифа в редакторе формы работает
+- Серверная валидация product/tariff активности и связки
+- `generate_order_number` fail → order не создаётся, execution failed
+- Дедупликация: `tariff_id IS NULL` корректно матчится с заказом без тарифа
+- `submission.order_id` проставляется и при create, и при reuse
+- Audit logs для created и reused
+- Без продукта — поведение без изменений
 
