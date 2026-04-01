@@ -79,9 +79,10 @@ export function DomainHomePage() {
     );
   }
 
-  // Site builder page found → render it
+  // Site builder page found → render it with pricing data
   if (siteBuilderPage) {
-    return <SiteBuilderPageRenderer page={siteBuilderPage} />;
+    const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
+    return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
   }
 
   // ─── Legacy: Product domain resolution ───
