@@ -102,9 +102,9 @@ serve(async (req) => {
 
     const { error: auditStartErr } = await supabase.from('audit_logs').insert({
       action: auditAction,
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: source === 'manual' ? 'admin_system_docs' : 'system_docs_nightly_refresh',
+      actor_type: actorType,
+      actor_user_id: actorUserId,
+      actor_label: actorLabel,
       meta: { batch_id: batchKey, source },
     });
     if (auditStartErr) console.error('Audit start insert error:', JSON.stringify(auditStartErr));
