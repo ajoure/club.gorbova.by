@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
+import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
 import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
@@ -78,17 +79,10 @@ export function DomainHomePage() {
     );
   }
 
-  // Site builder page found → render it
+  // Site builder page found → render it with pricing data
   if (siteBuilderPage) {
-    return (
-      <div className="site-public-layout">
-        <SitePageRenderer
-          blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
-          themeSettings={siteBuilderPage.theme_settings || {}}
-          pageId={siteBuilderPage.id}
-        />
-      </div>
-    );
+    const siteBlocks = (siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || [];
+    return <SiteBuilderPageWithPricing blocks={siteBlocks} themeSettings={siteBuilderPage.theme_settings || {}} pageId={siteBuilderPage.id} />;
   }
 
   // ─── Legacy: Product domain resolution ───
@@ -135,5 +129,15 @@ export function DomainHomePage() {
         />
       }
     />
+  );
+}
+
+/** Wrapper that fetches pricing data for site builder pages */
+function SiteBuilderPageWithPricing({ blocks, themeSettings, pageId }: { blocks: import("@/services/sitePages/types").SiteBlock[]; themeSettings: Record<string, unknown>; pageId: string }) {
+  const { pricingData } = useSitePricingData(blocks);
+  return (
+    <div className="site-public-layout">
+      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} />
+    </div>
   );
 }

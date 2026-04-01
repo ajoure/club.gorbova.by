@@ -16,23 +16,24 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get domain from query param or Host header
+    // Get domain or product_id from query params
     const url = new URL(req.url);
     let domain = url.searchParams.get("domain");
+    const productId = url.searchParams.get("product_id");
     const userId = url.searchParams.get("user_id");
     
-    if (!domain) {
+    if (!domain && !productId) {
       const host = req.headers.get("host") || req.headers.get("x-forwarded-host");
       if (host) {
         domain = host.split(":")[0]; // Remove port if present
       }
     }
 
-    console.log(`[public-product] Looking up product for domain: ${domain}, user_id: ${userId || 'none'}`);
+    console.log(`[public-product] Looking up product for domain: ${domain}, product_id: ${productId || 'none'}, user_id: ${userId || 'none'}`);
 
-    if (!domain) {
+    if (!domain && !productId) {
       return new Response(
-        JSON.stringify({ error: "Domain not specified" }),
+        JSON.stringify({ error: "Domain or product_id not specified" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -40,30 +41,27 @@ Deno.serve(async (req) => {
     // PATCH-FINAL: Check product-scoped reentry pricing instead of global profile flag
     let isReentryPricing = false;
     let reentryMessage = "";
-    // Product ID will be resolved after fetching the product below
 
-    // Fetch product by primary_domain with landing_config
-    const { data: product, error: productError } = await supabase
+    // Fetch product by primary_domain OR product_id
+    const productFields = `
+      id, name, code, slug, status, primary_domain, currency,
+      public_title, public_subtitle, payment_disclaimer_text,
+      landing_config, telegram_club_id, is_active
+    `;
+
+    let productQuery = supabase
       .from("products_v2")
-      .select(`
-        id,
-        name,
-        code,
-        slug,
-        status,
-        primary_domain,
-        currency,
-        public_title,
-        public_subtitle,
-        payment_disclaimer_text,
-        landing_config,
-        telegram_club_id,
-        is_active
-      `)
-      .eq("primary_domain", domain)
+      .select(productFields)
       .eq("status", "active")
-      .eq("is_active", true)
-      .single();
+      .eq("is_active", true);
+
+    if (productId) {
+      productQuery = productQuery.eq("id", productId);
+    } else {
+      productQuery = productQuery.eq("primary_domain", domain!);
+    }
+
+    const { data: product, error: productError } = await productQuery.single();
 
     if (productError || !product) {
       console.log(`[public-product] Product not found for domain: ${domain}`);

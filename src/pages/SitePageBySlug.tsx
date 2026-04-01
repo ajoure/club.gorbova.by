@@ -1,11 +1,5 @@
 /**
  * SitePageBySlug — thin public resolution layer.
- *
- * Compatibility rules:
- * - This route is strictly a public slug resolution layer, NOT a default routing mechanism.
- * - Slug is used only as a public URL attribute; all internal refs remain UUID-driven.
- * - No route-level business logic — delegates entirely to SiteRenderService.
- * - Explicit static routes always take priority over this dynamic /:slug route.
  */
 
 import { useParams } from "react-router-dom";
@@ -13,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { SiteRenderService } from "@/services/sitePages/SiteRenderService";
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
+import { useSitePricingData } from "@/hooks/useSitePricingData";
 import type { SiteBlock } from "@/services/sitePages/types";
 import NotFound from "./NotFound";
 
@@ -24,6 +19,9 @@ export default function SitePageBySlug() {
     queryFn: () => SiteRenderService.resolveBySlug(slug!),
     enabled: !!slug,
   });
+
+  const blocks = (page?.blocks as unknown as SiteBlock[]) || [];
+  const { pricingData } = useSitePricingData(blocks);
 
   if (isLoading) {
     return (
@@ -40,8 +38,9 @@ export default function SitePageBySlug() {
   return (
     <div className="site-public-layout">
       <SitePageRenderer
-        blocks={(page.blocks as unknown as SiteBlock[]) || []}
+        blocks={blocks}
         themeSettings={page.theme_settings || {}}
+        pricingData={pricingData}
         pageId={page.id}
       />
     </div>
