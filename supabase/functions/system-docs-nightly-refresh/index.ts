@@ -81,7 +81,7 @@ serve(async (req) => {
 
     const { error: auditStartErr } = await supabase.from('audit_logs').insert({
       action: auditAction,
-      actor_type: source === 'manual' ? 'admin' : 'system',
+      actor_type: 'system',
       actor_user_id: null,
       actor_label: source === 'manual' ? 'admin_system_docs' : 'system_docs_nightly_refresh',
       meta: { batch_id: batchKey, source },
@@ -184,7 +184,7 @@ serve(async (req) => {
 
     await supabase.from('audit_logs').insert({
       action: completedAction,
-      actor_type: source === 'manual' ? 'admin' : 'system',
+      actor_type: 'system',
       actor_user_id: null,
       actor_label: source === 'manual' ? 'admin_system_docs' : 'system_docs_nightly_refresh',
       meta: { batch_id: batchKey, updated_count: updatedCount, warnings, source },
