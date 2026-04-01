@@ -8020,6 +8020,7 @@ export type Database = {
           created_by: string
           domain: string
           id: string
+          is_home: boolean
           is_primary: boolean
           metadata: Json
           public_id: string
@@ -8033,6 +8034,7 @@ export type Database = {
           created_by: string
           domain: string
           id?: string
+          is_home?: boolean
           is_primary?: boolean
           metadata?: Json
           public_id?: string
@@ -8046,6 +8048,7 @@ export type Database = {
           created_by?: string
           domain?: string
           id?: string
+          is_home?: boolean
           is_primary?: boolean
           metadata?: Json
           public_id?: string
@@ -12305,6 +12308,10 @@ export type Database = {
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
+      }
+      set_site_home_page: {
+        Args: { p_domain: string; p_page_id: string }
+        Returns: undefined
       }
       subscription_has_payment_token: {
         Args: { p_subscription_id: string }
