@@ -52,6 +52,7 @@ interface FormField {
 interface RequestBody {
   page_id: string;
   fields: FormField[];
+  redirect_url?: string;
 }
 
 // ─── Main ───
