@@ -321,12 +321,13 @@ async function sendRenewalSuccessTelegram(
   tariffName: string,
   amount: number,
   currency: string,
-  newExpiryDate: Date
+  newExpiryDate: Date,
+  productId?: string
 ): Promise<void> {
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('telegram_user_id, telegram_link_status, full_name')
+      .select('telegram_user_id, telegram_link_status, full_name, id')
       .eq('user_id', userId)
       .single();
 
@@ -344,31 +345,90 @@ async function sendRenewalSuccessTelegram(
 
     if (!linkBot?.token) return;
 
+    // Get real product name from products_v2 if productId available
+    let realProductName = productName;
+    if (productId) {
+      const { data: product } = await supabase
+        .from('products_v2')
+        .select('name')
+        .eq('id', productId)
+        .maybeSingle();
+      if (product?.name) realProductName = product.name;
+    }
+
     const userName = profile.full_name?.split(' ')[0] || 'Клиент';
-    const formattedDate = newExpiryDate.toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long'
-    });
+
+    // Get club invite links and per-club access dates via shared helpers
+    let clubBlock = '';
+    let inlineKeyboard: any[][] = [];
+    if (productId) {
+      try {
+        const { getProductClubInviteLinks, formatClubAccessBlock } = await import('../_shared/invite-link-helper.ts');
+        const { resolveEffectiveClubAccess } = await import('../_shared/resolve-effective-access.ts');
+
+        const inviteResult = await getProductClubInviteLinks(supabase, productId);
+        if (inviteResult.links.length > 0) {
+          // Get per-club access dates
+          const accessDates = new Map<string, { endAt: Date | null; isUnlimited: boolean }>();
+          for (const link of inviteResult.links) {
+            const snapshot = await resolveEffectiveClubAccess(supabase, userId, link.clubId);
+            accessDates.set(link.clubId, {
+              endAt: snapshot.effectiveEndAt,
+              isUnlimited: snapshot.isUnlimited,
+            });
+          }
+          clubBlock = '\n' + formatClubAccessBlock(inviteResult.links, accessDates);
+          inlineKeyboard = inviteResult.inlineKeyboard;
+        }
+      } catch (linkErr) {
+        console.error('[renewal-tg] Error getting invite links:', linkErr);
+      }
+    }
+
+    // Use per-product access date for the main message
+    let formattedDate: string;
+    if (productId) {
+      try {
+        const { resolveEffectiveProductAccess } = await import('../_shared/resolve-effective-access.ts');
+        const productSnapshot = await resolveEffectiveProductAccess(supabase, userId, productId);
+        if (productSnapshot.isUnlimited) {
+          formattedDate = 'бессрочно';
+        } else if (productSnapshot.effectiveEndAt) {
+          formattedDate = productSnapshot.effectiveEndAt.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+        } else {
+          formattedDate = newExpiryDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+        }
+      } catch {
+        formattedDate = newExpiryDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+      }
+    } else {
+      formattedDate = newExpiryDate.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+    }
 
     const message = `✅ *Подписка успешно продлена!*
 
 ${userName}, ваша подписка была автоматически продлена.
 
-📦 *Продукт:* ${productName}
+📦 *Продукт:* ${realProductName}
 🎯 *Тариф:* ${tariffName}
 💳 *Списано:* ${formatCurrency(amount, currency)}
 📆 *Доступ до:* ${formattedDate}
-
+${clubBlock}
 Спасибо, что остаётесь с нами! 🎉`;
+
+    const body: any = {
+      chat_id: profile.telegram_user_id,
+      text: message,
+      parse_mode: 'Markdown',
+    };
+    if (inlineKeyboard.length > 0) {
+      body.reply_markup = JSON.stringify({ inline_keyboard: inlineKeyboard });
+    }
 
     await fetch(`https://api.telegram.org/bot${linkBot.token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: profile.telegram_user_id,
-        text: message,
-        parse_mode: 'Markdown',
-      }),
+      body: JSON.stringify(body),
     });
     console.log(`Sent renewal success notification to user ${userId} via Telegram`);
   } catch (err) {
@@ -1702,8 +1762,8 @@ async function chargeSubscription(
       }
       // === END PATCH: GC Sync ===
 
-      // Grant Telegram access via queue (not direct function call - avoids auth issues)
-      // The queue is processed by pg_cron calling telegram-process-access-queue
+      // Grant/update Telegram access: per-club membership check
+      // If user already in club → update mirrors only. If not → queue grant.
       try {
         const { data: clubMappings } = await supabase
           .from('product_club_mappings')
@@ -1712,27 +1772,66 @@ async function chargeSubscription(
           .eq('is_active', true);
 
         if (clubMappings && clubMappings.length > 0) {
-          for (const mapping of clubMappings) {
-            const { error: queueError } = await supabase
-              .from('telegram_access_queue')
-              .upsert({
-                user_id,
-                club_id: mapping.club_id,
-                subscription_id: id,
-                action: 'grant',
-                status: 'pending',
-                ...(renewLedgerResult?.execution_key ? {
-                  meta: {
-                    parent_event_key: renewSourceEventKey,
-                    parent_execution_key: renewLedgerResult.execution_key,
-                  }
-                } : {}),
-              }, { onConflict: 'user_id,club_id,subscription_id,action' });
+          const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
 
-            if (queueError) {
-              console.error('[TG-QUEUE] Failed to queue access grant:', queueError);
+          for (const mapping of clubMappings) {
+            // Check if user is already a member of THIS specific club
+            const { data: existingMember } = await supabase
+              .from('telegram_club_members')
+              .select('id, access_status, in_chat, in_channel')
+              .eq('profile_id', profileId)
+              .eq('club_id', mapping.club_id)
+              .maybeSingle();
+
+            const isAlreadyInClub = existingMember &&
+              ['ok', 'active', 'joined'].includes(existingMember.access_status || '') &&
+              (existingMember.in_chat || existingMember.in_channel);
+
+            if (isAlreadyInClub) {
+              // User already in this club → update mirrors with effectiveEndAt, no grant
+              const clubSnapshot = await resolveEffectiveClubAccess(supabase, user_id, mapping.club_id);
+              const mirrorDate = effectiveEndAtIso(clubSnapshot);
+
+              console.log(`[TG-RENEW] User ${user_id} already in club ${mapping.club_id}, updating mirrors to ${mirrorDate}`);
+
+              await supabase
+                .from('telegram_access')
+                .update({
+                  active_until: mirrorDate,
+                  last_sync_at: new Date().toISOString(),
+                })
+                .eq('user_id', user_id)
+                .eq('club_id', mapping.club_id);
+
+              await supabase
+                .from('telegram_access_grants')
+                .update({ end_at: mirrorDate })
+                .eq('user_id', user_id)
+                .eq('club_id', mapping.club_id)
+                .eq('status', 'active');
             } else {
-              console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${mapping.club_id}`);
+              // User NOT in this club → queue grant as before
+              const { error: queueError } = await supabase
+                .from('telegram_access_queue')
+                .upsert({
+                  user_id,
+                  club_id: mapping.club_id,
+                  subscription_id: id,
+                  action: 'grant',
+                  status: 'pending',
+                  ...(renewLedgerResult?.execution_key ? {
+                    meta: {
+                      parent_event_key: renewSourceEventKey,
+                      parent_execution_key: renewLedgerResult.execution_key,
+                    }
+                  } : {}),
+                }, { onConflict: 'user_id,club_id,subscription_id,action' });
+
+              if (queueError) {
+                console.error('[TG-QUEUE] Failed to queue access grant:', queueError);
+              } else {
+                console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${mapping.club_id}`);
+              }
             }
           }
         } else {
@@ -1750,7 +1849,8 @@ async function chargeSubscription(
         tariff.name || 'Стандартный',
         amount,
         currency,
-        newEndDate
+        newEndDate,
+        product_id
       );
       await sendRenewalSuccessEmail(
         supabase,
