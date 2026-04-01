@@ -1,88 +1,64 @@
-Да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В Задачу 3B (Repair wrongly removed) добавить обязательный dedupe/idempotency guard:  
+1. Убери из следующего плана повторный timezone discovery и любые развилки по таймзоне. Решение уже принято: все сроки доступа, revoke/kick, renew/grace, bePaid-normalization считаются по APP_TZ = Europe/Minsk. В next patch нужен только repo-wide verify/proof, а не повторное обсуждение выбора таймзоны.
+2. Исправь формулировку про карточку доступа. Нельзя писать, что везде истина = subscriptions_v2.access_end_at. Корректно так:  
 
-  - не ставить повторный grant в telegram_access_queue, если уже есть pending / processing запись для того же user + club;
-  - repair batch должен быть идемпотентным;
-  - DoD: повторный запуск batch не создаёт дубликатов очереди и не меняет уже исправленные записи.
-2. &nbsp;
-3. В Задачу 3 (Backfill зеркал + repair membership) явно разделить два разных сценария:  
+  - для Telegram/клубов/уведомлений/revoke/kick истина = resolveEffectiveClubAccess(...)
+  - для продуктовой подписки canonical = subscriptions_v2.access_end_at
+  - entitlements и telegram_manual_access обязательно учитываются
+  - backfill зеркал приводит telegram_access.active_until и telegram_access_grants.end_at к effectiveEndAt, а не просто к sub.access_end_at
+3. &nbsp;
+4. В плане на proof по removed/audit учитывай все три источника аудита, а не только audit_logs:  
 
-  - 3B.1 Regrant required: пользователь removed / kicked / not_in_chat, при этом доступ валиден → ставим в grant queue;
-  - 3B.2 State sync only: membership формально ещё ок, но зеркала/статусы расходятся → только sync state/mirrors, без нового invite/grant.  
-  Иначе часть пользователей будет ошибочно прогоняться через повторную выдачу доступа.
-4. &nbsp;
-5. В Задачу 3A (Backfill зеркал) жёстко зафиксировать scope обновления:  
+  - audit_logs
+  - telegram_access_audit
+  - telegram_logs
+5.   
+Иначе снова будет ложный вывод “без audit”.
+6. Раздели следующий патч на 2 независимых блока:  
 
-  - telegram_access.active_until обновлять только по user + club;
-  - telegram_access_grants.end_at обновлять только для status='active' и только по соответствующему club_id;
-  - не трогать revoked / expired / исторические grants.  
-  Добавить отдельный STOP-guard: если update затрагивает не только active grants — остановка.
-6. &nbsp;
-7. В Задачу 7 (Proof “не тот клуб в уведомлении”) расширить proof не только на renew, но и на grace/failure:  
+  - A. One-off corrective patch: backfill mirrors, repair membership, corrective notifications
+  - B. Final verification/proof-pack
+7.   
+Не смешивать это с уже сделанными runtime-fixes.
+8. В repair membership явно раздели два списка:  
 
-  - renewal_success
-  - grace_started
-  - grace_24h_left
-  - grace_expired  
-  Для каждого кейса сверять:
-  - subscriptions_v2.product_id
-  - product_club_[mappings.club](http://mappings.club)_id
-  - фактический club_name в тексте
-  - фактические invite links / inline keyboard в payload
-  - telegram_logs.meta  
-  То есть proof делать по реальному payload, а не только по строкам логов.
-8. &nbsp;
-9. В Задачу 4B (Manual-payment negative proof) добавить отдельный негативный кейс:  
+  - wrongly_removed
+  - valid_not_in_chat
+9.   
+И добавь idempotency guard:  
 
-  - у пользователя нет актуальной provider_managed подписки;
-  - при этом может существовать старый provider_subscriptions / старый bePaid subscription id;
-  - provider sync / bepaid-get-subscription-details / webhook не должен занизить, обнулить или перетереть текущий ручной доступ.  
-  Это отдельный обязательный proof, не сливать его с обычной ручной оплатой.
+  - не ставить повторно в telegram_access_queue, если уже есть pending/processing
+  - не делать auto-regrant для кейсов effectiveEndAt <= now + 1 day
+  - такие кейсы сразу в manual_review
 10. &nbsp;
-11. В Задачу 4A (Decision gate по live-sync карточки) зафиксировать обязательный финальный статус:  
+11. В corrective notifications зафиксируй правило:  
 
-  - Live-sync at card open = RESTORED
-  - или
-  - Live-sync at card open = INTENTIONALLY DEPRECATED  
-  С коротким обоснованием, почему выбран именно этот вариант.  
-  Нельзя оставлять этот пункт как просто “исследовали”.
+  - срок увеличен / восстановлен > 1 дня → auto-notify
+  - срок уменьшен → только manual review, без авторассылки
 12. &nbsp;
-13. В Задачу 1 (Repo-wide Warsaw/timezone grep + fix) уточнить границы проверки:  
+13. В backfill scope явно допиши guard:  
 
-  - grep/search обязателен по всем access/subscription/telegram runtime участкам:  
-
-    - Warsaw
-    - Europe/Warsaw
-    - endOfDayWarsaw
-    - ручные end-of-day helpers
-    - ручные +12h, +24h, setHours(23,59,59)
-  - &nbsp;
-  - всё найденное делить на:  
-
-    - access-critical → исправить;
-    - non-access / unrelated → явно перечислить и пометить “не относится к текущему патчу”.  
-    DoD: repo-wide grep result приложен к финальному proof.
-  - &nbsp;
+  - обновлять только активные записи зеркал и активные telegram_access_grants
+  - не трогать revoked / expired / historical
+  - все обновления строго по конкретному club_id
+  - никаких общих массовых апдейтов по пользователю без разреза по клубу
 14. &nbsp;
-15. В Задачу 3C (Corrective notifications) добавить правило:  
+15. Добавь отдельный обязательный proof, что доступы не смешиваются между клубами:  
 
-  - корректирующее уведомление отправляется по конкретному клубу / конкретному продукту;
-  - не объединять в одно сообщение несколько разных клубов/сроков пользователя;
-  - если у пользователя 2 клуба с разными сроками — уведомление формируется отдельно по каждому затронутому клубу.
+  - renew продукта A не меняет зеркала клуба B
+  - уведомление по A не подставляет название/ссылки клуба B
+  - subscription-charge и telegram-grant-access работают по club-scoped логике
 16. &nbsp;
-17. В DoD дополнительно включить:  
+17. Обязательно оставь в плане negative proof для MIT / ручной оплаты:  
 
-  - repair batch идемпотентен, без дублей в telegram_access_queue;
-  - backfill не трогает historical / revoked / expired grants;
-  - proof “не тот клуб” выполнен для renewal и grace-сценариев;
-  - manual-payment proof включает кейс со stale provider record;
-  - decision gate по карточке закрыт статусом RESTORED или INTENTIONALLY DEPRECATED;
-  - приложен repo-wide timezone grep report с разделением critical / non-critical находок.
+  - после endOfDayAppTz bePaid sync больше не уменьшает срок
+  - ручной / MIT доступ не перетирается provider-sync
+  - proof показать на живых данных или на post-fix audit rows
 18. &nbsp;
-19. В финальный отчёт добавить отдельный раздел:
+19. По renewal / wrong-club proof добавь честную развилку:
 
 &nbsp;
 
@@ -90,229 +66,316 @@
 
 &nbsp;
 
-- Repair batch results
-- Mirror backfill results
-- Wrong-club notification proof
-- Manual payment / stale provider proof
-- Live-sync decision
-- Timezone grep report
+- если после патча нет живого renewal event, это не блокирует corrective patch
+- тогда показать:  
+
+  - code proof
+  - queue/log proof
+  - и отдельно отметить, что live-proof ждёт первого события
+- &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Если нужно жёстко вставить это прямо в твой текущий план единым блоком для подрядчика, сделаю следующим сообщением в готовом виде для копипаста.
+&nbsp;
+
+11. В финальном отчёте следующего патча обязательно требуй:
 
 &nbsp;
 
-# План: PATCH-FOLLOWUP v2 — полное закрытие хвоста, repair, timezone cleanup, proofs
+&nbsp;
+
+&nbsp;
+
+- batch_id
+- actor_label
+- affected counts
+- sample rows
+- before/after по reconciliation
+- отдельный список manual_review
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. В плане явно зафиксируй уже принятое архитектурное решение:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- live-sync bePaid при открытии карточки не возвращаем
+- карточка читает canonical DB
+- sync идёт через webhook / cron / admin refresh
+- helper считает effective access из canonical data
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+13. Для proof-pack добавь обязательный блок:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- mirrors = effectiveEndAt
+- membership repaired where needed
+- no cross-club leakage
+- billing-day cutoff = 23:59:59 Minsk
+- corrective notifications split into auto/manual
+
+&nbsp;
+
+&nbsp;
+
+Итог: сам вектор плана правильный, но его нужно ужесточить вокруг club-scoped logic, effectiveEndAt как единой истины для Telegram-контура, трёх источников аудита и разделения one-off corrective / runtime logic.
+
+&nbsp;
+
+План: PATCH-NEXT — corrective backfill зеркал, repair membership, corrective notifications, final proof
 
 ---
 
-## Текущий статус
+## Контекст
 
-- Phase 0 (discovery): done
-- Phase 1 (shared helpers): done
-- Phase 2 (edge function fixes): done (включая DM в kick-violators, timezone в accessValidation.ts)
-- **PATCH-FOLLOWUP**: partially done — reconciliation запланирована, но не выполнена
+Timezone fix (`endOfDayWarsaw` → `endOfDayAppTz`) уже задеплоен. Reconciliation собрана — найдено 53 расхождения. Runtime логика (`resolveEffectiveClubAccess`, `hasValidAccessBatch`) работает по club_id. Нужно закрыть хвост: привести зеркала к реальности, починить membership, уведомить пользователей, дать финальный proof.
 
 ---
 
-## Задача 1: Repo-wide Warsaw/timezone grep + fix
+## Phase 1: Corrective backfill зеркал
 
-**Цель**: Гарантировать отсутствие скрытых Warsaw-участков в access-логике.
+### 1A. Dry-run (read-only SQL)
 
-**Найдено по discovery**:
+Собрать таблицу расхождений по каждому `user_id + club_id`:
 
+```sql
+-- Canonical SoT: MAX(access_end_at) по product_ids клуба, entitlements, manual_access
+-- vs mirrors: telegram_access.active_until, telegram_access_grants.end_at
+-- Категории: drift_over, drift_under, mirror_missing, ok
+-- Output: user_id, club_id, effective_end_at, ta_active_until, tag_max_end_at, category, days_diff
+```
 
-| Файл                                                 | Что                                       | Статус                                                                   |
-| ---------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------ |
-| `_shared/timezone.ts:160-166`                        | `endOfDayWarsaw()` с `Europe/Warsaw`      | **Менять** → `endOfDayAppTz()` с `APP_TZ`                                |
-| `bepaid-get-subscription-details/index.ts:4,495,530` | `import { endOfDayWarsaw }`, 2 вызова     | **Менять** → `endOfDayAppTz`                                             |
-| `bepaid-webhook/index.ts:3,1498`                     | `import { endOfDayWarsaw }`, 1 вызов      | **Менять** → `endOfDayAppTz`                                             |
-| `_shared/accessValidation.ts:51-52`                  | Комментарий «Warsaw»                      | **Менять** комментарий → APP_TZ                                          |
-| `instagram-webhook/index.ts:60,85`                   | `Europe/Warsaw` для ApiX-Drive timestamps | **НЕ МЕНЯТЬ** — это парсинг входящих данных ApiX-Drive, не access-логика |
-| `installment-notifications/index.ts:407`             | `setHours(23,59,59,999)`                  | **Проверить** — это рассрочки, не access                                 |
+Effective считается по той же логике, что `resolveEffectiveClubAccess`:
 
+- `subscriptions_v2.access_end_at` (status IN active/trial/past_due, grace 72h) — **только по product_ids, привязанным к данному club_id** через `product_club_mappings`
+- `entitlements.expires_at` (status=active) — **только по тем же product_ids**
+- `telegram_manual_access.valid_until` (is_active=true) — **по club_id напрямую**
+- MAX из всех, NULL = бессрочно
 
-**Фикс**:
+Summary counts по категориям + top-20 по `abs(days_diff)`.
 
-- `_shared/timezone.ts`: переименовать `endOfDayWarsaw` → `endOfDayAppTz`, использовать `APP_TZ` вместо `WARSAW_TZ`
-- `bepaid-get-subscription-details`: заменить import и вызовы
-- `bepaid-webhook`: заменить import и вызов
-- `accessValidation.ts`: обновить комментарий
+### 1B. Execute backfill
 
----
+Для каждой строки с drift/mirror_missing:
 
-## Задача 2: Read-only reconciliation сверка
+- UPDATE `telegram_access.active_until = effective_end_at` WHERE `user_id` AND `club_id`
+- UPDATE `telegram_access_grants.end_at = effective_end_at` WHERE `user_id` AND `club_id` AND `status = 'active'`
+- **НЕ трогать** grants с status = revoked/expired/historical
+- **STOP-guard**: если UPDATE затрагивает строки вне active scope — остановка
 
-SQL-запрос по каждому `user + club`:
+Audit:
 
-- `subscriptions_v2.access_end_at` (по product_club_mappings)
-- `entitlements.expires_at`
-- `telegram_manual_access.valid_until`
-- `telegram_access.active_until`
-- `telegram_access_grants.end_at`
-- Effective = MAX по валидным источникам (NULL = бессрочно)
+- `actor_type = 'system'`, `actor_label = 'patch_mirror_backfill'`
+- `batch_id = 'backfill_mirrors_YYYYMMDD_HHMM'`
+- `meta: { affected_count, sample_ids, category }`
 
-Выделить 4 категории расхождений:
+### 1C. After-query
 
-1. **Зеркала < effective** — mirror drift, нужен backfill зеркал
-2. **Зеркала > effective** — mirror overshot, нужен corrective sync
-3. **Доступ валиден, но membership = removed/not_in_chat** — нужен repair membership + regrant
-4. **Membership ok, но зеркала кривые** — только sync mirrors
+Повторить dry-run запрос → подтвердить 0 drift для обработанных строк.
 
----
-
-## Задача 3: Backfill зеркал + repair membership
-
-### 3A: Backfill зеркал (только даты)
-
-Для категорий 1-2 из задачи 2:
-
-- Пересчитать `effectiveEndAt` через `resolveEffectiveClubAccess`
-- Обновить `telegram_access.active_until` и `telegram_access_grants.end_at`
-- `audit_logs` с `actor_label = 'patch_mirror_backfill'`, `batch_id`
-
-### 3B: Repair wrongly removed (membership + regrant)
-
-Для категории 3:
-
-- Dry-run: список пользователей с валидным доступом, но `access_status = 'removed'` или `in_chat = false`
-- Execute: для каждого — upsert в `telegram_access_queue` с `action = 'grant'`
-- НЕ автоматически кикать обратно — ставить в очередь на grant, чтобы система сама выдала invite link
-- `audit_logs` с `actor_label = 'patch_wrongly_removed_repair'`, `batch_id`
-- Список восстановленных пользователей
-
-### 3C: Разделение corrective notifications
-
-**Срок увеличен/восстановлен** → автоматическое уведомление:
-
-- Шаблон: «ℹ️ Уточнён срок доступа к {club}. Актуальный срок: до {date}.»
-- Только если разница > 1 дня
-
-**Срок уменьшен** → НЕ отправлять автоматически:
-
-- Вывести список в ручной review
-- Отправка только после whitelist approval
+**Тип операции**: one-off corrective. Runtime логика (`subscription-charge`, `telegram-grant-access`) уже пишет зеркала через `resolveEffectiveClubAccess` — новые расхождения не появятся.
 
 ---
 
-## Задача 4: Проверка live-sync карточки доступа через bePaid
+## Phase 2: Repair membership
 
-### 4A: Decision gate (обязательное решение)
+### 2A. Dry-run (read-only)
 
-По результатам discovery (карточка читает только из БД, нет live-refresh bePaid при открытии):
+Два отдельных списка:
 
-**Зафиксировать архитектурное решение**:
+**wrongly_removed**: `telegram_club_members.access_status = 'removed'` при наличии valid access (subscription/entitlement/manual_access по club_id через product_club_mappings).
 
-- Sync bePaid → canonical data происходит **только** через webhook / cron / admin refresh
-- Карточка UI читает **только** canonical data из БД
-- Shared helper считает effective access из canonical data
-- Записать это решение как invariant
+**valid_not_in_chat**: `in_chat = false AND in_channel = false` при наличии valid access, но `access_status != 'removed'`.
 
-### 4B: Negative proof — ручная оплата не перетирается provider sync
+По каждому показать: `user_id, club_id, effective_end_at, valid_source_type, valid_source_id, current_membership_state, recommended_action (queue_regrant | manual_review)`.
 
-Отдельный кейс:
+Правило: если effective_end_at < now + 1 день → `manual_review` (нет смысла regrant на 1 день).
 
-- Пользователь без active provider subscription
-- Доступ дан по последней ручной оплате (subscriptions_v2 status=active, billing_type != provider_managed)
-- Вызов `bepaid-get-subscription-details` / webhook НЕ должен ухудшить `access_end_at`
-- Helper должен корректно вернуть canonical access
+### 2B. Execute repair
 
-SQL proof: найти таких пользователей, проверить, что `access_end_at` не обнулён/не уменьшен после последнего bePaid sync.
+Для подтверждённых `queue_regrant`:
 
----
+- **Idempotency guard**: проверить, нет ли уже pending/processing записи в `telegram_access_queue` для этого `user_id + club_id`
+- INSERT в `telegram_access_queue`: `action = 'grant'`, `club_id`, `user_id`
+- Audit: `actor_label = 'patch_wrongly_removed_repair'`, `batch_id = 'repair_membership_YYYYMMDD_HHMM'`
 
-## Задача 5: Proof renewal — нет дублирования grant-message
+Для `manual_review` — вывести отдельный список без автоматических действий.
 
-SQL:
-
-- Найти последнее успешное продление после деплоя
-- В `telegram_logs`: есть `renewal_success`, нет `grant` / "Доступ открыт" в тот же день
-- В `telegram_access_queue`: нет `action='grant'` для user с `in_chat=true`
-- В логах `subscription-charge`: строка `[TG-RENEW] User ... already in club`
+**Тип операции**: one-off corrective. Runtime (kick-violators, check-expired) уже проверяет access через shared helper — не будет повторного wrongly-remove.
 
 ---
 
-## Задача 6: Proof cutoff 23:59 Минск
+## Phase 3: Corrective notifications
 
-- Код: `accessValidation.ts:86-87` — `endOfDayUtcMs = todayEnd - 1000`, `now <= endOfDayUtcMs`
-- SQL: `audit_logs` с `action = 'access.validation.billing_day_protected'` после деплоя
-- Если нет таких записей — зафиксировать: «логика корректна, billing-day protection не воспроизводилась на живых данных»
+### 3A. Определить affected users
+
+После Phase 1+2 собрать список пользователей, у которых:
+
+- `old_mirror_date` (до backfill) отличается от `new_effective_date` (после) более чем на 1 день
+
+### 3B. Разделить на два потока
+
+
+| Изменение                 | Действие                      |
+| ------------------------- | ----------------------------- |
+| Срок **увеличен** > 1 дня | Автоматическое уведомление    |
+| Срок **уменьшен**         | Список на ручное согласование |
+
+
+### 3C. Шаблон auto-notify
+
+Текст: `«ℹ️ Уточнён срок доступа к {club_name}. Актуальный срок: до {date} (по Минску).»`
+
+- Отдельное сообщение по каждому затронутому клубу (не объединять клубы)
+- Отправка через Telegram DM (link-bot)
+- Non-fatal: ошибка DM логируется, не блокирует batch
+
+### 3D. Список manual-review
+
+Вывести отдельно: `user_id, club_id, old_date, new_date, diff_days, reason`.
+
+**Тип операции**: one-off corrective. В runtime уведомления формируются через `formatClubAccessBlock` с правильными данными.
 
 ---
 
-## Задача 7: Proof «не тот клуб в уведомлении» — по фактическому payload
+## Phase 4: Proof-pack
 
-Не только `telegram_logs.meta.club_id`, а:
+### 4A. Per-club isolation proof
 
-- `subscription.product_id` → `product_club_mappings.club_id` (expected)
-- `telegram_logs.meta` → фактические invite links / inline keyboard / club name в тексте
-- Сверка: название клуба в тексте сообщения совпадает с `telegram_clubs.club_name` для expected club_id
+SQL: найти пользователя с >= 2 клубами и разными `effective_end_at`. Показать:
+
+- club A: effective_end_at, telegram_access.active_until, product_ids
+- club B: effective_end_at, telegram_access.active_until, product_ids
+- Подтвердить: даты разные, mirrors соответствуют effective по каждому клубу отдельно
+
+### 4B. Valid entitlement/manual_access — no kick proof
+
+SQL: найти пользователя с expired subscription но valid entitlement/manual_access. Подтвердить: `telegram_club_members.access_status != 'removed'`.
+
+### 4C. MIT / ручная оплата — bePaid sync не затирает
+
+SQL: найти подписку с `billing_type = 'mit'` или без active provider_subscriptions. Проверить:
+
+- `access_end_at` не уменьшился после последнего bePaid sync event
+- Code proof: `bepaid-get-subscription-details` и `bepaid-webhook` обновляют `access_end_at` только для provider_managed подписок с active bePaid subscription
+
+### 4D. Mirrors = effective proof
+
+SQL after backfill: `telegram_access.active_until = effective_end_at` и `max(telegram_access_grants.end_at WHERE status='active') = effective_end_at` для всех пар user+club. Count mismatches = 0.
+
+### 4E. Billing-day protection proof
+
+SQL: `audit_logs WHERE action = 'access.validation.billing_day_protected'`. Если есть — показать пример. Если нет — зафиксировать: логика корректна, кейс не воспроизводился после деплоя.
+
+### 4F. Renewal — нет дублирования grant
+
+SQL: найти `telegram_logs WHERE action = 'renewal_success'` после деплоя. Проверить: нет `action = 'grant'` / "Доступ открыт" для того же user+club в тот же день. Code proof: `subscription-charge` строка 1790 — `isAlreadyInClub` → update mirrors, no grant queue.
 
 ---
 
-## Задача 8: Разбор legacy-хвоста поштучно
+## Phase 5: Дополнительные проверки (read-only)
 
-### 8A: 52 drift → new vs legacy
 
-- SQL: split по `subscriptions_v2.updated_at > дата_деплоя`
-- New drift = баг → разбирать
-- Legacy drift → backfill (задача 3A)
+| Проверка                                                | Метод                                                                                                                       |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Нет логики "общий MAX по всем клубам пользователя"      | Code grep: `resolveEffectiveClubAccess` всегда принимает `clubId`, никогда не считает глобально                             |
+| Нет timezone-хвостов                                    | Repo grep уже выполнен: `endOfDayWarsaw` → deprecated alias, `Europe/Warsaw` остался только в instagram-webhook (не access) |
+| bePaid sync не ломает MIT                               | Code proof в `bepaid-webhook` и `bepaid-get-subscription-details`                                                           |
+| Карточка доступа = effective access                     | UI читает `subscriptions_v2.access_end_at` (canonical), после backfill зеркала совпадают                                    |
+| Дата в уведомлении = дата в revoke/kick = helper result | Code proof: оба используют `resolveEffectiveClubAccess` / `hasValidAccessBatch` из `accessValidation.ts`                    |
 
-### 8B: 68 removed без audit → new vs legacy
 
-- SQL: `telegram_club_members.updated_at > дата_деплоя` + нет audit
-- New = продолжающаяся проблема
-- Legacy = historical gap
+---
 
-### 8C: 7 expired-but-not-kicked → поштучно
+## Batch IDs и audit labels
 
-- По каждому: все источники доступа (sub + ent + manual + billing-day)
-- Классификация: valid access source / ожидание cron / баг
+
+| Операция                | actor_label                    | batch_id pattern                  |
+| ----------------------- | ------------------------------ | --------------------------------- |
+| Backfill зеркал         | `patch_mirror_backfill`        | `backfill_mirrors_YYYYMMDD_HHMM`  |
+| Repair membership       | `patch_wrongly_removed_repair` | `repair_membership_YYYYMMDD_HHMM` |
+| Corrective notification | `patch_corrective_notify`      | `corrective_notify_YYYYMMDD_HHMM` |
+
+
+---
+
+## Классификация операций
+
+
+| Операция                                         | Тип                                          |
+| ------------------------------------------------ | -------------------------------------------- |
+| Backfill зеркал (Phase 1)                        | **One-off corrective**                       |
+| Repair membership (Phase 2)                      | **One-off corrective**                       |
+| Corrective notifications (Phase 3)               | **One-off corrective**                       |
+| `resolveEffectiveClubAccess` в runtime functions | **Постоянная runtime логика** (уже работает) |
+| `hasValidAccessBatch` в kick/check-expired       | **Постоянная runtime логика** (уже работает) |
+| Mirror update в `subscription-charge`            | **Постоянная runtime логика** (уже работает) |
+
+
+---
+
+## Пользователи в manual review
+
+Попадают в ручной список (без автоматических действий):
+
+- Срок уменьшен после reconciliation
+- effective_end_at < now + 1 день (regrant нецелесообразен)
+- Неоднозначный membership state
+
+---
+
+## Порядок выполнения
+
+1. Phase 1A: dry-run backfill зеркал → показать summary
+2. Phase 2A: dry-run repair membership → показать списки
+3. Phase 1B: execute backfill
+4. Phase 1C: after-query подтверждение
+5. Phase 2B: execute repair (с idempotency guard)
+6. Phase 3: corrective notifications (auto + manual list)
+7. Phase 4: proof-pack (6 проверок)
+8. Phase 5: дополнительные read-only проверки
+9. Финальный отчёт: before/after diff-summary
+
+---
+
+## DoD
+
+- Dry-run backfill: таблица расхождений с категориями и counts
+- Execute backfill: mirrors = effective, after-query = 0 drift
+- Backfill не трогает revoked/expired/historical grants
+- Dry-run repair: списки wrongly_removed и valid_not_in_chat
+- Execute repair: idempotent, без дублей в telegram_access_queue
+- Corrective notifications: auto (срок увеличен > 1д) + manual list (срок уменьшен)
+- Уведомления — по конкретному клубу, не объединённые
+- Proof per-club isolation: разные клубы = разные даты
+- Proof MIT/manual payment: bePaid sync не затирает
+- Proof mirrors = effective для всех пар user+club
+- Proof renewal: нет дублирования grant
+- All batches записаны в audit_logs с batch_id и actor_label
+- Before/after diff-summary приложен
 
 ---
 
 ## Изменяемые файлы
 
-
-| Файл                                       | Изменение                                     |
-| ------------------------------------------ | --------------------------------------------- |
-| `_shared/timezone.ts`                      | `endOfDayWarsaw` → `endOfDayAppTz` с `APP_TZ` |
-| `bepaid-get-subscription-details/index.ts` | import + 2 вызова → `endOfDayAppTz`           |
-| `bepaid-webhook/index.ts`                  | import + 1 вызов → `endOfDayAppTz`            |
-| `_shared/accessValidation.ts`              | комментарий Warsaw → APP_TZ                   |
-
-
-Остальное — SQL-диагностика, backfill скрипт, repair скрипт (read-only + one-off operations).
-
-## Порядок выполнения
-
-1. Repo-wide Warsaw grep + fix (задача 1)
-2. Read-only reconciliation сверка (задача 2)
-3. Разбор legacy-хвоста: drift/removed/expired (задача 8)
-4. Backfill зеркал + repair wrongly removed (задача 3)
-5. Decision gate по live-sync карточки (задача 4A)
-6. Proof renewal (задача 5)
-7. Proof cutoff 23:59 (задача 6)
-8. Proof «не тот клуб» по payload (задача 7)
-9. Negative proof ручная оплата (задача 4B)
-10. Деплой (timezone fix)
-11. Discovery AFTER (6 запросов, before/after summary)
-
-## DoD
-
-- `endOfDayWarsaw` → `endOfDayAppTz` во всех файлах, repo-wide grep чист
-- Reconciliation таблица собрана, 4 категории расхождений выделены
-- Backfill зеркал выполнен, записан в audit_logs
-- Wrongly removed: либо восстановлены (regrant в очередь), либо в ручной review list
-- Corrective notifications: увеличение срока — автоматически, уменьшение — только после ручного approve
-- Repair membership: пользователи с валидным доступом но removed/not_in_chat — в grant queue
-- Decision gate по live-sync карточки: зафиксировано (restored или intentionally deprecated)
-- Manual-payment negative proof: provider sync не перетирает ручной доступ
-- Proof renewal: нет дублирования grant-message
-- Proof cutoff 23:59 Минск
-- Proof «не тот клуб» по фактическому payload, не только по log rows
-- Legacy-хвост разобран: new vs legacy по drift/removed/expired
-- Before/after summary по 6 запросам
+Код менять не нужно — runtime логика уже задеплоена. Все операции — SQL data fixes + Telegram DM через существующий bot API.
