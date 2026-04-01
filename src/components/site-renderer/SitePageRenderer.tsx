@@ -16,6 +16,12 @@ import { SocialSection } from "./blocks/SocialSection";
 import { LogosSection } from "./blocks/LogosSection";
 import { SpacerSection } from "./blocks/SpacerSection";
 import { FormSection } from "./blocks/FormSection";
+import { AudioSection } from "./blocks/AudioSection";
+import { EmbedSection } from "./blocks/EmbedSection";
+import { AccordionBlock } from "@/components/admin/lesson-editor/blocks/AccordionBlock";
+import { TabsBlock } from "@/components/admin/lesson-editor/blocks/TabsBlock";
+import { CalloutBlock } from "@/components/admin/lesson-editor/blocks/CalloutBlock";
+import { QuoteBlock } from "@/components/admin/lesson-editor/blocks/QuoteBlock";
 
 // ─── Original Block Renderers (kept inline) ───
 
