@@ -837,33 +837,64 @@ Deno.serve(async (req) => {
                 .eq('id', targetProdId)
                 .maybeSingle();
 
-              const productCode = targetProduct?.code || targetProdId;
+              const targetProductCode = targetProduct?.code || targetProdId;
 
-              // Upsert entitlement
-              const expiresAt = rule.duration_days
+              // Calculate expires_at for this rule
+              const paExpiresAt = rule.duration_days
                 ? new Date(Date.now() + rule.duration_days * 86400000).toISOString()
                 : null;
 
-              const { error: entError } = await supabase
+              // Check existing entitlement first (GREATEST logic - never decrease)
+              const { data: existingPaEnt } = await supabase
                 .from('entitlements')
-                .upsert({
-                  user_id: userId,
-                  product_code: productCode,
-                  product_id: targetProdId,
-                  profile_id: profileId || null,
-                  order_id: orderId,
-                  status: 'active',
-                  expires_at: expiresAt,
-                  meta: { source_rule_id: rule.id, source_order_id: orderId },
-                  updated_at: new Date().toISOString(),
-                }, {
-                  onConflict: 'user_id,product_code',
-                  ignoreDuplicates: false,
-                });
+                .select('id, expires_at, order_id')
+                .eq('user_id', userId)
+                .eq('product_code', targetProductCode)
+                .maybeSingle();
 
-              if (entError) {
-                console.error(`[grant-access] Entitlement upsert failed for ${targetProdId}:`, entError);
-                productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: entError.message });
+              let paEntAction = 'created';
+              let paEntError: any = null;
+
+              if (existingPaEnt) {
+                // Update existing — GREATEST logic, preserve original order_id
+                const newExpiry = paExpiresAt 
+                  ? (existingPaEnt.expires_at && new Date(existingPaEnt.expires_at) > new Date(paExpiresAt) 
+                      ? existingPaEnt.expires_at 
+                      : paExpiresAt)
+                  : existingPaEnt.expires_at; // null (unlimited) from rule means keep current
+
+                const { error } = await supabase
+                  .from('entitlements')
+                  .update({
+                    status: 'active',
+                    expires_at: newExpiry,
+                    // Do NOT overwrite order_id — keep original purchase order
+                    meta: { source_rule_id: rule.id, source_order_id: orderId },
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', existingPaEnt.id);
+                paEntError = error;
+                paEntAction = 'updated';
+              } else {
+                // Create new entitlement — no order_id to avoid unique constraint
+                const { error } = await supabase
+                  .from('entitlements')
+                  .insert({
+                    user_id: userId,
+                    product_code: targetProductCode,
+                    product_id: targetProdId,
+                    profile_id: profileId || null,
+                    // order_id intentionally omitted — this is a derived grant, not a direct purchase
+                    status: 'active',
+                    expires_at: paExpiresAt,
+                    meta: { source_rule_id: rule.id, source_order_id: orderId },
+                  });
+                paEntError = error;
+              }
+
+              if (paEntError) {
+                console.error(`[grant-access] Entitlement ${paEntAction} failed for ${targetProdId}:`, paEntError);
+                productAccessResults.push({ target_product_id: targetProdId, status: 'failed', error: paEntError.message });
               } else {
                 // Ledger: granted
                 try {
@@ -884,14 +915,15 @@ Deno.serve(async (req) => {
                     result: {
                       rule_id: rule.id,
                       target_product_id: targetProdId,
-                      product_code: productCode,
-                      expires_at: expiresAt,
+                      product_code: targetProductCode,
+                      expires_at: paExpiresAt,
+                      entitlement_action: paEntAction,
                     },
                   });
                 } catch (ledgerErr) {
                   console.error('[grant-access] Ledger write for product_access grant failed:', ledgerErr);
                 }
-                productAccessResults.push({ target_product_id: targetProdId, status: 'granted', product_code: productCode });
+                productAccessResults.push({ target_product_id: targetProdId, status: 'granted', product_code: targetProductCode, entitlement_action: paEntAction });
               }
             } catch (grantErr) {
               console.error(`[grant-access] product_access grant error for ${targetProdId}:`, grantErr);
