@@ -54,6 +54,31 @@ Deno.serve(async (req) => {
       );
     }
 
+    // PATCH-FINAL: Check product-scoped reentry pricing after product is resolved
+    if (userId && product.id) {
+      const { data: reentryRecord } = await supabase
+        .from("product_reentry_pricing")
+        .select("reentry_active")
+        .eq("user_id", userId)
+        .eq("product_id", product.id)
+        .eq("reentry_active", true)
+        .maybeSingle();
+
+      if (reentryRecord) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("reentry_penalty_waived")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!profile?.reentry_penalty_waived) {
+          isReentryPricing = true;
+          reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
+          console.log(`[public-product-by-slug] User ${userId} has product-scoped reentry pricing for product ${product.id}`);
+        }
+      }
+    }
+
     // Fetch active tariffs
     const now = new Date().toISOString();
     const { data: tariffs, error: tariffsError } = await supabase
