@@ -44,6 +44,7 @@ import {
   ChevronUp,
   ChevronDown,
   Activity,
+  BookOpen,
 } from "lucide-react";
 
 export function AdminSidebar() {
@@ -372,6 +373,12 @@ export function AdminSidebar() {
                 <Activity className="h-4 w-4" />
                 Здоровье системы
               </DropdownMenuItem>
+              {isSuperAdmin && (
+                <DropdownMenuItem onClick={() => navigate("/admin/docs")} className="gap-2">
+                  <BookOpen className="h-4 w-4" />
+                  Документация системы
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleSignOut} className="gap-2 text-destructive focus:text-destructive">
                 <LogOut className="h-4 w-4" />

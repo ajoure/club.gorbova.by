@@ -89,6 +89,7 @@ const AdminFieldRegistry = lazy(() => import("./pages/admin/AdminFieldRegistry")
 const AdminProductsV2 = lazy(() => import("./pages/admin/AdminProductsV2"));
 const AdminProductDetailV2 = lazy(() => import("./pages/admin/AdminProductDetailV2"));
 const AdminProductsDocs = lazy(() => import("./pages/admin/AdminProductsDocs"));
+const AdminSystemDocs = lazy(() => import("./pages/admin/AdminSystemDocs"));
 const AdminOrdersV2 = lazy(() => import("./pages/admin/AdminOrdersV2"));
 const AdminPaymentsPage = lazy(() => import("./pages/admin/AdminPayments"));
 const AdminPaymentsHub = lazy(() => import("./pages/admin/AdminPaymentsHub"));
@@ -255,6 +256,7 @@ const App = () => {
               {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
               <Route path="/admin/products-v2" element={<ProtectedRoute><LazyRoute><AdminProductsV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/products-v2/docs" element={<ProtectedRoute><LazyRoute><AdminProductsDocs /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/docs" element={<ProtectedRoute><LazyRoute><AdminSystemDocs /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><LazyRoute><AdminProductDetailV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><LazyRoute><AdminOrdersV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
