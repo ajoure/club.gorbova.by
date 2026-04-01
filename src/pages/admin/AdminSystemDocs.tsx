@@ -67,7 +67,7 @@ export default function AdminSystemDocs({
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
-  const { isSuperAdmin, loading: rbacLoading } = useRbac();
+  const rbac = useRbac();
   const [seeding, setSeeding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
