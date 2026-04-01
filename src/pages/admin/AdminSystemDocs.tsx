@@ -30,12 +30,28 @@ interface AdminSystemDocsProps {
   backLabel?: string;
 }
 
-function DomainTab({ domain, mode, version }: { domain: SystemDocDomain; mode: ViewMode; version?: string }) {
+function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
+  domain: SystemDocDomain;
+  mode: ViewMode;
+  version?: string;
+  onModeChange?: (m: ViewMode) => void;
+  onVersionChange?: (v: string | undefined) => void;
+}) {
   const docs = useSystemDocs({
     sectionKey: domain.key,
     initialMode: mode,
     initialVersion: version,
   });
+
+  const handleSetViewMode = (m: ViewMode) => {
+    docs.setViewMode(m);
+    onModeChange?.(m);
+  };
+
+  const handleSelectManualVersion = (v: string) => {
+    docs.setSelectedManualVersion(v);
+    onVersionChange?.(v);
+  };
 
   return (
     <SystemDocViewer
@@ -45,9 +61,9 @@ function DomainTab({ domain, mode, version }: { domain: SystemDocDomain; mode: V
       currentDoc={docs.currentDoc}
       sections={docs.sections}
       selectedManualVersion={docs.selectedManualVersion}
-      onSelectManualVersion={docs.setSelectedManualVersion}
+      onSelectManualVersion={handleSelectManualVersion}
       viewMode={docs.viewMode}
-      onSetViewMode={docs.setViewMode}
+      onSetViewMode={handleSetViewMode}
       copied={docs.copied}
       creating={docs.creating}
       activating={docs.activating}
