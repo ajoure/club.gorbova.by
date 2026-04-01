@@ -32,7 +32,7 @@ interface AdminSystemDocsProps {
 
 function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
   domain: SystemDocDomain;
-  mode: ViewMode;
+  mode?: ViewMode;
   version?: string;
   onModeChange?: (m: ViewMode) => void;
   onVersionChange?: (v: string | undefined) => void;
