@@ -89,6 +89,7 @@ const AdminFieldRegistry = lazy(() => import("./pages/admin/AdminFieldRegistry")
 const AdminProductsV2 = lazy(() => import("./pages/admin/AdminProductsV2"));
 const AdminProductDetailV2 = lazy(() => import("./pages/admin/AdminProductDetailV2"));
 const AdminProductsDocs = lazy(() => import("./pages/admin/AdminProductsDocs"));
+const AdminSystemDocs = lazy(() => import("./pages/admin/AdminSystemDocs"));
 const AdminOrdersV2 = lazy(() => import("./pages/admin/AdminOrdersV2"));
 const AdminPaymentsPage = lazy(() => import("./pages/admin/AdminPayments"));
 const AdminPaymentsHub = lazy(() => import("./pages/admin/AdminPaymentsHub"));
