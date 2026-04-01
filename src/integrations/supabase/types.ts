@@ -8064,6 +8064,72 @@ export type Database = {
           },
         ]
       }
+      site_form_submissions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          field_mapping: Json
+          form_data: Json
+          id: string
+          metadata: Json
+          page_id: string
+          profile_id: string | null
+          public_id: string
+          source: string
+          status: string
+          updated_at: string
+          updated_by: string | null
+          workspace_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          field_mapping?: Json
+          form_data?: Json
+          id?: string
+          metadata?: Json
+          page_id: string
+          profile_id?: string | null
+          public_id: string
+          source?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          field_mapping?: Json
+          form_data?: Json
+          id?: string
+          metadata?: Json
+          page_id?: string
+          profile_id?: string | null
+          public_id?: string
+          source?: string
+          status?: string
+          updated_at?: string
+          updated_by?: string | null
+          workspace_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_form_submissions_page_id_fkey"
+            columns: ["page_id"]
+            isOneToOne: false
+            referencedRelation: "site_pages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "site_form_submissions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_page_folders: {
         Row: {
           created_at: string
