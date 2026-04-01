@@ -188,9 +188,10 @@ interface SitePageRendererProps {
   blocks: SiteBlock[];
   themeSettings?: Record<string, unknown>;
   pricingData?: PricingDataMap;
+  pageId?: string;
 }
 
-export function SitePageRenderer({ blocks, themeSettings, pricingData }: SitePageRendererProps) {
+export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId }: SitePageRendererProps) {
   const style: React.CSSProperties = {};
   if (themeSettings?.font_family) {
     style.fontFamily = themeSettings.font_family as string;
@@ -221,7 +222,7 @@ export function SitePageRenderer({ blocks, themeSettings, pricingData }: SitePag
       case "social": return <SocialSection content={block.content} />;
       case "logos": return <LogosSection content={block.content} />;
       case "spacer": return <SpacerSection content={block.content} />;
-      case "form": return <FormSection content={block.content} />;
+      case "form": return <FormSection content={block.content} pageId={pageId} />;
       default: return null;
     }
   };

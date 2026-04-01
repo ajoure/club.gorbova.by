@@ -84,6 +84,7 @@ export function DomainHomePage() {
         <SitePageRenderer
           blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
           themeSettings={siteBuilderPage.theme_settings || {}}
+          pageId={siteBuilderPage.id}
         />
       </div>
     );
