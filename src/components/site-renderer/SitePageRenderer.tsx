@@ -188,9 +188,10 @@ interface SitePageRendererProps {
   blocks: SiteBlock[];
   themeSettings?: Record<string, unknown>;
   pricingData?: PricingDataMap;
+  pageId?: string;
 }
 
-export function SitePageRenderer({ blocks, themeSettings, pricingData }: SitePageRendererProps) {
+export function SitePageRenderer({ blocks, themeSettings, pricingData, pageId }: SitePageRendererProps) {
   const style: React.CSSProperties = {};
   if (themeSettings?.font_family) {
     style.fontFamily = themeSettings.font_family as string;
