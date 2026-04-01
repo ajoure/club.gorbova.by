@@ -259,6 +259,8 @@ serve(async (req) => {
                 source_id: item.subscription_id,
                 tariff_name: tariffName,
                 product_name: productName,
+                product_id: subscriptionProductId,
+                product_resolve_source: productResolveSource,
                 // Sub-patch B: Forward parent lineage (nullable, queue is not primary)
                 parent_event_key: queueParentEventKey,
                 parent_execution_key: queueParentExecutionKey,
