@@ -42,6 +42,7 @@ export default function SitePageBySlug() {
       <SitePageRenderer
         blocks={(page.blocks as unknown as SiteBlock[]) || []}
         themeSettings={page.theme_settings || {}}
+        pageId={page.id}
       />
     </div>
   );
