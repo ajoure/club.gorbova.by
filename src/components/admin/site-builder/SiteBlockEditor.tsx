@@ -127,6 +127,12 @@ function BlockEditorComponent({ block, onChange }: { block: SiteBlock; onChange:
     case "logos": return <LogosBlockEditor content={block.content} onChange={onChange} />;
     case "spacer": return <SpacerBlockEditor content={block.content} onChange={onChange} />;
     case "form": return <FormBlockEditor content={block.content} onChange={onChange} />;
+    case "accordion": return <AccordionBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "tabs": return <TabsBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "callout": return <CalloutBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "quote": return <QuoteBlock content={block.content as any} onChange={(c) => onChange(c as any)} isEditing />;
+    case "audio": return <SiteAudioBlockEditor content={block.content} onChange={onChange} />;
+    case "embed": return <SiteEmbedBlockEditor content={block.content} onChange={onChange} />;
     default: return <p className="text-sm text-muted-foreground">Неизвестный тип блока: {block.type}</p>;
   }
 }
