@@ -89,7 +89,7 @@ export default function AdminSystemDocs({
 
   // Deep-link params
   const domainParam = presetDomain || searchParams.get("domain") || SYSTEM_DOC_DOMAINS[0].key;
-  const modeParam = (searchParams.get("mode") as ViewMode) || (presetDomain ? "manual" : "manual");
+  const modeParam = (searchParams.get("mode") as ViewMode) || undefined;
   const versionParam = searchParams.get("version") || undefined;
 
   const [activeDomain, setActiveDomain] = useState(domainParam);
