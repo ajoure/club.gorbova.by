@@ -11,14 +11,10 @@
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { toTzDateKey, dayWindowUtc } from './timezone.ts';
+import { toTzDateKey, dayWindowUtc, APP_TZ } from './timezone.ts';
 
 /** Grace period: 72 hours after access_end_at, subscription still counts as valid */
 const GRACE_PERIOD_MS = 72 * 60 * 60 * 1000;
-
-/** Billing-day protection: if next_charge_at is today (Warsaw) and now < next_charge_at + N hours, access is valid */
-const BILLING_DAY_PROTECTION_HOURS = 12;
-const WARSAW_TZ = 'Europe/Warsaw';
 
 export interface AccessCheckResult {
   valid: boolean;
@@ -64,8 +60,8 @@ async function checkBillingDayProtection(
   clubProductIds: string[] | null
 ): Promise<AccessCheckResult> {
   const nowStr = now.toISOString();
-  const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
-  const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+  const todayKey = toTzDateKey(nowStr, APP_TZ);
+  const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
 
   const q = supabase
     .from('subscriptions_v2')
@@ -86,9 +82,9 @@ async function checkBillingDayProtection(
   const { data: billingDaySub } = await q.maybeSingle();
 
   if (billingDaySub?.next_charge_at) {
-    const chargeTime = new Date(billingDaySub.next_charge_at).getTime();
-    const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
-    if (now.getTime() < protectionEnd) {
+    // End-of-day protection: valid until 23:59:59 APP_TZ (todayEnd - 1s)
+    const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
+    if (now.getTime() <= endOfDayUtcMs) {
       // Audit log — fire-and-forget
       supabase.from('audit_logs').insert({
         action: 'access.validation.billing_day_protected',
@@ -99,7 +95,7 @@ async function checkBillingDayProtection(
           subscription_id: billingDaySub.id,
           next_charge_at: billingDaySub.next_charge_at,
           now: nowStr,
-          window_hours: BILLING_DAY_PROTECTION_HOURS,
+          protection_until: new Date(endOfDayUtcMs).toISOString(),
         },
       }).then(() => {});
 
@@ -457,8 +453,8 @@ export async function hasValidAccessBatch(
   // 6. PATCH 4: Batch billing-day protection for remaining users
   const stillWithoutAccess4 = userIds.filter((uid) => !results.get(uid)?.valid);
   if (stillWithoutAccess4.length > 0) {
-    const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
-    const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+    const todayKey = toTzDateKey(nowStr, APP_TZ);
+    const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
 
     const bdQuery = supabase
       .from('subscriptions_v2')
@@ -477,9 +473,9 @@ export async function hasValidAccessBatch(
 
     for (const sub of billingDaySubs || []) {
       if (!results.get(sub.user_id)?.valid && sub.next_charge_at) {
-        const chargeTime = new Date(sub.next_charge_at).getTime();
-        const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
-        if (effectiveNow.getTime() < protectionEnd) {
+        // End-of-day protection: valid until 23:59:59 APP_TZ
+        const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
+        if (effectiveNow.getTime() <= endOfDayUtcMs) {
           results.set(sub.user_id, {
             valid: true,
             source: 'subscription',
@@ -496,7 +492,7 @@ export async function hasValidAccessBatch(
               subscription_id: sub.id,
               next_charge_at: sub.next_charge_at,
               now: nowStr,
-              window_hours: BILLING_DAY_PROTECTION_HOURS,
+              protection_until: new Date(endOfDayUtcMs).toISOString(),
             },
           }).then(() => {});
         }

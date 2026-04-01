@@ -504,6 +504,26 @@ Deno.serve(async (req) => {
               access_status_was: member.access_status,
             },
           });
+
+          // DM to kicked user (non-fatal: failure does not undo kick)
+          try {
+            const dmText = `❌ Ваш доступ к ${club.club_name || 'клубу'} завершён.\n\nПричина: срок доступа истёк.\n\nВы можете вернуться в любой момент, оформив подписку 👇`;
+            const dmKeyboard = {
+              inline_keyboard: [[{ text: '💳 Продлить подписку', url: 'https://gorbova.lovable.app/pricing' }]],
+            };
+            const dmBody: Record<string, unknown> = {
+              chat_id: member.telegram_user_id,
+              text: dmText,
+              parse_mode: 'HTML',
+              reply_markup: dmKeyboard,
+            };
+            const dmResp = await telegramRequest(botToken, 'sendMessage', dmBody);
+            if (!dmResp?.ok) {
+              console.log(`[kick-violators] DM failed for ${member.telegram_user_id}: ${dmResp?.description || 'unknown'}`);
+            }
+          } catch (dmErr) {
+            console.log(`[kick-violators] DM error for ${member.telegram_user_id} (non-fatal):`, dmErr);
+          }
         }
 
         // Small delay to avoid rate limiting
