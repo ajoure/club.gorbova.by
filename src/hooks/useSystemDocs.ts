@@ -26,7 +26,7 @@ export function useSystemDocs({
   const { user } = useAuth();
   const [allVersions, setAllVersions] = useState<DocVersion[]>([]);
   const [selectedManualVersion, setSelectedManualVersion] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
+  const [viewMode, setViewMode] = useState<ViewMode>(initialMode || "manual");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [activating, setActivating] = useState(false);
