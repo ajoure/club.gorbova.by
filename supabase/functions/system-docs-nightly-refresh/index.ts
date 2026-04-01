@@ -205,9 +205,9 @@ serve(async (req) => {
 
     await supabase.from('audit_logs').insert({
       action: completedAction,
-      actor_type: 'system',
-      actor_user_id: null,
-      actor_label: source === 'manual' ? 'admin_system_docs' : 'system_docs_nightly_refresh',
+      actor_type: actorType,
+      actor_user_id: actorUserId,
+      actor_label: actorLabel,
       meta: { batch_id: batchKey, updated_count: updatedCount, warnings, source },
     });
 
