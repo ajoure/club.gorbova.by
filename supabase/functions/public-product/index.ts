@@ -37,22 +37,10 @@ Deno.serve(async (req) => {
       );
     }
     
-    // Check if user is a former club member who should see reentry pricing
+    // PATCH-FINAL: Check product-scoped reentry pricing instead of global profile flag
     let isReentryPricing = false;
     let reentryMessage = "";
-    if (userId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("was_club_member, reentry_penalty_waived")
-        .eq("user_id", userId)
-        .single();
-      
-      if (profile?.was_club_member && !profile?.reentry_penalty_waived) {
-        isReentryPricing = true;
-        reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
-        console.log(`[public-product] User ${userId} is former club member, applying reentry pricing`);
-      }
-    }
+    // Product ID will be resolved after fetching the product below
 
     // Fetch product by primary_domain with landing_config
     const { data: product, error: productError } = await supabase
