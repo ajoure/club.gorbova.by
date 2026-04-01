@@ -1015,12 +1015,9 @@ Deno.serve(async (req) => {
     console.error("Audit log error (non-critical):", auditError);
   }
 
-  // 7. Phase 1: Write ledger entry (BEFORE telegram call for parent lineage)
-  let grantLedgerExecutionKey: string | null = null;
-  let grantLedgerSourceEventKey: string | null = null;
+  // 7. Phase 1: Write ledger entry
   try {
     const actionType = existingProductSub ? 'extend' : 'grant';
-    grantLedgerSourceEventKey = `gafo:webhook:${orderId}`;
     
     const postCheck = buildPostCheck({
       entitlement: { status: results.entitlement?.action || 'unknown', ref: results.entitlement?.id },
