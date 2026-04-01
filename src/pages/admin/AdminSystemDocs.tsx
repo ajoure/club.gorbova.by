@@ -32,7 +32,7 @@ interface AdminSystemDocsProps {
 
 function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
   domain: SystemDocDomain;
-  mode: ViewMode;
+  mode?: ViewMode;
   version?: string;
   onModeChange?: (m: ViewMode) => void;
   onVersionChange?: (v: string | undefined) => void;
@@ -89,7 +89,7 @@ export default function AdminSystemDocs({
 
   // Deep-link params
   const domainParam = presetDomain || searchParams.get("domain") || SYSTEM_DOC_DOMAINS[0].key;
-  const modeParam = (searchParams.get("mode") as ViewMode) || (presetDomain ? "manual" : "manual");
+  const modeParam = (searchParams.get("mode") as ViewMode) || undefined;
   const versionParam = searchParams.get("version") || undefined;
 
   const [activeDomain, setActiveDomain] = useState(domainParam);
@@ -169,13 +169,16 @@ export default function AdminSystemDocs({
         .select("section_key, version_label")
         .order("created_at");
 
-      const existingKeys = new Set(
-        ((existing as any[]) || []).map((d: any) => d.section_key)
+      const existingManualKeys = new Set(
+        ((existing as any[]) || [])
+          .filter((d: any) => d.version_label !== "AUTO-CURRENT")
+          .map((d: any) => d.section_key)
       );
 
       let created = 0;
+      const createdDomains: string[] = [];
       for (const domain of SYSTEM_DOC_DOMAINS) {
-        if (existingKeys.has(domain.key)) continue;
+        if (existingManualKeys.has(domain.key)) continue;
         const { error } = await supabase.from("admin_docs" as any).insert({
           section_key: domain.key,
           version_label: "POINT A",
@@ -185,7 +188,7 @@ export default function AdminSystemDocs({
           created_by: user?.id || null,
           updated_by: user?.id || null,
         } as any);
-        if (!error) created++;
+        if (!error) { created++; createdDomains.push(domain.key); }
       }
 
       if (created > 0) {
@@ -195,7 +198,7 @@ export default function AdminSystemDocs({
           actor_type: "user",
           actor_user_id: user?.id || null,
           actor_label: "admin_system_docs_seed",
-          meta: { affected_count: created, domains: SYSTEM_DOC_DOMAINS.filter(d => !existingKeys.has(d.key)).map(d => d.key) },
+          meta: { affected_count: created, created_domains: createdDomains },
         } as any);
       } else {
         toast.info("Все домены уже содержат документацию");

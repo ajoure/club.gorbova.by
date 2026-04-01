@@ -26,7 +26,7 @@ export function useSystemDocs({
   const { user } = useAuth();
   const [allVersions, setAllVersions] = useState<DocVersion[]>([]);
   const [selectedManualVersion, setSelectedManualVersion] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
+  const [viewMode, setViewMode] = useState<ViewMode>(initialMode || "manual");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -105,8 +105,18 @@ export function useSystemDocs({
         }
       } else {
         const manual = docs.filter((d) => !isAutoVersion(d));
-        const active = manual.find((d) => d.status === "active");
-        setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
+        const auto = docs.find((d) => isAutoVersion(d));
+
+        // Fallback: если manual-версий нет, но есть AUTO-CURRENT → авто-режим
+        if (manual.length === 0 && auto) {
+          setSelectedManualVersion("");
+          if (!initialMode) {
+            setViewMode("auto");
+          }
+        } else {
+          const active = manual.find((d) => d.status === "active");
+          setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
+        }
       }
     }
     setLoading(false);
