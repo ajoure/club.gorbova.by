@@ -256,6 +256,7 @@ const App = () => {
               {/* Admin routes - V2 (Products, Orders, Payments, Subscriptions) */}
               <Route path="/admin/products-v2" element={<ProtectedRoute><LazyRoute><AdminProductsV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/products-v2/docs" element={<ProtectedRoute><LazyRoute><AdminProductsDocs /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/docs" element={<ProtectedRoute><LazyRoute><AdminSystemDocs /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/products-v2/:productId" element={<ProtectedRoute><LazyRoute><AdminProductDetailV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/orders-v2" element={<ProtectedRoute><LazyRoute><AdminOrdersV2 /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/payments-v2" element={<Navigate to="/admin/payments" replace />} />
