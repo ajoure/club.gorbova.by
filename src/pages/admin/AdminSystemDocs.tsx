@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,9 @@ import {
   Loader2,
   RefreshCw,
   Sprout,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -21,6 +24,7 @@ import {
   SystemDocDomain,
   ViewMode,
 } from "@/lib/systemDocsRegistry";
+import { GlassCard } from "@/components/ui/GlassCard";
 
 interface AdminSystemDocsProps {
   presetDomain?: string;
@@ -28,12 +32,24 @@ interface AdminSystemDocsProps {
   backLabel?: string;
 }
 
-function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
+interface SeedResult {
+  created_domains?: string[];
+  repaired_domains?: string[];
+  skipped_domains?: string[];
+  manual_review_domains?: string[];
+  manual_review_docs?: any[];
+  repair_mapping?: any[];
+  warnings?: any[];
+  auto_updated?: number;
+}
+
+function DomainTab({ domain, mode, version, onModeChange, onVersionChange, onSeedRequest }: {
   domain: SystemDocDomain;
   mode?: ViewMode;
   version?: string;
   onModeChange?: (m: ViewMode) => void;
   onVersionChange?: (v: string | undefined) => void;
+  onSeedRequest?: () => void;
 }) {
   const docs = useSystemDocs({
     sectionKey: domain.key,
@@ -69,6 +85,8 @@ function DomainTab({ domain, mode, version, onModeChange, onVersionChange }: {
       onDownload={docs.handleDownload}
       onCreateNewVersion={docs.handleCreateNewVersion}
       onActivateVersion={docs.handleActivateVersion}
+      isPlaceholder={docs.isPlaceholder}
+      onSeedRequest={onSeedRequest}
     />
   );
 }
@@ -84,15 +102,14 @@ export default function AdminSystemDocs({
   const rbac = useRbac();
   const [seeding, setSeeding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [seedResult, setSeedResult] = useState<SeedResult | null>(null);
 
-  // Deep-link params
   const domainParam = presetDomain || searchParams.get("domain") || SYSTEM_DOC_DOMAINS[0].key;
   const modeParam = (searchParams.get("mode") as ViewMode) || undefined;
   const versionParam = searchParams.get("version") || undefined;
 
   const [activeDomain, setActiveDomain] = useState(domainParam);
 
-  // Last refresh status
   const [lastRefresh, setLastRefresh] = useState<{
     status: string;
     timestamp: string;
@@ -105,7 +122,6 @@ export default function AdminSystemDocs({
     }
   }, [rbac.loading, rbac.isSuperAdmin]);
 
-  // Fetch last refresh status
   useEffect(() => {
     const fetchRefreshStatus = async () => {
       const { data } = await supabase
@@ -116,6 +132,7 @@ export default function AdminSystemDocs({
           "system_docs.nightly_refresh_failed",
           "system_docs.manual_refresh_completed",
           "system_docs.manual_refresh_failed",
+          "system_docs.seed_completed",
         ])
         .order("created_at", { ascending: false })
         .limit(1);
@@ -128,9 +145,8 @@ export default function AdminSystemDocs({
       }
     };
     fetchRefreshStatus();
-  }, [refreshing]);
+  }, [refreshing, seeding]);
 
-  // Sync URL params helper
   const updateSearchParams = (updates: Record<string, string | undefined>) => {
     if (presetDomain) return;
     const params: Record<string, string> = {};
@@ -142,15 +158,12 @@ export default function AdminSystemDocs({
     setSearchParams(params);
   };
 
-  // Update URL on tab change (not for preset)
   const handleDomainChange = (key: string) => {
     setActiveDomain(key);
-    // Clear version when switching domains; preserve mode
     updateSearchParams({ domain: key, mode: modeParam, version: undefined });
   };
 
   const handleModeChange = (m: ViewMode) => {
-    // In auto mode, clear version from URL
     updateSearchParams({ mode: m, version: m === 'auto' ? undefined : searchParams.get('version') || undefined });
   };
 
@@ -158,59 +171,39 @@ export default function AdminSystemDocs({
     updateSearchParams({ version: v });
   };
 
-  // Seed: create baseline POINT A for empty domains
+  // Seed: invoke EF with source='seed'
   const handleSeed = async () => {
     setSeeding(true);
+    setSeedResult(null);
     try {
-      const { data: existing } = await supabase
-        .from("admin_docs" as any)
-        .select("section_key, version_label")
-        .order("created_at");
-
-      const existingManualKeys = new Set(
-        ((existing as any[]) || [])
-          .filter((d: any) => d.version_label !== "AUTO-CURRENT")
-          .map((d: any) => d.section_key)
+      const { data, error } = await supabase.functions.invoke(
+        "system-docs-nightly-refresh",
+        { body: { source: "seed" } }
       );
-
-      let created = 0;
-      const createdDomains: string[] = [];
-      for (const domain of SYSTEM_DOC_DOMAINS) {
-        if (existingManualKeys.has(domain.key)) continue;
-        const { error } = await supabase.from("admin_docs" as any).insert({
-          section_key: domain.key,
-          version_label: "POINT A",
-          status: "active",
-          content_text: `${domain.title}\n===\n\n## Цель документа\n\n(Заполнить)\n\n===\n\n## Источники истины (SoT)\n\n(Заполнить)\n\n===\n\n## Таблицы и связи\n\n(Заполнить)\n\n===\n\n## Edge Functions\n\n(Заполнить)\n\n===\n\n## UI / Роуты\n\n(Заполнить)\n\n===\n\n## Legacy / Deprecated\n\n(Заполнить)\n\n===\n\n## Anti-duplication proof\n\n(Заполнить)\n\n===\n\n## Known issues / Open tails\n\n(Заполнить)\n\n===\n\n## Change log\n\nСоздано seed'ом: ${new Date().toISOString()}`,
-          meta: { source: "seed", managed_by: "manual" },
-          created_by: user?.id || null,
-          updated_by: user?.id || null,
-        } as any);
-        if (!error) { created++; createdDomains.push(domain.key); }
-      }
-
-      if (created > 0) {
-        toast.success(`Создано ${created} baseline документов`);
-        await supabase.from("audit_logs" as any).insert({
-          action: "system_docs.seed_generated",
-          actor_type: "user",
-          actor_user_id: user?.id || null,
-          actor_label: "admin_system_docs_seed",
-          meta: { affected_count: created, created_domains: createdDomains },
-        } as any);
+      if (error) {
+        toast.error("Ошибка запуска seed");
+        console.error(error);
       } else {
-        toast.info("Все домены уже содержат документацию");
+        const result = data as SeedResult;
+        setSeedResult(result);
+        const created = result.created_domains?.length || 0;
+        const repaired = result.repaired_domains?.length || 0;
+        const review = result.manual_review_domains?.length || 0;
+        if (created > 0 || repaired > 0) {
+          toast.success(`Seed: создано ${created}, отремонтировано ${repaired}${review > 0 ? `, manual review: ${review}` : ""}`);
+        } else {
+          toast.info("Seed: все домены уже содержат документацию");
+        }
+        // Reload to show new docs
+        setTimeout(() => window.location.reload(), 1500);
       }
-      // Force re-render by navigating to same page
-      window.location.reload();
     } catch (e) {
       console.error("Seed error:", e);
-      toast.error("Ошибка при генерации документации");
+      toast.error("Ошибка при запуске seed");
     }
     setSeeding(false);
   };
 
-  // Manual refresh: invoke the same EF as nightly
   const handleManualRefresh = async () => {
     setRefreshing(true);
     try {
@@ -267,7 +260,6 @@ export default function AdminSystemDocs({
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Auto-refresh status */}
             {lastRefresh && (
               <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
                 <span
@@ -317,6 +309,54 @@ export default function AdminSystemDocs({
           )}
         </div>
 
+        {/* Seed result panel */}
+        {seedResult && (
+          <GlassCard className="p-4 space-y-2">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
+              <Sprout className="h-3.5 w-3.5" />
+              Результат Seed
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              {(seedResult.created_domains?.length || 0) > 0 && (
+                <div className="flex items-center gap-1.5 text-green-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Создано: {seedResult.created_domains!.join(", ")}
+                </div>
+              )}
+              {(seedResult.repaired_domains?.length || 0) > 0 && (
+                <div className="flex items-center gap-1.5 text-blue-600">
+                  <CheckCircle2 className="h-3 w-3" />
+                  Отремонтировано: {seedResult.repaired_domains!.join(", ")}
+                </div>
+              )}
+              {(seedResult.skipped_domains?.length || 0) > 0 && (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  Пропущено: {seedResult.skipped_domains!.join(", ")}
+                </div>
+              )}
+              {(seedResult.manual_review_domains?.length || 0) > 0 && (
+                <div className="flex items-center gap-1.5 text-amber-600">
+                  <AlertTriangle className="h-3 w-3" />
+                  Manual review: {seedResult.manual_review_domains!.join(", ")}
+                </div>
+              )}
+            </div>
+            {(seedResult.warnings?.length || 0) > 0 && (
+              <div className="text-[10px] text-amber-600 space-y-0.5">
+                {seedResult.warnings!.slice(0, 5).map((w: any, i: number) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+                    [{w.type}] {w.domain}: {w.message}
+                  </div>
+                ))}
+                {seedResult.warnings!.length > 5 && (
+                  <div className="text-muted-foreground">...и ещё {seedResult.warnings!.length - 5} предупреждений</div>
+                )}
+              </div>
+            )}
+          </GlassCard>
+        )}
+
         {/* Domain tabs */}
         {presetDomain ? (
           <DomainTab
@@ -325,6 +365,7 @@ export default function AdminSystemDocs({
             version={versionParam}
             onModeChange={handleModeChange}
             onVersionChange={handleVersionChange}
+            onSeedRequest={handleSeed}
           />
         ) : (
           <Tabs value={activeDomain} onValueChange={handleDomainChange}>
@@ -340,7 +381,14 @@ export default function AdminSystemDocs({
 
             {SYSTEM_DOC_DOMAINS.map((d) => (
               <TabsContent key={d.key} value={d.key}>
-                <DomainTab domain={d} mode={modeParam} version={versionParam} onModeChange={handleModeChange} onVersionChange={handleVersionChange} />
+                <DomainTab
+                  domain={d}
+                  mode={modeParam}
+                  version={versionParam}
+                  onModeChange={handleModeChange}
+                  onVersionChange={handleVersionChange}
+                  onSeedRequest={handleSeed}
+                />
               </TabsContent>
             ))}
           </Tabs>

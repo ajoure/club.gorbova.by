@@ -4,8 +4,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import {
   DocVersion,
-  DocMeta,
-  AUTO_CURRENT_LABEL,
   getManualVersions,
   getAutoVersion,
   isAutoVersion,
@@ -16,6 +14,21 @@ interface UseSystemDocsOptions {
   sectionKey: string;
   initialMode?: ViewMode;
   initialVersion?: string;
+}
+
+/** Check if a doc is a seed placeholder (multiple scaffold signatures + source=seed) */
+function detectPlaceholder(doc: DocVersion | null): boolean {
+  if (!doc) return false;
+  const content = doc.content_text || "";
+  const meta = doc.meta as any;
+  if (meta?.source !== "seed") return false;
+  // Must match at least 2 scaffold patterns
+  const signatures = ["(Заполнить)", "## Цель документа\n\n(Заполнить)", "## Anti-duplication proof\n\n(Заполнить)"];
+  let matchCount = 0;
+  for (const sig of signatures) {
+    if (content.includes(sig)) matchCount++;
+  }
+  return matchCount >= 2;
 }
 
 export function useSystemDocs({
@@ -40,7 +53,8 @@ export function useSystemDocs({
     return manualVersions.find((v) => v.version_label === selectedManualVersion) || null;
   }, [viewMode, autoVersion, manualVersions, selectedManualVersion]);
 
-  // Parse content into sections by === separators
+  const isPlaceholder = useMemo(() => detectPlaceholder(currentDoc), [currentDoc]);
+
   const sections = useMemo(() => {
     const text = currentDoc?.content_text || "";
     if (!text) return [];
@@ -92,7 +106,6 @@ export function useSystemDocs({
       const docs = (data as unknown as DocVersion[]) || [];
       setAllVersions(docs);
 
-      // Auto-select version
       if (initialVersion) {
         const found = docs.find((d) => d.version_label === initialVersion);
         if (found) {
@@ -104,13 +117,19 @@ export function useSystemDocs({
             setSelectedManualVersion(found.version_label);
           }
         } else {
-          // version not found — fallback priority: active manual > first manual > auto
           const manual = docs.filter((d) => !isAutoVersion(d));
           const auto = docs.find((d) => isAutoVersion(d));
           if (manual.length > 0) {
             const active = manual.find((d) => d.status === "active");
-            setViewMode("manual");
-            setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
+            // Auto-fallback: if active manual is placeholder and auto exists, show auto
+            const activeDoc = active || manual[0];
+            if (activeDoc && detectPlaceholder(activeDoc) && auto) {
+              setViewMode("auto");
+              setSelectedManualVersion(activeDoc.version_label);
+            } else {
+              setViewMode("manual");
+              setSelectedManualVersion(activeDoc?.version_label || "");
+            }
           } else if (auto) {
             setViewMode("auto");
             setSelectedManualVersion("");
@@ -125,7 +144,14 @@ export function useSystemDocs({
           setViewMode("auto");
         } else {
           const active = manual.find((d) => d.status === "active");
-          setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
+          const activeDoc = active || manual[0];
+          // Auto-fallback for placeholder
+          if (activeDoc && detectPlaceholder(activeDoc) && auto) {
+            setViewMode("auto");
+            setSelectedManualVersion(activeDoc.version_label);
+          } else {
+            setSelectedManualVersion(activeDoc?.version_label || "");
+          }
         }
       }
     }
@@ -225,7 +251,6 @@ export function useSystemDocs({
       if (!target || target.status === "active") return;
       setActivating(true);
 
-      // Step 1: Archive current active manual version (exclude AUTO-CURRENT)
       const currentActive = manualVersions.find((v) => v.status === "active");
       if (currentActive) {
         const { error: archiveError } = await supabase
@@ -243,7 +268,6 @@ export function useSystemDocs({
         });
       }
 
-      // Step 2: Activate target
       const { error } = await supabase
         .from("admin_docs" as any)
         .update({ status: "active", updated_by: user?.id } as any)
@@ -277,6 +301,7 @@ export function useSystemDocs({
     creating,
     activating,
     copied,
+    isPlaceholder,
     fetchVersions,
     handleCopyAll,
     handleDownload,

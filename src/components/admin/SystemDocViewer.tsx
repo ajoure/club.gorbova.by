@@ -7,11 +7,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { GlassCard } from "@/components/ui/GlassCard";
-import { Copy, Check, FileText, Plus, Download, Zap, Loader2, AlertTriangle } from "lucide-react";
+import { Copy, Check, FileText, Plus, Download, Zap, Loader2, AlertTriangle, Sprout } from "lucide-react";
 import {
   DocVersion,
   ViewMode,
-  isAutoVersion,
   SystemDocDomain,
 } from "@/lib/systemDocsRegistry";
 
@@ -32,6 +31,8 @@ interface SystemDocViewerProps {
   onDownload: (filename: string) => void;
   onCreateNewVersion: () => void;
   onActivateVersion: (label: string) => void;
+  isPlaceholder?: boolean;
+  onSeedRequest?: () => void;
 }
 
 export function SystemDocViewer({
@@ -51,9 +52,12 @@ export function SystemDocViewer({
   onDownload,
   onCreateNewVersion,
   onActivateVersion,
+  isPlaceholder,
+  onSeedRequest,
 }: SystemDocViewerProps) {
   const meta = currentDoc?.meta as any;
   const isTruncated = meta?.truncated === true;
+  const isPlatformMaster = domain.key === "platform_master";
 
   return (
     <div className="space-y-4">
@@ -158,21 +162,54 @@ export function SystemDocViewer({
             disabled={!currentDoc}
           >
             {copied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-            {copied ? "Скопировано" : "Копировать"}
+            {copied ? "Скопировано" : isPlatformMaster && viewMode === "auto" ? "Копировать master как контекст" : "Копировать"}
           </Button>
 
           <Button
             variant="secondary"
             size="sm"
             className="h-8 text-xs"
-            onClick={() => onDownload(domain.exportFileName)}
+            onClick={() => onDownload(isPlatformMaster ? "system-architecture-master.md" : domain.exportFileName)}
             disabled={!currentDoc}
           >
             <Download className="h-3 w-3 mr-1" />
-            Скачать
+            {isPlatformMaster && viewMode === "auto" ? "Скачать master" : "Скачать"}
           </Button>
         </div>
       </div>
+
+      {/* Placeholder warning */}
+      {isPlaceholder && viewMode === "manual" && (
+        <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-500/10 rounded-lg px-3 py-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Placeholder — содержит только шаблон seed. Рекомендуется перегенерировать baseline или переключиться на AUTO-CURRENT.
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onSeedRequest && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[10px] px-2"
+                onClick={onSeedRequest}
+              >
+                <Sprout className="h-2.5 w-2.5 mr-1" />
+                Перегенерировать
+              </Button>
+            )}
+            {autoVersion && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-6 text-[10px] px-2"
+                onClick={() => onSetViewMode("auto")}
+              >
+                Открыть AUTO-CURRENT
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Truncation warning */}
       {isTruncated && (
@@ -207,7 +244,7 @@ export function SystemDocViewer({
         <GlassCard className="text-center py-12">
           <FileText className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
           <p className="text-sm text-muted-foreground">
-            Ручные версии ещё не созданы. Запустите seed для генерации baseline.
+            Ручные версии ещё не созданы. Запустите Seed для генерации baseline.
           </p>
         </GlassCard>
       )}
