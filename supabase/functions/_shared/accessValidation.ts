@@ -473,9 +473,9 @@ export async function hasValidAccessBatch(
 
     for (const sub of billingDaySubs || []) {
       if (!results.get(sub.user_id)?.valid && sub.next_charge_at) {
-        const chargeTime = new Date(sub.next_charge_at).getTime();
-        const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
-        if (effectiveNow.getTime() < protectionEnd) {
+        // End-of-day protection: valid until 23:59:59 APP_TZ
+        const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
+        if (effectiveNow.getTime() <= endOfDayUtcMs) {
           results.set(sub.user_id, {
             valid: true,
             source: 'subscription',
@@ -492,7 +492,7 @@ export async function hasValidAccessBatch(
               subscription_id: sub.id,
               next_charge_at: sub.next_charge_at,
               now: nowStr,
-              window_hours: BILLING_DAY_PROTECTION_HOURS,
+              protection_until: new Date(endOfDayUtcMs).toISOString(),
             },
           }).then(() => {});
         }
