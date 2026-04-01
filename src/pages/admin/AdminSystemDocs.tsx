@@ -169,13 +169,16 @@ export default function AdminSystemDocs({
         .select("section_key, version_label")
         .order("created_at");
 
-      const existingKeys = new Set(
-        ((existing as any[]) || []).map((d: any) => d.section_key)
+      const existingManualKeys = new Set(
+        ((existing as any[]) || [])
+          .filter((d: any) => d.version_label !== "AUTO-CURRENT")
+          .map((d: any) => d.section_key)
       );
 
       let created = 0;
+      const createdDomains: string[] = [];
       for (const domain of SYSTEM_DOC_DOMAINS) {
-        if (existingKeys.has(domain.key)) continue;
+        if (existingManualKeys.has(domain.key)) continue;
         const { error } = await supabase.from("admin_docs" as any).insert({
           section_key: domain.key,
           version_label: "POINT A",
