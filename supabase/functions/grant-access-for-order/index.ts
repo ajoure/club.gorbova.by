@@ -909,7 +909,7 @@ Deno.serve(async (req) => {
                     source_subject_ref: orderId,
                     source_order_id: orderId,
                     action_type: 'grant',
-                    reason_code: 'product_access_rule',
+                    reason_code: 'rule_engine_bonus',
                     target_type: 'product',
                     target_key: `${userId}:${targetProdId}`,
                     user_id: userId,
