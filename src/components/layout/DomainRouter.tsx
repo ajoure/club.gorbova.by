@@ -131,3 +131,13 @@ export function DomainHomePage() {
     />
   );
 }
+
+/** Wrapper that fetches pricing data for site builder pages */
+function SiteBuilderPageWithPricing({ blocks, themeSettings, pageId }: { blocks: import("@/services/sitePages/types").SiteBlock[]; themeSettings: Record<string, unknown>; pageId: string }) {
+  const { pricingData } = useSitePricingData(blocks);
+  return (
+    <div className="site-public-layout">
+      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} />
+    </div>
+  );
+}

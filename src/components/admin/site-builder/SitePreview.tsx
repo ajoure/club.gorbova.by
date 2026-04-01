@@ -1,4 +1,5 @@
 import { SitePageRenderer } from "@/components/site-renderer/SitePageRenderer";
+import { useSitePricingData } from "@/hooks/useSitePricingData";
 import type { SiteBlock } from "@/services/sitePages/types";
 
 interface SitePreviewProps {
@@ -8,9 +9,10 @@ interface SitePreviewProps {
 }
 
 export function SitePreview({ blocks, themeSettings, pageId }: SitePreviewProps) {
+  const { pricingData } = useSitePricingData(blocks);
   return (
     <div className="bg-white min-h-full">
-      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pageId={pageId} />
+      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} />
     </div>
   );
 }
