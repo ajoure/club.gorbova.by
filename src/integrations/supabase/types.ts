@@ -8075,6 +8075,7 @@ export type Database = {
           form_data: Json
           id: string
           metadata: Json
+          order_id: string | null
           page_id: string
           profile_id: string | null
           public_id: string
@@ -8091,6 +8092,7 @@ export type Database = {
           form_data?: Json
           id?: string
           metadata?: Json
+          order_id?: string | null
           page_id: string
           profile_id?: string | null
           public_id: string
@@ -8107,6 +8109,7 @@ export type Database = {
           form_data?: Json
           id?: string
           metadata?: Json
+          order_id?: string | null
           page_id?: string
           profile_id?: string | null
           public_id?: string
@@ -8117,6 +8120,13 @@ export type Database = {
           workspace_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "site_form_submissions_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders_v2"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "site_form_submissions_page_id_fkey"
             columns: ["page_id"]
