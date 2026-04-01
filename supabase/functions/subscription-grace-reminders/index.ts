@@ -380,15 +380,20 @@ Deno.serve(async (req) => {
 
     for (const sub of validNewlyExpired) {
       try {
-        // Anti-stale guard: re-read subscription by ID
+        // Anti-stale guard: re-read subscription by ID before starting grace
         const { data: freshSub } = await supabase
           .from('subscriptions_v2')
           .select('id, access_end_at, status')
           .eq('id', sub.id)
           .maybeSingle();
 
-        if (freshSub && new Date(freshSub.access_end_at) > new Date(nowIso)) {
-          console.log(`[anti-stale] Subscription ${sub.id} already renewed (access_end_at=${freshSub.access_end_at}), skipping grace`);
+        // PATCH-FINAL: Skip if subscription was superseded, renewed, or no longer valid
+        if (!freshSub || freshSub.status === 'superseded' || freshSub.status === 'canceled') {
+          console.log(`[anti-stale-grace-start] Subscription ${sub.id} status=${freshSub?.status}, skipping grace start`);
+          continue;
+        }
+        if (new Date(freshSub.access_end_at) > new Date(nowIso)) {
+          console.log(`[anti-stale-grace-start] Subscription ${sub.id} already renewed (access_end_at=${freshSub.access_end_at}), skipping grace`);
           continue;
         }
 
