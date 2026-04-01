@@ -2,238 +2,236 @@
 
 &nbsp;
 
-1. **В блоке C structured meta добавь ещё subscription_id в subscription-renewal-reminders.**
+1. **PATCH B лучше разделить на два результата:**
   &nbsp;
-  - В финальном наборе полей для **обоих** writers должен быть один и тот же полный контракт:
-  - subscription_id, product_id, product_name, club_id, club_name, effective_end_at, amount, currency, pricing_mode, source
-  - Сейчас в твоём тексте для renewal reminders subscription_id не перечислен явно.
+  - B1 — SQL proof по email_logs и корректировка статуса email-proof;
+  - B2 — кодовый фикс telegram-process-access-queue для product_name.
+    Так будет проще принять отдельно доказательство и отдельно маленький кодовый фикс.
   &nbsp;
-2. **В блоке B живой proof по email нужно строить не только по telegram_logs.**
+2. **В PATCH A явно зафиксируй, что fallback нужен не только для product_name, но и для product_id в meta/log context, если он отсутствует.**
   &nbsp;
-  - Основной источник proof для email — именно email outbox / send log / delivery log, если он есть.
-  - telegram_logs допустим только как вспомогательный источник для сопоставления событий, но не как основной proof email-отправки.
-  - Это нужно прямо зафиксировать в плане, чтобы потом не закрыли email proof по Telegram-логам.
+  - tariff_name можно честно оставить UNKNOWN, это нормально;
+  - но product_id и product_name должны заполняться последовательно из product_club_mappings.
   &nbsp;
-3. **В блоке D явно зафиксируй правило про passthrough surfaces.**
+3. **Добавь в план post-check для PATCH A.**
+  После деплоя нужен proof на новых queue items:
   &nbsp;
-  - Чтобы потом не было спора, допиши:
-  - generate-renewal-ctas, public-checkout, admin-create-payment-link, email/TG price text **не принимают pricing decision**, а только используют уже рассчитанную цену.
-  - Поэтому их proof — это не “читают product_reentry_pricing напрямую”, а “не содержат собственной pricing-логики и получают amount извне”.
-  - Это важное уточнение для финальной матрицы.
+  - product_name != 'UNKNOWN';
+  - product_resolve_source = 'club_mapping';
+  - subscription_id is null при этом не ломает обработку.
+    Иначе фикс будет только “по коду”.
   &nbsp;
-4. **В блоке A3/A4 добавь обязательный audit для corrective notifications и shortened CSV.**
+4. **В SQL proof по email_logs расширь критерии stale.**
+  Сейчас у тебя:
   &nbsp;
-  - Нужен отдельный actor_label, batch_id, counts:
-    &nbsp;
-    - сколько auto-notify отправлено;
-    - сколько попало в shortened manual review;
-    - сколько minor skipped.
-    &nbsp;
-  - Иначе corrective tail потом будет трудно доказать.
+  - updated_at > sent_at AND access_end_at > sent_at
+  - superseded/canceled
+    Этого в целом достаточно, но лучше явно разделить verdict на:
+  - valid
+  - stale_after_renew
+  - stale_superseded
+  - stale_canceled
+    Чтобы итоговая статистика была точнее.
   &nbsp;
-5. **В блоке A2 по wrongly_removed / valid_not_in_chat добавь явный post-check.**
+5. **Уточни, что именно считается email live proof.**
+  Не просто наличие email_logs, а:
   &nbsp;
-  - Не только “обработан”, а:
-  - сколько queued;
-  - сколько skipped как duplicates;
-  - сколько ушло в manual_review.
-  - Это нужно для конечного before/after summary.
+  - есть реальная запись renewal/grace email;
+  - есть subscription_id;
+  - verdict не stale.
+    Только тогда статус email stale proof можно переводить в done.
   &nbsp;
-6. **В блоке E final architecture proof добавь отдельную строку по subscription-charge.**
+6. **Статус Email delivery source = done — да, но только после отдельной корректировки прошлого отчета.**
+  Надо явно зафиксировать:
   &nbsp;
-  - Сейчас у тебя есть Telegram renewal как поверхность, но лучше явно выделить:
-  - subscription-charge = источник renewal execution, pricing_mode/source, notification trigger.
-  - Иначе центральная функция теряется внутри общей строки.
+  - предыдущее заключение “источник отсутствует” было ошибочным;
+  - корректный источник — email_logs через send-email.
+    Это важно, чтобы в истории не осталось противоречия.
   &nbsp;
-7. **pending-live-proof зафиксируй в DoD как допустимый исход только для одного пункта.**
+7. **В STOP-guards добавь ещё один пункт:**
+  если в product_club_mappings на один club_id найдено несколько active mappings, не просто “взять первый”, а:
   &nbsp;
-  - То есть:
-  - весь патч может считаться выполненным с пометкой pending-live-proof только по first live renewal proof;
-  - остальные пункты должны быть закрыты фактически, не “по коду”.
-  - Это лучше написать прямо в финальном разделе.
+  - логировать warning;
+  - писать product_resolve_source = 'club_mapping_ambiguous';
+  - при необходимости оставлять product_name = 'UNKNOWN', если нельзя выбрать однозначно.
+    Иначе можно тихо подставить неверный продукт.
   &nbsp;
-8. **В финальном отчёте потребуй раздельный итог по фазам:**
+8. **В DoD добавь before/after для статусов.**
+  Итог должен быть такой:
   &nbsp;
-  - done
-  - manual_review
-  - pending-live-proof
-  - not-needed / passthrough
-  - Так будет проще принять план без повторных уточнений.
+  - email delivery source → done;
+  - email stale proof → done, если SQL покажет 0 stale;
+  - pending-live-proof остаётся только для первого реального renew event.
+  &nbsp;
+9. **Небольшая формулировка:**
+  в блоке “Что НЕ будет изменено” добавь ещё:
+  &nbsp;
+  - product_reentry_pricing не трогаем;
+  - pricing logic не трогаем;
+  - только proof + fallback для corrective queue.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-В остальном план собран правильно: он уже сфокусирован именно на незакрытых хвостах и логично отделяет corrective tail, email proof, pricing coverage, structured meta и architecture proof.
+В остальном план правильный: scope маленький, логичный и без лишнего рефакторинга.
 
 &nbsp;
 
-План: PATCH-FINAL-CLEANUP v2 — доотчёт по незакрытым пунктам
+План: PATCH-FOLLOW-UP — два follow-up патча + коррекция email proof статуса
 
 ---
 
-## Контекст
+## Проблема
 
-Уже сделано и принято: product-scoped reentry pricing, anti-stale guard для superseded, частичная structured meta. Нужно закрыть оставшиеся пункты одним проходом.
+По итогам PATCH-FINAL-CLEANUP v2 выявлены два follow-up дефекта и одно ошибочное заключение:
 
----
-
-## Блок A: PHASE 1 — corrective tail (one-off SQL + data)
-
-### A1. Mirror missing
-
-- SQL dry-run: найти пары user_id+club_id где `telegram_access` row отсутствует, но canonical access валиден
-- Execute: создать row или queue grant
-- After-query: подтвердить mirror_missing = 0
-
-### A2. Wrongly removed + valid_not_in_chat
-
-- SQL dry-run: два отдельных списка с полями user_id, club_id, effective_end_at, valid_source, membership_state, recommended_action
-- Idempotency guard: проверить pending/processing в telegram_access_queue
-- Execute: queue_regrant если effective_end_at > now + 1d, иначе manual_review
-- After-query: оба списка закрыты или вынесены в manual_review файл
-
-### A3. Corrective notifications
-
-- Собрать affected users (old_mirror vs new_effective, diff > 1 day)
-- Extended > 1d → auto-notify per-club, template: «ℹ️ Уточнён срок доступа к {club_name}. Актуальный срок: до {date} (по Минску).»
-- Shortened → manual_review list (отдельный CSV)
-- After: подтвердить counts auto-sent / manual-review
-
-### A4. Shortened list
-
-- Отдельный файл `/mnt/documents/corrective_shortened_manual_review.csv`
-- Поля: user_id, club_id, club_name, old_date, new_date, diff_days, reason
+1. **Косметический дефект**: `telegram-process-access-queue` показывает `product_name: UNKNOWN` и `tariff_name: UNKNOWN` когда queue item создан без `subscription_id` (corrective batch).
+2. **Ошибочное заключение по email audit trail**: ранее зафиксировано, что «email delivery source отсутствует». Это **неверно**. Все renewal/grace email отправки проходят через `send-email` edge function, которая уже пишет в таблицу `email_logs` с `subscription_id`, `event_type`, `user_id`, `profile_id` и `meta`. Значит email audit trail **уже существует**, и статус email proof можно закрыть через `email_logs`.
+3. **pending-live-proof** остаётся как есть.
 
 ---
 
-## Блок B: PHASE 2 — email stale-reminders живой proof
+## Диагностика
 
-- SQL по `email_send_log` + `telegram_logs` после даты деплоя anti-stale guard
-- Найти все renewal/grace email events, сверить sent_at с текущим access_end_at подписки
-- Показать: count valid / count stale / count skipped_superseded
-- Если stale = 0 → зафиксировать как живой proof
-- Если stale > 0 → добавить pre-send recheck
+### UNKNOWN в queue
 
----
+Файл: `telegram-process-access-queue/index.ts`, строки 150-177.
 
-## Блок C: PHASE 4 — дополнить structured meta
+Логика:
 
-### Текущее состояние
+- Если `item.subscription_id` задан → fetch из `subscriptions_v2` join `tariffs` + `products_v2` → получает `tariffName`, `productName`
+- Если `item.subscription_id` = null → fallback `"UNKNOWN"`
 
-- `subscription-renewal-reminders` meta: есть product_id, product_name, amount, currency, source. **Нет**: club_id, club_name, effective_end_at, pricing_mode
-- `subscription-grace-reminders` meta: есть subscription_id, product_name, club_id, club_name, amount, currency, source. **Нет**: product_id, effective_end_at, pricing_mode
-- `subscription-charge` renewal notification: нет structured meta в telegram_logs (логи идут через другой путь)
+Corrective queue items были созданы без `subscription_id`, поэтому всегда `UNKNOWN`.
 
-### Фикс
+**Решение**: добавить fallback-резолв через `product_club_mappings` + `products_v2` по `club_id`, если `subscription_id` отсутствует. Это не создаёт нового source of truth — `product_club_mappings` уже является каноническим маппингом club→product.
 
-Дополнить meta во всех трёх файлах полным набором:
-`subscription_id, product_id, product_name, club_id, club_name, effective_end_at, amount, currency, pricing_mode, source`
+### Email audit trail
 
-Затронутые файлы:
+Цепочка:
 
-- `supabase/functions/subscription-renewal-reminders/index.ts` — строка ~398: добавить club_id, club_name, effective_end_at, pricing_mode
-- `supabase/functions/subscription-grace-reminders/index.ts` — строка ~194: добавить product_id, effective_end_at, pricing_mode
+- `subscription-charge` → `sendRenewalSuccessEmail()` → `supabase.functions.invoke('send-email', ...)` → `email_logs.insert()`
+- `subscription-renewal-reminders` → `supabase.functions.invoke('send-email', { context: { subscription_id, event_type, ... } })` → `email_logs.insert()`
+- `subscription-grace-reminders` → `supabase.functions.invoke('send-email', ...)` → `email_logs.insert()`
 
-Деплой обоих функций после правки.
+`send-email/index.ts` строка 435: `await supabase.from('email_logs').insert(...)` с `subscription_id`, `event_type`, `template_code`, `status`, `meta`.
+
+**Вывод**: таблица `email_logs` уже является email audit trail. Статус email proof нужно пересмотреть — живой proof можно построить по `email_logs`.
 
 ---
 
-## Блок D: PHASE 3 — pricing surfaces coverage proof
+## Предлагаемое решение
 
-### Матрица покрытия
+### PATCH A: product_name fallback в telegram-process-access-queue
 
-Все pricing surfaces и их статус reentry pricing:
+**Файл**: `supabase/functions/telegram-process-access-queue/index.ts`
+
+**Изменение**: после блока `if (item.subscription_id)` (строки 154-174) и перед fallback на строках 176-177, добавить:
+
+```
+// Fallback: resolve product via club mapping if no subscription_id
+if (!productName && item.club_id) {
+  const { data: mapping } = await supabase
+    .from("product_club_mappings")
+    .select("product_id, products_v2(name)")
+    .eq("club_id", item.club_id)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  
+  if (mapping) {
+    productName = mapping.products_v2?.name || null;
+    subscriptionProductId = subscriptionProductId || mapping.product_id;
+  }
+}
+```
+
+Tariff остаётся `"UNKNOWN"` если нет subscription — это корректно, потому что тариф привязан к подписке, а не к продукту.
+
+**Audit**: запись в meta `product_resolve_source: 'club_mapping'` для трассируемости.
+
+### PATCH B: Email stale proof через email_logs
+
+**Не требует изменения кода** — только SQL proof.
+
+Dry-run запрос по `email_logs` после даты деплоя anti-stale guard:
+
+```sql
+SELECT 
+  el.subscription_id,
+  el.event_type,
+  el.created_at as sent_at,
+  s.access_end_at,
+  s.updated_at as sub_updated_at,
+  s.status as sub_status,
+  CASE 
+    WHEN s.updated_at > el.created_at AND s.access_end_at > el.created_at 
+    THEN 'stale_after_renew'
+    WHEN s.status IN ('superseded','canceled') 
+    THEN 'stale_superseded'
+    ELSE 'valid'
+  END as verdict
+FROM email_logs el
+JOIN subscriptions_v2 s ON s.id::text = el.subscription_id
+WHERE el.event_type IN ('renewal_reminder', 'grace_started', 'grace_72h', 'grace_24h', 'grace_expired')
+  AND el.created_at > '2026-04-01'
+ORDER BY el.created_at DESC;
+```
+
+### Коррекция статуса
 
 
-| Поверхность                  | Использует product_reentry_pricing    | Статус                          |
-| ---------------------------- | ------------------------------------- | ------------------------------- |
-| `public-product`             | Да (строка 40-97)                     | Переведён                       |
-| `public-product-by-slug`     | Да (строка 32-77)                     | Переведён                       |
-| `public-tariff-by-public-id` | Да (строка 96-120)                    | Переведён                       |
-| `generate-renewal-ctas`      | Нет — принимает amount извне          | Не нужен (passthrough)          |
-| `public-checkout`            | Нет — берёт amount из order/offer     | Не нужен (amount уже определён) |
-| `admin-create-payment-link`  | Нет — админ задаёт amount             | Не нужен                        |
-| Email/TG price text          | Amount берётся из subscription/tariff | Не нужен (amount уже определён) |
+| Пункт                 | Старый статус     | Новый статус                      | Обоснование                                                           |
+| --------------------- | ----------------- | --------------------------------- | --------------------------------------------------------------------- |
+| Email delivery source | partial / limited | **done**                          | `email_logs` через `send-email` уже логирует все renewal/grace emails |
+| Email stale proof     | partial / limited | **можно закрыть после SQL proof** | Источник найден, нужен только запрос                                  |
 
-
-Вывод: все 3 pricing-определяющие поверхности переведены. Остальные — passthrough (используют уже определённую цену).
-
-Code proof: grep `was_club_member` в pricing surfaces → остался только в `markAsExpiredReentry` (legacy backward compat flag), не используется для pricing decision.
-
----
-
-## Блок E: PHASE 6 — final architecture proof матрица
-
-Собрать и показать итоговую таблицу:
-
-
-| Поверхность                  | Источник даты                                    | Источник цены                      | Per-club/product isolation         | Proof                                  |
-| ---------------------------- | ------------------------------------------------ | ---------------------------------- | ---------------------------------- | -------------------------------------- |
-| UI карточка                  | subscriptions_v2.access_end_at                   | tariff_offers.amount               | per-product                        | Читает canonical DB                    |
-| Telegram renewal             | resolveEffectiveClubAccess                       | tariff_offers.amount (passthrough) | per-club via product_club_mappings | subscription-charge:1790               |
-| Email renewal                | subscriptions_v2.access_end_at                   | tariff_offers.amount               | per-product                        | subscription-renewal-reminders         |
-| Email grace                  | subscriptions_v2.access_end_at                   | tariff_offers.amount               | per-product                        | subscription-grace-reminders           |
-| Telegram grace               | resolveEffectiveClubAccess                       | tariff_offers.amount               | per-club                           | subscription-grace-reminders           |
-| Revoke/kick                  | resolveEffectiveClubAccess + hasValidAccessBatch | N/A                                | per-club                           | telegram-kick-violators, check-expired |
-| Public pricing (3 endpoints) | N/A                                              | product_reentry_pricing            | per-product                        | PATCH-FINAL code                       |
-| Payment links/CTA            | N/A                                              | amount from tariff/offer           | per-product                        | generate-renewal-ctas passthrough      |
-
-
----
-
-## Блок F: batch results summary
-
-Собрать итоговую таблицу по всем batches:
-
-
-| Batch                    | actor_label                  | batch_id                     | Affected  | Status  |
-| ------------------------ | ---------------------------- | ---------------------------- | --------- | ------- |
-| Mirror backfill          | patch_mirror_backfill        | (from prev run)              | count     | done    |
-| Membership repair        | patch_wrongly_removed_repair | (from prev run)              | 11 queued | done    |
-| Reentry pricing repair   | reentry_repair_20260401_0930 | reentry_repair_20260401_0930 | 36 reset  | done    |
-| Mirror missing           | patch_mirror_missing         | (new)                        | TBD       | execute |
-| Corrective notifications | patch_corrective_notify      | (new)                        | TBD       | execute |
-
-
-Before/after diff по reconciliation: повторить dry-run запрос, показать counts по категориям.
-
----
-
-## Порядок выполнения
-
-1. SQL dry-run: mirror_missing, wrongly_removed, valid_not_in_chat, corrective notifications
-2. Execute corrective tail (A1-A4)
-3. Email stale-reminder live proof (B)
-4. Дополнить structured meta в 2 файлах (C) + deploy
-5. Собрать pricing coverage proof (D) — read-only
-6. Собрать architecture proof матрицу (E) — read-only
-7. Собрать batch results summary (F) — SQL
-8. Финальный отчёт с before/after
 
 ---
 
 ## Изменяемые файлы
 
 
-| Файл                                      | Изменение                                                          |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `subscription-renewal-reminders/index.ts` | Дополнить meta: club_id, club_name, effective_end_at, pricing_mode |
-| `subscription-grace-reminders/index.ts`   | Дополнить meta: product_id, effective_end_at, pricing_mode         |
+| Файл                                     | Изменение                                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| `telegram-process-access-queue/index.ts` | Добавить fallback через `product_club_mappings` для queue items без `subscription_id` |
 
 
-Остальное — SQL queries, one-off data fixes, proof reports.
+### Что НЕ будет изменено
+
+- `send-email` — уже пишет в `email_logs`, не трогаем
+- `subscription-charge` — не трогаем
+- `subscription-renewal-reminders` — не трогаем
+- `subscription-grace-reminders` — не трогаем
+
+---
+
+## Dry-run
+
+1. Проверить, что `product_club_mappings` join `products_v2` отдаёт имя продукта по `club_id`
+2. SQL proof по `email_logs` — stale count
+3. Code review: fallback не ломает существующий flow (добавляется только если `productName` всё ещё null)
+
+## Execute
+
+1. Добавить fallback в `telegram-process-access-queue/index.ts`
+2. Deploy `telegram-process-access-queue`
+3. SQL proof по `email_logs` для email stale
+
+## STOP-guards
+
+- Если `product_club_mappings` отдаёт >1 active mapping на один `club_id` → использовать первый, но логировать warning
+- Если email_logs stale count > 5 → расширить scope
 
 ## DoD
 
-- mirror_missing = 0 (с SQL proof)
-- wrongly_removed / valid_not_in_chat: закрыты или в manual_review
-- corrective auto-notify отправлен (extended > 1d)
-- shortened list в отдельном CSV
-- email stale proof: живой (не code-only)
-- structured meta: все 10 полей во всех notification writers
-- pricing surfaces: матрица покрытия с proof
-- architecture proof: итоговая матрица
-- batch summary: before/after
-- pending-live-proof: зафиксирован отдельно
+- Queue items без `subscription_id` получают `product_name` через `product_club_mappings` fallback
+- Email stale proof построен по `email_logs` (живой proof)
+- Статус email delivery source скорректирован на done
+- pending-live-proof остаётся pending
+
+## Риски
+
+- Минимальные: fallback читает только существующий mapping, не мутирует данные.
