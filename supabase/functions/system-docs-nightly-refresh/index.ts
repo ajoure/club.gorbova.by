@@ -28,6 +28,36 @@ const SYSTEM_DOC_DOMAINS = [
 
 const MAX_DOC_SIZE = 100 * 1024; // 100KB
 
+/** Safe count helper — returns 0 on error instead of crashing */
+async function safeCount(supabase: any, table: string, filter?: { col: string; val: any }): Promise<number> {
+  try {
+    let q = supabase.from(table).select('id', { count: 'exact', head: true });
+    if (filter) q = q.eq(filter.col, filter.val);
+    const { count, error } = await q;
+    if (error) { console.warn(`safeCount(${table}): ${error.message}`); return 0; }
+    return count || 0;
+  } catch (e) {
+    console.warn(`safeCount(${table}) exception: ${e.message}`);
+    return 0;
+  }
+}
+
+/** Safe select helper */
+async function safeSelect(supabase: any, table: string, columns: string, opts?: { filter?: { col: string; val: any }; limit?: number; order?: { col: string; asc: boolean } }): Promise<any[]> {
+  try {
+    let q = supabase.from(table).select(columns);
+    if (opts?.filter) q = q.eq(opts.filter.col, opts.filter.val);
+    if (opts?.order) q = q.order(opts.order.col, { ascending: opts.order.asc });
+    if (opts?.limit) q = q.limit(opts.limit);
+    const { data, error } = await q;
+    if (error) { console.warn(`safeSelect(${table}): ${error.message}`); return []; }
+    return data || [];
+  } catch (e) {
+    console.warn(`safeSelect(${table}) exception: ${e.message}`);
+    return [];
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -44,7 +74,7 @@ serve(async (req) => {
     const source = body.source || 'cron-hourly';
     const now = new Date();
 
-    // Extract user from JWT for manual refresh (not spoofable)
+    // Extract user from JWT for manual refresh
     let callerUserId: string | null = null;
     if (source === 'manual') {
       const authHeader = req.headers.get('Authorization');
@@ -100,14 +130,13 @@ serve(async (req) => {
       ? 'system_docs.manual_refresh_started'
       : 'system_docs.nightly_refresh_started';
 
-    const { error: auditStartErr } = await supabase.from('audit_logs').insert({
+    await supabase.from('audit_logs').insert({
       action: auditAction,
       actor_type: actorType,
       actor_user_id: actorUserId,
       actor_label: actorLabel,
       meta: { batch_id: batchKey, source },
     });
-    if (auditStartErr) console.error('Audit start insert error:', JSON.stringify(auditStartErr));
 
     const snapshotAt = now.toISOString();
     const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -115,26 +144,28 @@ serve(async (req) => {
     let updatedCount = 0;
 
     // Collect changes from audit_logs for last 24h
-    const { data: recentAudit } = await supabase
-      .from('audit_logs')
-      .select('action, meta, created_at')
-      .gte('created_at', since24h)
-      .order('created_at', { ascending: false })
-      .limit(100);
+    const recentAudit = await safeSelect(supabase, 'audit_logs', 'action, meta, created_at', {
+      limit: 100,
+      order: { col: 'created_at', asc: false },
+    });
+    // Filter client-side for gte since24h
+    const filteredAudit = recentAudit.filter((a: any) => a.created_at >= since24h);
 
-    const changesSummary = (recentAudit || [])
+    const changesSummary = filteredAudit
       .map((a: any) => `- ${a.created_at.substring(0, 16)} | ${a.action}`)
       .join('\n');
 
     for (const domain of SYSTEM_DOC_DOMAINS) {
       let content = '';
+      const domainWarnings: string[] = [];
       try {
-        content = await buildDomainSnapshot(supabase, domain.key, domain.title, snapshotAt, changesSummary, since24h);
+        content = await buildDomainSnapshot(supabase, domain.key, domain.title, snapshotAt, changesSummary, since24h, domainWarnings);
       } catch (e) {
         console.error(`Error building snapshot for ${domain.key}:`, e);
-        content = `${domain.title}\n===\n\nОшибка сборки снимка: ${e.message}\n\nTimestamp: ${snapshotAt}`;
-        warnings.push(`error:${domain.key}`);
+        content = `${domain.title}\n===\n\n⚠️ Ошибка сборки снимка: ${e.message}\n\nTimestamp: ${snapshotAt}`;
+        domainWarnings.push(`error:${domain.key}:${e.message}`);
       }
+      if (domainWarnings.length > 0) warnings.push(...domainWarnings);
 
       // Truncation guard
       let truncated = false;
@@ -167,34 +198,21 @@ serve(async (req) => {
 
       const existingDocs = existing || [];
 
-      // STOP-guard: more than one AUTO-CURRENT
       if (existingDocs.length > 1) {
         warnings.push(`duplicate_auto:${domain.key}`);
-        console.error(`STOP: ${existingDocs.length} AUTO-CURRENT records for ${domain.key} — skipping, needs repair`);
+        console.error(`STOP: ${existingDocs.length} AUTO-CURRENT records for ${domain.key}`);
         continue;
       }
 
       if (existingDocs.length === 1) {
-        // UPDATE existing
         await supabase
           .from('admin_docs')
-          .update({
-            content_text: content,
-            meta,
-            updated_at: snapshotAt,
-          })
+          .update({ content_text: content, meta, updated_at: snapshotAt })
           .eq('id', existingDocs[0].id);
       } else {
-        // INSERT new
         await supabase
           .from('admin_docs')
-          .insert({
-            section_key: domain.key,
-            version_label: 'AUTO-CURRENT',
-            status: 'active',
-            content_text: content,
-            meta,
-          });
+          .insert({ section_key: domain.key, version_label: 'AUTO-CURRENT', status: 'active', content_text: content, meta });
       }
       updatedCount++;
     }
@@ -211,18 +229,12 @@ serve(async (req) => {
       meta: { batch_id: batchKey, updated_count: updatedCount, warnings, source },
     });
 
-    return new Response(JSON.stringify({
-      success: true,
-      batchKey,
-      updatedCount,
-      warnings,
-    }), {
+    return new Response(JSON.stringify({ success: true, batchKey, updatedCount, warnings }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('Nightly refresh error:', error);
-
     try {
       await supabase.from('audit_logs').insert({
         action: 'system_docs.nightly_refresh_failed',
@@ -232,7 +244,6 @@ serve(async (req) => {
         meta: { error: error.message },
       });
     } catch (_) {}
-
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -246,7 +257,8 @@ async function buildDomainSnapshot(
   title: string,
   snapshotAt: string,
   changesSummary: string,
-  since24h: string
+  since24h: string,
+  warnings: string[]
 ): Promise<string> {
   const header = `${title}\n===\n\nОбновлено автоматически: ${snapshotAt} (Europe/London)\n`;
 
@@ -257,26 +269,26 @@ async function buildDomainSnapshot(
   let domainContent = '';
 
   switch (domainKey) {
+    case 'platform_master':
+      domainContent = await buildPlatformMasterSnapshot(supabase, warnings);
+      break;
     case 'products_sales':
-      domainContent = await buildProductsSalesSnapshot(supabase);
+      domainContent = await buildProductsSalesSnapshot(supabase, warnings);
       break;
     case 'orders_payments':
-      domainContent = await buildOrdersPaymentsSnapshot(supabase);
+      domainContent = await buildOrdersPaymentsSnapshot(supabase, warnings);
       break;
     case 'trainings_access':
-      domainContent = await buildTrainingsAccessSnapshot(supabase);
+      domainContent = await buildTrainingsAccessSnapshot(supabase, warnings);
       break;
     case 'sites_pages_forms':
-      domainContent = await buildSitesPagesSnapshot(supabase);
+      domainContent = await buildSitesPagesSnapshot(supabase, warnings);
       break;
     case 'integrations':
-      domainContent = await buildIntegrationsSnapshot(supabase);
+      domainContent = await buildIntegrationsSnapshot(supabase, warnings);
       break;
     case 'open_tails':
-      domainContent = await buildOpenTailsSnapshot(supabase, since24h);
-      break;
-    case 'platform_master':
-      domainContent = await buildPlatformMasterSnapshot(supabase);
+      domainContent = await buildOpenTailsSnapshot(supabase, since24h, warnings);
       break;
     default:
       domainContent = '\n===\n\nНет данных для этого домена.\n';
@@ -285,200 +297,21 @@ async function buildDomainSnapshot(
   return header + changesBlock + domainContent;
 }
 
-async function buildProductsSalesSnapshot(supabase: any): Promise<string> {
-  const { data: products, count: productCount } = await supabase
-    .from('products_v2')
-    .select('id, name, status', { count: 'exact' })
-    .limit(50);
+// ─── PLATFORM MASTER ───────────────────────────────────────────────
 
-  const { count: tariffCount } = await supabase
-    .from('tariffs')
-    .select('id', { count: 'exact', head: true });
+async function buildPlatformMasterSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const userCount = await safeCount(supabase, 'profiles');
+  const roleCount = await safeCount(supabase, 'user_roles');
+  const efCount = await safeCount(supabase, 'edge_functions_registry');
+  const auditCount = await safeCount(supabase, 'audit_logs');
+  const appSettingsCount = await safeCount(supabase, 'app_settings');
+  const adminMenuCount = await safeCount(supabase, 'admin_menu_settings');
 
-  const { count: rulesCount } = await supabase
-    .from('access_rules')
-    .select('id', { count: 'exact', head: true })
-    .eq('is_active', true);
-
-  const productList = (products || [])
-    .map((p: any) => `  - ${p.name} [${p.status}] (${p.id.substring(0, 8)})`)
-    .join('\n');
-
-  return `
-===
-
-## Источники истины (SoT)
-
-- products_v2 — канонический реестр продуктов
-- tariffs — тарифы продуктов
-- tariff_offers — ценовые предложения
-- access_rules — правила доступа
-
-===
-
-## Текущее состояние
-
-- Продуктов: ${productCount || 0}
-- Тарифов: ${tariffCount || 0}
-- Активных правил доступа: ${rulesCount || 0}
-
-Продукты:
-${productList || '  (нет данных)'}
-`;
-}
-
-async function buildOrdersPaymentsSnapshot(supabase: any): Promise<string> {
-  const { count: orderCount } = await supabase
-    .from('orders_v2')
-    .select('id', { count: 'exact', head: true });
-
-  const { count: paidCount } = await supabase
-    .from('orders_v2')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'paid');
-
-  return `
-===
-
-## Источники истины (SoT)
-
-- orders_v2 — заказы
-- payments_v2 — платежи
-- bepaid_statement_rows — банковские выписки
-
-===
-
-## Текущее состояние
-
-- Всего заказов: ${orderCount || 0}
-- Оплаченных: ${paidCount || 0}
-`;
-}
-
-async function buildTrainingsAccessSnapshot(supabase: any): Promise<string> {
-  const { count: moduleCount } = await supabase
-    .from('training_modules')
-    .select('id', { count: 'exact', head: true });
-
-  const { count: lessonCount } = await supabase
-    .from('training_lessons')
-    .select('id', { count: 'exact', head: true });
-
-  const { count: entitlementCount } = await supabase
-    .from('entitlements')
-    .select('id', { count: 'exact', head: true })
-    .eq('is_active', true);
-
-  return `
-===
-
-## Источники истины (SoT)
-
-- training_modules — модули тренингов
-- training_lessons — уроки
-- entitlements — права доступа
-- subscriptions_v2 — подписки
-- access_rules — правила доступа
-
-===
-
-## Текущее состояние
-
-- Модулей: ${moduleCount || 0}
-- Уроков: ${lessonCount || 0}
-- Активных entitlements: ${entitlementCount || 0}
-`;
-}
-
-async function buildSitesPagesSnapshot(supabase: any): Promise<string> {
-  const { count: pageCount } = await supabase
-    .from('site_pages')
-    .select('id', { count: 'exact', head: true });
-
-  return `
-===
-
-## Источники истины (SoT)
-
-- site_pages — страницы сайтов
-- site_form_submissions — отправки форм
-
-===
-
-## Текущее состояние
-
-- Страниц: ${pageCount || 0}
-`;
-}
-
-async function buildIntegrationsSnapshot(supabase: any): Promise<string> {
-  const { count: botCount } = await supabase
-    .from('telegram_bots')
-    .select('id', { count: 'exact', head: true });
-
-  const { count: mappingCount } = await supabase
-    .from('bepaid_product_mappings')
-    .select('id', { count: 'exact', head: true });
-
-  return `
-===
-
-## Источники истины (SoT)
-
-- telegram_bots — Telegram боты
-- bepaid_product_mappings — маппинг продуктов для платёжных систем
-
-===
-
-## Текущее состояние
-
-- Telegram ботов: ${botCount || 0}
-- Payment маппингов: ${mappingCount || 0}
-`;
-}
-
-async function buildOpenTailsSnapshot(supabase: any, since24h: string): Promise<string> {
-  // Collect recent failed/pending audit entries
-  const { data: pendingAudits } = await supabase
-    .from('audit_logs')
-    .select('action, meta, created_at')
-    .or('action.ilike.%pending%,action.ilike.%failed%,action.ilike.%deferred%')
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  const pendingList = (pendingAudits || [])
-    .map((a: any) => `- ${a.created_at.substring(0, 16)} | ${a.action}`)
-    .join('\n');
-
-  return `
-===
-
-## Открытые хвосты и нерешённые задачи
-
-### Pending / Failed / Deferred записи из audit_logs
-
-${pendingList || '(нет записей)'}
-
-===
-
-## Известные незакрытые задачи
-
-- duration_days=NULL в access_rules — требует ручной проверки
-- Ретроактивный batch по product_access — pending implementation
-- pending-live-proof для training access/runtime
-- proof по site pricing block
-- manual review / shortened / wrongly_removed entitlements
-`;
-}
-
-async function buildPlatformMasterSnapshot(supabase: any): Promise<string> {
-  const { count: userCount } = await supabase
-    .from('profiles')
-    .select('id', { count: 'exact', head: true });
-
-  const { count: roleCount } = await supabase
-    .from('user_roles')
-    .select('id', { count: 'exact', head: true });
+  // Edge functions registry list
+  const efList = await safeSelect(supabase, 'edge_functions_registry', 'function_name, description, is_active', { limit: 50, order: { col: 'function_name', asc: true } });
+  const efBlock = efList.length > 0
+    ? efList.map((ef: any) => `  - ${ef.function_name} [${ef.is_active ? 'active' : 'inactive'}] — ${ef.description || '(без описания)'}`).join('\n')
+    : '  (нет записей в реестре)';
 
   return `
 ===
@@ -486,6 +319,17 @@ async function buildPlatformMasterSnapshot(supabase: any): Promise<string> {
 ## Архитектура платформы — Master Document
 
 Каноническое описание системы. Используйте как входной артефакт для новых задач.
+
+===
+
+## Источники истины (SoT)
+
+- admin_docs — системная документация (единственный SoT)
+- profiles — профили пользователей
+- user_roles — роли (enum: admin, moderator, user, super_admin)
+- edge_functions_registry — реестр Edge Functions
+- app_settings — глобальные настройки приложения
+- audit_logs — журнал аудита всех операций
 
 ===
 
@@ -502,8 +346,18 @@ async function buildPlatformMasterSnapshot(supabase: any): Promise<string> {
 
 ## Текущее состояние платформы
 
-- Профилей: ${userCount || 0}
-- Записей user_roles: ${roleCount || 0}
+- Профилей: ${userCount}
+- Записей user_roles: ${roleCount}
+- Edge Functions в реестре: ${efCount}
+- Записей audit_logs: ${auditCount}
+- App Settings: ${appSettingsCount}
+- Admin Menu Settings: ${adminMenuCount}
+
+===
+
+## Реестр Edge Functions
+
+${efBlock}
 
 ===
 
@@ -532,5 +386,362 @@ async function buildPlatformMasterSnapshot(supabase: any): Promise<string> {
 
 Отключение:
   SELECT cron.unschedule('system-docs-nightly-refresh');
+`;
+}
+
+// ─── PRODUCTS & SALES ──────────────────────────────────────────────
+
+async function buildProductsSalesSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const products = await safeSelect(supabase, 'products_v2', 'id, name, status', { limit: 50 });
+  const productCount = products.length;
+  const tariffCount = await safeCount(supabase, 'tariffs');
+  const offerCount = await safeCount(supabase, 'tariff_offers');
+  const rulesCount = await safeCount(supabase, 'access_rules', { col: 'is_active', val: true });
+  const relationsCount = await safeCount(supabase, 'product_relations');
+  const mappingCount = await safeCount(supabase, 'bepaid_product_mappings');
+
+  const productList = products
+    .map((p: any) => `  - ${p.name} [${p.status}] (${p.id.substring(0, 8)})`)
+    .join('\n');
+
+  // Tariffs per product
+  const tariffs = await safeSelect(supabase, 'tariffs', 'id, name, product_id, status', { limit: 100 });
+  const tariffsByProduct: Record<string, any[]> = {};
+  for (const t of tariffs) {
+    const pid = t.product_id?.substring(0, 8) || 'no-product';
+    if (!tariffsByProduct[pid]) tariffsByProduct[pid] = [];
+    tariffsByProduct[pid].push(t);
+  }
+  const tariffBlock = Object.entries(tariffsByProduct)
+    .map(([pid, ts]) => `  Продукт ${pid}:\n` + ts.map((t: any) => `    - ${t.name} [${t.status}]`).join('\n'))
+    .join('\n');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- products_v2 — канонический реестр продуктов
+- tariffs — тарифы продуктов
+- tariff_offers — ценовые предложения (${offerCount})
+- access_rules — правила доступа
+- product_relations — связи между продуктами (${relationsCount})
+- bepaid_product_mappings — маппинг на платёжные системы (${mappingCount})
+
+===
+
+## Текущее состояние
+
+- Продуктов: ${productCount}
+- Тарифов: ${tariffCount}
+- Ценовых предложений (offers): ${offerCount}
+- Активных правил доступа: ${rulesCount}
+- Связей между продуктами: ${relationsCount}
+- Маппингов на платёжные системы: ${mappingCount}
+
+===
+
+## Продукты
+
+${productList || '  (нет данных)'}
+
+===
+
+## Тарифы по продуктам
+
+${tariffBlock || '  (нет данных)'}
+`;
+}
+
+// ─── ORDERS & PAYMENTS ─────────────────────────────────────────────
+
+async function buildOrdersPaymentsSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const orderCount = await safeCount(supabase, 'orders_v2');
+  const paidCount = await safeCount(supabase, 'orders_v2', { col: 'status', val: 'paid' });
+  const pendingCount = await safeCount(supabase, 'orders_v2', { col: 'status', val: 'pending' });
+  const cancelledCount = await safeCount(supabase, 'orders_v2', { col: 'status', val: 'cancelled' });
+  const paymentMethodsCount = await safeCount(supabase, 'payment_methods');
+  const installmentCount = await safeCount(supabase, 'installment_payments');
+  const bepaidRowsCount = await safeCount(supabase, 'bepaid_statement_rows');
+  const reconcileQueueCount = await safeCount(supabase, 'payment_reconcile_queue');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- orders_v2 — заказы (канонический реестр)
+- payments_v2 — платежи
+- payment_methods — методы оплаты
+- installment_payments — рассрочки
+- bepaid_statement_rows — банковские выписки
+- payment_reconcile_queue — очередь сверки платежей
+
+===
+
+## Текущее состояние
+
+- Всего заказов: ${orderCount}
+- Оплаченных: ${paidCount}
+- Ожидающих: ${pendingCount}
+- Отменённых: ${cancelledCount}
+- Методов оплаты: ${paymentMethodsCount}
+- Рассрочек: ${installmentCount}
+- Строк банковских выписок: ${bepaidRowsCount}
+- В очереди сверки: ${reconcileQueueCount}
+
+===
+
+## Контуры
+
+- Основной поток: orders_v2 → payments_v2 → access_grant_ledger
+- ERIP сверка: erip-reconcile-pending EF, payment_reconcile_queue
+- bePaid выписки: bepaid_statement_rows, bepaid_sync_logs
+- Рассрочки: installment_payments (связь с orders_v2)
+`;
+}
+
+// ─── TRAININGS & ACCESS ────────────────────────────────────────────
+
+async function buildTrainingsAccessSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const moduleCount = await safeCount(supabase, 'training_modules');
+  const lessonCount = await safeCount(supabase, 'training_lessons');
+  const entitlementCount = await safeCount(supabase, 'entitlements', { col: 'status', val: 'active' });
+  const subCount = await safeCount(supabase, 'subscriptions_v2');
+  const lessonProgressCount = await safeCount(supabase, 'lesson_progress');
+  const accessRulesCount = await safeCount(supabase, 'access_rules', { col: 'is_active', val: true });
+
+  // Module list
+  const modules = await safeSelect(supabase, 'training_modules', 'id, title, status', { limit: 30, order: { col: 'title', asc: true } });
+  const moduleList = modules
+    .map((m: any) => `  - ${m.title} [${m.status || 'n/a'}]`)
+    .join('\n');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- training_modules — модули тренингов
+- training_lessons — уроки
+- entitlements — права доступа (status: active/expired/revoked)
+- subscriptions_v2 — подписки
+- lesson_progress — прогресс уроков
+- access_rules — правила доступа
+
+===
+
+## Текущее состояние
+
+- Модулей: ${moduleCount}
+- Уроков: ${lessonCount}
+- Активных entitlements: ${entitlementCount}
+- Подписок: ${subCount}
+- Записей lesson_progress: ${lessonProgressCount}
+- Активных access_rules: ${accessRulesCount}
+
+===
+
+## Модули
+
+${moduleList || '  (нет данных)'}
+
+===
+
+## Контуры
+
+- Основной поток: order → access_grant_ledger → entitlement → training_module access
+- Подписки: subscriptions_v2, автопродление через EF
+- Прогресс: lesson_progress (связь с training_lessons)
+- Отзыв доступа: telegram-check-expired EF, auto-revoke
+`;
+}
+
+// ─── SITES & PAGES ─────────────────────────────────────────────────
+
+async function buildSitesPagesSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const pageCount = await safeCount(supabase, 'site_pages');
+  const formSubmCount = await safeCount(supabase, 'site_form_submissions');
+  const domainBindingsCount = await safeCount(supabase, 'site_domain_bindings');
+  const pageFoldersCount = await safeCount(supabase, 'site_page_folders');
+
+  // Pages with domains
+  const pages = await safeSelect(supabase, 'site_pages', 'id, title, slug, status', { limit: 30, order: { col: 'title', asc: true } });
+  const pageList = pages
+    .map((p: any) => `  - ${p.title || '(без названия)'} [${p.status || 'n/a'}] /${p.slug || ''}`)
+    .join('\n');
+
+  // Domain bindings
+  const bindings = await safeSelect(supabase, 'site_domain_bindings', 'id, domain, product_id, is_active', { limit: 20 });
+  const bindingList = bindings
+    .map((b: any) => `  - ${b.domain} [${b.is_active ? 'active' : 'inactive'}]`)
+    .join('\n');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- site_pages — страницы сайтов
+- site_form_submissions — отправки форм
+- site_domain_bindings — привязки доменов к продуктам
+- site_page_folders — папки страниц
+
+===
+
+## Текущее состояние
+
+- Страниц: ${pageCount}
+- Отправок форм: ${formSubmCount}
+- Привязок доменов: ${domainBindingsCount}
+- Папок: ${pageFoldersCount}
+
+===
+
+## Страницы
+
+${pageList || '  (нет данных)'}
+
+===
+
+## Привязки доменов
+
+${bindingList || '  (нет данных)'}
+
+===
+
+## Контуры
+
+- Лендинги продуктов: site_pages → site_domain_bindings → products_v2
+- Формы: site_form_submissions (контакты, предрегистрации)
+- Публикация: public-product EF (рендер по домену)
+`;
+}
+
+// ─── INTEGRATIONS ──────────────────────────────────────────────────
+
+async function buildIntegrationsSnapshot(supabase: any, warnings: string[]): Promise<string> {
+  const botCount = await safeCount(supabase, 'telegram_bots');
+  const mappingCount = await safeCount(supabase, 'bepaid_product_mappings');
+  const instanceCount = await safeCount(supabase, 'integration_instances');
+  const logCount = await safeCount(supabase, 'integration_logs');
+  const syncLogCount = await safeCount(supabase, 'bepaid_sync_logs');
+  const emailAccountCount = await safeCount(supabase, 'email_accounts');
+
+  // Telegram bots
+  const bots = await safeSelect(supabase, 'telegram_bots', 'id, bot_name, is_active', { limit: 10 });
+  const botList = bots
+    .map((b: any) => `  - ${b.bot_name || '(без имени)'} [${b.is_active ? 'active' : 'inactive'}]`)
+    .join('\n');
+
+  // Integration instances
+  const instances = await safeSelect(supabase, 'integration_instances', 'id, provider, status', { limit: 20 });
+  const instanceList = instances
+    .map((i: any) => `  - ${i.provider} [${i.status}]`)
+    .join('\n');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- telegram_bots — Telegram боты
+- bepaid_product_mappings — маппинг продуктов для платёжных систем
+- integration_instances — экземпляры интеграций
+- integration_logs — логи интеграций
+- bepaid_sync_logs — логи синхронизации bePaid
+- email_accounts — почтовые аккаунты
+
+===
+
+## Текущее состояние
+
+- Telegram ботов: ${botCount}
+- Payment маппингов: ${mappingCount}
+- Экземпляров интеграций: ${instanceCount}
+- Записей integration_logs: ${logCount}
+- Записей bepaid_sync_logs: ${syncLogCount}
+- Email аккаунтов: ${emailAccountCount}
+
+===
+
+## Telegram боты
+
+${botList || '  (нет данных)'}
+
+===
+
+## Экземпляры интеграций
+
+${instanceList || '  (нет данных)'}
+
+===
+
+## Контуры
+
+- Telegram: telegram_bots → ai_bot_settings, telegram-webhook EF
+- bePaid: bepaid_product_mappings, bepaid_sync_logs, bepaid_statement_rows
+- Email: email_accounts, broadcast_templates
+- AI: ai_bot_settings, ai_prompt_packages, ai_user_prompts
+`;
+}
+
+// ─── OPEN TAILS ────────────────────────────────────────────────────
+
+async function buildOpenTailsSnapshot(supabase: any, since24h: string, warnings: string[]): Promise<string> {
+  const banCasesCount = await safeCount(supabase, 'ban_cases', { col: 'is_active', val: true });
+  const duplicateCasesCount = await safeCount(supabase, 'duplicate_cases');
+  const reconcileQueueCount = await safeCount(supabase, 'payment_reconcile_queue');
+
+  // Recent failed/pending audit entries
+  const pendingAudits = await safeSelect(supabase, 'audit_logs', 'action, meta, created_at', {
+    limit: 50,
+    order: { col: 'created_at', asc: false },
+  });
+  // Filter for relevant actions
+  const filtered = pendingAudits.filter((a: any) =>
+    a.action?.includes('pending') || a.action?.includes('failed') || a.action?.includes('deferred')
+  );
+  const pendingList = filtered
+    .map((a: any) => `- ${a.created_at.substring(0, 16)} | ${a.action}`)
+    .join('\n');
+
+  return `
+===
+
+## Источники истины (SoT)
+
+- audit_logs — все pending/failed/deferred записи
+- ban_cases — блокировки
+- ban_identifiers — идентификаторы блокировок
+- duplicate_cases — кейсы дубликатов
+- client_duplicates — связи дубликатов с профилями
+- payment_reconcile_queue — очередь сверки
+
+===
+
+## Текущее состояние
+
+- Активных блокировок (ban_cases): ${banCasesCount}
+- Кейсов дубликатов: ${duplicateCasesCount}
+- В очереди сверки платежей: ${reconcileQueueCount}
+
+===
+
+## Открытые хвосты и нерешённые задачи
+
+### Pending / Failed / Deferred записи из audit_logs
+
+${pendingList || '(нет записей)'}
+
+===
+
+## Известные незакрытые задачи
+
+- duration_days=NULL в access_rules — требует ручной проверки
+- Ретроактивный batch по product_access — pending implementation
+- pending-live-proof для training access/runtime
+- proof по site pricing block
+- manual review / shortened / wrongly_removed entitlements
 `;
 }
