@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
         field_mapping: fieldMapping,
         status: "new",
         source: "site_form",
-        metadata: {},
+        metadata: redirect_url ? { redirect_url } : {},
       })
       .select("id, public_id")
       .single();
