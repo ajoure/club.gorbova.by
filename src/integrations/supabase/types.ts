@@ -7056,6 +7056,64 @@ export type Database = {
           },
         ]
       }
+      product_reentry_pricing: {
+        Row: {
+          applies_from: string
+          created_at: string
+          id: string
+          product_id: string
+          reason_code: string
+          reentry_active: boolean
+          source_subscription_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          applies_from?: string
+          created_at?: string
+          id?: string
+          product_id: string
+          reason_code?: string
+          reentry_active?: boolean
+          source_subscription_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          applies_from?: string
+          created_at?: string
+          id?: string
+          product_id?: string
+          reason_code?: string
+          reentry_active?: boolean
+          source_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_reentry_pricing_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_reentry_pricing_source_subscription_id_fkey"
+            columns: ["source_subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_reentry_pricing_source_subscription_id_fkey"
+            columns: ["source_subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions_v2_safe"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_relations: {
         Row: {
           child_product_id: string

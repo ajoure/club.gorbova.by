@@ -29,21 +29,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check reentry pricing
+    // PATCH-FINAL: Reentry pricing will be checked after product is resolved (product-scoped)
     let isReentryPricing = false;
     let reentryMessage = "";
-    if (userId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("was_club_member, reentry_penalty_waived")
-        .eq("user_id", userId)
-        .single();
-      
-      if (profile?.was_club_member && !profile?.reentry_penalty_waived) {
-        isReentryPricing = true;
-        reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
-      }
-    }
 
     // Fetch product by slug OR public_id
     const { data: product, error: productError } = await supabase
@@ -64,6 +52,31 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: "Product not found", slug }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // PATCH-FINAL: Check product-scoped reentry pricing after product is resolved
+    if (userId && product.id) {
+      const { data: reentryRecord } = await supabase
+        .from("product_reentry_pricing")
+        .select("reentry_active")
+        .eq("user_id", userId)
+        .eq("product_id", product.id)
+        .eq("reentry_active", true)
+        .maybeSingle();
+
+      if (reentryRecord) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("reentry_penalty_waived")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (!profile?.reentry_penalty_waived) {
+          isReentryPricing = true;
+          reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
+          console.log(`[public-product-by-slug] User ${userId} has product-scoped reentry pricing for product ${product.id}`);
+        }
+      }
     }
 
     // Fetch active tariffs

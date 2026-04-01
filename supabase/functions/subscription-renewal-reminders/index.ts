@@ -193,7 +193,8 @@ async function sendTelegramReminder(
   subscriptionUrl: string | null,
   subscriptionId: string,
   orderId: string | null,
-  tariffId: string | null
+  tariffId: string | null,
+  productId?: string | null
 ): Promise<{ 
   sent: boolean; 
   logged: boolean; 
@@ -398,6 +399,12 @@ ${safeUserName}, это последнее напоминание. Подпис�
         days_left: daysLeft, product: productName, tariff: tariffName,
         subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
         has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
+        // PATCH-FINAL: structured notification meta
+        product_id: productId || null,
+        product_name: productName,
+        amount: amount || null,
+        currency: currency || null,
+        source: 'renewal_reminder',
       },
     });
     const isDuplicate = insertError?.code === '23505';
@@ -946,7 +953,7 @@ Deno.serve(async (req) => {
           supabase, botToken, userId,
           productName, tariffName, expiryDate, daysLeft,
           amount, currency, userHasSBS, oneTimeUrl, subscriptionUrl,
-          sub.id, sub.order_id, sub.tariff_id
+          sub.id, sub.order_id, sub.tariff_id, productId
         );
 
         result.telegram_sent = telegramResult.sent;
