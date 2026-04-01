@@ -1495,7 +1495,7 @@ Deno.serve(async (req) => {
         
         let accessEndAt: Date;
         if (bepaidActiveTo) {
-          accessEndAt = new Date(endOfDayWarsaw(bepaidActiveTo));
+          accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
         } else {
           // Fallback: +accessDays (with mandatory audit)
           accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);

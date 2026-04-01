@@ -527,7 +527,7 @@ Deno.serve(async (req) => {
 
         // ===== PATCH-C: APPLY ACCESS CHAIN =====
         if (truthAccessEnd) {
-          const accessEndAt = endOfDayWarsaw(truthAccessEnd);
+          const accessEndAt = endOfDayAppTz(truthAccessEnd);
 
           // C1: Read product info
           const { data: subV2Full } = await supabase
