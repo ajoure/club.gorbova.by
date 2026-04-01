@@ -92,7 +92,7 @@ async function sendGraceNotification(
 
 ${userName}, платёж за продление не прошёл.
 
-📦 *Продукт:* Gorbova Club
+📦 *Продукт:* ${productName || 'Подписка'}
 💳 *Сумма:* ${formatCurrency(amount, currency)}
 
 *У вас есть 72 часа*, чтобы оплатить и сохранить текущую цену.
