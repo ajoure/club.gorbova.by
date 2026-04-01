@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { Resend } from 'npm:resend@2.0.0';
-import { endOfDayWarsaw } from '../_shared/timezone.ts';
+import { endOfDayAppTz } from '../_shared/timezone.ts';
 import { buildAdminNotifyMessage, maskEmail } from '../_shared/admin-notify-message.ts';
 import { buildPurchaseSnapshot } from '../_shared/build-purchase-snapshot.ts';
 
@@ -1495,7 +1495,7 @@ Deno.serve(async (req) => {
         
         let accessEndAt: Date;
         if (bepaidActiveTo) {
-          accessEndAt = new Date(endOfDayWarsaw(bepaidActiveTo));
+          accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
         } else {
           // Fallback: +accessDays (with mandatory audit)
           accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);

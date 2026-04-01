@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 // PATCH-P0.9.1: Strict isolation
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
-import { endOfDayWarsaw } from '../_shared/timezone.ts';
+import { endOfDayAppTz } from '../_shared/timezone.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -492,7 +492,7 @@ Deno.serve(async (req) => {
           subV2Updates.next_charge_at = truthNextCharge;
         }
         if (truthAccessEnd) {
-          subV2Updates.access_end_at = endOfDayWarsaw(truthAccessEnd);
+          subV2Updates.access_end_at = endOfDayAppTz(truthAccessEnd);
         }
 
         // Read old values for audit
@@ -527,7 +527,7 @@ Deno.serve(async (req) => {
 
         // ===== PATCH-C: APPLY ACCESS CHAIN =====
         if (truthAccessEnd) {
-          const accessEndAt = endOfDayWarsaw(truthAccessEnd);
+          const accessEndAt = endOfDayAppTz(truthAccessEnd);
 
           // C1: Read product info
           const { data: subV2Full } = await supabase
