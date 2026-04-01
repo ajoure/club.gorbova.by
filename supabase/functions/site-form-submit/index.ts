@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
   try {
     // 1. Parse & validate
     const body: RequestBody = await req.json();
-    const { page_id, fields } = body;
+    const { page_id, fields, redirect_url } = body;
 
     if (!page_id || typeof page_id !== "string") {
       return json({ error: "page_id is required" }, 400);
