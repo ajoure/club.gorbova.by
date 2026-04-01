@@ -559,6 +559,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Pre-declare ledger keys for telegram lineage (populated later in step 7)
+    let grantLedgerExecutionKey: string | null = null;
+    let grantLedgerSourceEventKey: string | null = `gafo:webhook:${orderId}`;
+
     // 3. Try to grant Telegram access if applicable
     if (grantTelegram) {
       try {
