@@ -198,7 +198,7 @@ export default function AdminSystemDocs({
           actor_type: "user",
           actor_user_id: user?.id || null,
           actor_label: "admin_system_docs_seed",
-          meta: { affected_count: created, domains: SYSTEM_DOC_DOMAINS.filter(d => !existingKeys.has(d.key)).map(d => d.key) },
+          meta: { affected_count: created, created_domains: createdDomains },
         } as any);
       } else {
         toast.info("Все домены уже содержат документацию");
