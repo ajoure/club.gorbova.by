@@ -82,9 +82,9 @@ async function checkBillingDayProtection(
   const { data: billingDaySub } = await q.maybeSingle();
 
   if (billingDaySub?.next_charge_at) {
-    const chargeTime = new Date(billingDaySub.next_charge_at).getTime();
-    const protectionEnd = chargeTime + BILLING_DAY_PROTECTION_HOURS * 60 * 60 * 1000;
-    if (now.getTime() < protectionEnd) {
+    // End-of-day protection: valid until 23:59:59 APP_TZ (todayEnd - 1s)
+    const endOfDayUtcMs = new Date(todayEnd).getTime() - 1000;
+    if (now.getTime() <= endOfDayUtcMs) {
       // Audit log — fire-and-forget
       supabase.from('audit_logs').insert({
         action: 'access.validation.billing_day_protected',
@@ -95,7 +95,7 @@ async function checkBillingDayProtection(
           subscription_id: billingDaySub.id,
           next_charge_at: billingDaySub.next_charge_at,
           now: nowStr,
-          window_hours: BILLING_DAY_PROTECTION_HOURS,
+          protection_until: new Date(endOfDayUtcMs).toISOString(),
         },
       }).then(() => {});
 
