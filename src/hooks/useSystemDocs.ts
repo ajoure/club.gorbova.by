@@ -98,21 +98,31 @@ export function useSystemDocs({
         if (found) {
           if (isAutoVersion(found)) {
             setViewMode("auto");
+            setSelectedManualVersion("");
           } else {
             setViewMode("manual");
             setSelectedManualVersion(found.version_label);
+          }
+        } else {
+          // version not found — fallback priority: active manual > first manual > auto
+          const manual = docs.filter((d) => !isAutoVersion(d));
+          const auto = docs.find((d) => isAutoVersion(d));
+          if (manual.length > 0) {
+            const active = manual.find((d) => d.status === "active");
+            setViewMode("manual");
+            setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
+          } else if (auto) {
+            setViewMode("auto");
+            setSelectedManualVersion("");
           }
         }
       } else {
         const manual = docs.filter((d) => !isAutoVersion(d));
         const auto = docs.find((d) => isAutoVersion(d));
 
-        // Fallback: если manual-версий нет, но есть AUTO-CURRENT → авто-режим
         if (manual.length === 0 && auto) {
           setSelectedManualVersion("");
-          if (!initialMode) {
-            setViewMode("auto");
-          }
+          setViewMode("auto");
         } else {
           const active = manual.find((d) => d.status === "active");
           setSelectedManualVersion(active?.version_label || manual[0]?.version_label || "");
