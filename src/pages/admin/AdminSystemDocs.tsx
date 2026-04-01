@@ -156,7 +156,7 @@ export default function AdminSystemDocs({
         toast.success(`Создано ${created} baseline документов`);
         await supabase.from("audit_logs" as any).insert({
           action: "system_docs.seed_generated",
-          actor_type: "admin",
+          actor_type: "user",
           actor_user_id: user?.id || null,
           actor_label: "admin_system_docs_seed",
           meta: { affected_count: created, domains: SYSTEM_DOC_DOMAINS.filter(d => !existingKeys.has(d.key)).map(d => d.key) },
