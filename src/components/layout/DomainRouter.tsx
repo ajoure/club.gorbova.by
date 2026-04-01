@@ -43,7 +43,8 @@ export function DomainHomePage() {
       return;
     }
     
-    SiteRenderService.resolveByDomain(hostname)
+    const pathname = window.location.pathname.replace(/\/+$/, '') || '/';
+    SiteRenderService.resolveByDomainAndPath(hostname, pathname)
       .then((page) => {
         setSiteBuilderPage(page);
         setSiteBuilderChecked(true);
