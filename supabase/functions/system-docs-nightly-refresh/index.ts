@@ -44,6 +44,27 @@ serve(async (req) => {
     const source = body.source || 'cron-hourly';
     const now = new Date();
 
+    // Extract user from JWT for manual refresh (not spoofable)
+    let callerUserId: string | null = null;
+    if (source === 'manual') {
+      const authHeader = req.headers.get('Authorization');
+      if (authHeader?.startsWith('Bearer ')) {
+        const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+        const userClient = createClient(supabaseUrl, anonKey, {
+          global: { headers: { Authorization: authHeader } },
+        });
+        const { data: claimsData } = await userClient.auth.getClaims(authHeader.replace('Bearer ', ''));
+        if (claimsData?.claims?.sub) {
+          callerUserId = claimsData.claims.sub;
+        }
+      }
+    }
+
+    const isManual = source === 'manual';
+    const actorType = isManual ? 'user' : 'system';
+    const actorUserId = isManual ? callerUserId : null;
+    const actorLabel = isManual ? 'admin_system_docs' : 'system_docs_nightly_refresh';
+
     // Guard: if cron-hourly, only run at 03:00 Europe/London
     if (source === 'cron-hourly') {
       const londonHour = parseInt(
