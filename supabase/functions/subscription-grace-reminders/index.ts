@@ -192,13 +192,17 @@ ${userName}, 72 часа прошли — прежняя цена больше �
             event_type: eventType,
             status: 'success',
             meta: {
+              // PATCH-FINAL-v2: full structured notification meta (10-field contract)
               subscription_id: subscriptionId,
-              hours_left: hoursLeft,
+              product_id: (subData as any)?.product_id || null,
               product_name: productName || null,
               club_id: clubId,
               club_name: clubName,
+              effective_end_at: graceEndsAt?.toISOString() || null,
+              hours_left: hoursLeft,
               amount,
               currency,
+              pricing_mode: eventType === 'grace_expired' ? 'reactivation_after_grace' : 'grace_renewal',
               source: 'grace',
             },
           });

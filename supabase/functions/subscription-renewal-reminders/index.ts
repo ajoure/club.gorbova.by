@@ -399,11 +399,15 @@ ${safeUserName}, это последнее напоминание. Подпис�
         days_left: daysLeft, product: productName, tariff: tariffName,
         subscription_id: subscriptionId, order_id: orderId, tariff_id: tariffId,
         has_sbs: hasSBS, has_one_time_url: !!oneTimeUrl, has_subscription_url: !!subscriptionUrl,
-        // PATCH-FINAL: structured notification meta
+        // PATCH-FINAL-v2: full structured notification meta (10-field contract)
         product_id: productId || null,
         product_name: productName,
+        club_id: null as string | null, // resolved below
+        club_name: null as string | null, // resolved below
+        effective_end_at: expiryDate?.toISOString() || null,
         amount: amount || null,
         currency: currency || null,
+        pricing_mode: 'regular_renewal',
         source: 'renewal_reminder',
       },
     });
