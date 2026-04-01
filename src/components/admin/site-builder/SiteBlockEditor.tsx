@@ -65,6 +65,12 @@ const BLOCK_TYPES: { type: BlockType; label: string; icon: React.ReactNode }[] =
   { type: "logos", label: "Логотипы", icon: <Grip className="h-4 w-4" /> },
   { type: "spacer", label: "Отступ", icon: <Space className="h-4 w-4" /> },
   { type: "form", label: "Форма", icon: <FileText className="h-4 w-4" /> },
+  { type: "accordion", label: "Аккордеон", icon: <ChevronsUpDown className="h-4 w-4" /> },
+  { type: "tabs", label: "Вкладки", icon: <LayoutList className="h-4 w-4" /> },
+  { type: "callout", label: "Выноска", icon: <Info className="h-4 w-4" /> },
+  { type: "quote", label: "Цитата", icon: <Quote className="h-4 w-4" /> },
+  { type: "audio", label: "Аудио", icon: <Music className="h-4 w-4" /> },
+  { type: "embed", label: "Встраивание", icon: <Globe className="h-4 w-4" /> },
 ];
 
 function getDefaultContent(type: BlockType): Record<string, unknown> {
