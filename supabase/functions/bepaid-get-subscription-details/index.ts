@@ -492,7 +492,7 @@ Deno.serve(async (req) => {
           subV2Updates.next_charge_at = truthNextCharge;
         }
         if (truthAccessEnd) {
-          subV2Updates.access_end_at = endOfDayWarsaw(truthAccessEnd);
+          subV2Updates.access_end_at = endOfDayAppTz(truthAccessEnd);
         }
 
         // Read old values for audit
