@@ -1,102 +1,103 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В патче заменить getClaims() на getUser(), как ты описал. Это правильная правка.
-2. В EF не передавать токен в getUser(...) параметром. Делать так:  
+1. В AdminSystemDocs.tsx seed должен логировать именно фактически созданные manual-домены.  
+Сейчас вместе с исправлением existingManualKeys нужно отдельно собирать createdDomains[] и писать в audit_logs.meta именно его, а не вычислять список постфактум по старой логике.
+2. В useSystemDocs.ts авто-переключение в auto нужно делать как единственный fallback-режим.  
+Добавь поведение:  
 
-  - создать userClient с Authorization header
-  - вызвать именно await userClient.auth.getUser()
-  - взять callerUser?.id  
-  То есть источник пользователя должен быть только из JWT запроса.
+  - если manual.length === 0 && auto exists → setViewMode("auto")
+  - одновременно сбрасывать selectedManualVersion в "", чтобы не оставался stale state от прошлой вкладки/домена
+  - если initialVersion был передан, но такой manual-версии нет, а AUTO-CURRENT есть — тоже уходить в auto, а не оставаться на пустом экране
 3. &nbsp;
-4. После патча нужен повторный proof именно из UI, не через curl:  
+4. initialMode должен стать реально опциональным по всей цепочке.  
+Не только в AdminSystemDocs.tsx, но и в пропсах/вызове DomainTab и useSystemDocs не форсировать "manual" по умолчанию раньше времени. Решение о fallback-режиме должен принимать хук после загрузки данных.
+5. Нужен явный post-proof после патча.  
+Проверить и показать:  
 
-  - нажать Обновить сейчас на /admin/docs
-  - проверить в audit_logs:  
+  - домен, где есть только AUTO-CURRENT → открывается сразу в auto
+  - после Seed у такого домена появляется POINT A
+  - products_sales не получает новый POINT A
+  - system_docs.seed_generated в audit_logs содержит только реально созданные section_key
+6. &nbsp;
+7. Idempotency seed зафиксировать явно.  
+Повторный Seed не должен:  
 
-    - system_docs.manual_refresh_started
-    - system_docs.manual_refresh_completed
-    - actor_type='user'
-    - actor_user_id заполнен реальным UUID
-  - &nbsp;
-5. &nbsp;
-6. В финальный proof-пакет добавить этот отдельный блок:  
-
-  - “manual refresh actor proof”
-  - до фикса: actor_user_id = NULL
-  - после фикса: actor_user_id != NULL
-7. &nbsp;
-8. Остальные пункты можно считать подтвержденными только после этого последнего proof. Без него патч документации ещё не закрывать окончательно.
-
-&nbsp;
+  - создавать второй POINT A
+  - менять AUTO-CURRENT
+  - менять active/manual-историю существующих доменов
+8. &nbsp;
 
 &nbsp;
 
-После этого уже можно считать модуль документации закрытым.
+&nbsp;
+
+В остальном патч правильный.
 
 &nbsp;
 
-# План: Финальный корректирующий патч — actor_user_id для manual refresh
+PATCH: Починить Seed и стартовый режим документации
 
-## Обнаруженное расхождение
+## Корень проблемы
 
-**Критическое:** В EF `system-docs-nightly-refresh` для manual refresh используется несуществующий метод `userClient.auth.getClaims()`. Метод молча возвращает ошибку, `callerUserId` остаётся `null`.
+1. **Seed** (строка 172-174 в AdminSystemDocs.tsx) проверяет `existingKeys.has(domain.key)` — если для домена есть хоть одна запись (включая AUTO-CURRENT), seed считает домен "заполненным" и не создаёт POINT A.
+2. **useSystemDocs** (строка 106-110) при отсутствии manual-версий не переключается в auto-режим — пользователь видит пустой экран.
 
-**Proof из audit_logs:**
+## Патч (3 файла)
 
-```
-manual_refresh_completed: actor_type=user, actor_user_id=NULL ← должен быть user_id
-manual_refresh_started:   actor_type=user, actor_user_id=NULL ← должен быть user_id
-```
+### 1. `src/pages/admin/AdminSystemDocs.tsx` — seed-логика
 
-## Остальные proofs — ОК
-
-
-| Проверка                                                                  | Статус |
-| ------------------------------------------------------------------------- | ------ |
-| 7 AUTO-CURRENT, по 1 на section_key                                       | ✅      |
-| products_sales: POINT A (archived), B (archived), C (active) — не тронуты | ✅      |
-| Seed: actor_type='user', actor_label='admin_system_docs_seed'             | ✅      |
-| AdminProductsDocs — чистая preset-обёртка (6 строк)                       | ✅      |
-| Deep-link: domain/mode/version в URL                                      | ✅      |
-| auto mode очищает version                                                 | ✅      |
-| Cron: 1 job, schedule `0 * * * *`                                         | ✅      |
-
-
-## Патч (1 файл)
-
-**Файл:** `supabase/functions/system-docs-nightly-refresh/index.ts`, строки 49-61
-
-**Было:**
+Заменить проверку `existingKeys` на проверку наличия именно manual-версий:
 
 ```ts
-const userClient = createClient(supabaseUrl, anonKey, {
-  global: { headers: { Authorization: authHeader } },
-});
-const { data: claimsData } = await userClient.auth.getClaims(...);
-if (claimsData?.claims?.sub) {
-  callerUserId = claimsData.claims.sub;
+// Было: existingKeys = Set всех section_key (включая AUTO-CURRENT)
+// Нужно: проверять только manual-версии
+const existingManualKeys = new Set(
+  ((existing as any[]) || [])
+    .filter((d: any) => d.version_label !== 'AUTO-CURRENT')
+    .map((d: any) => d.section_key)
+);
+
+for (const domain of SYSTEM_DOC_DOMAINS) {
+  // products_sales не трогать, если manual уже есть
+  if (existingManualKeys.has(domain.key)) continue;
+  // создать POINT A
 }
 ```
 
-**Нужно:**
+### 2. `src/hooks/useSystemDocs.ts` — автовыбор режима
+
+После загрузки версий, если manual-версий нет, но есть AUTO-CURRENT — переключиться в auto:
 
 ```ts
-const userClient = createClient(supabaseUrl, anonKey, {
-  global: { headers: { Authorization: authHeader } },
-});
-const { data: { user: callerUser } } = await userClient.auth.getUser();
-if (callerUser?.id) {
-  callerUserId = callerUser.id;
+// После строки 109, добавить:
+if (manual.length === 0) {
+  const auto = docs.find((d) => isAutoVersion(d));
+  if (auto) {
+    setViewMode("auto");
+  }
 }
 ```
 
-`getUser()` — стандартный метод Supabase JS SDK, валидирует JWT серверно и возвращает `user.id`.
+### 3. `src/pages/admin/AdminSystemDocs.tsx` — modeParam по умолчанию
 
-## После патча — повторный proof
+Строка 92: если `initialMode` не задан через URL, позволить хуку самому определить режим на основе данных. Не форсировать `"manual"`.
 
-Вызвать manual refresh из UI и проверить в audit_logs:
+Изменение минимальное: передавать `initialMode` из URL только если он явно задан, иначе `undefined` — и хук сам решит.
 
-- `actor_type = 'user'`
-- `actor_user_id` ≠ NULL (реальный UUID)
+## Не изменяется
+
+- `SystemDocViewer.tsx` — без изменений
+- `systemDocsRegistry.ts` — без изменений  
+- EF `system-docs-nightly-refresh` — без изменений
+- RLS, схема — без изменений
+
+## DoD
+
+- Seed создаёт POINT A для доменов, где есть только AUTO-CURRENT
+- Seed не трогает products_sales (там уже POINT A/B/C)
+- Если manual-версий нет, UI открывается в режиме auto
+- Copy/Download в auto-режиме работают с AUTO-CURRENT
+- audit_logs содержит запись `system_docs.seed_generated`
+- Пустой экран не появляется, если хотя бы одна версия существует
