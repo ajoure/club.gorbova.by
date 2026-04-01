@@ -3,7 +3,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 interface FormBlockEditorProps {
   content: Record<string, unknown>;
@@ -22,10 +24,65 @@ const MAPPING_OPTIONS = [
 
 export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
   const fields = (content.fields as Array<{ label: string; type: string; required: boolean; mapping?: string }>) || [];
+  const selectedProductId = (content.product_id as string) || "";
+  const selectedTariffId = (content.tariff_id as string) || "";
+
+  const { data: products } = useQuery({
+    queryKey: ["products-v2-active-for-form"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-for-form", selectedProductId],
+    queryFn: async () => {
+      if (!selectedProductId) return [];
+      const { data, error } = await supabase
+        .from("tariffs")
+        .select("id, name")
+        .eq("product_id", selectedProductId)
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: !!selectedProductId,
+  });
 
   const updateField = (index: number, patch: Record<string, unknown>) => {
     const updated = fields.map((f, i) => (i === index ? { ...f, ...patch } : f));
     onChange({ ...content, fields: updated });
+  };
+
+  const handleProductChange = (productId: string) => {
+    if (productId === "none") {
+      const { product_id: _p, tariff_id: _t, ...rest } = content;
+      onChange(rest);
+    } else {
+      const { tariff_id: _t, ...rest } = content;
+      onChange({ ...rest, product_id: productId });
+    }
+  };
+
+  const handleTariffChange = (tariffId: string) => {
+    if (tariffId === "none") {
+      const { tariff_id: _t, ...rest } = content;
+      onChange(rest);
+    } else {
+      onChange({ ...content, tariff_id: tariffId });
+    }
+  };
+
+  const clearProductBinding = () => {
+    const { product_id: _p, tariff_id: _t, ...rest } = content;
+    onChange(rest);
   };
 
   return (
@@ -50,6 +107,42 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
           placeholder="https://... или /thank-you"
         />
         <p className="text-[10px] text-muted-foreground mt-1">Оставьте пустым для показа сообщения «Спасибо». Допустимы только https:// или относительные пути (/...)</p>
+      </div>
+
+      {/* Product/Tariff binding */}
+      <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs font-semibold">Привязка к продукту</Label>
+          {selectedProductId && (
+            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={clearProductBinding}>
+              <X className="h-3 w-3 mr-1" /> Убрать
+            </Button>
+          )}
+        </div>
+        <Select value={selectedProductId || "none"} onValueChange={handleProductChange}>
+          <SelectTrigger><SelectValue placeholder="Без привязки" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Без привязки</SelectItem>
+            {(products || []).map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {selectedProductId && (
+          <div>
+            <Label className="text-xs">Тариф (опционально)</Label>
+            <Select value={selectedTariffId || "none"} onValueChange={handleTariffChange}>
+              <SelectTrigger><SelectValue placeholder="Без тарифа" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Без тарифа</SelectItem>
+                {(tariffs || []).map((t) => (
+                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        <p className="text-[10px] text-muted-foreground">При отправке формы автоматически создастся сделка с выбранным продуктом</p>
       </div>
 
       {fields.map((field, i) => (
