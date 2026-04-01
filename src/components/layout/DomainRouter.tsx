@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
+import { useSitePricingData } from "@/hooks/useSitePricingData";
 import { ProductLanding } from "@/components/landing/ProductLanding";
 import { ProductLandingHeader } from "@/components/landing/ProductLandingHeader";
 import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter";
