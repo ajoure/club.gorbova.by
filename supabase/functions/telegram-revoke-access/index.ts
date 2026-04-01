@@ -607,10 +607,27 @@ Deno.serve(async (req) => {
     const keyboard = {
       inline_keyboard: [[{ text: '💳 Продлить подписку', url: getPricingUrl() }]],
     };
+    // Get club name for better DM
+    let clubName = 'клуба';
+    try {
+      const { data: clubInfo } = await supabase
+        .from('telegram_clubs')
+        .select('name')
+        .eq('id', club_id)
+        .maybeSingle();
+      if (clubInfo?.name) clubName = clubInfo.name;
+    } catch {}
+
+    const reasonText = reason === 'subscription_expired'
+      ? 'Срок действия подписки истёк.'
+      : reason === 'manual_revoke'
+      ? 'Доступ отозван администратором.'
+      : 'Доступ к клубу закрыт.';
+
     dmResult = await sendMessage(
       botToken,
       telegramUserId,
-      `❌ Доступ отозван\n\nДоступ к чату и каналу клуба закрыт.\n\nВы можете вернуться в любой момент, оформив подписку 👇`,
+      `❌ Доступ отозван — ${clubName}\n\n${reasonText}\n\nВы можете вернуться в любой момент, оформив подписку 👇`,
       keyboard
     );
 

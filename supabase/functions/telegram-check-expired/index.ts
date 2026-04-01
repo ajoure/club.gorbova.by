@@ -164,6 +164,33 @@ Deno.serve(async (req) => {
           results.revoked++;
         }
 
+        // Write audit_logs with system actor proof
+        try {
+          const { resolveEffectiveClubAccess } = await import('../_shared/resolve-effective-access.ts');
+          const accessSnapshot = await resolveEffectiveClubAccess(supabase, access.user_id, access.club_id);
+          
+          await supabase.from('audit_logs').insert({
+            action: 'telegram.access_expired_revoke',
+            actor_type: 'system',
+            actor_user_id: null,
+            actor_label: 'telegram-check-expired',
+            target_user_id: access.user_id,
+            meta: {
+              reason_code: 'subscription_expired',
+              reason_text: 'Срок доступа истёк',
+              club_id: access.club_id,
+              access_snapshot: {
+                active_until: access.active_until,
+                effective_end_at: accessSnapshot.effectiveEndAt?.toISOString() || null,
+                is_unlimited: accessSnapshot.isUnlimited,
+                sources_count: accessSnapshot.allSources.length,
+              },
+            },
+          });
+        } catch (auditErr) {
+          console.error('[telegram-check-expired] Audit log error (non-blocking):', auditErr);
+        }
+
         // Phase 1 Ledger: revoke via executeRevoke
         try {
           const revokeCtx: RevokeContext = {

@@ -342,6 +342,18 @@ Deno.serve(async (req) => {
 
     for (const sub of validNewlyExpired) {
       try {
+        // Anti-stale guard: re-read subscription by ID
+        const { data: freshSub } = await supabase
+          .from('subscriptions_v2')
+          .select('id, access_end_at, status')
+          .eq('id', sub.id)
+          .maybeSingle();
+
+        if (freshSub && new Date(freshSub.access_end_at) > new Date(nowIso)) {
+          console.log(`[anti-stale] Subscription ${sub.id} already renewed (access_end_at=${freshSub.access_end_at}), skipping grace`);
+          continue;
+        }
+
         // Get grace_hours from recurring_snapshot or default 72
         const subMeta = (sub.meta || {}) as Record<string, any>;
         const recurringSnapshot = subMeta.recurring_snapshot || {};
@@ -360,30 +372,58 @@ Deno.serve(async (req) => {
           updated_at: nowIso,
         }).eq('id', sub.id);
 
-        // Get amount from last order or tariff
+        // Get amount: strict priority meta → tariff_prices → orders_v2 (by product_id)
         let amount = 0;
         let currency = 'BYN';
-        
-        const { data: lastOrder } = await supabase
-          .from('orders_v2')
-          .select('final_price, currency')
-          .eq('user_id', sub.user_id)
-          .eq('status', 'paid')
-          .order('paid_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
 
-        if (lastOrder?.final_price) {
-          amount = Number(lastOrder.final_price);
-          currency = lastOrder.currency || 'BYN';
-        } else {
-          // Fallback to tariff
-          const { data: tariff } = await supabase
-            .from('tariffs')
-            .select('original_price')
-            .eq('id', sub.tariff_id)
-            .single();
-          amount = tariff?.original_price || 0;
+        // Priority 1: meta.recurring_amount or recurring_snapshot.amount
+        if (subMeta.recurring_amount) {
+          amount = Number(subMeta.recurring_amount);
+        } else if (recurringSnapshot.amount) {
+          amount = Number(recurringSnapshot.amount);
+        }
+
+        // Priority 2: tariff_prices
+        if (!amount && sub.tariff_id) {
+          const { data: priceData } = await supabase
+            .from('tariff_prices')
+            .select('final_price, price, currency')
+            .eq('tariff_id', sub.tariff_id)
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+          if (priceData) {
+            amount = Number(priceData.final_price || priceData.price || 0);
+            currency = priceData.currency || 'BYN';
+          }
+        }
+
+        // Priority 3: orders_v2 fallback by user_id + product_id
+        if (!amount && sub.product_id) {
+          const { data: lastOrder } = await supabase
+            .from('orders_v2')
+            .select('final_price, currency')
+            .eq('user_id', sub.user_id)
+            .eq('product_id', sub.product_id)
+            .eq('status', 'paid')
+            .order('paid_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (lastOrder?.final_price) {
+            amount = Number(lastOrder.final_price);
+            currency = lastOrder.currency || 'BYN';
+          }
+        }
+
+        // Get real product name from products_v2
+        let productName = 'Подписка';
+        if (sub.product_id) {
+          const { data: product } = await supabase
+            .from('products_v2')
+            .select('name')
+            .eq('id', sub.product_id)
+            .maybeSingle();
+          if (product?.name) productName = product.name;
         }
 
         // Send grace_started notification

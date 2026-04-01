@@ -1849,7 +1849,8 @@ async function chargeSubscription(
         tariff.name || 'Стандартный',
         amount,
         currency,
-        newEndDate
+        newEndDate,
+        product_id
       );
       await sendRenewalSuccessEmail(
         supabase,

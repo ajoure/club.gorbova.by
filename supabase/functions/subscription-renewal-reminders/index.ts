@@ -836,6 +836,18 @@ Deno.serve(async (req) => {
 
       for (const sub of subscriptions || []) {
         const userId = sub.user_id;
+
+        // Anti-stale guard: re-read subscription by ID before sending
+        const { data: freshSub } = await supabase
+          .from('subscriptions_v2')
+          .select('id, access_end_at, status')
+          .eq('id', sub.id)
+          .maybeSingle();
+
+        if (freshSub && (freshSub.status !== sub.status || new Date(freshSub.access_end_at) > new Date(windowEnd))) {
+          console.log(`[anti-stale] Subscription ${sub.id} changed (status=${freshSub.status}, access_end_at=${freshSub.access_end_at}), skipping reminder`);
+          continue;
+        }
         
         if (await wasReminderSentToday(supabase, userId, `subscription_reminder_${daysLeft}d`, todayWindow)) {
           console.log(`Reminder already sent today for user ${userId}, skipping`);
