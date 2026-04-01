@@ -85,11 +85,11 @@ export default function AdminSystemDocs({
   } | null>(null);
 
   useEffect(() => {
-    if (rbacLoading) return;
-    if (!isSuperAdmin()) {
+    if (rbac.loading) return;
+    if (!rbac.isSuperAdmin) {
       navigate("/admin/products-v2");
     }
-  }, [rbacLoading, isSuperAdmin]);
+  }, [rbac.loading, rbac.isSuperAdmin]);
 
   // Fetch last refresh status
   useEffect(() => {
