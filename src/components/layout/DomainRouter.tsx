@@ -81,15 +81,7 @@ export function DomainHomePage() {
 
   // Site builder page found → render it
   if (siteBuilderPage) {
-    return (
-      <div className="site-public-layout">
-        <SitePageRenderer
-          blocks={(siteBuilderPage.blocks as unknown as import("@/services/sitePages/types").SiteBlock[]) || []}
-          themeSettings={siteBuilderPage.theme_settings || {}}
-          pageId={siteBuilderPage.id}
-        />
-      </div>
-    );
+    return <SiteBuilderPageRenderer page={siteBuilderPage} />;
   }
 
   // ─── Legacy: Product domain resolution ───
