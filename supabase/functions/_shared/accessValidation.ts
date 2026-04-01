@@ -60,8 +60,8 @@ async function checkBillingDayProtection(
   clubProductIds: string[] | null
 ): Promise<AccessCheckResult> {
   const nowStr = now.toISOString();
-  const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
-  const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+  const todayKey = toTzDateKey(nowStr, APP_TZ);
+  const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
 
   const q = supabase
     .from('subscriptions_v2')
