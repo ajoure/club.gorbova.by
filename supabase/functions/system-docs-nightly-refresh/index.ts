@@ -5,6 +5,7 @@ import {
   SECTION_ORDER,
   SCAFFOLD_SIGNATURES,
   SEED_REPAIR_EXCLUDED_DOMAINS,
+  PENDING_PROOF_ITEMS,
   type DomainBlueprint,
 } from "../_shared/system_docs_blueprint.ts";
 
@@ -38,7 +39,7 @@ const SYSTEM_DOC_DOMAINS = [
 ];
 
 const MAX_DOC_SIZE = 100 * 1024;
-const LIST_LIMIT = 30; // top-N for live lists
+const LIST_LIMIT = 30;
 
 // ─── Structured warning type ───────────────────────────────────────
 interface StructuredWarning {
@@ -85,8 +86,10 @@ async function safeSelect(
   columns: string,
   opts?: {
     filter?: { col: string; val: any };
+    filters?: { col: string; val: any }[];
     limit?: number;
     order?: { col: string; asc: boolean };
+    neq?: { col: string; val: any };
   },
   domain?: string,
   warnings?: StructuredWarning[]
@@ -94,6 +97,10 @@ async function safeSelect(
   try {
     let q = supabase.from(table).select(columns);
     if (opts?.filter) q = q.eq(opts.filter.col, opts.filter.val);
+    if (opts?.filters) {
+      for (const f of opts.filters) q = q.eq(f.col, f.val);
+    }
+    if (opts?.neq) q = q.neq(opts.neq.col, opts.neq.val);
     if (opts?.order) q = q.order(opts.order.col, { ascending: opts.order.asc });
     if (opts?.limit) q = q.limit(opts.limit);
     const { data, error } = await q;
@@ -118,7 +125,6 @@ async function safeSelect(
 function isPlaceholderDoc(doc: any): boolean {
   const content = doc.content_text || "";
   const meta = doc.meta || {};
-  // Must match multiple scaffold signatures, not just one occurrence
   let matchCount = 0;
   for (const sig of SCAFFOLD_SIGNATURES) {
     if (content.includes(sig)) matchCount++;
@@ -127,10 +133,8 @@ function isPlaceholderDoc(doc: any): boolean {
 }
 
 function hasManualEdits(doc: any): boolean {
-  // If updated_by differs from created_by, someone edited it
   if (doc.updated_by && doc.created_by && doc.updated_by !== doc.created_by)
     return true;
-  // If updated_at is significantly after created_at (>5 min), likely edited
   if (doc.updated_at && doc.created_at) {
     const diff =
       new Date(doc.updated_at).getTime() - new Date(doc.created_at).getTime();
@@ -141,14 +145,66 @@ function hasManualEdits(doc: any): boolean {
 
 // ─── Next version label calculator ─────────────────────────────────
 function nextVersionLabel(existingLabels: string[]): string {
-  // Extract letter indices from POINT A, POINT B, etc.
   const letters = existingLabels
     .filter((l) => l.startsWith("POINT "))
     .map((l) => l.replace("POINT ", ""))
     .filter((l) => l.length === 1 && l >= "A" && l <= "Z")
-    .map((l) => l.charCodeAt(0) - 64); // A=1, B=2, ...
+    .map((l) => l.charCodeAt(0) - 64);
   const maxIdx = letters.length > 0 ? Math.max(...letters) : 0;
   return `POINT ${String.fromCharCode(65 + maxIdx)}`;
+}
+
+// ─── Audit changes filtering & aggregation ─────────────────────────
+function filterAndAggregateAudit(
+  allAudit: any[],
+  bp: DomainBlueprint
+): string {
+  let items = allAudit;
+
+  // Apply include filter (if prefixes specified)
+  if (bp.auditActionPrefixes.length > 0) {
+    items = items.filter((a: any) =>
+      bp.auditActionPrefixes.some((p) => a.action?.startsWith(p))
+    );
+  }
+
+  // Apply exclude filter
+  if (bp.excludeAuditPrefixes.length > 0) {
+    items = items.filter(
+      (a: any) =>
+        !bp.excludeAuditPrefixes.some((p) => a.action?.startsWith(p))
+    );
+  }
+
+  if (items.length === 0) return "(нет релевантных изменений за 24 часа)";
+
+  // Aggregate repeated actions
+  const counts: Record<string, number> = {};
+  const firstSeen: Record<string, string> = {};
+  for (const a of items) {
+    const key = a.action || "unknown";
+    counts[key] = (counts[key] || 0) + 1;
+    if (!firstSeen[key]) firstSeen[key] = a.created_at;
+  }
+
+  // Sort by first seen, format with aggregation
+  const sorted = Object.entries(counts).sort(([, ], [, ]) => {
+    return 0; // keep insertion order
+  });
+
+  const lines = sorted.map(([action, count]) => {
+    if (count > 1) return `- ${action} × ${count}`;
+    return `- ${firstSeen[action]?.substring(0, 16) || ""} | ${action}`;
+  });
+
+  const maxItems = bp.maxAuditItems || 20;
+  if (lines.length > maxItems) {
+    return (
+      lines.slice(0, maxItems).join("\n") +
+      `\n(показаны первые ${maxItems} из ${lines.length})`
+    );
+  }
+  return lines.join("\n");
 }
 
 serve(async (req) => {
@@ -180,6 +236,19 @@ serve(async (req) => {
           data: { user: callerUser },
         } = await userClient.auth.getUser();
         if (callerUser?.id) callerUserId = callerUser.id;
+      }
+
+      // JWT guard: manual/seed MUST have authenticated caller
+      if (!callerUserId) {
+        return new Response(
+          JSON.stringify({
+            error: "Authentication required for manual/seed operations",
+          }),
+          {
+            status: 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
     }
 
@@ -254,33 +323,28 @@ serve(async (req) => {
     const allWarnings: StructuredWarning[] = [];
     let updatedCount = 0;
 
-    // ── Collect recent audit for changes block ──
+    // ── Collect recent audit for changes block (raw, filtering done per-domain) ──
     const recentAudit = await safeSelect(
       supabase,
       "audit_logs",
       "action, meta, created_at",
-      { limit: 100, order: { col: "created_at", asc: false } }
+      { limit: 200, order: { col: "created_at", asc: false } }
     );
     const filteredAudit = recentAudit.filter(
       (a: any) => a.created_at >= since24h
     );
-    const changesSummary = filteredAudit
-      .sort((a: any, b: any) => a.created_at.localeCompare(b.created_at))
-      .map((a: any) => `- ${a.created_at.substring(0, 16)} | ${a.action}`)
-      .join("\n");
 
     // ── SEED MODE ──
     if (source === "seed") {
       const seedResult = await handleSeedMode(
         supabase,
         snapshotAt,
-        changesSummary,
+        filteredAudit,
         since24h,
         callerUserId,
         allWarnings
       );
 
-      // Also update AUTO-CURRENT for all domains
       for (const domain of SYSTEM_DOC_DOMAINS) {
         try {
           const content = await buildDomainDocument(
@@ -288,7 +352,7 @@ serve(async (req) => {
             domain.key,
             "auto_current",
             snapshotAt,
-            changesSummary,
+            filteredAudit,
             since24h,
             allWarnings
           );
@@ -345,7 +409,7 @@ serve(async (req) => {
           domain.key,
           "auto_current",
           snapshotAt,
-          changesSummary,
+          filteredAudit,
           since24h,
           allWarnings
         );
@@ -433,7 +497,7 @@ interface SeedResult {
 async function handleSeedMode(
   supabase: any,
   snapshotAt: string,
-  changesSummary: string,
+  filteredAudit: any[],
   since24h: string,
   callerUserId: string | null,
   warnings: StructuredWarning[]
@@ -447,7 +511,6 @@ async function handleSeedMode(
     repair_mapping: [],
   };
 
-  // Fetch all existing manual docs
   const { data: allDocs } = await supabase
     .from("admin_docs")
     .select("*")
@@ -455,7 +518,6 @@ async function handleSeedMode(
   const docs = (allDocs || []) as any[];
 
   for (const domain of SYSTEM_DOC_DOMAINS) {
-    // ── STOP-guard: products_sales ──
     if (SEED_REPAIR_EXCLUDED_DOMAINS.includes(domain.key)) {
       result.skipped_domains.push(domain.key);
       warnings.push({
@@ -472,18 +534,17 @@ async function handleSeedMode(
     );
 
     if (domainDocs.length === 0) {
-      // No manual docs → create POINT A
       try {
         const content = await buildDomainDocument(
           supabase,
           domain.key,
           "manual_baseline",
           snapshotAt,
-          "",
+          [],
           since24h,
           warnings
         );
-        const { data: inserted, error } = await supabase
+        const { error } = await supabase
           .from("admin_docs")
           .insert({
             section_key: domain.key,
@@ -525,7 +586,6 @@ async function handleSeedMode(
       continue;
     }
 
-    // Check for manual edits
     if (hasManualEdits(placeholderDoc)) {
       result.manual_review_domains.push(domain.key);
       result.manual_review_docs.push({
@@ -542,18 +602,13 @@ async function handleSeedMode(
       continue;
     }
 
-    // Safe to repair: archive old, create new
+    // Safe to repair
     try {
-      // Archive placeholder
       await supabase
         .from("admin_docs")
-        .update({
-          status: "archived",
-          updated_by: callerUserId,
-        })
+        .update({ status: "archived", updated_by: callerUserId })
         .eq("id", placeholderDoc.id);
 
-      // Calculate next version label
       const existingLabels = domainDocs.map((d: any) => d.version_label);
       const newLabel = nextVersionLabel(existingLabels);
 
@@ -562,7 +617,7 @@ async function handleSeedMode(
         domain.key,
         "manual_baseline",
         snapshotAt,
-        "",
+        [],
         since24h,
         warnings
       );
@@ -694,7 +749,7 @@ async function buildDomainDocument(
   domainKey: string,
   mode: "auto_current" | "manual_baseline",
   snapshotAt: string,
-  changesSummary: string,
+  filteredAudit: any[],
   since24h: string,
   warnings: StructuredWarning[]
 ): Promise<string> {
@@ -718,9 +773,7 @@ async function buildDomainDocument(
     bp.relatedTables.length > 0
       ? `\nСвязанные таблицы: ${bp.relatedTables.sort().join(", ")}`
       : "";
-  const cdLinks = bp.crossDomainLinks
-    .map((l) => `- ${l}`)
-    .join("\n");
+  const cdLinks = bp.crossDomainLinks.map((l) => `- ${l}`).join("\n");
   sections.push(
     `${SECTION_ORDER[2]}${relLines}\n\nCross-domain связи:\n${cdLinks || "(нет)"}`
   );
@@ -756,14 +809,11 @@ async function buildDomainDocument(
   sections.push(`${SECTION_ORDER[6]}\n\n${legacyLines}`);
 
   // 7. Текущее состояние (live snapshot)
-  const liveSnapshot = await buildLiveSnapshot(
-    supabase,
-    domainKey,
-    warnings
-  );
+  const liveSnapshot = await buildLiveSnapshot(supabase, domainKey, warnings);
   let section7 = `${SECTION_ORDER[7]}\n\nОбновлено: ${snapshotAt} (Europe/London)\n\n${liveSnapshot}`;
-  if (mode === "auto_current" && changesSummary) {
-    section7 += `\n\n### Изменения за последние 24 часа\n\n${changesSummary}`;
+  if (mode === "auto_current" && filteredAudit.length > 0) {
+    const domainChanges = filterAndAggregateAudit(filteredAudit, bp);
+    section7 += `\n\n### Изменения за последние 24 часа\n\n${domainChanges}`;
   }
   sections.push(section7);
 
@@ -777,25 +827,50 @@ async function buildDomainDocument(
   );
   sections.push(`${SECTION_ORDER[8]}\n\n${openTails}`);
 
-  // Special: platform_master adds cross-domain map + evidence boundaries
+  // ─── Domain-specific extra sections ───
   if (domainKey === "platform_master") {
     sections.push(
       `9. Cross-domain карта\n\n${bp.crossDomainLinks.map((l) => `- ${l}`).join("\n")}`
     );
     sections.push(
       `10. Границы доказанности\n\n` +
-        `Подтверждено по БД (FK):\n` +
+        `### Подтверждено (FK / SQL)\n` +
         `- products_v2 → tariffs → tariff_offers → orders_v2 → payments_v2 → entitlements\n` +
-        `- training_lessons → training_modules, products_v2\n` +
-        `- access_rules → products_v2, tariffs\n` +
+        `- training_lessons → training_modules (module_id FK), products_v2 (product_id FK)\n` +
+        `- training_modules → training_modules (parent_module_id FK — self-referencing)\n` +
+        `- access_rules → products_v2 (product_id FK), tariffs (tariff_id FK)\n` +
         `- site_domain_bindings → site_pages (site_page_id FK)\n\n` +
-        `Не подтверждено / hypothesis:\n` +
-        `- site_domain_bindings ↔ products_v2 (нет прямого FK, связь через контент)\n` +
-        `- Telegram clubs ↔ product_club_mappings ↔ subscriptions/access (требует проверки FK)\n`
+        `### Выведено из текущих данных\n` +
+        `- Все active access_rules имеют duration_days=NULL\n` +
+        `- prior_purchase rules проверяют orders_v2 при grant-access-for-order\n\n` +
+        `### Требует proof\n` +
+        `- duration_days=NULL: бессрочный доступ или bug?\n` +
+        `- prior_purchase runtime для existing subscribers\n` +
+        `- historical deals → entitlement mapping completeness\n` +
+        `- site_domain_bindings ↔ products_v2 (нет прямого FK)\n\n` +
+        `### Известные расхождения\n` +
+        `- Telegram clubs ↔ product_club_mappings FK не подтверждён в discovery\n` +
+        `- Root-модули с 0 direct lessons (уроки в child-модулях)\n`
+    );
+    sections.push(
+      `11. Как использовать master как входной артефакт\n\n` +
+        `- Что копировать по умолчанию: platform_master AUTO-CURRENT — актуальный snapshot системы\n` +
+        `- Когда дополнительно прикладывать доменный документ: при работе с конкретным доменом (trainings, orders, etc.)\n` +
+        `- Когда обязательно прикладывать open_tails: при планировании, диагностике, review\n` +
+        `- Manual POINT A/B/C — это историческая фиксация, а не текущий SoT. Для актуальной картины всегда брать AUTO-CURRENT\n` +
+        `- AUTO-CURRENT обновляется nightly 03:00 Europe/London или вручную через /admin/docs\n` +
+        `- Где искать open tails: домен open_tails AUTO-CURRENT или секция 8 в любом доменном документе\n` +
+        `- Как понять что доказано: секция «Границы доказанности» в каждом документе\n` +
+        `- /admin/docs → Архитектура платформы → Автообновление → «Копировать master как контекст»`
     );
   }
 
-  // Special: open_tails domain adds generator issues
+  if (domainKey === "trainings_access") {
+    // Extra sections for trainings
+    const extraTrainings = await buildTrainingsExtraSections(supabase, warnings);
+    sections.push(extraTrainings);
+  }
+
   if (domainKey === "open_tails") {
     sections.push(
       `9. Проблемы самого генератора документации\n\n` +
@@ -804,6 +879,17 @@ async function buildDomainDocument(
         `- proof полноты live snapshot (не scaffold) — pending\n` +
         `- schema mismatch / truncation warnings последних batch — см. audit_logs\n` +
         `- build-proof — pending verification\n`
+    );
+    // Structured pending proofs
+    const proofTable = PENDING_PROOF_ITEMS.map(
+      (p) =>
+        `| ${p.proof_type} | ${p.domain} | ${p.status} | ${p.evidence_source} | ${p.next_required_action} |`
+    ).join("\n");
+    sections.push(
+      `10. Реестр pending proof items\n\n` +
+        `| proof_type | domain | status | evidence_source | next_required_action |\n` +
+        `|---|---|---|---|---|\n` +
+        proofTable
     );
   }
 
@@ -853,12 +939,29 @@ async function livePlatformMaster(
   const d = "platform_master";
   const userCount = await safeCount(supabase, "profiles", undefined, d, w);
   const roleCount = await safeCount(supabase, "user_roles", undefined, d, w);
-  const efCount = await safeCount(supabase, "edge_functions_registry", undefined, d, w);
+  const efCount = await safeCount(
+    supabase,
+    "edge_functions_registry",
+    undefined,
+    d,
+    w
+  );
   const auditCount = await safeCount(supabase, "audit_logs", undefined, d, w);
-  const appSettingsCount = await safeCount(supabase, "app_settings", undefined, d, w);
-  const adminMenuCount = await safeCount(supabase, "admin_menu_settings", undefined, d, w);
+  const appSettingsCount = await safeCount(
+    supabase,
+    "app_settings",
+    undefined,
+    d,
+    w
+  );
+  const adminMenuCount = await safeCount(
+    supabase,
+    "admin_menu_settings",
+    undefined,
+    d,
+    w
+  );
 
-  // EF registry: real columns: name, enabled, category, tier, notes
   const efList = await safeSelect(
     supabase,
     "edge_functions_registry",
@@ -867,7 +970,13 @@ async function livePlatformMaster(
     d,
     w
   );
-  const efTotal = await safeCount(supabase, "edge_functions_registry", undefined, d, w);
+  const efTotal = await safeCount(
+    supabase,
+    "edge_functions_registry",
+    undefined,
+    d,
+    w
+  );
   const efBlock =
     efList.length > 0
       ? efList
@@ -900,8 +1009,7 @@ async function livePlatformMaster(
     `- Ручные версии: POINT A/B/C — через UI (active/draft/archived)\n` +
     `- AUTO-CURRENT: системная версия, nightly/manual refresh, meta.managed_by='system'\n` +
     `- Главный входной артефакт: platform_master AUTO-CURRENT\n` +
-    `- Nightly refresh: 03:00 Europe/London, EF system-docs-nightly-refresh, idempotent\n` +
-    `- Как использовать: /admin/docs → Архитектура платформы → Автообновление → Копировать`
+    `- Nightly refresh: 03:00 Europe/London, EF system-docs-nightly-refresh, idempotent\n`
   );
 }
 
@@ -918,14 +1026,49 @@ async function liveProductsSales(
     d,
     w
   );
-  const productTotal = await safeCount(supabase, "products_v2", undefined, d, w);
-  // tariffs: is_active, NOT status
+  const productTotal = await safeCount(
+    supabase,
+    "products_v2",
+    undefined,
+    d,
+    w
+  );
   const tariffCount = await safeCount(supabase, "tariffs", undefined, d, w);
-  const tariffActive = await safeCount(supabase, "tariffs", { col: "is_active", val: true }, d, w);
-  const offerCount = await safeCount(supabase, "tariff_offers", undefined, d, w);
-  const rulesCount = await safeCount(supabase, "access_rules", { col: "is_active", val: true }, d, w);
-  const relationsCount = await safeCount(supabase, "product_relations", undefined, d, w);
-  const mappingCount = await safeCount(supabase, "bepaid_product_mappings", undefined, d, w);
+  const tariffActive = await safeCount(
+    supabase,
+    "tariffs",
+    { col: "is_active", val: true },
+    d,
+    w
+  );
+  const offerCount = await safeCount(
+    supabase,
+    "tariff_offers",
+    undefined,
+    d,
+    w
+  );
+  const rulesCount = await safeCount(
+    supabase,
+    "access_rules",
+    { col: "is_active", val: true },
+    d,
+    w
+  );
+  const relationsCount = await safeCount(
+    supabase,
+    "product_relations",
+    undefined,
+    d,
+    w
+  );
+  const mappingCount = await safeCount(
+    supabase,
+    "bepaid_product_mappings",
+    undefined,
+    d,
+    w
+  );
 
   const productList =
     products
@@ -938,7 +1081,6 @@ async function liveProductsSales(
       ? `\n  (показаны первые ${products.length} из ${productTotal})`
       : "");
 
-  // Tariffs with is_active
   const tariffs = await safeSelect(
     supabase,
     "tariffs",
@@ -985,14 +1127,55 @@ async function liveOrdersPayments(
 ): Promise<string> {
   const d = "orders_payments";
   const orderCount = await safeCount(supabase, "orders_v2", undefined, d, w);
-  const paidCount = await safeCount(supabase, "orders_v2", { col: "status", val: "paid" }, d, w);
-  const pendingCount = await safeCount(supabase, "orders_v2", { col: "status", val: "pending" }, d, w);
-  // FIXED: canceled (one l)
-  const canceledCount = await safeCount(supabase, "orders_v2", { col: "status", val: "canceled" }, d, w);
-  const paymentMethodsCount = await safeCount(supabase, "payment_methods", undefined, d, w);
-  const installmentCount = await safeCount(supabase, "installment_payments", undefined, d, w);
-  const bepaidRowsCount = await safeCount(supabase, "bepaid_statement_rows", undefined, d, w);
-  const reconcileQueueCount = await safeCount(supabase, "payment_reconcile_queue", undefined, d, w);
+  const paidCount = await safeCount(
+    supabase,
+    "orders_v2",
+    { col: "status", val: "paid" },
+    d,
+    w
+  );
+  const pendingCount = await safeCount(
+    supabase,
+    "orders_v2",
+    { col: "status", val: "pending" },
+    d,
+    w
+  );
+  const canceledCount = await safeCount(
+    supabase,
+    "orders_v2",
+    { col: "status", val: "canceled" },
+    d,
+    w
+  );
+  const paymentMethodsCount = await safeCount(
+    supabase,
+    "payment_methods",
+    undefined,
+    d,
+    w
+  );
+  const installmentCount = await safeCount(
+    supabase,
+    "installment_payments",
+    undefined,
+    d,
+    w
+  );
+  const bepaidRowsCount = await safeCount(
+    supabase,
+    "bepaid_statement_rows",
+    undefined,
+    d,
+    w
+  );
+  const reconcileQueueCount = await safeCount(
+    supabase,
+    "payment_reconcile_queue",
+    undefined,
+    d,
+    w
+  );
 
   return (
     `- Всего заказов: ${orderCount}\n` +
@@ -1011,43 +1194,364 @@ async function liveTrainingsAccess(
   w: StructuredWarning[]
 ): Promise<string> {
   const d = "trainings_access";
-  const moduleCount = await safeCount(supabase, "training_modules", undefined, d, w);
-  const lessonCount = await safeCount(supabase, "training_lessons", undefined, d, w);
-  const entitlementCount = await safeCount(supabase, "entitlements", { col: "status", val: "active" }, d, w);
+
+  // ── Basic counts ──
+  const moduleTotal = await safeCount(supabase, "training_modules", undefined, d, w);
+  const lessonTotal = await safeCount(supabase, "training_lessons", undefined, d, w);
+  const entitlementActive = await safeCount(supabase, "entitlements", { col: "status", val: "active" }, d, w);
   const subCount = await safeCount(supabase, "subscriptions_v2", undefined, d, w);
   const lessonProgressCount = await safeCount(supabase, "lesson_progress", undefined, d, w);
-  const accessRulesCount = await safeCount(supabase, "access_rules", { col: "is_active", val: true }, d, w);
 
-  // FIXED: is_active instead of status
-  const modules = await safeSelect(
+  // ── Module breakdown: root vs child ──
+  const allModules = await safeSelect(
     supabase,
     "training_modules",
-    "id, title, is_active",
-    { limit: LIST_LIMIT, order: { col: "title", asc: true } },
-    d,
-    w
+    "id, title, is_active, parent_module_id",
+    { limit: 500, order: { col: "title", asc: true } },
+    d, w
   );
-  const moduleTotal = await safeCount(supabase, "training_modules", undefined, d, w);
-  const moduleList =
-    modules
-      .map(
-        (m: any) =>
-          `  - ${m.title} [${m.is_active ? "active" : "inactive"}]`
-      )
-      .join("\n") +
-    (moduleTotal > modules.length
-      ? `\n  (показаны первые ${modules.length} из ${moduleTotal})`
-      : "");
+  const rootModules = allModules.filter((m: any) => !m.parent_module_id);
+  const childModules = allModules.filter((m: any) => !!m.parent_module_id);
+  const activeModules = allModules.filter((m: any) => m.is_active);
 
-  return (
-    `- Модулей: ${moduleCount}\n` +
-    `- Уроков: ${lessonCount}\n` +
-    `- Активных entitlements: ${entitlementCount}\n` +
+  // ── Lesson breakdown ──
+  const activeLessons = await safeCount(supabase, "training_lessons", { col: "is_active", val: true }, d, w);
+  const inactiveLessons = lessonTotal - activeLessons;
+
+  // ── Lessons per module (for zero-lesson detection) ──
+  const allLessons = await safeSelect(
+    supabase,
+    "training_lessons",
+    "id, module_id, is_active",
+    { limit: 1000 },
+    d, w
+  );
+  const lessonsByModule: Record<string, { total: number; active: number }> = {};
+  for (const l of allLessons) {
+    if (!lessonsByModule[l.module_id]) lessonsByModule[l.module_id] = { total: 0, active: 0 };
+    lessonsByModule[l.module_id].total++;
+    if (l.is_active) lessonsByModule[l.module_id].active++;
+  }
+
+  // Find root modules with 0 direct lessons but with child modules that have lessons
+  const childModuleIds = new Set(childModules.map((m: any) => m.id));
+  const rootModuleProblems: any[] = [];
+  for (const root of rootModules) {
+    const directLessons = lessonsByModule[root.id]?.total || 0;
+    // Find children of this root
+    const children = childModules.filter((c: any) => c.parent_module_id === root.id);
+    let descendantLessons = 0;
+    let activeDescendantLessons = 0;
+    for (const child of children) {
+      const cl = lessonsByModule[child.id];
+      if (cl) {
+        descendantLessons += cl.total;
+        activeDescendantLessons += cl.active;
+      }
+    }
+    if (directLessons === 0 && descendantLessons > 0 && root.is_active) {
+      rootModuleProblems.push({
+        id: root.id.substring(0, 8),
+        title: root.title,
+        direct_lessons: directLessons,
+        descendant_lessons: descendantLessons,
+        active_descendant_lessons: activeDescendantLessons,
+      });
+    }
+  }
+  const rootWithZeroDirectLessons = rootModules.filter(
+    (r: any) => (lessonsByModule[r.id]?.total || 0) === 0
+  ).length;
+  const rootWithDescendantLessons = rootModuleProblems.length;
+
+  // ── Access rules by grant_target_type ──
+  const activeRules = await safeSelect(
+    supabase,
+    "access_rules",
+    "id, grant_target_type, product_id, tariff_id, target_ref, target_label, duration_days, is_active, conditions, created_at",
+    { filter: { col: "is_active", val: true }, limit: 50, order: { col: "created_at", asc: true } },
+    d, w
+  );
+
+  // Get product names for enrichment
+  const productIds = [...new Set(activeRules.map((r: any) => r.product_id).filter(Boolean))];
+  let productNameMap: Record<string, string> = {};
+  if (productIds.length > 0) {
+    const products = await safeSelect(
+      supabase,
+      "products_v2",
+      "id, name",
+      { limit: 100 },
+      d, w
+    );
+    for (const p of products) productNameMap[p.id] = p.name;
+  }
+
+  // Rules by type count
+  const rulesByType: Record<string, number> = {};
+  for (const r of activeRules) {
+    const t = r.grant_target_type || "unknown";
+    rulesByType[t] = (rulesByType[t] || 0) + 1;
+  }
+
+  const ruleCountLines = Object.entries(rulesByType)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([type, count]) => `  - ${type}: ${count}`)
+    .join("\n");
+
+  // Detailed rules table
+  const rulesTable = activeRules.map((r: any) => {
+    const cond = r.conditions || {};
+    const productName = productNameMap[r.product_id] || "(unknown)";
+    return (
+      `  - id:${r.id.substring(0, 8)} | type:${r.grant_target_type} | product:${productName} (${(r.product_id || "").substring(0, 8)}) | tariff:${(r.tariff_id || "none").substring(0, 8)} | ` +
+      `duration_days:${r.duration_days ?? "NULL"} | condition_type:${cond.condition_type || "none"} | ` +
+      `rule_purpose:${cond.rule_purpose || "none"} | match_mode:${cond.match_mode || "none"} | ` +
+      `target_product_ids:${(cond.target_product_ids || []).length} items | ` +
+      `required_product_ids:${(cond.required_product_ids || []).length} items`
+    );
+  }).join("\n");
+
+  // ── Format output ──
+  let output =
+    `### Сводка\n\n` +
+    `- Модулей всего: ${moduleTotal}\n` +
+    `  - root-модулей: ${rootModules.length}\n` +
+    `  - child-модулей: ${childModules.length}\n` +
+    `  - активных модулей: ${activeModules.length}\n` +
+    `- Уроков всего: ${lessonTotal}\n` +
+    `  - активных: ${activeLessons}\n` +
+    `  - неактивных: ${inactiveLessons}\n` +
+    `- Активных entitlements: ${entitlementActive}\n` +
     `- Подписок: ${subCount}\n` +
     `- Записей lesson_progress: ${lessonProgressCount}\n` +
-    `- Активных access_rules: ${accessRulesCount}\n\n` +
-    `### Модули\n\n${moduleList || "  (нет данных)"}`
+    `- Root-модулей с 0 direct lessons: ${rootWithZeroDirectLessons}\n` +
+    `- Root-модулей с 0 direct но есть descendant lessons: ${rootWithDescendantLessons}\n`;
+
+  output += `\n### Активные access_rules по типу\n\n${ruleCountLines || "  (нет правил)"}\n`;
+
+  output += `\n### Все active access_rules (factual snapshot)\n\n${rulesTable || "  (нет активных правил)"}\n`;
+
+  // Problematic modules
+  if (rootModuleProblems.length > 0) {
+    const problemTable = rootModuleProblems.map(
+      (p) =>
+        `  - ${p.id} | ${p.title} | direct:${p.direct_lessons} | descendant:${p.descendant_lessons} | active_descendant:${p.active_descendant_lessons} | suspected_ui_bug:YES`
+    ).join("\n");
+    output +=
+      `\n### Проблемные тренинги (0 direct lessons, есть descendant lessons)\n\n` +
+      problemTable +
+      `\n\n**Фактический баг**: UI может показывать 0 уроков для этих root-модулей, ` +
+      `хотя уроки реально есть и активны в child-модулях. Требует проверки UI rendering logic.\n`;
+  }
+
+  return output;
+}
+
+// ── Trainings extra sections: access matrix, BUSINESS→ЦБ, historical deals, evidence boundaries ──
+async function buildTrainingsExtraSections(
+  supabase: any,
+  w: StructuredWarning[]
+): Promise<string> {
+  const d = "trainings_access";
+  const sections: string[] = [];
+
+  // ── 3.1. Матрица доступа через продукты (live from DB) ──
+  const activeRules = await safeSelect(
+    supabase,
+    "access_rules",
+    "id, grant_target_type, product_id, tariff_id, target_ref, target_label, duration_days, is_active, conditions, created_at",
+    { filter: { col: "is_active", val: true }, limit: 50, order: { col: "created_at", asc: true } },
+    d, w
   );
+
+  // Get product names
+  const productIds = [...new Set(activeRules.map((r: any) => r.product_id).filter(Boolean))];
+  const tariffIds = [...new Set(activeRules.map((r: any) => r.tariff_id).filter(Boolean))];
+  let productNameMap: Record<string, string> = {};
+  let tariffNameMap: Record<string, string> = {};
+
+  if (productIds.length > 0) {
+    const products = await safeSelect(supabase, "products_v2", "id, name", { limit: 100 }, d, w);
+    for (const p of products) productNameMap[p.id] = p.name;
+  }
+  if (tariffIds.length > 0) {
+    const tariffs = await safeSelect(supabase, "tariffs", "id, name", { limit: 100 }, d, w);
+    for (const t of tariffs) tariffNameMap[t.id] = t.name;
+  }
+
+  const matrixLines = activeRules.map((r: any) => {
+    const cond = r.conditions || {};
+    const productName = productNameMap[r.product_id] || "(unknown)";
+    const tariffName = tariffNameMap[r.tariff_id] || "(все тарифы)";
+    const targetProducts = (cond.target_product_ids || []).map(
+      (id: string) => productNameMap[id] || id.substring(0, 8)
+    );
+    const requiredProducts = (cond.required_product_ids || []).map(
+      (id: string) => productNameMap[id] || id.substring(0, 8)
+    );
+
+    return (
+      `| ${r.id.substring(0, 8)} | ${r.grant_target_type} | ${productName} | ${tariffName} | ` +
+      `${cond.condition_type || "none"} | ${cond.rule_purpose || "none"} | ${cond.match_mode || "none"} | ` +
+      `${r.duration_days ?? "NULL"} | ${targetProducts.length > 0 ? targetProducts.join(", ") : "-"} | ` +
+      `${requiredProducts.length > 0 ? requiredProducts.join(", ") : "-"} |`
+    );
+  }).join("\n");
+
+  sections.push(
+    `9. Матрица доступа через продукты (live)\n\n` +
+    `| id | grant_target_type | product | tariff | condition_type | rule_purpose | match_mode | duration_days | target_products | required_products |\n` +
+    `|---|---|---|---|---|---|---|---|---|---|\n` +
+    matrixLines
+  );
+
+  // ── 3.2. BUSINESS → ЦБ кейс (live from DB, NOT hardcoded) ──
+  // Find prior_purchase rules dynamically
+  const priorPurchaseRules = activeRules.filter((r: any) => {
+    const cond = r.conditions || {};
+    return cond.condition_type === "prior_purchase" && r.grant_target_type === "product_access";
+  });
+
+  if (priorPurchaseRules.length > 0) {
+    let businessSection = `10. Кейсы prior_purchase (live proof)\n\n`;
+
+    for (const rule of priorPurchaseRules) {
+      const cond = rule.conditions || {};
+      const productName = productNameMap[rule.product_id] || rule.product_id?.substring(0, 8);
+      const tariffName = tariffNameMap[rule.tariff_id] || rule.tariff_id?.substring(0, 8) || "(все)";
+      const targetProductIds: string[] = cond.target_product_ids || [];
+      const targetNames = targetProductIds.map(
+        (id: string) => productNameMap[id] || id.substring(0, 8)
+      );
+
+      businessSection += `### Правило ${rule.id.substring(0, 8)}: ${productName} / ${tariffName}\n\n`;
+      businessSection += `- grant_target_type: ${rule.grant_target_type}\n`;
+      businessSection += `- condition_type: ${cond.condition_type}\n`;
+      businessSection += `- match_mode: ${cond.match_mode || "none"}\n`;
+      businessSection += `- duration_days: ${rule.duration_days ?? "NULL"} ⚠️ (pending proof: как определяется срок)\n`;
+      businessSection += `- target_product_ids (${targetProductIds.length}): ${targetNames.join(", ") || "none"}\n\n`;
+
+      // Live proof: subscriptions for this product+tariff
+      if (rule.tariff_id) {
+        const activeSubs = await safeCount(
+          supabase, "subscriptions_v2",
+          { col: "tariff_id", val: rule.tariff_id },
+          d, w
+        );
+
+        // Count how many unique profiles have active sub for this tariff
+        const subsProfiles = await safeSelect(
+          supabase, "subscriptions_v2",
+          "profile_id, status",
+          { filter: { col: "tariff_id", val: rule.tariff_id }, limit: 1000 },
+          d, w
+        );
+        const activeSubProfiles = subsProfiles.filter((s: any) => s.status === "active" || s.status === "past_due");
+        const uniqueActiveProfileIds = [...new Set(activeSubProfiles.map((s: any) => s.profile_id))];
+
+        // For each target_product_id, check historical orders + existing entitlements
+        let totalHistoricalMatches = 0;
+        let totalAlreadyGranted = 0;
+        let totalNeedsBatch = 0;
+
+        for (const targetPid of targetProductIds.slice(0, 5)) { // limit to avoid timeout
+          const historicalOrders = await safeSelect(
+            supabase, "orders_v2",
+            "profile_id",
+            {
+              filters: [
+                { col: "product_id", val: targetPid },
+                { col: "status", val: "paid" },
+              ],
+              limit: 1000,
+            },
+            d, w
+          );
+          const historicalProfileIds = new Set(historicalOrders.map((o: any) => o.profile_id));
+
+          // Intersection: active sub profiles with historical purchase
+          const matchingProfiles = uniqueActiveProfileIds.filter((pid: string) => historicalProfileIds.has(pid));
+          totalHistoricalMatches += matchingProfiles.length;
+
+          // Check existing entitlements
+          for (const pid of matchingProfiles.slice(0, 50)) {
+            const { count } = await supabase
+              .from("entitlements")
+              .select("*", { count: "exact", head: true })
+              .eq("product_id", targetPid)
+              .eq("profile_id", pid)
+              .eq("status", "active");
+            if (count && count > 0) totalAlreadyGranted++;
+            else totalNeedsBatch++;
+          }
+        }
+
+        businessSection += `#### Live proof snapshot\n\n`;
+        businessSection += `- subscriptions для tariff ${rule.tariff_id.substring(0, 8)}: ${activeSubs}\n`;
+        businessSection += `- active/past_due profiles: ${uniqueActiveProfileIds.length}\n`;
+        businessSection += `- historical purchase matches (проверено top-5 target products): ${totalHistoricalMatches}\n`;
+        businessSection += `- already_granted entitlements: ${totalAlreadyGranted}\n`;
+        businessSection += `- needs_batch_grant: ${totalNeedsBatch}\n`;
+        if (totalNeedsBatch > 0) {
+          businessSection += `\n⚠️ **Требуется retroactive batch**: ${totalNeedsBatch} пользователей имеют historical purchase но не имеют active entitlement\n`;
+        }
+        businessSection += `\n`;
+      }
+    }
+
+    sections.push(businessSection);
+  } else {
+    sections.push(
+      `10. Кейсы prior_purchase\n\n(нет активных prior_purchase rules в БД)`
+    );
+  }
+
+  // ── 3.3. Исторические сделки ──
+  sections.push(
+    `11. Исторические сделки — разграничение\n\n` +
+    `### Что считается historical purchase proof\n` +
+    `- paid order в orders_v2 для данного product_id + profile_id\n` +
+    `- Проверяется в runtime через access_rules с condition_type=prior_purchase\n\n` +
+    `### Что считается grant source\n` +
+    `- access_rule с grant_target_type + conditions (condition_type, match_mode, target_product_ids)\n` +
+    `- Триггер: оплата заказа (order paid) → grant-access-for-order EF\n\n` +
+    `### Что считается target entitlement\n` +
+    `- Запись в entitlements с product_id = target_product_id, status=active\n` +
+    `- Создаётся только через grant pipeline, НЕ напрямую из historical order\n\n` +
+    `### Важные ограничения\n` +
+    `- historical order сам по себе НЕ равен действующему доступу\n` +
+    `- доступ появляется ТОЛЬКО через access_rules + grant-access-for-order pipeline\n` +
+    `- pending proof: duration_days=NULL → как определяется expires_at? (все active rules имеют NULL)\n` +
+    `- pending proof: правило применяется только при оплате. Для existing subscribers нужен retroactive batch\n`
+  );
+
+  // ── 3.4. Границы доказанности ──
+  sections.push(
+    `12. Границы доказанности (trainings_access)\n\n` +
+    `### Подтверждено (FK / SQL)\n` +
+    `- training_modules → training_modules (parent_module_id FK)\n` +
+    `- training_lessons → training_modules (module_id FK)\n` +
+    `- training_lessons → products_v2 (product_id FK)\n` +
+    `- entitlements → products_v2 (product_id FK), orders_v2 (order_id FK)\n` +
+    `- access_rules → products_v2 (product_id FK), tariffs (tariff_id FK)\n` +
+    `- access_grant_ledger → orders_v2, tariff_offers (FK confirmed)\n\n` +
+    `### Выведено из текущих данных\n` +
+    `- Все active access_rules имеют duration_days=NULL\n` +
+    `- prior_purchase rules содержат target_product_ids и проверяют paid orders\n` +
+    `- Root-модули с 0 direct lessons имеют child-модули с уроками (derived from query)\n\n` +
+    `### Требует proof\n` +
+    `- duration_days=NULL: бессрочный доступ или bug? Не подтверждено runtime behaviour\n` +
+    `- prior_purchase retroactive batch для existing subscribers\n` +
+    `- historical deals → entitlement completeness (сколько пользователей не обработаны)\n` +
+    `- UI rendering root-модулей с 0 direct lessons\n\n` +
+    `### Известные расхождения\n` +
+    `- Root-модули показывают 0 уроков в UI, хотя уроки есть в child-модулях\n` +
+    `- duration_days=NULL для ВСЕХ active rules — ни одно правило не задаёт срок\n` +
+    `- Retroactive batch не запущен — existing subscribers могут не иметь entitlements\n`
+  );
+
+  return sections.join("\n\n===\n\n");
 }
 
 async function liveSitesPages(
@@ -1056,9 +1560,27 @@ async function liveSitesPages(
 ): Promise<string> {
   const d = "sites_pages_forms";
   const pageCount = await safeCount(supabase, "site_pages", undefined, d, w);
-  const formSubmCount = await safeCount(supabase, "site_form_submissions", undefined, d, w);
-  const domainBindingsCount = await safeCount(supabase, "site_domain_bindings", undefined, d, w);
-  const pageFoldersCount = await safeCount(supabase, "site_page_folders", undefined, d, w);
+  const formSubmCount = await safeCount(
+    supabase,
+    "site_form_submissions",
+    undefined,
+    d,
+    w
+  );
+  const domainBindingsCount = await safeCount(
+    supabase,
+    "site_domain_bindings",
+    undefined,
+    d,
+    w
+  );
+  const pageFoldersCount = await safeCount(
+    supabase,
+    "site_page_folders",
+    undefined,
+    d,
+    w
+  );
 
   const pages = await safeSelect(
     supabase,
@@ -1080,7 +1602,6 @@ async function liveSitesPages(
       ? `\n  (показаны первые ${pages.length} из ${pageCount})`
       : "");
 
-  // FIXED: site_page_id, is_primary, is_home (no product_id, no is_active)
   const bindings = await safeSelect(
     supabase,
     "site_domain_bindings",
@@ -1114,13 +1635,42 @@ async function liveIntegrations(
 ): Promise<string> {
   const d = "integrations";
   const botCount = await safeCount(supabase, "telegram_bots", undefined, d, w);
-  const mappingCount = await safeCount(supabase, "bepaid_product_mappings", undefined, d, w);
-  const instanceCount = await safeCount(supabase, "integration_instances", undefined, d, w);
-  const logCount = await safeCount(supabase, "integration_logs", undefined, d, w);
-  const syncLogCount = await safeCount(supabase, "bepaid_sync_logs", undefined, d, w);
-  const emailAccountCount = await safeCount(supabase, "email_accounts", undefined, d, w);
+  const mappingCount = await safeCount(
+    supabase,
+    "bepaid_product_mappings",
+    undefined,
+    d,
+    w
+  );
+  const instanceCount = await safeCount(
+    supabase,
+    "integration_instances",
+    undefined,
+    d,
+    w
+  );
+  const logCount = await safeCount(
+    supabase,
+    "integration_logs",
+    undefined,
+    d,
+    w
+  );
+  const syncLogCount = await safeCount(
+    supabase,
+    "bepaid_sync_logs",
+    undefined,
+    d,
+    w
+  );
+  const emailAccountCount = await safeCount(
+    supabase,
+    "email_accounts",
+    undefined,
+    d,
+    w
+  );
 
-  // FIXED: status instead of is_active
   const bots = await safeSelect(
     supabase,
     "telegram_bots",
@@ -1150,7 +1700,6 @@ async function liveIntegrations(
       .map((i: any) => `  - ${i.provider} [${i.status}]`)
       .join("\n") || "  (нет данных)";
 
-  // EF registry snapshot
   const efList = await safeSelect(
     supabase,
     "edge_functions_registry",
@@ -1187,9 +1736,27 @@ async function liveOpenTails(
   w: StructuredWarning[]
 ): Promise<string> {
   const d = "open_tails";
-  const banCasesCount = await safeCount(supabase, "ban_cases", { col: "is_active", val: true }, d, w);
-  const duplicateCasesCount = await safeCount(supabase, "duplicate_cases", undefined, d, w);
-  const reconcileQueueCount = await safeCount(supabase, "payment_reconcile_queue", undefined, d, w);
+  const banCasesCount = await safeCount(
+    supabase,
+    "ban_cases",
+    { col: "is_active", val: true },
+    d,
+    w
+  );
+  const duplicateCasesCount = await safeCount(
+    supabase,
+    "duplicate_cases",
+    undefined,
+    d,
+    w
+  );
+  const reconcileQueueCount = await safeCount(
+    supabase,
+    "payment_reconcile_queue",
+    undefined,
+    d,
+    w
+  );
 
   return (
     `- Активных блокировок (ban_cases): ${banCasesCount}\n` +
@@ -1216,26 +1783,47 @@ async function buildOpenTailsSection(
     );
   }
 
-  // Source 2: pending/failed/deferred from audit_logs
+  // Source 2: pending/failed/deferred from audit_logs (domain-filtered)
   const pendingAudits = await safeSelect(
     supabase,
     "audit_logs",
     "action, meta, created_at",
-    { limit: 50, order: { col: "created_at", asc: false } },
+    { limit: 100, order: { col: "created_at", asc: false } },
     domainKey,
     warnings
   );
-  const filtered = pendingAudits.filter(
+  let filtered = pendingAudits.filter(
     (a: any) =>
       a.action?.includes("pending") ||
       a.action?.includes("failed") ||
       a.action?.includes("deferred")
   );
+
+  // Apply domain prefix filter for non-open_tails domains
+  if (domainKey !== "open_tails" && bp.auditActionPrefixes.length > 0) {
+    filtered = filtered.filter((a: any) =>
+      bp.auditActionPrefixes.some((p) => a.action?.startsWith(p))
+    );
+  }
+  if (bp.excludeAuditPrefixes.length > 0) {
+    filtered = filtered.filter(
+      (a: any) =>
+        !bp.excludeAuditPrefixes.some((p) => a.action?.startsWith(p))
+    );
+  }
+
   if (filtered.length > 0) {
-    const pendingList = filtered
-      .map(
-        (a: any) => `- ${a.created_at.substring(0, 16)} | ${a.action}`
+    // Aggregate repeated
+    const counts: Record<string, number> = {};
+    for (const a of filtered) {
+      const key = a.action || "unknown";
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    const pendingList = Object.entries(counts)
+      .map(([action, count]) =>
+        count > 1 ? `- ${action} × ${count}` : `- ${action}`
       )
+      .slice(0, bp.maxAuditItems || 20)
       .join("\n");
     parts.push(
       `### Pending / Failed / Deferred (audit_logs)\n\n${pendingList}`

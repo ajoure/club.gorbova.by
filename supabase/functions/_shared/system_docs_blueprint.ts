@@ -5,6 +5,9 @@
  * 
  * STOP-guard narrative: генератор не имеет права писать неподтверждённые связи.
  * Если связь не доказана по FK/коду/discovery — маркировать как «не подтверждено» или «требует проверки».
+ * 
+ * STOP-guard env-specific: НЕ хардкодить UUID/names (rule_id, product_id, tariff_id).
+ * Blueprint описывает СТРУКТУРУ кейса, конкретные данные тянутся live из БД при генерации.
  */
 
 export interface DomainBlueprint {
@@ -19,6 +22,12 @@ export interface DomainBlueprint {
   knownIssues: string[];
   rules: string[];
   flows: { name: string; steps: string[] }[];
+  /** Prefixes to INCLUDE in "Changes last 24h" */
+  auditActionPrefixes: string[];
+  /** Prefixes to EXCLUDE from "Changes last 24h" (applied after include) */
+  excludeAuditPrefixes: string[];
+  /** Max items in "Changes last 24h" per domain. Default 20. */
+  maxAuditItems: number;
 }
 
 /** Фиксированный порядок секций в документе */
@@ -88,7 +97,20 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
           'audit_logs: nightly_refresh_completed',
         ],
       },
+      {
+        name: 'Как использовать master как входной артефакт',
+        steps: [
+          'Что копировать по умолчанию: platform_master AUTO-CURRENT — актуальный snapshot системы',
+          'Когда дополнительно прикладывать доменный документ: при работе с конкретным доменом (trainings, orders, etc.)',
+          'Когда обязательно прикладывать open_tails: при планировании, диагностике, review',
+          'Manual POINT A/B/C — это историческая фиксация, а не текущий SoT. Для актуальной картины всегда брать AUTO-CURRENT',
+          '/admin/docs → Архитектура платформы → Автообновление → Копировать master как контекст',
+        ],
+      },
     ],
+    auditActionPrefixes: ['system_docs.', 'cron.'],
+    excludeAuditPrefixes: [],
+    maxAuditItems: 20,
   },
 
   products_sales: {
@@ -147,21 +169,26 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
         ],
       },
     ],
+    auditActionPrefixes: ['admin.grant_access', 'corrective_batch', 'bulk_grant', 'entitlement'],
+    excludeAuditPrefixes: [],
+    maxAuditItems: 20,
   },
 
   trainings_access: {
-    purpose: 'Тренинги, модули, уроки, доступы и прогресс обучения.',
+    purpose: 'Тренинги, модули, уроки, доступы и прогресс обучения. Включает правила условного доступа (prior_purchase), historical deals mapping и связку клуб→тренинги.',
     sotTables: [
-      { name: 'training_modules', role: 'Модули тренингов (title, is_active — не status)' },
+      { name: 'training_modules', role: 'Модули тренингов (title, is_active — не status). parent_module_id FK для иерархии root→child' },
       { name: 'training_lessons', role: 'Уроки. FK: module_id → training_modules, product_id → products_v2' },
       { name: 'entitlements', role: 'Права доступа (status: active/expired/revoked). FK: product_id → products_v2, order_id → orders_v2' },
-      { name: 'subscriptions_v2', role: 'Подписки' },
+      { name: 'subscriptions_v2', role: 'Подписки (status, access_end_at). FK: product_id, tariff_id, profile_id' },
       { name: 'lesson_progress', role: 'Прогресс прохождения уроков' },
-      { name: 'access_rules', role: 'Правила доступа. FK: product_id → products_v2, tariff_id → tariffs' },
+      { name: 'access_rules', role: 'Правила доступа. FK: product_id → products_v2, tariff_id → tariffs. conditions JSONB: condition_type, rule_purpose, match_mode, target_product_ids, required_product_ids' },
+      { name: 'access_grant_ledger', role: 'Журнал выдачи прав — source → target mapping, status (granted/skipped_by_condition)' },
     ],
-    relatedTables: ['products_v2', 'orders_v2'],
+    relatedTables: ['products_v2', 'orders_v2', 'tariffs'],
     edgeFunctions: [
       { name: 'telegram-check-expired', role: 'Автоматический отзыв доступа по истечению' },
+      { name: 'grant-access-for-order', role: 'Выдача доступов после оплаты — обрабатывает access_rules включая prior_purchase' },
     ],
     uiRoutes: [
       { path: '/admin/trainings', description: 'Управление тренингами' },
@@ -171,26 +198,64 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
     crossDomainLinks: [
       'training_lessons → products_v2 (product_id FK)',
       'training_lessons → training_modules (module_id FK)',
+      'training_modules → training_modules (parent_module_id FK — self-referencing hierarchy)',
       'entitlements → products_v2 (product_id FK), orders_v2 (order_id FK)',
+      'access_rules → products_v2 (product_id FK), tariffs (tariff_id FK)',
+      'access_grant_ledger → orders_v2 (order_id FK), tariff_offers (source_offer_id FK)',
     ],
     knownIssues: [
+      'duration_days=NULL для всех active rules — неизвестно как определяется срок доступа. НЕ ПИСАТЬ как работающий механизм',
+      'Root-модули с 0 direct lessons — уроки в child-модулях, но UI может показывать 0 (bug)',
+      'prior_purchase batch для клуб→тренинги — pending retroactive application',
+      'proof по historical deals mapping — pending',
       'training access runtime proof — pending',
-      'lesson counts proof — pending',
       'pending live proof по renewal/access',
     ],
-    rules: [],
+    rules: [
+      'НЕ писать что duration_days=NULL корректно работает — это pending proof',
+      'НЕ писать что клуб→тренинги полностью работает глобально — pending batch/proof',
+      'historical order сам по себе НЕ равен действующему доступу — доступ только через rule/grant pipeline',
+    ],
     flows: [
       {
-        name: 'trainings_access / training_content',
+        name: 'trainings_access / training_content — runtime доступ',
         steps: [
           'order paid → grant-access-for-order EF',
-          'access_grant_ledger → entitlement (product_id, profile_id)',
-          'entitlement status=active → доступ к training_modules/lessons',
-          'lesson_progress отслеживает прохождение',
-          'telegram-check-expired → auto-revoke при истечении',
+          'EF проверяет access_rules для product_id + tariff_id заказа',
+          'Для каждого правила: grant_target_type определяет тип (club, product_access, training_content, email)',
+          'access_grant_ledger ← запись результата (granted / skipped_by_condition)',
+          'entitlement создаётся/продлевается с product_id, profile_id, status=active',
+          'UI: training_modules/lessons фильтруются по active entitlements + product_id',
+          'telegram-check-expired → auto-revoke при истечении expires_at',
+        ],
+      },
+      {
+        name: 'BUSINESS клуб → тренинги (prior_purchase) — СТРУКТУРА кейса',
+        steps: [
+          'Клиент покупает/продлевает подписку клубного тарифа (grant_target_type=club)',
+          'grant-access-for-order проверяет access_rules для product_id + tariff_id',
+          'Находит правило с grant_target_type=product_access, condition_type=prior_purchase, match_mode=per_product',
+          'Для каждого target_product_id из правила проверяется: есть ли paid order в orders_v2 для этого profile_id+product_id',
+          'Если есть historical purchase → entitlement создаётся/продлевается для target_product_id',
+          'Если нет → skipped_by_condition в access_grant_ledger',
+          'ПРОБЛЕМА: duration_days=NULL → как определяется expires_at? Pending proof — НЕ ПОДТВЕРЖДЕНО',
+          'ПРОБЛЕМА: правило применяется только при оплате. Для existing subscribers нужен retroactive batch — PENDING',
+        ],
+      },
+      {
+        name: 'Historical deals → entitlement sync — СТРУКТУРА',
+        steps: [
+          'Historical purchase = paid order в orders_v2 для данного product_id + profile_id',
+          'Факт покупки проверяется в runtime через access_rules с condition_type=prior_purchase',
+          'Связь historical order → entitlement: через product_id (НЕ через order_id)',
+          'ПРОБЛЕМА: duration_days=NULL → как определяется expires_at? Pending proof',
+          'ПРОБЛЕМА: historical order сам по себе НЕ создаёт entitlement — только через grant pipeline при следующей покупке клубного тарифа',
         ],
       },
     ],
+    auditActionPrefixes: ['entitlement', 'subscription.', 'admin.subscription.', 'bulk_grant', 'corrective_batch', 'access.', 'bepaid.sync.access_chain', 'bepaid.sync.entitlement', 'admin.grant_access'],
+    excludeAuditPrefixes: ['cron.job.triggered', 'bepaid.erip.reconcile_batch', 'bepaid.sync.statement', 'telegram.autokick'],
+    maxAuditItems: 20,
   },
 
   orders_payments: {
@@ -236,6 +301,9 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
         ],
       },
     ],
+    auditActionPrefixes: ['bepaid.', 'admin.create_deal', 'admin.link_payment', 'admin.payment_link', 'erip.'],
+    excludeAuditPrefixes: [],
+    maxAuditItems: 20,
   },
 
   sites_pages_forms: {
@@ -277,6 +345,9 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
         ],
       },
     ],
+    auditActionPrefixes: ['site.', 'form.'],
+    excludeAuditPrefixes: [],
+    maxAuditItems: 20,
   },
 
   integrations: {
@@ -308,6 +379,9 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
       'edge_functions_registry содержит: name (PK), enabled, category, tier, notes — выводить как реестр EF, а не как полный список всех EF платформы',
     ],
     flows: [],
+    auditActionPrefixes: ['telegram.', 'bepaid.', 'broadcast.', 'amocrm.', 'ai.'],
+    excludeAuditPrefixes: [],
+    maxAuditItems: 20,
   },
 
   open_tails: {
@@ -328,14 +402,20 @@ export const BLUEPRINTS: Record<string, DomainBlueprint> = {
       'actor_user_id proof для manual refresh — pending UI proof',
       'training access runtime proof — pending',
       'site pricing proof — pending',
-      'duration_days=NULL в access_rules — требует ручной проверки',
-      'retroactive batch для product_access — pending implementation',
+      'duration_days=NULL в access_rules — все active rules имеют NULL. Требует определения: бессрочный доступ или bug',
+      'retroactive batch для product_access (клуб→тренинги) — pending implementation',
       'manual review / wrongly_removed / shortened entitlements — pending',
       'pending live proof по renewal/access — pending',
       'proof, что docs generator реально даёт полный snapshot, а не scaffold — pending',
+      'баг 0 уроков в root-модулях с child-модулями — UI может не показывать уроки',
+      'proof по клуб→тренинги historical access — pending batch',
+      'proof, что created deals реально привязаны к нужному product_id — pending',
     ],
     rules: [],
     flows: [],
+    auditActionPrefixes: [], // open_tails shows ALL pending/failed/deferred
+    excludeAuditPrefixes: [],
+    maxAuditItems: 30,
   },
 };
 
@@ -348,3 +428,23 @@ export const SCAFFOLD_SIGNATURES = [
 
 /** Domains excluded from seed/repair (manual history read-only) */
 export const SEED_REPAIR_EXCLUDED_DOMAINS = ['products_sales'];
+
+/** Structured pending proof items for open_tails */
+export interface PendingProofItem {
+  proof_type: string;
+  domain: string;
+  status: 'pending' | 'partial' | 'confirmed' | 'failed';
+  evidence_source: string;
+  next_required_action: string;
+}
+
+export const PENDING_PROOF_ITEMS: PendingProofItem[] = [
+  { proof_type: 'actor_user_id', domain: 'platform_master', status: 'pending', evidence_source: 'audit_logs', next_required_action: 'Manual refresh из UI → проверить actor_user_id IS NOT NULL' },
+  { proof_type: 'training_runtime', domain: 'trainings_access', status: 'pending', evidence_source: 'entitlements + training_modules', next_required_action: 'Проверить что active entitlement → видимые уроки в UI' },
+  { proof_type: 'duration_days_null', domain: 'trainings_access', status: 'pending', evidence_source: 'access_rules', next_required_action: 'Определить: NULL = бессрочный или bug. Проверить expires_at в entitlements' },
+  { proof_type: 'prior_purchase_batch', domain: 'trainings_access', status: 'pending', evidence_source: 'access_grant_ledger', next_required_action: 'Запустить retroactive batch для existing subscribers' },
+  { proof_type: 'historical_deals_mapping', domain: 'trainings_access', status: 'pending', evidence_source: 'orders_v2 + entitlements', next_required_action: 'Dry-run: сколько users имеют historical purchase но нет entitlement' },
+  { proof_type: 'site_pricing', domain: 'sites_pages_forms', status: 'pending', evidence_source: 'site_domain_bindings + site_pages', next_required_action: 'Проверить связь домен → продукт через контент' },
+  { proof_type: 'zero_lessons_bug', domain: 'trainings_access', status: 'pending', evidence_source: 'training_modules + training_lessons', next_required_action: 'Проверить root-модули с 0 direct lessons но child-модулями с уроками' },
+  { proof_type: 'docs_snapshot_completeness', domain: 'platform_master', status: 'pending', evidence_source: 'admin_docs', next_required_action: 'Проверить что все секции содержат live данные, а не placeholder' },
+];
