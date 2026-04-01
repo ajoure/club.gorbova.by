@@ -29,21 +29,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Check reentry pricing
+    // PATCH-FINAL: Reentry pricing will be checked after product is resolved (product-scoped)
     let isReentryPricing = false;
     let reentryMessage = "";
-    if (userId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("was_club_member, reentry_penalty_waived")
-        .eq("user_id", userId)
-        .single();
-      
-      if (profile?.was_club_member && !profile?.reentry_penalty_waived) {
-        isReentryPricing = true;
-        reentryMessage = "Вы ранее были участником клуба. При повторном вступлении действуют новые условия.";
-      }
-    }
 
     // Fetch product by slug OR public_id
     const { data: product, error: productError } = await supabase
