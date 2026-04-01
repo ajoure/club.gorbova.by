@@ -453,8 +453,8 @@ export async function hasValidAccessBatch(
   // 6. PATCH 4: Batch billing-day protection for remaining users
   const stillWithoutAccess4 = userIds.filter((uid) => !results.get(uid)?.valid);
   if (stillWithoutAccess4.length > 0) {
-    const todayKey = toTzDateKey(nowStr, WARSAW_TZ);
-    const { start: todayStart, end: todayEnd } = dayWindowUtc(WARSAW_TZ, todayKey);
+    const todayKey = toTzDateKey(nowStr, APP_TZ);
+    const { start: todayStart, end: todayEnd } = dayWindowUtc(APP_TZ, todayKey);
 
     const bdQuery = supabase
       .from('subscriptions_v2')
