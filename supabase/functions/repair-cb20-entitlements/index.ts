@@ -9,6 +9,7 @@ const corsHeaders = {
 // BUSINESS tariff and cb20 product IDs (canonical)
 const BUSINESS_TARIFF_ID = '7c748940-dcad-4c7c-a92e-76a2344622d3';
 const CB20_PRODUCT_ID = '7101ed3c-7839-4a74-ad95-aa0660369b22';
+const CB20_ROOT_MODULE_ID = 'c9f7e9b8-e613-459a-91e3-38bbcfe424d8';
 
 // Staff emails — separate bucket, not mixed with manual_review
 const STAFF_EMAILS = [
@@ -72,15 +73,16 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const dryRun = body.dry_run !== false; // default = dry_run
-    const executeCohort: 'safe_only' | 'all' | null = body.execute_cohort || null;
+    const executeCohort: 'safe_only' | 'standalone_safe' | 'all' | null = body.execute_cohort || null;
+    const standaloneMode: 'strict_hold' | 'partial_safe' = body.standalone_mode || 'strict_hold';
     const batchId = `batch_business_cb20_repair_v1_${Date.now()}`;
 
-    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : `EXECUTE (cohort=${executeCohort})`}, batchId=${batchId}`);
+    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : `EXECUTE (cohort=${executeCohort}, standalone_mode=${standaloneMode})`}, batchId=${batchId}`);
 
     // Guard: execute requires explicit cohort
-    if (!dryRun && executeCohort !== 'safe_only') {
+    if (!dryRun && executeCohort !== 'safe_only' && executeCohort !== 'standalone_safe') {
       return new Response(
-        JSON.stringify({ error: "Execute requires execute_cohort='safe_only'. Full cohort execute is forbidden." }),
+        JSON.stringify({ error: "Execute requires execute_cohort='safe_only' or 'standalone_safe'. Full cohort execute is forbidden." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
