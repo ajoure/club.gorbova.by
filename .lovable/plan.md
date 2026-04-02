@@ -1,228 +1,242 @@
-# План: PATCH E dry_run + reference proofs + price truth audit + decision matrix
+# да, согласен, с учетом правок:
 
-## Главная цель спринта
+&nbsp;
 
-1. Historical standalone deals корректно разделены
-2. Цены child deals корректны (per-module, sum = parent)
-3. Parent/child визуальные дубли устранены
-4. Названия модулей единообразны на всех экранах
-5. Standalone entitlements repaired по доказуемо корректным кейсам
-6. Срок доступа и фактическая видимость контента подтверждены proof-таблицами
+1. **В fix lookup добавить приоритет и дедуп явно.**
+  При объединении результатов:
+  &nbsp;
+  - сначала entitlement, найденный по product_id = CB20_PRODUCT_ID;
+  - если его нет — fallback по product_code = 'cb20' AND product_id IS NULL;
+  - если найдено больше одного active entitlement на пользователя, не выбирать молча первый, а помечать кейс как manual_review_duplicate_active.
+  &nbsp;
+2. **Anti-duplicate guard делать не только перед CREATE, но и перед UPDATE legacy-case.**
+  Перед update Рыштаковой проверить:
+  &nbsp;
+  - сколько active cb20 entitlements уже есть по (user_id, product_id = CB20_PRODUCT_ID OR product_code = 'cb20');
+  - если больше 1 — не выполнять update автоматически, а уводить в manual_review_duplicate_active.
+  &nbsp;
+3. **В UPDATE path legacy entitlement дозаполнять не только product_id, но и унифицировать ключевые поля.**
+  Для existing legacy entitlement при update:
+  &nbsp;
+  - product_id = CB20_PRODUCT_ID
+  - product_code = 'cb20'
+  - expires_at = business_access_end_at
+  - meta.scope_resolution_mode = 'module_scope_only'
+  - updated_at обязательно
+    Это должно быть явно в DoD.
+  &nbsp;
+4. **Runtime preview расширять только для module_scope_only кейсов repair/update.**
+  Не открывать его для всех repair-path подряд.
+  Условие: scope_bucket === 'module_scope_only' и action в update/repair cohort.
+5. **В post-check после execute искать entitlement тем же unified lookup, что и в основном dry-run.**
+  Не дублировать отдельно похожую логику.
+  Лучше вынести один helper/resolver:
+  &nbsp;
+  - findExistingCb20Entitlement(user_id)
+    и использовать его в:
+  - initial lookup
+  - anti-duplicate guard
+  - post-check
+  &nbsp;
+6. **В dry-run output добавить еще один флаг:**
+  &nbsp;
+  - legacy_null_product_id = true/false
+    чтобы сразу было видно, почему кейс пошел по fallback.
+  &nbsp;
+7. **Для Рыштаковой expected result сформулировать жестко:**
+  &nbsp;
+  - planned_action = update, не create;
+  - current_entitlement_match_by = product_code;
+  - после execute product_id уже не NULL;
+  - active cb20 entitlement count = 1.
+  &nbsp;
+8. **Для Царёвой outcome отдельно закрепить в плане как non-regression.**
+  После фикса lookup её кейс не должен случайно перейти в create, если по runtime она все еще zero_visibility.
+  То есть lookup-fix не должен менять business-decision для blocked cases.
+9. **Перед execute добавить отдельный proof-блок по Рыштаковой:**
+  &nbsp;
+  - existing entitlement id
+  - existing product_id
+  - existing product_code
+  - match_by
+  - target expires_at
+  - target mapped_training_module_ids
+    Это нужно сохранить как pre-execute snapshot.
+  &nbsp;
+10. **После execute добавить post-execute proof-таблицу:**
+  &nbsp;
+  - email
+  - entitlement_id
+  - product_id
+  - product_code
+  - scope_resolution_mode
+  - mapped_training_module_ids
+  - expires_at
+  - active_cb20_entitlement_count
+    Без этой таблицы PATCH E не считать закрытым.
+  &nbsp;
+11. **STOP-guard уточнить.**
+  Execute запрещен, если выполняется хотя бы одно:
+  &nbsp;
+  - planned_action = create для пользователя, у которого есть active entitlement по product_code='cb20';
+  - найдено >1 active cb20 entitlement;
+  - post-fix dry-run не показывает match_by = product_id|product_code для approved candidate.
+  &nbsp;
+12. **Scope boundary дополнить.**
+  В этом шаге:
+  &nbsp;
+  - не трогаем parent/root visual cleanup;
+  - не трогаем активацию уроков у Царёвой;
+  - не трогаем полную reconciliation сделок;
+  - делаем только safe fix entitlement resolver + execute approved update-case.
+  &nbsp;
+13. **Итоговый expected outcome обновить так:**
+  &nbsp;
+  - Рыштакова — UPDATE existing legacy entitlement, не новый insert;
+  - Царёва — blocked/manual_review без изменений;
+  - duplicate active cb20 entitlements после execute = 0 новых, count для Рыштаковой = 1.
+  &nbsp;
 
-**PATCH G/H/I/J — поддерживающие нормализационные шаги.**
-**Основная тема спринта неизменна:** корректная цепочка продукт → тариф → тренинг → сделка → доступ → срок.
+&nbsp;
 
-## Статусы патчей
+&nbsp;
 
-| Patch | Статус |
-|---|---|
-| PATCH F | ⏳ verify after I (system-wide UI proof needed) |
-| PATCH C | ✅ done / verify only |
-| PATCH D | ⏳ proof base ready |
-| PATCH G | G1 ✅, G2 ✅, G3 ⏳ (badges deployed), G4 ⏳ (blocked until post-checks) |
-| PATCH H | H1 ✅ data-fix, H2 ✅ code-fix, **H3 ✅ price_truth_audit generated** |
-| PATCH I | ✅ UI badges deployed |
-| PATCH J | ✅ audit CSV generated |
-| PATCH E | **⏳ dry_run COMPLETED, execute pending approval** |
-| PATCH B | ⏳ final browser proof |
+План: Fix entitlement lookup bug + post-fix dry-run + execute
 
-## PATCH H3 — Price Truth Audit ✅
+## Диагноз
 
-**Deliverable:** `/mnt/documents/patch_h3_price_truth_audit.csv`
+Корневая причина бага: строка 131 edge function `repair-cb20-entitlements/index.ts`:
 
-Все 22 child orders проверены:
-
-| Группа | Parent final | Modules | Expected per child | Actual | Match |
-|---|---|---|---|---|---|
-| katerina5515530 | 250.00 | 3 | 83.33/83.33/83.34 | 83.33/83.33/83.34 | ✅ match |
-| lori-30 | 19204.08 | 2 | 9602.04/9602.04 | 9602.04/9602.04 | ✅ match |
-| overchenko.lina | 1100.00 | 2 | 550.00/550.00 | 550.00/550.00 | ✅ match |
-| princessa_elena1 | 28823.23 | 3 | 9607.74/9607.74/9607.75 | 9607.74/9607.74/9607.75 | ✅ match |
-| a.bruylo | 0 | 5 | 0×5 | 0×5 | ✅ trivial_match |
-| irinkazar | 0 | 3 | 0×3 | 0×3 | ✅ trivial_match |
-| irkaguzarevich | 0 | 4 | 0×4 | 0×4 | ✅ trivial_match |
-
-**Price source:** `parent_final / module_count` — единственный исторический источник. Альтернативного source (отдельная цена за модуль) в системе нет.
-
-**Особый кейс Рыштаковой:** parent = 250 / 3 = 83.33 per module. Это единственный доступный исторический source цены.
-
-**Статус PATCH H:** незакрыт формально до бизнес-подтверждения, что `parent_final / module_count` является корректной ценовой логикой.
-
-## PATCH E — Dry Run результаты ✅
-
-### Cohort Summary (dry_run batch_id: batch_business_cb20_repair_v1_1775164054828)
-
-| Метрика | Значение |
-|---|---|
-| business_users_total | 105 |
-| noop_count | 99 |
-| safe_execute_count | 1 (shkurenochek — expires alignment) |
-| standalone_safe_count | 1 (Рыштакова — partial_safe candidate) |
-| standalone_only_blocked_count | 1 (Царёва — zero visibility) |
-| staff_skip_count | 2 |
-| manual_review_count | 2 |
-
-### PATCH E1 — Pre-execute proof: Рыштакова (katerina5515530@gmail.com) ✅
-
-**partial_safe execute_scope = [Маркетплейсы only]**
-
-| child_order | display_purchase_name | final_price | matched_training_module_id | matched_training_module_title | active_lessons | included_in_entitlement |
-|---|---|---|---|---|---|---|
-| GC-3831920-M1 | ЦБ 2.0: Розничная торговля | 83.33 | 1ede03b4-03fc-4386-89a1-0f3f198d9ced | РОЗНИЧНАЯ ТОРГОВЛЯ | 0 | ❌ (0 lessons) |
-| GC-3831920-M2 | ЦБ 2.0: Производство | 83.33 | a4a5102d-fdb1-4171-a0de-f6e151155431 | ПРОИЗВОДСТВО | 0 | ❌ (0 lessons) |
-| GC-3831920-M3 | ЦБ 2.0: Маркетплейсы | 83.34 | 4c97d21c-ce30-4d96-8487-f810ae33b563 | Маркетплейсы | 5 | ✅ |
-
-**DB Cross-check:**
-
-| Поле | Значение |
-|---|---|
-| profile_id | 01e91e53-664a-49b9-bb7c-ced7033ae4b8 |
-| user_id | 7c53b6af-92d0-4a8d-881f-3fe9de45dffd |
-| business_subscription_id | f7bf26da-c06f-4e10-9d8b-eb89cc0b7a2c |
-| business_access_end_at | 2026-04-18T12:00:00+00:00 |
-| existing_cb20_entitlement | 5875992d (active, expires_at=NULL, source=admin_edit) |
-| target_expires_at | 2026-04-18T12:00:00+00:00 |
-| mapped_training_module_ids | [4c97d21c] (Маркетплейсы) |
-| visible_recursive_lesson_count | 5 |
-
-**⚠️ CRITICAL FINDING:** Edge function dry_run показывает `current_entitlement_id: null` и `planned_action: create`, но в БД уже есть активный cb20 entitlement (5875992d). **Функция не видит существующий entitlement.** Вероятная причина: несоответствие в логике lookup (user_id vs profile_id).
-
-**Решение перед execute:** Требуется исправление edge function для корректного обнаружения существующего entitlement. Без этого execute создаст дубль.
-
-**Execute payload preview:** `/mnt/documents/patch_e1_execute_payload_preview.json`
-
-**Expected runtime result после execute:**
-- Пользователь видит только модуль Маркетплейсы (5 lessons)
-- Другие child orders остаются историей покупки, но не дают доступ к inactive content
-- Розничная торговля и Производство в entitlement **не включать** (active_lessons = 0)
-
-### PATCH E2 — Blocked proof: Царёва (irinkazar@inbox.ru) ✅
-
-| child_order | module_name | matched_training_module_id | active_lessons | block_reason |
-|---|---|---|---|---|
-| GC-1767629483208-M1 | Розничная торговля | 1ede03b4-03fc-4386-89a1-0f3f198d9ced | 0 | zero_active_lessons |
-| GC-1767629483208-M2 | Грузо- и пассажироперевозки | 8f71d4a8-2358-4a1a-9082-e4b501909bb1 | 0 | zero_active_lessons |
-| GC-1767629483208-M3 | Производство | a4a5102d-fdb1-4171-a0de-f6e151155431 | 0 | zero_active_lessons |
-| (mapped via parent) | Строительство | b7bae7fd-3a39-4438-8ec6-ced99f79c327 | 0 | zero_active_lessons |
-
-**DB Cross-check:**
-
-| Поле | Значение |
-|---|---|
-| profile_id | f18d750e-16e9-4a44-b9f7-bbd9a4287cd9 |
-| user_id | 5c6e6e0f-7b19-4ebf-957c-fa491c7e52cb |
-| business_subscription_id | 161a0644-07f1-4048-8c19-891185538831 |
-| business_access_end_at | 2026-04-18T20:59:59+00:00 |
-| existing_cb20_entitlement | отсутствует |
-| hold_reason | runtime_preview_zero_visibility |
-
-**Итог:**
-- mapping_ok = ✅ (4/4 модуля сматчены)
-- execute_block_reason = inactive content / zero active lessons
-- Это исключает повторные попытки чинить mapping вместо контента
-
-**Expected manual path:**
-- Repair НЕ выполняется в этом спринте
-- Следующий шаг только после активации уроков/контента
-- После активации контента требуется повторный dry-run, а не прямой execute
-
-## Decision Matrix (обязательный gate) ✅
-
-**Deliverable:** `/mnt/documents/patch_e_decision_matrix.csv`
-
-| email | split_normalized | prices_verified | mapping_ok | active_lessons>0 | execute_allowed | final_action |
-|---|---|---|---|---|---|---|
-| katerina5515530@gmail.com | ✅ | ✅ (83.33/83.33/83.34=250) | ✅ (1/3: Маркетплейсы) | ✅ (5 lessons partial) | ✅ partial_safe | execute: Маркетплейсы only |
-| irinkazar@inbox.ru | ✅ | ✅ (trivial_zero) | ✅ (4/4 mapped, 0 active) | ❌ (0/4) | ❌ | blocked: manual_review |
-| a.bruylo@ajoure.by | ✅ | ✅ (trivial_zero) | — | — | ❌ | staff_skip |
-| irkaguzarevich@mail.ru | ✅ | ✅ (trivial_zero) | n/a | n/a | ❌ | has cb20 entitlement, not in scope |
-| lori-30@tut.by | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
-| overchenko.lina@mail.ru | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
-| princessa_elena1@mail.ru | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
-
-**Без заполненной decision matrix execute PATCH E и finalize PATCH G запрещены.**
-
-## Entitlement Uniqueness Check ✅
-
-**Deliverable:** `/mnt/documents/patch_e_entitlement_uniqueness.csv`
-
-| email | existing_active_cb20 | details | expected_after_execute | duplicate_risk |
-|---|---|---|---|---|
-| katerina5515530@gmail.com | 1 | active, expires=NULL, src=admin_edit | UPDATE existing (set scope+expires) | LOW (update, not insert) |
-| irinkazar@inbox.ru | 0 | — | no action (blocked) | none |
-
-## ⚠️ BLOCKER перед PATCH E execute
-
-**Edge function bug обнаружен при dry_run:**
-- Функция `repair-cb20-entitlements` не обнаруживает существующий cb20 entitlement для Рыштаковой
-- dry_run показывает `current_entitlement_id: null`, `planned_action: create`
-- Фактически в БД есть `5875992d` (active, product_code=cb20, user_id=7c53b6af)
-- **Execute без исправления создаст дубль entitlement**
-
-**Требуется:** точечная правка в edge function для корректного lookup entitlement перед execute.
-
-## Execution order (обновлённый)
-
-```text
-1. ✅ PATCH H3 — price_truth_audit CSV
-2. ✅ PATCH E1 — pre-execute proof Рыштакова
-3. ✅ PATCH E2 — blocked proof Царёва
-4. ✅ Decision matrix + entitlement_uniqueness_check
-5. ✅ PATCH E dry_run (edge function) — completed with findings
-6. ✅ Plan.md updated
-7. ⏳ FIX: edge function entitlement lookup bug
-8. ⏳ PATCH E execute only approved (Рыштакова partial_safe)
-9. ⏳ Post-execute proof
-10. ⏳ PATCH G finalize_parents
-11. ⏳ PATCH B browser proof
+```
+.eq('product_id', CB20_PRODUCT_ID)
 ```
 
-## STOP-guards перед execute
+У Рыштаковой existing entitlement (`5875992d`) имеет `product_code = 'cb20'`, но `product_id = NULL`. Lookup его не находит → dry-run ошибочно планирует `create` вместо `update`.
 
-- ✅ child prices verified by historical truth audit (H3)
-- ✅ parent rows have UI badges (I)
-- ⏳ titles consistent across all UI layers (F/I)
-- ✅ reference proof for Рыштакова и Царёва собран
-- ❌ edge function entitlement lookup bug — **BLOCKER**
+Тот же фильтр используется в post-check (строка 818) — аналогичная слепая зона.
 
-## STOP-guards перед finalize_parents
+## Что будет сделано
 
-- ✅ цены подтверждены по business truth (H3)
-- ⏳ split-parent не мешает child визуально (I)
-- ⏳ titles consistent across all UI (F/I)
-- ✅ reference proofs собраны
-- ⏳ execute/blocked outcome documented
-- ⏳ post-execute proof for Рыштакова
-- ⏳ entitlement реально создан/обновлён, expires_at = business_access_end_at
+### 1. Fix lookup existing entitlements (строки 128-135)
 
-## PATCH D — Reference-case summary
+Заменить один запрос на два последовательных:
 
-| Email | Роль | Статус |
-|---|---|---|
-| katerina5515530@gmail.com (Рыштакова) | non-staff | partial_safe candidate, 1/3 modules with active content |
-| irinkazar@inbox.ru (Царёва) | non-staff | blocked: 0 active lessons in all 4 modules |
-| a.bruylo@ajoure.by | staff | staff_skip |
+```
+// Primary: by product_id
+const { data: entsByProductId } = await supabase
+  .from('entitlements')
+  .select(...)
+  .eq('product_id', CB20_PRODUCT_ID)
+  .in('user_id', businessUserIds);
 
-## Ограничения текущего шага
+// Fallback: by product_code for legacy records
+const { data: entsByCode } = await supabase
+  .from('entitlements')
+  .select(...)
+  .eq('product_code', 'cb20')
+  .is('product_id', null)
+  .in('user_id', businessUserIds);
+```
 
-- Не создаются новые продукты/тренинги/уроки
-- Не решается контентная проблема inactive lessons у Царёвой
-- Для blocked case — proof и manual decision, не автоматический repair
-- Execute запрещён без decision matrix
-- Finalize parents запрещён до завершения PATCH E
-- PATCH B не блокирует G/E finalize-decision по данным
+Объединить в `entByUser` map с приоритетом product_id-match.
 
-## Add-only правило
+Добавить в output каждого plan:
 
-- Не создавать новые products/tariffs/training_modules
-- Не удалять child orders
-- Parent не переводить в canceled до полного proof-пакета
-- Все изменения parent/child обратимо диагностируемы через meta
+- `current_entitlement_match_by`: `'product_id' | 'product_code' | 'none'`
 
-## Финальный expected outcome
+### 2. Fix UPDATE path (строки 697-710)
 
-- Рыштакова — partial_safe executed (после fix edge function)
-- Царёва — blocked/manual_review (documented)
-- Parent multi-module orders — finalized only after execute-proof
-- Child orders — prices/truth verified ✅
-- Titles consistent across UI — pending browser proof
+При update legacy entitlement (product_id = NULL) — дозаполнить `product_id = CB20_PRODUCT_ID` в updateData.
+
+### 3. Anti-duplicate guard перед CREATE (строки 723-755)
+
+Перед insert добавить повторную проверку:
+
+```
+const { data: dupeCheck } = await supabase
+  .from('entitlements')
+  .select('id')
+  .eq('user_id', plan.user_id)
+  .or(`product_id.eq.${CB20_PRODUCT_ID},product_code.eq.cb20`)
+  .eq('status', 'active')
+  .limit(1);
+
+if (dupeCheck?.length > 0) {
+  // blocked — duplicate would be created
+}
+```
+
+### 4. Runtime preview для repair/update cases (строки 416-418)
+
+Расширить фильтр с `planned_action === 'create'` на включение `repair_metadata_and_align` / `repair_metadata_only` с `scope_bucket === 'module_scope_only'`. Это даст Рыштаковой runtime_preview (видимые модули/уроки).
+
+### 5. Fix post-check (строки 815-819)
+
+Аналогично lookup — добавить fallback по `product_code = 'cb20'`.
+
+### 6. Standalone dry-run output enrichment (строки 612-637)
+
+Добавить поля:
+
+- `current_entitlement_id`
+- `current_entitlement_match_by`
+- `current_product_id`
+- `current_product_code`
+
+### 7. Deploy + post-fix dry-run
+
+- Deploy edge function
+- Вызвать с `dry_run: true, standalone_mode: "partial_safe", execute_cohort: "standalone_safe"`
+- Проверить что Рыштакова → `planned_action = repair_metadata_and_align`, не `create`
+- Проверить что Царёва → `blocked / manual_review`
+
+### 8. Execute для approved cohort
+
+После подтверждения dry-run результата — execute для Рыштаковой:
+
+- update existing entitlement
+- scope = module_scope_only
+- mapped_training_module_ids = [Маркетплейсы]
+- expires_at = business_access_end_at
+- product_id дозаполнен
+
+### 9. Post-execute proof
+
+- active cb20 entitlement count для Рыштаковой = 1
+- product_id заполнен
+- scope корректен
+- expires_at корректен
+
+## Ожидаемый outcome
+
+- Рыштакова: entitlement **updated**, доступ к Маркетплейсам, expires = 2026-04-18
+- Царёва: **blocked/manual_review** (inactive content)
+- Дубли entitlement не создаются
+- Parent/root deal cleanup — не в scope текущего шага
+
+## Файлы для изменения
+
+- `supabase/functions/repair-cb20-entitlements/index.ts` — 5 точечных правок (lookup, update path, anti-dupe guard, runtime preview filter, post-check)
+- `.lovable/plan.md` — обновление статусов
+
+## Execution order
+
+```text
+1. Fix edge function (5 точечных правок)
+2. Deploy
+3. Post-fix dry-run (proof: Рыштакова = update)
+4. Execute partial_safe для approved candidate
+5. Post-execute proof
+6. Update plan.md
+```
+
+## STOP-guard
+
+Execute запрещён если post-fix dry-run для Рыштаковой показывает `planned_action = create`.
+
+## Backlog (не в текущем шаге)
+
+- Глубокая нормализация historical deal chain
+- Parent/root visual cleanup
+- Активация контента для Царёвой
+- Полная reconciliation сделочной модели
