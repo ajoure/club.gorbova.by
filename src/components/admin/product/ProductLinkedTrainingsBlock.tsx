@@ -702,11 +702,46 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule }: {
 }
 
 // --- Main Block ---
-export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule }: Props) {
+export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule, onEditRule }: Props) {
+  const queryClient = useQueryClient();
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
   const { visibleTrainings, visibleTrainingsMap, visibleTrainingCount } = useVisibleTrainings(trainings, ruleLinkedData, productId);
+
+  // Rule-link delete state
+  const [deleteRuleId, setDeleteRuleId] = useState<string | null>(null);
+  const [deleteRuleTrainingTitle, setDeleteRuleTrainingTitle] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteExecuting, setDeleteExecuting] = useState(false);
+
+  const handleDeleteRuleLink = (ruleId: string, trainingTitle: string) => {
+    setDeleteRuleId(ruleId);
+    setDeleteRuleTrainingTitle(trainingTitle);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteRuleConfirm = async () => {
+    if (!deleteRuleId) return;
+    setDeleteExecuting(true);
+    try {
+      const { error } = await supabase
+        .from('access_rules')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', deleteRuleId);
+      if (error) throw error;
+      toast.success('Связь деактивирована');
+      queryClient.invalidateQueries({ queryKey: ['access-rules'] });
+      queryClient.invalidateQueries({ queryKey: ['rule-linked-trainings'] });
+      queryClient.invalidateQueries({ queryKey: ['training-content-rules'] });
+      setDeleteConfirmOpen(false);
+      setDeleteRuleId(null);
+    } catch (err: any) {
+      toast.error('Ошибка: ' + err.message);
+    } finally {
+      setDeleteExecuting(false);
+    }
+  };
 
   // Only rule-linked (not owned) trainings for separate rendering
   const onlyRuleLinkedTrainings = visibleTrainings.filter(vt => !vt.is_owned && vt.is_rule_linked);
