@@ -736,7 +736,22 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   return (
     <div className="space-y-6">
       {/* PATCH A: Linked trainings block */}
-      <ProductLinkedTrainingsBlock productId={productId} onUseViaRule={openCreateTrainingContentRule} />
+      <ProductLinkedTrainingsBlock
+        productId={productId}
+        onUseViaRule={openCreateTrainingContentRule}
+        onFocusRule={(ruleId) => {
+          const el = document.getElementById(`access-rule-${ruleId}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("ring-2", "ring-primary");
+            setTimeout(() => el.classList.remove("ring-2", "ring-primary"), 3000);
+          } else {
+            // Fallback: scroll to rules section
+            const section = document.getElementById("access-rules-section");
+            section?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }}
+      />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
