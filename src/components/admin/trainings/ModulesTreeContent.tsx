@@ -164,15 +164,10 @@ function ModuleTreeNode({
             {/* Selection checkbox */}
             {selectionMode && onToggleSelection && (
               <Checkbox
-                checked={checkState === "checked"}
-                // @ts-ignore — radix supports indeterminate via "indeterminate" prop
-                {...(checkState === "indeterminate" ? { "data-state": "indeterminate" } : {})}
+                checked={checkState === "checked" ? true : checkState === "indeterminate" ? "indeterminate" : false}
                 onCheckedChange={() => onToggleSelection(node.module.id)}
                 onClick={(e) => e.stopPropagation()}
-                className={cn(
-                  "shrink-0",
-                  checkState === "indeterminate" && "data-[state=indeterminate]:bg-primary/50",
-                )}
+                className="shrink-0"
               />
             )}
 
