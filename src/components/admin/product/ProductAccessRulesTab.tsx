@@ -642,10 +642,11 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
     }
-    // training_content: target_label = training title
+    // training_content: target_label = training title (use merged trainingOptions)
     if (form.grant_target_type === "training_content" && form.target_ref) {
-      const training = rootTrainings.find(t => t.id === form.target_ref);
+      const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
+    }
     }
 
     const payload: any = {
@@ -667,6 +668,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       await createRule(payload);
     }
     setDialogOpen(false);
+    setUseViaRuleTraining(null);
   };
 
   // Auto-set target_label when selecting target (non-product_access types)
@@ -1262,41 +1264,59 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   {/* Root training selector */}
                   <div className="space-y-1.5">
                     <Label className="text-xs">Тренинг</Label>
-                    {rootTrainings.length === 0 ? (
+                    {trainingOptions.length === 0 && !form.target_ref ? (
                       <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
                         К продукту не привязано ни одного тренинга. Сначала привяжите тренинг.
                       </div>
                     ) : (
                       <Select
                         value={form.target_ref}
-                        onValueChange={(v) => setForm({
-                          ...form,
-                          target_ref: v,
-                          target_label: rootTrainings.find(t => t.id === v)?.title || v,
-                          tc_allowed_module_ids: [],
-                          tc_allowed_lesson_ids: [],
-                        })}
+                        onValueChange={(v) => {
+                          const isExternal = !rootTrainings.some(t => t.id === v);
+                          setForm({
+                            ...form,
+                            target_ref: v,
+                            target_label: trainingOptions.find(t => t.id === v)?.title || v,
+                            tc_allowed_module_ids: [],
+                            tc_allowed_lesson_ids: [],
+                          });
+                          if (!isExternal) {
+                            setUseViaRuleTraining(null);
+                          }
+                        }}
                       >
                         <SelectTrigger className="h-9">
                           <SelectValue placeholder="Выберите тренинг" />
                         </SelectTrigger>
                         <SelectContent>
-                          {rootTrainings.map(t => (
-                            <SelectItem key={t.id} value={t.id}>
-                              <div className="flex items-center gap-2">
-                                <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
-                                <span>{t.title}</span>
-                                {t.public_id && (
-                                  <span className="text-[10px] text-muted-foreground font-mono">{t.public_id}</span>
-                                )}
-                                {!t.is_active && (
-                                  <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
-                                )}
-                              </div>
-                            </SelectItem>
-                          ))}
+                          {trainingOptions.map(t => {
+                            const isExternal = !rootTrainings.some(rt => rt.id === t.id);
+                            return (
+                              <SelectItem key={t.id} value={t.id}>
+                                <div className="flex items-center gap-2">
+                                  <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                                  <span>{t.title}</span>
+                                  {t.public_id && (
+                                    <span className="text-[10px] text-muted-foreground font-mono">{t.public_id}</span>
+                                  )}
+                                  {!t.is_active && (
+                                    <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
+                                  )}
+                                  {isExternal && (
+                                    <Badge variant="secondary" className="text-[9px]">внешний</Badge>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
+                    )}
+                    {/* Helper text for external training via rule */}
+                    {useViaRuleTraining && form.target_ref && !rootTrainings.some(t => t.id === form.target_ref) && (
+                      <p className="text-[11px] text-muted-foreground bg-muted/30 rounded px-2 py-1.5">
+                        Тренинг используется через правило доступа. Владелец не меняется.
+                      </p>
                     )}
                   </div>
 
@@ -1585,7 +1605,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setUseViaRuleTraining(null); }}>Отмена</Button>
             <Button onClick={handleSave}>{editing ? "Сохранить" : "Создать"}</Button>
           </DialogFooter>
         </DialogContent>
