@@ -996,9 +996,20 @@ Deno.serve(async (req) => {
         return plan?.scope_bucket === 'module_scope_only' && r.result === 'success';
       }).length;
 
+      // Count duplicate active cb20 entitlements per user in post-check
+      const postEntCountPerUser = new Map<string, number>();
+      for (const e of allPostEnts) {
+        if (e.status === 'active') {
+          postEntCountPerUser.set(e.user_id, (postEntCountPerUser.get(e.user_id) || 0) + 1);
+        }
+      }
+      const usersWithDuplicatePostEnts = [...postEntCountPerUser.entries()].filter(([_, count]) => count > 1);
+
       postCheck = {
         business_users_total: businessUserIds.length,
         cb20_bonus_entitlements_total: allPostEnts.length,
+        duplicate_active_count: usersWithDuplicatePostEnts.length,
+        duplicate_active_users: usersWithDuplicatePostEnts.map(([uid, count]) => ({ user_id: uid, count })),
         normalized_meta_total: hasMeta.length,
         expires_mismatch_remaining: expiresMismatchRemaining,
         manual_review_remaining: plans.filter(p => p.planned_action === 'manual_review').length,
@@ -1020,17 +1031,30 @@ Deno.serve(async (req) => {
           expires_mismatch_for_executed_is_zero: expiresMismatchRemaining === 0,
           scope_mode_invalid_is_zero: scopeModeInvalid === 0,
           executed_standalone_no_match_is_zero: executedStandaloneNoMatch === 0,
+          no_duplicate_active_entitlements: usersWithDuplicatePostEnts.length === 0,
         },
-        // Per-user proof table for executed records
-        per_user_proof: executeResults.map(r => ({
-          user_id: r.user_id,
-          old_expires_at: r.old_expires_at,
-          new_expires_at: r.new_expires_at,
-          target_expires_at: r.target_expires_at,
-          old_meta_status: r.old_meta_status,
-          new_scope_resolution_mode: r.new_scope_resolution_mode,
-          result: r.result,
-        })),
+        // Per-user proof table for executed records — enriched
+        per_user_proof: executeResults.map(r => {
+          const postEnt = allPostEnts.find(e => e.user_id === r.user_id);
+          const activeCount = postEntCountPerUser.get(r.user_id) || 0;
+          return {
+            email: r.email,
+            user_id: r.user_id,
+            entitlement_id: postEnt?.id || null,
+            product_id: postEnt?.product_id || null,
+            product_code: postEnt?.product_code || null,
+            scope_resolution_mode: r.new_scope_resolution_mode,
+            mapped_training_module_ids: (() => {
+              const m = (postEnt?.meta || {}) as any;
+              return m.mapped_training_module_ids || null;
+            })(),
+            old_expires_at: r.old_expires_at,
+            new_expires_at: r.new_expires_at,
+            target_expires_at: r.target_expires_at,
+            result: r.result,
+            active_cb20_entitlement_count: activeCount,
+          };
+        }),
       };
     }
 
