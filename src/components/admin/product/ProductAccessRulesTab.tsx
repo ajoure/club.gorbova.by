@@ -728,20 +728,22 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         </Select>
       </div>
 
-      {/* Conflicts warning — classified */}
+      {/* Conflicts warning — real conflicts only */}
       {conflicts.filter(c => c.type !== 'valid_parallel_rule').length > 0 && (
         <Card className="border-amber-200/50 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-950/30">
           <CardContent className="py-3 px-4">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Обнаружены конфликты правил
+                Обнаружены конфликты правил — требует действия администратора
               </span>
             </div>
             <div className="mt-2 space-y-1">
-              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label }) => (
+              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label, type }) => (
                 <div key={key} className="text-xs text-amber-600 dark:text-amber-500">
-                  {items[0].target_label || key}: {label} — {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")}
+                  {items[0].target_label || key}: {label} — {items.map((i) => `${i.tariff?.name || "Продукт"} (приоритет ${i.priority})`).join(" + ")}
+                  {type === 'duplicate_rule' && " → рекомендуется удалить дубликат"}
+                  {type === 'ambiguous_overlap' && " → рекомендуется уточнить приоритеты"}
                 </div>
               ))}
             </div>
@@ -756,7 +758,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
             <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
               <Info className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Множественные правила на одну цель (разные тарифы — допустимо)
+                Это допустимая конфигурация, если правила разведены по тарифам
               </span>
             </div>
             <div className="mt-2 space-y-1">
@@ -795,7 +797,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
             const Icon = TARGET_TYPE_ICONS[rule.grant_target_type] || Shield;
             const purpose = getRulePurpose(rule);
             const PurposeIcon = PURPOSE_ICONS[purpose];
-            const hasConflict = conflicts.some((c) => c.items.some((i) => i.id === rule.id));
+            const conflictEntry = conflicts.find((c) => c.items.some((i) => i.id === rule.id));
+            const hasRealConflict = !!conflictEntry && conflictEntry.type !== 'valid_parallel_rule';
+            const isParallelRule = !!conflictEntry && conflictEntry.type === 'valid_parallel_rule';
             const hasOverlap = overlaps.some(
               (o) => o.grant_target_type === rule.grant_target_type && o.target_ref === rule.target_ref
             );
@@ -813,7 +817,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 className={cn(
                   "transition-colors",
                   !rule.is_active && "opacity-60",
-                  hasConflict && "border-amber-300/50"
+                  hasRealConflict && "border-amber-300/50"
                 )}
               >
                 <CardContent className="py-3 px-4">
@@ -847,11 +851,36 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                             {PURPOSE_LABELS[purpose]}
                           </Badge>
                         )}
-                        {hasConflict && (
-                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
-                            <AlertTriangle className="h-3 w-3 mr-0.5" />
-                            Конфликт
-                          </Badge>
+                        {hasRealConflict && conflictEntry && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                                  <AlertTriangle className="h-3 w-3 mr-0.5" />
+                                  Конфликт
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-[350px]">
+                                <div className="space-y-1 text-xs">
+                                  <div className="font-medium">
+                                    {conflictEntry.type === 'duplicate_rule' ? 'Дублирующие правила' : 'Неоднозначное перекрытие'}
+                                  </div>
+                                  <div className="text-muted-foreground">
+                                    {conflictEntry.type === 'duplicate_rule'
+                                      ? 'Найдены идентичные правила (продукт + тариф + цель). Рекомендуется удалить дубликат.'
+                                      : 'Несколько правил на одну цель с неопределённым приоритетом. Рекомендуется уточнить приоритеты.'}
+                                  </div>
+                                  <div className="pt-1 border-t border-border/50">
+                                    {conflictEntry.items.map((item, idx) => (
+                                      <div key={idx}>
+                                        • {item.tariff?.name || "Весь продукт"} — приоритет {item.priority}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         )}
                         {hasOverlap && (
                           <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300">

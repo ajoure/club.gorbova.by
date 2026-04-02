@@ -649,17 +649,24 @@ export function useAvailableTrainingsForBind(currentProductId?: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("training_modules")
-        .select("id, title, slug, public_id, is_active, product_id, parent_module_id, sort_order")
+        .select("id, title, slug, public_id, is_active, product_id, parent_module_id, sort_order, owner_product:products_v2(name)")
         .is("parent_module_id", null)
         .order("is_active", { ascending: false })
         .order("sort_order");
       if (error) throw error;
 
-      const free = (data || []).filter(m => !m.product_id);
-      const currentProduct = (data || []).filter(m => m.product_id === currentProductId);
-      const otherProduct = (data || []).filter(m => m.product_id && m.product_id !== currentProductId);
+      const normalize = (m: any) => ({
+        ...m,
+        owner_product_name: (m.owner_product as any)?.name || null,
+        owner_product: undefined,
+      });
 
-      return { free, currentProduct, otherProduct, all: data || [] };
+      const all = (data || []).map(normalize);
+      const free = all.filter(m => !m.product_id);
+      const currentProduct = all.filter(m => m.product_id === currentProductId);
+      const otherProduct = all.filter(m => m.product_id && m.product_id !== currentProductId);
+
+      return { free, currentProduct, otherProduct, all };
     },
     enabled: !!currentProductId,
   });
