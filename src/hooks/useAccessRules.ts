@@ -302,6 +302,23 @@ export interface EffectiveGrant {
   runtime_support: "full" | "partial" | "preview_only";
   // Club extras
   club_access_label?: string;
+  // Training content extras
+  tc_access_mode?: "full" | "partial";
+  tc_module_count?: number;
+  tc_lesson_count?: number;
+}
+
+/** Extract training_content metadata from conditions safely */
+export function getTrainingContentMeta(conditions: Record<string, unknown> | null | undefined): {
+  mode: "full" | "partial";
+  moduleCount: number;
+  lessonCount: number;
+} {
+  const cond = conditions || {};
+  const mode = (cond.access_mode === "partial" ? "partial" : "full") as "full" | "partial";
+  const moduleCount = Array.isArray(cond.allowed_module_ids) ? cond.allowed_module_ids.length : 0;
+  const lessonCount = Array.isArray(cond.allowed_lesson_ids) ? cond.allowed_lesson_ids.length : 0;
+  return { mode, moduleCount, lessonCount };
 }
 
 export function useEffectiveGrants(productId?: string, tariffId?: string) {
@@ -338,6 +355,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
         tariffRules?.forEach((r: any) => {
           const key = makeKey(r.grant_target_type, r.target_ref);
           coveredTargets.add(key);
+          const tcMeta = r.grant_target_type === "training_content" ? getTrainingContentMeta(r.conditions) : null;
           grants.push({
             grant_target_type: r.grant_target_type,
             target_ref: r.target_ref,
@@ -355,6 +373,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
             migrated_status: "new_rule",
             effective_status: "active",
             runtime_support: getRuntimeSupport(r.grant_target_type),
+            ...(tcMeta && { tc_access_mode: tcMeta.mode, tc_module_count: tcMeta.moduleCount, tc_lesson_count: tcMeta.lessonCount }),
           });
         });
       }
@@ -370,8 +389,9 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
 
       productRules?.forEach((r: any) => {
         const key = makeKey(r.grant_target_type, r.target_ref);
+        const tcMeta = r.grant_target_type === "training_content" ? getTrainingContentMeta(r.conditions) : null;
+        const tcFields = tcMeta ? { tc_access_mode: tcMeta.mode as "full" | "partial", tc_module_count: tcMeta.moduleCount, tc_lesson_count: tcMeta.lessonCount } : {};
         if (coveredTargets.has(key)) {
-          // Overridden by tariff-level
           grants.push({
             grant_target_type: r.grant_target_type,
             target_ref: r.target_ref,
@@ -390,6 +410,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
             effective_status: "overridden",
             overridden_by: "Правило тарифа",
             runtime_support: getRuntimeSupport(r.grant_target_type),
+            ...tcFields,
           });
         } else {
           coveredTargets.add(key);
@@ -410,6 +431,7 @@ export function useEffectiveGrants(productId?: string, tariffId?: string) {
             migrated_status: "new_rule",
             effective_status: "active",
             runtime_support: getRuntimeSupport(r.grant_target_type),
+            ...tcFields,
           });
         }
       });
