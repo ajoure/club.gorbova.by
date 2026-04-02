@@ -75,7 +75,8 @@ export default function ContactDealsDialog({
           customer_email,
           customer_phone,
           payer_type,
-          user_id
+          user_id,
+          purchase_snapshot
         `)
         .eq("user_id", userId)
         .order("deal_date", { ascending: false });
@@ -98,11 +99,19 @@ export default function ContactDealsDialog({
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
 
-      return data.map(deal => ({
-        ...deal,
-        product_name: productsMap.get(deal.product_id) || null,
-        tariff_name: tariffsMap.get(deal.tariff_id) || null,
-      }));
+      return data.map(deal => {
+        const snapshot = deal.purchase_snapshot as any;
+        const displayName = snapshot?.display_purchase_name;
+        const fkName = productsMap.get(deal.product_id) || null;
+        const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
+        return {
+          ...deal,
+          product_name: displayName || fkName,
+          tariff_name: tariffsMap.get(deal.tariff_id) || null,
+          _is_module_standalone: isModuleStandalone,
+          _missing_display_name: isModuleStandalone && !displayName,
+        };
+      });
     },
     enabled: !!profile && open,
   });
@@ -214,6 +223,16 @@ export default function ContactDealsDialog({
                             <div className="flex flex-col gap-0.5">
                               {deal.product_name && (
                                 <span className="font-medium text-sm">{deal.product_name}</span>
+                              )}
+                              {deal._is_module_standalone && (
+                                <Badge variant="outline" className="text-xs w-fit bg-purple-500/10 text-purple-700 border-purple-300">
+                                  Модульная покупка
+                                </Badge>
+                              )}
+                              {deal._missing_display_name && (
+                                <Badge variant="outline" className="text-xs w-fit bg-amber-500/10 text-amber-700 border-amber-300">
+                                  ⚠ Historical name missing
+                                </Badge>
                               )}
                               {deal.tariff_name && (
                                 <Badge variant="secondary" className="text-xs w-fit">

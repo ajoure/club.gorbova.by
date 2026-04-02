@@ -189,12 +189,18 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
       if (orderIds.length > 0) {
         const { data: orders } = await supabase
           .from('orders_v2')
-          .select('id, product_id, products_v2(name)')
+          .select('id, product_id, purchase_snapshot, products_v2(name)')
           .in('id', orderIds);
-        ordersMap = new Map((orders || []).map(o => [
-          o.id, 
-          { id: o.id, product_name: (o.products_v2 as any)?.name || null }
-        ]));
+        ordersMap = new Map((orders || []).map(o => {
+          const snapshot = o.purchase_snapshot as any;
+          const displayName = snapshot?.display_purchase_name;
+          const fkName = (o.products_v2 as any)?.name || null;
+          const resolvedName = displayName || fkName;
+          return [
+            o.id, 
+            { id: o.id, product_name: resolvedName }
+          ];
+        }));
       }
 
       return uniquePayments.map(p => ({

@@ -60,6 +60,7 @@ export function LinkSubscriptionDealDialog({
         .from("orders_v2")
         .select(`
           id, order_number, status, final_price, currency, created_at, profile_id, user_id,
+          purchase_snapshot,
           tariff:tariffs(name),
           product:products_v2(name)
         `)
@@ -81,17 +82,22 @@ export function LinkSubscriptionDealDialog({
       
       if (error) throw error;
       
-      setResults((data || []).map((o: any) => ({
-        id: o.id,
-        order_number: o.order_number,
-        status: o.status,
-        final_price: Number(o.final_price),
-        currency: o.currency,
-        created_at: o.created_at,
-        product_name: o.product?.name || o.tariff?.name || null,
-        profile_id: o.profile_id,
-        user_id: o.user_id,
-      })));
+      setResults((data || []).map((o: any) => {
+        const snapshot = o.purchase_snapshot;
+        const displayName = snapshot?.display_purchase_name;
+        const fkName = o.product?.name || o.tariff?.name || null;
+        return {
+          id: o.id,
+          order_number: o.order_number,
+          status: o.status,
+          final_price: Number(o.final_price),
+          currency: o.currency,
+          created_at: o.created_at,
+          product_name: displayName || fkName,
+          profile_id: o.profile_id,
+          user_id: o.user_id,
+        };
+      }));
     } catch (e: any) {
       toast.error(`Ошибка поиска: ${e.message}`);
     } finally {
