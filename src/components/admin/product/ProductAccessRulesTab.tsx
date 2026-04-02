@@ -278,6 +278,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     enabled: !!productId,
   });
 
+  // State for external (use-via-rule) training hydration
+  const [useViaRuleTraining, setUseViaRuleTraining] = useState<{ id: string; title: string } | null>(null);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
