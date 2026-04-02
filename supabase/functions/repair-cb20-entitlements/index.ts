@@ -124,15 +124,75 @@ Deno.serve(async (req) => {
       }
     });
 
-    // 3. Get existing cb20 entitlements
-    const { data: existingEnts } = await supabase
-      .from('entitlements')
-      .select('id, user_id, product_code, product_id, expires_at, meta, order_id')
-      .eq('product_id', CB20_PRODUCT_ID)
-      .in('user_id', businessUserIds);
+    // 3. Get existing cb20 entitlements — unified lookup helper
+    // Primary: by product_id; Fallback: by product_code='cb20' AND product_id IS NULL
+    const findExistingCb20Entitlements = async (userIds: string[]) => {
+      const { data: entsByProductId } = await supabase
+        .from('entitlements')
+        .select('id, user_id, product_code, product_id, expires_at, meta, order_id, status')
+        .eq('product_id', CB20_PRODUCT_ID)
+        .in('user_id', userIds);
 
-    const entByUser = new Map<string, typeof existingEnts extends (infer T)[] | null ? T : never>();
-    (existingEnts || []).forEach(e => entByUser.set(e.user_id, e));
+      const { data: entsByCode } = await supabase
+        .from('entitlements')
+        .select('id, user_id, product_code, product_id, expires_at, meta, order_id, status')
+        .eq('product_code', 'cb20')
+        .is('product_id', null)
+        .in('user_id', userIds);
+
+      // Build map with priority: product_id match > product_code fallback
+      // Also detect duplicates: >1 active cb20 entitlement per user
+      const resultMap = new Map<string, { ent: any; match_by: 'product_id' | 'product_code'; legacy_null_product_id: boolean }>();
+      const duplicateUsers = new Set<string>();
+
+      // Collect all active cb20 entitlements per user for dupe detection
+      const allEntsPerUser = new Map<string, any[]>();
+      for (const e of (entsByProductId || [])) {
+        const arr = allEntsPerUser.get(e.user_id) || [];
+        arr.push(e);
+        allEntsPerUser.set(e.user_id, arr);
+      }
+      for (const e of (entsByCode || [])) {
+        const arr = allEntsPerUser.get(e.user_id) || [];
+        // Avoid adding same entitlement twice
+        if (!arr.some(x => x.id === e.id)) {
+          arr.push(e);
+          allEntsPerUser.set(e.user_id, arr);
+        }
+      }
+
+      // Detect duplicates and pick best match
+      for (const [userId, ents] of allEntsPerUser) {
+        const activeEnts = ents.filter((e: any) => e.status === 'active');
+        if (activeEnts.length > 1) {
+          duplicateUsers.add(userId);
+        }
+        // Priority: product_id match first
+        const byProductId = ents.find((e: any) => e.product_id === CB20_PRODUCT_ID);
+        if (byProductId) {
+          resultMap.set(userId, { ent: byProductId, match_by: 'product_id', legacy_null_product_id: false });
+        } else {
+          const byCode = ents.find((e: any) => e.product_code === 'cb20' && !e.product_id);
+          if (byCode) {
+            resultMap.set(userId, { ent: byCode, match_by: 'product_code', legacy_null_product_id: true });
+          }
+        }
+      }
+
+      return { resultMap, duplicateUsers };
+    };
+
+    const { resultMap: entLookup, duplicateUsers: duplicateEntitlementUsers } = await findExistingCb20Entitlements(businessUserIds);
+
+    // Legacy compat: entByUser map for existing code paths
+    const entByUser = new Map<string, any>();
+    const entMatchBy = new Map<string, 'product_id' | 'product_code' | 'none'>();
+    const entLegacyNull = new Map<string, boolean>();
+    for (const [userId, info] of entLookup) {
+      entByUser.set(userId, info.ent);
+      entMatchBy.set(userId, info.match_by);
+      entLegacyNull.set(userId, info.legacy_null_product_id);
+    }
 
     // 4. Get historical cb20 purchases — DEDUPLICATE BY ORDER ID
     const profileIds = [...profileIdByAuthId.values()];
@@ -413,9 +473,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 7. Runtime preview for create cases with module_scope_only
+    // 7. Runtime preview for module_scope_only cases (create + repair/update)
     const createModuleScopePlans = plans.filter(
-      p => p.planned_action === 'create' && p.scope_bucket === 'module_scope_only'
+      p => p.scope_bucket === 'module_scope_only' && 
+           (p.planned_action === 'create' || p.planned_action === 'repair_metadata_and_align' || p.planned_action === 'repair_metadata_only')
     );
 
     for (const plan of createModuleScopePlans) {
@@ -609,7 +670,7 @@ Deno.serve(async (req) => {
       email_null_count: businessUserIds.filter(uid => !profileEmailMap.get(uid)).length,
     };
 
-    // Standalone dry-run table
+    // Standalone dry-run table — enriched with entitlement match info
     const standaloneDryRun = executeCandidatesStandalone.map(p => {
       const userMappings = mappingConfidence.filter(m =>
         p.historical_module_product_ids.includes(m.module_product_id)
@@ -619,6 +680,9 @@ Deno.serve(async (req) => {
       const unmappedIds = p.historical_module_product_ids.filter(mpId =>
         !userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id)
       );
+      const matchBy = entMatchBy.get(p.user_id) || 'none';
+      const legacyNull = entLegacyNull.get(p.user_id) || false;
+      const existingEnt = entByUser.get(p.user_id);
       return {
         user_id: p.user_id,
         email: p.email,
@@ -631,6 +695,11 @@ Deno.serve(async (req) => {
         confidence: userMappings.map(m => ({ id: m.module_product_id, name: m.module_product_name, confidence: m.mapping_confidence, reason: m.mapping_reason })),
         visible_lessons: p.runtime_preview?.visible_recursive_lesson_count || 0,
         planned_action: p.current_entitlement_id ? 'repair' : 'create',
+        current_entitlement_id: existingEnt?.id || null,
+        current_entitlement_match_by: matchBy,
+        current_product_id: existingEnt?.product_id || null,
+        current_product_code: existingEnt?.product_code || null,
+        legacy_null_product_id: legacyNull,
         mode: standaloneMode,
         reason: p.reason,
       };
@@ -694,12 +763,33 @@ Deno.serve(async (req) => {
         let newExpiresAt = oldExpiresAt;
 
         try {
+          // Anti-duplicate guard: before ANY action, verify no >1 active cb20 entitlements
+          if (duplicateEntitlementUsers.has(plan.user_id)) {
+            executeResults.push({
+              user_id: plan.user_id, email: plan.email,
+              action: plan.planned_action, result: 'blocked_duplicate',
+              error: 'manual_review_duplicate_active: >1 active cb20 entitlements found',
+              old_expires_at: oldExpiresAt, new_expires_at: null,
+              target_expires_at: plan.target_expires_at,
+              old_meta_status: plan.current_meta_status,
+              new_scope_resolution_mode: plan.scope_bucket,
+            });
+            continue;
+          }
+
           if (plan.current_entitlement_id) {
             // UPDATE existing entitlement
             const updateData: Record<string, any> = {
               meta: enrichedMeta,
               updated_at: new Date().toISOString(),
+              product_code: 'cb20',
             };
+            // Backfill product_id for legacy entitlements with NULL product_id
+            const isLegacyNull = entLegacyNull.get(plan.user_id) || false;
+            if (isLegacyNull) {
+              updateData.product_id = CB20_PRODUCT_ID;
+              console.log(`[repair-cb20] Backfilling product_id for legacy entitlement ${plan.current_entitlement_id}`);
+            }
             if (plan.planned_action !== 'repair_metadata_only') {
               updateData.expires_at = plan.business_access_end_at;
               newExpiresAt = plan.business_access_end_at;
@@ -721,37 +811,57 @@ Deno.serve(async (req) => {
               new_scope_resolution_mode: plan.scope_bucket,
             });
           } else if (executeCohort === 'standalone_safe' && plan.scope_bucket === 'module_scope_only') {
-            // CREATE new entitlement for standalone_safe cohort
-            const profileId = profileIdByAuthId.get(plan.user_id);
-            if (!profileId) {
+            // Anti-duplicate guard before CREATE: re-check using unified lookup
+            const { data: dupeCheck } = await supabase
+              .from('entitlements')
+              .select('id')
+              .eq('user_id', plan.user_id)
+              .eq('product_code', 'cb20')
+              .eq('status', 'active')
+              .limit(2);
+            
+            if (dupeCheck && dupeCheck.length > 0) {
               executeResults.push({
                 user_id: plan.user_id, email: plan.email,
-                action: 'create', result: 'error', error: 'profile_id not found',
-                old_expires_at: null, new_expires_at: null, target_expires_at: plan.target_expires_at,
-                old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
-              });
-            } else {
-              newExpiresAt = plan.business_access_end_at;
-              const { error } = await supabase
-                .from('entitlements')
-                .insert({
-                  user_id: plan.user_id,
-                  profile_id: profileId,
-                  product_id: CB20_PRODUCT_ID,
-                  product_code: 'cb20',
-                  status: 'active',
-                  source: 'batch_standalone_safe',
-                  expires_at: plan.business_access_end_at,
-                  meta: enrichedMeta,
-                });
-              executeResults.push({
-                user_id: plan.user_id, email: plan.email,
-                action: 'create_standalone', result: error ? 'error' : 'success',
-                error: error?.message || null,
-                old_expires_at: null, new_expires_at: newExpiresAt,
+                action: 'create_blocked', result: 'blocked_duplicate',
+                error: `Anti-duplicate guard: ${dupeCheck.length} existing active cb20 entitlement(s) found, ids: ${dupeCheck.map((d: any) => d.id).join(',')}`,
+                old_expires_at: null, new_expires_at: null,
                 target_expires_at: plan.target_expires_at,
                 old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
               });
+            } else {
+              // CREATE new entitlement for standalone_safe cohort
+              const profileId = profileIdByAuthId.get(plan.user_id);
+              if (!profileId) {
+                executeResults.push({
+                  user_id: plan.user_id, email: plan.email,
+                  action: 'create', result: 'error', error: 'profile_id not found',
+                  old_expires_at: null, new_expires_at: null, target_expires_at: plan.target_expires_at,
+                  old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+                });
+              } else {
+                newExpiresAt = plan.business_access_end_at;
+                const { error } = await supabase
+                  .from('entitlements')
+                  .insert({
+                    user_id: plan.user_id,
+                    profile_id: profileId,
+                    product_id: CB20_PRODUCT_ID,
+                    product_code: 'cb20',
+                    status: 'active',
+                    source: 'batch_standalone_safe',
+                    expires_at: plan.business_access_end_at,
+                    meta: enrichedMeta,
+                  });
+                executeResults.push({
+                  user_id: plan.user_id, email: plan.email,
+                  action: 'create_standalone', result: error ? 'error' : 'success',
+                  error: error?.message || null,
+                  old_expires_at: null, new_expires_at: newExpiresAt,
+                  target_expires_at: plan.target_expires_at,
+                  old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+                });
+              }
             }
           }
         } catch (err) {
@@ -809,14 +919,31 @@ Deno.serve(async (req) => {
       });
     }
 
-    // 11. Post-check (after execute) — per-user proof table
+    // 11. Post-check (after execute) — per-user proof table (unified lookup)
     let postCheck: any = null;
     if (!dryRun) {
-      const { data: postEnts } = await supabase
+      // Use same unified lookup as initial step — find by product_id OR product_code='cb20'
+      const { data: postEntsByPid } = await supabase
         .from('entitlements')
-        .select('id, user_id, expires_at, meta')
+        .select('id, user_id, product_id, product_code, expires_at, meta, status')
         .eq('product_id', CB20_PRODUCT_ID)
         .in('user_id', businessUserIds);
+
+      const { data: postEntsByCode } = await supabase
+        .from('entitlements')
+        .select('id, user_id, product_id, product_code, expires_at, meta, status')
+        .eq('product_code', 'cb20')
+        .is('product_id', null)
+        .in('user_id', businessUserIds);
+
+      // Deduplicate by entitlement ID
+      const seenPostIds = new Set<string>();
+      const postEntsRaw = [...(postEntsByPid || []), ...(postEntsByCode || [])].filter(e => {
+        if (seenPostIds.has(e.id)) return false;
+        seenPostIds.add(e.id);
+        return true;
+      });
+      const postEnts = postEntsRaw;
 
       const allPostEnts = postEnts || [];
       const hasMeta = allPostEnts.filter(e => e.meta && (e.meta as any).scope_resolution_mode);
