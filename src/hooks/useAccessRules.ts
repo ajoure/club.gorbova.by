@@ -189,7 +189,7 @@ export function useAccessRules(productId?: string) {
       } else if (msg.includes("must be a root training module")) {
         toast.error("Тренинг должен быть корневым модулем (не дочерним)");
       } else if (msg.includes("product must match") || msg.includes("product_id does not match")) {
-        toast.error("Тренинг не привязан к этому продукту. Сначала привяжите тренинг.");
+        toast.error("Тренинг принадлежит другому продукту. Для использования через правило доступа должна быть применена новая миграция.");
       } else if (msg.includes("must have access_mode")) {
         toast.error("Не указан режим доступа (полный / частичный)");
       } else if (msg.includes("non-empty allowed_module_ids") || msg.includes("non-empty allowed_lesson_ids")) {
@@ -223,7 +223,7 @@ export function useAccessRules(productId?: string) {
       } else if (msg.includes("must be a root training module")) {
         toast.error("Тренинг должен быть корневым модулем (не дочерним)");
       } else if (msg.includes("product must match") || msg.includes("product_id does not match")) {
-        toast.error("Тренинг не привязан к этому продукту. Сначала привяжите тренинг.");
+        toast.error("Тренинг принадлежит другому продукту. Для использования через правило доступа должна быть применена новая миграция.");
       } else if (msg.includes("must have access_mode")) {
         toast.error("Не указан режим доступа (полный / частичный)");
       } else if (msg.includes("non-empty allowed_module_ids") || msg.includes("non-empty allowed_lesson_ids")) {

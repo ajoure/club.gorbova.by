@@ -278,6 +278,41 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     enabled: !!productId,
   });
 
+  // State for external (use-via-rule) training hydration
+  const [useViaRuleTraining, setUseViaRuleTraining] = useState<{ id: string; title: string } | null>(null);
+
+  // Fetch external training by id when target_ref is set but not found in rootTrainings
+  const externalTrainingId = (() => {
+    // Only fetch if we have a target_ref for training_content that's not in rootTrainings
+    const ref = useViaRuleTraining?.id;
+    if (!ref) return undefined;
+    if (rootTrainings.some(t => t.id === ref)) return undefined;
+    return ref;
+  })();
+  const { data: externalTraining } = useQuery({
+    queryKey: ["external-training-by-id", externalTrainingId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, sort_order")
+        .eq("id", externalTrainingId!)
+        .is("parent_module_id", null)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!externalTrainingId,
+  });
+
+  // Merged training options: rootTrainings + external training if applicable
+  const trainingOptions = useMemo(() => {
+    const list = [...rootTrainings];
+    if (externalTraining && !list.some(t => t.id === externalTraining.id)) {
+      list.push(externalTraining);
+    }
+    return list;
+  }, [rootTrainings, externalTraining]);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
@@ -289,6 +324,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
 
   // Canonical helper: open create-dialog pre-filled for training_content
   const openCreateTrainingContentRule = useCallback((targetRef: string, targetLabel: string) => {
+    setUseViaRuleTraining({ id: targetRef, title: targetLabel });
     setEditing(null);
     setForm({
       scope: "product",
@@ -501,6 +537,18 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     const tcAllowedModuleIds = (Array.isArray(conditions.allowed_module_ids) ? conditions.allowed_module_ids : []) as string[];
     const tcAllowedLessonIds = (Array.isArray(conditions.allowed_lesson_ids) ? conditions.allowed_lesson_ids : []) as string[];
 
+    // Hydrate useViaRuleTraining for external training_content rules
+    if (rule.grant_target_type === "training_content" && rule.target_ref) {
+      const isExternal = !rootTrainings.some(t => t.id === rule.target_ref);
+      if (isExternal) {
+        setUseViaRuleTraining({ id: rule.target_ref, title: rule.target_label || rule.target_ref });
+      } else {
+        setUseViaRuleTraining(null);
+      }
+    } else {
+      setUseViaRuleTraining(null);
+    }
+
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
@@ -606,10 +654,11 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         targetLabel = `${names.length} продуктов: ${names.slice(0, 2).join(", ")}${names.length > 2 ? ` и ещё ${names.length - 2}` : ""}`;
       }
     }
-    // training_content: target_label = training title
+    // training_content: target_label = training title (use merged trainingOptions)
     if (form.grant_target_type === "training_content" && form.target_ref) {
-      const training = rootTrainings.find(t => t.id === form.target_ref);
+      const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
+    }
     }
 
     const payload: any = {
@@ -631,6 +680,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       await createRule(payload);
     }
     setDialogOpen(false);
+    setUseViaRuleTraining(null);
   };
 
   // Auto-set target_label when selecting target (non-product_access types)
@@ -1104,16 +1154,19 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               </div>
               <Select
                 value={form.grant_target_type}
-                onValueChange={(v: GrantTargetType) => setForm({
-                  ...form,
-                  grant_target_type: v,
-                  target_ref: "",
-                  target_label: "",
-                  target_product_ids: [],
-                  has_condition: false,
-                  condition_use_same_list: true,
-                  condition_required_product_ids: [],
-                })}
+                onValueChange={(v: GrantTargetType) => {
+                  setUseViaRuleTraining(null);
+                  setForm({
+                    ...form,
+                    grant_target_type: v,
+                    target_ref: "",
+                    target_label: "",
+                    target_product_ids: [],
+                    has_condition: false,
+                    condition_use_same_list: true,
+                    condition_required_product_ids: [],
+                  });
+                }}
               >
                 <SelectTrigger className="h-9">
                   <SelectValue />
@@ -1226,41 +1279,59 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   {/* Root training selector */}
                   <div className="space-y-1.5">
                     <Label className="text-xs">Тренинг</Label>
-                    {rootTrainings.length === 0 ? (
+                    {trainingOptions.length === 0 && !form.target_ref ? (
                       <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-3 text-center">
                         К продукту не привязано ни одного тренинга. Сначала привяжите тренинг.
                       </div>
                     ) : (
                       <Select
                         value={form.target_ref}
-                        onValueChange={(v) => setForm({
-                          ...form,
-                          target_ref: v,
-                          target_label: rootTrainings.find(t => t.id === v)?.title || v,
-                          tc_allowed_module_ids: [],
-                          tc_allowed_lesson_ids: [],
-                        })}
+                        onValueChange={(v) => {
+                          const isExternal = !rootTrainings.some(t => t.id === v);
+                          setForm({
+                            ...form,
+                            target_ref: v,
+                            target_label: trainingOptions.find(t => t.id === v)?.title || v,
+                            tc_allowed_module_ids: [],
+                            tc_allowed_lesson_ids: [],
+                          });
+                          if (!isExternal) {
+                            setUseViaRuleTraining(null);
+                          }
+                        }}
                       >
                         <SelectTrigger className="h-9">
                           <SelectValue placeholder="Выберите тренинг" />
                         </SelectTrigger>
                         <SelectContent>
-                          {rootTrainings.map(t => (
-                            <SelectItem key={t.id} value={t.id}>
-                              <div className="flex items-center gap-2">
-                                <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
-                                <span>{t.title}</span>
-                                {t.public_id && (
-                                  <span className="text-[10px] text-muted-foreground font-mono">{t.public_id}</span>
-                                )}
-                                {!t.is_active && (
-                                  <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
-                                )}
-                              </div>
-                            </SelectItem>
-                          ))}
+                          {trainingOptions.map(t => {
+                            const isExternal = !rootTrainings.some(rt => rt.id === t.id);
+                            return (
+                              <SelectItem key={t.id} value={t.id}>
+                                <div className="flex items-center gap-2">
+                                  <BookOpen className="h-3.5 w-3.5 text-primary shrink-0" />
+                                  <span>{t.title}</span>
+                                  {t.public_id && (
+                                    <span className="text-[10px] text-muted-foreground font-mono">{t.public_id}</span>
+                                  )}
+                                  {!t.is_active && (
+                                    <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивен</Badge>
+                                  )}
+                                  {isExternal && (
+                                    <Badge variant="secondary" className="text-[9px]">внешний</Badge>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
+                    )}
+                    {/* Helper text for external training via rule */}
+                    {useViaRuleTraining && form.target_ref && !rootTrainings.some(t => t.id === form.target_ref) && (
+                      <p className="text-[11px] text-muted-foreground bg-muted/30 rounded px-2 py-1.5">
+                        Тренинг используется через правило доступа. Владелец не меняется.
+                      </p>
                     )}
                   </div>
 
@@ -1549,7 +1620,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setUseViaRuleTraining(null); }}>Отмена</Button>
             <Button onClick={handleSave}>{editing ? "Сохранить" : "Создать"}</Button>
           </DialogFooter>
         </DialogContent>
