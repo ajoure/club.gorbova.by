@@ -564,7 +564,7 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 }
 
 // --- Main Block ---
-export function ProductLinkedTrainingsBlock({ productId }: Props) {
+export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) {
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const [bindOpen, setBind] = useState(false);
@@ -841,6 +841,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
         onBind={handleBind}
         onRebindRequest={handleRebindRequest}
         onUnbindRequest={handleUnbindRequest}
+        onUseViaRule={onUseViaRule}
       />
 
       {/* Rebind Preview Dialog */}
