@@ -923,11 +923,11 @@ Deno.serve(async (req) => {
   }
 });
 
-// Helper: try name matching with strict uniqueness guard
-function tryNameMatch(
+// Helper: match product name against children of CB20 root using normalized short name extraction
+function tryChildNameMatch(
   mpId: string,
   product: { name: string; code: string | null } | null,
-  allTrainingModules: Array<{ id: string; title: string; product_id: string | null; code: string | null }>,
+  cb20Children: Array<{ id: string; title: string; product_id: string | null }>,
   results: MappingConfidence[]
 ) {
   const productName = product?.name || '';
@@ -944,27 +944,62 @@ function tryNameMatch(
     return;
   }
 
-  const nameNorm = productName.toLowerCase().trim();
-  const nameMatches = allTrainingModules.filter(tm => tm.title.toLowerCase().trim() === nameNorm);
+  // Extract short name: "Ценный бухгалтер | 1 ступень 2.0 | Модуль: Строительство" → "строительство"
+  const extractShortName = (name: string): string => {
+    const lower = name.toLowerCase().trim();
+    // Try to extract after "модуль:" pattern
+    const moduleMatch = lower.match(/модуль:\s*(.+)/);
+    if (moduleMatch) return moduleMatch[1].trim();
+    // Try after last "|"
+    const parts = lower.split('|');
+    if (parts.length > 1) return parts[parts.length - 1].trim();
+    return lower;
+  };
 
-  if (nameMatches.length === 1) {
+  const shortName = extractShortName(productName);
+
+  // 1. Try exact full-name match first
+  const fullNameNorm = productName.toLowerCase().trim();
+  const exactFullMatches = cb20Children.filter(tm => tm.title.toLowerCase().trim() === fullNameNorm);
+  if (exactFullMatches.length === 1) {
     results.push({
       module_product_id: mpId,
       module_product_name: productName,
-      matched_training_module_id: nameMatches[0].id,
-      matched_training_module_title: nameMatches[0].title,
+      matched_training_module_id: exactFullMatches[0].id,
+      matched_training_module_title: exactFullMatches[0].title,
       mapping_confidence: 'exact_name',
-      mapping_reason: `Unique name match: '${productName}' = training '${nameMatches[0].title}'`,
+      mapping_reason: `Exact full-name match with CB20 child: '${productName}' = '${exactFullMatches[0].title}'`,
       allowed_in_execute: true,
     });
-  } else if (nameMatches.length > 1) {
+    return;
+  }
+
+  // 2. Try normalized short-name contains match against child titles
+  const shortNameMatches = cb20Children.filter(tm => {
+    const childTitle = tm.title.toLowerCase().trim();
+    const childShort = extractShortName(childTitle);
+    // Check if short names match or one contains the other
+    return childShort === shortName || childTitle.includes(shortName) || shortName.includes(childShort);
+  });
+
+  if (shortNameMatches.length === 1) {
+    results.push({
+      module_product_id: mpId,
+      module_product_name: productName,
+      matched_training_module_id: shortNameMatches[0].id,
+      matched_training_module_title: shortNameMatches[0].title,
+      mapping_confidence: 'exact_name',
+      mapping_reason: `Normalized short-name match: '${shortName}' → CB20 child '${shortNameMatches[0].title}'`,
+      allowed_in_execute: true,
+    });
+  } else if (shortNameMatches.length > 1) {
     results.push({
       module_product_id: mpId,
       module_product_name: productName,
       matched_training_module_id: null,
       matched_training_module_title: null,
       mapping_confidence: 'inferred',
-      mapping_reason: `Name '${productName}' matched ${nameMatches.length} training modules — ambiguous, manual review required`,
+      mapping_reason: `Short-name '${shortName}' matched ${shortNameMatches.length} CB20 children — ambiguous`,
       allowed_in_execute: false,
     });
   } else {
@@ -974,8 +1009,9 @@ function tryNameMatch(
       matched_training_module_id: null,
       matched_training_module_title: null,
       mapping_confidence: 'no_match',
-      mapping_reason: `No training module found for product '${productName}' (id=${mpId}) by FK, code, or name`,
+      mapping_reason: `No CB20 child module found for '${shortName}' (product: '${productName}', id=${mpId})`,
       allowed_in_execute: false,
     });
   }
+}
 }
