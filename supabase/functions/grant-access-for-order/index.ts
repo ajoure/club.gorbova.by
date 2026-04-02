@@ -853,12 +853,13 @@ Deno.serve(async (req) => {
                 sourceWindowRule = 'rule_duration';
               } else {
                 // align_with_source: use the triggering subscription's access_end_at
+                // Canonical SoT: MAX(access_end_at) from active OR past_due subscriptions
                 const { data: sourceSub } = await supabase
                   .from('subscriptions_v2')
                   .select('id, access_end_at, tariff_id')
                   .eq('user_id', userId)
                   .eq('product_id', productId)
-                  .eq('status', 'active')
+                  .in('status', ['active', 'past_due'])
                   .order('access_end_at', { ascending: false })
                   .limit(1)
                   .maybeSingle();
@@ -866,9 +867,9 @@ Deno.serve(async (req) => {
                 if (sourceSub?.access_end_at) {
                   paExpiresAt = sourceSub.access_end_at;
                   sourceWindowRule = 'align_with_source';
-                  console.log(`[grant-access] product_access: align_with_source expires_at=${paExpiresAt} from sub ${sourceSub.id}`);
+                  console.log(`[grant-access] product_access: align_with_source expires_at=${paExpiresAt} from sub ${sourceSub.id} (canonical SoT: MAX active+past_due)`);
                 } else {
-                  console.warn(`[grant-access] product_access: no active source subscription for align_with_source, expires_at=null`);
+                  console.warn(`[grant-access] product_access: no active/past_due source subscription for align_with_source, expires_at=null`);
                 }
               }
 
@@ -910,13 +911,13 @@ Deno.serve(async (req) => {
                 scopeResolutionMode = 'no_scope';
               }
 
-              // Get source business subscription info
+              // Get source business subscription info (canonical SoT: active+past_due, MAX access_end_at)
               const { data: businessSub } = await supabase
                 .from('subscriptions_v2')
                 .select('id, tariff_id, access_end_at')
                 .eq('user_id', userId)
                 .eq('product_id', productId)
-                .eq('status', 'active')
+                .in('status', ['active', 'past_due'])
                 .order('access_end_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();

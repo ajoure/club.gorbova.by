@@ -127,11 +127,19 @@ export function useSidebarModules() {
         const effectiveProductId = (m as any).product_id ?? 
           (m.parent_module_id ? parentProductMap.get(m.parent_module_id) : null) ?? null;
 
-        // Access precedence: admin → public → tariff → entitlement
-        const hasAccess = isAdminUser || 
-          moduleAccess.tariffIds.length === 0 || 
-          moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid)) ||
-          (effectiveProductId != null && userEntitlementProductIds.has(effectiveProductId));
+        // Access precedence:
+        // For product-linked modules: admin → entitlement ONLY (legacy module_access excluded)
+        // For non-product modules: admin → public → tariff (legacy path)
+        let hasAccess: boolean;
+        if (effectiveProductId != null) {
+          // Product-linked: entitlement-only path (module_access excluded for cb20 etc.)
+          hasAccess = isAdminUser || userEntitlementProductIds.has(effectiveProductId);
+        } else {
+          // Non-product-linked: legacy module_access path
+          hasAccess = isAdminUser || 
+            moduleAccess.tariffIds.length === 0 || 
+            moduleAccess.tariffIds.some(tid => userTariffIds.includes(tid));
+        }
 
         return {
           ...m,

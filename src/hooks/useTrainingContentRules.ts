@@ -153,6 +153,10 @@ export function useTrainingContentRulesForProduct(productId?: string) {
 /**
  * Loads active training_content rules relevant to the current user.
  * Used in runtime hooks for filtering.
+ * 
+ * Phase C enhancement: Also reads entitlement.meta for bonus scope resolution.
+ * Generates synthetic TrainingContentRule entries for entitlements with
+ * scope_resolution_mode != full_tariff_scope, enforcing Variant B.
  */
 export function useActiveTrainingContentRules() {
   const { user } = useAuth();
@@ -162,10 +166,10 @@ export function useActiveTrainingContentRules() {
     queryFn: async () => {
       if (!user) return [];
 
-      // Get user's active product IDs (from entitlements)
+      // Get user's active entitlements WITH meta for bonus scope resolution
       const { data: ents } = await supabase
         .from("entitlements")
-        .select("product_id")
+        .select("product_id, meta")
         .eq("user_id", user.id)
         .eq("status", "active");
 
@@ -196,11 +200,16 @@ export function useActiveTrainingContentRules() {
       const { data, error } = await query;
       if (error) throw error;
 
+      const dbRules = (data || []).map(r => ({
+        ...r,
+        conditions: (r.conditions as unknown as TrainingContentConditions) || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] },
+      })) as TrainingContentRule[];
+
+      // Phase C: Generate synthetic rules from entitlement.meta (bonus scope resolver)
+      const syntheticRules = await resolveBonusScopeRules(ents || [], supabase);
+
       return {
-        rules: (data || []).map(r => ({
-          ...r,
-          conditions: (r.conditions as unknown as TrainingContentConditions) || { access_mode: "full", allowed_module_ids: [], allowed_lesson_ids: [] },
-        })) as TrainingContentRule[],
+        rules: [...dbRules, ...syntheticRules],
         userTariffIds: tariffIds,
       };
     },
@@ -210,8 +219,153 @@ export function useActiveTrainingContentRules() {
 }
 
 /**
+ * Phase C: Bonus scope resolver.
+ * Reads entitlement.meta.scope_resolution_mode and generates synthetic
+ * TrainingContentRule entries to restrict access for bonus entitlements.
+ * 
+ * Variant B enforcement:
+ * - full_tariff_scope → no synthetic rule needed (full access via DB rules)
+ * - module_scope_only → partial rule with allowed_module_ids from historical_module_product_ids mapping
+ * - union_scope → partial rule combining tariff modules + standalone modules
+ * - no_scope → partial rule with empty allowed lists (blocks everything)
+ * - manual_review → treated as no_scope (safe default)
+ */
+async function resolveBonusScopeRules(
+  entitlements: Array<{ product_id: string | null; meta: any }>,
+  supabaseClient: typeof supabase,
+): Promise<TrainingContentRule[]> {
+  const syntheticRules: TrainingContentRule[] = [];
+
+  // Filter entitlements that have scope_resolution_mode in meta
+  const scopedEnts = entitlements.filter(e => {
+    const meta = (e.meta || {}) as Record<string, any>;
+    const mode = meta.scope_resolution_mode;
+    // Only generate synthetic rules for restricted modes
+    return mode && mode !== 'full_tariff_scope';
+  });
+
+  if (scopedEnts.length === 0) return syntheticRules;
+
+  // Collect all historical_module_product_ids for batch mapping
+  const allModuleProductIds = new Set<string>();
+  scopedEnts.forEach(e => {
+    const meta = (e.meta || {}) as Record<string, any>;
+    const ids = meta.historical_module_product_ids;
+    if (Array.isArray(ids)) {
+      ids.forEach((id: string) => allModuleProductIds.add(id));
+    }
+  });
+
+  // Batch query: map module product_ids → training_module_ids
+  // This resolves commercial module markers to actual training subtree nodes
+  let moduleProductToTrainingIds = new Map<string, string[]>();
+  if (allModuleProductIds.size > 0) {
+    const { data: mappedModules } = await supabaseClient
+      .from("training_modules")
+      .select("id, product_id")
+      .in("product_id", [...allModuleProductIds])
+      .eq("is_active", true);
+
+    (mappedModules || []).forEach(m => {
+      if (!m.product_id) return;
+      const existing = moduleProductToTrainingIds.get(m.product_id) || [];
+      existing.push(m.id);
+      moduleProductToTrainingIds.set(m.product_id, existing);
+    });
+  }
+
+  // Also need to find root training module for each entitlement's product
+  // to set target_ref correctly
+  const entProductIds = [...new Set(scopedEnts.map(e => e.product_id).filter(Boolean))] as string[];
+  let productToRootTraining = new Map<string, string>();
+  if (entProductIds.length > 0) {
+    const { data: rootModules } = await supabaseClient
+      .from("training_modules")
+      .select("id, product_id")
+      .in("product_id", entProductIds)
+      .is("parent_module_id", null)
+      .eq("is_active", true);
+
+    (rootModules || []).forEach(m => {
+      if (m.product_id) {
+        productToRootTraining.set(m.product_id, m.id);
+      }
+    });
+  }
+
+  // Generate synthetic rules per scoped entitlement
+  for (const ent of scopedEnts) {
+    const meta = (ent.meta || {}) as Record<string, any>;
+    const mode = meta.scope_resolution_mode as string;
+    const productId = ent.product_id;
+    if (!productId) continue;
+
+    const rootTrainingId = productToRootTraining.get(productId);
+    if (!rootTrainingId) continue; // No training linked to this product
+
+    // Resolve allowed module IDs from historical purchase
+    const historicalModuleProductIds: string[] = meta.historical_module_product_ids || [];
+    const allowedModuleIds: string[] = [];
+
+    for (const modProdId of historicalModuleProductIds) {
+      const trainingIds = moduleProductToTrainingIds.get(modProdId);
+      if (trainingIds) {
+        allowedModuleIds.push(...trainingIds);
+      }
+      // If no mapping found, this module goes to manual_review territory
+      // but we don't add it to allowed list (safe default)
+    }
+
+    let accessMode: "full" | "partial" = "partial";
+    let finalAllowedModuleIds = allowedModuleIds;
+
+    if (mode === 'no_scope' || mode === 'manual_review') {
+      // Block everything — empty allowed lists
+      finalAllowedModuleIds = [];
+    } else if (mode === 'module_scope_only') {
+      // Only historically purchased modules
+      finalAllowedModuleIds = allowedModuleIds;
+    } else if (mode === 'union_scope') {
+      // Union of tariff modules + standalone modules
+      // Tariff modules are handled by existing DB rules, 
+      // so we don't need to restrict here — let DB rules handle full part
+      // and add standalone modules on top
+      // For union_scope, we generate a full access rule (DB rules + standalone are both valid)
+      accessMode = "full";
+    }
+
+    const syntheticRule: TrainingContentRule = {
+      id: `synthetic-bonus-${productId}`,
+      product_id: productId,
+      tariff_id: null,
+      target_ref: rootTrainingId,
+      target_label: `Bonus scope: ${mode}`,
+      is_active: true,
+      conditions: {
+        access_mode: accessMode,
+        allowed_module_ids: finalAllowedModuleIds,
+        allowed_lesson_ids: [],
+        rule_purpose: `synthetic_bonus_${mode}`,
+      },
+      notes: null,
+    };
+
+    syntheticRules.push(syntheticRule);
+  }
+
+  return syntheticRules;
+}
+
+/**
  * Pure function: resolve the most specific training_content filter for a given training module.
- * Priority: tariff-level rule > product-level rule > no rule (full access).
+ * Priority: 
+ *   1. tariff-level DB rule (most specific)
+ *   2. product-level DB rule
+ *   3. synthetic bonus rule from entitlement.meta (Variant B enforcement)
+ *   4. no rule → null (full access)
+ * 
+ * For product-linked cb20 modules, synthetic bonus rules ensure that
+ * standalone_only users see only their purchased modules, not full access.
  */
 export function resolveTrainingContentFilter(
   rules: TrainingContentRule[],
@@ -225,20 +379,28 @@ export function resolveTrainingContentFilter(
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
   if (matchingRules.length === 0) return null;
 
-  // Find most specific: tariff-level first
+  // Separate DB rules from synthetic bonus rules
+  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-bonus-'));
+  const syntheticRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+
   let bestRule: TrainingContentRule | null = null;
 
-  // Tariff-level rules (most specific)
-  for (const rule of matchingRules) {
+  // Priority 1: Tariff-level DB rules (most specific)
+  for (const rule of dbRules) {
     if (rule.tariff_id && userTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
       break;
     }
   }
 
-  // Fallback to product-level
+  // Priority 2: Product-level DB rules
   if (!bestRule) {
-    bestRule = matchingRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+  }
+
+  // Priority 3: Synthetic bonus rules from entitlement.meta (Variant B)
+  if (!bestRule && syntheticRules.length > 0) {
+    bestRule = syntheticRules[0];
   }
 
   if (!bestRule) return null;
