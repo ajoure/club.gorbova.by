@@ -1166,6 +1166,12 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                       <div className="rounded-md border p-2 text-xs space-y-1 bg-muted/50">
                         <p><span className="font-medium">ID правила:</span> {deleteRuleId?.slice(0, 8)}</p>
                         <p><span className="font-medium">Режим:</span> {deleteAccessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</p>
+                        {deleteRule.tariff_id && tariffNamesMap[deleteRule.tariff_id] && (
+                          <p><span className="font-medium">Тариф:</span> {tariffNamesMap[deleteRule.tariff_id]}</p>
+                        )}
+                        {!deleteRule.tariff_id && (
+                          <p><span className="font-medium">Scope:</span> Весь продукт</p>
+                        )}
                         {deleteRule.target_label && <p><span className="font-medium">Метка:</span> {deleteRule.target_label}</p>}
                       </div>
                     )}
