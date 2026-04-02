@@ -659,7 +659,6 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       const training = trainingOptions.find(t => t.id === form.target_ref);
       targetLabel = training?.title || form.target_label || form.target_ref;
     }
-    }
 
     const payload: any = {
       product_id: form.scope === "product" ? productId : productId,
