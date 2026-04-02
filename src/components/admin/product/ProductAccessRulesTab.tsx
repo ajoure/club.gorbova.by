@@ -6,6 +6,7 @@ import {
   type AccessRule, type GrantTargetType, type RulePurpose,
   type EffectiveGrant, type LegacyMapping,
   getRulePurpose, getLegacyStatus, type LegacyStatus,
+  getTrainingContentMeta,
 } from "@/hooks/useAccessRules";
 import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
@@ -894,6 +895,26 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                         <Badge variant="outline" className="text-[10px]">
                           {TARGET_TYPE_LABELS[rule.grant_target_type]}
                         </Badge>
+                        {rule.grant_target_type === "training_content" && (() => {
+                          const meta = getTrainingContentMeta(rule.conditions as Record<string, unknown>);
+                          const isEmpty = meta.mode === "partial" && meta.moduleCount === 0 && meta.lessonCount === 0;
+                          return (
+                            <>
+                              <Badge variant="outline" className={cn("text-[10px]", meta.mode === "partial" ? "text-amber-600 border-amber-300" : "")}>
+                                {meta.mode === "full"
+                                  ? "Весь тренинг"
+                                  : isEmpty
+                                    ? "Частичный доступ"
+                                    : `Частичный: ${meta.moduleCount} мод. ${meta.lessonCount} ур.`}
+                              </Badge>
+                              {isEmpty && (
+                                <Badge variant="outline" className="text-[10px] text-muted-foreground border-muted">
+                                  ⚠ выбор пуст
+                                </Badge>
+                              )}
+                            </>
+                          );
+                        })()}
                         <Badge variant="outline" className="text-[10px]">
                           {rule.tariff_id ? `Тариф: ${rule.tariff?.name || "—"}` : "Весь продукт"}
                         </Badge>
@@ -1688,12 +1709,31 @@ function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: Effective
           <span className={cn("text-sm font-medium", isOverridden && "line-through")}>{g.target_label}</span>
           {g.club_access_label && (
             <Badge variant="outline" className="text-[9px]">{g.club_access_label}</Badge>
-          )}
+           )}
           {g.rule_purpose !== "primary" && (
             <Badge variant="outline" className="text-[9px] text-purple-600 border-purple-300">
               {PURPOSE_LABELS[g.rule_purpose]}
             </Badge>
           )}
+          {g.grant_target_type === "training_content" && g.tc_access_mode && (() => {
+            const isEmpty = g.tc_access_mode === "partial" && (g.tc_module_count || 0) === 0 && (g.tc_lesson_count || 0) === 0;
+            return (
+              <>
+                <Badge variant="outline" className={cn("text-[9px]", g.tc_access_mode === "partial" ? "text-amber-600 border-amber-300" : "")}>
+                  {g.tc_access_mode === "full"
+                    ? "Весь тренинг"
+                    : isEmpty
+                      ? "Частичный доступ"
+                      : `Частичный: ${g.tc_module_count} мод. ${g.tc_lesson_count} ур.`}
+                </Badge>
+                {isEmpty && (
+                  <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted">
+                    ⚠ выбор пуст
+                  </Badge>
+                )}
+              </>
+            );
+          })()}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <Badge
