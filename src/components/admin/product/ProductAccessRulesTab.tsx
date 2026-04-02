@@ -281,6 +281,38 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   // State for external (use-via-rule) training hydration
   const [useViaRuleTraining, setUseViaRuleTraining] = useState<{ id: string; title: string } | null>(null);
 
+  // Fetch external training by id when target_ref is set but not found in rootTrainings
+  const externalTrainingId = (() => {
+    // Only fetch if we have a target_ref for training_content that's not in rootTrainings
+    const ref = useViaRuleTraining?.id;
+    if (!ref) return undefined;
+    if (rootTrainings.some(t => t.id === ref)) return undefined;
+    return ref;
+  })();
+  const { data: externalTraining } = useQuery({
+    queryKey: ["external-training-by-id", externalTrainingId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, sort_order")
+        .eq("id", externalTrainingId!)
+        .is("parent_module_id", null)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!externalTrainingId,
+  });
+
+  // Merged training options: rootTrainings + external training if applicable
+  const trainingOptions = useMemo(() => {
+    const list = [...rootTrainings];
+    if (externalTraining && !list.some(t => t.id === externalTraining.id)) {
+      list.push(externalTraining);
+    }
+    return list;
+  }, [rootTrainings, externalTraining]);
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AccessRule | null>(null);
   const [previewTariffId, setPreviewTariffId] = useState<string>("");
@@ -292,6 +324,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
 
   // Canonical helper: open create-dialog pre-filled for training_content
   const openCreateTrainingContentRule = useCallback((targetRef: string, targetLabel: string) => {
+    setUseViaRuleTraining({ id: targetRef, title: targetLabel });
     setEditing(null);
     setForm({
       scope: "product",
