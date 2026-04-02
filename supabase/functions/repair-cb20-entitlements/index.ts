@@ -108,14 +108,20 @@ Deno.serve(async (req) => {
     console.log(`[repair-cb20] Found ${businessUserIds.length} active BUSINESS users`);
 
     // 2. Get profiles for staff filtering
+    // IMPORTANT: subscriptions_v2.user_id = auth.users.id, profiles.user_id = auth.users.id
+    // profiles.id ≠ auth.users.id, so join on profiles.user_id
     const { data: profiles } = await supabase
       .from('profiles')
-      .select('id, email')
-      .in('id', businessUserIds);
+      .select('id, user_id, email')
+      .in('user_id', businessUserIds);
 
     const profileEmailMap = new Map<string, string | null>();
+    const profileIdByAuthId = new Map<string, string>();
     (profiles || []).forEach(p => {
-      profileEmailMap.set(p.id, p.email || null);
+      if (p.user_id) {
+        profileEmailMap.set(p.user_id, p.email || null);
+        profileIdByAuthId.set(p.user_id, p.id);
+      }
     });
 
     // 3. Get existing cb20 entitlements
