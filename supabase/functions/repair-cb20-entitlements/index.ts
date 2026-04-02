@@ -108,8 +108,6 @@ Deno.serve(async (req) => {
     console.log(`[repair-cb20] Found ${businessUserIds.length} active BUSINESS users`);
 
     // 2. Get profiles for staff filtering
-    // IMPORTANT: subscriptions_v2.user_id = auth.users.id, profiles.user_id = auth.users.id
-    // profiles.id ≠ auth.users.id, so join on profiles.user_id
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, user_id, email')
@@ -135,8 +133,6 @@ Deno.serve(async (req) => {
     (existingEnts || []).forEach(e => entByUser.set(e.user_id, e));
 
     // 4. Get historical cb20 purchases — DEDUPLICATE BY ORDER ID
-    // orders_v2.profile_id = profiles.id (NOT auth UID)
-    // orders_v2.user_id = auth UID
     const profileIds = [...profileIdByAuthId.values()];
 
     const { data: historicalOrdersByProfile } = await supabase
@@ -168,10 +164,9 @@ Deno.serve(async (req) => {
     const authIdByProfileId = new Map<string, string>();
     profileIdByAuthId.forEach((pid, authId) => authIdByProfileId.set(pid, authId));
 
-    // Map orders by auth user_id (= businessUserIds key)
+    // Map orders by auth user_id
     const ordersByUser = new Map<string, typeof uniqueOrders>();
     uniqueOrders.forEach(o => {
-      // Try direct user_id match first, then resolve via profile_id
       let authUid = businessUserIds.includes(o.user_id) ? o.user_id : null;
       if (!authUid && o.profile_id) {
         authUid = authIdByProfileId.get(o.profile_id) || null;
@@ -187,7 +182,7 @@ Deno.serve(async (req) => {
 
     for (const userId of businessUserIds) {
       const email = profileEmailMap.get(userId) ?? null;
-      const profileId = profileIdByAuthId.get(userId) || userId; // actual profiles.id
+      const profileId = profileIdByAuthId.get(userId) || userId;
       const businessInfo = userBusinessMap.get(userId)!;
       const ent = entByUser.get(userId);
       const orders = ordersByUser.get(userId) || [];
@@ -366,7 +361,6 @@ Deno.serve(async (req) => {
     if (allModuleProductIds.size > 0) {
       const moduleProductIdList = [...allModuleProductIds];
 
-      // Get product names
       const { data: moduleProducts } = await supabase
         .from('products_v2')
         .select('id, name, code')
@@ -375,7 +369,6 @@ Deno.serve(async (req) => {
       const productMap = new Map<string, { name: string; code: string | null }>();
       (moduleProducts || []).forEach(p => productMap.set(p.id, { name: p.name, code: p.code }));
 
-      // Get training modules linked to these products (exact_fk)
       const { data: linkedTrainingModules } = await supabase
         .from('training_modules')
         .select('id, title, product_id')
@@ -389,18 +382,16 @@ Deno.serve(async (req) => {
         trainingByProduct.set(tm.product_id, arr);
       });
 
-      // Get all training modules for name matching fallback
       const { data: allTrainingModules } = await supabase
         .from('training_modules')
         .select('id, title, product_id, code')
-        .is('parent_module_id', null); // only root-level for name matching
+        .is('parent_module_id', null);
 
       for (const mpId of moduleProductIdList) {
         const product = productMap.get(mpId);
         const fkMatches = trainingByProduct.get(mpId) || [];
 
         if (fkMatches.length > 0) {
-          // exact_fk — direct FK match
           for (const match of fkMatches) {
             mappingConfidence.push({
               module_product_id: mpId,
@@ -413,7 +404,6 @@ Deno.serve(async (req) => {
             });
           }
         } else if (product?.code) {
-          // Try exact_code
           const codeMatches = (allTrainingModules || []).filter(tm => tm.code === product.code);
           if (codeMatches.length === 1) {
             mappingConfidence.push({
@@ -436,19 +426,15 @@ Deno.serve(async (req) => {
               allowed_in_execute: false,
             });
           } else {
-            // Try exact_name
             tryNameMatch(mpId, product, allTrainingModules || [], mappingConfidence);
           }
         } else {
-          // No code — try name match
           tryNameMatch(mpId, product || { name: 'unknown', code: null }, allTrainingModules || [], mappingConfidence);
         }
       }
     }
 
     // 7. Runtime preview for create cases with module_scope_only
-    // Uses the SAME resolution path as frontend:
-    // historical_module_product_ids → training_modules with matching product_id → count lessons recursively
     const createModuleScopePlans = plans.filter(
       p => p.planned_action === 'create' && p.scope_bucket === 'module_scope_only'
     );
@@ -468,15 +454,6 @@ Deno.serve(async (req) => {
       // Count visible lessons recursively — same as frontend useTrainingModules
       let totalLessonCount = 0;
       if (allowedModuleIds.length > 0) {
-        // Get all training_content for cb20 root tree
-        const CB20_ROOT_MODULE = 'c9f7e9b8-c0e7-4b47-882b-94b7dd0a4e41';
-        const { data: allContent } = await supabase
-          .from('training_content')
-          .select('id, module_id, content_type, status, parent_content_id')
-          .in('module_id', allowedModuleIds)
-          .eq('status', 'active');
-
-        // Get child modules of allowed modules (subtree)
         const { data: childModules } = await supabase
           .from('training_modules')
           .select('id, parent_module_id, title')
@@ -522,15 +499,28 @@ Deno.serve(async (req) => {
     }
 
     // 8. Split cohorts: SAFE EXECUTE NOW vs HOLD
+    // CRITICAL GUARDS:
+    // - create is NEVER in safe cohort (blocked for this execute, follow-up only)
+    // - module_scope_only is NEVER in safe cohort
+    // - only already-entitled repairs are safe
     const isSafe = (p: RepairPlan): boolean => {
-      if (p.planned_action === 'noop') return false; // nothing to execute
+      if (p.planned_action === 'noop') return false;
       if (p.planned_action === 'staff_skip') return false;
       if (p.planned_action === 'manual_review') return false;
+      // HARD GUARD: create is blocked from safe cohort entirely
+      if (p.planned_action === 'create') return false;
       if (p.hold_reason) return false;
       if (!p.business_access_end_at) return false;
       if (!p.email) return false;
-      // module_scope_only is ALWAYS HOLD until separate proof
+      // HARD GUARD: module_scope_only is ALWAYS HOLD
       if (p.scope_bucket === 'module_scope_only') return false;
+      // Only allow already-entitled repairs
+      if (!p.current_entitlement_id) return false;
+      // union_scope additional proof: must have historical_tariff_id AND module_product_ids
+      if (p.scope_bucket === 'union_scope') {
+        if (!p.historical_tariff_id) return false;
+        if (p.historical_module_product_ids.length === 0) return false;
+      }
       return true;
     };
 
@@ -539,6 +529,22 @@ Deno.serve(async (req) => {
       if (p.planned_action === 'noop') return false;
       return !isSafe(p);
     });
+
+    // ABORT guards for execute — validate safe cohort integrity
+    if (!dryRun) {
+      const hasForbiddenScope = executeCandidatesSafe.some(p => p.scope_bucket === 'module_scope_only');
+      const hasForbiddenAction = executeCandidatesSafe.some(p => p.planned_action === 'create');
+      if (hasForbiddenScope || hasForbiddenAction) {
+        return new Response(
+          JSON.stringify({
+            error: "ABORT: safe cohort contains forbidden entries",
+            has_module_scope_only: hasForbiddenScope,
+            has_create_action: hasForbiddenAction,
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // 9. Build matrix summary (action × scope)
     const actionBuckets: ActionBucket[] = ['create', 'align_to_business', 'repair_metadata_only', 'repair_metadata_and_align', 'noop', 'manual_review', 'staff_skip'];
@@ -552,6 +558,29 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Safe cohort breakdown — explicit per-action/scope counts
+    const safeCohortBreakdown = {
+      align_to_business: executeCandidatesSafe.filter(p => p.planned_action === 'align_to_business').length,
+      repair_metadata_and_align: executeCandidatesSafe.filter(p => p.planned_action === 'repair_metadata_and_align').length,
+      repair_metadata_only: executeCandidatesSafe.filter(p => p.planned_action === 'repair_metadata_only').length,
+      full_tariff_scope: executeCandidatesSafe.filter(p => p.scope_bucket === 'full_tariff_scope').length,
+      union_scope: executeCandidatesSafe.filter(p => p.scope_bucket === 'union_scope').length,
+      total: executeCandidatesSafe.length,
+    };
+
+    // Hold cohort breakdown — 3 explicit subgroups
+    const holdBreakdown = {
+      business_end_null: holdCandidates.filter(p => p.hold_reason === 'business_end_null').length,
+      runtime_preview_zero_visibility: holdCandidates.filter(p => p.hold_reason === 'runtime_preview_zero_visibility').length,
+      staff_skip: holdCandidates.filter(p => p.hold_reason === 'staff' || p.planned_action === 'staff_skip').length,
+      standalone_only_blocked: holdCandidates.filter(p => p.hold_reason === 'standalone_only_blocked').length,
+      create_blocked: holdCandidates.filter(p => p.planned_action === 'create').length,
+      email_null: holdCandidates.filter(p => p.hold_reason === 'email_null').length,
+      unclassified: holdCandidates.filter(p => p.hold_reason === 'unclassified').length,
+      scope_manual_review: holdCandidates.filter(p => p.hold_reason === 'scope_manual_review').length,
+      total: holdCandidates.length,
+    };
+
     // Cohort summary
     const cohortSummary = {
       safe_execute_count: executeCandidatesSafe.length,
@@ -559,14 +588,26 @@ Deno.serve(async (req) => {
       staff_skip_count: plans.filter(p => p.planned_action === 'staff_skip').length,
       identity_unresolved_count: plans.filter(p => p.hold_reason === 'email_null').length,
       standalone_only_blocked_count: plans.filter(p => p.hold_reason === 'standalone_only_blocked').length,
+      create_blocked_count: plans.filter(p => p.planned_action === 'create').length,
       noop_count: plans.filter(p => p.planned_action === 'noop').length,
       email_null_count: businessUserIds.filter(uid => !profileEmailMap.get(uid)).length,
     };
 
-    // 10. Execute if not dry_run — ONLY safe cohort
-    const executeResults: Array<{ user_id: string; email: string | null; action: string; result: string; error: string | null }> = [];
+    // 10. Execute if not dry_run — ONLY safe cohort (no create, no module_scope_only)
+    const executeResults: Array<{
+      user_id: string;
+      email: string | null;
+      action: string;
+      result: string;
+      error: string | null;
+      old_expires_at: string | null;
+      new_expires_at: string | null;
+      target_expires_at: string | null;
+      old_meta_status: string;
+      new_scope_resolution_mode: string;
+    }> = [];
+
     if (!dryRun) {
-      // Double-check: only safe cohort
       const toExecute = executeCandidatesSafe;
       console.log(`[repair-cb20] Executing ${toExecute.length} SAFE repairs (cohort=${executeCohort})`);
 
@@ -585,38 +626,60 @@ Deno.serve(async (req) => {
           repaired_at: new Date().toISOString(),
         };
 
+        const oldExpiresAt = plan.current_entitlement_expires_at;
+        let newExpiresAt = oldExpiresAt;
+
         try {
-          if (plan.planned_action === 'create') {
-            const { error } = await supabase.from('entitlements').insert({
-              user_id: plan.user_id,
-              product_code: 'cb20',
-              product_id: CB20_PRODUCT_ID,
-              profile_id: plan.profile_id,
-              status: 'active',
-              expires_at: plan.business_access_end_at,
-              meta: enrichedMeta,
-            });
-            executeResults.push({ user_id: plan.user_id, email: plan.email, action: 'created', result: error ? 'error' : 'success', error: error?.message || null });
-          } else if (plan.current_entitlement_id) {
+          if (plan.current_entitlement_id) {
             const updateData: Record<string, any> = {
               meta: enrichedMeta,
               updated_at: new Date().toISOString(),
             };
             if (plan.planned_action !== 'repair_metadata_only') {
               updateData.expires_at = plan.business_access_end_at;
+              newExpiresAt = plan.business_access_end_at;
             }
             const { error } = await supabase
               .from('entitlements')
               .update(updateData)
               .eq('id', plan.current_entitlement_id);
-            executeResults.push({ user_id: plan.user_id, email: plan.email, action: plan.planned_action, result: error ? 'error' : 'success', error: error?.message || null });
+            executeResults.push({
+              user_id: plan.user_id,
+              email: plan.email,
+              action: plan.planned_action,
+              result: error ? 'error' : 'success',
+              error: error?.message || null,
+              old_expires_at: oldExpiresAt,
+              new_expires_at: newExpiresAt,
+              target_expires_at: plan.target_expires_at,
+              old_meta_status: plan.current_meta_status,
+              new_scope_resolution_mode: plan.scope_bucket,
+            });
           }
         } catch (err) {
-          executeResults.push({ user_id: plan.user_id, email: plan.email, action: plan.planned_action, result: 'exception', error: String(err) });
+          executeResults.push({
+            user_id: plan.user_id,
+            email: plan.email,
+            action: plan.planned_action,
+            result: 'exception',
+            error: String(err),
+            old_expires_at: oldExpiresAt,
+            new_expires_at: null,
+            target_expires_at: plan.target_expires_at,
+            old_meta_status: plan.current_meta_status,
+            new_scope_resolution_mode: plan.scope_bucket,
+          });
         }
       }
 
-      // Audit log — canonical actor standard
+      // Audit log — extended with breakdowns
+      const executedActionBreakdown: Record<string, number> = {};
+      const executedScopeBreakdown: Record<string, number> = {};
+      for (const r of executeResults) {
+        executedActionBreakdown[r.action] = (executedActionBreakdown[r.action] || 0) + 1;
+        executedScopeBreakdown[r.new_scope_resolution_mode] = (executedScopeBreakdown[r.new_scope_resolution_mode] || 0) + 1;
+      }
+
       await supabase.from('audit_logs').insert({
         action: 'batch.repair_cb20_entitlements',
         actor_type: 'system',
@@ -626,24 +689,29 @@ Deno.serve(async (req) => {
           batch_id: batchId,
           execute_cohort: executeCohort,
           total_business_users: businessUserIds.length,
-          safe_executed: toExecute.length,
-          hold_skipped: holdCandidates.length,
+          safe_candidate_count: executeCandidatesSafe.length,
+          hold_candidate_count: holdCandidates.length,
+          executed_action_breakdown: executedActionBreakdown,
+          executed_scope_breakdown: executedScopeBreakdown,
           results_summary: {
-            created: executeResults.filter(r => r.action === 'created' && r.result === 'success').length,
             aligned: executeResults.filter(r => r.action === 'align_to_business' && r.result === 'success').length,
-            repaired: executeResults.filter(r => (r.action === 'repair_metadata_only' || r.action === 'repair_metadata_and_align') && r.result === 'success').length,
+            repaired_meta_and_align: executeResults.filter(r => r.action === 'repair_metadata_and_align' && r.result === 'success').length,
+            repaired_meta_only: executeResults.filter(r => r.action === 'repair_metadata_only' && r.result === 'success').length,
             skipped_manual_review: plans.filter(p => p.planned_action === 'manual_review').length,
             skipped_staff: plans.filter(p => p.planned_action === 'staff_skip').length,
             skipped_noop: plans.filter(p => p.planned_action === 'noop').length,
+            skipped_create: plans.filter(p => p.planned_action === 'create').length,
             errors: executeResults.filter(r => r.result !== 'success').length,
           },
           per_operation: executeResults,
+          safe_cohort_breakdown: safeCohortBreakdown,
+          hold_breakdown: holdBreakdown,
           matrix,
         },
       });
     }
 
-    // 11. Post-check (after execute)
+    // 11. Post-check (after execute) — per-user proof table
     let postCheck: any = null;
     if (!dryRun) {
       const { data: postEnts } = await supabase
@@ -672,21 +740,18 @@ Deno.serve(async (req) => {
         return biz && biz.access_end_at && e.expires_at !== biz.access_end_at;
       }).length;
 
-      // scope_resolution_mode invalid check
       const scopeModeInvalid = allPostEnts.filter(e => {
         if (!executedUserIds.has(e.user_id)) return false;
         const m = (e.meta || {}) as any;
         if (!m.scope_resolution_mode) return true;
-        // Check consistency with plan
         const plan = executeCandidatesSafe.find(p => p.user_id === e.user_id);
         return plan && m.scope_resolution_mode !== plan.scope_bucket;
       }).length;
 
-      // Executed standalone_only with no_match
       const executedStandaloneNoMatch = executeResults.filter(r => {
         const plan = executeCandidatesSafe.find(p => p.user_id === r.user_id);
         return plan?.scope_bucket === 'module_scope_only' && r.result === 'success';
-      }).length; // Should be 0 since we block module_scope_only from safe
+      }).length;
 
       postCheck = {
         business_users_total: businessUserIds.length,
@@ -713,6 +778,16 @@ Deno.serve(async (req) => {
           scope_mode_invalid_is_zero: scopeModeInvalid === 0,
           executed_standalone_no_match_is_zero: executedStandaloneNoMatch === 0,
         },
+        // Per-user proof table for executed records
+        per_user_proof: executeResults.map(r => ({
+          user_id: r.user_id,
+          old_expires_at: r.old_expires_at,
+          new_expires_at: r.new_expires_at,
+          target_expires_at: r.target_expires_at,
+          old_meta_status: r.old_meta_status,
+          new_scope_resolution_mode: r.new_scope_resolution_mode,
+          result: r.result,
+        })),
       };
     }
 
@@ -726,6 +801,8 @@ Deno.serve(async (req) => {
         plans: dryRun ? plans : undefined,
         execute_candidates_safe: dryRun ? executeCandidatesSafe : undefined,
         hold_candidates: dryRun ? holdCandidates : undefined,
+        safe_cohort_breakdown: safeCohortBreakdown,
+        hold_breakdown: holdBreakdown,
         cohort_summary: cohortSummary,
         mapping_confidence: mappingConfidence.length > 0 ? mappingConfidence : undefined,
         matrix,
@@ -779,7 +856,6 @@ function tryNameMatch(
       allowed_in_execute: true,
     });
   } else if (nameMatches.length > 1) {
-    // Ambiguous name match — NOT exact_name, goes to manual_review
     results.push({
       module_product_id: mpId,
       module_product_name: productName,
