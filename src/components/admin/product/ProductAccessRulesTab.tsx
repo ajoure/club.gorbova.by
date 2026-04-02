@@ -797,7 +797,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
             const Icon = TARGET_TYPE_ICONS[rule.grant_target_type] || Shield;
             const purpose = getRulePurpose(rule);
             const PurposeIcon = PURPOSE_ICONS[purpose];
-            const hasConflict = conflicts.some((c) => c.items.some((i) => i.id === rule.id));
+            const conflictEntry = conflicts.find((c) => c.items.some((i) => i.id === rule.id));
+            const hasRealConflict = !!conflictEntry && conflictEntry.type !== 'valid_parallel_rule';
+            const isParallelRule = !!conflictEntry && conflictEntry.type === 'valid_parallel_rule';
             const hasOverlap = overlaps.some(
               (o) => o.grant_target_type === rule.grant_target_type && o.target_ref === rule.target_ref
             );
