@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 interface Props {
   productId: string;
+  onUseViaRule?: (trainingId: string, trainingTitle: string) => void;
 }
 
 /** Recursively count all lessons in a training subtree */
@@ -120,59 +121,88 @@ function RebindPreviewDialog({ open, onOpenChange, preview, trainingTitle, onCon
   if (!preview) return null;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Перепривязка тренинга</DialogTitle>
-          <DialogDescription>Тренинг «{trainingTitle}» будет перемещён к другому продукту</DialogDescription>
+          <DialogDescription className="whitespace-normal break-words">
+            Тренинг будет перемещён к другому продукту
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Training title */}
+          <div className="p-3 rounded-lg bg-muted/40 border border-border/30">
+            <p className="text-[11px] text-muted-foreground">Тренинг</p>
+            <p className="text-sm font-medium line-clamp-3 break-words whitespace-normal" title={trainingTitle}>{trainingTitle}</p>
+          </div>
+
           {/* Product transition */}
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/40 border border-border/30">
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/40 border border-border/30">
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] text-muted-foreground">Текущий продукт</p>
-              <p className="text-sm font-medium truncate">{preview.current_product?.name || "—"}</p>
+              <p className="text-[11px] text-muted-foreground">Текущий владелец</p>
+              <p className="text-sm font-medium line-clamp-2 break-words whitespace-normal" title={preview.current_product?.name || "—"}>{preview.current_product?.name || "—"}</p>
               {preview.current_product?.public_id && (
                 <p className="text-[10px] font-mono text-muted-foreground">{preview.current_product.public_id}</p>
               )}
             </div>
-            <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0 mt-3" />
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] text-muted-foreground">Новый продукт</p>
-              <p className="text-sm font-medium truncate">{preview.new_product.name}</p>
+              <p className="text-[11px] text-muted-foreground">Новый владелец</p>
+              <p className="text-sm font-medium line-clamp-2 break-words whitespace-normal" title={preview.new_product.name}>{preview.new_product.name}</p>
               {preview.new_product.public_id && (
                 <p className="text-[10px] font-mono text-muted-foreground">{preview.new_product.public_id}</p>
               )}
             </div>
           </div>
 
-          {/* Stats */}
+          {/* Impact preview — neutral facts */}
           <div className="space-y-1">
-            <PreviewRow label="Дочерних модулей получат новый product_id" value={preview.descendant_count} />
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Затрагиваемые объекты</p>
+            <PreviewRow label="Дочерних модулей сменят owner" value={preview.descendant_count} />
             <PreviewRow label="Уроков затронуто" value={preview.lesson_count} />
-            <PreviewRow
-              label="Правил доступа будет деактивировано"
-              value={preview.training_content_rules_count}
-              warning={preview.training_content_rules_count > 0}
-            />
-            <PreviewRow
-              label="Старые настройки доступа"
-              value={preview.legacy_module_access_count}
-              warning={preview.legacy_module_access_count > 0}
-            />
-            {preview.has_active_entitlements && (
-              <PreviewRow
-                label="У пользователей есть активные entitlements на старый продукт"
-                value="⚠ Есть"
-                warning
-              />
-            )}
           </div>
+
+          {/* Impact preview — warnings */}
+          {(preview.training_content_rules_count > 0 || preview.legacy_module_access_count > 0) && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-amber-600 uppercase tracking-wider flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                Предупреждения
+              </p>
+              {preview.training_content_rules_count > 0 && (
+                <PreviewRow
+                  label="Правил training_content будет деактивировано"
+                  value={preview.training_content_rules_count}
+                  warning
+                />
+              )}
+              {preview.legacy_module_access_count > 0 && (
+                <PreviewRow
+                  label="Старые настройки доступа затронуты"
+                  value={preview.legacy_module_access_count}
+                  warning
+                />
+              )}
+            </div>
+          )}
+
+          {/* Impact preview — critical risk */}
+          {preview.has_active_entitlements && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 space-y-1">
+              <p className="text-[11px] font-medium text-destructive uppercase tracking-wider flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                Критический риск
+              </p>
+              <p className="text-sm text-destructive whitespace-normal break-words">
+                У пользователей есть активные entitlements на старый продукт. Перепривязка может привести к потере доступа к контенту тренинга.
+              </p>
+            </div>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isExecuting}>Отмена</Button>
-          <Button onClick={onConfirm} disabled={isExecuting} className="gap-1.5">
+          <Button variant="destructive" onClick={onConfirm} disabled={isExecuting} className="gap-1.5">
             {isExecuting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Перепривязать
           </Button>
@@ -247,13 +277,14 @@ function UnbindPreviewDialog({ open, onOpenChange, preview, onConfirm, isExecuti
 }
 
 // --- Bind Dialog (with rebind & unbind support) ---
-function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindRequest, onUnbindRequest }: {
+function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindRequest, onUnbindRequest, onUseViaRule }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string;
   onBind: (trainingId: string) => Promise<void>;
   onRebindRequest: (trainingId: string, trainingTitle: string) => void;
   onUnbindRequest: (trainingId: string) => void;
+  onUseViaRule?: (trainingId: string, trainingTitle: string) => void;
 }) {
   const { data } = useAvailableTrainingsForBind(productId);
   const [search, setSearch] = useState("");
@@ -273,10 +304,9 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
   const handleClick = async (m: { id: string; title: string; product_id: string | null }) => {
     const isOtherProduct = m.product_id && m.product_id !== productId;
     const isCurrent = m.product_id === productId;
-    if (isCurrent) return; // Already bound — actions are inline
+    if (isCurrent) return;
     if (isOtherProduct) {
-      onRebindRequest(m.id, m.title);
-      onOpenChange(false);
+      // For already-bound trainings, actions are only via explicit buttons
       return;
     }
     setBinding(true);
@@ -348,14 +378,14 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                       isCurrent
                         ? "bg-muted/30"
                         : isOtherProduct
-                          ? "hover:bg-amber-50/50 dark:hover:bg-amber-900/10 cursor-pointer border border-transparent hover:border-amber-200/50"
+                          ? "bg-amber-50/30 dark:bg-amber-900/10 border border-amber-200/30"
                           : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
                     <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
                     <div
-                      className={cn("flex-1 min-w-0", !isCurrent && "cursor-pointer")}
-                      onClick={() => !isCurrent && handleClick(m)}
+                      className={cn("flex-1 min-w-0", !isCurrent && !isOtherProduct && "cursor-pointer")}
+                      onClick={() => !isCurrent && !isOtherProduct && handleClick(m)}
                     >
                       <span
                         className="line-clamp-3 leading-snug block"
@@ -378,18 +408,40 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
                       )}
                       {isOtherProduct && (
-                        <>
-                          <Badge
+                        <div className="flex flex-col gap-1 items-end mt-1">
+                          <Button
+                            size="sm"
                             variant="outline"
-                            className="text-[10px] text-amber-600 border-amber-300 cursor-pointer"
-                            onClick={() => handleClick(m)}
+                            className="h-6 text-[10px] gap-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onUseViaRule) {
+                                onUseViaRule(m.id, m.title);
+                                onOpenChange(false);
+                              }
+                            }}
                           >
-                            Перепривязать к этому продукту
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground italic mt-0.5">
-                            Использование через правило доступа — в разработке
+                            <BookOpen className="h-2.5 w-2.5" />
+                            Использовать через правило
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[10px] gap-1 text-destructive hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRebindRequest(m.id, m.title);
+                              onOpenChange(false);
+                            }}
+                          >
+                            <ArrowRight className="h-2.5 w-2.5" />
+                            Перепривязать владельца
+                          </Button>
+                          <span className="text-[9px] text-muted-foreground max-w-[220px] text-right leading-tight whitespace-normal">
+                            «Через правило» — владелец не меняется.
+                            «Перепривязать» — сменит владельца, может затронуть старые правила/доступы.
                           </span>
-                        </>
+                        </div>
                       )}
                       {isCurrent && (
                         <div className="flex items-center gap-1">
@@ -512,7 +564,7 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 }
 
 // --- Main Block ---
-export function ProductLinkedTrainingsBlock({ productId }: Props) {
+export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) {
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const [bindOpen, setBind] = useState(false);
@@ -789,6 +841,7 @@ export function ProductLinkedTrainingsBlock({ productId }: Props) {
         onBind={handleBind}
         onRebindRequest={handleRebindRequest}
         onUnbindRequest={handleUnbindRequest}
+        onUseViaRule={onUseViaRule}
       />
 
       {/* Rebind Preview Dialog */}
