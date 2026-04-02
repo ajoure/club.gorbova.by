@@ -75,7 +75,8 @@ export default function ContactDealsDialog({
           customer_email,
           customer_phone,
           payer_type,
-          user_id
+          user_id,
+          purchase_snapshot
         `)
         .eq("user_id", userId)
         .order("deal_date", { ascending: false });
@@ -98,11 +99,19 @@ export default function ContactDealsDialog({
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
 
-      return data.map(deal => ({
-        ...deal,
-        product_name: productsMap.get(deal.product_id) || null,
-        tariff_name: tariffsMap.get(deal.tariff_id) || null,
-      }));
+      return data.map(deal => {
+        const snapshot = deal.purchase_snapshot as any;
+        const displayName = snapshot?.display_purchase_name;
+        const fkName = productsMap.get(deal.product_id) || null;
+        const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
+        return {
+          ...deal,
+          product_name: displayName || fkName,
+          tariff_name: tariffsMap.get(deal.tariff_id) || null,
+          _is_module_standalone: isModuleStandalone,
+          _missing_display_name: isModuleStandalone && !displayName,
+        };
+      });
     },
     enabled: !!profile && open,
   });
