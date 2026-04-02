@@ -147,10 +147,16 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     if (data.childModules) {
       for (const child of data.childModules) {
         const parent = containerMap.get(child.parent_module_id);
+        // PATCH K4: effective active = child is_active AND parent is_active
+        const childIsActive = (child as any).is_active ?? true;
+        const parentIsActive = parent?.isActive ?? true;
+        const effectiveActive = childIsActive && parentIsActive;
+        
         containerMap.set(child.id, {
           slug: child.slug || parent?.slug || '',
           sectionKey: child.menu_section_key || parent?.sectionKey || '',
           productId: (child as any).product_id ?? parent?.productId ?? null,
+          isActive: effectiveActive,
         });
       }
     }
