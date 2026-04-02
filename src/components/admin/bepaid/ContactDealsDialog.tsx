@@ -224,6 +224,16 @@ export default function ContactDealsDialog({
                               {deal.product_name && (
                                 <span className="font-medium text-sm">{deal.product_name}</span>
                               )}
+                              {deal._is_module_standalone && (
+                                <Badge variant="outline" className="text-xs w-fit bg-purple-500/10 text-purple-700 border-purple-300">
+                                  Модульная покупка
+                                </Badge>
+                              )}
+                              {deal._missing_display_name && (
+                                <Badge variant="outline" className="text-xs w-fit bg-amber-500/10 text-amber-700 border-amber-300">
+                                  ⚠ Historical name missing
+                                </Badge>
+                              )}
                               {deal.tariff_name && (
                                 <Badge variant="secondary" className="text-xs w-fit">
                                   {deal.tariff_name}
