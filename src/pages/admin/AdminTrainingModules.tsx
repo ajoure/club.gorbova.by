@@ -796,8 +796,10 @@ export default function AdminTrainingModules() {
                   }}
                   sortMode={modulesSortMode}
                   selectionMode={selectionMode}
-                  selectedIds={selectedModuleIds}
-                  onToggleSelection={handleToggleSelection}
+                  selectedModuleIds={selectedModuleIds}
+                  selectedLessonIds={selectedLessonIds}
+                  onToggleModuleSelection={handleToggleModuleSelection}
+                  onToggleLessonSelection={handleToggleLessonSelection}
                 />
               ) : (
                 <div className={cn(
