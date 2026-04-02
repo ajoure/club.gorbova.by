@@ -20,6 +20,7 @@ const STAFF_EMAILS = [
 
 type ActionBucket = 'create' | 'align_to_business' | 'repair_metadata_only' | 'repair_metadata_and_align' | 'noop' | 'manual_review' | 'staff_skip';
 type ScopeBucket = 'full_tariff_scope' | 'module_scope_only' | 'union_scope' | 'no_scope' | 'manual_review';
+type MappingConfidenceLevel = 'exact_fk' | 'exact_code' | 'exact_name' | 'inferred' | 'no_match';
 
 interface RepairPlan {
   profile_id: string;
@@ -35,7 +36,28 @@ interface RepairPlan {
   current_meta_status: 'has_meta' | 'no_meta';
   planned_action: ActionBucket;
   scope_bucket: ScopeBucket;
+  target_expires_at: string | null;
   reason: string;
+  hold_reason: string | null;
+  runtime_preview?: RuntimePreview | null;
+}
+
+interface MappingConfidence {
+  module_product_id: string;
+  module_product_name: string | null;
+  matched_training_module_id: string | null;
+  matched_training_module_title: string | null;
+  mapping_confidence: MappingConfidenceLevel;
+  mapping_reason: string;
+  allowed_in_execute: boolean;
+}
+
+interface RuntimePreview {
+  historical_module_product_ids: string[];
+  derived_allowed_module_ids: string[];
+  derived_allowed_module_titles: string[];
+  visible_module_count: number;
+  visible_recursive_lesson_count: number;
 }
 
 Deno.serve(async (req) => {
@@ -50,9 +72,18 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const dryRun = body.dry_run !== false; // default = dry_run
+    const executeCohort: 'safe_only' | 'all' | null = body.execute_cohort || null;
     const batchId = `batch_business_cb20_repair_v1_${Date.now()}`;
 
-    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : 'EXECUTE'}, batchId=${batchId}`);
+    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : `EXECUTE (cohort=${executeCohort})`}, batchId=${batchId}`);
+
+    // Guard: execute requires explicit cohort
+    if (!dryRun && executeCohort !== 'safe_only') {
+      return new Response(
+        JSON.stringify({ error: "Execute requires execute_cohort='safe_only'. Full cohort execute is forbidden." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // 1. Get all active BUSINESS subscribers
     const { data: businessSubs, error: subErr } = await supabase
@@ -82,9 +113,9 @@ Deno.serve(async (req) => {
       .select('id, email')
       .in('id', businessUserIds);
 
-    const profileEmailMap = new Map<string, string>();
+    const profileEmailMap = new Map<string, string | null>();
     (profiles || []).forEach(p => {
-      if (p.email) profileEmailMap.set(p.id, p.email);
+      profileEmailMap.set(p.id, p.email || null);
     });
 
     // 3. Get existing cb20 entitlements
@@ -97,11 +128,10 @@ Deno.serve(async (req) => {
     const entByUser = new Map<string, typeof existingEnts extends (infer T)[] | null ? T : never>();
     (existingEnts || []).forEach(e => entByUser.set(e.user_id, e));
 
-    // 4. Get historical cb20 purchases for all BUSINESS users
-    // Use both profile_id and user_id join paths
+    // 4. Get historical cb20 purchases — DEDUPLICATE BY ORDER ID
     const { data: historicalOrders } = await supabase
       .from('orders_v2')
-      .select('profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
+      .select('id, profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
       .eq('product_id', CB20_PRODUCT_ID)
       .eq('status', 'paid')
       .in('profile_id', businessUserIds)
@@ -109,19 +139,18 @@ Deno.serve(async (req) => {
 
     const { data: historicalOrdersByUser } = await supabase
       .from('orders_v2')
-      .select('profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
+      .select('id, profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
       .eq('product_id', CB20_PRODUCT_ID)
       .eq('status', 'paid')
       .in('user_id', businessUserIds)
       .order('created_at', { ascending: false });
 
-    // Merge and deduplicate
+    // Deduplicate by order ID (not composite key!)
     const allOrders = [...(historicalOrders || []), ...(historicalOrdersByUser || [])];
-    const seenOrderKeys = new Set<string>();
+    const seenOrderIds = new Set<string>();
     const uniqueOrders = allOrders.filter(o => {
-      const key = `${o.profile_id}:${o.user_id}:${o.tariff_id || 'null'}`;
-      if (seenOrderKeys.has(key)) return false;
-      seenOrderKeys.add(key);
+      if (seenOrderIds.has(o.id)) return false;
+      seenOrderIds.add(o.id);
       return true;
     });
 
@@ -139,26 +168,47 @@ Deno.serve(async (req) => {
     const plans: RepairPlan[] = [];
 
     for (const userId of businessUserIds) {
-      const email = profileEmailMap.get(userId) || null;
+      const email = profileEmailMap.get(userId) ?? null;
       const businessInfo = userBusinessMap.get(userId)!;
       const ent = entByUser.get(userId);
       const orders = ordersByUser.get(userId) || [];
+      const metaStatus: 'has_meta' | 'no_meta' = ent?.meta && (ent.meta as any).scope_resolution_mode ? 'has_meta' : 'no_meta';
 
-      // Staff skip — separate bucket, NOT mixed with manual_review
+      const basePlan = {
+        profile_id: userId,
+        user_id: userId,
+        email,
+        business_subscription_id: businessInfo.sub_id,
+        business_access_end_at: businessInfo.access_end_at,
+        current_entitlement_id: ent?.id || null,
+        current_entitlement_expires_at: ent?.expires_at || null,
+        current_meta_status: metaStatus,
+      };
+
+      // Staff skip — separate bucket
       if (email && STAFF_EMAILS.some(s => email.toLowerCase() === s.toLowerCase())) {
         plans.push({
-          profile_id: userId, user_id: userId, email,
-          business_subscription_id: businessInfo.sub_id,
-          business_access_end_at: businessInfo.access_end_at,
-          historical_class: 'staff_skip',
-          historical_tariff_id: null,
+          ...basePlan,
+          historical_class: 'staff_skip', historical_tariff_id: null,
           historical_module_product_ids: [],
-          current_entitlement_id: ent?.id || null,
-          current_entitlement_expires_at: ent?.expires_at || null,
-          current_meta_status: ent?.meta && (ent.meta as any).scope_resolution_mode ? 'has_meta' : 'no_meta',
-          planned_action: 'staff_skip',
-          scope_bucket: 'manual_review',
+          planned_action: 'staff_skip', scope_bucket: 'manual_review',
+          target_expires_at: null,
           reason: 'Staff account — skipped (separate from manual_review)',
+          hold_reason: 'staff',
+        });
+        continue;
+      }
+
+      // Identity guard: email IS NULL → manual_review
+      if (!email) {
+        plans.push({
+          ...basePlan,
+          historical_class: 'identity_unresolved', historical_tariff_id: null,
+          historical_module_product_ids: [],
+          planned_action: 'manual_review', scope_bucket: 'manual_review',
+          target_expires_at: null,
+          reason: 'STOP-guard: email IS NULL — identity unresolved',
+          hold_reason: 'email_null',
         });
         continue;
       }
@@ -171,7 +221,6 @@ Deno.serve(async (req) => {
 
       if (orders.length > 0) {
         const hasBaseTariff = orders.some(o => o.tariff_id != null);
-        // Collect module_list_mapped from ALL orders for this user
         const allModuleIds = new Set<string>();
         for (const order of orders) {
           const snapshot = (order.purchase_snapshot || {}) as Record<string, any>;
@@ -199,26 +248,16 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Determine action
-      let action: ActionBucket;
-      let reason: string;
-      const metaStatus: 'has_meta' | 'no_meta' = ent?.meta && (ent.meta as any).scope_resolution_mode ? 'has_meta' : 'no_meta';
-
       // STOP-guard: business_access_end_at IS NULL → only manual_review
       if (!businessInfo.access_end_at) {
         plans.push({
-          profile_id: userId, user_id: userId, email,
-          business_subscription_id: businessInfo.sub_id,
-          business_access_end_at: null,
-          historical_class: historicalClass,
-          historical_tariff_id: historicalTariffId,
+          ...basePlan,
+          historical_class: historicalClass, historical_tariff_id: historicalTariffId,
           historical_module_product_ids: historicalBasisProductIds,
-          current_entitlement_id: ent?.id || null,
-          current_entitlement_expires_at: ent?.expires_at || null,
-          current_meta_status: metaStatus,
-          planned_action: 'manual_review',
-          scope_bucket: scopeBucket,
+          planned_action: 'manual_review', scope_bucket: scopeBucket,
+          target_expires_at: null,
           reason: 'STOP-guard: business_access_end_at IS NULL',
+          hold_reason: 'business_end_null',
         });
         continue;
       }
@@ -226,43 +265,37 @@ Deno.serve(async (req) => {
       // STOP-guard: historical_class = unclassified → only manual_review
       if (historicalClass === 'unclassified') {
         plans.push({
-          profile_id: userId, user_id: userId, email,
-          business_subscription_id: businessInfo.sub_id,
-          business_access_end_at: businessInfo.access_end_at,
-          historical_class: historicalClass,
-          historical_tariff_id: historicalTariffId,
+          ...basePlan,
+          historical_class: historicalClass, historical_tariff_id: historicalTariffId,
           historical_module_product_ids: historicalBasisProductIds,
-          current_entitlement_id: ent?.id || null,
-          current_entitlement_expires_at: ent?.expires_at || null,
-          current_meta_status: metaStatus,
-          planned_action: 'manual_review',
-          scope_bucket: scopeBucket,
+          planned_action: 'manual_review', scope_bucket: 'manual_review',
+          target_expires_at: null,
           reason: 'STOP-guard: historical_class = unclassified',
+          hold_reason: 'unclassified',
         });
         continue;
       }
 
-      // STOP-guard: scope_bucket = manual_review → execute forbidden
+      // STOP-guard: scope_bucket = manual_review
       if (scopeBucket === 'manual_review') {
         plans.push({
-          profile_id: userId, user_id: userId, email,
-          business_subscription_id: businessInfo.sub_id,
-          business_access_end_at: businessInfo.access_end_at,
-          historical_class: historicalClass,
-          historical_tariff_id: historicalTariffId,
+          ...basePlan,
+          historical_class: historicalClass, historical_tariff_id: historicalTariffId,
           historical_module_product_ids: historicalBasisProductIds,
-          current_entitlement_id: ent?.id || null,
-          current_entitlement_expires_at: ent?.expires_at || null,
-          current_meta_status: metaStatus,
-          planned_action: 'manual_review',
-          scope_bucket: 'manual_review',
+          planned_action: 'manual_review', scope_bucket: 'manual_review',
+          target_expires_at: null,
           reason: 'STOP-guard: scope_bucket = manual_review',
+          hold_reason: 'scope_manual_review',
         });
         continue;
       }
 
+      // Determine action
+      let action: ActionBucket;
+      let reason: string;
+      const targetExpiresAt = businessInfo.access_end_at;
+
       if (!ent) {
-        // No entitlement exists
         if (historicalClass === 'no_cb_purchase') {
           action = 'noop';
           reason = 'No cb20 purchase history, no entitlement to create';
@@ -271,48 +304,227 @@ Deno.serve(async (req) => {
           reason = `Historical class: ${historicalClass}, creating new entitlement`;
         }
       } else if (metaStatus === 'has_meta') {
-        // Has meta — check alignment
-        const expiresMatch = ent.expires_at === businessInfo.access_end_at;
+        const expiresMatch = ent.expires_at === targetExpiresAt;
         if (expiresMatch) {
           action = 'noop';
           reason = 'Meta present, expires aligned';
         } else {
           action = 'align_to_business';
-          reason = `Meta present but expires mismatch: ${ent.expires_at} vs ${businessInfo.access_end_at}`;
+          reason = `Meta present but expires mismatch: ${ent.expires_at} vs ${targetExpiresAt}`;
         }
       } else {
-        // No meta — MUST repair (even if expires happens to match)
-        // entitlement without mandatory meta cannot be noop
-        const expiresMatch = ent.expires_at === businessInfo.access_end_at;
+        const expiresMatch = ent.expires_at === targetExpiresAt;
         if (expiresMatch) {
           action = 'repair_metadata_only';
-          reason = `Missing mandatory meta (scope_resolution_mode), expires happen to match — still must repair meta`;
+          reason = 'Missing mandatory meta (scope_resolution_mode), expires match — still must repair meta';
         } else {
           action = 'repair_metadata_and_align';
-          reason = `Missing mandatory meta AND expires mismatch: ${ent.expires_at} vs ${businessInfo.access_end_at}`;
+          reason = `Missing mandatory meta AND expires mismatch: ${ent.expires_at} vs ${targetExpiresAt}`;
         }
       }
 
+      // Hold reason for module_scope_only — always HOLD until mapping proof
+      const holdReason = scopeBucket === 'module_scope_only' ? 'standalone_only_blocked' : null;
+
       plans.push({
-        profile_id: userId, user_id: userId, email,
-        business_subscription_id: businessInfo.sub_id,
-        business_access_end_at: businessInfo.access_end_at,
-        historical_class: historicalClass,
-        historical_tariff_id: historicalTariffId,
+        ...basePlan,
+        historical_class: historicalClass, historical_tariff_id: historicalTariffId,
         historical_module_product_ids: historicalBasisProductIds,
-        current_entitlement_id: ent?.id || null,
-        current_entitlement_expires_at: ent?.expires_at || null,
-        current_meta_status: metaStatus,
-        planned_action: action,
-        scope_bucket: scopeBucket,
+        planned_action: action, scope_bucket: scopeBucket,
+        target_expires_at: action === 'noop' ? (ent?.expires_at || null) : targetExpiresAt,
         reason,
+        hold_reason: holdReason,
       });
     }
 
-    // 6. Build matrix summary (action × scope)
+    // 6. Mapping confidence for module_scope_only
+    const allModuleProductIds = new Set<string>();
+    plans.filter(p => p.scope_bucket === 'module_scope_only').forEach(p => {
+      p.historical_module_product_ids.forEach(id => allModuleProductIds.add(id));
+    });
+
+    const mappingConfidence: MappingConfidence[] = [];
+    if (allModuleProductIds.size > 0) {
+      const moduleProductIdList = [...allModuleProductIds];
+
+      // Get product names
+      const { data: moduleProducts } = await supabase
+        .from('products_v2')
+        .select('id, name, code')
+        .in('id', moduleProductIdList);
+
+      const productMap = new Map<string, { name: string; code: string | null }>();
+      (moduleProducts || []).forEach(p => productMap.set(p.id, { name: p.name, code: p.code }));
+
+      // Get training modules linked to these products (exact_fk)
+      const { data: linkedTrainingModules } = await supabase
+        .from('training_modules')
+        .select('id, title, product_id')
+        .in('product_id', moduleProductIdList);
+
+      const trainingByProduct = new Map<string, Array<{ id: string; title: string }>>();
+      (linkedTrainingModules || []).forEach(tm => {
+        if (!tm.product_id) return;
+        const arr = trainingByProduct.get(tm.product_id) || [];
+        arr.push({ id: tm.id, title: tm.title });
+        trainingByProduct.set(tm.product_id, arr);
+      });
+
+      // Get all training modules for name matching fallback
+      const { data: allTrainingModules } = await supabase
+        .from('training_modules')
+        .select('id, title, product_id, code')
+        .is('parent_module_id', null); // only root-level for name matching
+
+      for (const mpId of moduleProductIdList) {
+        const product = productMap.get(mpId);
+        const fkMatches = trainingByProduct.get(mpId) || [];
+
+        if (fkMatches.length > 0) {
+          // exact_fk — direct FK match
+          for (const match of fkMatches) {
+            mappingConfidence.push({
+              module_product_id: mpId,
+              module_product_name: product?.name || null,
+              matched_training_module_id: match.id,
+              matched_training_module_title: match.title,
+              mapping_confidence: 'exact_fk',
+              mapping_reason: `training_modules.product_id = '${mpId}' (direct FK)`,
+              allowed_in_execute: true,
+            });
+          }
+        } else if (product?.code) {
+          // Try exact_code
+          const codeMatches = (allTrainingModules || []).filter(tm => tm.code === product.code);
+          if (codeMatches.length === 1) {
+            mappingConfidence.push({
+              module_product_id: mpId,
+              module_product_name: product.name,
+              matched_training_module_id: codeMatches[0].id,
+              matched_training_module_title: codeMatches[0].title,
+              mapping_confidence: 'exact_code',
+              mapping_reason: `Unique code match: training_modules.code = '${product.code}'`,
+              allowed_in_execute: true,
+            });
+          } else if (codeMatches.length > 1) {
+            mappingConfidence.push({
+              module_product_id: mpId,
+              module_product_name: product.name,
+              matched_training_module_id: null,
+              matched_training_module_title: null,
+              mapping_confidence: 'inferred',
+              mapping_reason: `Code '${product.code}' matched ${codeMatches.length} training modules — ambiguous`,
+              allowed_in_execute: false,
+            });
+          } else {
+            // Try exact_name
+            tryNameMatch(mpId, product, allTrainingModules || [], mappingConfidence);
+          }
+        } else {
+          // No code — try name match
+          tryNameMatch(mpId, product || { name: 'unknown', code: null }, allTrainingModules || [], mappingConfidence);
+        }
+      }
+    }
+
+    // 7. Runtime preview for create cases with module_scope_only
+    // Uses the SAME resolution path as frontend:
+    // historical_module_product_ids → training_modules with matching product_id → count lessons recursively
+    const createModuleScopePlans = plans.filter(
+      p => p.planned_action === 'create' && p.scope_bucket === 'module_scope_only'
+    );
+
+    for (const plan of createModuleScopePlans) {
+      const allowedModuleIds: string[] = [];
+      const allowedModuleTitles: string[] = [];
+
+      for (const mpId of plan.historical_module_product_ids) {
+        const mc = mappingConfidence.find(m => m.module_product_id === mpId && m.matched_training_module_id);
+        if (mc?.matched_training_module_id) {
+          allowedModuleIds.push(mc.matched_training_module_id);
+          allowedModuleTitles.push(mc.matched_training_module_title || 'unknown');
+        }
+      }
+
+      // Count visible lessons recursively — same as frontend useTrainingModules
+      let totalLessonCount = 0;
+      if (allowedModuleIds.length > 0) {
+        // Get all training_content for cb20 root tree
+        const CB20_ROOT_MODULE = 'c9f7e9b8-c0e7-4b47-882b-94b7dd0a4e41';
+        const { data: allContent } = await supabase
+          .from('training_content')
+          .select('id, module_id, content_type, status, parent_content_id')
+          .in('module_id', allowedModuleIds)
+          .eq('status', 'active');
+
+        // Get child modules of allowed modules (subtree)
+        const { data: childModules } = await supabase
+          .from('training_modules')
+          .select('id, parent_module_id, title')
+          .in('parent_module_id', allowedModuleIds);
+
+        // BFS to collect all descendant module IDs
+        const allVisibleModuleIds = new Set(allowedModuleIds);
+        let queue = (childModules || []).map(cm => cm.id);
+        while (queue.length > 0) {
+          queue.forEach(id => allVisibleModuleIds.add(id));
+          const { data: nextLevel } = await supabase
+            .from('training_modules')
+            .select('id, parent_module_id')
+            .in('parent_module_id', queue);
+          queue = (nextLevel || []).map(m => m.id);
+        }
+
+        // Count lessons across full subtree
+        const { data: subtreeContent } = await supabase
+          .from('training_content')
+          .select('id, module_id, content_type, status')
+          .in('module_id', [...allVisibleModuleIds])
+          .eq('status', 'active')
+          .eq('content_type', 'lesson');
+
+        totalLessonCount = (subtreeContent || []).length;
+      }
+
+      plan.runtime_preview = {
+        historical_module_product_ids: plan.historical_module_product_ids,
+        derived_allowed_module_ids: allowedModuleIds,
+        derived_allowed_module_titles: allowedModuleTitles,
+        visible_module_count: allowedModuleIds.length,
+        visible_recursive_lesson_count: totalLessonCount,
+      };
+
+      // Auto-block if runtime shows zero visibility
+      if (allowedModuleIds.length === 0 || totalLessonCount === 0) {
+        plan.planned_action = 'manual_review';
+        plan.hold_reason = 'runtime_preview_zero_visibility';
+        plan.reason += ' → BLOCKED: runtime preview shows 0 visible modules/lessons';
+      }
+    }
+
+    // 8. Split cohorts: SAFE EXECUTE NOW vs HOLD
+    const isSafe = (p: RepairPlan): boolean => {
+      if (p.planned_action === 'noop') return false; // nothing to execute
+      if (p.planned_action === 'staff_skip') return false;
+      if (p.planned_action === 'manual_review') return false;
+      if (p.hold_reason) return false;
+      if (!p.business_access_end_at) return false;
+      if (!p.email) return false;
+      // module_scope_only is ALWAYS HOLD until separate proof
+      if (p.scope_bucket === 'module_scope_only') return false;
+      return true;
+    };
+
+    const executeCandidatesSafe = plans.filter(p => isSafe(p));
+    const holdCandidates = plans.filter(p => {
+      if (p.planned_action === 'noop') return false;
+      return !isSafe(p);
+    });
+
+    // 9. Build matrix summary (action × scope)
     const actionBuckets: ActionBucket[] = ['create', 'align_to_business', 'repair_metadata_only', 'repair_metadata_and_align', 'noop', 'manual_review', 'staff_skip'];
     const scopeBuckets: ScopeBucket[] = ['full_tariff_scope', 'module_scope_only', 'union_scope', 'no_scope', 'manual_review'];
-    
+
     const matrix: Record<string, Record<string, number>> = {};
     for (const a of actionBuckets) {
       matrix[a] = {};
@@ -321,18 +533,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 7. Execute if not dry_run
+    // Cohort summary
+    const cohortSummary = {
+      safe_execute_count: executeCandidatesSafe.length,
+      manual_review_count: plans.filter(p => p.planned_action === 'manual_review').length,
+      staff_skip_count: plans.filter(p => p.planned_action === 'staff_skip').length,
+      identity_unresolved_count: plans.filter(p => p.hold_reason === 'email_null').length,
+      standalone_only_blocked_count: plans.filter(p => p.hold_reason === 'standalone_only_blocked').length,
+      noop_count: plans.filter(p => p.planned_action === 'noop').length,
+      email_null_count: businessUserIds.filter(uid => !profileEmailMap.get(uid)).length,
+    };
+
+    // 10. Execute if not dry_run — ONLY safe cohort
     const executeResults: Array<{ user_id: string; email: string | null; action: string; result: string; error: string | null }> = [];
     if (!dryRun) {
-      const executablePlans = plans.filter(p => 
-        p.planned_action !== 'noop' && 
-        p.planned_action !== 'manual_review' &&
-        p.planned_action !== 'staff_skip'
-      );
+      // Double-check: only safe cohort
+      const toExecute = executeCandidatesSafe;
+      console.log(`[repair-cb20] Executing ${toExecute.length} SAFE repairs (cohort=${executeCohort})`);
 
-      console.log(`[repair-cb20] Executing ${executablePlans.length} repairs`);
-
-      for (const plan of executablePlans) {
+      for (const plan of toExecute) {
         const enrichedMeta = {
           source_rule_id: '1b497fba-031a-4318-8d9f-2530f1bac116',
           business_subscription_id: plan.business_subscription_id,
@@ -386,8 +605,10 @@ Deno.serve(async (req) => {
         actor_label: 'batch_business_cb20_repair_v1',
         meta: {
           batch_id: batchId,
+          execute_cohort: executeCohort,
           total_business_users: businessUserIds.length,
-          executed: executablePlans.length,
+          safe_executed: toExecute.length,
+          hold_skipped: holdCandidates.length,
           results_summary: {
             created: executeResults.filter(r => r.action === 'created' && r.result === 'success').length,
             aligned: executeResults.filter(r => r.action === 'align_to_business' && r.result === 'success').length,
@@ -397,12 +618,13 @@ Deno.serve(async (req) => {
             skipped_noop: plans.filter(p => p.planned_action === 'noop').length,
             errors: executeResults.filter(r => r.result !== 'success').length,
           },
+          per_operation: executeResults,
           matrix,
         },
       });
     }
 
-    // 8. Post-check (after execute)
+    // 11. Post-check (after execute)
     let postCheck: any = null;
     if (!dryRun) {
       const { data: postEnts } = await supabase
@@ -423,18 +645,29 @@ Deno.serve(async (req) => {
         return m.historical_purchase_type === 'module_only_standalone' && m.scope_resolution_mode === 'module_scope_only';
       });
 
-      // Non-manual-review plans that were executed — check for expires mismatch
-      const executedUserIds = new Set(plans.filter(p => 
-        p.planned_action !== 'noop' && 
-        p.planned_action !== 'manual_review' && 
-        p.planned_action !== 'staff_skip'
-      ).map(p => p.user_id));
+      const executedUserIds = new Set(executeCandidatesSafe.map(p => p.user_id));
 
       const expiresMismatchRemaining = allPostEnts.filter(e => {
-        if (!executedUserIds.has(e.user_id)) return false; // only check executed
+        if (!executedUserIds.has(e.user_id)) return false;
         const biz = userBusinessMap.get(e.user_id);
         return biz && biz.access_end_at && e.expires_at !== biz.access_end_at;
       }).length;
+
+      // scope_resolution_mode invalid check
+      const scopeModeInvalid = allPostEnts.filter(e => {
+        if (!executedUserIds.has(e.user_id)) return false;
+        const m = (e.meta || {}) as any;
+        if (!m.scope_resolution_mode) return true;
+        // Check consistency with plan
+        const plan = executeCandidatesSafe.find(p => p.user_id === e.user_id);
+        return plan && m.scope_resolution_mode !== plan.scope_bucket;
+      }).length;
+
+      // Executed standalone_only with no_match
+      const executedStandaloneNoMatch = executeResults.filter(r => {
+        const plan = executeCandidatesSafe.find(p => p.user_id === r.user_id);
+        return plan?.scope_bucket === 'module_scope_only' && r.result === 'success';
+      }).length; // Should be 0 since we block module_scope_only from safe
 
       postCheck = {
         business_users_total: businessUserIds.length,
@@ -443,12 +676,23 @@ Deno.serve(async (req) => {
         expires_mismatch_remaining: expiresMismatchRemaining,
         manual_review_remaining: plans.filter(p => p.planned_action === 'manual_review').length,
         standalone_only_with_module_scope_only: standaloneWithModule.length,
-        standalone_only_with_full_scope: standaloneWithFull.length, // MUST BE 0
+        standalone_only_with_full_scope: standaloneWithFull.length,
         no_meta_remaining: noMeta.length,
-        // Critical assertions
+        executed_users_scope_mode_invalid: scopeModeInvalid,
+        executed_standalone_only_with_no_match: executedStandaloneNoMatch,
+        executed_users_with_null_business_end: executeResults.filter(r => {
+          const plan = executeCandidatesSafe.find(p => p.user_id === r.user_id);
+          return plan && !plan.business_access_end_at;
+        }).length,
+        executed_users_with_email_unresolved: executeResults.filter(r => {
+          const plan = executeCandidatesSafe.find(p => p.user_id === r.user_id);
+          return plan && !plan.email;
+        }).length,
         assertions: {
           standalone_full_scope_is_zero: standaloneWithFull.length === 0,
           expires_mismatch_for_executed_is_zero: expiresMismatchRemaining === 0,
+          scope_mode_invalid_is_zero: scopeModeInvalid === 0,
+          executed_standalone_no_match_is_zero: executedStandaloneNoMatch === 0,
         },
       };
     }
@@ -458,8 +702,13 @@ Deno.serve(async (req) => {
         success: true,
         dry_run: dryRun,
         batch_id: batchId,
+        execute_cohort: executeCohort,
         business_users_total: businessUserIds.length,
         plans: dryRun ? plans : undefined,
+        execute_candidates_safe: dryRun ? executeCandidatesSafe : undefined,
+        hold_candidates: dryRun ? holdCandidates : undefined,
+        cohort_summary: cohortSummary,
+        mapping_confidence: mappingConfidence.length > 0 ? mappingConfidence : undefined,
         matrix,
         execute_results: dryRun ? undefined : executeResults,
         post_check: postCheck,
@@ -475,3 +724,61 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+// Helper: try name matching with strict uniqueness guard
+function tryNameMatch(
+  mpId: string,
+  product: { name: string; code: string | null } | null,
+  allTrainingModules: Array<{ id: string; title: string; product_id: string | null; code: string | null }>,
+  results: MappingConfidence[]
+) {
+  const productName = product?.name || '';
+  if (!productName) {
+    results.push({
+      module_product_id: mpId,
+      module_product_name: null,
+      matched_training_module_id: null,
+      matched_training_module_title: null,
+      mapping_confidence: 'no_match',
+      mapping_reason: 'Product not found in products_v2',
+      allowed_in_execute: false,
+    });
+    return;
+  }
+
+  const nameNorm = productName.toLowerCase().trim();
+  const nameMatches = allTrainingModules.filter(tm => tm.title.toLowerCase().trim() === nameNorm);
+
+  if (nameMatches.length === 1) {
+    results.push({
+      module_product_id: mpId,
+      module_product_name: productName,
+      matched_training_module_id: nameMatches[0].id,
+      matched_training_module_title: nameMatches[0].title,
+      mapping_confidence: 'exact_name',
+      mapping_reason: `Unique name match: '${productName}' = training '${nameMatches[0].title}'`,
+      allowed_in_execute: true,
+    });
+  } else if (nameMatches.length > 1) {
+    // Ambiguous name match — NOT exact_name, goes to manual_review
+    results.push({
+      module_product_id: mpId,
+      module_product_name: productName,
+      matched_training_module_id: null,
+      matched_training_module_title: null,
+      mapping_confidence: 'inferred',
+      mapping_reason: `Name '${productName}' matched ${nameMatches.length} training modules — ambiguous, manual review required`,
+      allowed_in_execute: false,
+    });
+  } else {
+    results.push({
+      module_product_id: mpId,
+      module_product_name: productName,
+      matched_training_module_id: null,
+      matched_training_module_title: null,
+      mapping_confidence: 'no_match',
+      mapping_reason: `No training module found for product '${productName}' (id=${mpId}) by FK, code, or name`,
+      allowed_in_execute: false,
+    });
+  }
+}
