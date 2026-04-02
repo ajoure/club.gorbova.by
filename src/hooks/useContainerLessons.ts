@@ -170,6 +170,9 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       const container = containerMap.get(lesson.module_id);
       if (!container) continue;
 
+      // PATCH K4: Effective active guard — lesson invisible if parent module chain inactive
+      if (!container.isActive) continue;
+
       // Filter out scheduled lessons for non-admins
       if (!isAdminUser && lesson.published_at) {
         const publishDate = new Date(lesson.published_at);
