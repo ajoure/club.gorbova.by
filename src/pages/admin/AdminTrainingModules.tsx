@@ -75,7 +75,8 @@ import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabCont
 import { ModulesTreeContent } from "@/components/admin/trainings/ModulesTreeContent";
 import { BulkActivationModal } from "@/components/admin/trainings/BulkActivationModal";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
-import { useBulkModuleActivation, type BulkAction } from "@/hooks/useModuleBulkActions";
+import { useBulkModuleActivation, type BulkAction, type SelectionMode } from "@/hooks/useModuleBulkActions";
+import { toggleModuleSubtree, toggleLesson, type TreeIndexes } from "@/components/admin/trainings/moduleTreeIndexes";
 import type { SortMode } from "@/components/admin/trainings/moduleTreeUtils";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon, ArrowDownAZ, ArrowDown01 } from "lucide-react";
