@@ -742,7 +742,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         onEditRule={(ruleId) => {
           const rule = rules.find(r => r.id === ruleId);
           if (rule) {
-            handleEditRule(rule);
+            openEditDialog(rule);
           }
         }}
         onFocusRule={(ruleId) => {
