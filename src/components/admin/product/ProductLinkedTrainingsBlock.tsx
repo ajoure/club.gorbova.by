@@ -707,7 +707,9 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
     }
   };
 
-  if (isLoading) {
+  const bothLoading = isLoading && isRuleLinkedLoading;
+
+  if (isLoading && !ruleLinkedData) {
     return (
       <Card>
         <CardContent className="py-8 text-center text-muted-foreground text-sm">
