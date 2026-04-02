@@ -131,22 +131,59 @@ export function useTrainingModules() {
         });
       }
 
+      // Build direct lesson count map
+      const directLessonCount: Record<string, number> = {};
+      lessonsData?.forEach(l => {
+        directLessonCount[l.module_id] = (directLessonCount[l.module_id] || 0) + 1;
+      });
+
+      // Build adjacency map for recursive counting (parent → children)
+      const childrenMap: Record<string, string[]> = {};
+      modulesData?.forEach(mod => {
+        if (mod.parent_module_id) {
+          if (!childrenMap[mod.parent_module_id]) childrenMap[mod.parent_module_id] = [];
+          childrenMap[mod.parent_module_id].push(mod.id);
+        }
+      });
+
+      // Iterative BFS to compute recursive lesson count for any module
+      const computeRecursiveLessonCount = (rootId: string): number => {
+        let total = directLessonCount[rootId] || 0;
+        const queue = [...(childrenMap[rootId] || [])];
+        const visited = new Set<string>([rootId]);
+        while (queue.length > 0) {
+          const nodeId = queue.shift()!;
+          if (visited.has(nodeId)) continue;
+          visited.add(nodeId);
+          // Only count active modules
+          const nodeModule = modulesData?.find(m => m.id === nodeId);
+          if (!nodeModule?.is_active) continue;
+          total += directLessonCount[nodeId] || 0;
+          const nodeChildren = childrenMap[nodeId] || [];
+          queue.push(...nodeChildren);
+        }
+        return total;
+      };
+
       // Combine data
       const enrichedModules = modulesData?.map(mod => {
-        const lessonCount = lessonsData?.filter(l => l.module_id === mod.id).length || 0;
+        const lessonCount = directLessonCount[mod.id] || 0;
+        const recursiveLessonCount = computeRecursiveLessonCount(mod.id);
         const moduleAccess = accessData?.filter(a => a.module_id === mod.id) || [];
         const accessibleTariffs = moduleAccess.map(a => (a.tariffs as any)?.name || "");
         
-        // Access precedence:
-        // 1. admin bypass (applied below in normalizedModules)
-        // 2. public module (no module_access entries) → true
-        // 3. tariff-based: module_access ∩ subscriptions_v2 → true
-        // 4. entitlement-based: module.product_id ∈ userEntitlementProductIds → true
-        // module.product_id = null → entitlement path не применяется
-        const baseAccess = 
-          moduleAccess.length === 0 || 
-          moduleAccess.some(a => userTariffIds.includes(a.tariff_id)) ||
-          (mod.product_id != null && userEntitlementProductIds.has(mod.product_id));
+        // Phase F fix: Access precedence for product-linked modules
+        // If module has product_id, use ONLY entitlement path (not legacy module_access)
+        // module_access is secondary fallback ONLY for modules without product_id
+        let baseAccess: boolean;
+        if (mod.product_id != null) {
+          // Product-linked: entitlement-only path (module_access excluded)
+          baseAccess = userEntitlementProductIds.has(mod.product_id);
+        } else {
+          // Non-product-linked: legacy module_access path
+          baseAccess = moduleAccess.length === 0 || 
+            moduleAccess.some(a => userTariffIds.includes(a.tariff_id));
+        }
 
         // Group by product for compact display
         const productMap: Record<string, { product_name: string; tariff_count: number }> = {};
@@ -162,8 +199,9 @@ export function useTrainingModules() {
         return {
           ...mod,
           lesson_count: lessonCount,
+          recursive_lesson_count: recursiveLessonCount,
           completed_count: progressMap[mod.id] || 0,
-          has_access: baseAccess, // Will be overridden for admins below
+          has_access: baseAccess,
           accessible_tariffs: accessibleTariffs,
           accessible_products: accessibleProducts,
         };
@@ -174,25 +212,41 @@ export function useTrainingModules() {
       const tcRules = tcData?.rules || [];
       const tcUserTariffIds = tcData?.userTariffIds || [];
 
+      // Build parent product_id map for inheritance
+      const parentProductMap = new Map<string, string>();
+      enrichedModules.forEach(m => {
+        if (m.product_id && !m.parent_module_id) {
+          parentProductMap.set(m.id, m.product_id);
+        }
+      });
+
       const normalizedModules = enrichedModules.map(m => {
         if (isAdminUser) return { ...m, has_access: true };
+        
+        // Inherit access from parent for child modules with same product_id
+        if (!m.has_access && m.parent_module_id) {
+          const parentProdId = parentProductMap.get(m.parent_module_id);
+          if (parentProdId && m.product_id === parentProdId) {
+            const parentMod = enrichedModules.find(p => p.id === m.parent_module_id);
+            if (parentMod?.has_access) {
+              m = { ...m, has_access: true };
+            }
+          }
+        }
+        
         if (!m.has_access) return m;
 
         // Apply training_content filter only for modules with confirmed access
         if (m.product_id && tcRules.length > 0) {
-          // Find the root training for this module (parent_module_id = null means it IS root)
           const rootId = m.parent_module_id 
             ? enrichedModules.find(rm => rm.id === m.parent_module_id && !rm.parent_module_id)?.id || m.parent_module_id
             : m.id;
           
           const filter = resolveTrainingContentFilter(tcRules, rootId, m.product_id, tcUserTariffIds);
           if (filter && filter.mode === "partial") {
-            // For root/container: check if this module or any child is allowed
             if (m.parent_module_id === null) {
-              // Root module: keep visible (children will be filtered individually)
-              return m;
+              return m; // Root: keep visible, children filtered individually
             }
-            // Child module: check if visible
             if (!isModuleVisible(filter, m.id)) {
               return { ...m, has_access: false, lesson_count: 0, completed_count: 0 };
             }
@@ -201,30 +255,53 @@ export function useTrainingModules() {
         return m;
       });
 
-      // Hide empty containers (non-admin): root modules with no visible content
+      // Phase E: Compute visible recursive lesson count based on effective scope
+      const visibleModuleIds = new Set(normalizedModules.filter(m => m.has_access).map(m => m.id));
+      
+      const computeVisibleRecursiveLessonCount = (rootId: string): number => {
+        let total = directLessonCount[rootId] || 0;
+        const queue = [...(childrenMap[rootId] || [])];
+        const visited = new Set<string>([rootId]);
+        while (queue.length > 0) {
+          const nodeId = queue.shift()!;
+          if (visited.has(nodeId)) continue;
+          visited.add(nodeId);
+          // Only count modules that are visible in effective scope
+          if (!visibleModuleIds.has(nodeId)) continue;
+          const nodeModule = modulesData?.find(m => m.id === nodeId);
+          if (!nodeModule?.is_active) continue;
+          total += directLessonCount[nodeId] || 0;
+          queue.push(...(childrenMap[nodeId] || []));
+        }
+        return total;
+      };
+
+      // Phase E: Hide root modules with empty effective scope (not "0 уроков")
       const finalModules = normalizedModules.filter(m => {
         if (isAdminUser) return true;
         // Keep locked child items visible (for lock display)
         if (!m.has_access && m.parent_module_id !== null) return true;
-        // Root module with access: hide if no own lessons AND no visible children
+        // Root module with access: hide if effective scope is empty
         if (m.parent_module_id === null && m.has_access) {
-          const ownLessons = m.lesson_count || 0;
-          const hasVisibleChildren = normalizedModules.some(
-            child => child.parent_module_id === m.id && child.has_access && (child.lesson_count || 0) > 0
-          );
-          if (ownLessons === 0 && !hasVisibleChildren) return false;
+          const visibleRecursive = computeVisibleRecursiveLessonCount(m.id);
+          if (visibleRecursive === 0) {
+            // Phase E STOP-guard: empty scope = "нет доступа", not "0 уроков"
+            return false;
+          }
         }
         return true;
       });
 
-      // Recalc root lesson_count/completed_count from visible children
+      // Recalc root lesson_count/completed_count from visible children (recursive)
       finalModules.forEach(m => {
         if (isAdminUser || m.parent_module_id !== null || !m.has_access) return;
-        const visibleChildren = finalModules.filter(
-          c => c.parent_module_id === m.id && c.has_access
-        );
-        if (visibleChildren.length > 0) {
-          m.lesson_count = visibleChildren.reduce((s, c) => s + (c.lesson_count || 0), 0);
+        const visibleRecursive = computeVisibleRecursiveLessonCount(m.id);
+        if (visibleRecursive > 0) {
+          m.lesson_count = visibleRecursive;
+          // Recalc completed from visible children
+          const visibleChildren = finalModules.filter(
+            c => c.parent_module_id === m.id && c.has_access
+          );
           m.completed_count = visibleChildren.reduce((s, c) => s + (c.completed_count || 0), 0);
         }
       });

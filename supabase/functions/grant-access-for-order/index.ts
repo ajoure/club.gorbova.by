@@ -843,15 +843,101 @@ Deno.serve(async (req) => {
 
               const targetProductCode = targetProduct?.code || targetProdId;
 
-              // Calculate expires_at for this rule
-              const paExpiresAt = rule.duration_days
-                ? new Date(Date.now() + rule.duration_days * 86400000).toISOString()
-                : null;
+              // Phase C: align_with_source — if rule.duration_days is null, 
+              // align expires_at with the source subscription's access_end_at
+              let paExpiresAt: string | null = null;
+              let sourceWindowRule = 'default';
+
+              if (rule.duration_days) {
+                paExpiresAt = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
+                sourceWindowRule = 'rule_duration';
+              } else {
+                // align_with_source: use the triggering subscription's access_end_at
+                const { data: sourceSub } = await supabase
+                  .from('subscriptions_v2')
+                  .select('id, access_end_at, tariff_id')
+                  .eq('user_id', userId)
+                  .eq('product_id', productId)
+                  .eq('status', 'active')
+                  .order('access_end_at', { ascending: false })
+                  .limit(1)
+                  .maybeSingle();
+                
+                if (sourceSub?.access_end_at) {
+                  paExpiresAt = sourceSub.access_end_at;
+                  sourceWindowRule = 'align_with_source';
+                  console.log(`[grant-access] product_access: align_with_source expires_at=${paExpiresAt} from sub ${sourceSub.id}`);
+                } else {
+                  console.warn(`[grant-access] product_access: no active source subscription for align_with_source, expires_at=null`);
+                }
+              }
+
+              // Phase C: Build enriched meta with mandatory traceability fields
+              // Determine historical purchase type from prior order
+              let historicalPurchaseType = 'unknown';
+              let historicalTariffId: string | null = null;
+              let historicalModuleProductIds: string[] = [];
+              let scopeResolutionMode = 'full_tariff_scope';
+
+              const { data: priorOrderData } = await supabase
+                .from('orders_v2')
+                .select('id, tariff_id, purchase_snapshot')
+                .eq('user_id', userId)
+                .eq('product_id', targetProdId)
+                .eq('status', 'paid')
+                .neq('id', orderId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              if (priorOrderData) {
+                const snapshot = (priorOrderData.purchase_snapshot || {}) as Record<string, any>;
+                historicalPurchaseType = snapshot.historical_purchase_type || 
+                  (priorOrderData.tariff_id ? 'base_tariff_purchase' : 'module_only_standalone');
+                historicalTariffId = priorOrderData.tariff_id || snapshot.tariff_id || null;
+                
+                if (Array.isArray(snapshot.module_list_mapped)) {
+                  historicalModuleProductIds = snapshot.module_list_mapped;
+                }
+
+                // Variant B scope resolution
+                if (historicalPurchaseType === 'module_only_standalone' || historicalPurchaseType === 'module_child_purchase') {
+                  scopeResolutionMode = historicalModuleProductIds.length > 0 ? 'module_scope_only' : 'manual_review';
+                } else if (priorOrderData.tariff_id) {
+                  scopeResolutionMode = 'full_tariff_scope';
+                }
+              } else {
+                scopeResolutionMode = 'no_scope';
+              }
+
+              // Get source business subscription info
+              const { data: businessSub } = await supabase
+                .from('subscriptions_v2')
+                .select('id, tariff_id, access_end_at')
+                .eq('user_id', userId)
+                .eq('product_id', productId)
+                .eq('status', 'active')
+                .order('access_end_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+              const enrichedMeta = {
+                source_rule_id: rule.id,
+                source_order_id: orderId,
+                business_subscription_id: businessSub?.id || null,
+                business_tariff_id: businessSub?.tariff_id || tariffId || null,
+                source_access_end_at: businessSub?.access_end_at || null,
+                historical_purchase_type: historicalPurchaseType,
+                historical_tariff_id: historicalTariffId,
+                historical_module_product_ids: historicalModuleProductIds,
+                scope_resolution_mode: scopeResolutionMode,
+                source_window_rule: sourceWindowRule,
+              };
 
               // Check existing entitlement first (GREATEST logic - never decrease)
               const { data: existingPaEnt } = await supabase
                 .from('entitlements')
-                .select('id, expires_at, order_id')
+                .select('id, expires_at, order_id, meta')
                 .eq('user_id', userId)
                 .eq('product_code', targetProductCode)
                 .maybeSingle();
@@ -867,13 +953,16 @@ Deno.serve(async (req) => {
                       : paExpiresAt)
                   : existingPaEnt.expires_at; // null (unlimited) from rule means keep current
 
+                // Merge existing meta with enriched meta (enriched takes precedence)
+                const existingMeta = (existingPaEnt.meta || {}) as Record<string, any>;
+                const mergedMeta = { ...existingMeta, ...enrichedMeta };
+
                 const { error } = await supabase
                   .from('entitlements')
                   .update({
                     status: 'active',
                     expires_at: newExpiry,
-                    // Do NOT overwrite order_id — keep original purchase order
-                    meta: { source_rule_id: rule.id, source_order_id: orderId },
+                    meta: mergedMeta,
                     updated_at: new Date().toISOString(),
                   })
                   .eq('id', existingPaEnt.id);
@@ -888,10 +977,9 @@ Deno.serve(async (req) => {
                     product_code: targetProductCode,
                     product_id: targetProdId,
                     profile_id: profileId || null,
-                    // order_id intentionally omitted — this is a derived grant, not a direct purchase
                     status: 'active',
                     expires_at: paExpiresAt,
-                    meta: { source_rule_id: rule.id, source_order_id: orderId },
+                    meta: enrichedMeta,
                   });
                 paEntError = error;
               }
