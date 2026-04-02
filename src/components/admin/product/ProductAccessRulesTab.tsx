@@ -368,7 +368,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     return result;
   }, [rules, filter, typeFilter]);
 
-  // Conflicts
+  // Conflicts — classified into categories
   const conflicts = useMemo(() => {
     const seen = new Map<string, AccessRule[]>();
     rules.forEach((r) => {
@@ -376,9 +376,46 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       if (!seen.has(key)) seen.set(key, []);
       seen.get(key)!.push(r);
     });
-    return Array.from(seen.entries())
-      .filter(([, v]) => v.length > 1)
-      .map(([key, items]) => ({ key, items }));
+
+    type ConflictType = 'valid_parallel_rule' | 'duplicate_rule' | 'ambiguous_overlap' | 'shadowed_rule';
+    interface ClassifiedConflict {
+      key: string;
+      items: AccessRule[];
+      type: ConflictType;
+      label: string;
+    }
+
+    const classified: ClassifiedConflict[] = [];
+
+    for (const [key, items] of seen.entries()) {
+      if (items.length <= 1) continue;
+
+      // Check if all rules have different tariff_ids → valid parallel
+      const tariffIds = items.map(i => i.tariff_id || '__product_level__');
+      const uniqueTariffs = new Set(tariffIds);
+
+      if (uniqueTariffs.size === items.length) {
+        // All different tariffs = valid parallel rules (different tariff scopes)
+        classified.push({ key, items, type: 'valid_parallel_rule', label: 'Разные тарифы — допустимо' });
+      } else {
+        // Check for exact duplicates (same product + tariff + target)
+        const sigMap = new Map<string, AccessRule[]>();
+        items.forEach(i => {
+          const sig = `${i.product_id}:${i.tariff_id || ''}:${i.target_ref}`;
+          if (!sigMap.has(sig)) sigMap.set(sig, []);
+          sigMap.get(sig)!.push(i);
+        });
+        const hasDuplicates = [...sigMap.values()].some(g => g.length > 1);
+
+        if (hasDuplicates) {
+          classified.push({ key, items, type: 'duplicate_rule', label: 'Дублирующие правила' });
+        } else {
+          classified.push({ key, items, type: 'ambiguous_overlap', label: 'Неоднозначное перекрытие' });
+        }
+      }
+    }
+
+    return classified;
   }, [rules]);
 
   // Legacy-new overlaps
