@@ -105,6 +105,7 @@ export function LinkDealDialog({
         const snapshot = o.purchase_snapshot;
         const displayName = snapshot?.display_purchase_name;
         const fkName = o.product?.name || o.tariff?.name || null;
+        const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
         return {
           id: o.id,
           order_number: o.order_number,
@@ -115,6 +116,7 @@ export function LinkDealDialog({
           product_name: displayName || fkName,
           profile_id: o.profile_id,
           user_id: o.user_id,
+          _missing_display_name: isModuleStandalone && !displayName,
         };
       }));
     } catch (e: any) {
@@ -291,6 +293,9 @@ export function LinkDealDialog({
                       <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
                         <span>{format(new Date(order.created_at), "dd.MM.yy", { locale: ru })}</span>
                         {order.product_name && <span>• {order.product_name}</span>}
+                        {(order as any)._missing_display_name && (
+                          <Badge variant="outline" className="text-[9px] text-amber-700 border-amber-400 bg-amber-50">⚠ Historical name missing</Badge>
+                        )}
                       </div>
                     </button>
                   ))}

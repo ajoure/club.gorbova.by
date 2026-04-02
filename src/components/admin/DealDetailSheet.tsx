@@ -559,9 +559,14 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                       const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
                       if (snapshot?.historical_purchase_type === 'module_only_standalone') {
                         return (
-                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 ml-2">
-                            Модульная покупка
-                          </Badge>
+                          <>
+                            <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 ml-2">
+                              Модульная покупка
+                            </Badge>
+                            {!snapshot?.display_purchase_name && (
+                              <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400 bg-amber-50 ml-1">⚠ Historical name missing</Badge>
+                            )}
+                          </>
                         );
                       }
                       return null;

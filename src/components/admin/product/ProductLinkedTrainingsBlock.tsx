@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useProductTrainings, useAvailableTrainingsForBind, useRuleLinkedTrainings, useVisibleTrainings, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview, type VisibleTraining } from "@/hooks/useProductTrainings";
 import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -571,12 +572,13 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 }
 
 // --- Rule-linked Training Card with actions ---
-function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, contentRules }: {
+function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, contentRules, tariffNamesMap }: {
   vt: VisibleTraining;
   onFocusRule?: (ruleId: string) => void;
   onEditRule?: (ruleId: string) => void;
   onDeleteRule?: (ruleId: string, trainingTitle: string) => void;
   contentRules?: Array<{ id: string; tariff_id: string | null; target_label: string | null; is_active: boolean; conditions: any }>;
+  tariffNamesMap?: Record<string, string>;
 }) {
   const [ruleSelectOpen, setRuleSelectOpen] = useState(false);
   const [ruleSelectAction, setRuleSelectAction] = useState<'edit' | 'delete'>('edit');
@@ -698,10 +700,17 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, con
                     {rule && !rule.is_active && (
                       <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивно</Badge>
                     )}
+                    {rule?.is_active && (
+                      <Badge variant="outline" className="text-[9px] text-green-600 border-green-300">Активно</Badge>
+                    )}
                   </div>
                   {rule && (
                     <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground">
                       <span>Режим: {accessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</span>
+                      {rule.tariff_id && tariffNamesMap?.[rule.tariff_id] && (
+                        <span>• Тариф: {tariffNamesMap[rule.tariff_id]}</span>
+                      )}
+                      {!rule.tariff_id && <span>• Весь продукт</span>}
                       {rule.target_label && <span>• {rule.target_label}</span>}
                     </div>
                   )}
@@ -722,6 +731,27 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
   const { visibleTrainings, visibleTrainingsMap, visibleTrainingCount } = useVisibleTrainings(trainings, ruleLinkedData, productId);
+
+  // Fetch tariff names for content rules
+  const tariffIds = useMemo(() => {
+    const ids = contentRules.map(r => r.tariff_id).filter(Boolean) as string[];
+    return [...new Set(ids)];
+  }, [contentRules]);
+  
+  const { data: tariffNamesMap = {} } = useQuery({
+    queryKey: ["tariff-names-for-rules", tariffIds],
+    queryFn: async () => {
+      if (tariffIds.length === 0) return {};
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name")
+        .in("id", tariffIds);
+      const map: Record<string, string> = {};
+      (data || []).forEach(t => { map[t.id] = t.name; });
+      return map;
+    },
+    enabled: tariffIds.length > 0,
+  });
 
   // Rule-link delete state
   const [deleteRuleId, setDeleteRuleId] = useState<string | null>(null);
@@ -958,7 +988,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                   )}
                   <div className="space-y-2">
                     {onlyRuleLinkedTrainings.map(vt => (
-                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} contentRules={contentRules} />
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} contentRules={contentRules} tariffNamesMap={tariffNamesMap} />
                     ))}
                   </div>
                 </>
@@ -1136,6 +1166,12 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                       <div className="rounded-md border p-2 text-xs space-y-1 bg-muted/50">
                         <p><span className="font-medium">ID правила:</span> {deleteRuleId?.slice(0, 8)}</p>
                         <p><span className="font-medium">Режим:</span> {deleteAccessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</p>
+                        {deleteRule.tariff_id && tariffNamesMap[deleteRule.tariff_id] && (
+                          <p><span className="font-medium">Тариф:</span> {tariffNamesMap[deleteRule.tariff_id]}</p>
+                        )}
+                        {!deleteRule.tariff_id && (
+                          <p><span className="font-medium">Scope:</span> Весь продукт</p>
+                        )}
                         {deleteRule.target_label && <p><span className="font-medium">Метка:</span> {deleteRule.target_label}</p>}
                       </div>
                     )}

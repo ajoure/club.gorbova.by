@@ -185,7 +185,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         .filter(p => p.order_id)
         .map(p => p.order_id!);
 
-      let ordersMap = new Map<string, { id: string; product_name: string | null }>();
+      let ordersMap = new Map<string, { id: string; product_name: string | null; _is_module_standalone: boolean; _missing_display_name: boolean }>();
       if (orderIds.length > 0) {
         const { data: orders } = await supabase
           .from('orders_v2')
@@ -196,17 +196,24 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           const displayName = snapshot?.display_purchase_name;
           const fkName = (o.products_v2 as any)?.name || null;
           const resolvedName = displayName || fkName;
+          const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
+          const missingDisplayName = isModuleStandalone && !displayName;
           return [
             o.id, 
-            { id: o.id, product_name: resolvedName }
+            { id: o.id, product_name: resolvedName, _is_module_standalone: isModuleStandalone, _missing_display_name: missingDisplayName }
           ];
         }));
       }
 
-      return uniquePayments.map(p => ({
-        ...p,
-        productName: p.order_id ? ordersMap.get(p.order_id)?.product_name : null,
-      })) as PaymentItem[];
+      return uniquePayments.map(p => {
+        const orderInfo = p.order_id ? ordersMap.get(p.order_id) : null;
+        return {
+          ...p,
+          productName: orderInfo?.product_name || null,
+          _is_module_standalone: orderInfo?._is_module_standalone || false,
+          _missing_display_name: orderInfo?._missing_display_name || false,
+        };
+      }) as PaymentItem[];
     },
     enabled: !!contactId,
   });
@@ -399,6 +406,9 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                         <Package className="w-3 h-3 shrink-0" />
                         <span className="truncate">{payment.productName}</span>
                       </Badge>
+                    )}
+                    {(payment as any)._missing_display_name && (
+                      <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400 bg-amber-50">⚠ Historical name missing</Badge>
                     )}
                     {payment.order_id && (
                       <Button
