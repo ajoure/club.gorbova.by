@@ -208,7 +208,7 @@ Deno.serve(async (req) => {
         }
       } else if (metaStatus === 'has_meta') {
         // Has meta — check alignment
-        const expiresMatch = ent.expires_at === businessInfo.access_end_at;
+        const expiresMatch = !businessInfo.access_end_at || ent.expires_at === businessInfo.access_end_at;
         if (expiresMatch) {
           action = 'noop';
           reason = 'Meta present, expires aligned';
@@ -218,13 +218,19 @@ Deno.serve(async (req) => {
         }
       } else {
         // No meta — MUST repair (even if expires happens to match)
-        const expiresMatch = ent.expires_at === businessInfo.access_end_at;
-        if (expiresMatch) {
+        if (!businessInfo.access_end_at) {
+          // Business sub has no access_end_at — can't align, repair meta only
           action = 'repair_metadata_only';
-          reason = `Missing mandatory meta (scope_resolution_mode), expires happen to match`;
+          reason = `Missing mandatory meta, business sub has no access_end_at (keeping current expires)`;
         } else {
-          action = 'repair_metadata_and_align';
-          reason = `Missing mandatory meta AND expires mismatch: ${ent.expires_at} vs ${businessInfo.access_end_at}`;
+          const expiresMatch = ent.expires_at === businessInfo.access_end_at;
+          if (expiresMatch) {
+            action = 'repair_metadata_only';
+            reason = `Missing mandatory meta (scope_resolution_mode), expires happen to match`;
+          } else {
+            action = 'repair_metadata_and_align';
+            reason = `Missing mandatory meta AND expires mismatch: ${ent.expires_at} vs ${businessInfo.access_end_at}`;
+          }
         }
       }
 
