@@ -728,21 +728,41 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         </Select>
       </div>
 
-      {/* Conflicts warning */}
-      {conflicts.length > 0 && (
+      {/* Conflicts warning — classified */}
+      {conflicts.filter(c => c.type !== 'valid_parallel_rule').length > 0 && (
         <Card className="border-amber-200/50 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-950/30">
           <CardContent className="py-3 px-4">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Обнаружены конфликты: одна цель назначена несколькими правилами
+                Обнаружены конфликты правил
               </span>
             </div>
             <div className="mt-2 space-y-1">
-              {conflicts.map(({ key, items }) => (
+              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label }) => (
                 <div key={key} className="text-xs text-amber-600 dark:text-amber-500">
-                  {items[0].target_label || key}: {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")} — 
-                  победит приоритет {Math.max(...items.map((i) => i.priority))}
+                  {items[0].target_label || key}: {label} — {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Valid parallel rules — info only */}
+      {conflicts.filter(c => c.type === 'valid_parallel_rule').length > 0 && (
+        <Card className="border-blue-200/50 bg-blue-50/30 dark:border-blue-800/50 dark:bg-blue-950/30">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
+              <Info className="h-4 w-4 shrink-0" />
+              <span className="text-sm font-medium">
+                Множественные правила на одну цель (разные тарифы — допустимо)
+              </span>
+            </div>
+            <div className="mt-2 space-y-1">
+              {conflicts.filter(c => c.type === 'valid_parallel_rule').map(({ key, items }) => (
+                <div key={key} className="text-xs text-blue-600 dark:text-blue-500">
+                  {items[0].target_label || key}: {items.map((i) => (i.tariff?.name || "Продукт")).join(", ")}
                 </div>
               ))}
             </div>
