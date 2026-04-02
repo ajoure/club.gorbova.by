@@ -881,6 +881,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
 
             return (
               <Card
+                id={`access-rule-${rule.id}`}
                 key={rule.id}
                 className={cn(
                   "transition-colors",
