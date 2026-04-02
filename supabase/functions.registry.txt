@@ -79,3 +79,4 @@ grp-lookup
 public-checkout
 ai-generate-corporate-package
 gorbova-ai-chat
+split-multi-module-orders
