@@ -599,6 +599,8 @@ Deno.serve(async (req) => {
     // Cohort summary
     const cohortSummary = {
       safe_execute_count: executeCandidatesSafe.length,
+      standalone_safe_count: executeCandidatesStandalone.length,
+      standalone_mode: standaloneMode,
       manual_review_count: plans.filter(p => p.planned_action === 'manual_review').length,
       staff_skip_count: plans.filter(p => p.planned_action === 'staff_skip').length,
       identity_unresolved_count: plans.filter(p => p.hold_reason === 'email_null').length,
@@ -607,6 +609,33 @@ Deno.serve(async (req) => {
       noop_count: plans.filter(p => p.planned_action === 'noop').length,
       email_null_count: businessUserIds.filter(uid => !profileEmailMap.get(uid)).length,
     };
+
+    // Standalone dry-run table
+    const standaloneDryRun = executeCandidatesStandalone.map(p => {
+      const userMappings = mappingConfidence.filter(m =>
+        p.historical_module_product_ids.includes(m.module_product_id)
+      );
+      const mappedIds = userMappings.filter(m => m.matched_training_module_id).map(m => m.matched_training_module_id);
+      const mappedTitles = userMappings.filter(m => m.matched_training_module_title).map(m => m.matched_training_module_title);
+      const unmappedIds = p.historical_module_product_ids.filter(mpId =>
+        !userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id)
+      );
+      return {
+        user_id: p.user_id,
+        email: p.email,
+        business_sub_id: p.business_subscription_id,
+        business_end: p.business_access_end_at,
+        module_products: p.historical_module_product_ids,
+        mapped_training_ids: mappedIds,
+        mapped_titles: mappedTitles,
+        unmapped_module_product_ids: unmappedIds,
+        confidence: userMappings.map(m => ({ id: m.module_product_id, name: m.module_product_name, confidence: m.mapping_confidence, reason: m.mapping_reason })),
+        visible_lessons: p.runtime_preview?.visible_recursive_lesson_count || 0,
+        planned_action: p.current_entitlement_id ? 'repair' : 'create',
+        mode: standaloneMode,
+        reason: p.reason,
+      };
+    });
 
     // 10. Execute if not dry_run — ONLY safe cohort (no create, no module_scope_only)
     const executeResults: Array<{
