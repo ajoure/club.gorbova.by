@@ -727,7 +727,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
             <div className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
               <CardTitle className="text-sm">Тренинги этого продукта</CardTitle>
-              <Badge variant="outline" className="text-[10px]">{trainings.length}</Badge>
+              <Badge variant="outline" className="text-[10px]">{visibleTrainingCount}</Badge>
             </div>
             <div className="flex items-center gap-1.5">
               {/* View mode toggle */}
