@@ -108,12 +108,17 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
 
   // Root "all" state
   const rootState = useMemo(() => {
-    if (allModuleIds.length === 0 && allLessonIds.length === 0) return "unchecked" as const;
-    const allModsSelected = allModuleIds.every(id => modSet.has(id));
-    if (allModsSelected && allModuleIds.length > 0) return "checked" as const;
+    const hasModules = allModuleIds.length > 0;
+    const hasRootLessons = tree.lessons.length > 0;
+    if (!hasModules && !hasRootLessons) return "unchecked" as const;
+
+    const allModsSelected = !hasModules || allModuleIds.every(id => modSet.has(id));
+    const allRootLessonsSelected = !hasRootLessons || tree.lessons.every(l => lesSet.has(l.id));
+
+    if (allModsSelected && allRootLessonsSelected && (hasModules || hasRootLessons)) return "checked" as const;
     if (modSet.size > 0 || lesSet.size > 0) return "indeterminate" as const;
     return "unchecked" as const;
-  }, [allModuleIds, allLessonIds, modSet, lesSet]);
+  }, [allModuleIds, tree.lessons, modSet, lesSet]);
 
   // === Actions ===
 
