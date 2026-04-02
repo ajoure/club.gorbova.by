@@ -776,6 +776,9 @@ export default function AdminTrainingModules() {
                     setViewerModal({ lessonId: lesson.id, title: lesson.title });
                   }}
                   sortMode={modulesSortMode}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedModuleIds}
+                  onToggleSelection={handleToggleSelection}
                 />
               ) : (
                 <div className={cn(
