@@ -6,6 +6,7 @@ import {
   type AccessRule, type GrantTargetType, type RulePurpose,
   type EffectiveGrant, type LegacyMapping,
   getRulePurpose, getLegacyStatus, type LegacyStatus,
+  getTrainingContentMeta,
 } from "@/hooks/useAccessRules";
 import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
@@ -895,28 +896,24 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                           {TARGET_TYPE_LABELS[rule.grant_target_type]}
                         </Badge>
                         {rule.grant_target_type === "training_content" && (() => {
-                          const { getTrainingContentMeta } = require("@/hooks/useAccessRules");
                           const meta = getTrainingContentMeta(rule.conditions as Record<string, unknown>);
                           const isEmpty = meta.mode === "partial" && meta.moduleCount === 0 && meta.lessonCount === 0;
                           return (
-                            <Badge variant="outline" className={cn("text-[10px]", meta.mode === "partial" ? "text-amber-600 border-amber-300" : "")}>
-                              {meta.mode === "full"
-                                ? "Весь тренинг"
-                                : isEmpty
-                                  ? "Частичный доступ"
-                                  : `Частичный: ${meta.moduleCount} мод. ${meta.lessonCount} ур.`}
-                            </Badge>
+                            <>
+                              <Badge variant="outline" className={cn("text-[10px]", meta.mode === "partial" ? "text-amber-600 border-amber-300" : "")}>
+                                {meta.mode === "full"
+                                  ? "Весь тренинг"
+                                  : isEmpty
+                                    ? "Частичный доступ"
+                                    : `Частичный: ${meta.moduleCount} мод. ${meta.lessonCount} ур.`}
+                              </Badge>
+                              {isEmpty && (
+                                <Badge variant="outline" className="text-[10px] text-muted-foreground border-muted">
+                                  ⚠ выбор пуст
+                                </Badge>
+                              )}
+                            </>
                           );
-                        })()}
-                        {rule.grant_target_type === "training_content" && (() => {
-                          const meta = (require("@/hooks/useAccessRules")).getTrainingContentMeta(rule.conditions as Record<string, unknown>);
-                          const isEmpty = meta.mode === "partial" && meta.moduleCount === 0 && meta.lessonCount === 0;
-                          if (isEmpty) return (
-                            <Badge variant="outline" className="text-[10px] text-muted-foreground border-muted">
-                              ⚠ выбор пуст
-                            </Badge>
-                          );
-                          return null;
                         })()}
                         <Badge variant="outline" className="text-[10px]">
                           {rule.tariff_id ? `Тариф: ${rule.tariff?.name || "—"}` : "Весь продукт"}
