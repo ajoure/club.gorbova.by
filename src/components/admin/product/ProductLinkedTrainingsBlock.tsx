@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useProductTrainings, useAvailableTrainingsForBind, useRuleLinkedTrainings, useVisibleTrainings, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview, type VisibleTraining } from "@/hooks/useProductTrainings";
 import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
