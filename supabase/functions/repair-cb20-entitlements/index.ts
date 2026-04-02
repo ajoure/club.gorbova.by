@@ -696,6 +696,7 @@ Deno.serve(async (req) => {
 
         try {
           if (plan.current_entitlement_id) {
+            // UPDATE existing entitlement
             const updateData: Record<string, any> = {
               meta: enrichedMeta,
               updated_at: new Date().toISOString(),
@@ -720,6 +721,39 @@ Deno.serve(async (req) => {
               old_meta_status: plan.current_meta_status,
               new_scope_resolution_mode: plan.scope_bucket,
             });
+          } else if (executeCohort === 'standalone_safe' && plan.scope_bucket === 'module_scope_only') {
+            // CREATE new entitlement for standalone_safe cohort
+            const profileId = profileIdByAuthId.get(plan.user_id);
+            if (!profileId) {
+              executeResults.push({
+                user_id: plan.user_id, email: plan.email,
+                action: 'create', result: 'error', error: 'profile_id not found',
+                old_expires_at: null, new_expires_at: null, target_expires_at: plan.target_expires_at,
+                old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+              });
+            } else {
+              newExpiresAt = plan.business_access_end_at;
+              const { error } = await supabase
+                .from('entitlements')
+                .insert({
+                  user_id: plan.user_id,
+                  profile_id: profileId,
+                  product_id: CB20_PRODUCT_ID,
+                  product_code: 'cb20',
+                  status: 'active',
+                  source: 'batch_standalone_safe',
+                  expires_at: plan.business_access_end_at,
+                  meta: enrichedMeta,
+                });
+              executeResults.push({
+                user_id: plan.user_id, email: plan.email,
+                action: 'create_standalone', result: error ? 'error' : 'success',
+                error: error?.message || null,
+                old_expires_at: null, new_expires_at: newExpiresAt,
+                target_expires_at: plan.target_expires_at,
+                old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+              });
+            }
           }
         } catch (err) {
           executeResults.push({
