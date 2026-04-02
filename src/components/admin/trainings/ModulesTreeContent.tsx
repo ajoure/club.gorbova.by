@@ -36,6 +36,13 @@ import {
   type ModuleTreeNodeWithData,
   type SortMode,
 } from "./moduleTreeUtils";
+import {
+  buildTreeIndexes,
+  getModuleCheckState,
+  toggleModuleSubtree,
+  toggleLesson,
+  type TreeIndexes,
+} from "./moduleTreeIndexes";
 
 const STORAGE_KEY = "admin_training_modules.expanded";
 
@@ -57,8 +64,10 @@ interface ModulesTreeContentProps {
   onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
   sortMode?: SortMode;
   selectionMode?: boolean;
-  selectedIds?: Set<string>;
-  onToggleSelection?: (id: string) => void;
+  selectedModuleIds?: Set<string>;
+  selectedLessonIds?: Set<string>;
+  onToggleModuleSelection?: (moduleId: string, indexes: TreeIndexes) => void;
+  onToggleLessonSelection?: (lessonId: string) => void;
 }
 
 /* ── Gradient color map for soft card accents ── */
@@ -79,29 +88,6 @@ function getGradientColors(gradient: string | null | undefined) {
   return GRADIENT_COLOR_MAP[gradient] || DEFAULT_GRADIENT;
 }
 
-/**
- * Compute indeterminate state for a parent checkbox:
- * - checked: all descendants selected
- * - indeterminate: some descendants selected
- * - unchecked: none selected
- */
-function getCheckState(
-  node: ModuleTreeNodeWithData<SimpleLessonRow>,
-  selectedIds: Set<string>,
-): "checked" | "indeterminate" | "unchecked" {
-  const allIds: string[] = [];
-  const collectIds = (n: ModuleTreeNodeWithData<SimpleLessonRow>) => {
-    allIds.push(n.module.id);
-    n.children.forEach(collectIds);
-  };
-  collectIds(node);
-
-  const selectedCount = allIds.filter((id) => selectedIds.has(id)).length;
-  if (selectedCount === 0) return "unchecked";
-  if (selectedCount === allIds.length) return "checked";
-  return "indeterminate";
-}
-
 /* ── Module node ── */
 function ModuleTreeNode({
   node,
@@ -114,8 +100,11 @@ function ModuleTreeNode({
   onCopyMove,
   onOpenLessonViewers,
   selectionMode,
-  selectedIds,
-  onToggleSelection,
+  selectedModuleIds,
+  selectedLessonIds,
+  treeIndexes,
+  onToggleModuleSelection,
+  onToggleLessonSelection,
 }: {
   node: ModuleTreeNodeWithData<SimpleLessonRow>;
   depth: number;
@@ -127,16 +116,19 @@ function ModuleTreeNode({
   onCopyMove: (m: TrainingModule) => void;
   onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
   selectionMode?: boolean;
-  selectedIds?: Set<string>;
-  onToggleSelection?: (id: string) => void;
+  selectedModuleIds?: Set<string>;
+  selectedLessonIds?: Set<string>;
+  treeIndexes?: TreeIndexes;
+  onToggleModuleSelection?: (moduleId: string, indexes: TreeIndexes) => void;
+  onToggleLessonSelection?: (lessonId: string) => void;
 }) {
   const navigate = useNavigate();
   const isOpen = expandedIds.has(node.module.id);
   const hasContent = node.children.length > 0 || node.items.length > 0;
   const colors = getGradientColors(node.module.color_gradient);
 
-  const checkState = selectionMode && selectedIds
-    ? getCheckState(node, selectedIds)
+  const checkState = selectionMode && selectedModuleIds && selectedLessonIds && treeIndexes
+    ? getModuleCheckState(node.module.id, treeIndexes, selectedModuleIds, selectedLessonIds)
     : "unchecked";
 
   return (
@@ -148,7 +140,7 @@ function ModuleTreeNode({
             "backdrop-blur-xl bg-card/60 dark:bg-card/40",
             "border border-border/40 hover:border-border/70",
             "shadow-sm hover:shadow-md mb-1.5",
-            selectionMode && selectedIds?.has(node.module.id) && "ring-2 ring-primary/40",
+            selectionMode && selectedModuleIds?.has(node.module.id) && "ring-2 ring-primary/40",
           )}
         >
           {/* Soft gradient overlay */}
@@ -162,10 +154,10 @@ function ModuleTreeNode({
 
           <div className="relative z-10 flex items-center gap-2 px-3 py-2">
             {/* Selection checkbox */}
-            {selectionMode && onToggleSelection && (
+            {selectionMode && onToggleModuleSelection && treeIndexes && (
               <Checkbox
                 checked={checkState === "checked" ? true : checkState === "indeterminate" ? "indeterminate" : false}
-                onCheckedChange={() => onToggleSelection(node.module.id)}
+                onCheckedChange={() => onToggleModuleSelection(node.module.id, treeIndexes)}
                 onClick={(e) => e.stopPropagation()}
                 className="shrink-0"
               />
@@ -213,40 +205,16 @@ function ModuleTreeNode({
             {/* Actions */}
             {!selectionMode && (
               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => { e.stopPropagation(); onOpenLessons(node.module.id); }}
-                  title="Уроки"
-                >
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onOpenLessons(node.module.id); }} title="Уроки">
                   <BookOpen className="h-3.5 w-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => { e.stopPropagation(); onCopyMove(node.module); }}
-                  title="Копировать / Переместить"
-                >
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onCopyMove(node.module); }} title="Копировать / Переместить">
                   <Copy className="h-3.5 w-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={(e) => { e.stopPropagation(); onEdit(node.module); }}
-                  title="Редактировать"
-                >
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onEdit(node.module); }} title="Редактировать">
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-destructive hover:text-destructive"
-                  onClick={(e) => { e.stopPropagation(); onDelete(node.module.id); }}
-                  title="Удалить"
-                >
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(node.module.id); }} title="Удалить">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -270,8 +238,11 @@ function ModuleTreeNode({
                 onCopyMove={onCopyMove}
                 onOpenLessonViewers={onOpenLessonViewers}
                 selectionMode={selectionMode}
-                selectedIds={selectedIds}
-                onToggleSelection={onToggleSelection}
+                selectedModuleIds={selectedModuleIds}
+                selectedLessonIds={selectedLessonIds}
+                treeIndexes={treeIndexes}
+                onToggleModuleSelection={onToggleModuleSelection}
+                onToggleLessonSelection={onToggleLessonSelection}
               />
             ))}
             {/* Lessons */}
@@ -280,11 +251,28 @@ function ModuleTreeNode({
                 key={lesson.id}
                 className={cn(
                   "group/lesson flex items-center gap-2 px-3 py-1.5 rounded-lg",
-                  "hover:bg-muted/50 transition-colors cursor-pointer",
+                  "hover:bg-muted/50 transition-colors",
+                  !selectionMode && "cursor-pointer",
+                  selectionMode && selectedLessonIds?.has(lesson.id) && "bg-primary/5 ring-1 ring-primary/20",
                   depth > 0 && "ml-4",
                 )}
-                onClick={() => navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`)}
+                onClick={() => {
+                  if (selectionMode) {
+                    onToggleLessonSelection?.(lesson.id);
+                  } else {
+                    navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`);
+                  }
+                }}
               >
+                {/* Lesson checkbox in selection mode */}
+                {selectionMode && onToggleLessonSelection && (
+                  <Checkbox
+                    checked={selectedLessonIds?.has(lesson.id) ?? false}
+                    onCheckedChange={() => onToggleLessonSelection(lesson.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="shrink-0"
+                  />
+                )}
                 <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="text-sm truncate flex-1">{lesson.title}</span>
                 <Badge
@@ -296,46 +284,22 @@ function ModuleTreeNode({
                 {/* Hover action buttons */}
                 {!selectionMode && (
                   <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/lesson:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`);
-                      }}
-                      title="Контент"
-                    >
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`); }} title="Контент">
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (lesson.completion_mode === "kvest") {
-                          navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
-                        } else if (onOpenLessonViewers) {
-                          onOpenLessonViewers(lesson);
-                        } else {
-                          onOpenLessons(lesson.module_id);
-                        }
-                      }}
-                      title="Прогресс / просмотры"
-                    >
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => {
+                      e.stopPropagation();
+                      if (lesson.completion_mode === "kvest") {
+                        navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
+                      } else if (onOpenLessonViewers) {
+                        onOpenLessonViewers(lesson);
+                      } else {
+                        onOpenLessons(lesson.module_id);
+                      }
+                    }} title="Прогресс / просмотры">
                       <Eye className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenLessons(lesson.module_id);
-                      }}
-                      title="Уроки модуля"
-                    >
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); onOpenLessons(lesson.module_id); }} title="Уроки модуля">
                       <List className="h-3.5 w-3.5" />
                     </Button>
                   </div>
@@ -359,8 +323,10 @@ export function ModulesTreeContent({
   onOpenLessonViewers,
   sortMode = "order",
   selectionMode,
-  selectedIds,
-  onToggleSelection,
+  selectedModuleIds,
+  selectedLessonIds,
+  onToggleModuleSelection,
+  onToggleLessonSelection,
 }: ModulesTreeContentProps) {
   const moduleIds = useMemo(() => modules.map((m) => m.id), [modules]);
   const moduleIdsKey = useMemo(() => moduleIds.slice().sort().join(","), [moduleIds]);
@@ -407,6 +373,9 @@ export function ModulesTreeContent({
     );
   }, [modules, lessons, sortMode]);
 
+  // Build tree indexes for efficient selection operations
+  const treeIndexes = useMemo(() => buildTreeIndexes(tree), [tree]);
+
   // Auto-open single root (once per component mount)
   useEffect(() => {
     if (!didAutoOpenRef.current && expandedIds.size === 0 && tree.length === 1) {
@@ -434,7 +403,7 @@ export function ModulesTreeContent({
   }
 
   if (tree.length === 0) {
-    return null; // Parent handles empty state
+    return null;
   }
 
   return (
@@ -452,8 +421,11 @@ export function ModulesTreeContent({
           onCopyMove={onCopyMove}
           onOpenLessonViewers={onOpenLessonViewers}
           selectionMode={selectionMode}
-          selectedIds={selectedIds}
-          onToggleSelection={onToggleSelection}
+          selectedModuleIds={selectedModuleIds}
+          selectedLessonIds={selectedLessonIds}
+          treeIndexes={treeIndexes}
+          onToggleModuleSelection={onToggleModuleSelection}
+          onToggleLessonSelection={onToggleLessonSelection}
         />
       ))}
     </div>

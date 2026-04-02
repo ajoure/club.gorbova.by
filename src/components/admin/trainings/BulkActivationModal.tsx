@@ -9,15 +9,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, AlertTriangle } from "lucide-react";
-import { getBulkModuleActivationPreview, type BulkAction, type BulkPreviewResult } from "@/hooks/useModuleBulkActions";
+import { Loader2, AlertTriangle, Info } from "lucide-react";
+import { getBulkPreview, type BulkAction, type SelectionMode, type BulkPreviewResult } from "@/hooks/useModuleBulkActions";
 
 interface BulkActivationModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selectedModuleIds: string[];
+  selectedLessonIds: string[];
   action: BulkAction;
-  cascadeToLessons: boolean;
+  selectionMode: SelectionMode;
   onConfirm: () => void;
   executing?: boolean;
 }
@@ -26,8 +27,9 @@ export function BulkActivationModal({
   open,
   onOpenChange,
   selectedModuleIds,
+  selectedLessonIds,
   action,
-  cascadeToLessons,
+  selectionMode,
   onConfirm,
   executing,
 }: BulkActivationModalProps) {
@@ -35,25 +37,26 @@ export function BulkActivationModal({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (open && selectedModuleIds.length > 0) {
+    if (open && (selectedModuleIds.length > 0 || selectedLessonIds.length > 0)) {
       setLoading(true);
-      getBulkModuleActivationPreview(selectedModuleIds, action, cascadeToLessons)
+      getBulkPreview(selectedModuleIds, selectedLessonIds, action, selectionMode)
         .then(setPreview)
         .catch(() => setPreview(null))
         .finally(() => setLoading(false));
     } else {
       setPreview(null);
     }
-  }, [open, selectedModuleIds, action, cascadeToLessons]);
+  }, [open, selectedModuleIds, selectedLessonIds, action, selectionMode]);
 
   const actionLabel = action === "activate" ? "Активация" : "Деактивация";
   const actionVerb = action === "activate" ? "активированы" : "деактивированы";
+  const modeLabel = selectionMode === "cascade" ? "каскадно" : "точечно";
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="sm:max-w-lg">
         <AlertDialogHeader>
-          <AlertDialogTitle>{actionLabel} модулей</AlertDialogTitle>
+          <AlertDialogTitle>{actionLabel} ({modeLabel})</AlertDialogTitle>
           <AlertDialogDescription asChild>
             <div className="space-y-3">
               {loading ? (
@@ -63,11 +66,20 @@ export function BulkActivationModal({
                 </div>
               ) : preview ? (
                 <>
+                  {/* Selected counts */}
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="rounded-lg border p-3">
                       <div className="text-muted-foreground text-xs mb-1">Выбрано модулей</div>
                       <div className="text-lg font-semibold">{preview.selectedModuleCount}</div>
                     </div>
+                    <div className="rounded-lg border p-3">
+                      <div className="text-muted-foreground text-xs mb-1">Выбрано уроков</div>
+                      <div className="text-lg font-semibold">{preview.selectedLessonCount}</div>
+                    </div>
+                  </div>
+
+                  {/* Affected counts */}
+                  <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="rounded-lg border p-3">
                       <div className="text-muted-foreground text-xs mb-1">Затронуто модулей</div>
                       <div className="text-lg font-semibold">{preview.affectedModuleCount}</div>
@@ -75,38 +87,50 @@ export function BulkActivationModal({
                         {preview.activeModules} акт. / {preview.inactiveModules} неакт.
                       </div>
                     </div>
-                  </div>
-
-                  {cascadeToLessons && (
-                    <div className="rounded-lg border p-3 text-sm">
+                    <div className="rounded-lg border p-3">
                       <div className="text-muted-foreground text-xs mb-1">Затронуто уроков</div>
                       <div className="text-lg font-semibold">{preview.affectedLessonCount}</div>
                       <div className="text-xs text-muted-foreground">
                         {preview.activeLessons} акт. / {preview.inactiveLessons} неакт.
                       </div>
                     </div>
+                  </div>
+
+                  {/* Auto-activated parents */}
+                  {preview.autoActivatedParentModuleCount > 0 && (
+                    <div className="flex items-start gap-2 rounded-lg bg-blue-500/10 border border-blue-500/20 p-3">
+                      <Info className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                      <div className="text-xs text-blue-700 dark:text-blue-400">
+                        <strong>{preview.autoActivatedParentModuleCount}</strong> родительских модулей будут автоматически активированы, чтобы выбранный контент стал видимым.
+                      </div>
+                    </div>
                   )}
 
+                  {/* Mode info */}
                   <div className="rounded-lg border p-3 text-sm">
-                    <div className="text-muted-foreground text-xs mb-1">Действие</div>
+                    <div className="text-muted-foreground text-xs mb-1">Режим</div>
                     <div className="font-medium">
-                      {actionLabel} {cascadeToLessons ? "модулей + дочерних модулей + уроков" : "только выбранных модулей + дочерних модулей"}
+                      {selectionMode === "cascade"
+                        ? "Каскадно: модули + все дочерние модули + все уроки"
+                        : "Точечно: только выбранные модули и уроки"}
                     </div>
                   </div>
 
+                  {/* Warning */}
                   <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3">
                     <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-xs text-amber-700 dark:text-amber-400">
                       {action === "deactivate"
-                        ? "Деактивация скроет выбранный контент для всех пользователей. Уроки и модули станут недоступны на платформе."
+                        ? "Деактивация скроет выбранный контент для всех пользователей."
                         : "Активация сделает контент видимым для пользователей с соответствующим доступом."}
+                      {selectionMode === "cascade" && " Каскадный режим затрагивает все вложенные элементы."}
                     </p>
                   </div>
 
                   <p className="text-xs text-muted-foreground">
-                    После выполнения будут {actionVerb}:{" "}
+                    Будут {actionVerb}:{" "}
                     <strong>{preview.affectedModuleCount}</strong> модулей
-                    {cascadeToLessons && (
+                    {preview.affectedLessonCount > 0 && (
                       <> и <strong>{preview.affectedLessonCount}</strong> уроков</>
                     )}
                     .
