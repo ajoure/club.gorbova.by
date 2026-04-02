@@ -371,6 +371,47 @@ export default function AdminTrainingModules() {
   } | null>(null);
   // Lesson viewers modal state (opened from tree hover action)
   const [viewerModal, setViewerModal] = useState<{ lessonId: string; title: string } | null>(null);
+
+  // PATCH K: Bulk selection state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set());
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkAction, setBulkAction] = useState<BulkAction>("activate");
+  const [bulkCascade, setBulkCascade] = useState(true);
+  const { execute: executeBulk, loading: bulkExecuting } = useBulkModuleActivation();
+
+  const handleToggleSelection = useCallback((id: string) => {
+    setSelectedModuleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedModuleIds(new Set(modules.map((m) => m.id)));
+  }, [modules]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedModuleIds(new Set());
+    setSelectionMode(false);
+  }, []);
+
+  const openBulkModal = useCallback((action: BulkAction, cascade: boolean) => {
+    setBulkAction(action);
+    setBulkCascade(cascade);
+    setBulkModalOpen(true);
+  }, []);
+
+  const handleBulkConfirm = useCallback(async () => {
+    const success = await executeBulk(Array.from(selectedModuleIds), bulkAction, bulkCascade);
+    if (success) {
+      setBulkModalOpen(false);
+      handleClearSelection();
+      refetch();
+    }
+  }, [executeBulk, selectedModuleIds, bulkAction, bulkCascade, handleClearSelection, refetch]);
   
   // E1/E2/E3: View settings with localStorage persistence
   const [density, setDensity] = useState<ViewDensity>(() => {
