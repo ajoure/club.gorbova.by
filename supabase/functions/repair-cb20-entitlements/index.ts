@@ -384,10 +384,11 @@ Deno.serve(async (req) => {
         trainingByProduct.set(tm.product_id, arr);
       });
 
-      const { data: allTrainingModules } = await supabase
+      // Fetch children of CB20 root for name matching (NOT root modules)
+      const { data: cb20ChildModules } = await supabase
         .from('training_modules')
-        .select('id, title, product_id, code')
-        .is('parent_module_id', null);
+        .select('id, title, product_id')
+        .eq('parent_module_id', CB20_ROOT_MODULE_ID);
 
       for (const mpId of moduleProductIdList) {
         const product = productMap.get(mpId);
@@ -405,33 +406,9 @@ Deno.serve(async (req) => {
               allowed_in_execute: true,
             });
           }
-        } else if (product?.code) {
-          const codeMatches = (allTrainingModules || []).filter(tm => tm.code === product.code);
-          if (codeMatches.length === 1) {
-            mappingConfidence.push({
-              module_product_id: mpId,
-              module_product_name: product.name,
-              matched_training_module_id: codeMatches[0].id,
-              matched_training_module_title: codeMatches[0].title,
-              mapping_confidence: 'exact_code',
-              mapping_reason: `Unique code match: training_modules.code = '${product.code}'`,
-              allowed_in_execute: true,
-            });
-          } else if (codeMatches.length > 1) {
-            mappingConfidence.push({
-              module_product_id: mpId,
-              module_product_name: product.name,
-              matched_training_module_id: null,
-              matched_training_module_title: null,
-              mapping_confidence: 'inferred',
-              mapping_reason: `Code '${product.code}' matched ${codeMatches.length} training modules — ambiguous`,
-              allowed_in_execute: false,
-            });
-          } else {
-            tryNameMatch(mpId, product, allTrainingModules || [], mappingConfidence);
-          }
         } else {
-          tryNameMatch(mpId, product || { name: 'unknown', code: null }, allTrainingModules || [], mappingConfidence);
+          // Normalized exact match against children of CB20 root
+          tryChildNameMatch(mpId, product || null, cb20ChildModules || [], mappingConfidence);
         }
       }
     }
