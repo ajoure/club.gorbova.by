@@ -332,6 +332,8 @@ export default function AdminProductsV2() {
   // Sort
   const { sortedData, sortKey, sortDirection, handleSort } = useTableSort({
     data: searchFiltered,
+    defaultSortKey: "name",
+    defaultSortDirection: "asc",
     getFieldValue: (item: any, key: string) => {
       switch (key) {
         case "name": return item.name;
