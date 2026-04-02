@@ -965,6 +965,13 @@ export default function AdminDeals() {
                           )}
                           {(() => {
                             const snapshot = deal.purchase_snapshot as Record<string, any> | null;
+                            const meta = deal.meta as Record<string, any> | null;
+                            if (meta?.split_status === 'children_created') {
+                              return <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">📦 Разделена на модули</Badge>;
+                            }
+                            if (meta?.split_from_order_id) {
+                              return <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300 mt-0.5">📄 Модуль (split)</Badge>;
+                            }
                             if (snapshot?.historical_purchase_type === 'module_only_standalone') {
                               return (
                                 <>
