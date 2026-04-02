@@ -46,9 +46,10 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       const containerIds = containers.map((c) => c.id);
 
       // 1b. Get child modules of containers (non-container children only)
+      // PATCH K4: Only fetch active child modules — inactive parent chain = invisible content
       const { data: childModules } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key, parent_module_id, product_id")
+        .select("id, slug, menu_section_key, parent_module_id, product_id, is_active")
         .in("parent_module_id", containerIds)
         .eq("is_active", true)
         .eq("is_container", false);
