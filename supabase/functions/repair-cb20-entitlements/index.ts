@@ -477,10 +477,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 8. Split cohorts: SAFE EXECUTE NOW vs HOLD
+    // 8. Split cohorts: SAFE EXECUTE NOW vs STANDALONE_SAFE vs HOLD
     // CRITICAL GUARDS:
     // - create is NEVER in safe cohort (blocked for this execute, follow-up only)
-    // - module_scope_only is NEVER in safe cohort
+    // - module_scope_only is NEVER in safe cohort (but CAN be in standalone_safe)
     // - only already-entitled repairs are safe
     const isSafe = (p: RepairPlan): boolean => {
       if (p.planned_action === 'noop') return false;
@@ -491,7 +491,7 @@ Deno.serve(async (req) => {
       if (p.hold_reason) return false;
       if (!p.business_access_end_at) return false;
       if (!p.email) return false;
-      // HARD GUARD: module_scope_only is ALWAYS HOLD
+      // HARD GUARD: module_scope_only goes to standalone_safe, not safe
       if (p.scope_bucket === 'module_scope_only') return false;
       // Only allow already-entitled repairs
       if (!p.current_entitlement_id) return false;
@@ -503,25 +503,61 @@ Deno.serve(async (req) => {
       return true;
     };
 
+    // Standalone safe cohort: module_scope_only with proven mapping
+    const isStandaloneSafe = (p: RepairPlan): boolean => {
+      if (p.scope_bucket !== 'module_scope_only') return false;
+      if (p.planned_action === 'staff_skip' || p.planned_action === 'noop') return false;
+      if (!p.business_access_end_at) return false;
+      if (!p.email) return false;
+      // Must not be staff
+      if (STAFF_EMAILS.includes(p.email.toLowerCase())) return false;
+      // All module mappings must be proven
+      const userMappings = mappingConfidence.filter(m =>
+        p.historical_module_product_ids.includes(m.module_product_id)
+      );
+      if (userMappings.length === 0) return false;
+
+      if (standaloneMode === 'strict_hold') {
+        // ALL modules must be mapped
+        const allMapped = p.historical_module_product_ids.every(mpId =>
+          userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id && m.allowed_in_execute)
+        );
+        if (!allMapped) return false;
+      } else {
+        // partial_safe: at least one module mapped
+        const anyMapped = userMappings.some(m => m.matched_training_module_id && m.allowed_in_execute);
+        if (!anyMapped) return false;
+      }
+
+      // Must have runtime preview with non-zero visibility
+      if (p.runtime_preview) {
+        if (p.runtime_preview.visible_module_count === 0 || p.runtime_preview.visible_recursive_lesson_count === 0) return false;
+      }
+      return true;
+    };
+
     const executeCandidatesSafe = plans.filter(p => isSafe(p));
+    const executeCandidatesStandalone = plans.filter(p => isStandaloneSafe(p));
     const holdCandidates = plans.filter(p => {
       if (p.planned_action === 'noop') return false;
-      return !isSafe(p);
+      return !isSafe(p) && !isStandaloneSafe(p);
     });
 
-    // ABORT guards for execute — validate safe cohort integrity
+    // ABORT guards for execute — validate cohort integrity
     if (!dryRun) {
-      const hasForbiddenScope = executeCandidatesSafe.some(p => p.scope_bucket === 'module_scope_only');
-      const hasForbiddenAction = executeCandidatesSafe.some(p => p.planned_action === 'create');
-      if (hasForbiddenScope || hasForbiddenAction) {
-        return new Response(
-          JSON.stringify({
-            error: "ABORT: safe cohort contains forbidden entries",
-            has_module_scope_only: hasForbiddenScope,
-            has_create_action: hasForbiddenAction,
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      if (executeCohort === 'safe_only') {
+        const hasForbiddenScope = executeCandidatesSafe.some(p => p.scope_bucket === 'module_scope_only');
+        const hasForbiddenAction = executeCandidatesSafe.some(p => p.planned_action === 'create');
+        if (hasForbiddenScope || hasForbiddenAction) {
+          return new Response(
+            JSON.stringify({
+              error: "ABORT: safe cohort contains forbidden entries",
+              has_module_scope_only: hasForbiddenScope,
+              has_create_action: hasForbiddenAction,
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
       }
     }
 
