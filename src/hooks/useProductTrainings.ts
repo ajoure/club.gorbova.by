@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import type { TrainingContentRule } from "@/hooks/useTrainingContentRules";
 
 export interface LinkedTraining {
   id: string;
@@ -670,4 +672,164 @@ export function useAvailableTrainingsForBind(currentProductId?: string) {
     },
     enabled: !!currentProductId,
   });
+}
+
+// ── PATCH A: Visible trainings (owned + rule-linked) ────────────────
+
+export interface VisibleTraining {
+  id: string;
+  title: string;
+  public_id: string | null;
+  is_active: boolean;
+  is_owned: boolean;
+  is_rule_linked: boolean;
+  owner_product_id: string | null;
+  owner_product_name: string | null;
+  rule_ids: string[];
+  rule_count: number;
+  /** Full owned tree — only present when is_owned */
+  owned_tree?: LinkedTraining;
+}
+
+/**
+ * Fetches root training modules referenced by training_content rules of this product,
+ * but NOT owned by this product (i.e. external trainings used via rules).
+ */
+export function useRuleLinkedTrainings(productId?: string, contentRules?: TrainingContentRule[]) {
+  return useQuery({
+    queryKey: ["rule-linked-trainings", productId, contentRules?.map(r => r.id).join(",")],
+    queryFn: async () => {
+      if (!productId || !contentRules?.length) return [];
+
+      // Only active rules
+      const activeRules = contentRules.filter(r => r.is_active);
+      if (activeRules.length === 0) return [];
+
+      // Unique target_refs from active training_content rules
+      const targetRefMap = new Map<string, string[]>();
+      for (const r of activeRules) {
+        if (!r.target_ref) continue;
+        const existing = targetRefMap.get(r.target_ref) || [];
+        existing.push(r.id);
+        targetRefMap.set(r.target_ref, existing);
+      }
+
+      const targetRefs = Array.from(targetRefMap.keys());
+      if (targetRefs.length === 0) return [];
+
+      // Fetch only root modules (parent_module_id IS NULL) that are NOT owned by this product
+      const { data: modules, error } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, product_id")
+        .in("id", targetRefs)
+        .is("parent_module_id", null)
+        .neq("product_id", productId);
+
+      if (error) throw error;
+      if (!modules?.length) return [];
+
+      // Also include modules with null product_id (orphans referenced by rules)
+      const { data: orphanModules } = await supabase
+        .from("training_modules")
+        .select("id, title, public_id, is_active, product_id")
+        .in("id", targetRefs)
+        .is("parent_module_id", null)
+        .is("product_id", null);
+
+      const allModules = [...(modules || []), ...(orphanModules || [])];
+      // Deduplicate by id
+      const uniqueModules = Array.from(new Map(allModules.map(m => [m.id, m])).values());
+
+      // Get owner product names
+      const ownerProductIds = [...new Set(uniqueModules.map(m => m.product_id).filter(Boolean))] as string[];
+      let ownerNames: Record<string, string> = {};
+      if (ownerProductIds.length > 0) {
+        const { data: products } = await supabase
+          .from("products_v2")
+          .select("id, name")
+          .in("id", ownerProductIds);
+        products?.forEach(p => { ownerNames[p.id] = p.name; });
+      }
+
+      return uniqueModules.map(m => ({
+        id: m.id,
+        title: m.title,
+        public_id: m.public_id,
+        is_active: m.is_active,
+        owner_product_id: m.product_id,
+        owner_product_name: m.product_id ? (ownerNames[m.product_id] || null) : null,
+        rule_ids: targetRefMap.get(m.id) || [],
+        rule_count: (targetRefMap.get(m.id) || []).length,
+      }));
+    },
+    enabled: !!productId && !!contentRules?.length,
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Merges owned trainings and rule-linked trainings into a single VisibleTraining[] collection.
+ * Deduplicates by training_id. Returns map and count.
+ */
+export function useVisibleTrainings(
+  ownedTrainings: LinkedTraining[],
+  ruleLinkedData: ReturnType<typeof useRuleLinkedTrainings>["data"],
+  productId?: string,
+) {
+  return useMemo(() => {
+    const map = new Map<string, VisibleTraining>();
+
+    // Add owned trainings
+    for (const t of ownedTrainings) {
+      map.set(t.id, {
+        id: t.id,
+        title: t.title,
+        public_id: t.public_id,
+        is_active: t.is_active,
+        is_owned: true,
+        is_rule_linked: false,
+        owner_product_id: productId || null,
+        owner_product_name: null, // self-owned, no need
+        rule_ids: [],
+        rule_count: 0,
+        owned_tree: t,
+      });
+    }
+
+    // Merge rule-linked trainings
+    for (const rl of (ruleLinkedData || [])) {
+      const existing = map.get(rl.id);
+      if (existing) {
+        // Training is both owned and rule-linked
+        existing.is_rule_linked = true;
+        existing.rule_ids = rl.rule_ids;
+        existing.rule_count = rl.rule_count;
+      } else {
+        map.set(rl.id, {
+          id: rl.id,
+          title: rl.title,
+          public_id: rl.public_id,
+          is_active: rl.is_active,
+          is_owned: false,
+          is_rule_linked: true,
+          owner_product_id: rl.owner_product_id,
+          owner_product_name: rl.owner_product_name,
+          rule_ids: rl.rule_ids,
+          rule_count: rl.rule_count,
+        });
+      }
+    }
+
+    const visibleTrainings = Array.from(map.values());
+    const visibleTrainingsMap: Record<string, VisibleTraining> = {};
+    for (const vt of visibleTrainings) {
+      visibleTrainingsMap[vt.id] = vt;
+    }
+
+    return {
+      visibleTrainings,
+      visibleTrainingsMap,
+      visibleTrainingCount: visibleTrainings.length,
+    };
+  }, [ownedTrainings, ruleLinkedData, productId]);
 }

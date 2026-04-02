@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview } from "@/hooks/useProductTrainings";
+import { useProductTrainings, useAvailableTrainingsForBind, useRuleLinkedTrainings, useVisibleTrainings, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview, type VisibleTraining } from "@/hooks/useProductTrainings";
 import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 interface Props {
   productId: string;
   onUseViaRule?: (trainingId: string, trainingTitle: string) => void;
+  onFocusRule?: (ruleId: string) => void;
 }
 
 /** Recursively count all lessons in a training subtree */
@@ -563,10 +564,75 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
   );
 }
 
+// --- Rule-linked Training Card ---
+function RuleLinkedTrainingCard({ vt, onFocusRule }: { vt: VisibleTraining; onFocusRule?: (ruleId: string) => void }) {
+  return (
+    <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:border-indigo-800/30 dark:bg-indigo-950/10">
+      <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-medium">{vt.title}</span>
+          {vt.public_id && (
+            <Badge variant="outline" className="text-[10px] font-mono">{vt.public_id}</Badge>
+          )}
+          {!vt.is_active && (
+            <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {vt.is_owned && (
+            <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
+          )}
+          <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
+            Через правило
+          </Badge>
+        </div>
+        {!vt.is_owned && vt.owner_product_name && (
+          <p className="text-[11px] text-muted-foreground">
+            Владелец: {vt.owner_product_name}
+          </p>
+        )}
+        {!vt.is_owned && (
+          <p className="text-[11px] text-muted-foreground italic">
+            Тренинг используется этим продуктом через access rule
+          </p>
+        )}
+        {vt.rule_count > 1 && (
+          <p className="text-[11px] text-muted-foreground">
+            {vt.rule_count} {vt.rule_count >= 2 && vt.rule_count <= 4 ? "правила" : "правил"} доступа
+          </p>
+        )}
+      </div>
+      <div className="shrink-0 self-start">
+        {onFocusRule && vt.rule_ids.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px] gap-1 text-muted-foreground"
+            onClick={() => onFocusRule(vt.rule_ids[0])}
+            title="Перейти к правилам"
+          >
+            <Shield className="h-3 w-3" />
+            К правилам
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Main Block ---
-export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) {
+export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule }: Props) {
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
+  const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
+  const { visibleTrainings, visibleTrainingsMap, visibleTrainingCount } = useVisibleTrainings(trainings, ruleLinkedData, productId);
+
+  // Only rule-linked (not owned) trainings for separate rendering
+  const onlyRuleLinkedTrainings = visibleTrainings.filter(vt => !vt.is_owned && vt.is_rule_linked);
+  // Mixed (owned + rule-linked) for badge overlay
+  const mixedTrainingIds = new Set(visibleTrainings.filter(vt => vt.is_owned && vt.is_rule_linked).map(vt => vt.id));
+
   const [bindOpen, setBind] = useState(false);
   const [viewMode, setViewMode] = useState<"tree" | "matrix-summary" | "matrix-expanded">("tree");
 
@@ -641,7 +707,9 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) 
     }
   };
 
-  if (isLoading) {
+  const bothLoading = isLoading && isRuleLinkedLoading;
+
+  if (isLoading && !ruleLinkedData) {
     return (
       <Card>
         <CardContent className="py-8 text-center text-muted-foreground text-sm">
@@ -659,7 +727,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) 
             <div className="flex items-center gap-2">
               <BookOpen className="h-4 w-4 text-primary" />
               <CardTitle className="text-sm">Тренинги этого продукта</CardTitle>
-              <Badge variant="outline" className="text-[10px]">{trainings.length}</Badge>
+              <Badge variant="outline" className="text-[10px]">{visibleTrainingCount}</Badge>
             </div>
             <div className="flex items-center gap-1.5">
               {/* View mode toggle */}
@@ -689,7 +757,8 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) 
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {trainings.length === 0 ? (
+          {/* Empty state: only if both owned and rule-linked are empty */}
+          {visibleTrainingCount === 0 && !isRuleLinkedLoading ? (
             <div className="text-center py-8 space-y-3">
               <BookOpen className="h-8 w-8 mx-auto text-muted-foreground/40" />
               <p className="text-sm text-muted-foreground">К продукту не привязано ни одного тренинга</p>
@@ -698,45 +767,78 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) 
                 Привязать тренинг
               </Button>
             </div>
-          ) : viewMode === "tree" ? (
-            <div className="space-y-0.5">
-              {trainings.map(t => (
-                <TrainingTreeItem
-                  key={t.id}
-                  training={t}
-                  diagnostics={diagnostics[t.id]}
-                  onUnbind={handleUnbindRequest}
-                />
-              ))}
-            </div>
           ) : (
-            <>
-              {viewMode.startsWith("matrix") && (
-                <div className="flex items-center gap-1.5 mb-2">
-                  <button
-                    onClick={() => setViewMode("matrix-summary")}
-                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    Сводка
-                  </button>
-                  <button
-                    onClick={() => setViewMode("matrix-expanded")}
-                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-expanded" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    Развёрнутый
-                  </button>
-                </div>
+            <div className="space-y-3">
+              {/* Owned trainings */}
+              {trainings.length > 0 && (
+                viewMode === "tree" ? (
+                  <div className="space-y-0.5">
+                    {trainings.map(t => (
+                      <div key={t.id}>
+                        <TrainingTreeItem
+                          training={t}
+                          diagnostics={diagnostics[t.id]}
+                          onUnbind={handleUnbindRequest}
+                        />
+                        {mixedTrainingIds.has(t.id) && (
+                          <div className="ml-7 mt-0.5 flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
+                            <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
+                              Через правило
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    {viewMode.startsWith("matrix") && (
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <button
+                          onClick={() => setViewMode("matrix-summary")}
+                          className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          Сводка
+                        </button>
+                        <button
+                          onClick={() => setViewMode("matrix-expanded")}
+                          className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-expanded" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          Развёрнутый
+                        </button>
+                      </div>
+                    )}
+                    <TrainingMatrixView
+                      trainings={trainings}
+                      diagnostics={diagnostics}
+                      viewMode={viewMode === "matrix-expanded" ? "expanded" : "summary"}
+                    />
+                  </>
+                )
               )}
-              <TrainingMatrixView
-                trainings={trainings}
-                diagnostics={diagnostics}
-                viewMode={viewMode === "matrix-expanded" ? "expanded" : "summary"}
-              />
-            </>
+
+              {/* Rule-linked trainings (not owned by this product) */}
+              {onlyRuleLinkedTrainings.length > 0 && (
+                <>
+                  {trainings.length > 0 && <Separator className="my-2" />}
+                  {trainings.length === 0 && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Тренинги подключены через правила доступа
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {onlyRuleLinkedTrainings.map(vt => (
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* Training content rules summary */}
-          {trainings.length > 0 && (
+          {visibleTrainingCount > 0 && (
             <>
               <Separator className="my-4" />
               <div className="space-y-2">
@@ -753,7 +855,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule }: Props) 
                 ) : (
                   <div className="space-y-1">
                     {contentRules.map(rule => {
-                      const training = trainings.find(t => t.id === rule.target_ref);
+                      const training = visibleTrainingsMap[rule.target_ref];
                       const cond = rule.conditions;
                       const mCount = cond.allowed_module_ids?.length || 0;
                       const lCount = cond.allowed_lesson_ids?.length || 0;
