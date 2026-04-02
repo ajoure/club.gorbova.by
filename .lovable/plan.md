@@ -1,314 +1,259 @@
-да, согласен, с учетом правок:
 
-&nbsp;
+# Business → ЦБ 2.0 Bonus Access Normalization
+## Утверждённое бизнес-решение: Variant B
 
-1. Для BUSINESS → ЦБ не хардкодить в blueprint конкретные UUID/названия как источник истины.  
-В blueprint оставить только структуру кейса, а реальные:  
-
-  - rule id
-  - product_id
-  - tariff_id
-  - product_name
-  - target_product_ids
-  - duration_days
-2.   
-тянуть live из БД при генерации документа.  
-Иначе документ станет зависимым от текущего окружения и сломается при замене rule / продукта / тарифа.
-3. Для блока «Изменения за 24 часа» добавить не только auditActionPrefixes, но и:  
-
-  - excludeAuditPrefixes
-  - maxItems
-  - aggregateRepeated = true
-4.   
-Иначе по одному prefix всё равно можно получить шум.  
-Для trainings_access явно исключить:  
-
-  - cron.job.triggered
-  - bepaid.erip.reconcile_batch
-  - общие sync/job-события, не относящиеся к доступам/тренингам.
-5. &nbsp;
-6. В trainings_access помимо narrative обязательно добавить отдельный factual snapshot по правилам:  
-
-  - active training_content
-  - active product_access
-  - active club
-  - active email
-7.   
-Не общим count, а раздельно по grant_target_type.  
-Это важно, потому что сейчас именно смешение типов правил скрывает реальную картину.
-8. В секции active rules добавить ещё:  
-
-  - grant_target_type
-  - product_id short
-  - tariff_id short
-  - is_active
-  - created_at
-9.   
-А для conditions не только narrative, но и raw доказуемые поля:  
-
-  - condition_type
-  - rule_purpose
-  - match_mode
-  - target_product_ids
-  - required_product_ids
-10.   
-То есть документ должен показывать и интерпретацию, и фактический source row.
-11. Для кейса BUSINESS → ЦБ нужен не только текстовый flow, но и live proof-блок:  
-
-  - сколько active/past_due BUSINESS subscriptions
-  - сколько profile_id из них имеют historical paid order по ЦБ
-  - сколько уже имеют active entitlement по ЦБ
-  - сколько ещё не имеют entitlement и требуют retroactive batch
-12.   
-Это должен быть отдельный subsection вида:  
-
-  - subscriptions_total
-  - historical_purchase_matches
-  - already_granted
-  - needs_batch_grant
-13. &nbsp;
-14. Для раздела Исторические сделки добавить жёсткое разграничение:  
-
-  - что считается historical purchase proof
-  - что считается grant source
-  - что считается target entitlement
-15.   
-И отдельно указать:  
-
-  - historical order сам по себе не равен действующему доступу
-  - доступ появляется только через rule/grant pipeline
-  - pending proof: как именно считается срок при duration_days = NULL
-16. &nbsp;
-17. В trainings_access добавить отдельный блок «Проблемные тренинги / расхождения UI vs DB» с dry-run списком:  
-
-  - root_module_id
-  - title
-  - direct_lessons_count
-  - descendant_lessons_count
-  - active_descendant_lessons_count
-  - has_training_content_rule
-  - suspected_ui_bug
-18.   
-Это нужно, чтобы баг 0 уроков был не абстрактным текстом, а конкретным реестром.
-19. Для live snapshot по тренингам считать не только общее количество уроков, но раздельно:  
-
-  - lessons_total
-  - lessons_active
-  - lessons_inactive
-  - root_modules_total
-  - child_modules_total
-  - root_modules_with_zero_direct_lessons
-  - root_modules_with_descendant_lessons
-20.   
-И отдельно выводить top-N таких root-модулей.
-21. В open_tails нужно добавить не только known issues, но и доказуемые pending-proof items с источником:  
-
-  - proof_type
-  - domain
-  - status
-  - evidence_source
-  - next_required_action
-22.   
-Иначе раздел остаётся слишком текстовым и неуправляемым.
-23. Для platform_master в секции «Как использовать как входной артефакт» добавить ещё:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- что копировать по умолчанию: platform_master AUTO-CURRENT
-- когда дополнительно прикладывать доменный документ
-- когда обязательно прикладывать open_tails
-- что manual POINT A/B/C — это история, а не текущий SoT
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. В EF добавить отдельную секцию «Границы доказанности» не только для trainings_access, но и для любого домена, где есть:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- FK-confirmed facts
-- live-query facts
-- inferred narrative
-- pending proof
-
-&nbsp;
-
-&nbsp;
-
-Формат единый:
-
-&nbsp;
-
-- Подтверждено
-- Выведено из текущих данных
-- Требует proof
-- Известные расхождения
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Для seed/repair добавить guard:  
-если manual doc уже содержит реальный контент и не scaffold, но короче AUTO-CURRENT, не считать его автоматически устаревшим и не repair’ить.  
-Repair только для явных placeholder/scaffold, как ты уже указал.
-13. В proof после деплоя добавить ещё два обязательных SQL proof:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- список active product_access rules с полями condition_type, rule_purpose, match_mode
-- dry-run список BUSINESS пользователей, которым должен быть выдан/продлён ЦБ по historical purchase, но у кого ещё нет active entitlement
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-14. Отдельный guard по narrative:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- не писать, что site_domain_bindings связаны с продуктом напрямую
-- не писать, что duration_days = NULL уже корректно работает
-- не писать, что BUSINESS → ЦБ уже полностью работает глобально, пока нет batch/proof
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-15. Фронтенд действительно можно не трогать в этом патче, кроме одного исключения:  
-если после генерации длинного trainings_access / platform_master UI начнёт подвисать или ломать copy/download, тогда нужен отдельный follow-up patch только на viewer-performance. В текущий scope это не включать, но зафиксировать как возможный follow-up.
-
-&nbsp;
-
-&nbsp;
-
-Итог: сам каркас плана правильный. Главное — убрать любые env-specific hardcodes из blueprint, добавить factual live-proof блоки по BUSINESS → ЦБ и historical deals, и сделать доменную фильтрацию изменений действительно строгой, а не только по одному include-prefix.
-
-&nbsp;
-
-# План: Улучшение генератора документации — доменная фильтрация, бизнес-логика, proof-границы
+### Каноническое правило (обязательно для всех фаз)
+- **historical full tariff purchase** → `full_tariff_scope`
+- **historical standalone module purchase** → `module_scope_only` (только если mapping в training subtree доказан)
+- **historical full tariff + standalone modules** → `union_scope`
+- **no historical purchase** → `no_scope` (доступ к ЦБ через Business НЕ выдаётся)
+- `module_only_standalone` НИКОГДА не является основанием для `full_cb20_access`
+- Спорные кейсы → только `manual_review`, без массовой выдачи
 
 ---
 
-## Диагностика текущего состояния
+## PHASE A: Discovery & Proof
 
-### Проблема 1: «Изменения за 24 часа» тащит весь audit_logs без фильтрации
+### A.1 Канонический join-path (proof)
+```
+subscriptions_v2.user_id → profiles.user_id → profiles.id → orders_v2.profile_id
+entitlements.user_id → subscriptions_v2.user_id
+```
+- Доказать отсутствие ложных совпадений при OR (profile_id OR user_id)
+- Зафиксировать: join по `user_id` приоритетен, join по `profile_id` — вспомогательный
 
-Строки 258-270 EF: `changesSummary` собирает 100 последних audit_logs без доменной фильтрации. Этот же `changesSummary` передаётся в каждый `buildDomainDocument()`. Результат: в trainings_access появляются bepaid.erip.reconcile_batch, cron.job.triggered и прочий шум.
+### A.2 Business effective end — Source of Truth
+- Канонический источник: `subscriptions_v2.access_end_at` для BUSINESS подписки
+- Единственный источник для align во всех фазах
 
-### Проблема 2: liveTrainingsAccess (строки 1009-1051) — только counts + список модулей
+### A.3 Historical purchase validity matrix
+| historical_purchase_type | valid_for_full_cb20 | valid_for_module_scope | requires_manual_review | why |
+|---|---|---|---|---|
+| base_tariff_purchase | true | true | false | Полный тариф = полный scope |
+| module_only_standalone | false | true* | if mapping unconfirmed | *Только при доказанном mapping |
+| module_child_purchase | false | true* | if mapping unconfirmed | Аналогично standalone |
+| no_purchase | false | false | false | Нет покупки = нет доступа |
 
-Нет: root vs child breakdown, active lesson stats, active rules listing, проблемных тренингов с 0 уроков.
+### A.4 module_list_mapped → training subtree mapping (proof)
+| module_product_id | module_product_name | matched_training_module_id | match_type | confidence |
+|---|---|---|---|---|
+Все `inferred_name` и `no_match` → `manual_review`, не участвуют в execute.
 
-### Проблема 3: Blueprint trainings_access (строки 152-194) — слишком общий
+### A.5 Target products reality check (9 products из rule 1b497fba)
+| product_id | product_name | paid_orders_count | active_entitlements | linked_training_modules | has_training_content_rules | usable_now | why |
 
-Нет flows для: BUSINESS → ЦБ, historical deals, prior_purchase конкретных кейсов.
+### A.6 Runtime read-path приоритет (proof)
+1. entitlement/product path (каноническиий)
+2. training_content rules path
+3. module_access legacy path
+Доказать текущий порядок в коде. Зафиксировать, что legacy не должен расширять доступ для cb20.
 
-### Проблема 4: open_tails (строки 1201-1267) — Source 2 не фильтрует по домену
+### A.7 Business users classification
+| class | count_users | with_active_ent_cb20 | without_ent | expires_mismatch |
+|---|---|---|---|---|
+| base_only | | | | |
+| base+standalone | | | | |
+| standalone_only | | | | |
+| no_cb_purchase | | | | |
+| other | | | | |
 
-`pendingAudits` берёт 50 последних pending/failed/deferred из audit_logs без доменного фильтра.
+### A.8 Подтверждённые факты discovery
+- Основной продукт ЦБ 2.0: `7101ed3c`
+- Root training module: `c9f7e9b8`
+- 8 target products без training_modules и training_content rules
+- Runtime при bonus entitlement без tariff context → full access = **доказанный дефект**
+- `module_only_standalone` хранится в `purchase_snapshot.module_list_mapped`
 
-### Реальные данные (discovery)
-
-- access_rules: нет колонки `rule_type` — есть `grant_target_type`, `conditions->>'condition_type'`, `conditions->>'rule_purpose'`
-- Active rules: 7 штук (1 club, 3 product_access, 3 training_content)
-- BUSINESS tariff: `7c748940` для Gorbova Club → prior_purchase rule `1b497fba` с 9 target_product_ids
-- Root modules: 16, child: 64, lessons: 390, active lessons: 186
-- «Ценный бухгалтер | 1 ступень 2.0» (root `c9f7e9b8`): 0 direct lessons, но 28+ allowed_module_ids в training_content rules → уроки в child-модулях
-- duration_days = NULL для **всех** active rules
+### A.9 Нормативное решение по scope бонуса
+**Утверждён Variant B:**
+- Business + standalone history → открыть только mapped modules
+- Business + full tariff history → открыть по матрице тарифа
+- Business + no cb purchase → не открывать
+- PHASE D execute запрещён без этого решения ✅ Решение принято
 
 ---
 
-## Файлы и патчи
+## PHASE B: Historical Normalization
 
-### 1. `supabase/functions/_shared/system_docs_blueprint.ts`
+### Proof-матрица по каждому historical типу
+| purchase_type | valid_for_full_cb20 | valid_for_module_scope | why |
+|---|---|---|---|
+- `module_only_standalone` НЕ считается valid prior_purchase for full cb20
+- `module_child_purchase` НЕ считается valid prior_purchase for full cb20
 
-**1a. Доменные фильтры audit_logs** — добавить в DomainBlueprint:
+---
 
-```ts
-auditActionPrefixes: string[]; // для фильтрации "Изменений за 24 часа"
+## PHASE C: Duration & Metadata Fix
+
+### C.1 align_with_source mechanism
+- `bonus_expires_at = business_effective_end_at` (из `subscriptions_v2.access_end_at`)
+- Повторный rerun → align, не extend
+- `current expires_at > business_effective_end_at` → `manual_review` (не резать молча)
+- `current expires_at < business_effective_end_at` → `align_to_business`
+- Применяется при create И при repair existing entitlement
+
+### C.2 Обязательные поля entitlement.meta
+```json
+{
+  "business_subscription_id": "uuid",
+  "business_tariff_id": "uuid",
+  "source_access_end_at": "iso_date",
+  "historical_purchase_type": "base_tariff|module_standalone|module_child",
+  "historical_tariff_id": "uuid|null",
+  "historical_module_product_ids": ["uuid"],
+  "scope_resolution_mode": "full_tariff|module_only|union|no_scope"
+}
 ```
 
-Заполнение:
+### C.3 Source alignment context
+Хранение: в `entitlement.meta` (поля выше). Дополнительно в `access_grant_ledger.result`.
 
-- platform_master: `['system_docs.', 'cron.']`
-- products_sales: `['admin.grant_access', 'corrective_batch', 'bulk_grant', 'entitlement']`
-- trainings_access: `['entitlement', 'subscription.', 'admin.subscription.', 'bulk_grant', 'corrective_batch', 'access.', 'bepaid.sync.access_chain', 'bepaid.sync.entitlement']`
-- orders_payments: `['bepaid.', 'admin.create_deal', 'admin.link_payment', 'admin.payment_link']`
-- sites_pages_forms: `['site.', 'form.']`
-- integrations: `['telegram.', 'bepaid.', 'broadcast.', 'amocrm.']`
-- open_tails: `[]` (показывать все pending/failed/deferred)
+### C.4 Правило для existing entitlements
+Если cb20 entitlement существует, но в meta нет `historical_purchase_type` / `scope_resolution_mode` / `business_subscription_id`:
+- НЕ считается нормализованным → bucket `repair_metadata_only` или `repair_metadata_and_align`
+- НЕ попадает в `noop`
 
-**1b. trainings_access blueprint расширить** — добавить flows:
+### C.5 Правило для недоказуемых entitlements
+Entitlement без `scope_resolution_mode` и без `historical_*` metadata → `manual_review/backfill_repair`
 
-- Flow «BUSINESS → Ценный бухгалтер (prior_purchase)»:
-  1. Клиент покупает/продлевает подписку Gorbova Club BUSINESS (tariff 7c748940)
-  2. grant-access-for-order проверяет access_rules для product 11c9f1b8 + tariff BUSINESS
-  3. Rule 1b497fba: grant_target_type=product_access, condition_type=prior_purchase, match_mode=per_product
-  4. Для каждого target_product_id проверяется: есть ли paid order в orders_v2 для этого profile_id+product_id
-  5. Если да → entitlement создаётся/продлевается; если нет → skipped_by_condition
-  6. duration_days=NULL → **ПРОБЛЕМА: требует ручного определения срока** (не подтверждено)
-- Flow «Historical deals → entitlement sync»:
-  1. Исторические paid orders определяются по orders_v2 (status=paid, product_id)
-  2. Факт покупки = наличие paid order для данного product_id + profile_id
-  3. Связь historical order → entitlement: через product_id FK
-  4. **ПРОБЛЕМА**: duration_days=NULL → как определяется expires_at? Pending proof.
+---
 
-**1c. knownIssues trainings_access расширить**:
+## PHASE D: Batch Repair
 
-- `'duration_days=NULL для всех active rules — неизвестно как определяется срок доступа'`
-- `'Root-модуль "Ценный бухгалтер | 1 ступень 2.0" показывает 0 direct lessons — уроки в child-модулях, но UI может показывать 0'`
-- `'prior_purchase batch для BUSINESS → ЦБ — pending retroactive application'`
-- `'proof по historical deals mapping — pending'`
+### D.1 Action buckets (6 состояний)
+1. `create` — новый entitlement
+2. `align_to_business` — выровнять expires_at
+3. `repair_metadata_only` — дополнить meta без изменения срока
+4. `repair_metadata_and_align` — дополнить meta + выровнять срок
+5. `noop` — полностью нормализован
+6. `manual_review` — требует ручного решения
 
-**1d. platform_master** — добавить в flows:
+### D.2 Scope buckets (5 состояний)
+1. `full_tariff_scope`
+2. `module_scope_only`
+3. `union_scope`
+4. `no_scope`
+5. `manual_review`
 
-- Flow «Как использовать этот документ как входной артефакт»
+### D.3 Dry-run output (обязательные поля)
+| profile_id | user_id | business_sub_id | business_access_end_at | historical_class | historical_basis | current_ent_expires_at | planned_action | scope_bucket | reason |
 
-**1e. open_tails knownIssues** расширить полным списком из требований.
+### D.4 STOP-guards
+- Staff/internal users (`@ajoure.by`) → не трогать автоматически
+- Спорные imported/manual/ghost history → только `manual_review`
+- Без уверенного `profile_id + product_id` match → только `manual_review`
+- `standalone_only` с неподтверждённым mapping → только `manual_review` (не create)
 
-### 2. `supabase/functions/system-docs-nightly-refresh/index.ts`
+### D.5 Denylist / protected list
+Явный список исключений из автоматического execute.
 
-**2a. Доменная фильтрация audit changes** (строки 258-270):
-Вместо сбора единого `changesSummary` и передачи всем доменам — передавать `filteredAudit` целиком, а в `buildDomainDocument()` фильтровать по `bp.auditActionPrefixes`. Агрегировать одинаковые события: `bepaid.erip.reconcile_batch × 24`. Лимит: 20 строк на домен.
+### D.6 Post-check proof (обязателен после execute)
+- Всего Business users
+- С нормализованным cb20 entitlement
+- В manual_review
+- expires_mismatch осталось
+- Без обязательной meta
+- standalone_only с module_scope_only (не full scope) ✅
 
-**2b. liveTrainingsAccess переписать** (строки 1009-1051):
-Добавить:
+### D.7 Правило execute
+Execute разрешён ТОЛЬКО после:
+1. Корректный dry-run по action и scope buckets
+2. standalone_only не получают full access
+3. Спорные кейсы не в массовой выдаче
+4. Runtime после фикса открывает только разрешённый scope
 
-- root vs child module breakdown
-- active modules / active lessons counts
-- modules_with_product count
-- active product_access rules count
-- active training_content rules count
-- **Таблица active access_rules** с колонками: id (short), grant_target_type, product_name, tariff_id (short), condition_type, rule_purpose, match_mode, duration_days, target_label
-- **Проблемные тренинги**: root-модули где direct_lesson_count=0 но is_active=true (есть child-модули с уроками)
-- **Секция «Фактические баги»**: 0 уроков в UI vs реальные уроки в child-модулях
+---
 
-**2c. buildDomainDocument** — добавить для trainings_access:
+## PHASE E: "0 уроков" Fix
 
-- Секция «3.1. Матрица доступа через продукты» — из live access_rules
-- Секция «3.2. BUSINESS → Ценный бухгалтер» — конкретный кейс из blueprint flow + live данные (
+### E.1 Разделение двух проблем
+- **count bug**: UI считает direct lessons вместо recursive
+- **scope bug**: runtime доступ режет children из-за отсутствия tariff/historical scope
+- Доказать отдельно: что ломает count, что ломает access, что первично, какой фикс первым
+
+### E.2 Proof-блок по root-модулю ЦБ
+| root_module_id | direct_lesson_count | recursive_lesson_count | visible_recursive | visible_child_modules | hidden_due_to_scope | hidden_due_to_is_active |
+
+### E.3 Proof "почему раньше показывало 0 уроков"
+| metric | value | reason |
+Отдельно: count bug, scope bug, или оба.
+
+### E.4 Runtime proof после фикса (4 класса пользователей)
+| user_class | db_state | resolver_result | ui_visible |
+|---|---|---|---|
+| base_only | | | |
+| base+standalone | | | |
+| standalone_only | | | |
+| no_cb_purchase | | | |
+
+### E.5 Proof: lesson count = effective scope
+| effective_scope_module_ids | visible_module_ids | visible_lesson_count_recursive | hidden_module_ids_due_to_scope |
+
+### E.6 STOP-guard: пустой scope
+- effective scope пустой → root НЕ показывается как "0 уроков", а как "нет доступа"
+- Различать: 0 уроков (scope пустой) vs 0 уроков (дерево реально пустое)
+
+### E.7 STOP-guard: root без children
+- Root-модуль НЕ становится "видимым", если ни к одному child нет доступа
+
+---
+
+## PHASE F: Self-Rules & Legacy Audit
+
+### F.1 Impact matrix по access_rules
+| rule_id | target_product | trigger | creates | duplicates_paid | can_create_perpetual | recommended_action |
+
+### F.2 Legacy module_access: итоговое решение
+Для product-linked модулей cb20:
+- **Либо** исключить module_access из baseAccess path
+- **Либо** оставить как secondary fallback только для модулей без product_id
+- Оставлять в текущем OR-виде **запрещено**
+
+### F.3 Legacy contour audit
+| path | active_read_path | deprecated_read_path | conflict |
+|---|---|---|---|
+
+---
+
+## PHASE G: Документация
+
+### G.1 Обновление после каждой фазы
+- После A: карта SoT и proof boundaries
+- После C: новая модель срока и runtime scope
+- После D: batch dry-run/execute proof
+- После E: runtime/UI proof по урокам
+
+### G.2 Обязательные матрицы в документации
+1. Historical purchase validity matrix
+2. Target products reality check
+3. Business → historical type → effective scope matrix
+
+### G.3 Разделение по доказанности
+- Подтверждено SQL/FK
+- Подтверждено runtime
+- Inference
+- Pending proof
+
+---
+
+## Definition of Done (19 пунктов)
+
+1. Бонусный доступ к ЦБ выдаётся только при наличии исторической покупки
+2. Срок бонуса = сроку BUSINESS подписки
+3. Scope определяется строго по Variant B
+4. Все 4 класса пользователей проверены runtime proof
+5. Count bug и scope bug исправлены раздельно с доказательством
+6. Документация содержит proof-матрицы, а не только narrative
+7. Legacy module_access не расширяет доступ для cb20 path
+8. 8 target products rule 1b497fba объяснены архитектурно
+9. module_only_standalone не смешивается с full cb20 purchase
+10. Runtime не даёт full cb20 access из-за entitlement без tariff context
+11. Документ trainings_access содержит матрицу BUSINESS → cb20 → historical type → scope
+12. module_list_mapped доказанно маппится в training subtree ИЛИ спорные исключены
+13. Каждый repaired entitlement трассируется до business_subscription_id и historical_purchase_type
+14. standalone_only не получают full cb20 access ни при каком fallback
+15. Канонический join-path доказан и не создаёт ложных совпадений
+16. Source of truth для business_effective_end_at один и используется везде
+17. Existing cb20 entitlements нормализованы по meta-трассировке
+18. После execute не осталось cb20 bonus entitlements без scope_resolution_mode
+19. Документация содержит секцию «Подтверждено / Inference / Pending proof»
