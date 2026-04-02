@@ -373,46 +373,64 @@ export default function AdminTrainingModules() {
   // Lesson viewers modal state (opened from tree hover action)
   const [viewerModal, setViewerModal] = useState<{ lessonId: string; title: string } | null>(null);
 
-  // PATCH K: Bulk selection state
+  // PATCH K: Bulk selection state (dual: modules + lessons)
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set());
+  const [selectedLessonIds, setSelectedLessonIds] = useState<Set<string>>(new Set());
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [bulkAction, setBulkAction] = useState<BulkAction>("activate");
-  const [bulkCascade, setBulkCascade] = useState(true);
+  const [bulkSelectionMode, setBulkSelectionMode] = useState<SelectionMode>("cascade");
   const { execute: executeBulk, loading: bulkExecuting } = useBulkModuleActivation();
+  // Keep a ref to tree indexes for select-all
+  const [lastTreeIndexes, setLastTreeIndexes] = useState<TreeIndexes | null>(null);
 
-  const handleToggleSelection = useCallback((id: string) => {
-    setSelectedModuleIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const handleToggleModuleSelection = useCallback((moduleId: string, indexes: TreeIndexes) => {
+    setLastTreeIndexes(indexes);
+    const { nextModuleIds, nextLessonIds } = toggleModuleSubtree(
+      moduleId, indexes, selectedModuleIds, selectedLessonIds,
+    );
+    setSelectedModuleIds(nextModuleIds);
+    setSelectedLessonIds(nextLessonIds);
+  }, [selectedModuleIds, selectedLessonIds]);
+
+  const handleToggleLessonSelection = useCallback((lessonId: string) => {
+    setSelectedLessonIds((prev) => toggleLesson(lessonId, prev));
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    setSelectedModuleIds(new Set(modules.map((m) => m.id)));
-  }, [modules]);
+    if (lastTreeIndexes) {
+      setSelectedModuleIds(new Set(lastTreeIndexes.allModuleIds));
+      setSelectedLessonIds(new Set(lastTreeIndexes.allLessonIds));
+    } else {
+      setSelectedModuleIds(new Set(modules.map((m) => m.id)));
+    }
+  }, [modules, lastTreeIndexes]);
 
   const handleClearSelection = useCallback(() => {
     setSelectedModuleIds(new Set());
+    setSelectedLessonIds(new Set());
     setSelectionMode(false);
   }, []);
 
-  const openBulkModal = useCallback((action: BulkAction, cascade: boolean) => {
+  const openBulkModal = useCallback((action: BulkAction, mode: SelectionMode) => {
     setBulkAction(action);
-    setBulkCascade(cascade);
+    setBulkSelectionMode(mode);
     setBulkModalOpen(true);
   }, []);
 
   const handleBulkConfirm = useCallback(async () => {
-    const success = await executeBulk(Array.from(selectedModuleIds), bulkAction, bulkCascade);
+    const success = await executeBulk(
+      Array.from(selectedModuleIds),
+      Array.from(selectedLessonIds),
+      bulkAction,
+      bulkSelectionMode,
+    );
     if (success) {
       setBulkModalOpen(false);
       handleClearSelection();
       refetch();
     }
-  }, [executeBulk, selectedModuleIds, bulkAction, bulkCascade, handleClearSelection, refetch]);
+  }, [executeBulk, selectedModuleIds, selectedLessonIds, bulkAction, bulkSelectionMode, handleClearSelection, refetch]);
   
   // E1/E2/E3: View settings with localStorage persistence
   const [density, setDensity] = useState<ViewDensity>(() => {
