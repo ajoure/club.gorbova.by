@@ -683,7 +683,7 @@ export default function AdminTrainingModules() {
                   <>
                     <DropdownMenuItem onClick={() => {
                       setSelectionMode((p) => !p);
-                      if (selectionMode) setSelectedModuleIds(new Set());
+                      if (selectionMode) { setSelectedModuleIds(new Set()); setSelectedLessonIds(new Set()); }
                     }}>
                       <CheckSquare className="h-4 w-4 mr-2" />
                       {selectionMode ? "Отключить выделение" : "Режим выделения"}
