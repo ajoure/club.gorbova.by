@@ -652,11 +652,20 @@ Deno.serve(async (req) => {
     }> = [];
 
     if (!dryRun) {
-      const toExecute = executeCandidatesSafe;
-      console.log(`[repair-cb20] Executing ${toExecute.length} SAFE repairs (cohort=${executeCohort})`);
+      const toExecute = executeCohort === 'standalone_safe' ? executeCandidatesStandalone : executeCandidatesSafe;
+      console.log(`[repair-cb20] Executing ${toExecute.length} repairs (cohort=${executeCohort})`);
 
       for (const plan of toExecute) {
-        const enrichedMeta = {
+        // Build mapped module IDs for standalone
+        const userMappings = mappingConfidence.filter(m =>
+          plan.historical_module_product_ids.includes(m.module_product_id) && m.matched_training_module_id
+        );
+        const mappedTrainingModuleIds = userMappings.map(m => m.matched_training_module_id!);
+        const unmappedProductIds = plan.historical_module_product_ids.filter(mpId =>
+          !userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id)
+        );
+
+        const enrichedMeta: Record<string, any> = {
           source_rule_id: '1b497fba-031a-4318-8d9f-2530f1bac116',
           business_subscription_id: plan.business_subscription_id,
           business_tariff_id: BUSINESS_TARIFF_ID,
@@ -669,6 +678,18 @@ Deno.serve(async (req) => {
           repaired_by: batchId,
           repaired_at: new Date().toISOString(),
         };
+
+        // Add standalone-specific meta fields
+        if (plan.scope_bucket === 'module_scope_only') {
+          enrichedMeta.mapped_training_module_ids = mappedTrainingModuleIds;
+          enrichedMeta.unmapped_historical_module_product_ids = unmappedProductIds;
+          enrichedMeta.mapping_version = 'v2_children_match';
+          enrichedMeta.mapping_confidence_summary = userMappings.map(m => ({
+            module_product_id: m.module_product_id,
+            confidence: m.mapping_confidence,
+            training_module_id: m.matched_training_module_id,
+          }));
+        }
 
         const oldExpiresAt = plan.current_entitlement_expires_at;
         let newExpiresAt = oldExpiresAt;
