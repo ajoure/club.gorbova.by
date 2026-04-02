@@ -739,6 +739,12 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       <ProductLinkedTrainingsBlock
         productId={productId}
         onUseViaRule={openCreateTrainingContentRule}
+        onEditRule={(ruleId) => {
+          const rule = rules.find(r => r.id === ruleId);
+          if (rule) {
+            handleEditRule(rule);
+          }
+        }}
         onFocusRule={(ruleId) => {
           const el = document.getElementById(`access-rule-${ruleId}`);
           if (el) {
@@ -746,7 +752,6 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
             el.classList.add("ring-2", "ring-primary");
             setTimeout(() => el.classList.remove("ring-2", "ring-primary"), 3000);
           } else {
-            // Fallback: scroll to rules section
             const section = document.getElementById("access-rules-section");
             section?.scrollIntoView({ behavior: "smooth", block: "start" });
           }
