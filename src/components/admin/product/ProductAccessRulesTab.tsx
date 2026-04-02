@@ -728,20 +728,22 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         </Select>
       </div>
 
-      {/* Conflicts warning — classified */}
+      {/* Conflicts warning — real conflicts only */}
       {conflicts.filter(c => c.type !== 'valid_parallel_rule').length > 0 && (
         <Card className="border-amber-200/50 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-950/30">
           <CardContent className="py-3 px-4">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Обнаружены конфликты правил
+                Обнаружены конфликты правил — требует действия администратора
               </span>
             </div>
             <div className="mt-2 space-y-1">
-              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label }) => (
+              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label, type }) => (
                 <div key={key} className="text-xs text-amber-600 dark:text-amber-500">
-                  {items[0].target_label || key}: {label} — {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")}
+                  {items[0].target_label || key}: {label} — {items.map((i) => `${i.tariff?.name || "Продукт"} (приоритет ${i.priority})`).join(" + ")}
+                  {type === 'duplicate_rule' && " → рекомендуется удалить дубликат"}
+                  {type === 'ambiguous_overlap' && " → рекомендуется уточнить приоритеты"}
                 </div>
               ))}
             </div>
@@ -756,7 +758,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
             <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
               <Info className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Множественные правила на одну цель (разные тарифы — допустимо)
+                Это допустимая конфигурация, если правила разведены по тарифам
               </span>
             </div>
             <div className="mt-2 space-y-1">
