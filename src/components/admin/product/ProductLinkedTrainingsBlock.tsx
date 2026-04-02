@@ -944,7 +944,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                   )}
                   <div className="space-y-2">
                     {onlyRuleLinkedTrainings.map(vt => (
-                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} />
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} />
                     ))}
                   </div>
                 </>
