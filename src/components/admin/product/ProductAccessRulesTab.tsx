@@ -1710,11 +1710,25 @@ function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: Effective
           {g.club_access_label && (
             <Badge variant="outline" className="text-[9px]">{g.club_access_label}</Badge>
           )}
-          {g.rule_purpose !== "primary" && (
-            <Badge variant="outline" className="text-[9px] text-purple-600 border-purple-300">
-              {PURPOSE_LABELS[g.rule_purpose]}
-            </Badge>
-          )}
+          {g.grant_target_type === "training_content" && g.tc_access_mode && (() => {
+            const isEmpty = g.tc_access_mode === "partial" && (g.tc_module_count || 0) === 0 && (g.tc_lesson_count || 0) === 0;
+            return (
+              <>
+                <Badge variant="outline" className={cn("text-[9px]", g.tc_access_mode === "partial" ? "text-amber-600 border-amber-300" : "")}>
+                  {g.tc_access_mode === "full"
+                    ? "Весь тренинг"
+                    : isEmpty
+                      ? "Частичный доступ"
+                      : `Частичный: ${g.tc_module_count} мод. ${g.tc_lesson_count} ур.`}
+                </Badge>
+                {isEmpty && (
+                  <Badge variant="outline" className="text-[9px] text-muted-foreground border-muted">
+                    ⚠ выбор пуст
+                  </Badge>
+                )}
+              </>
+            );
+          })()}
         </div>
         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
           <Badge
