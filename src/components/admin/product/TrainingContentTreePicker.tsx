@@ -126,7 +126,8 @@ export function TrainingContentTreePicker({ tree, selectedModuleIds, selectedLes
     if (rootState === "checked") {
       onChange([], []);
     } else {
-      onChange([...allModuleIds], []);
+      // Select all modules + root-level lessons (not covered by any module)
+      onChange([...allModuleIds], [...tree.lessons.map(l => l.id)]);
     }
   };
 
