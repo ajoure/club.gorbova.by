@@ -838,7 +838,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
           )}
 
           {/* Training content rules summary */}
-          {trainings.length > 0 && (
+          {visibleTrainingCount > 0 && (
             <>
               <Separator className="my-4" />
               <div className="space-y-2">
@@ -855,7 +855,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                 ) : (
                   <div className="space-y-1">
                     {contentRules.map(rule => {
-                      const training = trainings.find(t => t.id === rule.target_ref);
+                      const training = visibleTrainingsMap[rule.target_ref];
                       const cond = rule.conditions;
                       const mCount = cond.allowed_module_ids?.length || 0;
                       const lCount = cond.allowed_lesson_ids?.length || 0;
