@@ -135,12 +135,16 @@ Deno.serve(async (req) => {
     (existingEnts || []).forEach(e => entByUser.set(e.user_id, e));
 
     // 4. Get historical cb20 purchases — DEDUPLICATE BY ORDER ID
-    const { data: historicalOrders } = await supabase
+    // orders_v2.profile_id = profiles.id (NOT auth UID)
+    // orders_v2.user_id = auth UID
+    const profileIds = [...profileIdByAuthId.values()];
+
+    const { data: historicalOrdersByProfile } = await supabase
       .from('orders_v2')
       .select('id, profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
       .eq('product_id', CB20_PRODUCT_ID)
       .eq('status', 'paid')
-      .in('profile_id', businessUserIds)
+      .in('profile_id', profileIds)
       .order('created_at', { ascending: false });
 
     const { data: historicalOrdersByUser } = await supabase
@@ -152,7 +156,7 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false });
 
     // Deduplicate by order ID (not composite key!)
-    const allOrders = [...(historicalOrders || []), ...(historicalOrdersByUser || [])];
+    const allOrders = [...(historicalOrdersByProfile || []), ...(historicalOrdersByUser || [])];
     const seenOrderIds = new Set<string>();
     const uniqueOrders = allOrders.filter(o => {
       if (seenOrderIds.has(o.id)) return false;
@@ -160,14 +164,22 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    // Map orders by user_id
+    // Build reverse map: profiles.id → auth UID
+    const authIdByProfileId = new Map<string, string>();
+    profileIdByAuthId.forEach((pid, authId) => authIdByProfileId.set(pid, authId));
+
+    // Map orders by auth user_id (= businessUserIds key)
     const ordersByUser = new Map<string, typeof uniqueOrders>();
     uniqueOrders.forEach(o => {
-      const uid = businessUserIds.includes(o.profile_id) ? o.profile_id : o.user_id;
-      if (!uid) return;
-      const existing = ordersByUser.get(uid) || [];
+      // Try direct user_id match first, then resolve via profile_id
+      let authUid = businessUserIds.includes(o.user_id) ? o.user_id : null;
+      if (!authUid && o.profile_id) {
+        authUid = authIdByProfileId.get(o.profile_id) || null;
+      }
+      if (!authUid) return;
+      const existing = ordersByUser.get(authUid) || [];
       existing.push(o);
-      ordersByUser.set(uid, existing);
+      ordersByUser.set(authUid, existing);
     });
 
     // 5. Build repair plan for each BUSINESS user
