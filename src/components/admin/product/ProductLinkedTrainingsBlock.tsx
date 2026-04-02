@@ -700,10 +700,17 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, con
                     {rule && !rule.is_active && (
                       <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивно</Badge>
                     )}
+                    {rule?.is_active && (
+                      <Badge variant="outline" className="text-[9px] text-green-600 border-green-300">Активно</Badge>
+                    )}
                   </div>
                   {rule && (
                     <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground">
                       <span>Режим: {accessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</span>
+                      {rule.tariff_id && tariffNamesMap?.[rule.tariff_id] && (
+                        <span>• Тариф: {tariffNamesMap[rule.tariff_id]}</span>
+                      )}
+                      {!rule.tariff_id && <span>• Весь продукт</span>}
                       {rule.target_label && <span>• {rule.target_label}</span>}
                     </div>
                   )}
