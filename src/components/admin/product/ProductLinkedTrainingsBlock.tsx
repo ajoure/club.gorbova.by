@@ -6,15 +6,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List, Pencil, Eye, EyeOff } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Link2, Unlink, AlertTriangle, Search, Info, Shield, ArrowRight, Loader2, Ban, CheckCircle2, LayoutGrid, List, Pencil, Eye, EyeOff, MoreVertical, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface Props {
   productId: string;
   onUseViaRule?: (trainingId: string, trainingTitle: string) => void;
   onFocusRule?: (ruleId: string) => void;
+  onEditRule?: (ruleId: string) => void;
 }
 
 /** Recursively count all lessons in a training subtree */
@@ -564,69 +570,178 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
   );
 }
 
-// --- Rule-linked Training Card ---
-function RuleLinkedTrainingCard({ vt, onFocusRule }: { vt: VisibleTraining; onFocusRule?: (ruleId: string) => void }) {
+// --- Rule-linked Training Card with actions ---
+function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule }: {
+  vt: VisibleTraining;
+  onFocusRule?: (ruleId: string) => void;
+  onEditRule?: (ruleId: string) => void;
+  onDeleteRule?: (ruleId: string, trainingTitle: string) => void;
+}) {
+  const [ruleSelectOpen, setRuleSelectOpen] = useState(false);
+  const [ruleSelectAction, setRuleSelectAction] = useState<'edit' | 'delete'>('edit');
+
+  const handleAction = (action: 'edit' | 'delete') => {
+    if (vt.rule_ids.length === 1) {
+      if (action === 'edit' && onEditRule) {
+        onEditRule(vt.rule_ids[0]);
+      } else if (action === 'delete' && onDeleteRule) {
+        onDeleteRule(vt.rule_ids[0], vt.title);
+      }
+    } else if (vt.rule_ids.length > 1) {
+      setRuleSelectAction(action);
+      setRuleSelectOpen(true);
+    }
+  };
+
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:border-indigo-800/30 dark:bg-indigo-950/10">
-      <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium">{vt.title}</span>
-          {vt.public_id && (
-            <Badge variant="outline" className="text-[10px] font-mono">{vt.public_id}</Badge>
+    <>
+      <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:border-indigo-800/30 dark:bg-indigo-950/10">
+        <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">{vt.title}</span>
+            {vt.public_id && (
+              <Badge variant="outline" className="text-[10px] font-mono">{vt.public_id}</Badge>
+            )}
+            {!vt.is_active && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {vt.is_owned && (
+              <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
+            )}
+            <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
+              Через правило
+            </Badge>
+          </div>
+          {!vt.is_owned && vt.owner_product_name && (
+            <p className="text-[11px] text-muted-foreground">
+              Владелец: {vt.owner_product_name}
+            </p>
           )}
-          {!vt.is_active && (
-            <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+          {!vt.is_owned && (
+            <p className="text-[11px] text-muted-foreground italic">
+              Тренинг используется этим продуктом через access rule
+            </p>
+          )}
+          {vt.rule_count > 1 && (
+            <p className="text-[11px] text-muted-foreground">
+              {vt.rule_count} {vt.rule_count >= 2 && vt.rule_count <= 4 ? "правила" : "правил"} доступа
+            </p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {vt.is_owned && (
-            <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
-          )}
-          <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
-            Через правило
-          </Badge>
+        <div className="shrink-0 self-start">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                <MoreVertical className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {(onEditRule || onFocusRule) && (
+                <DropdownMenuItem onClick={() => handleAction('edit')}>
+                  <Pencil className="h-3.5 w-3.5 mr-2" />
+                  Редактировать правило
+                </DropdownMenuItem>
+              )}
+              {onDeleteRule && (
+                <DropdownMenuItem onClick={() => handleAction('delete')} className="text-destructive">
+                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                  Удалить связь
+                </DropdownMenuItem>
+              )}
+              {onFocusRule && vt.rule_ids.length > 0 && (
+                <DropdownMenuItem onClick={() => onFocusRule(vt.rule_ids[0])}>
+                  <Shield className="h-3.5 w-3.5 mr-2" />
+                  К правилам
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        {!vt.is_owned && vt.owner_product_name && (
-          <p className="text-[11px] text-muted-foreground">
-            Владелец: {vt.owner_product_name}
-          </p>
-        )}
-        {!vt.is_owned && (
-          <p className="text-[11px] text-muted-foreground italic">
-            Тренинг используется этим продуктом через access rule
-          </p>
-        )}
-        {vt.rule_count > 1 && (
-          <p className="text-[11px] text-muted-foreground">
-            {vt.rule_count} {vt.rule_count >= 2 && vt.rule_count <= 4 ? "правила" : "правил"} доступа
-          </p>
-        )}
       </div>
-      <div className="shrink-0 self-start">
-        {onFocusRule && vt.rule_ids.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] gap-1 text-muted-foreground"
-            onClick={() => onFocusRule(vt.rule_ids[0])}
-            title="Перейти к правилам"
-          >
-            <Shield className="h-3 w-3" />
-            К правилам
-          </Button>
-        )}
-      </div>
-    </div>
+
+      {/* Rule selection dialog for multi-rule trainings */}
+      <Dialog open={ruleSelectOpen} onOpenChange={setRuleSelectOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {ruleSelectAction === 'edit' ? 'Выберите правило для редактирования' : 'Выберите правило для удаления'}
+            </DialogTitle>
+            <DialogDescription>
+              Тренинг «{vt.title}» подключён {vt.rule_count} правилами. Выберите конкретное.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            {vt.rule_ids.map((ruleId, idx) => (
+              <button
+                key={ruleId}
+                className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                onClick={() => {
+                  setRuleSelectOpen(false);
+                  if (ruleSelectAction === 'edit' && onEditRule) {
+                    onEditRule(ruleId);
+                  } else if (ruleSelectAction === 'delete' && onDeleteRule) {
+                    onDeleteRule(ruleId, vt.title);
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Shield className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-sm font-medium">Правило {idx + 1}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{ruleId.slice(0, 8)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 // --- Main Block ---
-export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule }: Props) {
+export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRule, onEditRule }: Props) {
+  const queryClient = useQueryClient();
   const { trainings, diagnostics, isLoading, bindTraining, unbindTraining, rebindTraining, getRebindPreview, getUnbindPreview } = useProductTrainings(productId);
   const { data: contentRules = [] } = useTrainingContentRulesForProduct(productId);
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
   const { visibleTrainings, visibleTrainingsMap, visibleTrainingCount } = useVisibleTrainings(trainings, ruleLinkedData, productId);
+
+  // Rule-link delete state
+  const [deleteRuleId, setDeleteRuleId] = useState<string | null>(null);
+  const [deleteRuleTrainingTitle, setDeleteRuleTrainingTitle] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteExecuting, setDeleteExecuting] = useState(false);
+
+  const handleDeleteRuleLink = (ruleId: string, trainingTitle: string) => {
+    setDeleteRuleId(ruleId);
+    setDeleteRuleTrainingTitle(trainingTitle);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteRuleConfirm = async () => {
+    if (!deleteRuleId) return;
+    setDeleteExecuting(true);
+    try {
+      const { error } = await supabase
+        .from('access_rules')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', deleteRuleId);
+      if (error) throw error;
+      toast.success('Связь деактивирована');
+      queryClient.invalidateQueries({ queryKey: ['access-rules'] });
+      queryClient.invalidateQueries({ queryKey: ['rule-linked-trainings'] });
+      queryClient.invalidateQueries({ queryKey: ['training-content-rules'] });
+      setDeleteConfirmOpen(false);
+      setDeleteRuleId(null);
+    } catch (err: any) {
+      toast.error('Ошибка: ' + err.message);
+    } finally {
+      setDeleteExecuting(false);
+    }
+  };
 
   // Only rule-linked (not owned) trainings for separate rendering
   const onlyRuleLinkedTrainings = visibleTrainings.filter(vt => !vt.is_owned && vt.is_rule_linked);
@@ -829,7 +944,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                   )}
                   <div className="space-y-2">
                     {onlyRuleLinkedTrainings.map(vt => (
-                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} />
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} />
                     ))}
                   </div>
                 </>
@@ -990,6 +1105,26 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
           />
         )
       )}
+
+      {/* Delete Rule-Link Confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить связь через правило?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Будет деактивировано правило доступа для тренинга «{deleteRuleTrainingTitle}».</p>
+              <p>Владелец тренинга не изменится. Доступ для покупателей этого продукта к тренингу будет прекращён.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteExecuting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteRuleConfirm} disabled={deleteExecuting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleteExecuting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Деактивировать
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

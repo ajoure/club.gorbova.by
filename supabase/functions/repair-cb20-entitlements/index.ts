@@ -9,6 +9,7 @@ const corsHeaders = {
 // BUSINESS tariff and cb20 product IDs (canonical)
 const BUSINESS_TARIFF_ID = '7c748940-dcad-4c7c-a92e-76a2344622d3';
 const CB20_PRODUCT_ID = '7101ed3c-7839-4a74-ad95-aa0660369b22';
+const CB20_ROOT_MODULE_ID = 'c9f7e9b8-e613-459a-91e3-38bbcfe424d8';
 
 // Staff emails — separate bucket, not mixed with manual_review
 const STAFF_EMAILS = [
@@ -72,15 +73,16 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const dryRun = body.dry_run !== false; // default = dry_run
-    const executeCohort: 'safe_only' | 'all' | null = body.execute_cohort || null;
+    const executeCohort: 'safe_only' | 'standalone_safe' | 'all' | null = body.execute_cohort || null;
+    const standaloneMode: 'strict_hold' | 'partial_safe' = body.standalone_mode || 'strict_hold';
     const batchId = `batch_business_cb20_repair_v1_${Date.now()}`;
 
-    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : `EXECUTE (cohort=${executeCohort})`}, batchId=${batchId}`);
+    console.log(`[repair-cb20] Starting ${dryRun ? 'DRY RUN' : `EXECUTE (cohort=${executeCohort}, standalone_mode=${standaloneMode})`}, batchId=${batchId}`);
 
     // Guard: execute requires explicit cohort
-    if (!dryRun && executeCohort !== 'safe_only') {
+    if (!dryRun && executeCohort !== 'safe_only' && executeCohort !== 'standalone_safe') {
       return new Response(
-        JSON.stringify({ error: "Execute requires execute_cohort='safe_only'. Full cohort execute is forbidden." }),
+        JSON.stringify({ error: "Execute requires execute_cohort='safe_only' or 'standalone_safe'. Full cohort execute is forbidden." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -382,10 +384,11 @@ Deno.serve(async (req) => {
         trainingByProduct.set(tm.product_id, arr);
       });
 
-      const { data: allTrainingModules } = await supabase
+      // Fetch children of CB20 root for name matching (NOT root modules)
+      const { data: cb20ChildModules } = await supabase
         .from('training_modules')
-        .select('id, title, product_id, code')
-        .is('parent_module_id', null);
+        .select('id, title, product_id')
+        .eq('parent_module_id', CB20_ROOT_MODULE_ID);
 
       for (const mpId of moduleProductIdList) {
         const product = productMap.get(mpId);
@@ -403,33 +406,9 @@ Deno.serve(async (req) => {
               allowed_in_execute: true,
             });
           }
-        } else if (product?.code) {
-          const codeMatches = (allTrainingModules || []).filter(tm => tm.code === product.code);
-          if (codeMatches.length === 1) {
-            mappingConfidence.push({
-              module_product_id: mpId,
-              module_product_name: product.name,
-              matched_training_module_id: codeMatches[0].id,
-              matched_training_module_title: codeMatches[0].title,
-              mapping_confidence: 'exact_code',
-              mapping_reason: `Unique code match: training_modules.code = '${product.code}'`,
-              allowed_in_execute: true,
-            });
-          } else if (codeMatches.length > 1) {
-            mappingConfidence.push({
-              module_product_id: mpId,
-              module_product_name: product.name,
-              matched_training_module_id: null,
-              matched_training_module_title: null,
-              mapping_confidence: 'inferred',
-              mapping_reason: `Code '${product.code}' matched ${codeMatches.length} training modules — ambiguous`,
-              allowed_in_execute: false,
-            });
-          } else {
-            tryNameMatch(mpId, product, allTrainingModules || [], mappingConfidence);
-          }
         } else {
-          tryNameMatch(mpId, product || { name: 'unknown', code: null }, allTrainingModules || [], mappingConfidence);
+          // Normalized exact match against children of CB20 root
+          tryChildNameMatch(mpId, product || null, cb20ChildModules || [], mappingConfidence);
         }
       }
     }
@@ -498,10 +477,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 8. Split cohorts: SAFE EXECUTE NOW vs HOLD
+    // 8. Split cohorts: SAFE EXECUTE NOW vs STANDALONE_SAFE vs HOLD
     // CRITICAL GUARDS:
     // - create is NEVER in safe cohort (blocked for this execute, follow-up only)
-    // - module_scope_only is NEVER in safe cohort
+    // - module_scope_only is NEVER in safe cohort (but CAN be in standalone_safe)
     // - only already-entitled repairs are safe
     const isSafe = (p: RepairPlan): boolean => {
       if (p.planned_action === 'noop') return false;
@@ -512,7 +491,7 @@ Deno.serve(async (req) => {
       if (p.hold_reason) return false;
       if (!p.business_access_end_at) return false;
       if (!p.email) return false;
-      // HARD GUARD: module_scope_only is ALWAYS HOLD
+      // HARD GUARD: module_scope_only goes to standalone_safe, not safe
       if (p.scope_bucket === 'module_scope_only') return false;
       // Only allow already-entitled repairs
       if (!p.current_entitlement_id) return false;
@@ -524,25 +503,61 @@ Deno.serve(async (req) => {
       return true;
     };
 
+    // Standalone safe cohort: module_scope_only with proven mapping
+    const isStandaloneSafe = (p: RepairPlan): boolean => {
+      if (p.scope_bucket !== 'module_scope_only') return false;
+      if (p.planned_action === 'staff_skip' || p.planned_action === 'noop') return false;
+      if (!p.business_access_end_at) return false;
+      if (!p.email) return false;
+      // Must not be staff
+      if (STAFF_EMAILS.includes(p.email.toLowerCase())) return false;
+      // All module mappings must be proven
+      const userMappings = mappingConfidence.filter(m =>
+        p.historical_module_product_ids.includes(m.module_product_id)
+      );
+      if (userMappings.length === 0) return false;
+
+      if (standaloneMode === 'strict_hold') {
+        // ALL modules must be mapped
+        const allMapped = p.historical_module_product_ids.every(mpId =>
+          userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id && m.allowed_in_execute)
+        );
+        if (!allMapped) return false;
+      } else {
+        // partial_safe: at least one module mapped
+        const anyMapped = userMappings.some(m => m.matched_training_module_id && m.allowed_in_execute);
+        if (!anyMapped) return false;
+      }
+
+      // Must have runtime preview with non-zero visibility
+      if (p.runtime_preview) {
+        if (p.runtime_preview.visible_module_count === 0 || p.runtime_preview.visible_recursive_lesson_count === 0) return false;
+      }
+      return true;
+    };
+
     const executeCandidatesSafe = plans.filter(p => isSafe(p));
+    const executeCandidatesStandalone = plans.filter(p => isStandaloneSafe(p));
     const holdCandidates = plans.filter(p => {
       if (p.planned_action === 'noop') return false;
-      return !isSafe(p);
+      return !isSafe(p) && !isStandaloneSafe(p);
     });
 
-    // ABORT guards for execute — validate safe cohort integrity
+    // ABORT guards for execute — validate cohort integrity
     if (!dryRun) {
-      const hasForbiddenScope = executeCandidatesSafe.some(p => p.scope_bucket === 'module_scope_only');
-      const hasForbiddenAction = executeCandidatesSafe.some(p => p.planned_action === 'create');
-      if (hasForbiddenScope || hasForbiddenAction) {
-        return new Response(
-          JSON.stringify({
-            error: "ABORT: safe cohort contains forbidden entries",
-            has_module_scope_only: hasForbiddenScope,
-            has_create_action: hasForbiddenAction,
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      if (executeCohort === 'safe_only') {
+        const hasForbiddenScope = executeCandidatesSafe.some(p => p.scope_bucket === 'module_scope_only');
+        const hasForbiddenAction = executeCandidatesSafe.some(p => p.planned_action === 'create');
+        if (hasForbiddenScope || hasForbiddenAction) {
+          return new Response(
+            JSON.stringify({
+              error: "ABORT: safe cohort contains forbidden entries",
+              has_module_scope_only: hasForbiddenScope,
+              has_create_action: hasForbiddenAction,
+            }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
       }
     }
 
@@ -584,6 +599,8 @@ Deno.serve(async (req) => {
     // Cohort summary
     const cohortSummary = {
       safe_execute_count: executeCandidatesSafe.length,
+      standalone_safe_count: executeCandidatesStandalone.length,
+      standalone_mode: standaloneMode,
       manual_review_count: plans.filter(p => p.planned_action === 'manual_review').length,
       staff_skip_count: plans.filter(p => p.planned_action === 'staff_skip').length,
       identity_unresolved_count: plans.filter(p => p.hold_reason === 'email_null').length,
@@ -592,6 +609,33 @@ Deno.serve(async (req) => {
       noop_count: plans.filter(p => p.planned_action === 'noop').length,
       email_null_count: businessUserIds.filter(uid => !profileEmailMap.get(uid)).length,
     };
+
+    // Standalone dry-run table
+    const standaloneDryRun = executeCandidatesStandalone.map(p => {
+      const userMappings = mappingConfidence.filter(m =>
+        p.historical_module_product_ids.includes(m.module_product_id)
+      );
+      const mappedIds = userMappings.filter(m => m.matched_training_module_id).map(m => m.matched_training_module_id);
+      const mappedTitles = userMappings.filter(m => m.matched_training_module_title).map(m => m.matched_training_module_title);
+      const unmappedIds = p.historical_module_product_ids.filter(mpId =>
+        !userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id)
+      );
+      return {
+        user_id: p.user_id,
+        email: p.email,
+        business_sub_id: p.business_subscription_id,
+        business_end: p.business_access_end_at,
+        module_products: p.historical_module_product_ids,
+        mapped_training_ids: mappedIds,
+        mapped_titles: mappedTitles,
+        unmapped_module_product_ids: unmappedIds,
+        confidence: userMappings.map(m => ({ id: m.module_product_id, name: m.module_product_name, confidence: m.mapping_confidence, reason: m.mapping_reason })),
+        visible_lessons: p.runtime_preview?.visible_recursive_lesson_count || 0,
+        planned_action: p.current_entitlement_id ? 'repair' : 'create',
+        mode: standaloneMode,
+        reason: p.reason,
+      };
+    });
 
     // 10. Execute if not dry_run — ONLY safe cohort (no create, no module_scope_only)
     const executeResults: Array<{
@@ -608,11 +652,20 @@ Deno.serve(async (req) => {
     }> = [];
 
     if (!dryRun) {
-      const toExecute = executeCandidatesSafe;
-      console.log(`[repair-cb20] Executing ${toExecute.length} SAFE repairs (cohort=${executeCohort})`);
+      const toExecute = executeCohort === 'standalone_safe' ? executeCandidatesStandalone : executeCandidatesSafe;
+      console.log(`[repair-cb20] Executing ${toExecute.length} repairs (cohort=${executeCohort})`);
 
       for (const plan of toExecute) {
-        const enrichedMeta = {
+        // Build mapped module IDs for standalone
+        const userMappings = mappingConfidence.filter(m =>
+          plan.historical_module_product_ids.includes(m.module_product_id) && m.matched_training_module_id
+        );
+        const mappedTrainingModuleIds = userMappings.map(m => m.matched_training_module_id!);
+        const unmappedProductIds = plan.historical_module_product_ids.filter(mpId =>
+          !userMappings.some(m => m.module_product_id === mpId && m.matched_training_module_id)
+        );
+
+        const enrichedMeta: Record<string, any> = {
           source_rule_id: '1b497fba-031a-4318-8d9f-2530f1bac116',
           business_subscription_id: plan.business_subscription_id,
           business_tariff_id: BUSINESS_TARIFF_ID,
@@ -626,11 +679,24 @@ Deno.serve(async (req) => {
           repaired_at: new Date().toISOString(),
         };
 
+        // Add standalone-specific meta fields
+        if (plan.scope_bucket === 'module_scope_only') {
+          enrichedMeta.mapped_training_module_ids = mappedTrainingModuleIds;
+          enrichedMeta.unmapped_historical_module_product_ids = unmappedProductIds;
+          enrichedMeta.mapping_version = 'v2_children_match';
+          enrichedMeta.mapping_confidence_summary = userMappings.map(m => ({
+            module_product_id: m.module_product_id,
+            confidence: m.mapping_confidence,
+            training_module_id: m.matched_training_module_id,
+          }));
+        }
+
         const oldExpiresAt = plan.current_entitlement_expires_at;
         let newExpiresAt = oldExpiresAt;
 
         try {
           if (plan.current_entitlement_id) {
+            // UPDATE existing entitlement
             const updateData: Record<string, any> = {
               meta: enrichedMeta,
               updated_at: new Date().toISOString(),
@@ -655,6 +721,39 @@ Deno.serve(async (req) => {
               old_meta_status: plan.current_meta_status,
               new_scope_resolution_mode: plan.scope_bucket,
             });
+          } else if (executeCohort === 'standalone_safe' && plan.scope_bucket === 'module_scope_only') {
+            // CREATE new entitlement for standalone_safe cohort
+            const profileId = profileIdByAuthId.get(plan.user_id);
+            if (!profileId) {
+              executeResults.push({
+                user_id: plan.user_id, email: plan.email,
+                action: 'create', result: 'error', error: 'profile_id not found',
+                old_expires_at: null, new_expires_at: null, target_expires_at: plan.target_expires_at,
+                old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+              });
+            } else {
+              newExpiresAt = plan.business_access_end_at;
+              const { error } = await supabase
+                .from('entitlements')
+                .insert({
+                  user_id: plan.user_id,
+                  profile_id: profileId,
+                  product_id: CB20_PRODUCT_ID,
+                  product_code: 'cb20',
+                  status: 'active',
+                  source: 'batch_standalone_safe',
+                  expires_at: plan.business_access_end_at,
+                  meta: enrichedMeta,
+                });
+              executeResults.push({
+                user_id: plan.user_id, email: plan.email,
+                action: 'create_standalone', result: error ? 'error' : 'success',
+                error: error?.message || null,
+                old_expires_at: null, new_expires_at: newExpiresAt,
+                target_expires_at: plan.target_expires_at,
+                old_meta_status: 'no_meta', new_scope_resolution_mode: plan.scope_bucket,
+              });
+            }
           }
         } catch (err) {
           executeResults.push({
@@ -797,9 +896,12 @@ Deno.serve(async (req) => {
         dry_run: dryRun,
         batch_id: batchId,
         execute_cohort: executeCohort,
+        standalone_mode: standaloneMode,
         business_users_total: businessUserIds.length,
         plans: dryRun ? plans : undefined,
         execute_candidates_safe: dryRun ? executeCandidatesSafe : undefined,
+        execute_candidates_standalone: dryRun ? executeCandidatesStandalone : undefined,
+        standalone_dry_run: dryRun ? standaloneDryRun : undefined,
         hold_candidates: dryRun ? holdCandidates : undefined,
         safe_cohort_breakdown: safeCohortBreakdown,
         hold_breakdown: holdBreakdown,
@@ -821,11 +923,11 @@ Deno.serve(async (req) => {
   }
 });
 
-// Helper: try name matching with strict uniqueness guard
-function tryNameMatch(
+// Helper: match product name against children of CB20 root using normalized short name extraction
+function tryChildNameMatch(
   mpId: string,
   product: { name: string; code: string | null } | null,
-  allTrainingModules: Array<{ id: string; title: string; product_id: string | null; code: string | null }>,
+  cb20Children: Array<{ id: string; title: string; product_id: string | null }>,
   results: MappingConfidence[]
 ) {
   const productName = product?.name || '';
@@ -842,27 +944,62 @@ function tryNameMatch(
     return;
   }
 
-  const nameNorm = productName.toLowerCase().trim();
-  const nameMatches = allTrainingModules.filter(tm => tm.title.toLowerCase().trim() === nameNorm);
+  // Extract short name: "Ценный бухгалтер | 1 ступень 2.0 | Модуль: Строительство" → "строительство"
+  const extractShortName = (name: string): string => {
+    const lower = name.toLowerCase().trim();
+    // Try to extract after "модуль:" pattern
+    const moduleMatch = lower.match(/модуль:\s*(.+)/);
+    if (moduleMatch) return moduleMatch[1].trim();
+    // Try after last "|"
+    const parts = lower.split('|');
+    if (parts.length > 1) return parts[parts.length - 1].trim();
+    return lower;
+  };
 
-  if (nameMatches.length === 1) {
+  const shortName = extractShortName(productName);
+
+  // 1. Try exact full-name match first
+  const fullNameNorm = productName.toLowerCase().trim();
+  const exactFullMatches = cb20Children.filter(tm => tm.title.toLowerCase().trim() === fullNameNorm);
+  if (exactFullMatches.length === 1) {
     results.push({
       module_product_id: mpId,
       module_product_name: productName,
-      matched_training_module_id: nameMatches[0].id,
-      matched_training_module_title: nameMatches[0].title,
+      matched_training_module_id: exactFullMatches[0].id,
+      matched_training_module_title: exactFullMatches[0].title,
       mapping_confidence: 'exact_name',
-      mapping_reason: `Unique name match: '${productName}' = training '${nameMatches[0].title}'`,
+      mapping_reason: `Exact full-name match with CB20 child: '${productName}' = '${exactFullMatches[0].title}'`,
       allowed_in_execute: true,
     });
-  } else if (nameMatches.length > 1) {
+    return;
+  }
+
+  // 2. Try normalized short-name contains match against child titles
+  const shortNameMatches = cb20Children.filter(tm => {
+    const childTitle = tm.title.toLowerCase().trim();
+    const childShort = extractShortName(childTitle);
+    // Check if short names match or one contains the other
+    return childShort === shortName || childTitle.includes(shortName) || shortName.includes(childShort);
+  });
+
+  if (shortNameMatches.length === 1) {
+    results.push({
+      module_product_id: mpId,
+      module_product_name: productName,
+      matched_training_module_id: shortNameMatches[0].id,
+      matched_training_module_title: shortNameMatches[0].title,
+      mapping_confidence: 'exact_name',
+      mapping_reason: `Normalized short-name match: '${shortName}' → CB20 child '${shortNameMatches[0].title}'`,
+      allowed_in_execute: true,
+    });
+  } else if (shortNameMatches.length > 1) {
     results.push({
       module_product_id: mpId,
       module_product_name: productName,
       matched_training_module_id: null,
       matched_training_module_title: null,
       mapping_confidence: 'inferred',
-      mapping_reason: `Name '${productName}' matched ${nameMatches.length} training modules — ambiguous, manual review required`,
+      mapping_reason: `Short-name '${shortName}' matched ${shortNameMatches.length} CB20 children — ambiguous`,
       allowed_in_execute: false,
     });
   } else {
@@ -872,7 +1009,7 @@ function tryNameMatch(
       matched_training_module_id: null,
       matched_training_module_title: null,
       mapping_confidence: 'no_match',
-      mapping_reason: `No training module found for product '${productName}' (id=${mpId}) by FK, code, or name`,
+      mapping_reason: `No CB20 child module found for '${shortName}' (product: '${productName}', id=${mpId})`,
       allowed_in_execute: false,
     });
   }

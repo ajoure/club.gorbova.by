@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
@@ -547,9 +547,26 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Продукт</span>
-                  <span className="font-medium">{product?.name || "—"}</span>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm text-muted-foreground shrink-0">Продукт</span>
+                  <div className="text-right">
+                    <span className="font-medium">{(() => {
+                      const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
+                      if (snapshot?.display_purchase_name) return snapshot.display_purchase_name;
+                      return product?.name || "—";
+                    })()}</span>
+                    {(() => {
+                      const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
+                      if (snapshot?.historical_purchase_type === 'module_only_standalone') {
+                        return (
+                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 ml-2">
+                            Модульная покупка
+                          </Badge>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
                 </div>
                 <Separator />
                 <div className="flex items-center justify-between">
