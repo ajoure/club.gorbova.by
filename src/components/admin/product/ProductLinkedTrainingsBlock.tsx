@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useProductTrainings, useAvailableTrainingsForBind, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview } from "@/hooks/useProductTrainings";
+import { useProductTrainings, useAvailableTrainingsForBind, useRuleLinkedTrainings, useVisibleTrainings, type LinkedTraining, type TrainingBindingDiagnostics, type RebindPreview, type UnbindPreview, type VisibleTraining } from "@/hooks/useProductTrainings";
 import { useTrainingContentRulesForProduct, type TrainingContentRule, type TrainingContentConditions } from "@/hooks/useTrainingContentRules";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
