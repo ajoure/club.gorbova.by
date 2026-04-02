@@ -1709,6 +1709,11 @@ function EffectiveGrantCard({ grant: g, getDurationDisplay }: { grant: Effective
           <span className={cn("text-sm font-medium", isOverridden && "line-through")}>{g.target_label}</span>
           {g.club_access_label && (
             <Badge variant="outline" className="text-[9px]">{g.club_access_label}</Badge>
+           )}
+          {g.rule_purpose !== "primary" && (
+            <Badge variant="outline" className="text-[9px] text-purple-600 border-purple-300">
+              {PURPOSE_LABELS[g.rule_purpose]}
+            </Badge>
           )}
           {g.grant_target_type === "training_content" && g.tc_access_mode && (() => {
             const isEmpty = g.tc_access_mode === "partial" && (g.tc_module_count || 0) === 0 && (g.tc_lesson_count || 0) === 0;
