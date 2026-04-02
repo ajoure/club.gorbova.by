@@ -23,7 +23,7 @@
 | PATCH H | H1 ✅ data-fix, H2 ✅ code-fix, **H3 ✅ price_truth_audit generated** |
 | PATCH I | ✅ UI badges deployed |
 | PATCH J | ✅ audit CSV generated |
-| PATCH E | **⏳ dry_run COMPLETED, execute pending approval** |
+| PATCH E | **✅ EXECUTED — Рыштакова updated, Царёва blocked** |
 | PATCH B | ⏳ final browser proof |
 
 ## PATCH H3 — Price Truth Audit ✅
