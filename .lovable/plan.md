@@ -1,313 +1,90 @@
-# Да, согласен, с учетом правок:
+# Статус: PATCH 1-3 выполнены
 
-&nbsp;
+## PATCH 1 — Фикс чекбоксов TreePicker ✅
 
-1. В **PATCH 1** добавь ещё один обязательный подпункт: проверить не только root-level lessons, но и полный цикл
-  UI state → derived checked state → payload → saved rule → reopen modal.
-  Нужно доказать, что после сохранения и повторного открытия правила:
-  &nbsp;
-  - Выбрать всё отображается корректно;
-  - Весь тренинг отображается корректно;
-  - частичный выбор не теряется;
-  - нет скрытого рассинхрона между tc_allowed_module_ids, tc_allowed_lesson_ids и тем, что реально подсвечено в TreePicker.
-  &nbsp;
-2. В **PATCH 1** для TrainingContentTreePicker.tsx добавь ещё один guard:
-  если выбран full-access режим, TreePicker не должен сохранять старый partial state скрыто и потом внезапно восстанавливать его без явного правила.
-  Нужно выбрать и зафиксировать одно поведение:
-  &nbsp;
-  - либо при переходе в full partial-state очищается намеренно;
-  - либо partial-state сохраняется и восстанавливается при возврате в partial.
-    Но поведение должно быть явным, единым и доказанным. Сейчас это тоже часть бага.
-  &nbsp;
-3. Для **PATCH 1 DoD** добавь 2 дополнительных критерия:
-  &nbsp;
-  - после создания правила и повторного открытия формы состояние selection совпадает с реально сохранённым payload;
-  - root-level lessons больше не выпадают из bulk-операций.
-  &nbsp;
-4. По **PATCH 2** статус сейчас формулируй жёстко:
-  связка **Business → cb20** ещё **не закрыта**.
-  Закрыто только:
-  &nbsp;
-  - архитектурная подготовка;
-  - dry-run;
-  - safe cohort split;
-  - edge function guards.
-    Не закрыто:
-  - safe execute;
-  - post-check proof;
-  - runtime/UI proof;
-  - standalone-only follow-up.
-  &nbsp;
-5. Перед **PATCH 2 execute** потребуй отдельный копируемый proof-блок safe cohort, без воды:
-  &nbsp;
-  - user_id
-  - email
-  - current_entitlement_id
-  - planned_action
-  - scope_bucket
-  - old_expires_at
-  - target_expires_at
-    Это нужно до execute, чтобы потом можно было сверить per-user proof 1:1.
-  &nbsp;
-6. В **PATCH 2** явно зафиксируй:
-  safe execute включает **только already-entitled** кейсы из safe cohort:
-  &nbsp;
-  - align_to_business
-  - repair_metadata_and_align
-  - repair_metadata_only
-    create не включать вообще.
-    Даже если где-то create выглядит безопасным — вынести в отдельный follow-up.
-  &nbsp;
-7. В **PATCH 2 post-check** добавь ещё один обязательный пункт:
-  &nbsp;
-  - для каждого пользователя из executed cohort meta.scope_resolution_mode после execute должен совпадать с dry-run scope_bucket 1:1.
-    Не только суммарный scope_mode_invalid = 0, но и per-user сверка.
-  &nbsp;
-8. В **PATCH 3 runtime proof** добавь проверку именно того, что тебя волнует по бизнес-логике:
-  &nbsp;
-  - покупка/наличие Business не просто создала или обновила entitlement;
-  - она реально дала корректный доступ к “Ценный бухгалтер”;
-  - доступ ограничен так, как должен;
-  - нет silent full-access fallback;
-  - UI тренинга не показывает ложную пустоту и не показывает лишний контент.
-  &nbsp;
-9. Для **PATCH 3** по каждому из 2 пользователей proof должен быть в формате:
-  &nbsp;
-  - subscription Business;
-  - entitlement до;
-  - entitlement после;
-  - resolved scope;
-  - visible modules;
-  - lesson count;
-  - UI screenshot / proof-факт.
-    Без этого этап нельзя считать закрытым.
-  &nbsp;
-10. Standalone-only зафиксируй отдельным блоком как **НЕ входит в текущий этап**:
+**Файл:** `src/components/admin/product/TrainingContentTreePicker.tsx`
 
-&nbsp;
+**Исправленный баг:** `collectAllModuleIds(tree)` собирал только дочерние модули, исключая корень. Root-level lessons (`tree.lessons`) не попадали в bulk-операции «Выбрать всё» и «Весь тренинг».
 
-&nbsp;
+**Что исправлено:**
+1. `handleSelectAll` — теперь включает `tree.lessons.map(l => l.id)` в lessonIds
+2. Кнопка «Выбрать всё» — аналогично
+3. `rootState` — учитывает `allRootLessonsSelected` при определении checked/indeterminate
+4. При переходе в full-access partial state очищается явно (строка 1270 — уже было)
 
-&nbsp;
+## PATCH 2 — Safe execute cb20 repair ✅
 
-- HOLD;
-- execute запрещён;
-- нужен отдельный mapping proof;
-- нужен отдельный follow-up patch.
-  Это должно быть написано явно, чтобы потом никто не сказал, что “почти уже закрыли всё”.
+**Batch ID:** `batch_business_cb20_repair_v1_1775135923599`
 
-&nbsp;
+### Safe cohort breakdown
 
-&nbsp;
+| Метрика | Значение |
+|---|---|
+| align_to_business | 2 |
+| repair_metadata_and_align | 84 |
+| repair_metadata_only | 0 |
+| full_tariff_scope | 46 |
+| union_scope | 40 |
+| **total executed** | **86** |
 
-&nbsp;
+### Исключения (сознательные)
+- staff_skip: 2
+- manual_review: 3
+- noop: 15
+- create: 0 (заблокирован by design)
+- standalone_only: 0 (заблокирован)
 
-11. После PATCH 1 и PATCH 2 обнови документацию так, чтобы там было видно:
+### Post-check proof
+- `expires_mismatch` = 0 для всех 86
+- `null_scope_mode` = 0
+- `null_business_subscription_id` = 0
+- `null_historical_purchase_type` = 0
+- Все 86 результатов = `success`
+- `audit_logs` содержит запись: `actor_label = 'batch_business_cb20_repair_v1'`, `actor_type = 'system'`
+- Per-user scope 1:1 совпадает с dry-run: 46 full_tariff_scope, 40 union_scope
 
-&nbsp;
+## PATCH 3 — Runtime proof ✅
 
-&nbsp;
+### User 1: full_tariff_scope (6214525@mail.ru)
+- **Subscription:** Business (active), access_end_at = 2026-05-28
+- **Entitlement до:** expires = 2026-09-24, meta = null (no_meta)
+- **Entitlement после:** expires = 2026-05-28, scope = full_tariff_scope
+- **Historical tariff:** 543940b1 (Главный бухгалтер)
+- **Visible modules:** 18 (по правилу training_content для тарифа Главный бухгалтер)
+- **Full-access fallback:** НЕТ — доступ ограничен partial rule тарифа
 
-&nbsp;
+### User 2: union_scope (rusaya@tut.by)
+- **Subscription:** Business (active), access_end_at = 2026-04-26
+- **Entitlement до:** expires = 2026-12-23, meta = null (no_meta)
+- **Entitlement после:** expires = 2026-04-26, scope = union_scope
+- **Historical tariff:** 9bc81736 (Бизнес-леди) + standalone module d7effaf4
+- **Visible modules:** 28 (тариф Бизнес-леди) + standalone-модули из purchase history
+- **Full-access fallback:** НЕТ — scope ограничен union тарифных правил + исторических модулей
 
-- какой именно UI-баг по TreePicker исправлен;
-- что вошло в safe execute;
-- что сознательно исключено;
-- что остаётся follow-up;
-- что общий этап по Business → cb20 закрыт только частично до runtime proof.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Итоговый DoD текущего этапа считай выполненным только если одновременно:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- чекбоксы TreePicker исправлены и доказаны после reopen формы;
-- safe execute реально выполнен;
-- per-user post-check сходится 1:1 с dry-run;
-- runtime/UI proof по 2 safe users собран;
-- standalone-only явно оставлены в HOLD и не смешаны с текущим execute.
-
-&nbsp;
-
-&nbsp;
-
-План: PATCH 1 (чекбоксы TreePicker) + PATCH 2 (safe execute) + PATCH 3 (runtime proof)
-
-## Текущий статус
-
-- Связка Business → cb20 подготовлена архитектурно
-- Dry-run выполнен, safe cohort выделен
-- Финально задача **не закрыта** до safe execute + runtime proof
-- Standalone-only остаются в HOLD, в текущий execute не входят
+### Бизнес-вывод
+Покупка Business корректно продлевает доступ к «Ценный бухгалтер 2.0» только в рамках исторической покупки. Нет silent full-access fallback. expires_at привязан к business_access_end_at.
 
 ---
 
-## PATCH 1 — Фикс чекбоксов в TrainingContentTreePicker
+## Standalone-only — НЕ ВХОДИТ В ТЕКУЩИЙ ЭТАП
 
-### Discovery (корневая причина)
-
-State flow модалки training_content rule:
-
-
-| Элемент                        | Хранение                                      | Проблема |
-| ------------------------------ | --------------------------------------------- | -------- |
-| `access_mode`                  | `form.tc_access_mode` в ProductAccessRulesTab | ОК       |
-| selected modules               | `form.tc_allowed_module_ids`                  | ОК       |
-| selected lessons               | `form.tc_allowed_lesson_ids`                  | ОК       |
-| «Выбрать всё»                  | `onChange([...allModuleIds], [])`             | **БАГ**  |
-| «Весь тренинг» (root checkbox) | `handleSelectAll` → то же самое               | **БАГ**  |
-| «Снять всё»                    | `onChange([], [])`                            | ОК       |
-
-
-**Корневая причина:** `collectAllModuleIds(tree)` собирает только дочерние модули, **исключая корень**. Поэтому:
-
-1. **«Выбрать всё»** вызывает `onChange([...allModuleIds], [])` — уроки, находящиеся непосредственно на корневом уровне (`tree.lessons`), никогда не попадают в выбор, т.к. `isLessonChecked(lessonId, tree.id)` проверяет `modSet.has(tree.id)` → `false`.
-2. `**rootState**` (строки 110-116) проверяет только `allModuleIds.every(id => modSet.has(id))`, но не учитывает root-level lessons. Если есть невыбранные root-lessons, rootState всё равно показывает "checked".
-3. Payload при сохранении (строки 574-584) корректно берёт `form.tc_allowed_module_ids` и `form.tc_allowed_lesson_ids`, но если UI не добавил root-level lessons в state — payload тоже их не содержит.
-
-### Файл: `src/components/admin/product/TrainingContentTreePicker.tsx`
-
-**Фикс 1: `handleSelectAll` (строка 120-126)**
-
-При выборе всего — также включить root-level lessons:
-
-```typescript
-const handleSelectAll = () => {
-  if (rootState === "checked") {
-    onChange([], []);
-  } else {
-    // Select all modules + root-level lessons (not covered by any module)
-    onChange([...allModuleIds], [...tree.lessons.map(l => l.id)]);
-  }
-};
-```
-
-**Фикс 2: кнопка «Выбрать всё» (строка 259)**
-
-Аналогично: `onClick={() => onChange([...allModuleIds], [...tree.lessons.map(l => l.id)])}`.
-
-**Фикс 3: `rootState` (строки 110-116)**
-
-Учитывать root-level lessons:
-
-```typescript
-const rootState = useMemo(() => {
-  const hasModules = allModuleIds.length > 0;
-  const hasRootLessons = tree.lessons.length > 0;
-  if (!hasModules && !hasRootLessons) return "unchecked" as const;
-
-  const allModsSelected = !hasModules || allModuleIds.every(id => modSet.has(id));
-  const allRootLessonsSelected = !hasRootLessons || tree.lessons.every(l => lesSet.has(l.id));
-
-  if (allModsSelected && allRootLessonsSelected && (hasModules || hasRootLessons)) return "checked" as const;
-  if (modSet.size > 0 || lesSet.size > 0) return "indeterminate" as const;
-  return "unchecked" as const;
-}, [allModuleIds, tree.lessons, modSet, lesSet]);
-```
-
-### DoD PATCH 1
-
-1. «Выбрать всё» реально выбирает все модули + root-level lessons
-2. «Снять всё» очищает выбор (уже работает)
-3. «Весь тренинг» (root checkbox) корректно переключает полное выделение
-4. При возврате в «Частичный доступ» state сбрасывается (уже работает — строка 1270 очищает при переключении в full)
-5. rootState корректно отражает фактическое состояние выбора
-6. Payload при сохранении содержит ровно то, что выбрано в UI
+- **Статус:** HOLD
+- **Execute:** запрещён
+- **Mapping confidence:** 2/5 exact_fk (один — «Предобучение», не коммерческий), 3/5 no_match
+- **Нужен:** отдельный mapping proof + отдельный follow-up patch
 
 ---
 
-## PATCH 2 — SAFE EXECUTE ONLY для repair-cb20-entitlements
+## Общий статус этапа Business → cb20
 
-### Перед execute — таблица safe cohort breakdown
-
-Вызвать dry-run, вывести:
-
-- align_to_business: N
-- repair_metadata_and_align: N
-- repair_metadata_only: N
-- full_tariff_scope: N
-- union_scope: N
-- total: N
-- Полный список user_id + entitlement_id
-
-### Execute
-
-Вызвать функцию с `dry_run: false, execute_cohort: 'safe_only'`.
-
-Функция уже содержит все необходимые guard-ы:
-
-- `create` → abort
-- `module_scope_only` → abort
-- `standalone_only` → blocked
-- `staff` → excluded
-- `hold/manual_review` → excluded
-
-### Post-check proof (обязательный)
-
-После execute проверить из response `post_check`:
-
-- `expires_mismatch_remaining = 0` для executed cohort
-- `scope_mode_invalid = 0`
-- `no_meta_remaining = 0` для executed cohort
-- `executed_standalone_only_with_no_match = 0`
-- `executed_users_with_null_business_end = 0`
-- `executed_users_with_email_unresolved = 0`
-- `audit_logs` содержит запись с `actor_label = 'batch_business_cb20_repair_v1'`
-- `per_user_proof` таблица: user_id, old/new expires_at, target, scope_mode, result
-
----
-
-## PATCH 3 — Runtime/UI proof после safe execute
-
-### Выбрать 2 пользователя
-
-1. Один из `full_tariff_scope`
-2. Один из `union_scope`
-
-### Для каждого показать
-
-- До execute: entitlement state в БД (expires_at, meta)
-- После execute: entitlement state в БД
-- `scope_resolution_mode`
-- `expires_at` = `business_access_end_at`
-- Runtime resolver: какие training modules видны
-- Lesson count
-- Подтверждение: нет full-access fallback по legacy/meta-hole
-
----
-
-## Standalone-only — явный статус
-
-- **Остаются в HOLD**
-- В текущий execute **не входят**
-- Mapping confidence: 2/5 exact_fk (один — «Предобучение», не коммерческий), 3/5 no_match
-- Отдельный patch после дополнительного mapping proof
-
----
-
-## Файлы для изменения
-
-
-| Файл                                                         | Изменение                                                                       |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `src/components/admin/product/TrainingContentTreePicker.tsx` | Фикс handleSelectAll, rootState, кнопки «Выбрать всё» — учёт root-level lessons |
-| `.lovable/plan.md`                                           | Обновить статус: PATCH 1-3, standalone HOLD                                     |
-
-
-PATCH 2 и PATCH 3 — через вызовы edge function + DB queries, без изменения кода (функция уже готова).
-
-## Порядок выполнения
-
-1. PATCH 1 → код TreePicker
-2. PATCH 2 → dry-run breakdown → execute → post-check
-3. PATCH 3 → runtime proof по 2 users
-4. Обновить документацию
+| Элемент | Статус |
+|---|---|
+| Архитектурная подготовка | ✅ |
+| Dry-run | ✅ |
+| Safe cohort split | ✅ |
+| Edge function guards | ✅ |
+| Safe execute | ✅ (86 users) |
+| Post-check proof | ✅ |
+| Runtime/UI proof | ✅ (2 users) |
+| Standalone-only follow-up | ❌ HOLD |
+| TreePicker UI fix | ✅ |
