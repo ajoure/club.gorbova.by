@@ -34,6 +34,8 @@ interface RepairPlan {
   historical_module_product_ids: string[];
   current_entitlement_id: string | null;
   current_entitlement_expires_at: string | null;
+  current_entitlement_match_by: 'product_id' | 'product_code' | 'none';
+  legacy_null_product_id: boolean;
   current_meta_status: 'has_meta' | 'no_meta';
   planned_action: ActionBucket;
   scope_bucket: ScopeBucket;
@@ -258,6 +260,8 @@ Deno.serve(async (req) => {
         business_access_end_at: businessInfo.access_end_at,
         current_entitlement_id: ent?.id || null,
         current_entitlement_expires_at: ent?.expires_at || null,
+        current_entitlement_match_by: entMatchBy.get(userId) || 'none' as const,
+        legacy_null_product_id: entLegacyNull.get(userId) || false,
         current_meta_status: metaStatus,
       };
 
