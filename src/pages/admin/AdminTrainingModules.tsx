@@ -941,38 +941,38 @@ export default function AdminTrainingModules() {
         )}
 
         {/* PATCH K: Bulk Actions Bar */}
-        {selectionMode && selectedModuleIds.size > 0 && (
+        {selectionMode && (selectedModuleIds.size > 0 || selectedLessonIds.size > 0) && (
           <BulkActionsBar
-            selectedCount={selectedModuleIds.size}
+            selectedCount={selectedModuleIds.size + selectedLessonIds.size}
             onClearSelection={handleClearSelection}
             onSelectAll={handleSelectAll}
             totalCount={modules.length}
-            entityName="модулей"
-            onBulkEdit={() => openBulkModal("activate", false)}
-            onBulkArchive={() => openBulkModal("deactivate", false)}
+            entityName={`${selectedModuleIds.size} мод. / ${selectedLessonIds.size} ур.`}
+            onBulkEdit={() => openBulkModal("activate", "exact")}
+            onBulkArchive={() => openBulkModal("deactivate", "exact")}
           />
         )}
 
         {/* PATCH K: Bulk activation floating actions */}
-        {selectionMode && selectedModuleIds.size > 0 && !bulkModalOpen && (
+        {selectionMode && (selectedModuleIds.size > 0 || selectedLessonIds.size > 0) && !bulkModalOpen && (
           <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40">
-            <div className="bg-background border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", false)}>
+            <div className="bg-background border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2 flex-wrap justify-center">
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", "exact")}>
                 <Power className="h-3.5 w-3.5" />
-                Активировать модули
+                Активировать выбранное
               </Button>
-              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", false)}>
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", "exact")}>
                 <PowerOff className="h-3.5 w-3.5" />
-                Деактивировать модули
+                Деактивировать выбранное
               </Button>
               <div className="h-5 w-px bg-border" />
-              <Button size="sm" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", true)}>
+              <Button size="sm" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", "cascade")}>
                 <Power className="h-3.5 w-3.5" />
-                Модули + уроки
+                Каскадная активация
               </Button>
-              <Button size="sm" variant="destructive" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", true)}>
+              <Button size="sm" variant="destructive" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", "cascade")}>
                 <PowerOff className="h-3.5 w-3.5" />
-                Деактивировать всё
+                Каскадная деактивация
               </Button>
             </div>
           </div>
@@ -983,8 +983,9 @@ export default function AdminTrainingModules() {
           open={bulkModalOpen}
           onOpenChange={setBulkModalOpen}
           selectedModuleIds={Array.from(selectedModuleIds)}
+          selectedLessonIds={Array.from(selectedLessonIds)}
           action={bulkAction}
-          cascadeToLessons={bulkCascade}
+          selectionMode={bulkSelectionMode}
           onConfirm={handleBulkConfirm}
           executing={bulkExecuting}
         />
