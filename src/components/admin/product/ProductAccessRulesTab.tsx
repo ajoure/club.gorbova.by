@@ -1142,16 +1142,19 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
               </div>
               <Select
                 value={form.grant_target_type}
-                onValueChange={(v: GrantTargetType) => setForm({
-                  ...form,
-                  grant_target_type: v,
-                  target_ref: "",
-                  target_label: "",
-                  target_product_ids: [],
-                  has_condition: false,
-                  condition_use_same_list: true,
-                  condition_required_product_ids: [],
-                })}
+                onValueChange={(v: GrantTargetType) => {
+                  setUseViaRuleTraining(null);
+                  setForm({
+                    ...form,
+                    grant_target_type: v,
+                    target_ref: "",
+                    target_label: "",
+                    target_product_ids: [],
+                    has_condition: false,
+                    condition_use_same_list: true,
+                    condition_required_product_ids: [],
+                  });
+                }}
               >
                 <SelectTrigger className="h-9">
                   <SelectValue />
