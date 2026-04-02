@@ -572,12 +572,13 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 }
 
 // --- Rule-linked Training Card with actions ---
-function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, contentRules }: {
+function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, contentRules, tariffNamesMap }: {
   vt: VisibleTraining;
   onFocusRule?: (ruleId: string) => void;
   onEditRule?: (ruleId: string) => void;
   onDeleteRule?: (ruleId: string, trainingTitle: string) => void;
   contentRules?: Array<{ id: string; tariff_id: string | null; target_label: string | null; is_active: boolean; conditions: any }>;
+  tariffNamesMap?: Record<string, string>;
 }) {
   const [ruleSelectOpen, setRuleSelectOpen] = useState(false);
   const [ruleSelectAction, setRuleSelectAction] = useState<'edit' | 'delete'>('edit');
@@ -980,7 +981,7 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                   )}
                   <div className="space-y-2">
                     {onlyRuleLinkedTrainings.map(vt => (
-                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} contentRules={contentRules} />
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} onEditRule={onEditRule} onDeleteRule={handleDeleteRuleLink} contentRules={contentRules} tariffNamesMap={tariffNamesMap} />
                     ))}
                   </div>
                 </>
