@@ -410,18 +410,50 @@ export function resolveTrainingContentFilter(
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
   if (matchingRules.length === 0) return null;
 
-  // Separate DB rules from synthetic bonus rules
-  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-bonus-'));
-  const syntheticRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+  // Separate DB rules from synthetic rules
+  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-'));
+  const syntheticBonusRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+  const syntheticLegacyRules = matchingRules.filter(r => r.id.startsWith('synthetic-legacy-safe-'));
 
   let bestRule: TrainingContentRule | null = null;
 
-  // Priority 1: Tariff-level DB rules (most specific)
+  // Priority 1: Tariff-level DB rules (most specific — direct purchase with active subscription)
   for (const rule of dbRules) {
     if (rule.tariff_id && userTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
       break;
     }
+  }
+
+  // Priority 2: Product-level DB rules (no tariff specified)
+  if (!bestRule) {
+    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+  }
+
+  // Priority 3: Synthetic bonus rules (explicit scope_resolution_mode from meta)
+  if (!bestRule && syntheticBonusRules.length > 0) {
+    bestRule = syntheticBonusRules[0];
+  }
+
+  // Priority 4: Synthetic legacy safe default (no meta → no_scope)
+  // This catches bonus entitlements without tariff context that would otherwise get full access
+  if (!bestRule && syntheticLegacyRules.length > 0) {
+    bestRule = syntheticLegacyRules[0];
+  }
+
+  if (!bestRule) return null;
+
+  const cond = bestRule.conditions;
+  if (cond.access_mode === "full") {
+    return { mode: "full", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
+  }
+
+  return {
+    mode: "partial",
+    allowedModuleIds: new Set(cond.allowed_module_ids || []),
+    allowedLessonIds: new Set(cond.allowed_lesson_ids || []),
+  };
+}
   }
 
   // Priority 2: Product-level DB rules
