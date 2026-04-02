@@ -1,195 +1,257 @@
-# План: PATCH G → H → I → J → E → B — нормализация + repair + proof
+# да, согласен, с учетом правок:
 
-## Главная цель спринта
+&nbsp;
 
-1. Historical standalone deals корректно разделены
-2. Цены child deals корректны (per-module, sum = parent)
-3. Parent/child визуальные дубли устранены
-4. Названия модулей единообразны на всех экранах
-5. Standalone entitlements repaired по доказуемо корректным кейсам
-6. Срок доступа и фактическая видимость контента подтверждены proof-таблицами
+1. **Не закрывать PATCH H до price truth audit.**
+  В плане правильно добавлен PATCH H3, но нужно зафиксировать жестче:
+  PATCH H = done только после таблицы price_truth_audit, а не только после sum(children)=parent.
+2. **Для Рыштаковой явно указать, что execute возможен только по одному модулю.**
+  Сейчас это следует из таблицы, но нужно записать прямо:
+  &nbsp;
+  - partial_safe execute_scope = [Маркетплейсы]
+  - Розничная торговля и Производство в entitlement **не включать**, так как active_lessons = 0.
+  &nbsp;
+3. **Для Царёвой добавить отдельный вывод, что mapping успешен.**
+  Сейчас написано, что она blocked, но важно явно разделить причины:
+  &nbsp;
+  - mapping_ok = true
+  - execute_block_reason = inactive content / zero active lessons
+    Это исключает повторные попытки чинить mapping вместо контента.
+  &nbsp;
+4. **Decision matrix сделать не просто deliverable, а обязательным gate.**
+  Добавить строку:
+  Без заполненной decision matrix execute PATCH E и finalize PATCH G запрещены.
+5. **В PATCH E dry_run обязать подрядчика показать не только edge-function output, но и DB cross-check.**
+  Для approved/blocked users отдельно:
+  &nbsp;
+  - business_access_end_at
+  - existing cb20 entitlement
+  - target_expires_at
+  - mapped_training_module_ids
+  - visible_recursive_lesson_count
+    Это должно совпасть 1:1 с proof tables.
+  &nbsp;
+6. **Уточнить PATCH H3 по zero-price кейсам.**
+  Для Царёвой и других zero parents записать явно:
+  &nbsp;
+  - expected_module_price = 0
+  - actual_child_price = 0
+  - status = trivial_match
+    Чтобы потом не возвращаться к этим кейсам.
+  &nbsp;
+7. **Добавить обязательную таблицу execute payload preview для Рыштаковой.**
+  Перед execute подрядчик должен показать финальный payload entitlement:
+  &nbsp;
+  - user_id
+  - product_id
+  - product_code
+  - scope_resolution_mode
+  - mapped_training_module_ids
+  - unmapped_historical_module_product_ids
+  - expires_at
+  - business_subscription_id
+  - mapping_version
+    Без этого execute не запускать.
+  &nbsp;
+8. **PATCH G finalize_parents разрешать только после post-execute proof по Рыштаковой.**
+  Сейчас написано “после PATCH E”. Нужно точнее:
+  &nbsp;
+  - execute completed
+  - entitlement реально создан
+  - expires_at = business_access_end_at
+  - UI/runtime proof собран
+    Только после этого finalize parents.
+  &nbsp;
+9. **В reference-case block для Рыштаковой добавить expected runtime result.**
+  Не просто “execute candidate”, а:
+  &nbsp;
+  - после execute пользователь видит только модуль Маркетплейсы
+  - другие child orders остаются историей покупки, но не дают доступ к inactive content.
+  &nbsp;
+10. **В reference-case block для Царёвой добавить expected manual path.**
+  Явно записать:
+  &nbsp;
+  - repair не выполняется в этом спринте
+  - следующий шаг только после активации уроков/контента
+  - после активации контента требуется повторный dry-run, а не прямой execute.
+  &nbsp;
+11. **Добавить в план таблицу entitlement_uniqueness_check.**
+  Перед и после execute:
+  &nbsp;
+  - email
+  - existing_active_cb20_entitlements_count
+  - expected_after_execute
+  - duplicate_risk
+    Это нужно, чтобы не создать дубль entitlement.
+  &nbsp;
+12. **Зафиксировать, что PATCH B не должен блокировать G/E finalize-decision по данным.**
+  Browser proof уроков важен, но он не должен тормозить решение по entitlement/split, если DB/UI proof по сделкам и доступам уже собран.
+  То есть PATCH B оставить в конце, но не делать hard blocker для PATCH E.
+13. **В блоке “Файлы для изменения” добавить возможную точечную правку repair function только при расхождении dry-run и proof tables.**
+  Иначе подрядчик может начать лишние правки без новых фактов.
+14. **Итоговый порядок работ переписать так:**
+  &nbsp;
+  - PATCH H3 price_truth_audit
+  - PATCH E1 pre-execute proof Рыштакова
+  - PATCH E2 blocked proof Царёва
+  - decision_matrix + entitlement_uniqueness_check
+  - PATCH E dry_run + DB cross-check
+  - PATCH E execute only approved users
+  - post-execute proof
+  - PATCH G finalize_parents
+  - PATCH B browser proof
+  &nbsp;
+15. **Финальный expected outcome записать явно:**
+  &nbsp;
+  - Рыштакова — partial_safe executed
+  - Царёва — blocked/manual_review
+  - parent multi-module orders — finalized only after execute-proof
+  - child orders — prices/truth verified
+  - titles consistent across UI
+  &nbsp;
 
-**PATCH G/H/I/J — поддерживающие нормализационные шаги.**
-**Основная тема спринта неизменна:** корректная цепочка продукт → тариф → тренинг → сделка → доступ → срок.
+&nbsp;
 
-## Статусы патчей
+&nbsp;
 
-| Patch | Статус |
-|---|---|
-| PATCH F | ⏳ verify after I (system-wide UI proof needed) |
-| PATCH C | ✅ done / verify only |
-| PATCH D | ⏳ proof base ready |
-| PATCH G | G1 ✅ children_created (22/22), G2 ✅ price_normalized, G3 ⏳ parent_ui_clean (badges deployed), G4 ⏳ parents_finalized |
-| PATCH H | ✅ H1 data-fix done (22 children), H2 code-fix done (edge function) |
-| PATCH I | ✅ UI badges deployed (ContactDetailSheet, AdminDeals, DealDetailSheet) |
-| PATCH J | ✅ audit CSV generated — all 7 parents: child_prices_ok, titles_ok, needs_ui_badge |
-| PATCH E | ⏳ dry-run next |
-| PATCH B | ⏳ final browser proof |
+План: PATCH E dry_run + reference proofs + price truth audit + decision matrix
 
-## Готовность edge functions
+## Контекст
 
-- `split-multi-module-orders` — FIXED: per-module pricing with deterministic remainder
-- `repair-cb20-entitlements` — FIXED: `training_content` → `training_lessons`, `status` → `is_active`
+Данные после PATCH G/H/I/J:
 
-**Правило:** edge functions считаются готовыми только после preflight-check. При отклонениях допускаются точечные правки.
+- 22 child orders созданы, цены нормализованы (sum = parent)
+- UI badges для split parent/child deployed
+- System-wide audit completed (PATCH J)
 
-## PATCH G sub-statuses
+Фактическое состояние reference-cases:
 
-- G1 ✅ children_created — 7 parent → 22 child orders, batch_id: SPLIT-2026-04-02T200720
-- G2 ✅ price_normalized — batch_id: PRICE-FIX-2026-04-02, sum_match = true на всех 7
-- G3 ⏳ parent_ui_clean — UI badges deployed, needs browser proof
-- G4 ⏳ parents_finalized — BLOCKED until all post-checks + repair confirmed
+**Рыштакова ([katerina5515530@gmail.com](mailto:katerina5515530@gmail.com)):**
 
-**До G4 split считается незавершённым.**
+- 3 child orders: GC-3831920-M1 (83.33), M2 (83.33), M3 (83.34)
+- BUSINESS active, access_end_at = 2026-04-18
+- Из 3 модулей только **Маркетплейсы** имеет 5 active lessons
+- Розничная торговля: 0 active lessons
+- Производство: 0 active lessons
+- **Статус: partial_safe candidate** (1 из 3 модулей с active content)
 
-## PATCH H результаты
+**Царёва ([irinkazar@inbox.ru](mailto:irinkazar@inbox.ru)):**
 
-### H1 data-fix ✅
+- 3 child orders: GC-1767629483208-M1/M2/M3, все с ценой 0.00
+- BUSINESS active, access_end_at = 2026-04-18
+- Все 3 matched модуля (Розничная торговля, Грузо, Производство): 0 active lessons
+- **Статус: blocked / runtime_preview_zero_visibility**
 
-| Parent | parent_final | modules | child_prices | sum_match |
-|---|---|---|---|---|
-| GC-3813592 | 19204.08 | 2 | 9602.04, 9602.04 | ✅ |
-| GC-3814251 | 28823.23 | 3 | 9607.74, 9607.74, 9607.75 | ✅ |
-| GC-3818307 | 1100.00 | 2 | 550.00, 550.00 | ✅ |
-| GC-3831920 | 250.00 | 3 | 83.33, 83.33, 83.34 | ✅ |
-| (3 zero-price parents) | 0 | 3/4/5 | all 0.00 | ✅ trivial |
+## Что будет сделано
 
-### H2 code-fix ✅
-Edge function `split-multi-module-orders/index.ts` обновлена:
-- Цена считается как `parent_price / module_count` с remainder на последнем child
-- В meta добавлены: `split_parent_final_price`, `split_parent_module_count`, `split_price_strategy`, `split_price_batch_id`
-- В purchase_snapshot: `normalized_unit_price`, `parent_total_price`, `parent_module_count`
+### 1. PATCH H3 — price truth audit
 
-### Add-only правило
-- Не создавать новые products/tariffs/training_modules
-- Не удалять child orders
-- Parent не переводить в canceled до полного proof-пакета
-- Все изменения parent/child обратимо диагностируемы через meta
+Генерация таблицы сопоставления цен child orders с бизнес-ожиданием:
 
-## PATCH I результаты
+| email | parent_order | child_order | module_name | actual_child_price | expected_module_price | price_source | match |
 
-UI-компоненты обновлены для корректного отображения split orders:
-- **ContactDetailSheet** — split parent: opacity-50 + бейдж "📦 Разделена на модули"; split child: бейдж "📄 Модуль (split)"; + display_purchase_name fallback
-- **AdminDeals** — аналогичные бейджи для split parent/child
-- **DealDetailSheet** — бейдж + ссылка на parent order number + child count
+Правило расчёта: `parent_final / module_count`, remainder на последнем child.
+Для zero-price parents — trivial match.
 
-## PATCH J audit результаты
+Особый кейс Рыштаковой: parent = 250 / 3 модуля = 83.33 per module. Это единственный доступный исторический source цены. Альтернативного source (отдельная цена за модуль) в системе нет.
 
-| profile_email | parent_order | children | parent_status | child_prices_ok | titles_ok | needs_cleanup |
-|---|---|---|---|---|---|---|
-| a.bruylo@ajoure.by | GC-3830657 | 5 | paid | trivial_zero | OK | needs_ui_badge |
-| irinkazar@inbox.ru | GC-1767629483208 | 3 | paid | trivial_zero | OK | needs_ui_badge |
-| irkaguzarevich@mail.ru | GC-3818501 | 4 | paid | trivial_zero | OK | needs_ui_badge |
-| katerina5515530@gmail.com | GC-3831920 | 3 | paid | OK | OK | needs_ui_badge |
-| lori-30@tut.by | GC-3813592 | 2 | paid | OK | OK | needs_ui_badge |
-| overchenko.lina@mail.ru | GC-3818307 | 2 | paid | OK | OK | needs_ui_badge |
-| princessa_elena1@mail.ru | GC-3814251 | 3 | paid | OK | OK | needs_ui_badge |
+**Deliverable:** `/mnt/documents/patch_h3_price_truth_audit.csv`
 
-**Итог:** все 7 parents — child_prices_ok, titles_ok. Все нуждаются в UI badge (deployed).
+### 2. PATCH E1 — pre-execute proof для Рыштаковой
 
-## Execution order (обновлённый)
+Обязательная таблица перед execute:
+
+
+| child_order   | display_purchase_name      | final_price | matched_training_module_id | matched_training_module_title | active_lessons | included_in_entitlement |
+| ------------- | -------------------------- | ----------- | -------------------------- | ----------------------------- | -------------- | ----------------------- |
+| GC-3831920-M1 | ЦБ 2.0: Розничная торговля | 83.33       | 1ede03b4                   | РОЗНИЧНАЯ ТОРГОВЛЯ            | 0              | ❌ (0 lessons)           |
+| GC-3831920-M2 | ЦБ 2.0: Производство       | 83.33       | a4a5102d                   | ПРОИЗВОДСТВО                  | 0              | ❌ (0 lessons)           |
+| GC-3831920-M3 | ЦБ 2.0: Маркетплейсы       | 83.34       | 4c97d21c                   | Маркетплейсы                  | 5              | ✅                       |
+
+
+**Планируемый entitlement:**
+
+- scope_resolution_mode = module_scope_only
+- mapped_training_module_ids = [4c97d21c] (только Маркетплейсы)
+- expires_at = 2026-04-18 (= business_access_end_at)
+- режим: partial_safe
+
+### 3. PATCH E2 — blocked proof для Царёвой
+
+
+| child_order         | module_name                 | matched_training_module_id | active_lessons | block_reason        |
+| ------------------- | --------------------------- | -------------------------- | -------------- | ------------------- |
+| GC-1767629483208-M1 | Розничная торговля          | 1ede03b4                   | 0              | zero_active_lessons |
+| GC-1767629483208-M2 | Грузо- и пассажироперевозки | 8f71d4a8                   | 0              | zero_active_lessons |
+| GC-1767629483208-M3 | Производство                | a4a5102d                   | 0              | zero_active_lessons |
+
+
+**Итог:** repair blocked by inactive content, not by mapping. Все 3 модуля сматчены, но 0 active lessons.
+
+### 4. Decision matrix (обязательный gate)
+
+
+| email           | split_normalized | prices_verified | mapping_ok     | active_lessons>0 | execute_allowed | final_action               |
+| --------------- | ---------------- | --------------- | -------------- | ---------------- | --------------- | -------------------------- |
+| katerina5515530 | ✅                | ✅               | ✅ (1/3)        | ✅ (partial)      | ✅ partial_safe  | execute: Маркетплейсы only |
+| irinkazar       | ✅                | ✅ trivial       | ✅ (3/3 mapped) | ❌ (0/3)          | ❌               | blocked: manual_review     |
+| a.bruylo        | ✅                | ✅ trivial       | —              | —                | ❌               | staff_skip                 |
+
+
+### 5. PATCH E dry_run через edge function
+
+Вызов `repair-cb20-entitlements` с `dry_run: true, standalone_mode: "partial_safe"`.
+Результат разделить на два блока:
+
+- **post_split_candidates** — пользователи с active lessons > 0
+- **still_blocked** — пользователи с 0 visible lessons
+
+### 6. Обновление .lovable/plan.md
+
+Зафиксировать:
+
+- PATCH E разделён на E1 (partial_safe execute candidate) и E2 (blocked/manual_review)
+- Reference-case statuses с фактическими данными
+- Decision matrix как обязательный deliverable
+- PATCH H незакрыт до price_truth_audit
+
+## Порядок работ
 
 ```text
-1. ✅ PATCH H1 — data-fix prices (done)
-2. ✅ PATCH H2 — code-fix split function (done)
-3. ✅ PATCH I — UI cleanup parent/child + badges (done)
-4. ✅ PATCH J — audit/proof table (done)
-5. ⏳ PATCH E — dry_run on normalized data
-6. ⏳ PATCH E — execute approved cohort
-7. ⏳ PATCH G4 — finalize_parents
-8. ⏳ PATCH B — browser proof
+1. PATCH H3 — price_truth_audit CSV
+2. PATCH E1 — pre-execute proof Рыштакова
+3. PATCH E2 — blocked proof Царёва
+4. Decision matrix
+5. PATCH E dry_run (edge function)
+6. Обновление plan.md
 ```
 
-## PATCH E — следующий шаг
+Далее (после согласования dry_run результатов):
 
-### Царёва (irinkazar@inbox.ru) — proof-блок
+```text
+7. PATCH E execute only approved (Рыштакова partial_safe)
+8. PATCH G finalize_parents
+9. PATCH B browser proof
+```
 
-| Поле | Значение |
-|---|---|
-| matched modules | 4/4 (Розница, Грузо, Производство, Строительство) |
-| visible_module_count | 0 |
-| visible_recursive_lesson_count | 0 |
-| inactive_lessons_count | 12+ |
-| **Статус** | **repair blocked by inactive content, not by mapping** |
+## Ограничения текущего шага
 
-### Катерина (katerina5515530@gmail.com) — pre-execute proof (обязательный)
+- Не создаются новые продукты/тренинги/уроки
+- Не решается контентная проблема inactive lessons у Царёвой
+- Для blocked case — proof и manual decision, не автоматический repair
+- Execute запрещён без decision matrix
+- Finalize parents запрещён до завершения PATCH E
 
-До execute показать:
-- module_product_ids из child orders
-- matched_training_module_ids
-- visible_module_count / visible_recursive_lesson_count
-- target_expires_at
-- child orders after split + corrected prices
+## STOP-guards перед finalize
 
-Финальный статус: один из трёх — `repair executed` / `blocked with exact reason` / `manual review`
+- Цены подтверждены по business truth (H3)
+- Split-parent не мешает child визуально (I)
+- Titles consistent across all UI (F/I)
+- Reference proofs для Рыштаковой и Царёвой собраны
+- Execute/blocked outcome documented per user
 
-### Режим execute
-- dry-run показывает оба варианта: `strict_hold` и `partial_safe`
-- Выбор после просмотра результатов
-- Execute идёт **только по approved cohort из dry-run**
-- Базовый приоритет для reference-cases: `partial_safe`
+## Файлы для изменения
 
-## STOP-guard перед finalize_parents
-
-Finalize запрещён если хотя бы одно:
-- ❌ child price mismatch
-- ❌ parent still visible as normal deal (без badge)
-- ❌ titles mismatch across UI layers
-- ❌ standalone repair cohort not reviewed
-- ❌ reference proof for Царёва/Катерина not collected
-- ❌ UI/display proof на 1-2 child orders не подтверждён
-
-## PATCH F DoD (verify after PATCH I)
-
-- [ ] Одинаковое отображение названия сделки снаружи и внутри карточки
-- [ ] Корректное отображение split child deals
-- [ ] Отсутствие root-name там, где должен быть модуль
-- [ ] System-wide UI proof на всех экранах: AdminDeals, ContactDetailSheet, DealDetailSheet, ContactPaymentsTab
-
-## PATCH B — browser proof (расширенный)
-
-- [ ] admin lesson edit/save
-- [ ] superadmin lesson edit/save
-- [ ] Катерина: корректные child deals в списке и карточке контакта
-- [ ] Царёва: корректные child deals + parent не мешает UI
-- [ ] Корректное название сделки внутри и снаружи
-- [ ] Runtime visibility тренинга после repair на reference-case
-
-## Reference cases — before/after proof
-
-Для Царёвой и Катерины 4-этапный proof:
-1. До split (текущее состояние parent)
-2. После children_created + price normalization
-3. После UI cleanup (parent помечен badge)
-4. После repair (entitlement created/blocked)
-
-## DoD спринта
-
-### Основная цепочка
-- [x] Child deals имеют корректную модульную цену (sum children = parent)
-- [ ] Parent multi-module deal не выглядит как обычная активная сделка
-- [ ] Названия модулей совпадают на всех экранах
-- [x] System-wide audit completed
-- [ ] Duplicate visual rows eliminated (badge deployed, browser proof pending)
-
-### Entitlements
-- [ ] standalone_safe dry-run и execute по approved cohort
-- [ ] Царёва: documented proof (blocked by inactive content)
-- [ ] Катерина: pre-execute proof → execute/block/manual
-- [ ] expires_at = business_access_end_at
-- [ ] Нет дублей активных cb20 entitlements
-- [ ] Runtime visibility доказана UI proof
-- [ ] Active entitlement по cb20 один канонический
-
-### Finalize
-- [ ] PATCH G4 finalize_parents после полного post-check (DB + UI)
-- [ ] Child orders отображаются в UI как отдельные модульные сделки
-- [ ] Browser proof admin + superadmin
-
-## Reference cases
-
-| Email | Роль | Статус |
-|---|---|---|
-| irinkazar@inbox.ru | non-staff reference | blocked: 0 active lessons in all 4 modules |
-| katerina5515530@gmail.com | non-staff | standalone_safe, ready for pre-execute proof |
-| a.bruylo@ajoure.by | staff | manual skip |
+- `.lovable/plan.md` — обновление статусов и reference-case data
+- При отклонениях dry-run — точечные правки в `supabase/functions/repair-cb20-entitlements/index.ts`
+- Генерация `/mnt/documents/patch_h3_price_truth_audit.csv`
