@@ -366,6 +366,20 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // STOP-guard: duplicate active cb20 entitlements → manual_review
+      if (duplicateEntitlementUsers.has(userId)) {
+        plans.push({
+          ...basePlan,
+          historical_class: historicalClass, historical_tariff_id: historicalTariffId,
+          historical_module_product_ids: historicalBasisProductIds,
+          planned_action: 'manual_review', scope_bucket: scopeBucket,
+          target_expires_at: null,
+          reason: 'STOP-guard: >1 active cb20 entitlements found — manual_review_duplicate_active',
+          hold_reason: 'duplicate_active_entitlement',
+        });
+        continue;
+      }
+
       // Determine action
       let action: ActionBucket;
       let reason: string;
