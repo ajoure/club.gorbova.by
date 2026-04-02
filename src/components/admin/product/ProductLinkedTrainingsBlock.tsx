@@ -378,14 +378,14 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                       isCurrent
                         ? "bg-muted/30"
                         : isOtherProduct
-                          ? "hover:bg-amber-50/50 dark:hover:bg-amber-900/10 cursor-pointer border border-transparent hover:border-amber-200/50"
+                          ? "bg-amber-50/30 dark:bg-amber-900/10 border border-amber-200/30"
                           : "hover:bg-muted/50 cursor-pointer"
                     )}
                   >
                     <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
                     <div
-                      className={cn("flex-1 min-w-0", !isCurrent && "cursor-pointer")}
-                      onClick={() => !isCurrent && handleClick(m)}
+                      className={cn("flex-1 min-w-0", !isCurrent && !isOtherProduct && "cursor-pointer")}
+                      onClick={() => !isCurrent && !isOtherProduct && handleClick(m)}
                     >
                       <span
                         className="line-clamp-3 leading-snug block"
@@ -408,18 +408,40 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
                       )}
                       {isOtherProduct && (
-                        <>
-                          <Badge
+                        <div className="flex flex-col gap-1 items-end mt-1">
+                          <Button
+                            size="sm"
                             variant="outline"
-                            className="text-[10px] text-amber-600 border-amber-300 cursor-pointer"
-                            onClick={() => handleClick(m)}
+                            className="h-6 text-[10px] gap-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onUseViaRule) {
+                                onUseViaRule(m.id, m.title);
+                                onOpenChange(false);
+                              }
+                            }}
                           >
-                            Перепривязать к этому продукту
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground italic mt-0.5">
-                            Использование через правило доступа — в разработке
+                            <BookOpen className="h-2.5 w-2.5" />
+                            Использовать через правило
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 text-[10px] gap-1 text-destructive hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRebindRequest(m.id, m.title);
+                              onOpenChange(false);
+                            }}
+                          >
+                            <ArrowRight className="h-2.5 w-2.5" />
+                            Перепривязать владельца
+                          </Button>
+                          <span className="text-[9px] text-muted-foreground max-w-[220px] text-right leading-tight whitespace-normal">
+                            «Через правило» — владелец не меняется.
+                            «Перепривязать» — сменит владельца, может затронуть старые правила/доступы.
                           </span>
-                        </>
+                        </div>
                       )}
                       {isCurrent && (
                         <div className="flex items-center gap-1">
