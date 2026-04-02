@@ -918,6 +918,55 @@ export default function AdminTrainingModules() {
             }}
           />
         )}
+
+        {/* PATCH K: Bulk Actions Bar */}
+        {selectionMode && selectedModuleIds.size > 0 && (
+          <BulkActionsBar
+            selectedCount={selectedModuleIds.size}
+            onClearSelection={handleClearSelection}
+            onSelectAll={handleSelectAll}
+            totalCount={modules.length}
+            entityName="модулей"
+            onBulkEdit={() => openBulkModal("activate", false)}
+            onBulkArchive={() => openBulkModal("deactivate", false)}
+          />
+        )}
+
+        {/* PATCH K: Bulk activation floating actions */}
+        {selectionMode && selectedModuleIds.size > 0 && !bulkModalOpen && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40">
+            <div className="bg-background border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", false)}>
+                <Power className="h-3.5 w-3.5" />
+                Активировать модули
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", false)}>
+                <PowerOff className="h-3.5 w-3.5" />
+                Деактивировать модули
+              </Button>
+              <div className="h-5 w-px bg-border" />
+              <Button size="sm" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", true)}>
+                <Power className="h-3.5 w-3.5" />
+                Модули + уроки
+              </Button>
+              <Button size="sm" variant="destructive" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", true)}>
+                <PowerOff className="h-3.5 w-3.5" />
+                Деактивировать всё
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* PATCH K: Bulk Activation Modal */}
+        <BulkActivationModal
+          open={bulkModalOpen}
+          onOpenChange={setBulkModalOpen}
+          selectedModuleIds={Array.from(selectedModuleIds)}
+          action={bulkAction}
+          cascadeToLessons={bulkCascade}
+          onConfirm={handleBulkConfirm}
+          executing={bulkExecuting}
+        />
       </div>
     </AdminLayout>
   );
