@@ -757,7 +757,8 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {trainings.length === 0 ? (
+          {/* Empty state: only if both owned and rule-linked are empty */}
+          {visibleTrainingCount === 0 && !isRuleLinkedLoading ? (
             <div className="text-center py-8 space-y-3">
               <BookOpen className="h-8 w-8 mx-auto text-muted-foreground/40" />
               <p className="text-sm text-muted-foreground">К продукту не привязано ни одного тренинга</p>
@@ -766,41 +767,74 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
                 Привязать тренинг
               </Button>
             </div>
-          ) : viewMode === "tree" ? (
-            <div className="space-y-0.5">
-              {trainings.map(t => (
-                <TrainingTreeItem
-                  key={t.id}
-                  training={t}
-                  diagnostics={diagnostics[t.id]}
-                  onUnbind={handleUnbindRequest}
-                />
-              ))}
-            </div>
           ) : (
-            <>
-              {viewMode.startsWith("matrix") && (
-                <div className="flex items-center gap-1.5 mb-2">
-                  <button
-                    onClick={() => setViewMode("matrix-summary")}
-                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    Сводка
-                  </button>
-                  <button
-                    onClick={() => setViewMode("matrix-expanded")}
-                    className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-expanded" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    Развёрнутый
-                  </button>
-                </div>
+            <div className="space-y-3">
+              {/* Owned trainings */}
+              {trainings.length > 0 && (
+                viewMode === "tree" ? (
+                  <div className="space-y-0.5">
+                    {trainings.map(t => (
+                      <div key={t.id}>
+                        <TrainingTreeItem
+                          training={t}
+                          diagnostics={diagnostics[t.id]}
+                          onUnbind={handleUnbindRequest}
+                        />
+                        {mixedTrainingIds.has(t.id) && (
+                          <div className="ml-7 mt-0.5 flex items-center gap-1.5">
+                            <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
+                            <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
+                              Через правило
+                            </Badge>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    {viewMode.startsWith("matrix") && (
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <button
+                          onClick={() => setViewMode("matrix-summary")}
+                          className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-summary" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          Сводка
+                        </button>
+                        <button
+                          onClick={() => setViewMode("matrix-expanded")}
+                          className={cn("text-xs px-2 py-0.5 rounded", viewMode === "matrix-expanded" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground hover:text-foreground")}
+                        >
+                          Развёрнутый
+                        </button>
+                      </div>
+                    )}
+                    <TrainingMatrixView
+                      trainings={trainings}
+                      diagnostics={diagnostics}
+                      viewMode={viewMode === "matrix-expanded" ? "expanded" : "summary"}
+                    />
+                  </>
+                )
               )}
-              <TrainingMatrixView
-                trainings={trainings}
-                diagnostics={diagnostics}
-                viewMode={viewMode === "matrix-expanded" ? "expanded" : "summary"}
-              />
-            </>
+
+              {/* Rule-linked trainings (not owned by this product) */}
+              {onlyRuleLinkedTrainings.length > 0 && (
+                <>
+                  {trainings.length > 0 && <Separator className="my-2" />}
+                  {trainings.length === 0 && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Тренинги подключены через правила доступа
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {onlyRuleLinkedTrainings.map(vt => (
+                      <RuleLinkedTrainingCard key={vt.id} vt={vt} onFocusRule={onFocusRule} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* Training content rules summary */}
