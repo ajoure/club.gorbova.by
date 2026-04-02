@@ -660,6 +660,18 @@ export default function AdminTrainingModules() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
+                {activeTab === "modules" && displayLayout === "list" && (
+                  <>
+                    <DropdownMenuItem onClick={() => {
+                      setSelectionMode((p) => !p);
+                      if (selectionMode) setSelectedModuleIds(new Set());
+                    }}>
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      {selectionMode ? "Отключить выделение" : "Режим выделения"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onClick={() => navigate("/admin/kb-import")}>
                   <Upload className="h-4 w-4 mr-2" />
                   Импорт КБ
