@@ -817,7 +817,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                 className={cn(
                   "transition-colors",
                   !rule.is_active && "opacity-60",
-                  hasConflict && "border-amber-300/50"
+                  hasRealConflict && "border-amber-300/50"
                 )}
               >
                 <CardContent className="py-3 px-4">
