@@ -571,11 +571,12 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
 }
 
 // --- Rule-linked Training Card with actions ---
-function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule }: {
+function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule, contentRules }: {
   vt: VisibleTraining;
   onFocusRule?: (ruleId: string) => void;
   onEditRule?: (ruleId: string) => void;
   onDeleteRule?: (ruleId: string, trainingTitle: string) => void;
+  contentRules?: Array<{ id: string; tariff_id: string | null; target_label: string | null; is_active: boolean; conditions: any }>;
 }) {
   const [ruleSelectOpen, setRuleSelectOpen] = useState(false);
   const [ruleSelectAction, setRuleSelectAction] = useState<'edit' | 'delete'>('edit');
@@ -674,26 +675,39 @@ function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule }: {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {vt.rule_ids.map((ruleId, idx) => (
-              <button
-                key={ruleId}
-                className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                onClick={() => {
-                  setRuleSelectOpen(false);
-                  if (ruleSelectAction === 'edit' && onEditRule) {
-                    onEditRule(ruleId);
-                  } else if (ruleSelectAction === 'delete' && onDeleteRule) {
-                    onDeleteRule(ruleId, vt.title);
-                  }
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <Shield className="h-3.5 w-3.5 text-primary shrink-0" />
-                  <span className="text-sm font-medium">Правило {idx + 1}</span>
-                  <span className="text-[10px] font-mono text-muted-foreground">{ruleId.slice(0, 8)}</span>
-                </div>
-              </button>
-            ))}
+            {vt.rule_ids.map((ruleId, idx) => {
+              const rule = contentRules?.find(r => r.id === ruleId);
+              const accessMode = rule?.conditions?.access_mode || 'full';
+              return (
+                <button
+                  key={ruleId}
+                  className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                  onClick={() => {
+                    setRuleSelectOpen(false);
+                    if (ruleSelectAction === 'edit' && onEditRule) {
+                      onEditRule(ruleId);
+                    } else if (ruleSelectAction === 'delete' && onDeleteRule) {
+                      onDeleteRule(ruleId, vt.title);
+                    }
+                  }}
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Shield className="h-3.5 w-3.5 text-primary shrink-0" />
+                    <span className="text-sm font-medium">Правило {idx + 1}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">{ruleId.slice(0, 8)}</span>
+                    {rule && !rule.is_active && (
+                      <Badge variant="outline" className="text-[9px] text-muted-foreground">Неактивно</Badge>
+                    )}
+                  </div>
+                  {rule && (
+                    <div className="mt-1 flex items-center gap-2 flex-wrap text-[11px] text-muted-foreground">
+                      <span>Режим: {accessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</span>
+                      {rule.target_label && <span>• {rule.target_label}</span>}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </DialogContent>
       </Dialog>
