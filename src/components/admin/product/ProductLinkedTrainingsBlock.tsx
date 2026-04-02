@@ -1121,24 +1121,40 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
       )}
 
       {/* Delete Rule-Link Confirmation */}
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Удалить связь через правило?</AlertDialogTitle>
-            <AlertDialogDescription className="space-y-2">
-              <p>Будет деактивировано правило доступа для тренинга «{deleteRuleTrainingTitle}».</p>
-              <p>Владелец тренинга не изменится. Доступ для покупателей этого продукта к тренингу будет прекращён.</p>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteExecuting}>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteRuleConfirm} disabled={deleteExecuting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              {deleteExecuting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Деактивировать
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {(() => {
+        const deleteRule = deleteRuleId ? contentRules.find(r => r.id === deleteRuleId) : null;
+        const deleteAccessMode = deleteRule?.conditions?.access_mode || 'full';
+        return (
+          <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Удалить связь через правило?</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>Будет деактивировано правило доступа для тренинга «{deleteRuleTrainingTitle}».</p>
+                    {deleteRule && (
+                      <div className="rounded-md border p-2 text-xs space-y-1 bg-muted/50">
+                        <p><span className="font-medium">ID правила:</span> {deleteRuleId?.slice(0, 8)}</p>
+                        <p><span className="font-medium">Режим:</span> {deleteAccessMode === 'full' ? 'Весь тренинг' : 'Частичный'}</p>
+                        {deleteRule.target_label && <p><span className="font-medium">Метка:</span> {deleteRule.target_label}</p>}
+                      </div>
+                    )}
+                    <p className="text-amber-600 font-medium">⚠ Владелец тренинга не изменится. Удаляется только связь через правило доступа.</p>
+                    <p>Доступ для покупателей этого продукта к тренингу будет прекращён.</p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={deleteExecuting}>Отмена</AlertDialogCancel>
+                <AlertDialogAction onClick={handleDeleteRuleConfirm} disabled={deleteExecuting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                  {deleteExecuting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  Деактивировать
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        );
+      })()}
     </>
   );
 }
