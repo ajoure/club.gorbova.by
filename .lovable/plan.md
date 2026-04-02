@@ -1,78 +1,64 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Исправь блокировку по порядку фаз.  
-Сейчас у тебя снова есть логическая петля:  
-Execute (Phase F) запрещён до Phase D + G proof.  
-Это неверно, потому что PHASE G — это уже post-execute proof.  
-Нужно так:  
-
-  - Execute PHASE F запрещён до: PHASE A proof approved + PHASE D deployed + PHASE E deployed + PHASE F dry-run approved
-  - PHASE G = post-execute runtime/UI proof
-2. &nbsp;
-3. PHASE C пометь как non-blocking follow-up, а не как часть критического пути до batch repair.  
-Для текущего BUSINESS → cb20 блокера сначала важны:  
-
-  - PHASE A
-  - PHASE D
-  - PHASE E
-  - PHASE F
-  - PHASE G  
-  А multi-product binding UI можно выполнять после этого, если discovery не покажет, что без него repair невозможен.
-4. &nbsp;
-5. В PHASE D уточни safe default для legacy entitlements без meta.  
-Нельзя формулировать это как общий safe default = no_scope для всех entitlements без meta.  
-Нужно явно разделить:  
-
-  - bonus entitlement без historical/tariff context → safe default = no_scope
-  - прямой cb20 purchase с валидным order/subscription/tariff context → scope восстанавливается из этого контекста, а не падает в no_scope
-6. &nbsp;
-7. В PHASE E закрепи, что repair existing entitlements идёт по двум осям одновременно:  
-
-  - срок: expires_at ↔ business_effective_end_at
-  - meta: historical_purchase_type, scope_resolution_mode, business_subscription_id, historical_tariff_id, historical_module_product_ids
-8.   
-Отдельно допиши правило:  
-
-  - entitlement без обязательной meta не может идти в noop, даже если срок случайно совпадает
-9. &nbsp;
-10. В PHASE F dry-run должен показывать не только totals по action buckets и scope buckets, а матрицу пересечений:  
-
-  - строки: create / align_to_business / repair_metadata_only / repair_metadata_and_align / noop / manual_review
-  - колонки: full_tariff_scope / module_scope_only / union_scope / no_scope / manual_review
-11. &nbsp;
-12. В PHASE F добавь обязательный post-check блок после execute:  
-
-  - business_users_total
-  - cb20_bonus_entitlements_total
-  - normalized_meta_total
-  - expires_mismatch_remaining
-  - manual_review_remaining
-  - standalone_only_with_module_scope_only
-  - standalone_only_with_full_scope
-13.   
-Последний показатель должен быть 0.
-14. В PHASE G пропиши три обязательных конечных состояния UI/runtime:  
-
-  - no_access
-  - has_access_but_zero_visible_lessons
-  - has_access_and_visible_lessons
-15.   
-Root не должен маскировать no_access под «0 уроков».
-16. В PHASE I зафиксируй жёстко:  
-
-  - для cb20 product-linked path module_access исключается из baseAccess
-  - допустим только как fallback для модулей без product_id
-  - текущий OR-path нельзя оставлять без явного приоритета
-17. &nbsp;
-18. В PHASE J уточни, что документация обновляется не только “после каждой фазы” в общем виде, а минимум в трёх контрольных точках:  
-
-  - после PHASE A — полный discovery snapshot
-  - после PHASE F execute — batch repair proof snapshot
-  - после PHASE G — runtime/UI proof snapshot
-19. &nbsp;
-20. В DoD добавь ещё 4 жёстких критерия:
+1. Для runtime_preview используй **тот же реальный runtime path**, что и фронтенд:
+  &nbsp;
+  - тот же resolver scope
+  - тот же способ расчёта visible_module_count
+  - тот же recursive lesson count
+    Нельзя делать отдельный “упрощённый preview-алгоритм”, который потом расходится с UI.
+  &nbsp;
+2. Для mapping_confidence добавь ещё поле:
+  &nbsp;
+  - mapping_reason
+  &nbsp;
+  Чтобы по каждому module product было видно, **почему** он попал в exact_fk / exact_code / exact_name / inferred / no_match.
+3. Для exact_name добавь жёсткий guard:
+  &nbsp;
+  - exact_name допустим **только если match уникален**
+  - если по названию найдено 2+ кандидата → это не exact_name, а manual_review
+  &nbsp;
+4. В SAFE EXECUTE NOW не включать кейсы module_scope_only даже если после dedupe они выглядят чисто, пока не будет отдельного proof:
+  &nbsp;
+  - mapping_confidence допустим
+  - runtime_preview.visible_module_count > 0
+  - runtime_preview.visible_recursive_lesson_count > 0
+  - preview совпадает с ожидаемым business-result
+    До этого все standalone-only остаются в HOLD.
+  &nbsp;
+5. В dry-run response добавь отдельный список:
+  &nbsp;
+  - execute_candidates_safe[]
+  - hold_candidates[]
+  &nbsp;
+  Не только summary counts, а именно полные строки кандидатов с reason.
+6. Для всех repair_metadata_only / repair_metadata_and_align / align_to_business добавь в dry-run явное поле:
+  &nbsp;
+  - target_expires_at
+  &nbsp;
+  Чтобы было видно, к какому конечному сроку будет приведён entitlement.
+7. Для execute потом обязателен **partial execute only**:
+  &nbsp;
+  - отдельный флаг execute_cohort = 'safe_only'
+  - функция не должна уметь случайно исполнить HOLD cohort одним вызовом
+  &nbsp;
+8. Для post-check добавь ещё одно обязательное условие:
+  &nbsp;
+  - executed_users_scope_mode_invalid = 0
+  &nbsp;
+  То есть после execute не должно остаться записей, где:
+  &nbsp;
+  - scope_resolution_mode IS NULL
+  - или scope_resolution_mode не соответствует dry-run classification
+  &nbsp;
+9. В .lovable/[plan.md](http://plan.md) зафиксируй отдельно:
+  &nbsp;
+  - **standalone_only сейчас не approve на execute**
+  - **первый execute допускается только по SAFE cohort**
+  - после него нужен отдельный follow-up dry-run для HOLD cohort
+  &nbsp;
+10. Документацию обновить не только статусом NO-GO, но и двумя явными таблицами:
 
 &nbsp;
 
@@ -80,10 +66,18 @@ Root не должен маскировать no_access под «0 уроков�
 
 &nbsp;
 
-- standalone_only -> full access = 0 кейсов
-- cb20 bonus entitlement without scope_resolution_mode = 0
-- cb20 bonus entitlement without business_subscription_id = 0
-- module_access больше не влияет на cb20 product-linked runtime path, кроме явно документированного fallback для модулей без product_id
+- **SAFE cohort**
+- **HOLD / MANUAL REVIEW cohort**
+
+&nbsp;
+
+&nbsp;
+
+Чтобы потом не пересобирать это заново вручную.
+
+&nbsp;
+
+11. Итоговый критерий следующего шага:
 
 &nbsp;
 
@@ -91,205 +85,198 @@ Root не должен маскировать no_access под «0 уроков�
 
 &nbsp;
 
-11. В конце плана добавь отдельный блок Go/No-Go для execute Phase F:
+- после доработки вернуть
+  &nbsp;
+  - обновлённую матрицу
+  - полный mapping_confidence
+  - 3 create-кейса с runtime_preview
+  - execute_candidates_safe[]
+  - hold_candidates[]
+  &nbsp;
+- только после этого можно approve execute_cohort='safe_only'
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: Доработка dry-run Phase F — dedupe fix, mapping confidence, safe/risky cohort split
 
-- YES только если:  
+## Текущий статус: NO-GO на execute
 
-  - join-path доказан
-  - historical classification завершена
-  - Variant B зафиксирован как целевая логика
-  - runtime safe default исправлен
-  - alignment logic deployed
-  - dry-run matrix approved
-- &nbsp;
-- иначе только discovery/manual_review, без массовой выдачи
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Не убирай из плана, а явно сохрани как незакрытые хвосты до proof:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- duration_days=NULL legacy risk
-- self-rules impact
-- module_list_mapped -> training subtree confidence
-- actor/system proof по batch
-- runtime proof по 4 user classes
-
-&nbsp;
-
-&nbsp;
-
-После этих правок план можно считать финальным для [lovable.dev](http://lovable.dev).
-
-&nbsp;
-
-&nbsp;
-
-# План: CONSOLIDATED PATCH — cb20 / BUSINESS / runtime / lesson count / multi-product training bindings / rule conflicts
-
-## Корневой статус системы (Discovery)
-
-### Что уже работает
-
-- Write-side: `grant-access-for-order` пишет enriched meta (scope_resolution_mode, historical_*, business_subscription_id)
-- Read-side: `useTrainingContentRules.ts` генерирует synthetic rules из entitlement.meta
-- Sidebar/modules: product-linked модули используют entitlement-only path (module_access исключён)
-- Recursive lesson count реализован в `useTrainingModules.tsx`
-- SoT для срока: `MAX(access_end_at)` из `active + past_due`
-
-### Что НЕ работает / не закрыто
-
-1. **Привязка тренингов**: `training_modules.product_id` = single FK → один модуль = один продукт. Нет many-to-many. UI предлагает только "перепривязать" (MOVE), а не "добавить второй продукт".
-2. **Conflict detection**: Простое группирование по `target_type:target_ref` — любые 2+ правила на одну цель = "конфликт". Не различает валидную множественность от реального конфликта.
-3. **Self-rules**: 3 правила где `product_id == target_ref` (продукт выдаёт доступ сам себе, duration_days=NULL). Дублируют базовую выдачу entitlement.
-4. **Batch repair**: Existing cb20 entitlements не нормализованы по meta и сроку.
-5. **Runtime proof**: Нет end-to-end proof по 4 user classes.
-6. **КРИТИЧЕСКИЙ БАГ**: Legacy entitlements без meta → synthetic rule НЕ генерируется → `resolveTrainingContentFilter` возвращает null → **full access по умолчанию**. Bonus entitlement cb20 без tariff context получает полный доступ.
-
-### Архитектурное решение по привязке тренингов
-
-**Новая bridge-таблица НЕ нужна.** Обоснование:
-
-- DB уже поддерживает many-to-one (нет UNIQUE на `training_modules.product_id`)
-- `access_rules` с `grant_target_type = 'training_content'` уже служит мостом между продуктом и тренингом
-- Для cb20: child modules принадлежат root product, standalone module products — коммерческие маркеры в orders_v2
-- Новая таблица создаёт risk дублирования SoT
-
-**Решение**: `training_modules.product_id` = primary owner. Доступ от других продуктов через `access_rules`. UI рефакторинг для поддержки этого паттерна.
+Execute Phase F заблокирован до выполнения всех доработок ниже.
 
 ---
 
-## Фазы исполнения
+## Что нужно сделать
 
-### PHASE A — Discovery proof-пакет (read-only SQL)
+### 1. Исправить dedupe historical orders
 
-Собрать и показать:
+**Файл**: `supabase/functions/repair-cb20-entitlements/index.ts` (строки 100-136)
 
-1. Join-path proof: `subscriptions_v2.user_id → profiles.id → orders_v2.profile_id`
-2. Historical purchase validity matrix по cb20
-3. Target products reality check — 9 target products из rule 1b497fba
-4. Training binding model reality check
-5. Rule conflict matrix с classification
-6. Legacy read-path matrix
-7. Self-rules impact analysis (1ba0aac9, daa796bf, e151c8da)
-8. Business effective end source of truth proof
+**Баг**: Дедупликация по `profile_id:user_id:tariff_id` теряет несколько standalone-заказов одного пользователя с разными модулями (у всех `tariff_id = null` → одинаковый ключ).
 
-### PHASE B — Conflict detection refactor
+**Фикс**:
 
-**Файл**: `src/components/admin/product/ProductAccessRulesTab.tsx` (строки 372-382)
+- В select добавить `id` (order UUID)
+- Дедуплицировать по `id` заказа вместо composite key
+- После этого полностью пересчитать dry-run
 
-Заменить простое группирование на классификацию:
+Строки 102-126 заменить:
 
-- `valid_parallel_rule` — разные tariff_id (нормально)
-- `duplicate_rule` — одинаковый product + tariff + target + scope
-- `ambiguous_overlap` — неоднозначный приоритет
-- `shadowed_rule` — правило которое никогда не выиграет
+```typescript
+const { data: historicalOrders } = await supabase
+  .from('orders_v2')
+  .select('id, profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
+  .eq('product_id', CB20_PRODUCT_ID)
+  .eq('status', 'paid')
+  .in('profile_id', businessUserIds)
+  .order('created_at', { ascending: false });
 
-UI: warning только для duplicate/ambiguous. Info badge для valid parallel.
+const { data: historicalOrdersByUser } = await supabase
+  .from('orders_v2')
+  .select('id, profile_id, user_id, tariff_id, product_id, purchase_snapshot, status')
+  .eq('product_id', CB20_PRODUCT_ID)
+  .eq('status', 'paid')
+  .in('user_id', businessUserIds)
+  .order('created_at', { ascending: false });
 
-### PHASE C — Multi-product training binding UI
-
-**Файлы**: `ProductLinkedTrainingsBlock.tsx`, `useProductTrainings.ts`
-
-1. В bind dialog для тренингов привязанных к другому продукту: добавить опцию "Использовать через правило доступа" (создаёт access_rule вместо rebind)
-2. Usage info: какие продукты используют этот training (через product_id + access_rules)
-3. Impact preview перед действием
-
-### PHASE D — Runtime resolver: критический фикс
-
-**Файл**: `src/hooks/useTrainingContentRules.ts`
-
-**Баг**: legacy entitlements без meta → нет synthetic rule → full access по умолчанию.
-
-**Фикс**: в `resolveBonusScopeRules` обработать entitlements БЕЗ `scope_resolution_mode`:
-
-- Если entitlement для product-linked training, и нет matching DB rule, и нет meta → вернуть safe default `no_scope` вместо null
-
-### PHASE E — Duration/meta alignment
-
-**Файл**: `grant-access-for-order/index.ts`
-
-Уже реализовано для create. Расширить на repair existing entitlements:
-
-- Если entitlement без обязательной meta → repair_metadata_only
-- Если expires_at не совпадает с business_effective_end_at → repair_metadata_and_align
-
-### PHASE F — Batch repair
-
-6 action buckets: create, align_to_business, repair_metadata_only, repair_metadata_and_align, noop, manual_review
-
-5 scope buckets: full_tariff_scope, module_scope_only, union_scope, no_scope, manual_review
-
-Dry-run → approve → execute. STOP-guards: staff skip, mapping confidence < high → manual_review.
-
-### PHASE G — "0 уроков" proof
-
-Proof по 4 user classes: что в БД → scope_resolution_mode → effective scope → visible modules → lesson count → UI result.
-
-### PHASE H — Self-rules audit
-
-3 self-rules дублируют базовую выдачу entitlement (grant-access-for-order строки 226-280). Impact analysis → decision: deactivate или keep с документированным обоснованием.
-
-### PHASE I — Legacy module_access final decision
-
-Зафиксировать: module_access = fallback ТОЛЬКО для модулей без product_id. Для cb20 path полностью исключён.
-
-### PHASE J — Документация после каждой фазы
-
-Машинно-проверяемые таблицы: historical matrix, target products, scope matrix, module mapping, conflict matrix, legacy audit.
-
----
-
-## Порядок исполнения
-
-```text
-1. PHASE A — Discovery proof (read-only)
-2. PHASE D — Runtime resolver critical fix (блокер для всего остального)
-3. PHASE B — Conflict detection refactor
-4. PHASE C — Multi-product training binding UI
-5. PHASE E — Duration/meta alignment
-6. PHASE F — Batch repair (dry-run → execute)
-7. PHASE G — "0 уроков" proof
-8. PHASE H — Self-rules audit
-9. PHASE I — Legacy path decision
-10. PHASE J — Documentation
+// Deduplicate by order ID, not composite key
+const allOrders = [...(historicalOrders || []), ...(historicalOrdersByUser || [])];
+const seenOrderIds = new Set<string>();
+const uniqueOrders = allOrders.filter(o => {
+  if (seenOrderIds.has(o.id)) return false;
+  seenOrderIds.add(o.id);
+  return true;
+});
 ```
 
-Execute (Phase F) запрещён до Phase D + G proof.
+### 2. Добавить mapping confidence proof
+
+**Файл**: `supabase/functions/repair-cb20-entitlements/index.ts`
+
+После построения repair plans, для всех кейсов с `scope_bucket = module_scope_only`, выполнить mapping proof:
+
+```typescript
+// For each unique historical_module_product_id across all module_scope_only plans:
+// 1. Query products_v2 for product name
+// 2. Query training_modules WHERE product_id = module_product_id
+// 3. Classify confidence:
+//    - exact_fk: training_module.product_id = module_product_id (direct FK match)
+//    - exact_code: matched by product_code
+//    - exact_name: matched by name (only if unambiguous)
+//    - inferred: partial name match or heuristic
+//    - no_match: no training_module found for this product_id
+```
+
+В response добавить секцию `mapping_confidence`:
+
+```json
+{
+  "mapping_confidence": [
+    {
+      "module_product_id": "...",
+      "module_product_name": "...",
+      "matched_training_module_id": "..." | null,
+      "matched_training_module_title": "..." | null,
+      "mapping_confidence": "exact_fk" | "no_match",
+      "allowed_in_execute": true | false
+    }
+  ]
+}
+```
+
+Правило: `exact_fk` / `exact_code` → `allowed_in_execute = true`. `inferred` / `no_match` → `false`.
+
+### 3. Разделить cohorts: SAFE EXECUTE NOW vs HOLD
+
+В response добавить разделение plans на два списка:
+
+**SAFE EXECUTE NOW** (все условия одновременно):
+
+- `historical_class` ∈ {`base_tariff_purchase`, `base_tariff_plus_standalone`}
+- ИЛИ `planned_action` ∈ {`align_to_business`, `repair_metadata_only`, `repair_metadata_and_align`} при `scope_bucket` ∈ {`full_tariff_scope`, `union_scope`}
+- `business_access_end_at IS NOT NULL`
+- email resolved
+- не staff
+
+**HOLD / MANUAL REVIEW** (любое из):
+
+- `scope_bucket = module_scope_only` (standalone_only) — пока mapping confidence не доказан
+- `business_access_end_at IS NULL`
+- `historical_class = unclassified`
+- `scope_bucket = manual_review`
+- `email IS NULL` / identity unresolved
+- staff
+
+### 4. Identity/staff guard
+
+Добавить в dry-run response:
+
+- `email_null_count`: сколько BUSINESS users без email
+- `denylist_unresolvable_count`: сколько не проверено по staff denylist
+- Все с `email IS NULL` автоматически → `manual_review`
+
+### 5. Runtime preview для create-кейсов
+
+Для каждого create-кандидата добавить секцию `runtime_preview`:
+
+```json
+{
+  "historical_module_product_ids": [...],
+  "derived_allowed_module_ids": [...],
+  "derived_allowed_module_titles": [...],
+  "visible_module_count": N,
+  "visible_recursive_lesson_count": N
+}
+```
+
+Если `derived_allowed_module_ids = []` или `visible_module_count = 0` → автоматически перевести в `manual_review`.
+
+### 6. Обновить dry-run response structure
+
+Добавить cohort summary:
+
+```json
+{
+  "cohort_summary": {
+    "safe_execute_count": N,
+    "manual_review_count": N,
+    "staff_skip_count": N,
+    "identity_unresolved_count": N,
+    "standalone_only_blocked_count": N
+  }
+}
+```
+
+### 7. Расширить post-check (для будущего execute)
+
+Три дополнительных условия:
+
+- `executed_standalone_only_with_no_match = 0`
+- `executed_users_with_null_business_end = 0`
+- `executed_users_with_email_unresolved = 0`
+
+---
 
 ## Файлы для изменения
 
 
-| Файл                                                           | Фаза | Изменение                                        |
-| -------------------------------------------------------------- | ---- | ------------------------------------------------ |
-| `src/components/admin/product/ProductAccessRulesTab.tsx`       | B    | Conflict classification                          |
-| `src/components/admin/product/ProductLinkedTrainingsBlock.tsx` | C    | "Использовать через правило" для bound trainings |
-| `src/hooks/useProductTrainings.ts`                             | C    | Usage info query                                 |
-| `src/hooks/useTrainingContentRules.ts`                         | D    | Safe default для legacy entitlements без meta    |
-| `supabase/functions/grant-access-for-order/index.ts`           | E    | Repair mode                                      |
+| Файл                                                   | Изменение                                                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `supabase/functions/repair-cb20-entitlements/index.ts` | Dedupe fix, mapping confidence, cohort split, identity guard, runtime preview, extended response |
+| `.lovable/plan.md`                                     | Обновить статус: NO-GO, документировать dedupe fix и cohort split                                |
 
 
-## DoD (24 пункта)
+## Порядок
 
-1-18 из исходного задания + 6 дополнительных:
-19. Канонический join-path доказан
-20. Existing entitlements нормализованы по meta
-21. Legacy entitlements без meta → safe default no_scope
-22. Self-rules impact analysis проведён
-23. Conflict detection различает valid parallel от реального конфликта
-24. Multi-product binding через access_rules
+1. Исправить dedupe → redeploy
+2. Добавить mapping confidence + cohort split + runtime preview → redeploy
+3. Запустить dry-run с `dry_run: true`
+4. Показать: обновлённую матрицу, 3 create-кейса с mapping proof, SAFE vs HOLD списки
+5. Только после approval SAFE cohort → GO на partial execute
+
+## Go/No-Go для execute
+
+- **GO** только для SAFE cohort, если: dedupe исправлен, mapping confidence доказан, email resolved, business_end != NULL
+- **NO-GO** для standalone_only до mapping confidence proof
+- **NO-GO** для любого кейса с email IS NULL / unclassified / manual_review
