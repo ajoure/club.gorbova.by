@@ -2943,13 +2943,41 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         setSelectedDealId(deal.id);
                       }}
                     >
-                      <CardContent className="p-4">
+                      <CardContent className={`p-4 ${(() => {
+                        const meta = deal.meta as Record<string, any> | null;
+                        return meta?.split_status === 'children_created' ? 'opacity-50 border-l-2 border-amber-400' : '';
+                      })()}`}>
                         <div className="flex items-start justify-between mb-2">
                           <div>
-                            <div className="font-medium">{(deal.products_v2 as any)?.name || "Продукт"}</div>
+                            <div className="font-medium">{(() => {
+                              const snapshot = deal.purchase_snapshot as Record<string, any> | null;
+                              if (snapshot?.display_purchase_name) return snapshot.display_purchase_name;
+                              return (deal.products_v2 as any)?.name || "Продукт";
+                            })()}</div>
                             {deal.tariffs && (
                               <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                             )}
+                            {(() => {
+                              const meta = deal.meta as Record<string, any> | null;
+                              const snapshot = deal.purchase_snapshot as Record<string, any> | null;
+                              if (meta?.split_status === 'children_created') {
+                                return <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">📦 Разделена на модули</Badge>;
+                              }
+                              if (meta?.split_from_order_id) {
+                                return <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300 mt-0.5">📄 Модуль (split)</Badge>;
+                              }
+                              if (snapshot?.historical_purchase_type === 'module_only_standalone') {
+                                return (
+                                  <>
+                                    <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">Модульная покупка</Badge>
+                                    {!snapshot?.display_purchase_name && (
+                                      <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400 bg-amber-50 mt-0.5">⚠ Historical name missing</Badge>
+                                    )}
+                                  </>
+                                );
+                              }
+                              return null;
+                            })()}
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge className={getStatusColor(deal.status)}>{getStatusLabel(deal.status)}</Badge>

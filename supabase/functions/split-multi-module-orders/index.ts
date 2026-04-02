@@ -128,10 +128,42 @@ Deno.serve(async (req) => {
       const results: any[] = [];
       const toCreate = dryRunRows.filter(r => r.will_create);
 
+      // Pre-calculate per-module prices for each parent
+      const parentModuleCounts: Record<string, number> = {};
+      const parentChildIndices: Record<string, number> = {};
+      for (const row of toCreate) {
+        parentModuleCounts[row.parent_order_id] = (parentModuleCounts[row.parent_order_id] || 0) + 1;
+        parentChildIndices[row.parent_order_id] = 0;
+      }
+
       for (const row of toCreate) {
         const parent = targets.find(t => t.id === row.parent_order_id)!;
         const snap = parent.purchase_snapshot as any;
         const parentMeta = (parent.meta || {}) as Record<string, any>;
+
+        const moduleCount = parentModuleCounts[row.parent_order_id];
+        const childIdx = parentChildIndices[row.parent_order_id]++;
+        const isLastChild = childIdx === moduleCount - 1;
+
+        // Per-module price calculation with deterministic remainder on last child
+        const parentBase = parseFloat(parent.base_price) || 0;
+        const parentFinal = parseFloat(parent.final_price) || 0;
+        const parentPaid = parseFloat(parent.paid_amount) || 0;
+
+        const unitBase = Math.floor((parentBase / moduleCount) * 100) / 100;
+        const unitFinal = Math.floor((parentFinal / moduleCount) * 100) / 100;
+        const unitPaid = Math.floor((parentPaid / moduleCount) * 100) / 100;
+
+        // Last child gets remainder so sum = parent exactly
+        const childBase = isLastChild
+          ? Math.round((parentBase - unitBase * (moduleCount - 1)) * 100) / 100
+          : unitBase;
+        const childFinal = isLastChild
+          ? Math.round((parentFinal - unitFinal * (moduleCount - 1)) * 100) / 100
+          : unitFinal;
+        const childPaid = isLastChild
+          ? Math.round((parentPaid - unitPaid * (moduleCount - 1)) * 100) / 100
+          : unitPaid;
 
         // Build child purchase_snapshot
         const childSnapshot = {
@@ -140,6 +172,10 @@ Deno.serve(async (req) => {
           module_list_raw: [MODULE_SHORT_NAMES[row.module_product_id] || "Unknown"],
           display_purchase_name: row.module_name,
           split_from_parent: true,
+          normalized_unit_price: childFinal,
+          parent_total_price: parentFinal,
+          parent_module_count: moduleCount,
+          ...(isLastChild ? { is_remainder_child: true } : {}),
         };
 
         // Build child meta
@@ -150,6 +186,10 @@ Deno.serve(async (req) => {
           split_batch_id: batchId,
           split_module_product_id: row.module_product_id,
           source_parent_deal_date: parent.deal_date,
+          split_parent_final_price: parentFinal,
+          split_parent_module_count: moduleCount,
+          split_price_strategy: "per_module_equal",
+          ...(isLastChild ? { split_price_remainder: true } : {}),
         };
 
         const insertData = {
@@ -165,9 +205,9 @@ Deno.serve(async (req) => {
           payer_type: parent.payer_type,
           status: "paid",
           reconcile_source: "getcourse_historical",
-          base_price: parent.base_price,
-          final_price: parent.final_price,
-          paid_amount: parent.paid_amount,
+          base_price: childBase,
+          final_price: childFinal,
+          paid_amount: childPaid,
           currency: parent.currency,
           deal_date: parent.deal_date,
           purchase_snapshot: childSnapshot,
