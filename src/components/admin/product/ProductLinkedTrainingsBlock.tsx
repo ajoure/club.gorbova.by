@@ -570,60 +570,134 @@ function TrainingMatrixView({ trainings, diagnostics, viewMode }: {
   );
 }
 
-// --- Rule-linked Training Card ---
-function RuleLinkedTrainingCard({ vt, onFocusRule }: { vt: VisibleTraining; onFocusRule?: (ruleId: string) => void }) {
+// --- Rule-linked Training Card with actions ---
+function RuleLinkedTrainingCard({ vt, onFocusRule, onEditRule, onDeleteRule }: {
+  vt: VisibleTraining;
+  onFocusRule?: (ruleId: string) => void;
+  onEditRule?: (ruleId: string) => void;
+  onDeleteRule?: (ruleId: string, trainingTitle: string) => void;
+}) {
+  const [ruleSelectOpen, setRuleSelectOpen] = useState(false);
+  const [ruleSelectAction, setRuleSelectAction] = useState<'edit' | 'delete'>('edit');
+
+  const handleAction = (action: 'edit' | 'delete') => {
+    if (vt.rule_ids.length === 1) {
+      if (action === 'edit' && onEditRule) {
+        onEditRule(vt.rule_ids[0]);
+      } else if (action === 'delete' && onDeleteRule) {
+        onDeleteRule(vt.rule_ids[0], vt.title);
+      }
+    } else if (vt.rule_ids.length > 1) {
+      setRuleSelectAction(action);
+      setRuleSelectOpen(true);
+    }
+  };
+
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:border-indigo-800/30 dark:bg-indigo-950/10">
-      <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-      <div className="flex-1 min-w-0 space-y-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium">{vt.title}</span>
-          {vt.public_id && (
-            <Badge variant="outline" className="text-[10px] font-mono">{vt.public_id}</Badge>
+    <>
+      <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border border-indigo-200/50 bg-indigo-50/30 dark:border-indigo-800/30 dark:bg-indigo-950/10">
+        <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium">{vt.title}</span>
+            {vt.public_id && (
+              <Badge variant="outline" className="text-[10px] font-mono">{vt.public_id}</Badge>
+            )}
+            {!vt.is_active && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {vt.is_owned && (
+              <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
+            )}
+            <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
+              Через правило
+            </Badge>
+          </div>
+          {!vt.is_owned && vt.owner_product_name && (
+            <p className="text-[11px] text-muted-foreground">
+              Владелец: {vt.owner_product_name}
+            </p>
           )}
-          {!vt.is_active && (
-            <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
+          {!vt.is_owned && (
+            <p className="text-[11px] text-muted-foreground italic">
+              Тренинг используется этим продуктом через access rule
+            </p>
+          )}
+          {vt.rule_count > 1 && (
+            <p className="text-[11px] text-muted-foreground">
+              {vt.rule_count} {vt.rule_count >= 2 && vt.rule_count <= 4 ? "правила" : "правил"} доступа
+            </p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {vt.is_owned && (
-            <Badge variant="outline" className="text-[9px] text-primary border-primary/30">Владелец</Badge>
-          )}
-          <Badge variant="outline" className="text-[9px] text-indigo-600 border-indigo-300 dark:text-indigo-400 dark:border-indigo-700">
-            Через правило
-          </Badge>
+        <div className="shrink-0 self-start">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                <MoreVertical className="h-3.5 w-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {(onEditRule || onFocusRule) && (
+                <DropdownMenuItem onClick={() => handleAction('edit')}>
+                  <Pencil className="h-3.5 w-3.5 mr-2" />
+                  Редактировать правило
+                </DropdownMenuItem>
+              )}
+              {onDeleteRule && (
+                <DropdownMenuItem onClick={() => handleAction('delete')} className="text-destructive">
+                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                  Удалить связь
+                </DropdownMenuItem>
+              )}
+              {onFocusRule && vt.rule_ids.length > 0 && (
+                <DropdownMenuItem onClick={() => onFocusRule(vt.rule_ids[0])}>
+                  <Shield className="h-3.5 w-3.5 mr-2" />
+                  К правилам
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        {!vt.is_owned && vt.owner_product_name && (
-          <p className="text-[11px] text-muted-foreground">
-            Владелец: {vt.owner_product_name}
-          </p>
-        )}
-        {!vt.is_owned && (
-          <p className="text-[11px] text-muted-foreground italic">
-            Тренинг используется этим продуктом через access rule
-          </p>
-        )}
-        {vt.rule_count > 1 && (
-          <p className="text-[11px] text-muted-foreground">
-            {vt.rule_count} {vt.rule_count >= 2 && vt.rule_count <= 4 ? "правила" : "правил"} доступа
-          </p>
-        )}
       </div>
-      <div className="shrink-0 self-start">
-        {onFocusRule && vt.rule_ids.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] gap-1 text-muted-foreground"
-            onClick={() => onFocusRule(vt.rule_ids[0])}
-            title="Перейти к правилам"
-          >
-            <Shield className="h-3 w-3" />
-            К правилам
-          </Button>
-        )}
-      </div>
-    </div>
+
+      {/* Rule selection dialog for multi-rule trainings */}
+      <Dialog open={ruleSelectOpen} onOpenChange={setRuleSelectOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {ruleSelectAction === 'edit' ? 'Выберите правило для редактирования' : 'Выберите правило для удаления'}
+            </DialogTitle>
+            <DialogDescription>
+              Тренинг «{vt.title}» подключён {vt.rule_count} правилами. Выберите конкретное.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            {vt.rule_ids.map((ruleId, idx) => (
+              <button
+                key={ruleId}
+                className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                onClick={() => {
+                  setRuleSelectOpen(false);
+                  if (ruleSelectAction === 'edit' && onEditRule) {
+                    onEditRule(ruleId);
+                  } else if (ruleSelectAction === 'delete' && onDeleteRule) {
+                    onDeleteRule(ruleId, vt.title);
+                  }
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <Shield className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-sm font-medium">Правило {idx + 1}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{ruleId.slice(0, 8)}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
