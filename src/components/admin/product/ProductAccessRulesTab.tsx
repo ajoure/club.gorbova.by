@@ -537,6 +537,18 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     const tcAllowedModuleIds = (Array.isArray(conditions.allowed_module_ids) ? conditions.allowed_module_ids : []) as string[];
     const tcAllowedLessonIds = (Array.isArray(conditions.allowed_lesson_ids) ? conditions.allowed_lesson_ids : []) as string[];
 
+    // Hydrate useViaRuleTraining for external training_content rules
+    if (rule.grant_target_type === "training_content" && rule.target_ref) {
+      const isExternal = !rootTrainings.some(t => t.id === rule.target_ref);
+      if (isExternal) {
+        setUseViaRuleTraining({ id: rule.target_ref, title: rule.target_label || rule.target_ref });
+      } else {
+        setUseViaRuleTraining(null);
+      }
+    } else {
+      setUseViaRuleTraining(null);
+    }
+
     setForm({
       scope: rule.tariff_id ? "tariff" : "product",
       tariff_id: rule.tariff_id || tariffs[0]?.id || "",
