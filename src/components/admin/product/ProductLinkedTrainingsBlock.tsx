@@ -1105,6 +1105,26 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
           />
         )
       )}
+
+      {/* Delete Rule-Link Confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить связь через правило?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Будет деактивировано правило доступа для тренинга «{deleteRuleTrainingTitle}».</p>
+              <p>Владелец тренинга не изменится. Доступ для покупателей этого продукта к тренингу будет прекращён.</p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteExecuting}>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteRuleConfirm} disabled={deleteExecuting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleteExecuting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Деактивировать
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
