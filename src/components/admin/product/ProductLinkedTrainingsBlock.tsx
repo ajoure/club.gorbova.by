@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 interface Props {
   productId: string;
   onUseViaRule?: (trainingId: string, trainingTitle: string) => void;
+  onFocusRule?: (ruleId: string) => void;
 }
 
 /** Recursively count all lessons in a training subtree */
