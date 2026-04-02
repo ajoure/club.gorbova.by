@@ -966,7 +966,14 @@ export default function AdminDeals() {
                           {(() => {
                             const snapshot = deal.purchase_snapshot as Record<string, any> | null;
                             if (snapshot?.historical_purchase_type === 'module_only_standalone') {
-                              return <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">Модульная покупка</Badge>;
+                              return (
+                                <>
+                                  <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300 mt-0.5">Модульная покупка</Badge>
+                                  {!snapshot?.display_purchase_name && (
+                                    <Badge variant="outline" className="text-[10px] text-amber-700 border-amber-400 bg-amber-50 mt-0.5">⚠ Historical name missing</Badge>
+                                  )}
+                                </>
+                              );
                             }
                             return null;
                           })()}
