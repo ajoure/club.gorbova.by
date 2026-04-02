@@ -42,6 +42,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -57,6 +58,9 @@ import {
   Settings,
   Wand2,
   Users,
+  CheckSquare,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersModal";
@@ -69,6 +73,9 @@ import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/compone
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
 import { ModulesTreeContent } from "@/components/admin/trainings/ModulesTreeContent";
+import { BulkActivationModal } from "@/components/admin/trainings/BulkActivationModal";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { useBulkModuleActivation, type BulkAction } from "@/hooks/useModuleBulkActions";
 import type { SortMode } from "@/components/admin/trainings/moduleTreeUtils";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon, ArrowDownAZ, ArrowDown01 } from "lucide-react";
