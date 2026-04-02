@@ -911,13 +911,13 @@ Deno.serve(async (req) => {
                 scopeResolutionMode = 'no_scope';
               }
 
-              // Get source business subscription info
+              // Get source business subscription info (canonical SoT: active+past_due, MAX access_end_at)
               const { data: businessSub } = await supabase
                 .from('subscriptions_v2')
                 .select('id, tariff_id, access_end_at')
                 .eq('user_id', userId)
                 .eq('product_id', productId)
-                .eq('status', 'active')
+                .in('status', ['active', 'past_due'])
                 .order('access_end_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
