@@ -187,13 +187,14 @@ Deno.serve(async (req) => {
 
     for (const userId of businessUserIds) {
       const email = profileEmailMap.get(userId) ?? null;
+      const profileId = profileIdByAuthId.get(userId) || userId; // actual profiles.id
       const businessInfo = userBusinessMap.get(userId)!;
       const ent = entByUser.get(userId);
       const orders = ordersByUser.get(userId) || [];
       const metaStatus: 'has_meta' | 'no_meta' = ent?.meta && (ent.meta as any).scope_resolution_mode ? 'has_meta' : 'no_meta';
 
       const basePlan = {
-        profile_id: userId,
+        profile_id: profileId,
         user_id: userId,
         email,
         business_subscription_id: businessInfo.sub_id,
