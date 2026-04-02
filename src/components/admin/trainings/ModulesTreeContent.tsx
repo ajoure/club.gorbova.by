@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
@@ -55,6 +56,9 @@ interface ModulesTreeContentProps {
   onCopyMove: (module: TrainingModule) => void;
   onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
   sortMode?: SortMode;
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelection?: (id: string) => void;
 }
 
 /* ── Gradient color map for soft card accents ── */
@@ -75,6 +79,29 @@ function getGradientColors(gradient: string | null | undefined) {
   return GRADIENT_COLOR_MAP[gradient] || DEFAULT_GRADIENT;
 }
 
+/**
+ * Compute indeterminate state for a parent checkbox:
+ * - checked: all descendants selected
+ * - indeterminate: some descendants selected
+ * - unchecked: none selected
+ */
+function getCheckState(
+  node: ModuleTreeNodeWithData<SimpleLessonRow>,
+  selectedIds: Set<string>,
+): "checked" | "indeterminate" | "unchecked" {
+  const allIds: string[] = [];
+  const collectIds = (n: ModuleTreeNodeWithData<SimpleLessonRow>) => {
+    allIds.push(n.module.id);
+    n.children.forEach(collectIds);
+  };
+  collectIds(node);
+
+  const selectedCount = allIds.filter((id) => selectedIds.has(id)).length;
+  if (selectedCount === 0) return "unchecked";
+  if (selectedCount === allIds.length) return "checked";
+  return "indeterminate";
+}
+
 /* ── Module node ── */
 function ModuleTreeNode({
   node,
@@ -86,6 +113,9 @@ function ModuleTreeNode({
   onOpenLessons,
   onCopyMove,
   onOpenLessonViewers,
+  selectionMode,
+  selectedIds,
+  onToggleSelection,
 }: {
   node: ModuleTreeNodeWithData<SimpleLessonRow>;
   depth: number;
@@ -96,11 +126,18 @@ function ModuleTreeNode({
   onOpenLessons: (moduleId: string) => void;
   onCopyMove: (m: TrainingModule) => void;
   onOpenLessonViewers?: (lesson: SimpleLessonRow) => void;
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelection?: (id: string) => void;
 }) {
   const navigate = useNavigate();
   const isOpen = expandedIds.has(node.module.id);
   const hasContent = node.children.length > 0 || node.items.length > 0;
   const colors = getGradientColors(node.module.color_gradient);
+
+  const checkState = selectionMode && selectedIds
+    ? getCheckState(node, selectedIds)
+    : "unchecked";
 
   return (
     <div className={cn(depth > 0 && "ml-4")}>
@@ -111,6 +148,7 @@ function ModuleTreeNode({
             "backdrop-blur-xl bg-card/60 dark:bg-card/40",
             "border border-border/40 hover:border-border/70",
             "shadow-sm hover:shadow-md mb-1.5",
+            selectionMode && selectedIds?.has(node.module.id) && "ring-2 ring-primary/40",
           )}
         >
           {/* Soft gradient overlay */}
@@ -123,6 +161,16 @@ function ModuleTreeNode({
           />
 
           <div className="relative z-10 flex items-center gap-2 px-3 py-2">
+            {/* Selection checkbox */}
+            {selectionMode && onToggleSelection && (
+              <Checkbox
+                checked={checkState === "checked" ? true : checkState === "indeterminate" ? "indeterminate" : false}
+                onCheckedChange={() => onToggleSelection(node.module.id)}
+                onClick={(e) => e.stopPropagation()}
+                className="shrink-0"
+              />
+            )}
+
             <CollapsibleTrigger asChild>
               <button className="flex items-center gap-2 flex-1 min-w-0 text-left">
                 {hasContent ? (
@@ -163,44 +211,46 @@ function ModuleTreeNode({
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={(e) => { e.stopPropagation(); onOpenLessons(node.module.id); }}
-                title="Уроки"
-              >
-                <BookOpen className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={(e) => { e.stopPropagation(); onCopyMove(node.module); }}
-                title="Копировать / Переместить"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={(e) => { e.stopPropagation(); onEdit(node.module); }}
-                title="Редактировать"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-destructive hover:text-destructive"
-                onClick={(e) => { e.stopPropagation(); onDelete(node.module.id); }}
-                title="Удалить"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+            {!selectionMode && (
+              <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={(e) => { e.stopPropagation(); onOpenLessons(node.module.id); }}
+                  title="Уроки"
+                >
+                  <BookOpen className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={(e) => { e.stopPropagation(); onCopyMove(node.module); }}
+                  title="Копировать / Переместить"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={(e) => { e.stopPropagation(); onEdit(node.module); }}
+                  title="Редактировать"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-destructive hover:text-destructive"
+                  onClick={(e) => { e.stopPropagation(); onDelete(node.module.id); }}
+                  title="Удалить"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -219,6 +269,9 @@ function ModuleTreeNode({
                 onOpenLessons={onOpenLessons}
                 onCopyMove={onCopyMove}
                 onOpenLessonViewers={onOpenLessonViewers}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelection={onToggleSelection}
               />
             ))}
             {/* Lessons */}
@@ -241,50 +294,52 @@ function ModuleTreeNode({
                   {lesson.completion_mode === "kvest" ? "Квест" : "Обычный"}
                 </Badge>
                 {/* Hover action buttons */}
-                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/lesson:opacity-100 transition-opacity">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`);
-                    }}
-                    title="Контент"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (lesson.completion_mode === "kvest") {
-                        navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
-                      } else if (onOpenLessonViewers) {
-                        onOpenLessonViewers(lesson);
-                      } else {
+                {!selectionMode && (
+                  <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/lesson:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/admin/training-lessons/${lesson.module_id}/edit/${lesson.id}`);
+                      }}
+                      title="Контент"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (lesson.completion_mode === "kvest") {
+                          navigate(`/admin/training-lessons/${lesson.module_id}/progress/${lesson.id}`);
+                        } else if (onOpenLessonViewers) {
+                          onOpenLessonViewers(lesson);
+                        } else {
+                          onOpenLessons(lesson.module_id);
+                        }
+                      }}
+                      title="Прогресс / просмотры"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
                         onOpenLessons(lesson.module_id);
-                      }
-                    }}
-                    title="Прогресс / просмотры"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenLessons(lesson.module_id);
-                    }}
-                    title="Уроки модуля"
-                  >
-                    <List className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
+                      }}
+                      title="Уроки модуля"
+                    >
+                      <List className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -303,6 +358,9 @@ export function ModulesTreeContent({
   onCopyMove,
   onOpenLessonViewers,
   sortMode = "order",
+  selectionMode,
+  selectedIds,
+  onToggleSelection,
 }: ModulesTreeContentProps) {
   const moduleIds = useMemo(() => modules.map((m) => m.id), [modules]);
   const moduleIdsKey = useMemo(() => moduleIds.slice().sort().join(","), [moduleIds]);
@@ -393,6 +451,9 @@ export function ModulesTreeContent({
           onOpenLessons={onOpenLessons}
           onCopyMove={onCopyMove}
           onOpenLessonViewers={onOpenLessonViewers}
+          selectionMode={selectionMode}
+          selectedIds={selectedIds}
+          onToggleSelection={onToggleSelection}
         />
       ))}
     </div>

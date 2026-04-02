@@ -36,7 +36,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       // 1. Get all container modules
       const { data: containers, error: containerError } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key, product_id")
+        .select("id, slug, menu_section_key, product_id, is_active")
         .eq("is_active", true)
         .eq("is_container", true);
 
@@ -46,9 +46,10 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
       const containerIds = containers.map((c) => c.id);
 
       // 1b. Get child modules of containers (non-container children only)
+      // PATCH K4: Only fetch active child modules — inactive parent chain = invisible content
       const { data: childModules } = await supabase
         .from("training_modules")
-        .select("id, slug, menu_section_key, parent_module_id, product_id")
+        .select("id, slug, menu_section_key, parent_module_id, product_id, is_active")
         .in("parent_module_id", containerIds)
         .eq("is_active", true)
         .eq("is_container", false);
@@ -137,19 +138,25 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const restrictedTariffIds = new Set<string>();
 
   if (data?.containers && data?.lessons) {
-    const containerMap = new Map<string, { slug: string; sectionKey: string; productId: string | null }>();
+    const containerMap = new Map<string, { slug: string; sectionKey: string; productId: string | null; isActive: boolean }>();
     for (const c of data.containers) {
-      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key, productId: (c as any).product_id ?? null });
+      containerMap.set(c.id, { slug: c.slug, sectionKey: c.menu_section_key, productId: (c as any).product_id ?? null, isActive: (c as any).is_active ?? true });
     }
 
     // Map child modules: use own menu_section_key, fallback to parent's; product_id fallback to parent
     if (data.childModules) {
       for (const child of data.childModules) {
         const parent = containerMap.get(child.parent_module_id);
+        // PATCH K4: effective active = child is_active AND parent is_active
+        const childIsActive = (child as any).is_active ?? true;
+        const parentIsActive = parent?.isActive ?? true;
+        const effectiveActive = childIsActive && parentIsActive;
+        
         containerMap.set(child.id, {
           slug: child.slug || parent?.slug || '',
           sectionKey: child.menu_section_key || parent?.sectionKey || '',
           productId: (child as any).product_id ?? parent?.productId ?? null,
+          isActive: effectiveActive,
         });
       }
     }
@@ -162,6 +169,9 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
     for (const lesson of data.lessons) {
       const container = containerMap.get(lesson.module_id);
       if (!container) continue;
+
+      // PATCH K4: Effective active guard — lesson invisible if parent module chain inactive
+      if (!container.isActive) continue;
 
       // Filter out scheduled lessons for non-admins
       if (!isAdminUser && lesson.published_at) {

@@ -42,6 +42,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -57,6 +58,9 @@ import {
   Settings,
   Wand2,
   Users,
+  CheckSquare,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import TrainingModuleCard from "@/components/admin/trainings/TrainingModuleCard";
 import { LessonViewersModal } from "@/components/admin/trainings/LessonViewersModal";
@@ -69,6 +73,9 @@ import { DisplayLayoutSelector, DisplayLayout, normalizeLayout } from "@/compone
 import { ContentCreationWizard } from "@/components/admin/trainings/ContentCreationWizard";
 import { ProgressTabContent } from "@/components/admin/trainings/ProgressTabContent";
 import { ModulesTreeContent } from "@/components/admin/trainings/ModulesTreeContent";
+import { BulkActivationModal } from "@/components/admin/trainings/BulkActivationModal";
+import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
+import { useBulkModuleActivation, type BulkAction } from "@/hooks/useModuleBulkActions";
 import type { SortMode } from "@/components/admin/trainings/moduleTreeUtils";
 import { cn } from "@/lib/utils";
 import { Upload, Image as ImageIcon, ArrowDownAZ, ArrowDown01 } from "lucide-react";
@@ -364,6 +371,47 @@ export default function AdminTrainingModules() {
   } | null>(null);
   // Lesson viewers modal state (opened from tree hover action)
   const [viewerModal, setViewerModal] = useState<{ lessonId: string; title: string } | null>(null);
+
+  // PATCH K: Bulk selection state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedModuleIds, setSelectedModuleIds] = useState<Set<string>>(new Set());
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [bulkAction, setBulkAction] = useState<BulkAction>("activate");
+  const [bulkCascade, setBulkCascade] = useState(true);
+  const { execute: executeBulk, loading: bulkExecuting } = useBulkModuleActivation();
+
+  const handleToggleSelection = useCallback((id: string) => {
+    setSelectedModuleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedModuleIds(new Set(modules.map((m) => m.id)));
+  }, [modules]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedModuleIds(new Set());
+    setSelectionMode(false);
+  }, []);
+
+  const openBulkModal = useCallback((action: BulkAction, cascade: boolean) => {
+    setBulkAction(action);
+    setBulkCascade(cascade);
+    setBulkModalOpen(true);
+  }, []);
+
+  const handleBulkConfirm = useCallback(async () => {
+    const success = await executeBulk(Array.from(selectedModuleIds), bulkAction, bulkCascade);
+    if (success) {
+      setBulkModalOpen(false);
+      handleClearSelection();
+      refetch();
+    }
+  }, [executeBulk, selectedModuleIds, bulkAction, bulkCascade, handleClearSelection, refetch]);
   
   // E1/E2/E3: View settings with localStorage persistence
   const [density, setDensity] = useState<ViewDensity>(() => {
@@ -612,6 +660,18 @@ export default function AdminTrainingModules() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="bg-background/95 backdrop-blur-xl border-border/50">
+                {activeTab === "modules" && displayLayout === "list" && (
+                  <>
+                    <DropdownMenuItem onClick={() => {
+                      setSelectionMode((p) => !p);
+                      if (selectionMode) setSelectedModuleIds(new Set());
+                    }}>
+                      <CheckSquare className="h-4 w-4 mr-2" />
+                      {selectionMode ? "Отключить выделение" : "Режим выделения"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
                 <DropdownMenuItem onClick={() => navigate("/admin/kb-import")}>
                   <Upload className="h-4 w-4 mr-2" />
                   Импорт КБ
@@ -716,6 +776,9 @@ export default function AdminTrainingModules() {
                     setViewerModal({ lessonId: lesson.id, title: lesson.title });
                   }}
                   sortMode={modulesSortMode}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedModuleIds}
+                  onToggleSelection={handleToggleSelection}
                 />
               ) : (
                 <div className={cn(
@@ -855,6 +918,55 @@ export default function AdminTrainingModules() {
             }}
           />
         )}
+
+        {/* PATCH K: Bulk Actions Bar */}
+        {selectionMode && selectedModuleIds.size > 0 && (
+          <BulkActionsBar
+            selectedCount={selectedModuleIds.size}
+            onClearSelection={handleClearSelection}
+            onSelectAll={handleSelectAll}
+            totalCount={modules.length}
+            entityName="модулей"
+            onBulkEdit={() => openBulkModal("activate", false)}
+            onBulkArchive={() => openBulkModal("deactivate", false)}
+          />
+        )}
+
+        {/* PATCH K: Bulk activation floating actions */}
+        {selectionMode && selectedModuleIds.size > 0 && !bulkModalOpen && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40">
+            <div className="bg-background border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", false)}>
+                <Power className="h-3.5 w-3.5" />
+                Активировать модули
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", false)}>
+                <PowerOff className="h-3.5 w-3.5" />
+                Деактивировать модули
+              </Button>
+              <div className="h-5 w-px bg-border" />
+              <Button size="sm" className="gap-1.5 text-xs" onClick={() => openBulkModal("activate", true)}>
+                <Power className="h-3.5 w-3.5" />
+                Модули + уроки
+              </Button>
+              <Button size="sm" variant="destructive" className="gap-1.5 text-xs" onClick={() => openBulkModal("deactivate", true)}>
+                <PowerOff className="h-3.5 w-3.5" />
+                Деактивировать всё
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* PATCH K: Bulk Activation Modal */}
+        <BulkActivationModal
+          open={bulkModalOpen}
+          onOpenChange={setBulkModalOpen}
+          selectedModuleIds={Array.from(selectedModuleIds)}
+          action={bulkAction}
+          cascadeToLessons={bulkCascade}
+          onConfirm={handleBulkConfirm}
+          executing={bulkExecuting}
+        />
       </div>
     </AdminLayout>
   );
