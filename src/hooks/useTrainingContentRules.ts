@@ -358,7 +358,14 @@ async function resolveBonusScopeRules(
 
 /**
  * Pure function: resolve the most specific training_content filter for a given training module.
- * Priority: tariff-level rule > product-level rule > no rule (full access).
+ * Priority: 
+ *   1. tariff-level DB rule (most specific)
+ *   2. product-level DB rule
+ *   3. synthetic bonus rule from entitlement.meta (Variant B enforcement)
+ *   4. no rule → null (full access)
+ * 
+ * For product-linked cb20 modules, synthetic bonus rules ensure that
+ * standalone_only users see only their purchased modules, not full access.
  */
 export function resolveTrainingContentFilter(
   rules: TrainingContentRule[],
@@ -372,20 +379,28 @@ export function resolveTrainingContentFilter(
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
   if (matchingRules.length === 0) return null;
 
-  // Find most specific: tariff-level first
+  // Separate DB rules from synthetic bonus rules
+  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-bonus-'));
+  const syntheticRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+
   let bestRule: TrainingContentRule | null = null;
 
-  // Tariff-level rules (most specific)
-  for (const rule of matchingRules) {
+  // Priority 1: Tariff-level DB rules (most specific)
+  for (const rule of dbRules) {
     if (rule.tariff_id && userTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
       break;
     }
   }
 
-  // Fallback to product-level
+  // Priority 2: Product-level DB rules
   if (!bestRule) {
-    bestRule = matchingRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
+  }
+
+  // Priority 3: Synthetic bonus rules from entitlement.meta (Variant B)
+  if (!bestRule && syntheticRules.length > 0) {
+    bestRule = syntheticRules[0];
   }
 
   if (!bestRule) return null;
