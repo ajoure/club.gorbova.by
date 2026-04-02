@@ -851,11 +851,36 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                             {PURPOSE_LABELS[purpose]}
                           </Badge>
                         )}
-                        {hasConflict && (
-                          <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
-                            <AlertTriangle className="h-3 w-3 mr-0.5" />
-                            Конфликт
-                          </Badge>
+                        {hasRealConflict && conflictEntry && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                                  <AlertTriangle className="h-3 w-3 mr-0.5" />
+                                  Конфликт
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-[350px]">
+                                <div className="space-y-1 text-xs">
+                                  <div className="font-medium">
+                                    {conflictEntry.type === 'duplicate_rule' ? 'Дублирующие правила' : 'Неоднозначное перекрытие'}
+                                  </div>
+                                  <div className="text-muted-foreground">
+                                    {conflictEntry.type === 'duplicate_rule'
+                                      ? 'Найдены идентичные правила (продукт + тариф + цель). Рекомендуется удалить дубликат.'
+                                      : 'Несколько правил на одну цель с неопределённым приоритетом. Рекомендуется уточнить приоритеты.'}
+                                  </div>
+                                  <div className="pt-1 border-t border-border/50">
+                                    {conflictEntry.items.map((item, idx) => (
+                                      <div key={idx}>
+                                        • {item.tariff?.name || "Весь продукт"} — приоритет {item.priority}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                         )}
                         {hasOverlap && (
                           <Badge variant="outline" className="text-[10px] text-blue-600 border-blue-300">

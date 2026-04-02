@@ -339,6 +339,7 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
               {filtered.map(m => {
                 const isOtherProduct = m.product_id && m.product_id !== productId;
                 const isCurrent = m.product_id === productId;
+                const ownerName = (m as any).owner_product_name || null;
                 return (
                   <div
                     key={m.id}
@@ -352,13 +353,24 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                     )}
                   >
                     <BookOpen className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                    <span
-                      className={cn("flex-1 min-w-0 line-clamp-2 leading-snug", !isCurrent && "cursor-pointer")}
+                    <div
+                      className={cn("flex-1 min-w-0", !isCurrent && "cursor-pointer")}
                       onClick={() => !isCurrent && handleClick(m)}
                     >
-                      {m.title}
-                    </span>
-                    <div className="flex flex-col items-end gap-0.5 shrink-0 ml-2">
+                      <span
+                        className="line-clamp-3 leading-snug block"
+                        title={m.title}
+                      >
+                        {m.title}
+                      </span>
+                      <span
+                        className="text-[11px] text-muted-foreground block line-clamp-1 mt-0.5"
+                        title={ownerName || "не привязан"}
+                      >
+                        Владелец: {ownerName || "не привязан"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end gap-0.5 shrink-0 self-start ml-3">
                       {m.public_id && (
                         <Badge variant="outline" className="text-[10px] font-mono">{m.public_id}</Badge>
                       )}
@@ -366,13 +378,18 @@ function BindTrainingDialog({ open, onOpenChange, productId, onBind, onRebindReq
                         <Badge variant="outline" className="text-[10px] text-muted-foreground">Неактивен</Badge>
                       )}
                       {isOtherProduct && (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] text-amber-600 border-amber-300 cursor-pointer"
-                          onClick={() => handleClick(m)}
-                        >
-                          Перепривязать к этому продукту
-                        </Badge>
+                        <>
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] text-amber-600 border-amber-300 cursor-pointer"
+                            onClick={() => handleClick(m)}
+                          >
+                            Перепривязать к этому продукту
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground italic mt-0.5">
+                            Использование через правило доступа — в разработке
+                          </span>
+                        </>
                       )}
                       {isCurrent && (
                         <div className="flex items-center gap-1">
