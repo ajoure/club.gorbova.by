@@ -185,7 +185,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         .filter(p => p.order_id)
         .map(p => p.order_id!);
 
-      let ordersMap = new Map<string, { id: string; product_name: string | null }>();
+      let ordersMap = new Map<string, { id: string; product_name: string | null; _is_module_standalone: boolean; _missing_display_name: boolean }>();
       if (orderIds.length > 0) {
         const { data: orders } = await supabase
           .from('orders_v2')
