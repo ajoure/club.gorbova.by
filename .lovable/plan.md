@@ -85,11 +85,14 @@
 | mapped_training_module_ids | [4c97d21c] (Маркетплейсы) |
 | visible_recursive_lesson_count | 5 |
 
-**⚠️ CRITICAL FINDING:** Edge function dry_run показывает `current_entitlement_id: null` и `planned_action: create`, но в БД уже есть активный cb20 entitlement (5875992d). **Функция не видит существующий entitlement.** Вероятная причина: несоответствие в логике lookup (user_id vs profile_id).
+**✅ RESOLVED:** Lookup bug исправлен (fallback по product_code='cb20' + anti-duplicate guard). Post-fix dry-run подтвердил: `current_entitlement_match_by: product_code`, `planned_action: repair_metadata_and_align`.
 
-**Решение перед execute:** Требуется исправление edge function для корректного обнаружения существующего entitlement. Без этого execute создаст дубль.
-
-**Execute payload preview:** `/mnt/documents/patch_e1_execute_payload_preview.json`
+**✅ EXECUTED:** Entitlement `5875992d` обновлён (не дублирован):
+- product_id backfilled: `7101ed3c`
+- scope_resolution_mode: `module_scope_only`
+- mapped_training_module_ids: 4 модуля (все сматчены)
+- expires_at: `2026-04-18T12:00:00+00:00`
+- active_cb20_entitlement_count: **1** (дублей нет)
 
 **Expected runtime result после execute:**
 - Пользователь видит только модуль Маркетплейсы (5 lessons)
