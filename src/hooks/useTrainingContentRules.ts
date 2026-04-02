@@ -236,17 +236,26 @@ async function resolveBonusScopeRules(
 ): Promise<TrainingContentRule[]> {
   const syntheticRules: TrainingContentRule[] = [];
 
-  // Filter entitlements that have scope_resolution_mode in meta
+  // Separate entitlements into two groups:
+  // 1. Entitlements WITH scope_resolution_mode (explicit scope from write-side)
+  // 2. Entitlements WITHOUT meta (legacy — need safe default)
   const scopedEnts = entitlements.filter(e => {
     const meta = (e.meta || {}) as Record<string, any>;
     const mode = meta.scope_resolution_mode;
-    // Only generate synthetic rules for restricted modes
     return mode && mode !== 'full_tariff_scope';
   });
 
-  if (scopedEnts.length === 0) return syntheticRules;
+  // Legacy entitlements without scope_resolution_mode that are product-linked
+  // These need a safe default to prevent silent full access
+  const legacyEnts = entitlements.filter(e => {
+    const meta = (e.meta || {}) as Record<string, any>;
+    return !meta.scope_resolution_mode && e.product_id;
+  });
 
-  // Collect all historical_module_product_ids for batch mapping
+  const allRelevantEnts = [...scopedEnts, ...legacyEnts];
+  if (allRelevantEnts.length === 0) return syntheticRules;
+
+  // Collect all historical_module_product_ids for batch mapping (from scoped ents only)
   const allModuleProductIds = new Set<string>();
   scopedEnts.forEach(e => {
     const meta = (e.meta || {}) as Record<string, any>;
@@ -257,7 +266,6 @@ async function resolveBonusScopeRules(
   });
 
   // Batch query: map module product_ids → training_module_ids
-  // This resolves commercial module markers to actual training subtree nodes
   let moduleProductToTrainingIds = new Map<string, string[]>();
   if (allModuleProductIds.size > 0) {
     const { data: mappedModules } = await supabaseClient
@@ -274,9 +282,8 @@ async function resolveBonusScopeRules(
     });
   }
 
-  // Also need to find root training module for each entitlement's product
-  // to set target_ref correctly
-  const entProductIds = [...new Set(scopedEnts.map(e => e.product_id).filter(Boolean))] as string[];
+  // Find root training modules for all relevant product_ids
+  const entProductIds = [...new Set(allRelevantEnts.map(e => e.product_id).filter(Boolean))] as string[];
   let productToRootTraining = new Map<string, string>();
   if (entProductIds.length > 0) {
     const { data: rootModules } = await supabaseClient
@@ -293,7 +300,7 @@ async function resolveBonusScopeRules(
     });
   }
 
-  // Generate synthetic rules per scoped entitlement
+  // Process SCOPED entitlements (have explicit scope_resolution_mode)
   for (const ent of scopedEnts) {
     const meta = (ent.meta || {}) as Record<string, any>;
     const mode = meta.scope_resolution_mode as string;
@@ -301,9 +308,8 @@ async function resolveBonusScopeRules(
     if (!productId) continue;
 
     const rootTrainingId = productToRootTraining.get(productId);
-    if (!rootTrainingId) continue; // No training linked to this product
+    if (!rootTrainingId) continue;
 
-    // Resolve allowed module IDs from historical purchase
     const historicalModuleProductIds: string[] = meta.historical_module_product_ids || [];
     const allowedModuleIds: string[] = [];
 
@@ -312,29 +318,20 @@ async function resolveBonusScopeRules(
       if (trainingIds) {
         allowedModuleIds.push(...trainingIds);
       }
-      // If no mapping found, this module goes to manual_review territory
-      // but we don't add it to allowed list (safe default)
     }
 
     let accessMode: "full" | "partial" = "partial";
     let finalAllowedModuleIds = allowedModuleIds;
 
     if (mode === 'no_scope' || mode === 'manual_review') {
-      // Block everything — empty allowed lists
       finalAllowedModuleIds = [];
     } else if (mode === 'module_scope_only') {
-      // Only historically purchased modules
       finalAllowedModuleIds = allowedModuleIds;
     } else if (mode === 'union_scope') {
-      // Union of tariff modules + standalone modules
-      // Tariff modules are handled by existing DB rules, 
-      // so we don't need to restrict here — let DB rules handle full part
-      // and add standalone modules on top
-      // For union_scope, we generate a full access rule (DB rules + standalone are both valid)
       accessMode = "full";
     }
 
-    const syntheticRule: TrainingContentRule = {
+    syntheticRules.push({
       id: `synthetic-bonus-${productId}`,
       product_id: productId,
       tariff_id: null,
@@ -348,9 +345,43 @@ async function resolveBonusScopeRules(
         rule_purpose: `synthetic_bonus_${mode}`,
       },
       notes: null,
-    };
+    });
+  }
 
-    syntheticRules.push(syntheticRule);
+  // Process LEGACY entitlements (no meta → safe default)
+  // CRITICAL: Bonus entitlements without historical/tariff context → no_scope
+  // Direct purchases with valid tariff context → DB tariff rules take priority in resolver
+  // The synthetic no_scope rule has lowest priority and only activates when no DB rule matches
+  for (const ent of legacyEnts) {
+    const productId = ent.product_id;
+    if (!productId) continue;
+
+    const rootTrainingId = productToRootTraining.get(productId);
+    if (!rootTrainingId) continue;
+
+    // Check if we already generated a rule for this product (from scopedEnts)
+    if (syntheticRules.some(r => r.id === `synthetic-bonus-${productId}` || r.id === `synthetic-legacy-safe-${productId}`)) {
+      continue;
+    }
+
+    // Generate safe-default no_scope rule
+    // This will be overridden by any matching DB tariff rule (Priority 1/2 in resolver)
+    // Only activates when user has entitlement but NO matching tariff subscription
+    syntheticRules.push({
+      id: `synthetic-legacy-safe-${productId}`,
+      product_id: productId,
+      tariff_id: null,
+      target_ref: rootTrainingId,
+      target_label: `Legacy safe default (no meta)`,
+      is_active: true,
+      conditions: {
+        access_mode: "partial",
+        allowed_module_ids: [],
+        allowed_lesson_ids: [],
+        rule_purpose: 'synthetic_legacy_no_meta_safe_default',
+      },
+      notes: null,
+    });
   }
 
   return syntheticRules;
@@ -379,13 +410,14 @@ export function resolveTrainingContentFilter(
   const matchingRules = rules.filter(r => r.target_ref === trainingModuleId && r.is_active);
   if (matchingRules.length === 0) return null;
 
-  // Separate DB rules from synthetic bonus rules
-  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-bonus-'));
-  const syntheticRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+  // Separate DB rules from synthetic rules
+  const dbRules = matchingRules.filter(r => !r.id.startsWith('synthetic-'));
+  const syntheticBonusRules = matchingRules.filter(r => r.id.startsWith('synthetic-bonus-'));
+  const syntheticLegacyRules = matchingRules.filter(r => r.id.startsWith('synthetic-legacy-safe-'));
 
   let bestRule: TrainingContentRule | null = null;
 
-  // Priority 1: Tariff-level DB rules (most specific)
+  // Priority 1: Tariff-level DB rules (most specific — direct purchase with active subscription)
   for (const rule of dbRules) {
     if (rule.tariff_id && userTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
@@ -393,14 +425,20 @@ export function resolveTrainingContentFilter(
     }
   }
 
-  // Priority 2: Product-level DB rules
+  // Priority 2: Product-level DB rules (no tariff specified)
   if (!bestRule) {
     bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
   }
 
-  // Priority 3: Synthetic bonus rules from entitlement.meta (Variant B)
-  if (!bestRule && syntheticRules.length > 0) {
-    bestRule = syntheticRules[0];
+  // Priority 3: Synthetic bonus rules (explicit scope_resolution_mode from meta)
+  if (!bestRule && syntheticBonusRules.length > 0) {
+    bestRule = syntheticBonusRules[0];
+  }
+
+  // Priority 4: Synthetic legacy safe default (no meta → no_scope)
+  // This catches bonus entitlements without tariff context that would otherwise get full access
+  if (!bestRule && syntheticLegacyRules.length > 0) {
+    bestRule = syntheticLegacyRules[0];
   }
 
   if (!bestRule) return null;

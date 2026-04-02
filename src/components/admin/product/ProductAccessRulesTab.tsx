@@ -368,7 +368,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
     return result;
   }, [rules, filter, typeFilter]);
 
-  // Conflicts
+  // Conflicts — classified into categories
   const conflicts = useMemo(() => {
     const seen = new Map<string, AccessRule[]>();
     rules.forEach((r) => {
@@ -376,9 +376,46 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       if (!seen.has(key)) seen.set(key, []);
       seen.get(key)!.push(r);
     });
-    return Array.from(seen.entries())
-      .filter(([, v]) => v.length > 1)
-      .map(([key, items]) => ({ key, items }));
+
+    type ConflictType = 'valid_parallel_rule' | 'duplicate_rule' | 'ambiguous_overlap' | 'shadowed_rule';
+    interface ClassifiedConflict {
+      key: string;
+      items: AccessRule[];
+      type: ConflictType;
+      label: string;
+    }
+
+    const classified: ClassifiedConflict[] = [];
+
+    for (const [key, items] of seen.entries()) {
+      if (items.length <= 1) continue;
+
+      // Check if all rules have different tariff_ids → valid parallel
+      const tariffIds = items.map(i => i.tariff_id || '__product_level__');
+      const uniqueTariffs = new Set(tariffIds);
+
+      if (uniqueTariffs.size === items.length) {
+        // All different tariffs = valid parallel rules (different tariff scopes)
+        classified.push({ key, items, type: 'valid_parallel_rule', label: 'Разные тарифы — допустимо' });
+      } else {
+        // Check for exact duplicates (same product + tariff + target)
+        const sigMap = new Map<string, AccessRule[]>();
+        items.forEach(i => {
+          const sig = `${i.product_id}:${i.tariff_id || ''}:${i.target_ref}`;
+          if (!sigMap.has(sig)) sigMap.set(sig, []);
+          sigMap.get(sig)!.push(i);
+        });
+        const hasDuplicates = [...sigMap.values()].some(g => g.length > 1);
+
+        if (hasDuplicates) {
+          classified.push({ key, items, type: 'duplicate_rule', label: 'Дублирующие правила' });
+        } else {
+          classified.push({ key, items, type: 'ambiguous_overlap', label: 'Неоднозначное перекрытие' });
+        }
+      }
+    }
+
+    return classified;
   }, [rules]);
 
   // Legacy-new overlaps
@@ -691,21 +728,41 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         </Select>
       </div>
 
-      {/* Conflicts warning */}
-      {conflicts.length > 0 && (
+      {/* Conflicts warning — classified */}
+      {conflicts.filter(c => c.type !== 'valid_parallel_rule').length > 0 && (
         <Card className="border-amber-200/50 bg-amber-50/30 dark:border-amber-800/50 dark:bg-amber-950/30">
           <CardContent className="py-3 px-4">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="text-sm font-medium">
-                Обнаружены конфликты: одна цель назначена несколькими правилами
+                Обнаружены конфликты правил
               </span>
             </div>
             <div className="mt-2 space-y-1">
-              {conflicts.map(({ key, items }) => (
+              {conflicts.filter(c => c.type !== 'valid_parallel_rule').map(({ key, items, label }) => (
                 <div key={key} className="text-xs text-amber-600 dark:text-amber-500">
-                  {items[0].target_label || key}: {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")} — 
-                  победит приоритет {Math.max(...items.map((i) => i.priority))}
+                  {items[0].target_label || key}: {label} — {items.map((i) => (i.tariff?.name || "Продукт")).join(" + ")}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Valid parallel rules — info only */}
+      {conflicts.filter(c => c.type === 'valid_parallel_rule').length > 0 && (
+        <Card className="border-blue-200/50 bg-blue-50/30 dark:border-blue-800/50 dark:bg-blue-950/30">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
+              <Info className="h-4 w-4 shrink-0" />
+              <span className="text-sm font-medium">
+                Множественные правила на одну цель (разные тарифы — допустимо)
+              </span>
+            </div>
+            <div className="mt-2 space-y-1">
+              {conflicts.filter(c => c.type === 'valid_parallel_rule').map(({ key, items }) => (
+                <div key={key} className="text-xs text-blue-600 dark:text-blue-500">
+                  {items[0].target_label || key}: {items.map((i) => (i.tariff?.name || "Продукт")).join(", ")}
                 </div>
               ))}
             </div>
