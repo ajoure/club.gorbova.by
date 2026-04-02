@@ -754,7 +754,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
       />
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+      <div id="access-rules-section" className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <div>
           <h2 className="text-lg font-semibold">Правила доступа</h2>
           <p className="text-sm text-muted-foreground">
