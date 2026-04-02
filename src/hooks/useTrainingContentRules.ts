@@ -454,31 +454,6 @@ export function resolveTrainingContentFilter(
     allowedLessonIds: new Set(cond.allowed_lesson_ids || []),
   };
 }
-  }
-
-  // Priority 2: Product-level DB rules
-  if (!bestRule) {
-    bestRule = dbRules.find(r => !r.tariff_id && r.product_id === productId) || null;
-  }
-
-  // Priority 3: Synthetic bonus rules from entitlement.meta (Variant B)
-  if (!bestRule && syntheticRules.length > 0) {
-    bestRule = syntheticRules[0];
-  }
-
-  if (!bestRule) return null;
-
-  const cond = bestRule.conditions;
-  if (cond.access_mode === "full") {
-    return { mode: "full", allowedModuleIds: new Set(), allowedLessonIds: new Set() };
-  }
-
-  return {
-    mode: "partial",
-    allowedModuleIds: new Set(cond.allowed_module_ids || []),
-    allowedLessonIds: new Set(cond.allowed_lesson_ids || []),
-  };
-}
 
 /**
  * Apply training_content filter to check if a specific module is visible.
