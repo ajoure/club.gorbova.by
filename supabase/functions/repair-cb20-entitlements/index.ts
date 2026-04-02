@@ -453,9 +453,9 @@ Deno.serve(async (req) => {
         // Count lessons across full subtree
         const { data: subtreeContent } = await supabase
           .from('training_lessons')
-          .select('id, module_id, status')
+          .select('id, module_id')
           .in('module_id', [...allVisibleModuleIds])
-          .eq('status', 'active');
+          .eq('is_active', true);
 
         totalLessonCount = (subtreeContent || []).length;
       }
