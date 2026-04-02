@@ -724,6 +724,27 @@ export function ProductLinkedTrainingsBlock({ productId, onUseViaRule, onFocusRu
   const { data: ruleLinkedData, isLoading: isRuleLinkedLoading } = useRuleLinkedTrainings(productId, contentRules);
   const { visibleTrainings, visibleTrainingsMap, visibleTrainingCount } = useVisibleTrainings(trainings, ruleLinkedData, productId);
 
+  // Fetch tariff names for content rules
+  const tariffIds = useMemo(() => {
+    const ids = contentRules.map(r => r.tariff_id).filter(Boolean) as string[];
+    return [...new Set(ids)];
+  }, [contentRules]);
+  
+  const { data: tariffNamesMap = {} } = useQuery({
+    queryKey: ["tariff-names-for-rules", tariffIds],
+    queryFn: async () => {
+      if (tariffIds.length === 0) return {};
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name")
+        .in("id", tariffIds);
+      const map: Record<string, string> = {};
+      (data || []).forEach(t => { map[t.id] = t.name; });
+      return map;
+    },
+    enabled: tariffIds.length > 0,
+  });
+
   // Rule-link delete state
   const [deleteRuleId, setDeleteRuleId] = useState<string | null>(null);
   const [deleteRuleTrainingTitle, setDeleteRuleTrainingTitle] = useState("");
