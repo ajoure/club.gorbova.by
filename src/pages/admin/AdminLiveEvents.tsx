@@ -1472,6 +1472,10 @@ function LiveStreamControlPanel({
       const existingMeta = (current?.metadata as Record<string, any>) || {};
       const mergedMeta = {
         ...existingMeta,
+        provider_source_status: "ok",
+        provider_error_message: null,
+        provider_status_code: syncData?.status_code || 200,
+        last_provider_sync_at: new Date().toISOString(),
         provider: {
           ...(existingMeta.provider || {}),
           current: {
@@ -1482,7 +1486,6 @@ function LiveStreamControlPanel({
             streamkey: syncEvent?.streamkey || providerCurrent.streamkey,
           },
         },
-        last_provider_sync_at: new Date().toISOString(),
         replay_video_id: replayVideoId || existingMeta.replay_video_id,
       };
 
