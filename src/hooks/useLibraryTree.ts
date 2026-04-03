@@ -28,6 +28,35 @@ export interface LibraryRootModule {
 const NO_PRODUCT_ID = "__no_product__";
 const NO_PRODUCT_NAME = "Без продукта";
 
+/* ── Title normalizer & flatten check ─────────────────── */
+
+function normalizeTitle(s: string): string {
+  return s.toLowerCase().replace(/[|·—–\-]/g, "").replace(/\s+/g, " ").trim();
+}
+
+export function shouldFlattenSingleRoot(
+  groupProductId: string,
+  groupName: string,
+  rootModules: LibraryRootModule[],
+): { flatten: boolean; root?: LibraryRootModule } {
+  if (rootModules.length !== 1) return { flatten: false };
+  const root = rootModules[0];
+  // root must belong to same product
+  if ((root.module.product_id || "__no_product__") !== groupProductId) return { flatten: false };
+  const a = normalizeTitle(groupName);
+  const b = normalizeTitle(root.module.title);
+  if (a === b) return { flatten: true, root };
+  // Allow match when only trailing decorative chars differ
+  if (a.length > 3 && b.length > 3 && (a.startsWith(b) || b.startsWith(a))) {
+    const longer = a.length > b.length ? a : b;
+    const shorter = a.length > b.length ? b : a;
+    const tail = longer.slice(shorter.length).trim();
+    // Only flatten if the tail is purely decorative (empty or very short residual)
+    if (tail.length <= 2) return { flatten: true, root };
+  }
+  return { flatten: false };
+}
+
 /* ── Access label resolver ─────────────────────────────── */
 
 /**
