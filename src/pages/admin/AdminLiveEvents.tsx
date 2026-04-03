@@ -1618,7 +1618,7 @@ function LiveStreamControlPanel({
         });
       } catch {}
 
-      // 5. Update local state
+      // 5. Update local state and auto-sync to confirm
       setProviderSourceStatus("ok");
       setSyncStatus("idle");
       onFormUpdate?.({ kinescope_live_event_id: newEventId });
@@ -1626,6 +1626,11 @@ function LiveStreamControlPanel({
       toast.success("Эфир пересоздан в Kinescope", { description: `Новый ID: ${newEventId}` });
       refetchProvider();
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+
+      // 6. Auto-sync the newly created event to confirm its state
+      setTimeout(() => {
+        handleSyncProvider();
+      }, 1500);
     } catch (err: any) {
       toast.error(`Ошибка пересоздания: ${err.message || String(err)}`);
     } finally {
