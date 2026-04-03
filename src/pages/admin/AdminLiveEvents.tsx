@@ -46,6 +46,8 @@ interface LiveEvent {
   is_published: boolean;
   scheduled_at: string | null;
   replay_enabled: boolean;
+  invite_mode: string;
+  direct_access_allowed: boolean;
   created_at: string;
 }
 
@@ -62,6 +64,8 @@ interface LiveEventForm {
   is_published: boolean;
   scheduled_at: string;
   replay_enabled: boolean;
+  invite_mode: "none" | "optional_one_time" | "required_one_time";
+  direct_access_allowed: boolean;
 }
 
 const defaultForm: LiveEventForm = {
@@ -77,6 +81,8 @@ const defaultForm: LiveEventForm = {
   is_published: false,
   scheduled_at: "",
   replay_enabled: false,
+  invite_mode: "none",
+  direct_access_allowed: true,
 };
 
 const statusLabels: Record<string, string> = {
@@ -150,6 +156,8 @@ export default function AdminLiveEvents() {
         is_published: data.is_published,
         scheduled_at: data.scheduled_at || null,
         replay_enabled: data.replay_enabled,
+        invite_mode: data.invite_mode,
+        direct_access_allowed: data.direct_access_allowed,
       };
 
       if (editingId) {
@@ -186,6 +194,8 @@ export default function AdminLiveEvents() {
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
       replay_enabled: event.replay_enabled,
+      invite_mode: (event.invite_mode as "none" | "optional_one_time" | "required_one_time") || "none",
+      direct_access_allowed: event.direct_access_allowed ?? true,
     });
     setDialogOpen(true);
   };
@@ -372,6 +382,47 @@ export default function AdminLiveEvents() {
                   {form.access_mode === "all" && "Ссылка откроется всем авторизованным пользователям"}
                   {form.access_mode === "product" && "Ссылка откроется только пользователям с доступом к выбранному продукту"}
                   {form.access_mode === "tariff" && "Ссылка откроется только пользователям с выбранным тарифом продукта"}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Invite Mode */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium">Режим приглашений</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Select
+                  value={form.invite_mode}
+                  onValueChange={(v) => {
+                    const newMode = v as "none" | "optional_one_time" | "required_one_time";
+                    // If required_one_time, force direct_access_allowed=false
+                    const newDirect = newMode === "required_one_time" ? false : form.direct_access_allowed;
+                    setForm({ ...form, invite_mode: newMode, direct_access_allowed: newDirect });
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без приглашений</SelectItem>
+                    <SelectItem value="optional_one_time">Опциональные одноразовые ссылки</SelectItem>
+                    <SelectItem value="required_one_time">Обязательные одноразовые ссылки</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {form.invite_mode !== "none" && form.invite_mode !== "required_one_time" && (
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={form.direct_access_allowed}
+                      onCheckedChange={(v) => setForm({ ...form, direct_access_allowed: v })}
+                    />
+                    <Label>Разрешить прямой доступ без ссылки</Label>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {form.invite_mode === "none" && "Приглашения не используются, доступ по правилу доступа"}
+                  {form.invite_mode === "optional_one_time" && "Можно отправить персональные ссылки, но прямой доступ тоже работает"}
+                  {form.invite_mode === "required_one_time" && "Вход возможен только по персональной одноразовой ссылке. Прямой доступ запрещён."}
                 </p>
               </CardContent>
             </Card>

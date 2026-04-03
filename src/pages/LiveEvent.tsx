@@ -9,7 +9,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -19,7 +19,7 @@ interface LiveResolveResult {
   message?: string;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "scheduled" | "live" | "ended_no_replay" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "error";
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
@@ -64,6 +64,9 @@ export default function LiveEvent() {
             break;
           case "access_denied":
             setState("access_denied");
+            break;
+          case "invite_required":
+            setState("invite_required");
             break;
           case "ok":
             if (json.event_status === "scheduled") {
@@ -132,6 +135,21 @@ export default function LiveEvent() {
         <Button variant="outline" onClick={() => window.location.href = "/products"}>
           Перейти к продуктам
         </Button>
+      </div>
+    );
+  }
+
+  if (state === "invite_required") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <Lock className="h-16 w-16 text-muted-foreground" />
+        <h1 className="text-2xl font-bold text-foreground">Требуется приглашение</h1>
+        {data?.title && (
+          <h2 className="text-lg text-muted-foreground">{data.title}</h2>
+        )}
+        <p className="text-muted-foreground text-center max-w-md">
+          Доступ к этому эфиру возможен только по персональной пригласительной ссылке. Проверьте сообщения в Telegram или электронной почте.
+        </p>
       </div>
     );
   }
