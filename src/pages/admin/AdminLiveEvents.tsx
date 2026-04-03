@@ -102,6 +102,7 @@ const defaultForm: LiveEventForm = {
   kinescope_video_id: "",
   kinescope_mode: "picker",
   kinescope_project_id: "",
+  kinescope_folder_id: "",
   status: "draft",
   is_published: false,
   scheduled_at: "",
