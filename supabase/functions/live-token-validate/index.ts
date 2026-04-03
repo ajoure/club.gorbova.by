@@ -27,8 +27,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ status: 'error', message: 'Invalid action' }, 400);
     }
 
-    // ─── ACTION: CREATE ───
+    // ─── ACTION: CREATE (service role / internal backend only) ───
     if (action === 'create') {
+      // Guard: only service_role callers allowed (backend-to-backend)
+      const authHeader = req.headers.get('Authorization');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      if (!authHeader || authHeader !== `Bearer ${serviceKey}`) {
+        return jsonResponse({ status: 'error', message: 'Service role access required' }, 403);
+      }
       return await handleCreate(supabase, body);
     }
 
@@ -176,12 +182,7 @@ async function handleValidate(
     return jsonResponse({ status: 'token_revoked' }, 403);
   }
 
-  // 6. token in mismatch status (was already flagged)
-  if (link.status === 'mismatch') {
-    return jsonResponse({ status: 'token_mismatch' }, 403);
-  }
-
-  // 7. Authenticate user via JWT
+  // 6. Authenticate user via JWT
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
     return jsonResponse({ status: 'auth_required' }, 401);
@@ -197,13 +198,17 @@ async function handleValidate(
     return jsonResponse({ status: 'auth_required' }, 401);
   }
 
-  // 8. User match
+  // 7. Write live_link_opened audit (after successful auth, with user context)
+  await logAudit(supabase, 'live_link_opened', 'user', user.id, {
+    link_id: link.id, result: 'pending_validation',
+  });
+
+  // 8. User match — audit-only, do NOT burn the link
   if (user.id !== link.user_id) {
-    // Record mismatch
+    // Record telemetry on link without changing status
     await supabase
       .from('live_access_links')
       .update({
-        status: 'mismatch',
         last_opened_by_user_id: user.id,
         last_opened_at: new Date().toISOString(),
       })

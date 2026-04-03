@@ -37,6 +37,17 @@ const DialogContent = React.forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      onPointerDownOutside={(e) => {
+        // Guard: don't dismiss dialog when clicking inside token picker dropdown
+        const target = e.target as HTMLElement | null;
+        const composedPath = (e as any).composedPath?.() as EventTarget[] | undefined;
+        const isTokenPicker = target?.closest?.('[data-token-picker]') ||
+          composedPath?.some((el: any) => el instanceof HTMLElement && el.hasAttribute?.('data-token-picker'));
+        if (isTokenPicker) {
+          e.preventDefault();
+        }
+        props.onPointerDownOutside?.(e);
+      }}
       className={cn(
         // Default centered dialog
         "fixed left-[50%] top-[50%] z-50 grid w-[calc(100vw-1.5rem)] sm:w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-4 shadow-lg duration-200",

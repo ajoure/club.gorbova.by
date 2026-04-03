@@ -454,6 +454,17 @@ Deno.serve(async (req) => {
           if (inviteLinkId) {
             msgMeta.link_id = inviteLinkId;
             msgMeta.live_event_id = liveEventId;
+            // A3: audit live_link_sent + update status (only if still 'created')
+            await supabase.from('live_access_links')
+              .update({ status: 'sent', sent_at: new Date().toISOString() })
+              .eq('id', inviteLinkId)
+              .eq('status', 'created');
+            await supabase.from('audit_logs').insert({
+              action: 'live_link_sent',
+              actor_type: 'system',
+              actor_label: 'telegram-mass-broadcast',
+              meta: { link_id: inviteLinkId, sent_via: 'telegram', user_id: profile.user_id, template_id: templateId },
+            });
           }
           messageLogBatch.push({
             user_id: profile.user_id,

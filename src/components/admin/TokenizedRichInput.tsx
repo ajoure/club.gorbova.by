@@ -836,6 +836,7 @@ export function TokenizedRichInput({
       {pickerOpen && caretCoords && createPortal(
         <div
           ref={dropdownRef}
+          data-token-picker="true"
           className="fixed z-[9998] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
           style={{ top: caretCoords.top, left: caretCoords.left }}
         >
