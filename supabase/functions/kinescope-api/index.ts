@@ -320,13 +320,59 @@ serve(async (req) => {
           break;
         }
         const eventResult = await makeV2Request(`/live/events/${live_event_id}`, apiToken);
+        
+        // Determine provider_source_status
+        let provider_source_status: "ok" | "missing" | "broken" = "ok";
+        let provider_error_message: string | null = null;
+        let provider_stream_status: string | null = null;
+
+        if (!eventResult.success) {
+          if (eventResult.status_code === 404) {
+            provider_source_status = "missing";
+            provider_error_message = "Событие не найдено в Kinescope (удалено или недоступно)";
+          } else {
+            provider_source_status = "broken";
+            provider_error_message = eventResult.error || `HTTP ${eventResult.status_code}`;
+          }
+          result = {
+            success: false,
+            data: {
+              event: null,
+              videos: null,
+              error: provider_error_message,
+              status_code: eventResult.status_code,
+              provider_source_status,
+              provider_error_message,
+              provider_stream_status: null,
+            },
+          };
+          break;
+        }
+
+        // Event exists — check stream health
+        const evData = (eventResult.data as any)?.data || eventResult.data;
+        provider_stream_status = evData?.stream?.status || null;
+        const hasStream = !!evData?.stream?.id;
+        const hasPlayLink = !!evData?.play_link;
+
+        if (!hasStream && !hasPlayLink) {
+          provider_source_status = "broken";
+          provider_error_message = "Событие существует, но отсутствуют stream и play_link";
+        }
+
+        // Fetch videos for replay check
         const videosResult = await makeV2Request(`/live/events/${live_event_id}/videos`, apiToken);
+
         result = {
-          success: eventResult.success,
+          success: true,
           data: {
             event: eventResult.data,
             videos: videosResult.success ? videosResult.data : null,
-            error: eventResult.error || videosResult.error || null,
+            error: null,
+            status_code: eventResult.status_code,
+            provider_source_status,
+            provider_error_message,
+            provider_stream_status,
           },
         };
         break;
