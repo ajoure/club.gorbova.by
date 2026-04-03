@@ -4991,7 +4991,9 @@ export type Database = {
           access_rule: Json
           created_at: string
           description: string | null
+          direct_access_allowed: boolean
           id: string
+          invite_mode: string
           is_published: boolean
           kinescope_video_id: string
           metadata: Json | null
@@ -5007,7 +5009,9 @@ export type Database = {
           access_rule?: Json
           created_at?: string
           description?: string | null
+          direct_access_allowed?: boolean
           id?: string
+          invite_mode?: string
           is_published?: boolean
           kinescope_video_id: string
           metadata?: Json | null
@@ -5023,7 +5027,9 @@ export type Database = {
           access_rule?: Json
           created_at?: string
           description?: string | null
+          direct_access_allowed?: boolean
           id?: string
+          invite_mode?: string
           is_published?: boolean
           kinescope_video_id?: string
           metadata?: Json | null
