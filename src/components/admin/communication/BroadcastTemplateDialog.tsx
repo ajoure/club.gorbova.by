@@ -297,10 +297,14 @@ export function BroadcastTemplateDialog({
                         {selectedReadiness?.ready ? "Готов к приглашениям" : selectedReadiness?.label}
                       </Badge>
                     </p>
-                    {!selectedReadiness?.ready && selectedReadiness?.reason && (
+                    {!selectedReadiness?.ready && selectedReadiness?.reasons.length > 0 && (
                       <div className="flex items-start gap-1.5 text-destructive bg-destructive/5 rounded p-1.5 mt-1">
                         <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                        <span>{selectedReadiness.reason}</span>
+                        <div className="space-y-0.5">
+                          {selectedReadiness.reasons.map((r, i) => (
+                            <p key={i} className="text-xs">• {r}</p>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
