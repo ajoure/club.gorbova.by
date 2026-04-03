@@ -741,7 +741,26 @@ export default function AdminLiveEvents() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
+                          {event.event_type === "live_stream" && (() => {
+                            const meta = event.metadata as any;
+                            const pss = meta?.provider_source_status;
+                            if (!event.kinescope_live_event_id && !pss) {
+                              return <Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground">⚪ Не создан</Badge>;
+                            }
+                            if (pss === "missing") {
+                              return <Badge variant="destructive" className="text-[9px]">🔴 Источник удалён</Badge>;
+                            }
+                            if (pss === "broken") {
+                              return <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-700 border-amber-500/30">🟡 Источник повреждён</Badge>;
+                            }
+                            if (event.kinescope_live_event_id) {
+                              return <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/30">🟢 Источник активен</Badge>;
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {event.is_published ? (
