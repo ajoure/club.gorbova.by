@@ -839,6 +839,7 @@ export function TokenizedRichInput({
           data-token-picker="true"
           className="fixed z-[9998] max-w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md"
           style={{ top: caretCoords.top, left: caretCoords.left }}
+          onWheel={(e) => e.stopPropagation()}
         >
           <Command>
             <CommandInput
