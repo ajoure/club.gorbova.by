@@ -1,129 +1,245 @@
-# да, согласен, с учетом правок:
-
-&nbsp;
-
-1. В пункте про renderActionLabel не привязывай навигацию к уже загруженным lessons, иначе кнопки снова будут нестабильными:
-  &nbsp;
-  - Начать / Продолжить должны работать даже если уроки этого модуля еще не раскрывались и не подгружались
-  - правило:
-    &nbsp;
-    - если lessons уже есть в кеше — использовать их
-    - если уроков нет в кеше — fallback сразу на /library/{moduleSlug}
-    &nbsp;
-  - не делать нерабочую кнопку в ожидании lazy-load
-  &nbsp;
-2. Для Продолжить уточни порядок выбора:
-  &nbsp;
-  - сначала первый **незавершенный и не запланированный** урок
-  - если таких нет, fallback на первый доступный урок
-  - если уроков нет/не загружены — fallback на модуль
-  &nbsp;
-3. Для flattened single-root группы зафиксируй источник данных:
-  &nbsp;
-  - progress, lesson_count, action и slug брать из flattenedRoot.module
-  - children/lessons рендерить сразу под group row
-  - не пересчитывать эти значения из group aggregate, если это single-root flatten case
-  &nbsp;
-4. В LibraryTableView.tsx добавь явный guard:
-  &nbsp;
-  - клик по chevron только раскрывает/сворачивает
-  - клик по названию строки только навигирует
-  - клик по action-column не должен одновременно триггерить expand/collapse строки
-  &nbsp;
-5. В DoD добавь отдельную проверку для flattened single-root:
-  &nbsp;
-  - у строки продукта остается только один верхний уровень
-  - после раскрытия сразу видны child modules или lessons
-  - скрытый root-level не рендерится ни визуально, ни как пустая промежуточная строка
-  &nbsp;
-6. По localStorage уточни ключи и совместимость:
-  &nbsp;
-  - не ломать уже сохраненные expandedGroupIds / expandedModuleIds
-  - если структура ключей меняется, добавить мягкую миграцию или fallback на старые ключи
-  - после flatten старый expanded-state не должен вызывать «призрачное» раскрытие несуществующего промежуточного root-уровня
-  &nbsp;
-7. Добавь в DoD еще один UX-check:
-  &nbsp;
-  - в collapsed состоянии список остается компактным
-  - в expanded состоянии строки не дублируются
-  - ни один single-root продукт не показывает «продукт → такой же root → child»
-  &nbsp;
-8. Add-only guard:
-  &nbsp;
-  - не трогать useLibraryLessons.ts
-  - не менять lazy-loading уроков
-  - не менять search/filter механику, кроме сохранения текущего ручного expanded-state
-  - не менять существующие access labels, progress bars и counts
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-План: Убрать папки, починить flatten и action-навигацию
+# План: Live/Video MVP — Protected Page + Entitlement Gate + Тип шаблона «Приглашение на вебинар»
 
 ## Проблема
+Нужен MVP для доступа к видеоэфирам Kinescope: protected page + entitlement gate + приглашения через существующую систему рассылок. Без дублирования UI и send-flow.
 
-1. Иконки папок (`FolderOpen`) и badge с количеством root modules создают визуальный шум
-2. Не все single-root группы flatten'ятся — только с совпадающим названием, а нужно все
-3. Кнопки «Начать/Продолжить/Завершено» не имеют навигации — мёртвый UI
-4. Single-root группы авто-раскрываются (строка 422), нарушая требование «всё свёрнуто»
+## Архитектурные решения (зафиксированные)
 
-## Изменения
+### Источник истины по доступу
+**`live_events`** — единственный источник истины для доступа к эфиру.
+- `live_events.product_id` определяет, какой продукт даёт право входа.
+- `live_events.access_rule` (JSONB) определяет режим и гранулярность проверки.
+- `broadcast_templates` — только carrier/preview. Шаблон **не хранит и не переопределяет** правило доступа. В UI шаблона access_rule показывается read-only из привязанного live_event.
 
-### 1. `src/hooks/useLibraryTree.ts` — flatten все single-root группы
+### RLS для live_events
+- Прямой SELECT/INSERT/UPDATE/DELETE — **только для админов** (через `has_role_v2(auth.uid(), 'admin')`).
+- Пользователь **не может** читать таблицу `live_events` напрямую.
+- Пользовательские данные эфира приходят **только** через secure resolver.
 
-Изменить `shouldFlattenSingleRoot`: если у группы ровно 1 root module — всегда `flatten: true`, без проверки совпадения названий. Multi-root группы не трогать.
+### Cardinality
+- Один `product_id` может иметь **много** `live_events`. Нет скрытого ограничения «один продукт = один эфир».
+- `product_id` — required (nullable=false), т.к. без привязки к продукту невозможна проверка доступа.
 
-### 2. `src/components/training/LibraryTableView.tsx`
+### access_rule JSON-контракт
+```jsonc
+{
+  "mode": "all" | "product" | "tariff",
+  "product_id": "uuid | null",
+  "tariff_id": "uuid | null"
+}
+// Валидация:
+// mode='all'     → product_id=null, tariff_id=null (доступ всем authenticated)
+// mode='product' → product_id required, tariff_id=null
+// mode='tariff'  → product_id required, tariff_id required
+```
 
-**Убрать визуальный шум:**
+### Edge Function: условное создание
+**STOP-guard**: перед реализацией проверить, можно ли собрать secure resolver через existing backend layer (RPC / existing edge function) без утечки `kinescope_video_id`. Новая edge function `live-resolve` создаётся **только если** existing слой не гарантирует:
+- скрытие kinescope_video_id до access check
+- server-side entitlement validation
+- audit logging
 
-- Убрать `FolderOpen` иконку (строка 450)
-- Убрать badge с количеством root modules (строки 460-464)
-- Все group rows выглядят одинаково — clean строка без папки
+## Фазы
 
-**Убрать авто-раскрытие single-root:**
+### Фаза 1 — Миграция БД
 
-- Строка 422: `effectiveExpanded = isExpanded` (убрать `|| (isSingleRoot && !isFlat)`)
-- Первый вход = всё свёрнуто, сохранение через localStorage
+**Новая таблица `live_events`:**
+```sql
+CREATE TABLE public.live_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  kinescope_video_id TEXT NOT NULL,
+  product_id UUID NOT NULL REFERENCES public.products_v2(id),
+  access_rule JSONB NOT NULL DEFAULT '{"mode":"product","product_id":null,"tariff_id":null}',
+  status TEXT NOT NULL DEFAULT 'draft',  -- draft | scheduled | live | ended
+  is_published BOOLEAN NOT NULL DEFAULT false,
+  scheduled_at TIMESTAMPTZ,
+  replay_enabled BOOLEAN NOT NULL DEFAULT false,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
-**Починить action-навигацию в `renderActionLabel`:**
+-- RLS: admin-only direct access
+ALTER TABLE public.live_events ENABLE ROW LEVEL SECURITY;
 
-- Принимать дополнительные параметры: `moduleSlug`, `lessons` (если загружены)
-- **Начать**: навигация на первый доступный урок → `/library/{moduleSlug}/{lessonSlug}`, fallback → `/library/{moduleSlug}`
-- **Продолжить**: первый незавершённый урок → `/library/{moduleSlug}/{lessonSlug}`, fallback → `/library/{moduleSlug}`
-- **Завершено**: рабочая ссылка на модуль → `/library/{moduleSlug}`
-- Обернуть в `onClick` с `navigate()`
+CREATE POLICY "Admins full access to live_events"
+  ON public.live_events FOR ALL
+  TO authenticated
+  USING (public.has_role_v2(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role_v2(auth.uid(), 'admin'));
+-- Нет policy для обычных пользователей. Данные — только через resolver.
+```
 
-**Прокинуть навигацию во все вызовы `renderActionLabel`:**
+**Расширение `broadcast_templates`:**
+```sql
+ALTER TABLE public.broadcast_templates
+  ADD COLUMN template_type TEXT NOT NULL DEFAULT 'general',
+  ADD COLUMN live_event_id UUID REFERENCES public.live_events(id);
+-- template_type: 'general' | 'webinar_invite'
+-- live_event_id: nullable для general, required для webinar_invite (валидация на UI/app уровне)
+```
 
-- В `renderGroup` (flattened): slug из `flatRoot.module.slug`, lessons из `getLessons(flatRoot.module.id)`
-- В `renderRootModule`: slug из `rm.module.slug`, lessons из `getLessons(rm.module.id)`
-- В `renderChildModule`: slug из `child.slug`, lessons из `getLessons(child.id)`
+**Расширение `broadcast_templates` для тарифного фильтра аудитории:**
+```sql
+ALTER TABLE public.broadcast_templates
+  ADD COLUMN targeting_tariff_id UUID REFERENCES public.tariffs(id);
+```
 
-**Гарантировать showGroupRow = true всегда** (строка 427 → убрать условие)
+### Фаза 2 — Secure Resolver
 
-### Файлы
+**Условие**: создать `live-resolve` edge function (или RPC), если existing слой не покрывает требования (см. STOP-guard выше).
 
+**Контракт resolver:**
+- Вход: `slug` + JWT (auth user)
+- Branch order:
+  1. `slug exists?` → нет → `{ status: 'not_found' }`
+  2. `is_published = true?` → нет → `{ status: 'unpublished' }`
+  3. `user authenticated?` → нет → `{ status: 'auth_required' }`
+  4. `access valid?` (через canonical access helper: `resolveEffectiveProductAccess` или equivalent entitlement check по `live_events.product_id` + `access_rule`) → нет → `{ status: 'access_denied' }`
+  5. Всё ок → `{ status: 'ok', title, description, kinescope_video_id, event_status, replay_enabled }`
+- `kinescope_video_id` **не возвращается** при любом статусе кроме `ok`.
+- Audit: логирует в `audit_logs`:
+  - `live_access_attempt` (каждый запрос)
+  - `live_access_granted` / `live_access_denied` / `live_access_not_found` / `live_access_unpublished`
 
-| Файл                                           | Изменения                                                               |
-| ---------------------------------------------- | ----------------------------------------------------------------------- |
-| `src/hooks/useLibraryTree.ts`                  | `shouldFlattenSingleRoot` → flatten все single-root группы              |
-| `src/components/training/LibraryTableView.tsx` | Убрать FolderOpen, badge count, auto-expand; починить action navigation |
+**Canonical access check**: resolver использует текущий canonical valid-access path (entitlements + subscriptions_v2), **не** создаёт параллельный access SoT. Для `mode='tariff'` дополнительно проверяет tariff_id подписки.
 
+### Фаза 3 — Live Page (`/live/:slug`)
 
-### DoD
+Новая страница, обёрнутая в `ProtectedRoute` (login redirect с `redirectTo`).
 
-- Нет иконок папок в таблице
-- Single-root product не показывает «папку в папке»
-- Multi-root product показывает корректную иерархию
-- Все продукты свёрнуты при первом входе
-- После раскрытия и refresh — состояние сохраняется
-- Поиск не перетирает ручное раскрытие
-- Клик «Начать» → первый урок или модуль (работает)
-- Клик «Продолжить» → первый незавершённый урок (работает)
-- Клик «Завершено» → модуль (работает)
-- Нет мёртвых кнопок в action-column
-- Маршруты `/library/{slug}` и `/library/{slug}/{lessonSlug}` не изменены
-- Progress / lesson counts / access labels не изменены
+**Состояния:**
+1. `loading` — запрос к resolver
+2. `not_found` — slug не найден (отличается от denied)
+3. `unpublished` — событие не опубликовано (отличается от denied)
+4. `access_denied` — нет доступа, deny screen без kinescope данных
+5. `scheduled` — событие запланировано, показать дату
+6. `live` / `replay` — Kinescope player через existing `useKinescopePlayer`
+
+Route: регистрация в `App.tsx` внутри existing routing structure.
+
+### Фаза 4 — Расширение UI шаблонов (existing broadcast system)
+
+**`BroadcastTemplateDialog.tsx` — новый тип шаблона:**
+- Селектор типа: Обычная рассылка / Приглашение на вебинар
+- Для типа `webinar_invite`:
+  - Селектор live_event (из `live_events` где `is_published = true`)
+  - При выборе live_event:
+    - `button_url` вычисляется автоматически из `live_event.slug` → `/live/{slug}`. **Ручной ввод URL запрещён** для этого типа.
+    - `button_text` предзаполняется, но редактируется
+    - Кнопка-ссылка обязательна (нельзя убрать)
+  - **Access rule preview** (read-only из live_event):
+    - mode=all → «Ссылка откроется всем авторизованным пользователям»
+    - mode=product → «Ссылка откроется только пользователям с доступом к продукту X»
+    - mode=tariff → «Ссылка откроется только пользователям с тарифом Y продукта X»
+  - **Validation guard**: нельзя сохранить webinar_invite без выбранного live_event
+
+**`BroadcastSendDialog.tsx` — добавить тарифный фильтр + access preview:**
+- Добавить селектор тарифа (зависимый от выбранного продукта) в existing фильтры аудитории
+- Для webinar_invite: показать read-only блок «Кому разрешён вход» из live_event.access_rule
+- Визуально разделить: «Кому отправляем» (targeting) vs «Кому доступен вход» (access — read-only)
+- **Send guard**: для webinar_invite disabled send если нет привязанного live_event
+
+**`BroadcastTemplateCard.tsx`:**
+- Badge «Вебинар» для webinar_invite
+- Preview access_rule из привязанного live_event
+
+### Фаза 5 — Админ-конфигурация Live Events
+
+**Встроить в existing admin navigation section** (не отдельный модуль).
+Добавить пункт в existing admin menu, например в секцию интеграций или контента.
+
+Минимальная страница:
+- Список эфиров (CRUD)
+- Поля: title, slug, kinescope_video_id, product (селектор из products_v2), access_rule (mode + product/tariff селекторы), status, is_published, scheduled_at, replay_enabled
+- Кнопка «Создать приглашение» → открывает BroadcastTemplateDialog с:
+  - type = webinar_invite
+  - live_event_id prefilled
+  - title/button prefilled
+  - **Не создаёт шаблон автоматически** — только prefill, пользователь подтверждает save
+
+### Фаза 6 — Отправка через existing каналы
+
+**Без нового send-flow:**
+- `telegram-mass-broadcast` — добавить фильтрацию по `tariff_id` (если указан в targeting)
+- `email-mass-broadcast` — аналогично добавить `tariff_id`
+- Для webinar_invite `button_url` = платформенная ссылка `/live/:slug`
+- **Kinescope URL/reference НЕ попадает** в: message text, email HTML, button_url, preview, payload рассылки
+
+### Фаза 7 — Audit
+
+Внутри resolver, логирование в existing `audit_logs`:
+- `live_access_attempt` — каждый запрос
+- `live_access_granted` — доступ разрешён
+- `live_access_denied` — доступ запрещён
+- `live_access_not_found` — slug не найден
+- `live_access_unpublished` — событие не опубликовано
+- Actor: `actor_type = 'user'`, `actor_user_id` из JWT
+
+## Файлы
+
+| Файл | Действие |
+|------|----------|
+| `supabase/migrations/xxx_live_events.sql` | Новая таблица + расширение broadcast_templates |
+| `supabase/functions/live-resolve/index.ts` | Новый edge function — secure resolver (условно, см. STOP-guard) |
+| `src/pages/LiveEvent.tsx` | Новая страница /live/:slug |
+| `src/pages/admin/AdminLiveEvents.tsx` | Админ-страница (встроена в existing admin section) |
+| `src/App.tsx` | Регистрация маршрутов |
+| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Тип шаблона + webinar fields |
+| `src/components/admin/communication/BroadcastTemplateCard.tsx` | Badge + preview |
+| `src/components/admin/communication/BroadcastSendDialog.tsx` | Тарифный фильтр + access preview |
+| `supabase/functions/telegram-mass-broadcast/index.ts` | Добавить tariff_id фильтрацию |
+| `supabase/functions/email-mass-broadcast/index.ts` | Добавить tariff_id фильтрацию |
+
+## Add-only guard
+- Не менять existing send mutations logic (только добавить tariff filter)
+- Не менять entitlements, access_rules, products_v2
+- Не менять existing шаблоны в БД
+- Source of truth по доступу = entitlements/subscriptions_v2 (canonical), не Telegram membership
+- targeting_filter и access_rule разделены на уровне данных и runtime: фильтр рассылки не влияет на доступ по ссылке
+
+## DoD
+
+### Функциональные проверки
+- [ ] `/live/:slug` требует логин (redirectTo работает)
+- [ ] Entitlement check на уровне resolver, не client-side only
+- [ ] `kinescope_video_id` не отдаётся без valid access
+- [ ] Deny state показывается без утечки video config
+- [ ] Состояние `not_found` отличается от `access_denied`
+- [ ] Состояние `unpublished` отличается от `access_denied`
+- [ ] Live → Replay без смены маршрута и access-модели
+
+### Шаблоны и рассылки
+- [ ] Шаблон типа «Приглашение на вебинар» создаётся в существующем UI рассылок
+- [ ] Для webinar_invite: URL кнопки вычисляется автоматически, ручной ввод невозможен
+- [ ] Для webinar_invite: кнопка-ссылка обязательна
+- [ ] Для webinar_invite: нельзя сохранить/отправить без привязанного live_event
+- [ ] Access rule preview (read-only) отображается из live_event
+- [ ] Тарифный фильтр работает в диалоге отправки
+
+### Proof по каналам доставки
+- [ ] Telegram сообщение содержит только platform link `/live/:slug`
+- [ ] Email содержит только platform link `/live/:slug`
+- [ ] Kinescope URL/video_id **нигде** не присутствует в payload рассылки, preview, HTML
+
+### Runtime-сценарий «получил сообщение, но нет доступа»
+- [ ] Пользователь попал в targeting_filter
+- [ ] Получил сообщение (Telegram или Email)
+- [ ] Открыл ссылку `/live/:slug`
+- [ ] Залогинился
+- [ ] Не имеет нужного entitlement/подписки
+- [ ] Получил deny state без утечки video config
+
+### Audit
+- [ ] `live_access_granted` / `live_access_denied` / `live_access_not_found` / `live_access_unpublished` логируются
+- [ ] Actor = user из JWT
+
+### Архитектура
+- [ ] `live_events` — единственный SoT для access_rule
+- [ ] `broadcast_templates` не хранит и не переопределяет access_rule
+- [ ] Прямой доступ к `live_events` — admin-only (RLS)
+- [ ] Canonical access helpers переиспользованы (не параллельный SoT)
+- [ ] Админ-страница встроена в existing admin navigation
