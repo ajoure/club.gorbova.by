@@ -235,6 +235,12 @@ Deno.serve(async (req) => {
       event_status: event.status,
       scheduled_at: event.scheduled_at,
       replay_enabled: event.replay_enabled,
+      event_id: event.id,
+      event_type: event.event_type,
+      source_kind: event.source_kind,
+      event_timezone: event.event_timezone,
+      platform_status: event.platform_status,
+      kinescope_live_event_id: event.kinescope_live_event_id,
     });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);

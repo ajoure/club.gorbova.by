@@ -23,8 +23,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { MessageCircle, Mail, Loader2, Save, Video, Info } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { MessageCircle, Mail, Loader2, Save, Video, Info, Radio, AlertCircle } from "lucide-react";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
+
+interface LiveEventForBroadcast {
+  id: string;
+  slug: string;
+  title: string;
+  is_published: boolean;
+  status: string;
+  event_type: string;
+  platform_status: string;
+  scheduled_at: string | null;
+  kinescope_video_id: string | null;
+  kinescope_live_event_id: string | null;
+}
+
+function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reason: string | null; label: string } {
+  if (!event.is_published) {
+    return { ready: false, reason: "Черновик — сначала опубликуйте", label: "Черновик" };
+  }
+
+  if (event.event_type === "live_stream") {
+    if (!event.kinescope_live_event_id) {
+      return { ready: false, reason: "Нет источника — привяжите Kinescope Live Event", label: "Нет источника" };
+    }
+    if (!event.scheduled_at) {
+      return { ready: false, reason: "Нет даты — задайте дату и время эфира", label: "Нет даты" };
+    }
+  } else {
+    if (!event.kinescope_video_id) {
+      return { ready: false, reason: "Нет видео — привяжите видео Kinescope", label: "Нет видео" };
+    }
+  }
+
+  return { ready: true, reason: null, label: "Готов к приглашениям" };
+}
+
+function getEventTypeLabel(eventType: string): string {
+  return eventType === "live_stream" ? "Живой эфир" : "Видео / Автовебинар";
+}
 
 interface BroadcastTemplateDialogProps {
   open: boolean;
@@ -52,30 +95,22 @@ export function BroadcastTemplateDialog({
   const [emailBodyHtml, setEmailBodyHtml] = useState("");
   const [liveEventId, setLiveEventId] = useState("");
 
-  // Fetch live events for webinar type
+  // Fetch ALL live events (not only published) for readiness display
   const { data: liveEvents } = useQuery({
-    queryKey: ["broadcast-live-events"],
+    queryKey: ["broadcast-live-events-all"],
     queryFn: async () => {
       const { data } = await supabase
         .from("live_events")
-        .select("id, slug, title, is_published, access_rule, status")
-        .eq("is_published", true)
+        .select("id, slug, title, is_published, status, event_type, platform_status, scheduled_at, kinescope_video_id, kinescope_live_event_id")
         .order("created_at", { ascending: false });
-      return (data || []) as Array<{
-        id: string;
-        slug: string;
-        title: string;
-        is_published: boolean;
-        access_rule: { mode: string; product_id: string | null; tariff_id: string | null };
-        status: string;
-      }>;
+      return (data || []) as LiveEventForBroadcast[];
     },
     enabled: open,
   });
 
   const selectedEvent = liveEvents?.find((e) => e.id === liveEventId);
+  const selectedReadiness = selectedEvent ? getEventReadiness(selectedEvent) : null;
 
-  // Auto-compute button URL for webinar
   const computedButtonUrl = selectedEvent ? `/live/${selectedEvent.slug}` : "";
 
   useEffect(() => {
@@ -130,15 +165,7 @@ export function BroadcastTemplateDialog({
     name.trim() &&
     ((channel === "telegram" && messageText.trim()) ||
       (channel === "email" && emailSubject.trim() && emailBodyHtml.trim())) &&
-    (!isWebinar || liveEventId);
-
-  const accessPreview = selectedEvent
-    ? selectedEvent.access_rule?.mode === "all"
-      ? "Ссылка откроется всем авторизованным пользователям"
-      : selectedEvent.access_rule?.mode === "tariff"
-        ? "Ссылка откроется только пользователям с определённым тарифом"
-        : "Ссылка откроется только пользователям с доступом к продукту"
-    : null;
+    (!isWebinar || (liveEventId && selectedReadiness?.ready));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -167,12 +194,12 @@ export function BroadcastTemplateDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="general">Обычная рассылка</SelectItem>
-                <SelectItem value="webinar_invite">Приглашение на вебинар</SelectItem>
+                <SelectItem value="webinar_invite">Приглашение на эфир</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
-          {/* Webinar event selector */}
+          {/* Webinar event selector with readiness */}
           {isWebinar && (
             <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
               <div className="flex items-center gap-2">
@@ -187,11 +214,8 @@ export function BroadcastTemplateDialog({
                     size="sm"
                     onClick={() => window.open("/admin/live-events", "_blank")}
                   >
-                    Создать эфир
+                    Открыть эфиры
                   </Button>
-                  <p className="text-xs text-muted-foreground">
-                    После создания обновите эту страницу, чтобы выбрать эфир
-                  </p>
                 </div>
               ) : (
                 <Select value={liveEventId} onValueChange={setLiveEventId}>
@@ -199,30 +223,79 @@ export function BroadcastTemplateDialog({
                     <SelectValue placeholder="Выберите эфир" />
                   </SelectTrigger>
                   <SelectContent>
-                    {liveEvents?.map((e) => (
-                      <SelectItem key={e.id} value={e.id}>
-                        {e.title}
-                      </SelectItem>
-                    ))}
+                    {liveEvents?.map((e) => {
+                      const readiness = getEventReadiness(e);
+                      return (
+                        <SelectItem
+                          key={e.id}
+                          value={e.id}
+                          disabled={!readiness.ready}
+                          className="flex items-center"
+                        >
+                          <div className="flex items-center gap-2 w-full">
+                            <span className="truncate flex-1">{e.title}</span>
+                            <Badge
+                              variant={e.event_type === "live_stream" ? "default" : "secondary"}
+                              className="text-[9px] shrink-0 ml-1"
+                            >
+                              {e.event_type === "live_stream" ? (
+                                <><Radio className="h-2.5 w-2.5 mr-0.5" />Живой</>
+                              ) : (
+                                <><Video className="h-2.5 w-2.5 mr-0.5" />Видео</>
+                              )}
+                            </Badge>
+                            {readiness.ready ? (
+                              <Badge variant="outline" className="text-[9px] text-primary border-primary/30 shrink-0">
+                                ✓ Готов
+                              </Badge>
+                            ) : (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0 cursor-help">
+                                    <AlertCircle className="h-2.5 w-2.5 mr-0.5" />
+                                    {readiness.label}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p className="text-xs">{readiness.reason}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               )}
+
               {selectedEvent && (
-                <>
+                <div className="space-y-2">
                   <div className="text-sm text-muted-foreground">
                     Ссылка кнопки: <code className="bg-muted px-1 rounded">{computedButtonUrl}</code>
                   </div>
                   <div className="space-y-1 text-xs text-muted-foreground bg-background rounded p-2">
-                    <p>Статус: <Badge variant="outline" className="text-[10px]">{selectedEvent.status === 'draft' ? 'Черновик' : selectedEvent.is_published ? 'Опубликован' : 'Не опубликован'}</Badge></p>
-                    <p>Приглашения: {selectedEvent.access_rule?.mode === 'all' ? 'Все авторизованные' : 'По правилам доступа'}</p>
+                    <p>
+                      Тип: <Badge variant="outline" className="text-[10px]">
+                        {getEventTypeLabel(selectedEvent.event_type)}
+                      </Badge>
+                    </p>
+                    <p>
+                      Статус: <Badge
+                        variant={selectedReadiness?.ready ? "default" : "outline"}
+                        className={`text-[10px] ${selectedReadiness?.ready ? "bg-primary" : ""}`}
+                      >
+                        {selectedReadiness?.ready ? "Готов к приглашениям" : selectedReadiness?.label}
+                      </Badge>
+                    </p>
+                    {!selectedReadiness?.ready && selectedReadiness?.reason && (
+                      <div className="flex items-start gap-1.5 text-destructive bg-destructive/5 rounded p-1.5 mt-1">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                        <span>{selectedReadiness.reason}</span>
+                      </div>
+                    )}
                   </div>
-                  {accessPreview && (
-                    <div className="flex items-start gap-2 text-sm text-muted-foreground bg-background rounded p-2">
-                      <Info className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
-                      <span>{accessPreview}</span>
-                    </div>
-                  )}
-                </>
+                </div>
               )}
             </div>
           )}
