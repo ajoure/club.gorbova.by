@@ -36,6 +36,12 @@ import {
   AlertDescription,
 } from "@/components/ui/alert";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Send,
   Mail,
   MessageCircle,
@@ -55,6 +61,8 @@ import {
   X,
   Paperclip,
   AlertTriangle,
+  ExternalLink,
+  MousePointerClick,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -106,7 +114,8 @@ const [includeButton, setIncludeButton] = useState(true);
   const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
-  
+  const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -782,12 +791,13 @@ const [includeButton, setIncludeButton] = useState(true);
                     const isTelegram = item.action === "telegram_mass_broadcast";
 
                     return (
-                      <div
+                      <button
                         key={item.id}
-                        className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+                        onClick={() => setSelectedBroadcast({ ...item, _meta: meta })}
+                        className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors w-full text-left cursor-pointer"
                       >
                         <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
                             isTelegram ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"
                           }`}
                         >
@@ -799,7 +809,10 @@ const [includeButton, setIncludeButton] = useState(true);
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">
-                            {String(meta?.message_preview || meta?.subject || "Рассылка").replace(/\{\{\w+\}\}/g, '').replace(/\s{2,}/g, ' ').trim() || "Рассылка"}
+                            {String(meta?.message_preview || meta?.subject || "Рассылка")
+                              .replace(/[,\s]*\{\{(?:\w+(?:\.\w+)*)\}\}[,\s]*/g, ' ')
+                              .replace(/\s{2,}/g, ' ')
+                              .trim() || "Рассылка"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {format(new Date(item.created_at), "dd MMM yyyy, HH:mm", {
@@ -818,8 +831,9 @@ const [includeButton, setIncludeButton] = useState(true);
                               {failed}
                             </Badge>
                           )}
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -1125,6 +1139,100 @@ const [includeButton, setIncludeButton] = useState(true);
       </div>
         </TabsContent>
       </Tabs>
+
+      {/* Broadcast detail dialog */}
+      <Dialog open={!!selectedBroadcast} onOpenChange={(open) => !open && setSelectedBroadcast(null)}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedBroadcast?.action === "telegram_mass_broadcast" ? (
+                <MessageCircle className="h-5 w-5" />
+              ) : (
+                <Mail className="h-5 w-5" />
+              )}
+              Детали рассылки
+            </DialogTitle>
+          </DialogHeader>
+          {selectedBroadcast && (() => {
+            const m = (selectedBroadcast._meta || selectedBroadcast.meta) as Record<string, unknown> | null;
+            const fullText = String(m?.message_template || m?.message_preview || m?.subject || "—");
+            const btnText = m?.button_text as string | null;
+            const btnUrl = m?.button_url as string | null;
+            const includeBtn = m?.include_button as boolean | undefined;
+            const filtersData = m?.filters as Record<string, unknown> | null;
+            const sentCount = Number(m?.sent || 0);
+            const failedCount = Number(m?.failed || 0);
+            return (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Дата</p>
+                  <p className="text-sm">
+                    {format(new Date(selectedBroadcast.created_at as string), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Текст сообщения</p>
+                  <div className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+                    {fullText}
+                  </div>
+                </div>
+
+                {includeBtn && btnText && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Кнопка</p>
+                    <div className="flex items-center gap-2 rounded-lg bg-muted p-3 text-sm">
+                      <MousePointerClick className="h-4 w-4 shrink-0" />
+                      <span className="font-medium">{btnText}</span>
+                      {btnUrl && (
+                        <a href={btnUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-primary hover:underline flex items-center gap-1 text-xs">
+                          <ExternalLink className="h-3 w-3" />
+                          Ссылка
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Отправлено</p>
+                    <Badge variant="outline" className="gap-1">
+                      <CheckCircle className="h-3 w-3 text-green-500" />
+                      {sentCount}
+                    </Badge>
+                  </div>
+                  {failedCount > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Ошибки</p>
+                      <Badge variant="outline" className="gap-1">
+                        <XCircle className="h-3 w-3 text-red-500" />
+                        {failedCount}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+
+                {filtersData && Object.keys(filtersData).length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Фильтры</p>
+                    <div className="rounded-lg bg-muted p-3 text-xs space-y-1">
+                      {(filtersData.productIds as string[])?.length > 0 && (
+                        <p>Продукты: {(filtersData.productIds as string[]).length} шт.</p>
+                      )}
+                      {(filtersData.tariffIds as string[])?.length > 0 && (
+                        <p>Тарифы: {(filtersData.tariffIds as string[]).length} шт.</p>
+                      )}
+                      {filtersData.hasActiveSubscription && <p>Только с активной подпиской</p>}
+                      {filtersData.clubId && <p>Клуб: задан</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

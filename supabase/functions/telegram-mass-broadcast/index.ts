@@ -282,10 +282,29 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bots[0].bot_token_encrypted;
+    // Get bot id for telegram_messages logging
+    const { data: botIdRows } = await supabase
+      .from('telegram_bots')
+      .select('id')
+      .eq('status', 'active')
+      .limit(1);
+    const activeBotId = botIdRows?.[0]?.id || null;
+
     const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
 
     let sent = 0;
     let failed = 0;
+    const messageLogBatch: Array<{
+      user_id: string;
+      telegram_user_id: number;
+      bot_id: string | null;
+      direction: string;
+      message_text: string;
+      message_id: number | null;
+      sent_by_admin: string;
+      status: string;
+      meta: Record<string, unknown>;
+    }> = [];
 
     const keyboard = includeButton ? {
       inline_keyboard: [[
@@ -365,7 +384,22 @@ Deno.serve(async (req) => {
 
         if (result.ok) {
           sent++;
-          console.log(`Message sent to user ${profile.user_id}`);
+          const telegramMsgId = result.result?.message_id || null;
+          messageLogBatch.push({
+            user_id: profile.user_id,
+            telegram_user_id: profile.telegram_user_id,
+            bot_id: activeBotId,
+            direction: 'outgoing',
+            message_text: personalizedMessage,
+            message_id: telegramMsgId,
+            sent_by_admin: user.id,
+            status: 'sent',
+            meta: { broadcast: true },
+          });
+          // Batch insert every 50 messages
+          if (messageLogBatch.length >= 50) {
+            await supabase.from('telegram_messages').insert(messageLogBatch.splice(0, 50));
+          }
         } else {
           failed++;
           console.error(`Failed to send to ${profile.user_id}:`, result.description);
@@ -376,6 +410,11 @@ Deno.serve(async (req) => {
         failed++;
         console.error(`Error sending to ${profile.user_id}:`, error);
       }
+    }
+
+    // Flush remaining message logs
+    if (messageLogBatch.length > 0) {
+      await supabase.from('telegram_messages').insert(messageLogBatch);
     }
 
     // Log the broadcast action
@@ -403,11 +442,15 @@ Deno.serve(async (req) => {
         failed,
         total: sent + failed,
         message_preview: resolveSystemTokens(message, broadcastNow)
-          .replace(/\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}/g, '')
+          .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
           .replace(/\s{2,}/g, ' ')
           .trim()
           .substring(0, 80),
+        message_template: message,
+        include_button: includeButton,
+        button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
+        button_url: includeButton ? appUrl : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
