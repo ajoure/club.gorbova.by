@@ -1287,6 +1287,24 @@ function SummaryItem({ icon: Icon, label, children }: { icon: React.ElementType;
   );
 }
 
+// --- Provider Source Status types ---
+type ProviderSourceStatus = "draft" | "ok" | "missing" | "broken";
+type ProviderSyncStatus = "idle" | "syncing" | "success" | "error";
+
+const providerSourceLabels: Record<ProviderSourceStatus, string> = {
+  draft: "Не создан",
+  ok: "Источник активен",
+  missing: "Источник удалён в Kinescope",
+  broken: "Источник повреждён",
+};
+
+const providerSourceColors: Record<ProviderSourceStatus, string> = {
+  draft: "bg-muted text-muted-foreground",
+  ok: "bg-primary/10 text-primary",
+  missing: "bg-destructive/10 text-destructive",
+  broken: "bg-amber-500/10 text-amber-700",
+};
+
 // --- Live Stream Control Panel ---
 function LiveStreamControlPanel({
   form,
@@ -1294,76 +1312,137 @@ function LiveStreamControlPanel({
   kinescopeInstanceId,
   onLifecycleAction,
   queryClient,
+  onFormUpdate,
 }: {
   form: LiveEventForm;
   editingId: string | null;
   kinescopeInstanceId: string | undefined;
   onLifecycleAction: (eventId: string, action: "enable_live_event" | "complete_live_event" | "sync_live_event", liveEventId: string) => Promise<void>;
   queryClient: ReturnType<typeof useQueryClient>;
+  onFormUpdate?: (updates: Partial<LiveEventForm>) => void;
 }) {
   const [showStreamkey, setShowStreamkey] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<ProviderSyncStatus>("idle");
+  const [providerSourceStatus, setProviderSourceStatus] = useState<ProviderSourceStatus>("draft");
+  const [recreateDialogOpen, setRecreateDialogOpen] = useState(false);
+  const [detachDialogOpen, setDetachDialogOpen] = useState(false);
+  const [recreating, setRecreating] = useState(false);
+  const [detaching, setDetaching] = useState(false);
 
   // Get provider data from DB
-  const { data: eventData } = useQuery({
+  const { data: eventData, refetch: refetchProvider } = useQuery({
     queryKey: ["live-event-provider", editingId],
     queryFn: async () => {
       if (!editingId) return null;
-      const { data } = await supabase.from("live_events").select("metadata, platform_status, kinescope_stream_id").eq("id", editingId).single();
+      const { data } = await supabase.from("live_events").select("metadata, platform_status, kinescope_stream_id, kinescope_live_event_id").eq("id", editingId).single();
       return data;
     },
     enabled: !!editingId,
   });
 
-  const provider = (eventData?.metadata as any)?.provider || {};
-  const playLink = provider.play_link;
-  const rtmpLink = provider.rtmp_link || "rtmp://rtmp.kinescope.io/live";
-  const streamkey = provider.streamkey;
-  const streamStatus = provider.stream_status || "pending";
+  const providerCurrent = (eventData?.metadata as any)?.provider?.current || (eventData?.metadata as any)?.provider || {};
+  const playLink = providerCurrent.play_link;
+  const rtmpLink = providerCurrent.rtmp_link || "rtmp://rtmp.kinescope.io/live";
+  const streamkey = providerCurrent.streamkey;
+  const streamStatus = providerCurrent.stream_status || "pending";
   const platformStatus = eventData?.platform_status || "draft";
   const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
+  const kinescopeLiveEventId = eventData?.kinescope_live_event_id || form.kinescope_live_event_id;
 
-  const handleSync = async () => {
-    if (!editingId || !form.kinescope_live_event_id || !kinescopeInstanceId) return;
-    setSyncing(true);
+  // Determine provider source status from local state
+  useEffect(() => {
+    if (!kinescopeLiveEventId) {
+      setProviderSourceStatus("draft");
+    } else {
+      // Default to ok if we have an ID, will be refined by sync
+      if (providerSourceStatus === "draft") setProviderSourceStatus("ok");
+    }
+  }, [kinescopeLiveEventId]);
+
+  // Can recreate only if folder_id and project_id are available
+  const canRecreate = !!(form.kinescope_folder_id || (eventData?.metadata as any)?.kinescope_folder_id);
+  const recreateBlockers: string[] = [];
+  if (!form.kinescope_folder_id && !(eventData?.metadata as any)?.kinescope_folder_id) {
+    recreateBlockers.push("Не выбрана папка live-эфиров");
+  }
+
+  // --- handleSyncProvider ---
+  const handleSyncProvider = async () => {
+    if (!editingId || !kinescopeLiveEventId || !kinescopeInstanceId) return;
+    setSyncStatus("syncing");
     try {
       const { data, error } = await supabase.functions.invoke("kinescope-api", {
-        body: { action: "sync_live_event", instance_id: kinescopeInstanceId, live_event_id: form.kinescope_live_event_id },
+        body: { action: "sync_live_event", instance_id: kinescopeInstanceId, live_event_id: kinescopeLiveEventId },
       });
-      if (error || !data?.success) {
-        toast.error(data?.error || "Ошибка синхронизации");
+
+      if (error) {
+        setSyncStatus("error");
+        toast.error(`Ошибка синхронизации: ${error.message || String(error)}`);
         return;
       }
 
-      const syncEvent = (data.data as any)?.event?.data || (data.data as any)?.event;
-      const syncVideos = (data.data as any)?.videos?.data || (data.data as any)?.videos;
+      const syncData = data?.data as any;
+      const returnedSourceStatus: ProviderSourceStatus = syncData?.provider_source_status || "ok";
+      setProviderSourceStatus(returnedSourceStatus);
 
-      // Map provider status to platform status
-      const providerStreamStatus = syncEvent?.stream?.status;
+      // Handle missing (404)
+      if (returnedSourceStatus === "missing") {
+        setSyncStatus("error");
+        // Audit
+        try {
+          await DomainEventService.emitEvent("live_provider_missing", "admin", editingId, {
+            platform_live_event_id: editingId,
+            old_provider_live_event_id: kinescopeLiveEventId,
+            provider_source_status_before: providerSourceStatus,
+            provider_source_status_after: "missing",
+          });
+        } catch {}
+        toast.error("Источник трансляции удалён в Kinescope", {
+          description: "Вы можете пересоздать эфир или отвязать источник",
+          duration: 8000,
+        });
+        return;
+      }
+
+      if (returnedSourceStatus === "broken") {
+        setSyncStatus("error");
+        toast.warning("Источник трансляции повреждён", {
+          description: syncData?.provider_error_message || "Отсутствуют stream или play_link",
+          duration: 6000,
+        });
+        return;
+      }
+
+      // OK — process normal sync
+      const syncEvent = syncData?.event?.data || syncData?.event;
+      const syncVideos = syncData?.videos?.data || syncData?.videos;
+      const providerStreamStatus = syncEvent?.stream?.status || syncData?.provider_stream_status;
+
       let newPlatformStatus = platformStatus;
       if (providerStreamStatus === "pending") newPlatformStatus = "scheduled";
       else if (providerStreamStatus === "active" || providerStreamStatus === "live") newPlatformStatus = "live";
       else if (providerStreamStatus === "completed" || providerStreamStatus === "finished") newPlatformStatus = "ended";
 
-      // Check for replay videos
       let replayVideoId: string | null = null;
       if (Array.isArray(syncVideos) && syncVideos.length > 0) {
         replayVideoId = syncVideos[0]?.id || null;
         if (replayVideoId) newPlatformStatus = "replay_available";
       }
 
-      // Merge metadata
+      // Merge metadata with provider.current structure
       const { data: current } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
       const existingMeta = (current?.metadata as Record<string, any>) || {};
       const mergedMeta = {
         ...existingMeta,
         provider: {
           ...(existingMeta.provider || {}),
-          stream_status: providerStreamStatus,
-          play_link: syncEvent?.play_link || existingMeta.provider?.play_link,
-          rtmp_link: syncEvent?.rtmp_link || existingMeta.provider?.rtmp_link,
-          streamkey: syncEvent?.streamkey || existingMeta.provider?.streamkey,
-          raw_sync_response: syncEvent,
+          current: {
+            ...(existingMeta.provider?.current || existingMeta.provider || {}),
+            stream_status: providerStreamStatus,
+            play_link: syncEvent?.play_link || providerCurrent.play_link,
+            rtmp_link: syncEvent?.rtmp_link || providerCurrent.rtmp_link,
+            streamkey: syncEvent?.streamkey || providerCurrent.streamkey,
+          },
         },
         last_provider_sync_at: new Date().toISOString(),
         replay_video_id: replayVideoId || existingMeta.replay_video_id,
@@ -1379,13 +1458,203 @@ function LiveStreamControlPanel({
       }
 
       await supabase.from("live_events").update(updatePayload as any).eq("id", editingId);
+
+      // Audit
+      try {
+        await DomainEventService.emitEvent("live_provider_synced", "admin", editingId, {
+          platform_live_event_id: editingId,
+          provider_live_event_id: kinescopeLiveEventId,
+          provider_source_status_after: "ok",
+          provider_stream_status: providerStreamStatus,
+        });
+      } catch {}
+
+      setSyncStatus("success");
       toast.success("Статус обновлён");
-      queryClient.invalidateQueries({ queryKey: ["live-event-provider", editingId] });
+      refetchProvider();
+      queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+    } catch (err: any) {
+      setSyncStatus("error");
+      toast.error(`Ошибка: ${err.message || String(err)}`);
+    }
+  };
+
+  // --- handleRecreateProvider ---
+  const handleRecreateProvider = async () => {
+    if (!editingId || !kinescopeInstanceId) return;
+    const folderId = form.kinescope_folder_id || (eventData?.metadata as any)?.kinescope_folder_id;
+    const projectId = form.kinescope_project_id || (eventData?.metadata as any)?.kinescope_project_id;
+    if (!folderId) {
+      toast.error("Не выбрана папка для трансляций");
+      return;
+    }
+
+    setRecreating(true);
+    try {
+      // 1. Save old provider to history
+      const { data: current } = await supabase.from("live_events").select("metadata, kinescope_live_event_id, kinescope_stream_id").eq("id", editingId).single();
+      const existingMeta = (current?.metadata as Record<string, any>) || {};
+      const oldProvider = existingMeta.provider?.current || existingMeta.provider || {};
+      const providerHistory = existingMeta.provider_history || [];
+
+      if (current?.kinescope_live_event_id) {
+        providerHistory.push({
+          live_event_id: current.kinescope_live_event_id,
+          stream_id: current.kinescope_stream_id,
+          play_link: oldProvider.play_link,
+          rtmp_link: oldProvider.rtmp_link,
+          has_streamkey: !!oldProvider.streamkey,
+          provider_stream_status: oldProvider.stream_status,
+          detached_at: new Date().toISOString(),
+          reason: "recreated",
+        });
+      }
+
+      // 2. Create new live event
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
+        body: {
+          action: "create_live_event",
+          instance_id: kinescopeInstanceId,
+          folder_id: folderId,
+          project_id: projectId || undefined,
+          name: form.title || "Новый эфир",
+        },
+      });
+
+      if (error || !data?.success) {
+        toast.error(`Не удалось пересоздать: ${data?.error || error?.message || "Неизвестная ошибка"}`);
+        return;
+      }
+
+      const eventDataResp = (data.data as any)?.data || data.data;
+      const newEventId = eventDataResp?.id;
+      const newStreamId = eventDataResp?.stream?.id;
+
+      if (!newEventId) {
+        toast.error("Эфир создан, но ID не получен");
+        return;
+      }
+
+      // 3. Update DB with new provider data
+      const newMeta = {
+        ...existingMeta,
+        kinescope_project_id: projectId || existingMeta.kinescope_project_id,
+        kinescope_folder_id: folderId,
+        provider: {
+          current: {
+            live_event_id: newEventId,
+            stream_id: newStreamId,
+            play_link: eventDataResp?.play_link,
+            rtmp_link: eventDataResp?.rtmp_link,
+            streamkey: eventDataResp?.streamkey,
+            stream_status: eventDataResp?.stream?.status || "pending",
+          },
+        },
+        provider_history: providerHistory,
+        last_provider_sync_at: new Date().toISOString(),
+      };
+
+      await supabase.from("live_events").update({
+        kinescope_live_event_id: newEventId,
+        kinescope_stream_id: newStreamId || null,
+        metadata: newMeta,
+      } as any).eq("id", editingId);
+
+      // 4. Audit
+      try {
+        await DomainEventService.emitEvent("live_provider_recreated", "admin", editingId, {
+          platform_live_event_id: editingId,
+          old_provider_live_event_id: current?.kinescope_live_event_id,
+          new_provider_live_event_id: newEventId,
+          old_stream_id: current?.kinescope_stream_id,
+          new_stream_id: newStreamId,
+          reason: "recreated",
+          provider_source_status_before: providerSourceStatus,
+          provider_source_status_after: "ok",
+        });
+      } catch {}
+
+      // 5. Update local state
+      setProviderSourceStatus("ok");
+      setSyncStatus("idle");
+      onFormUpdate?.({ kinescope_live_event_id: newEventId });
+
+      toast.success("Эфир пересоздан в Kinescope", { description: `Новый ID: ${newEventId}` });
+      refetchProvider();
+      queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+    } catch (err: any) {
+      toast.error(`Ошибка пересоздания: ${err.message || String(err)}`);
+    } finally {
+      setRecreating(false);
+      setRecreateDialogOpen(false);
+    }
+  };
+
+  // --- handleDetachProvider ---
+  const handleDetachProvider = async () => {
+    if (!editingId) return;
+    setDetaching(true);
+    try {
+      const { data: current } = await supabase.from("live_events").select("metadata, kinescope_live_event_id, kinescope_stream_id").eq("id", editingId).single();
+      const existingMeta = (current?.metadata as Record<string, any>) || {};
+      const oldProvider = existingMeta.provider?.current || existingMeta.provider || {};
+      const providerHistory = existingMeta.provider_history || [];
+
+      if (current?.kinescope_live_event_id) {
+        providerHistory.push({
+          live_event_id: current.kinescope_live_event_id,
+          stream_id: current.kinescope_stream_id,
+          play_link: oldProvider.play_link,
+          rtmp_link: oldProvider.rtmp_link,
+          has_streamkey: !!oldProvider.streamkey,
+          provider_stream_status: oldProvider.stream_status,
+          detached_at: new Date().toISOString(),
+          reason: "manual_reset",
+        });
+      }
+
+      const newMeta = {
+        ...existingMeta,
+        provider: { current: {} },
+        provider_history: providerHistory,
+        last_provider_sync_at: new Date().toISOString(),
+      };
+      // Keep folder_id and project_id at top level of metadata
+      if (existingMeta.kinescope_folder_id) newMeta.kinescope_folder_id = existingMeta.kinescope_folder_id;
+      if (existingMeta.kinescope_project_id) newMeta.kinescope_project_id = existingMeta.kinescope_project_id;
+
+      await supabase.from("live_events").update({
+        kinescope_live_event_id: null,
+        kinescope_stream_id: null,
+        metadata: newMeta,
+      } as any).eq("id", editingId);
+
+      // Audit
+      try {
+        await DomainEventService.emitEvent("live_provider_detached", "admin", editingId, {
+          platform_live_event_id: editingId,
+          old_provider_live_event_id: current?.kinescope_live_event_id,
+          old_stream_id: current?.kinescope_stream_id,
+          reason: "manual_reset",
+          provider_source_status_before: providerSourceStatus,
+          provider_source_status_after: "draft",
+        });
+      } catch {}
+
+      setProviderSourceStatus("draft");
+      setSyncStatus("idle");
+      onFormUpdate?.({ kinescope_live_event_id: "" });
+
+      toast.success("Привязка к Kinescope сброшена", {
+        description: "Платформенный эфир сохранён. Можно привязать новый источник.",
+      });
+      refetchProvider();
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
     } catch (err: any) {
       toast.error(`Ошибка: ${err.message || String(err)}`);
     } finally {
-      setSyncing(false);
+      setDetaching(false);
+      setDetachDialogOpen(false);
     }
   };
 
@@ -1394,85 +1663,195 @@ function LiveStreamControlPanel({
     toast.success(`${label} скопировано`);
   };
 
-  const statusColors: Record<string, string> = {
-    pending: "bg-muted text-muted-foreground",
-    scheduled: "bg-muted text-muted-foreground",
-    active: "bg-primary/10 text-primary",
-    live: "bg-primary/10 text-primary",
-    completed: "bg-muted text-muted-foreground",
-    ended: "bg-muted text-muted-foreground",
-  };
+  const isSourceAvailable = providerSourceStatus === "ok";
+  const isSourceMissingOrBroken = providerSourceStatus === "missing" || providerSourceStatus === "broken";
 
   return (
     <div className="space-y-4">
-      {/* Status header */}
-      <div className="rounded-lg border bg-primary/5 p-3 space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-medium text-primary">
-            <CheckCircle2 className="h-4 w-4" /> Эфир создан в Kinescope
+      {/* Block A: Источник трансляции Kinescope */}
+      <div className="rounded-lg border p-3 space-y-3">
+        <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+          Источник трансляции Kinescope
+        </h4>
+
+        {/* Dual status badges */}
+        <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">Платформа:</span>
+            <Badge variant="outline" className="text-[10px]">
+              {platformStatusLabels[platformStatus] || platformStatus}
+            </Badge>
           </div>
-          <Badge className={statusColors[streamStatus] || "bg-muted"}>
-            {streamStatus === "pending" ? "Ожидает" : streamStatus === "active" ? "В эфире" : streamStatus === "completed" ? "Завершён" : streamStatus}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground">Kinescope:</span>
+            <Badge className={`text-[10px] ${providerSourceColors[providerSourceStatus]}`}>
+              {providerSourceLabels[providerSourceStatus]}
+            </Badge>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">
-          ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_live_event_id}</code>
-        </p>
+
+        {kinescopeLiveEventId && (
+          <p className="text-xs text-muted-foreground">
+            ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{kinescopeLiveEventId}</code>
+          </p>
+        )}
         {lastSync && (
           <p className="text-[10px] text-muted-foreground">
             Последняя синхронизация: {format(new Date(lastSync), "dd.MM.yyyy HH:mm:ss", { locale: ru })}
           </p>
         )}
-      </div>
 
-      {/* OBS / Streaming settings */}
-      <div className="rounded-lg border p-3 space-y-3">
-        <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
-          <Radio className="h-3.5 w-3.5" /> Настройки трансляции (OBS)
-        </h4>
-        
-        {playLink && (
-          <ProviderField label="Ссылка для просмотра" value={playLink} onCopy={() => copyToClipboard(playLink, "Ссылка")} />
+        {/* Warning for missing/broken */}
+        {providerSourceStatus === "missing" && (
+          <div className="flex items-start gap-2 rounded-md bg-destructive/5 border border-destructive/20 p-2.5">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <p className="font-medium text-destructive">Источник трансляции удалён в Kinescope</p>
+              <p className="text-muted-foreground">Пересоздайте эфир или отвяжите источник.</p>
+            </div>
+          </div>
         )}
-        <ProviderField label="RTMP сервер" value={rtmpLink} onCopy={() => copyToClipboard(rtmpLink, "RTMP")} />
-        
-        {streamkey && (
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">Ключ трансляции</Label>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 bg-muted px-2 py-1.5 rounded text-[11px] font-mono break-all">
-                {showStreamkey ? streamkey : "••••••••••••••••"}
-              </code>
-              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowStreamkey(!showStreamkey)}>
-                {showStreamkey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyToClipboard(streamkey, "Ключ")}>
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+        {providerSourceStatus === "broken" && (
+          <div className="flex items-start gap-2 rounded-md bg-amber-500/5 border border-amber-500/20 p-2.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <p className="font-medium text-amber-700">Источник трансляции повреждён</p>
+              <p className="text-muted-foreground">Отсутствуют ключевые поля (stream, play_link). Попробуйте обновить или пересоздать.</p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Action buttons */}
+      {/* Block B: OBS / Streaming settings — only if source is available */}
+      {isSourceAvailable && (playLink || streamkey) && (
+        <div className="rounded-lg border p-3 space-y-3">
+          <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+            <Radio className="h-3.5 w-3.5" /> Настройки трансляции (OBS)
+          </h4>
+          
+          {playLink && (
+            <ProviderField label="Ссылка для просмотра" value={playLink} onCopy={() => copyToClipboard(playLink, "Ссылка")} />
+          )}
+          <ProviderField label="RTMP сервер" value={rtmpLink} onCopy={() => copyToClipboard(rtmpLink, "RTMP")} />
+          
+          {streamkey && (
+            <div className="space-y-1">
+              <Label className="text-[11px] text-muted-foreground">Ключ трансляции</Label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 bg-muted px-2 py-1.5 rounded text-[11px] font-mono break-all">
+                  {showStreamkey ? streamkey : "••••••••••••••••"}
+                </code>
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowStreamkey(!showStreamkey)}>
+                  {showStreamkey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyToClipboard(streamkey, "Ключ")}>
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Block C: Actions */}
       <div className="flex flex-wrap gap-2">
-        {editingId && platformStatus !== "live" && platformStatus !== "ended" && (
+        {/* Enable / Complete — only if source OK */}
+        {editingId && isSourceAvailable && platformStatus !== "live" && platformStatus !== "ended" && (
           <Button variant="outline" size="sm" className="gap-1.5"
-            onClick={() => onLifecycleAction(editingId, "enable_live_event", form.kinescope_live_event_id)}>
+            onClick={() => onLifecycleAction(editingId, "enable_live_event", kinescopeLiveEventId)}>
             <Zap className="h-3.5 w-3.5" /> Запустить эфир
           </Button>
         )}
-        {editingId && platformStatus === "live" && (
+        {editingId && isSourceAvailable && platformStatus === "live" && (
           <Button variant="outline" size="sm" className="gap-1.5 text-destructive"
-            onClick={() => onLifecycleAction(editingId, "complete_live_event", form.kinescope_live_event_id)}>
+            onClick={() => onLifecycleAction(editingId, "complete_live_event", kinescopeLiveEventId)}>
             <Square className="h-3.5 w-3.5" /> Завершить эфир
           </Button>
         )}
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={handleSync} disabled={syncing}>
-          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Обновить статус
+
+        {/* Sync — always available if we have an ID */}
+        {kinescopeLiveEventId && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={handleSyncProvider} disabled={syncStatus === "syncing"}>
+            {syncStatus === "syncing" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Обновить источник
+          </Button>
+        )}
+
+        {/* Recreate */}
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setRecreateDialogOpen(true)}
+          disabled={!canRecreate || recreating}>
+          <RotateCcw className="h-3.5 w-3.5" /> Пересоздать эфир
         </Button>
+
+        {/* Detach — only if there's a provider bound */}
+        {kinescopeLiveEventId && (
+          <Button variant="outline" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => setDetachDialogOpen(true)}
+            disabled={detaching}>
+            <Unlink className="h-3.5 w-3.5" /> Отвязать источник
+          </Button>
+        )}
       </div>
+
+      {/* Recreate blockers */}
+      {!canRecreate && recreateBlockers.length > 0 && (
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          {recreateBlockers.map((b, i) => (
+            <p key={i} className="flex items-center gap-1">
+              <AlertCircle className="h-3 w-3" /> {b}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* Confirm: Recreate */}
+      <AlertDialog open={recreateDialogOpen} onOpenChange={setRecreateDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Пересоздать эфир в Kinescope?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Будет создан новый источник трансляции. Текущая привязка будет сохранена в истории.</p>
+              <ul className="list-disc pl-4 text-xs space-y-1">
+                <li>Ссылка <code>/live/{form.slug || "..."}</code> сохранится</li>
+                <li>Комментарии и вопросы не потеряются</li>
+                <li>Будет заменён только источник трансляции</li>
+                <li>Приглашения начнут работать после повторной проверки готовности</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleRecreateProvider} disabled={recreating}>
+              {recreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Пересоздать
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirm: Detach */}
+      <AlertDialog open={detachDialogOpen} onOpenChange={setDetachDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Сбросить привязку Kinescope?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>Привязка к провайдеру будет удалена. Платформенный эфир сохранится.</p>
+              <ul className="list-disc pl-4 text-xs space-y-1">
+                <li>Ссылка <code>/live/{form.slug || "..."}</code> сохранится</li>
+                <li>Комментарии и вопросы не потеряются</li>
+                <li>Правила доступа и настройки приглашений сохранятся</li>
+                <li>Эфир перейдёт в состояние «без источника» и может быть привязан заново</li>
+              </ul>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDetachProvider} disabled={detaching} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {detaching ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Сбросить привязку
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Comments & Questions tabs */}
       {editingId && (
