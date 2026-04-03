@@ -468,16 +468,37 @@ export default function AdminLiveEvents() {
       }
     },
     onSuccess: () => {
+      const wasPublished = form.is_published;
       const wasInviteReady = isInviteReady;
+      
       toast.success(editingId ? "Эфир обновлён" : "Эфир создан");
-      if (wasInviteReady && !editingId) {
+      
+      if (wasPublished && wasInviteReady) {
         toast.info("Эфир готов к приглашениям", {
           action: {
             label: "Создать приглашение",
             onClick: () => window.open("/admin/communication?tab=broadcasts", "_blank"),
           },
+          duration: 8000,
         });
+      } else if (wasPublished && !wasInviteReady) {
+        // Show what's still needed
+        const missing: string[] = [];
+        if (isLiveStream && !form.scheduled_at) missing.push("дата и время эфира");
+        if (isLiveStream && !form.kinescope_live_event_id) missing.push("живой эфир в Kinescope");
+        if (!isLiveStream && !form.kinescope_video_id) missing.push("видео Kinescope");
+        if (form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
+        
+        if (missing.length > 0) {
+          toast.info(`Для приглашений осталось: ${missing.join(", ")}`, { duration: 8000 });
+        }
+      } else if (!wasPublished) {
+        const remainingBlockers = blockers.map(b => b.label.toLowerCase());
+        if (remainingBlockers.length > 0) {
+          toast.info(`Для публикации: ${remainingBlockers.join(", ")}`, { duration: 6000 });
+        }
       }
+      
       setDialogOpen(false);
       setEditingId(null);
       setForm(defaultForm);
@@ -486,7 +507,10 @@ export default function AdminLiveEvents() {
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
       queryClient.invalidateQueries({ queryKey: ["live-event-access-rules"] });
     },
-    onError: (err) => toast.error("Ошибка: " + (err as Error).message),
+    onError: (err: any) => {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка сохранения: ${msg}`);
+    },
   });
 
   // --- Handlers ---
