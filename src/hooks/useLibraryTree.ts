@@ -192,12 +192,16 @@ export function useLibraryTree(libraryModules: TrainingModule[], allModules: Tra
       const totalLessons = roots.reduce((s, r) => s + (r.lesson_count || 0), 0);
       const totalCompleted = roots.reduce((s, r) => s + (r.completed_count || 0), 0);
 
+      const { flatten, root: flatRoot } = shouldFlattenSingleRoot(pid, productName, rootNodes);
+
       groups.push({
         productId: pid,
         productName,
         rootModules: rootNodes,
         totalLessons,
         totalCompleted,
+        isFlattenable: flatten,
+        flattenedRoot: flatRoot,
       });
     }
 
