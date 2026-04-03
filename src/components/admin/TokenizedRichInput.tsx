@@ -898,7 +898,7 @@ export function TokenizedRichInput({
                 group.tokens.length > 0 && (
                   <CommandGroup heading={group.heading} key={group.heading}>
                     {group.tokens.map((t) => (
-                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1"
+                      <CommandItem key={t.key} value={t.searchKeywords} className="text-xs py-1" data-token-picker="true"
                         onSelect={() => handleTokenSelect(t)}>
                         <span className="flex-1 truncate">{t.label}</span>
                         <Badge variant="secondary" className="ml-2 text-[10px] px-1.5 py-0">{t.badge}</Badge>
