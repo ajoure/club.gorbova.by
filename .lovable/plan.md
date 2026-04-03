@@ -2,78 +2,74 @@
 
 &nbsp;
 
-1. **session_missing не своди автоматически к session_expired без различения причины.**
-  Это два разных состояния:
+1. **Не ослабляй текущую модель доступа из-за product_id nullable без явного migration mapping.**
+  Если live_events.product_id переводится в legacy/fallback, нужно в плане прямо добавить:
   &nbsp;
-  - session_missing — proof ещё валиден, но активной viewer-session нет;
-  - session_expired — session была, но истекла/стала невалидной.
-    Лучше либо:
-  - показать отдельное состояние “Требуется повторный вход по ссылке”,
-    либо
-  - хотя бы явно различать их в коде и audit, даже если UI текст пока общий.
+  - backfill/mapping для уже созданных эфиров;
+  - правило, как существующие записи превращаются в live_event_access_rules;
+  - запрет на потерю текущего access behavior при миграции.
   &nbsp;
-2. **Перед удалением autoCreateSession проверь, что re-entry flow реально достижим для пользователя без тупика.**
-  Если /live/:slug вернёт session_missing, пользователь должен иметь понятный путь назад:
+2. **live_event_access_rules должна стать единственным SoT для multi-access после миграции, а fallback — только временным.**
+  Иначе архитектура останется раздвоенной.
+  Добавь явный этап:
   &nbsp;
-  - либо через сохранённую token-link,
-  - либо через кнопку/redirect на /live-access/:token, если token ещё доступен,
-  - либо через явный текст “откройте пригласительную ссылку снова”.
-    Нельзя оставлять состояние, где доступ есть, proof жив, а пользователь не понимает, как восстановить session.
+  - migrate old single-rule data into rules table;
+  - после этого new writes идут только в live_event_access_rules;
+  - legacy access_rule/product_id читаются только для старых записей до завершения backfill.
   &nbsp;
-3. **В handleCreate расширение revoke до consumed нужно делать только если это не ломает обычный owner re-entry.**
-  Для обычного create из broadcast/send-flow это нормально, потому что создаётся новая ссылка.
-  Но в плане надо явно указать:
+3. **Для multi-rule access нужен точный приоритет проверки и дедупликации.**
+  Зафиксируй:
   &nbsp;
-  - это безопасно, потому что create используется для новой выдачи/переотправки,
-  - текущий доступ владельца через старую ссылку после создания новой считается намеренно заменённым.
+  - если есть правило product_id=X, tariff_id=NULL, то более узкие правила для этого же продукта уже избыточны;
+  - UI должен либо запрещать такие комбинации, либо автоматически схлопывать их;
+  - нельзя хранить конфликтующие/дублирующие rules.
   &nbsp;
-4. **handleRevoke должен отзывать не только links/proof/session, но и быть идемпотентным.**
-  Если admin нажмёт revoke повторно:
+4. **Multi-select тарифов лучше хранить как отдельные строки, как ты и предложил, но это нужно прямо закрепить в UI/DB mapping.**
+  То есть:
   &nbsp;
-  - не должно быть ошибки,
-  - состояние должно остаться корректным,
-  - audit не должен вводить в заблуждение.
-    Это стоит явно добавить в план.
+  - один продукт + 3 тарифа = 3 строки в live_event_access_rules
+  - “все тарифы продукта” = 1 строка с tariff_id=NULL
+    Это нужно прописать явно, чтобы подрядчик не ушёл в JSON внутри строки.
   &nbsp;
-5. **В PATCH D2 для revoke/reissue нужно отдельно указать порядок операций.**
-  Лучше зафиксировать последовательность:
+5. **Pre-publish validation должна учитывать не только наличие kinescope_video_id, но и Kinescope readiness.**
+  Добавь в checklist:
   &nbsp;
-  1. revoke active session
-  2. delete proof
-  3. revoke existing links
-  4. create new link (для reissue)
-    Либо другой выбранный порядок, но один канонический. Это важно для предсказуемости race conditions.
+  - выбранный/введённый kinescope_video_id реально существует или валидируется через integration layer;
+  - если видео не найдено/недоступно — publish blocked.
   &nbsp;
-6. **В handleReissue audit лучше не заменять старые события новым кастомным live_link_reissue_full, а дополнять ими, если нет реальной необходимости.**
-  Для консистентности лучше:
+6. **Если kinescope-api остаётся “без изменений”, это нужно подтвердить достаточностью current actions.**
+  В плане сейчас написано “без изменений, уже достаточен”. Лучше явно добавить:
   &nbsp;
-  - сохранить live_link_revoked
-  - сохранить live_link_created
-  - при необходимости добавить live_link_reissued как summary event
-    Но не заменять базовые события одним агрегатом.
+  - reuse existing list_projects + list_videos
+  - manual fallback для video_id
+  - отсутствие automation по live creation признано ограничением, а не забыто.
   &nbsp;
-7. **После reissue старая token-link должна давать явно определённый статус.**
-  Нужно прописать в DoD:
+7. **Статус Запись доступна не должен зависеть только от status='ended' на уровне UI.**
+  Правильнее:
   &nbsp;
-  - старая ссылка после reissue возвращает token_revoked
-  - а не token_not_found, access_denied или другой размытый ответ.
+  - setting можно включить заранее как намерение;
+  - но фактическая доступность записи пользователю наступает только после ended и валидной Kinescope replay source.
+    Иначе UX будет странным. Лучше разделить:
+  - “Разрешить доступ к записи после завершения”
+  - фактический replay availability
   &nbsp;
-8. **Для revoke тоже нужен явный user-facing результат на старой вкладке и по старой ссылке.**
-  После ручного revoke:
+8. **Опубликован должен быть не просто switch, а результат readiness-check.**
+  В плане стоит добавить:
   &nbsp;
-  - heartbeat в открытой вкладке должен привести к session_revoked
-  - повторное открытие старой ссылки должно давать token_revoked
+  - publish action валидирует всё и либо включает публикацию, либо показывает список блокеров;
+  - не просто toggle без контекста.
   &nbsp;
-9. **Добавь proof-сценарий “proof жив, session нет”.**
-  Это как раз основной смысл PATCH D1. Нужно отдельно проверить:
+9. **Нужен явный summary block “Как это будет работать для пользователя”.**
+  В карточке/форме эфира показывать:
   &nbsp;
-  - valid proof
-  - active session отсутствует
-  - /live/:slug возвращает session_missing
-  - пользователь после повторной активации снова получает доступ
+  - доступ у кого;
+  - нужен ли персональный invite;
+  - доступна ли запись;
+  - как пользователь войдёт: напрямую или только по ссылке.
+    Это снимет основную путаницу из текущего UI.
   &nbsp;
-10. **Если session_missing маппится на существующий UI session_expired, зафиксируй это как временный MVP-компромисс.**
-  Чтобы потом не забыть, лучше прямо пометить:
+10. **Для BroadcastTemplateDialog нужен не только empty-state, но и возвратный flow после создания эфира.**
+  Зафиксируй:
 
 &nbsp;
 
@@ -81,158 +77,484 @@
 
 &nbsp;
 
-- backend distinction есть,
-- frontend пока использует общий overlay,
-- отдельный UX copy можно вынести в follow-up.
+- “Создать эфир” открывает /admin/live-events;
+- после сохранения эфир можно выбрать без ручного перезахода/потери формы, если это возможно;
+- если нет — хотя бы явно написать, что нужен refresh списка.
 
 &nbsp;
 
 &nbsp;
 
-В остальном направление правильное: убрать скрытое автосоздание session из live-resolve и сделать reissue полным разрывом старой цепочки — это именно то, что сейчас нужно.
+&nbsp;
+
+11. **Token picker bugfix не смешивай с empty dropdown of live events.**
+  В плане их надо держать как 2 независимых проблемы:
 
 &nbsp;
 
-План: PATCH D — Закрытие архитектурных разрывов session lifecycle
+&nbsp;
 
-## Диагностика
+&nbsp;
 
-### Блокер 1: `live-resolve` создаёт session без передачи `session_key` клиенту
+- dropdown пуст из-за отсутствия данных;
+- token picker/dropdown interaction bug inside Dialog.
+  Это важно для DoD и proof.
 
-**Факт по коду (строки 102-116 live-resolve):** `autoCreateSession()` генерирует `session_key`, вставляет в БД, но `live-resolve` response (строки 182-190) НЕ содержит `session_key`. Клиент (`LiveEvent.tsx` строка 43) берёт ключ из `sessionStorage` — его там нет для авто-созданной session. Heartbeat не запускается.
+&nbsp;
 
-**Решение: Вариант A** — убрать `autoCreateSession` из `live-resolve`. Session создаётся ТОЛЬКО в `live-token-validate`. Если proof валиден, но session нет/expired, `live-resolve` возвращает `session_missing` → клиент показывает "Сессия истекла, обновите страницу" или автоматически повторяет активацию через token-link.
+&nbsp;
 
-### Блокер 2: `reissue` не отзывает `consumed` ссылку
+&nbsp;
 
-**Факт по коду (строки 78-84 handleCreate):** `handleCreate` делает revoke только для `['created', 'sent']`. При `reissue` (строка 401) вызывается `handleCreate` — старая `consumed` ссылка остаётся рабочей.
+12. **AdminLiveEvents должен быть встроен в AdminLayout без потери existing admin guards.**
+  Прямо зафиксируй:
 
-**Решение:** В `handleReissue` перед вызовом `handleCreate` явно revoke все ссылки пользователя на этот event (включая `consumed`), удалить proof, revoke active session.
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- route остаётся под admin-only protection;
+- sidebar/title/breadcrumb работают как у остальных admin pages.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+13. **Нужен отдельный smoke-test на multi-rule с несколькими продуктами и смешанной логикой тарифов.**
+  Не только “2 продукта, у одного 2 тарифа”, а конкретно:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- продукт A — все тарифы;
+- продукт B — только тарифы X,Y;
+- пользователь с A проходит;
+- пользователь с B+X проходит;
+- пользователь с B+Z не проходит.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+14. **Host flow ограничение нужно вынести в явный раздел “что не автоматизировано”.**
+  Сейчас это есть, но лучше жёстче:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- host/instructor flow через Kinescope console;
+- viewer flow через платформу;
+- в текущем спринте host automation не обещается.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+15. **Kinescope Video ID как fallback-поле лучше скрывать по умолчанию.**
+  В плане запиши:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- default UX = выбор проекта/видео;
+- manual ID — только в “Расширенные настройки”.
+  Это важный UX-фикс.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+16. **DoD нужно расширить proof по sidebar/navigation и by-role сценариям.**
+  Добавь:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- admin видит страницу в sidebar и открывает её;
+- шаблон вебинара видит созданный эфир;
+- пользователь с нужным multi-rule доступом входит;
+- пользователь без доступа не входит;
+- ограничения host flow отражены в UI.
+
+&nbsp;
+
+&nbsp;
+
+В остальном направление верное: semi-auto Kinescope, нормальная навигация, multi-rule access и human-readable workflow — это именно то, чего сейчас не хватает.
+
+&nbsp;
+
+План: Перестройка Live Events — навигация, множественный доступ, Kinescope интеграция, UX
+
+## Kinescope API Discovery — факты
+
+### Что есть в API (подтверждено)
+
+- **v1/projects** — CRUD проектов (GET/POST/PUT/DELETE). Работает, проверено реальным вызовом. 28 проектов в аккаунте.
+- **v1/videos** — CRUD видео, загрузка, получение embed/play/hls ссылок. Поля: `id`, `project_id`, `play_link`, `embed_link`, `hls_link`, `status`, `duration`.
+- **v1/projects/{id}/videos** — список видео в проекте.
+- **Embed URL** — формируется как `https://kinescope.io/embed/{video_id}` — это уже используется в системе.
+
+### Что указано в OpenAPI spec, но НЕ документировано
+
+- **v2/live** — тег существует в spec (`The event object: id, type: one-time|recurring`), но ни одного endpoint path (`/v2/live/...`) в spec не описано.
+- **v2/live/restreams** — тег есть, paths нет.
+- **v1/speak/rooms** — тег есть (Speak = вебинарная комната Kinescope), paths не документированы.
+
+### Вывод
+
+**Full auto (Mode A) невозможен** на основании имеющейся документации. Нет подтверждённых endpoints для:
+
+- создания live stream/event через API
+- получения RTMP credentials через API  
+- получения host URL через API
+- управления записью через API
+
+**Выбранный режим: Mode B — semi-auto.**
+
+Kinescope используется как video hosting + embed player. Создание live stream / настройка RTMP выполняется в консоли Kinescope. Наша система получает `video_id` (или `embed_link`) и управляет доступом.
 
 ---
 
-## PATCH D1 — Убрать autoCreateSession из live-resolve
+## Единый продуктовый сценарий (backbone)
 
-### `supabase/functions/live-resolve/index.ts`
-
-**Удалить:** функцию `autoCreateSession` (строки 197-225) и её вызов (строки 102-116).
-
-**Заменить** блок строк 102-116 на:
-
-```typescript
-// Check active session
-const { data: activeSession } = await supabase
-  .from('live_active_sessions')
-  .select('id, expires_at')
-  .eq('user_id', userId)
-  .eq('live_event_id', event.id)
-  .is('revoked_at', null)
-  .maybeSingle();
-
-if (!activeSession || new Date(activeSession.expires_at) < new Date()) {
-  // Proof valid but no active session — client must re-enter via token-link
-  return jsonRes({
-    status: 'session_missing',
-    title: event.title,
-    description: event.description,
-    event_status: event.status,
-  }, 403);
-}
+```text
+1. Админ создаёт эфир в системе
+2. Привязывает Kinescope video/stream (ручной ID или выбор из списка видео)
+3. Настраивает множественные правила доступа (продукты + тарифы)
+4. Выбирает режим приглашений
+5. Публикует эфир (с pre-publish validation)
+6. Создаёт шаблон рассылки и отправляет приглашения
+7. Пользователь входит по ссылке (viewer flow)
+8. После завершения — запись доступна по тем же access rules
 ```
 
-### `src/pages/LiveEvent.tsx`
-
-Добавить в `LiveResolveResult.status` тип `session_missing`.
-
-В switch (строка 104) добавить:
-
-```typescript
-case "session_missing":
-  setState("session_expired");
-  break;
-```
-
-Это переиспользует существующий UI overlay "Сессия истекла. Обновите страницу" — при refresh пользователь может повторно пройти через `/live-access/:token`.
-
-Добавить `PageState` значение уже есть (`session_expired`), UI overlay уже есть (строки 160+). Дополнительных UI-изменений не требуется.
+Host/instructor flow — вне текущего спринта (Kinescope API не даёт host URL, преподаватель работает через Kinescope native console).
 
 ---
 
-## PATCH D2 — Исправить reissue: полный revoke цепочки
+## Scope текущего спринта vs Follow-up
 
-### `supabase/functions/live-token-validate/index.ts`
+### Current sprint
 
-**handleReissue** (строки 369-412) — переписать:
+- Навигация: Live Events в sidebar
+- Multi-rule access model (таблица `live_event_access_rules`)
+- UI конструктор правил доступа
+- Semi-auto Kinescope (выбор из списка видео + ручной fallback)
+- Pre-publish validation
+- UX-тексты на русском
+- Empty state + CTA в BroadcastTemplateDialog
+- Token picker bugfix
+- Smoke-test flow
 
-После получения `user_id` и `live_event_id` (строка 397), ПЕРЕД вызовом `handleCreate`:
+### Follow-up (не в этом спринте)
 
-```typescript
-const now = new Date().toISOString();
-
-// 1. Revoke ALL links for this user+event (including consumed)
-await supabase
-  .from('live_access_links')
-  .update({ status: 'revoked', revoked_at: now })
-  .eq('user_id', user_id)
-  .eq('live_event_id', live_event_id)
-  .in('status', ['created', 'sent', 'consumed']);
-
-// 2. Delete proof
-await supabase
-  .from('live_access_proofs')
-  .delete()
-  .eq('user_id', user_id)
-  .eq('live_event_id', live_event_id);
-
-// 3. Revoke active session
-await supabase
-  .from('live_active_sessions')
-  .update({ revoked_at: now })
-  .eq('user_id', user_id)
-  .eq('live_event_id', live_event_id)
-  .is('revoked_at', null);
-```
-
-Также в `handleCreate` (строки 78-84) расширить список отзываемых статусов до `['created', 'sent', 'consumed']` — для консистентности при любом вызове create.
-
-**handleRevoke** (строки 334-364) — расширить аналогично:
-
-- Revoke ссылки любого статуса кроме уже `revoked`/`expired`
-- Удалить proof
-- Revoke active session
+- Host/instructor automation (зависит от Kinescope API v2/live/speak)
+- Kinescope webhook для автоматического определения начала/конца эфира
+- Advanced moderation
+- Analytics
 
 ---
 
-## PATCH D3 — Аудит для полноты reissue
+## Фаза 1 — Навигация
 
-В `handleReissue` audit (строка 407) добавить мету:
+### AdminSidebar: добавить пункт
+
+В `src/hooks/useAdminMenuSettings.tsx`, группа `service`, добавить:
 
 ```typescript
-await logAudit(supabase, 'live_link_reissue_full', 'user', admin.id, {
-  old_link_id: link_id || null,
-  user_id,
-  live_event_id,
-  actions: ['revoke_links', 'delete_proof', 'revoke_session', 'create_new'],
-});
+{ id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 6.5, permission: "content.edit" }
 ```
+
+Добавить `Video` в `MENU_ICONS`.
+
+### AdminLayout route fix
+
+В `src/App.tsx` строка 304: обернуть `AdminLiveEvents` в `AdminLayout` (сейчас без неё).
+
+### routeToTitle
+
+В `src/components/layout/AdminLayout.tsx`: добавить `'/admin/live-events': 'Эфиры'`.
+
+---
+
+## Фаза 2 — Multi-rule access model
+
+### Миграция: таблица `live_event_access_rules`
+
+```sql
+CREATE TABLE public.live_event_access_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  live_event_id UUID NOT NULL REFERENCES public.live_events(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES public.products_v2(id),
+  tariff_id UUID REFERENCES public.tariffs(id),
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(live_event_id, product_id, tariff_id)
+);
+
+CREATE INDEX idx_live_event_access_rules_event ON public.live_event_access_rules(live_event_id);
+
+ALTER TABLE public.live_event_access_rules ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admins can manage live_event_access_rules"
+  ON public.live_event_access_rules FOR ALL TO authenticated
+  USING (public.has_role_v2(auth.uid(), 'admin'))
+  WITH CHECK (public.has_role_v2(auth.uid(), 'admin'));
+```
+
+### Миграция: make `product_id` nullable на `live_events`
+
+```sql
+ALTER TABLE public.live_events ALTER COLUMN product_id DROP NOT NULL;
+ALTER TABLE public.live_events ALTER COLUMN kinescope_video_id DROP NOT NULL;
+```
+
+`product_id` остаётся как legacy fallback. Source of truth переносится в `live_event_access_rules`.
+
+### `live-resolve`: обновить access check
+
+Новая логика:
+
+```text
+1. Загрузить rules из live_event_access_rules WHERE live_event_id = event.id
+2. Если rules пусты — fallback на legacy access_rule
+3. Для каждого rule: проверить product access через resolveEffectiveProductAccess
+4. Если rule.tariff_id задан — дополнительно проверить tariff match
+5. Доступ = хотя бы одно rule matched
+```
+
+---
+
+## Фаза 3 — Semi-auto Kinescope integration
+
+### Расширить `kinescope-api` Edge Function
+
+Добавить action `list_videos_for_project` — уже есть как `list_videos`. Достаточно текущего API.
+
+### UI: Kinescope-блок в форме эфира
+
+Два режима:
+
+- **Выбрать из Kinescope** — Select проекта → Select видео из проекта → auto-fill `kinescope_video_id`
+- **Ввести вручную** — текстовое поле (advanced/fallback)
+
+По умолчанию — режим выбора. Ручной ввод — в секции "Расширенные настройки".
+
+При выборе видео — сохранять `kinescope_video_id` и `metadata.kinescope_project_id` для повторного использования.
+
+---
+
+## Фаза 4 — UI конструктор правил доступа
+
+### Компонент `LiveEventAccessRulesEditor`
+
+Заменяет текущий single-select "Правило доступа" в `AdminLiveEvents.tsx`.
+
+```text
+┌────────────────────────────────────────┐
+│ Кто может войти                        │
+│                                        │
+│ [Продукт A]  [Все тарифы     ▼]   [✕] │
+│ [Продукт B]  [VIP, Premium   ▼]   [✕] │
+│                                        │
+│ [+ Добавить правило]                   │
+│                                        │
+│ Итог: доступ у пользователей           │
+│ продуктов A, B (для B — только VIP,    │
+│ Premium)                               │
+└────────────────────────────────────────┘
+```
+
+- Select продукта — из `products_v2`
+- Multi-select тарифов для выбранного продукта — из `tariffs`
+- Пустой список тарифов = любой тариф продукта
+- Дедупликация: нельзя добавить одинаковый product+tariff дважды
+- Audience preview — текстовое описание итогового правила
+
+---
+
+## Фаза 5 — UX тексты и человекочитаемые подписи
+
+### Режим приглашений (invite_mode)
+
+
+| Значение          | Текущий текст                   | Новый текст                          |
+| ----------------- | ------------------------------- | ------------------------------------ |
+| none              | Без приглашений                 | Без приглашений                      |
+| optional_one_time | Опциональные одноразовые ссылки | Персональные ссылки можно отправлять |
+| required_one_time | Обязательные одноразовые ссылки | Вход только по персональной ссылке   |
+
+
+Под каждым вариантом — пояснение:
+
+- none: "Доступ по правам аккаунта, без персональной ссылки"
+- optional: "По ссылке вход удобнее, но пользователь с нужными правами может войти и без неё"
+- required: "Даже при наличии прав аккаунта нужен вход через выданную ссылку"
+
+### Переключатели
+
+- **Опубликован** → tooltip: "Эфир виден системе и доступен по ссылке"
+- **Запись доступна** → tooltip: "После завершения эфира пользователи смогут смотреть запись"
+- Если status != `ended`, switch "Запись доступна" → disabled + пояснение "Эфир ещё не завершён"
+
+---
+
+## Фаза 6 — Pre-publish validation
+
+Перед включением `is_published = true` — чек-лист:
+
+1. `kinescope_video_id` заполнен
+2. Хотя бы одно правило доступа задано (или legacy access_rule)
+3. `title` и `slug` заполнены
+
+Если не проходит — показать ошибки, не дать опубликовать.
+
+---
+
+## Фаза 7 — Структура формы эфира (workflow-экран)
+
+Перестроить `AdminLiveEvents.tsx` dialog в секционный wizard:
+
+1. **Основное** — Название, Slug, Описание, Дата, Статус
+2. **Kinescope** — Выбор видео из аккаунта или ручной ID
+3. **Кто может войти** — Конструктор правил доступа (Фаза 4)
+4. **Приглашения** — Режим приглашений + пояснения (Фаза 5)
+5. **Публикация и запись** — Переключатели с пояснениями + pre-publish validation
+6. **Проверка готовности** — read-only чек-лист (Фаза 6)
+
+---
+
+## Фаза 8 — Empty state + CTA в BroadcastTemplateDialog
+
+В `BroadcastTemplateDialog.tsx` (строки 175-206):
+
+Если `liveEvents` загружены и пустые:
+
+```tsx
+<div className="text-center py-4 space-y-2">
+  <p className="text-sm text-muted-foreground">Нет созданных эфиров</p>
+  <Button variant="outline" size="sm" onClick={() => window.open('/admin/live-events', '_blank')}>
+    Создать эфир
+  </Button>
+</div>
+```
+
+---
+
+## Фаза 9 — Token picker bugfix
+
+### `src/components/admin/TokenizedRichInput.tsx`
+
+- На dropdown div добавить `onWheel={(e) => e.stopPropagation()}`
+- На каждый `CommandItem` добавить `data-token-picker="true"`
+
+### `src/components/ui/dialog.tsx`
+
+- В `onPointerDownOutside` guard расширить проверку на `[cmdk-item]`, `[cmdk-list]`
+
+---
+
+## Фаза 10 — Audience/access preview
+
+### В форме эфира
+
+Текстовый preview: "Доступ у пользователей продуктов A, B. Для продукта C — только тарифы X, Y."
+
+### В BroadcastTemplateDialog
+
+После выбора эфира показать summary:
+
+- Статус эфира (черновик / опубликован)
+- Режим приглашений
+- Список продуктов/тарифов доступа
+- Запись вкл/выкл
+
+---
+
+## Фаза 11 — Host/instructor flow (зафиксировать ограничения)
+
+Kinescope API НЕ предоставляет:
+
+- Endpoint для создания live stream
+- Host URL для преподавателя
+- RTMP credentials через API
+
+**Решение для текущего спринта:**
+
+- Преподаватель работает через Kinescope native console (dashboard.kinescope.io)
+- В `live_events.metadata` можно сохранить `host_instructions` — текстовая подсказка для ведущего
+- В UI эфира — read-only секция "Для ведущего" с инструкцией
+
+**Follow-up:** когда Kinescope откроет v2/live API — добавить автоматизацию.
+
+---
+
+## Smoke-test flow (обязательный)
+
+
+| #   | Сценарий                                            | Ожидание                       |
+| --- | --------------------------------------------------- | ------------------------------ |
+| 1   | Админ создаёт эфир, видит его в sidebar и в списке  | Эфир виден                     |
+| 2   | Шаблон вебинара может выбрать этот эфир             | Select показывает эфир         |
+| 3   | Пустой список эфиров — показывает CTA               | "Создать эфир" кнопка          |
+| 4   | Multi-rule: 2 продукта, у одного 2 тарифа           | Rules сохраняются в БД         |
+| 5   | Пользователь с подходящим продуктом входит          | `live-resolve` → ok            |
+| 6   | Пользователь без доступа не входит                  | `live-resolve` → access_denied |
+| 7   | Pre-publish: без kinescope_video_id не опубликовать | Validation блокирует           |
+| 8   | Token picker: клик/скролл работают в Dialog         | Нет серых/disabled items       |
+
 
 ---
 
 ## Файлы
 
 
-| Файл                                              | Действие                                                                         |
-| ------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `supabase/functions/live-resolve/index.ts`        | Убрать autoCreateSession, вернуть session_missing                                |
-| `supabase/functions/live-token-validate/index.ts` | Reissue: full revoke chain. Revoke: full revoke chain. Create: расширить статусы |
-| `src/pages/LiveEvent.tsx`                         | Обработка session_missing → session_expired UI                                   |
+| Файл                                                             | Действие                                                              |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `src/hooks/useAdminMenuSettings.tsx`                             | Добавить "Эфиры" + Video icon                                         |
+| `src/App.tsx`                                                    | Обернуть AdminLiveEvents в AdminLayout                                |
+| `src/components/layout/AdminLayout.tsx`                          | routeToTitle                                                          |
+| `supabase/migrations/xxx_live_event_access_rules.sql`            | Новая таблица + make product_id nullable                              |
+| `src/pages/admin/AdminLiveEvents.tsx`                            | Полная перестройка: секции, multi-rule, Kinescope select, pre-publish |
+| `src/components/admin/live/LiveEventAccessRulesEditor.tsx`       | Новый компонент                                                       |
+| `supabase/functions/live-resolve/index.ts`                       | Multi-rule access check                                               |
+| `supabase/functions/kinescope-api/index.ts`                      | (без изменений, уже достаточен)                                       |
+| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Empty state + summary                                                 |
+| `src/components/admin/TokenizedRichInput.tsx`                    | Scroll/click fix                                                      |
+| `src/components/ui/dialog.tsx`                                   | Pointer guard расширение                                              |
 
 
 ## DoD
 
-1. `live-resolve` НЕ создаёт session — только проверяет наличие
-2. При отсутствии active session и valid proof → `session_missing` → клиент показывает "сессия истекла"
-3. `reissue` отзывает consumed ссылку + удаляет proof + revoke session + создаёт новую
-4. `revoke` отзывает ссылку любого активного статуса + удаляет proof + revoke session
-5. Старая вкладка после reissue теряет доступ через heartbeat → `session_revoked`
-6. Владелец новой ссылки проходит стандартную активацию и получает новый session_key
+1. "Эфиры" доступны из sidebar
+2. Форма эфира — секционная, с human-readable текстами
+3. Multi-rule access работает (несколько продуктов/тарифов)
+4. `live-resolve` проверяет по новой таблице rules
+5. Kinescope video выбирается из списка или вводится вручную
+6. Pre-publish validation блокирует публикацию без обязательных полей
+7. Empty state в шаблоне вебинара показывает CTA
+8. Token picker кликабелен и скроллится
+9. Audience preview показывает итог правил доступа
+10. Host flow = Kinescope console (documented limitation)
