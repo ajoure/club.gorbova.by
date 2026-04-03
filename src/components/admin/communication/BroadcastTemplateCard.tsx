@@ -12,6 +12,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Video,
 } from "lucide-react";
 
 export interface BroadcastTemplate {
@@ -30,6 +31,9 @@ export interface BroadcastTemplate {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  template_type: "general" | "webinar_invite";
+  live_event_id: string | null;
+  targeting_tariff_id: string | null;
 }
 
 interface BroadcastTemplateCardProps {
@@ -87,7 +91,15 @@ export function BroadcastTemplateCard({
               </p>
             </div>
           </div>
-          <Badge variant={variant}>{label}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={variant}>{label}</Badge>
+            {template.template_type === "webinar_invite" && (
+              <Badge variant="outline" className="gap-1">
+                <Video className="h-3 w-3" />
+                Вебинар
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">

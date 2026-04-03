@@ -119,6 +119,8 @@ const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramD
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
+const AdminLiveEvents = lazy(() => import("./pages/admin/AdminLiveEvents"));
+const LiveEvent = lazy(() => import("./pages/LiveEvent"));
 // AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
 
 // Page loader component for Suspense fallback
@@ -184,6 +186,7 @@ const App = () => {
               <Route path="/club" element={<Landing />} />
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
+              <Route path="/live/:slug" element={<ProtectedRoute><LazyRoute><LiveEvent /></LazyRoute></ProtectedRoute>} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />
@@ -296,6 +299,7 @@ const App = () => {
               <Route path="/admin/kb-import" element={<ProtectedRoute><LazyRoute><AdminKbImport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites/:id" element={<ProtectedRoute><LazyRoute><AdminSiteEditor /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/live-events" element={<ProtectedRoute><LazyRoute><AdminLiveEvents /></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
