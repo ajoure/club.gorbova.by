@@ -32,6 +32,7 @@ import {
   Upload,
   PanelTop,
   Bot,
+  Video,
   LucideIcon,
 } from "lucide-react";
 
