@@ -100,7 +100,7 @@ export default function AdminLiveEvents() {
         .select("*")
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return data as LiveEvent[];
+      return (data || []) as unknown as LiveEvent[];
     },
   });
 
