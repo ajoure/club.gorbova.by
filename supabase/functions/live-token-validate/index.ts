@@ -182,12 +182,7 @@ async function handleValidate(
     return jsonResponse({ status: 'token_revoked' }, 403);
   }
 
-  // 6. token in mismatch status (was already flagged)
-  if (link.status === 'mismatch') {
-    return jsonResponse({ status: 'token_mismatch' }, 403);
-  }
-
-  // 7. Authenticate user via JWT
+  // 6. Authenticate user via JWT
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
     return jsonResponse({ status: 'auth_required' }, 401);
