@@ -1350,15 +1350,19 @@ function LiveStreamControlPanel({
   const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
   const kinescopeLiveEventId = eventData?.kinescope_live_event_id || form.kinescope_live_event_id;
 
-  // Determine provider source status from local state
+  // Determine provider source status from DB metadata (source of truth)
   useEffect(() => {
     if (!kinescopeLiveEventId) {
       setProviderSourceStatus("draft");
     } else {
-      // Default to ok if we have an ID, will be refined by sync
-      if (providerSourceStatus === "draft") setProviderSourceStatus("ok");
+      const metaStatus = (eventData?.metadata as any)?.provider_source_status as ProviderSourceStatus | undefined;
+      if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
+        setProviderSourceStatus(metaStatus);
+      } else if (providerSourceStatus === "draft") {
+        setProviderSourceStatus("ok");
+      }
     }
-  }, [kinescopeLiveEventId]);
+  }, [kinescopeLiveEventId, eventData]);
 
   // Can recreate only if folder_id and project_id are available
   const canRecreate = !!(form.kinescope_folder_id || (eventData?.metadata as any)?.kinescope_folder_id);
