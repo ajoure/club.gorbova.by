@@ -228,6 +228,7 @@ serve(async (req) => {
         const createBody: Record<string, unknown> = {
           name: request.name || "Новый эфир",
           parent_id: project_id,
+          type: "webinar",
           record: { parent_id: project_id },
         };
         console.log("[kinescope-api] create_live_event payload:", JSON.stringify(createBody));
