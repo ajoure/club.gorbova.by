@@ -52,6 +52,9 @@ async function telegramUploadMedia(
 interface BroadcastFilters {
   hasActiveSubscription?: boolean;
   productId?: string;
+  productIds?: string[];
+  tariffId?: string;
+  tariffIds?: string[];
   clubId?: string;
 }
 
