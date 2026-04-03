@@ -412,6 +412,11 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Flush remaining message logs
+    if (messageLogBatch.length > 0) {
+      await supabase.from('telegram_messages').insert(messageLogBatch);
+    }
+
     // Log the broadcast action
     await supabase.from('telegram_logs').insert({
       action: 'MASS_NOTIFICATION',
