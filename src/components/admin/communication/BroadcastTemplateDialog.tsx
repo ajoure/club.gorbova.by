@@ -44,25 +44,30 @@ interface LiveEventForBroadcast {
   kinescope_live_event_id: string | null;
 }
 
-function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reason: string | null; label: string } {
+function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reasons: string[]; label: string } {
+  const reasons: string[] = [];
+  
   if (!event.is_published) {
-    return { ready: false, reason: "Черновик — сначала опубликуйте", label: "Черновик" };
+    reasons.push("Не опубликован");
   }
 
   if (event.event_type === "live_stream") {
     if (!event.kinescope_live_event_id) {
-      return { ready: false, reason: "Нет источника — привяжите Kinescope Live Event", label: "Нет источника" };
+      reasons.push("Не создан источник трансляции");
     }
     if (!event.scheduled_at) {
-      return { ready: false, reason: "Нет даты — задайте дату и время эфира", label: "Нет даты" };
+      reasons.push("Не задана дата и время");
     }
   } else {
     if (!event.kinescope_video_id) {
-      return { ready: false, reason: "Нет видео — привяжите видео Kinescope", label: "Нет видео" };
+      reasons.push("Не привязано видео");
     }
   }
 
-  return { ready: true, reason: null, label: "Готов к приглашениям" };
+  if (reasons.length === 0) {
+    return { ready: true, reasons: [], label: "Готов" };
+  }
+  return { ready: false, reasons, label: reasons[0] };
 }
 
 function getEventTypeLabel(eventType: string): string {
