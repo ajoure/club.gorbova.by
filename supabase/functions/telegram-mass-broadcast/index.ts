@@ -208,11 +208,17 @@ Deno.serve(async (req) => {
     }
 
     if (filters.productId) {
-      const { data: productSubs } = await supabase
+      let subQuery = supabase
         .from('subscriptions_v2')
         .select('user_id')
         .eq('product_id', filters.productId)
         .eq('status', 'active');
+
+      if (filters.tariffId) {
+        subQuery = subQuery.eq('tariff_id', filters.tariffId);
+      }
+
+      const { data: productSubs } = await subQuery;
 
       const productUserIds = new Set(productSubs?.map(s => s.user_id) || []);
       profiles = profiles.filter(p => productUserIds.has(p.user_id));
