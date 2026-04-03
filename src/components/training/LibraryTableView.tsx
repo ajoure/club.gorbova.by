@@ -158,7 +158,16 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
         if (rm.children.some((c) => c.title.toLowerCase().includes(query))) return true;
         return false;
       });
-      return { ...g, rootModules: filteredRoots };
+      // For flattened groups, also check if the hidden root's children/lessons match
+      if (g.isFlattenable && g.flattenedRoot && filteredRoots.length === 0 && isSearchActive) {
+        // Check if root title matches (root is hidden but should still be searchable)
+        if (g.flattenedRoot.module.title.toLowerCase().includes(query)) {
+          return { ...g, rootModules: g.rootModules };
+        }
+      }
+      // Re-check flattenability with filtered roots
+      const newFlatten = g.isFlattenable && filteredRoots.length === 1 && g.flattenedRoot?.module.id === filteredRoots[0].module.id;
+      return { ...g, rootModules: filteredRoots, isFlattenable: newFlatten, flattenedRoot: newFlatten ? g.flattenedRoot : undefined };
     }).filter((g) => g.rootModules.length > 0);
   }, [groups, query, isSearchActive, showOnlyIncomplete]);
 
