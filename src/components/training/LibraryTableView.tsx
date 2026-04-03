@@ -437,7 +437,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
         </TableCell>
         <TableCell className="py-2.5">
           <div className="flex items-center gap-2">
-            {renderActionLabel(lessonCount, completedCount)}
+            {renderActionLabel(lessonCount, completedCount, rm.module.slug, rm.module.id)}
           </div>
         </TableCell>
       </TableRow>,
