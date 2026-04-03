@@ -13,7 +13,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
