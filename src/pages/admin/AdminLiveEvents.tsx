@@ -81,6 +81,8 @@ const defaultForm: LiveEventForm = {
   is_published: false,
   scheduled_at: "",
   replay_enabled: false,
+  invite_mode: "none",
+  direct_access_allowed: true,
 };
 
 const statusLabels: Record<string, string> = {
