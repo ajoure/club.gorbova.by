@@ -42,6 +42,7 @@ interface LiveEventForBroadcast {
   scheduled_at: string | null;
   kinescope_video_id: string | null;
   kinescope_live_event_id: string | null;
+  metadata: Record<string, any> | null;
 }
 
 function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reasons: string[]; label: string } {
