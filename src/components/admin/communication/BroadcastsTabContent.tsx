@@ -60,8 +60,8 @@ interface BroadcastFilters {
   hasActiveSubscription: boolean;
   hasTelegram: boolean;
   hasEmail: boolean;
-  productId: string;
-  tariffId: string;
+  productIds: string[];
+  tariffIds: string[];
   clubId: string;
 }
 
