@@ -90,20 +90,20 @@ export function BroadcastSendDialog({
     },
   });
 
-  // Fetch tariffs for selected product
+  // Fetch tariffs for selected products
   const { data: tariffs } = useQuery({
-    queryKey: ["broadcast-tariffs", filters.productId],
+    queryKey: ["broadcast-tariffs", filters.productIds],
     queryFn: async () => {
-      if (!filters.productId) return [];
+      if (filters.productIds.length === 0) return [];
       const { data } = await supabase
         .from("tariffs")
-        .select("id, name")
-        .eq("product_id", filters.productId)
+        .select("id, name, product_id")
+        .in("product_id", filters.productIds)
         .eq("is_active", true)
         .order("name");
       return data || [];
     },
-    enabled: !!filters.productId,
+    enabled: filters.productIds.length > 0,
   });
 
   // Fetch telegram clubs
