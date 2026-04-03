@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
-import { useLibraryTree, resolveAccessLabel } from "@/hooks/useLibraryTree";
+import { useLibraryTree, resolveAccessLabel, shouldFlattenSingleRoot } from "@/hooks/useLibraryTree";
 import { useLibraryLessons, type LibraryLesson } from "@/hooks/useLibraryLessons";
 import type { LibraryGroup, LibraryRootModule } from "@/hooks/useLibraryTree";
 
@@ -139,11 +139,18 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
 
   /* ── Fetch lessons when modules are expanded ──────── */
   useEffect(() => {
-    const ids = [...effectiveExpandedModules];
-    if (ids.length > 0) {
-      fetchLessonsForModules(ids);
+    const ids = new Set([...effectiveExpandedModules]);
+    // For flattened groups without children, lessons load when group is expanded
+    for (const g of groups) {
+      if (g.isFlattenable && g.flattenedRoot && !g.flattenedRoot.hasChildren && effectiveExpandedGroups.has(g.productId)) {
+        ids.add(g.flattenedRoot.module.id);
+      }
     }
-  }, [effectiveExpandedModules, fetchLessonsForModules]);
+    const arr = [...ids];
+    if (arr.length > 0) {
+      fetchLessonsForModules(arr);
+    }
+  }, [effectiveExpandedModules, effectiveExpandedGroups, groups, fetchLessonsForModules]);
 
   /* ── Filter groups by search + incomplete filter ─── */
   const filteredGroups = useMemo(() => {
@@ -158,7 +165,16 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
         if (rm.children.some((c) => c.title.toLowerCase().includes(query))) return true;
         return false;
       });
-      return { ...g, rootModules: filteredRoots };
+      // For flattened groups, also check if the hidden root's children/lessons match
+      if (g.isFlattenable && g.flattenedRoot && filteredRoots.length === 0 && isSearchActive) {
+        // Check if root title matches (root is hidden but should still be searchable)
+        if (g.flattenedRoot.module.title.toLowerCase().includes(query)) {
+          return { ...g, rootModules: g.rootModules };
+        }
+      }
+      // Re-check flattenability with filtered roots
+      const newFlatten = g.isFlattenable && filteredRoots.length === 1 && g.flattenedRoot?.module.id === filteredRoots[0].module.id;
+      return { ...g, rootModules: filteredRoots, isFlattenable: newFlatten, flattenedRoot: newFlatten ? g.flattenedRoot : undefined };
     }).filter((g) => g.rootModules.length > 0);
   }, [groups, query, isSearchActive, showOnlyIncomplete]);
 
@@ -394,46 +410,101 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
   /* ── Group row ────────────────────────────────────── */
   const renderGroup = (group: LibraryGroup) => {
     const isExpanded = effectiveExpandedGroups.has(group.productId);
-    // If only one root in group, auto-expand group
     const isSingleRoot = group.rootModules.length === 1;
-    const effectiveExpanded = isExpanded || isSingleRoot;
+    const isFlat = group.isFlattenable && group.flattenedRoot;
+
+    // For flattened groups, data comes from flattenedRoot
+    const flatRoot = isFlat ? group.flattenedRoot! : undefined;
+    const displayLessons = isFlat ? (flatRoot!.module.lesson_count || 0) : group.totalLessons;
+    const displayCompleted = isFlat ? (flatRoot!.module.completed_count || 0) : group.totalCompleted;
+
+    // For non-flat single root, auto-expand
+    const effectiveExpanded = isExpanded || (isSingleRoot && !isFlat);
+
+    // For flattened groups, expand state is only on group level
+    const flatExpanded = isFlat && isExpanded;
+
+    const showGroupRow = filteredGroups.length > 1 || group.rootModules.length > 1 || isFlat;
 
     return [
-      // Group header — only show if there are multiple groups or multiple roots
-      ...(filteredGroups.length > 1 || group.rootModules.length > 1 ? [
+      // Group header row
+      ...(showGroupRow ? [
         <TableRow
           key={`group-${group.productId}`}
           className="bg-muted/20 hover:bg-muted/40"
         >
-          <TableCell className="py-2.5" colSpan={4}>
+          <TableCell className="py-2.5" colSpan={isFlat ? 1 : 4}>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => toggleGroup(group.productId)}
                 className="p-0.5 rounded hover:bg-muted transition-colors"
               >
-                {effectiveExpanded
+                {(isFlat ? flatExpanded : effectiveExpanded)
                   ? <ChevronDown className="h-4 w-4 text-foreground" />
                   : <ChevronRight className="h-4 w-4 text-foreground" />
                 }
               </button>
-              <FolderOpen className="h-4 w-4 text-primary" />
-              <span className="text-sm font-semibold text-foreground">
+              {isFlat && flatRoot!.module.color_gradient && (
+                <div className={cn("w-1 h-5 rounded-full bg-gradient-to-b", flatRoot!.module.color_gradient)} />
+              )}
+              {!isFlat && <FolderOpen className="h-4 w-4 text-primary" />}
+              <span
+                className={cn(
+                  "text-sm font-semibold",
+                  isFlat && "cursor-pointer hover:text-primary transition-colors"
+                )}
+                onClick={isFlat ? () => navigate(`/library/${flatRoot!.module.slug}`) : undefined}
+              >
                 {group.productName}
               </span>
-              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1">
-                {group.rootModules.length}
-              </Badge>
+              {!isFlat && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1">
+                  {group.rootModules.length}
+                </Badge>
+              )}
+              {isFlat && flatRoot && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 ml-1">
+                  {flatRoot.accessLabel}
+                </Badge>
+              )}
               <div className="flex-1" />
               <div className="hidden sm:flex items-center gap-3 mr-2">
-                {renderProgress(group.totalLessons, group.totalCompleted, true)}
+                {renderProgress(displayLessons, displayCompleted, true)}
               </div>
             </div>
           </TableCell>
+          {isFlat && (
+            <>
+              <TableCell className="py-2.5 hidden sm:table-cell">
+                <span className="text-xs text-muted-foreground">{displayLessons}</span>
+              </TableCell>
+              <TableCell className="py-2.5 hidden sm:table-cell">
+                {renderProgress(displayLessons, displayCompleted)}
+              </TableCell>
+              <TableCell className="py-2.5">
+                {renderActionLabel(displayLessons, displayCompleted)}
+              </TableCell>
+            </>
+          )}
         </TableRow>
       ] : []),
-      ...(effectiveExpanded
-        ? group.rootModules.flatMap((rm) => renderRootModule(rm, true) || [])
-        : []),
+
+      // Content rows
+      ...(isFlat
+        // Flattened: skip root module row, render children/lessons directly
+        ? (flatExpanded
+          ? (flatRoot!.hasChildren
+            ? flatRoot!.children.flatMap((c) => renderChildModule(c, flatRoot!.module.slug))
+            : [renderModuleLessons(flatRoot!.module.id, flatRoot!.module.slug, 1)].flat()
+          )
+          : []
+        )
+        // Normal: render root modules
+        : (effectiveExpanded
+          ? group.rootModules.flatMap((rm) => renderRootModule(rm, true) || [])
+          : []
+        )
+      ),
     ];
   };
 
