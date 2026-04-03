@@ -99,20 +99,29 @@ Deno.serve(async (req) => {
         }, 403);
       }
 
-      // Check active session — if none exists but proof is valid,
-      // auto-create a new session (soft model: proof valid = can re-enter)
+      // Check active session — session is created ONLY in live-token-validate
+      // live-resolve only verifies its existence
       const { data: activeSession } = await supabase
         .from('live_active_sessions')
-        .select('id, session_key, revoked_at, expires_at')
+        .select('id, expires_at')
         .eq('user_id', userId)
         .eq('live_event_id', event.id)
         .is('revoked_at', null)
         .maybeSingle();
 
       if (!activeSession || new Date(activeSession.expires_at) < new Date()) {
-        // No active session or expired — auto-create one since proof is valid
-        // This handles page refresh / new tab for the same user
-        await autoCreateSession(supabase, event.id, userId);
+        // Proof valid but no active session — client must re-enter via token-link
+        // MVP: frontend maps this to session_expired overlay
+        await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
+          reason: 'session_missing',
+          proof_id: proof.id,
+        });
+        return jsonRes({
+          status: 'session_missing',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+        }, 403);
       }
     }
 
@@ -194,35 +203,7 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Auto-create session when proof is valid but no active session exists */
-async function autoCreateSession(
-  supabase: any,
-  eventId: string,
-  userId: string,
-) {
-  const SESSION_TTL_HOURS = 24;
-  const now = new Date().toISOString();
-
-  // Revoke any existing (might be expired)
-  await supabase
-    .from('live_active_sessions')
-    .update({ revoked_at: now })
-    .eq('user_id', userId)
-    .eq('live_event_id', eventId)
-    .is('revoked_at', null);
-
-  const sessionKey = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-
-  await supabase
-    .from('live_active_sessions')
-    .insert({
-      live_event_id: eventId,
-      user_id: userId,
-      session_key: sessionKey,
-      expires_at: expiresAt,
-    });
-}
+// autoCreateSession removed — sessions are created ONLY in live-token-validate
 
 function jsonRes(data: any, status = 200) {
   return new Response(JSON.stringify(data), {

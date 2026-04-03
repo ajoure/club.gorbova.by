@@ -8,7 +8,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -113,6 +113,11 @@ export default function LiveEvent() {
             break;
           case "invite_required":
             setState("invite_required");
+            break;
+          case "session_missing":
+            // MVP: proof valid but no active session — reuse session_expired overlay
+            // User should re-enter via their token-link
+            setState("session_expired");
             break;
           case "ok":
             if (json.event_status === "scheduled") {
