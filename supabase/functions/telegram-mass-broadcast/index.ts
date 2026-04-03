@@ -210,15 +210,19 @@ Deno.serve(async (req) => {
       profiles = profiles.filter(p => activeUserIds.has(p.user_id));
     }
 
-    if (filters.productId) {
+    // Support both legacy single productId and new array productIds
+    const effectiveProductIds = filters.productIds?.length ? filters.productIds : (filters.productId ? [filters.productId] : []);
+    const effectiveTariffIds = filters.tariffIds?.length ? filters.tariffIds : (filters.tariffId ? [filters.tariffId] : []);
+
+    if (effectiveProductIds.length > 0) {
       let subQuery = supabase
         .from('subscriptions_v2')
         .select('user_id')
-        .eq('product_id', filters.productId)
+        .in('product_id', effectiveProductIds)
         .eq('status', 'active');
 
-      if (filters.tariffId) {
-        subQuery = subQuery.eq('tariff_id', filters.tariffId);
+      if (effectiveTariffIds.length > 0) {
+        subQuery = subQuery.in('tariff_id', effectiveTariffIds);
       }
 
       const { data: productSubs } = await subQuery;

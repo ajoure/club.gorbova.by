@@ -849,25 +849,145 @@ const [includeButton, setIncludeButton] = useState(true);
 
               <div className="space-y-2">
                 <Label>Продукт</Label>
-                <Select
-                  value={filters.productId || "all"}
-                  onValueChange={(v) =>
-                    setFilters((f) => ({ ...f, productId: v === "all" ? "" : v }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Все продукты" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Все продукты</SelectItem>
-                    {products?.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="w-full justify-start font-normal">
+                      {filters.productIds.length === 0
+                        ? "Все продукты"
+                        : `Выбрано: ${filters.productIds.length}`}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-3" align="start">
+                    <div className="space-y-2">
+                      {products?.map((p) => (
+                        <label key={p.id} className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox
+                            checked={filters.productIds.includes(p.id)}
+                            onCheckedChange={(checked) => {
+                              setFilters((f) => {
+                                const next = checked
+                                  ? [...f.productIds, p.id]
+                                  : f.productIds.filter((id) => id !== p.id);
+                                // Remove tariffs that no longer belong to selected products
+                                const validTariffIds = f.tariffIds.filter((tid) =>
+                                  tariffs?.some((t) => t.id === tid && next.includes(t.product_id))
+                                );
+                                return { ...f, productIds: next, tariffIds: validTariffIds };
+                              });
+                            }}
+                          />
+                          <span className="text-sm">{p.name}</span>
+                        </label>
+                      ))}
+                      {(products?.length ?? 0) === 0 && (
+                        <p className="text-sm text-muted-foreground">Нет активных продуктов</p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                {filters.productIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {filters.productIds.map((pid) => {
+                      const name = products?.find((p) => p.id === pid)?.name;
+                      return (
+                        <Badge key={pid} variant="secondary" className="text-xs gap-1">
+                          {name}
+                          <button
+                            onClick={() =>
+                              setFilters((f) => ({
+                                ...f,
+                                productIds: f.productIds.filter((id) => id !== pid),
+                                tariffIds: f.tariffIds.filter((tid) =>
+                                  tariffs?.some((t) => t.id === tid && t.product_id !== pid)
+                                ),
+                              }))
+                            }
+                            className="ml-0.5 hover:text-destructive"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
+
+              {filters.productIds.length > 0 && tariffs && tariffs.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Тариф</Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start font-normal">
+                        {filters.tariffIds.length === 0
+                          ? "Все тарифы"
+                          : `Выбрано: ${filters.tariffIds.length}`}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-3" align="start">
+                      <ScrollArea className="max-h-60">
+                        <div className="space-y-3">
+                          {filters.productIds.map((pid) => {
+                            const productName = products?.find((p) => p.id === pid)?.name;
+                            const productTariffs = tariffs?.filter((t) => t.product_id === pid) || [];
+                            if (productTariffs.length === 0) return null;
+                            return (
+                              <div key={pid}>
+                                {filters.productIds.length > 1 && (
+                                  <p className="text-xs font-medium text-muted-foreground mb-1">
+                                    {productName}
+                                  </p>
+                                )}
+                                <div className="space-y-2">
+                                  {productTariffs.map((t) => (
+                                    <label key={t.id} className="flex items-center gap-2 cursor-pointer">
+                                      <Checkbox
+                                        checked={filters.tariffIds.includes(t.id)}
+                                        onCheckedChange={(checked) => {
+                                          setFilters((f) => ({
+                                            ...f,
+                                            tariffIds: checked
+                                              ? [...f.tariffIds, t.id]
+                                              : f.tariffIds.filter((id) => id !== t.id),
+                                          }));
+                                        }}
+                                      />
+                                      <span className="text-sm">{t.name}</span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
+                  {filters.tariffIds.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {filters.tariffIds.map((tid) => {
+                        const name = tariffs?.find((t) => t.id === tid)?.name;
+                        return (
+                          <Badge key={tid} variant="outline" className="text-xs gap-1">
+                            {name}
+                            <button
+                              onClick={() =>
+                                setFilters((f) => ({
+                                  ...f,
+                                  tariffIds: f.tariffIds.filter((id) => id !== tid),
+                                }))
+                              }
+                              className="ml-0.5 hover:text-destructive"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label>Telegram-клуб</Label>
