@@ -214,7 +214,7 @@ export default function AdminLiveEvents() {
       let eventId = editingId;
 
       if (editingId) {
-        const { error } = await supabase.from("live_events").update(payload).eq("id", editingId);
+        const { error } = await supabase.from("live_events").update(payload as any).eq("id", editingId);
         if (error) throw error;
       } else {
         const { data: inserted, error } = await supabase.from("live_events").insert(payload as any).select("id").single();
