@@ -203,35 +203,7 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Auto-create session when proof is valid but no active session exists */
-async function autoCreateSession(
-  supabase: any,
-  eventId: string,
-  userId: string,
-) {
-  const SESSION_TTL_HOURS = 24;
-  const now = new Date().toISOString();
-
-  // Revoke any existing (might be expired)
-  await supabase
-    .from('live_active_sessions')
-    .update({ revoked_at: now })
-    .eq('user_id', userId)
-    .eq('live_event_id', eventId)
-    .is('revoked_at', null);
-
-  const sessionKey = crypto.randomUUID();
-  const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-
-  await supabase
-    .from('live_active_sessions')
-    .insert({
-      live_event_id: eventId,
-      user_id: userId,
-      session_key: sessionKey,
-      expires_at: expiresAt,
-    });
-}
+// autoCreateSession removed — sessions are created ONLY in live-token-validate
 
 function jsonRes(data: any, status = 200) {
   return new Response(JSON.stringify(data), {

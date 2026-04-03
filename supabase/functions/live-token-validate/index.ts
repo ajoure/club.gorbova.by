@@ -434,14 +434,47 @@ async function handleReissue(
     return jsonResponse({ status: 'error', message: 'user_id and live_event_id required' }, 400);
   }
 
+  const now = new Date().toISOString();
+
+  // Full revoke chain (canonical order):
+  // 1. Revoke active session
+  await supabase
+    .from('live_active_sessions')
+    .update({ revoked_at: now })
+    .eq('user_id', user_id)
+    .eq('live_event_id', live_event_id)
+    .is('revoked_at', null);
+
+  // 2. Delete proof
+  await supabase
+    .from('live_access_proofs')
+    .delete()
+    .eq('user_id', user_id)
+    .eq('live_event_id', live_event_id);
+
+  // 3. Revoke ALL links for this user+event (including consumed)
+  await supabase
+    .from('live_access_links')
+    .update({ status: 'revoked', revoked_at: now })
+    .eq('user_id', user_id)
+    .eq('live_event_id', live_event_id)
+    .in('status', ['created', 'sent', 'consumed']);
+
+  // Audit: keep individual revoke event + reissue summary
+  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, {
+    link_id: link_id || null, user_id, live_event_id,
+    chain: ['revoke_session', 'delete_proof', 'revoke_links'],
+  });
+
+  // 4. Create new link (handleCreate also revokes, but chain above is authoritative)
   const createResult = await handleCreate(supabase, {
     live_event_id, user_id,
     ttl_hours: body.ttl_hours,
     sent_via: body.sent_via,
   });
 
-  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, {
-    link_id: link_id || null, reissue: true, user_id, live_event_id,
+  await logAudit(supabase, 'live_link_reissued', 'user', admin.id, {
+    old_link_id: link_id || null, user_id, live_event_id,
   });
 
   return createResult;
