@@ -137,6 +137,8 @@ Deno.serve(async (req) => {
     let mediaBuffer: ArrayBuffer | null = null;
     let mediaFileName: string | null = null;
     let productContextId: string | null = null;
+    let templateType: string | null = null;
+    let liveEventId: string | null = null;
 
     const contentType = req.headers.get('content-type') || '';
     
@@ -162,6 +164,9 @@ Deno.serve(async (req) => {
         mediaBuffer = await mediaFile.arrayBuffer();
         mediaFileName = mediaFile.name;
       }
+
+      templateType = formData.get('template_type') as string || null;
+      liveEventId = formData.get('live_event_id') as string || null;
     } else {
       const body = await req.json();
       message = body.message || '';
@@ -171,7 +176,11 @@ Deno.serve(async (req) => {
       filters = body.filters || {};
       const rawPcid = body.product_context_id;
       productContextId = (rawPcid && rawPcid !== 'all') ? rawPcid : null;
+      templateType = body.template_type || null;
+      liveEventId = body.live_event_id || null;
     }
+
+    const isWebinarInvite = templateType === 'webinar_invite' && !!liveEventId;
 
     if (!message && !mediaBuffer) {
       return new Response(
