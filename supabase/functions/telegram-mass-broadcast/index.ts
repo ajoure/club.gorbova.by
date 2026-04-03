@@ -384,7 +384,22 @@ Deno.serve(async (req) => {
 
         if (result.ok) {
           sent++;
-          console.log(`Message sent to user ${profile.user_id}`);
+          const telegramMsgId = result.result?.message_id || null;
+          messageLogBatch.push({
+            user_id: profile.user_id,
+            telegram_user_id: profile.telegram_user_id,
+            bot_id: activeBotId,
+            direction: 'outgoing',
+            message_text: personalizedMessage,
+            message_id: telegramMsgId,
+            sent_by_admin: user.id,
+            status: 'sent',
+            meta: { broadcast: true },
+          });
+          // Batch insert every 50 messages
+          if (messageLogBatch.length >= 50) {
+            await supabase.from('telegram_messages').insert(messageLogBatch.splice(0, 50));
+          }
         } else {
           failed++;
           console.error(`Failed to send to ${profile.user_id}:`, result.description);
