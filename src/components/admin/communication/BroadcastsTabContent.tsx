@@ -791,12 +791,13 @@ const [includeButton, setIncludeButton] = useState(true);
                     const isTelegram = item.action === "telegram_mass_broadcast";
 
                     return (
-                      <div
+                      <button
                         key={item.id}
-                        className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+                        onClick={() => setSelectedBroadcast({ ...item, _meta: meta })}
+                        className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors w-full text-left cursor-pointer"
                       >
                         <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
                             isTelegram ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"
                           }`}
                         >
@@ -808,7 +809,10 @@ const [includeButton, setIncludeButton] = useState(true);
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">
-                            {String(meta?.message_preview || meta?.subject || "Рассылка").replace(/\{\{\w+\}\}/g, '').replace(/\s{2,}/g, ' ').trim() || "Рассылка"}
+                            {String(meta?.message_preview || meta?.subject || "Рассылка")
+                              .replace(/[,\s]*\{\{(?:\w+(?:\.\w+)*)\}\}[,\s]*/g, ' ')
+                              .replace(/\s{2,}/g, ' ')
+                              .trim() || "Рассылка"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {format(new Date(item.created_at), "dd MMM yyyy, HH:mm", {
@@ -827,8 +831,9 @@ const [includeButton, setIncludeButton] = useState(true);
                               {failed}
                             </Badge>
                           )}
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
