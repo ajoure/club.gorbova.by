@@ -226,6 +226,7 @@ export default function LiveEvent() {
     );
   }
 
+  if (state === "access_denied") {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <Lock className="h-16 w-16 text-muted-foreground" />
