@@ -82,6 +82,7 @@ interface LiveEventForm {
   kinescope_video_id: string;
   kinescope_mode: "picker" | "manual";
   kinescope_project_id: string;
+  kinescope_folder_id: string; // live folder for live events
   status: string;
   is_published: boolean;
   scheduled_at: string;
