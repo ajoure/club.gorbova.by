@@ -155,27 +155,45 @@ export default function AdminLiveEvents() {
     enabled: !!editingId,
   });
 
+  // Kinescope integration instance
+  const { data: kinescopeInstance } = useQuery({
+    queryKey: ["kinescope-instance"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("integration_instances")
+        .select("id, config, status")
+        .eq("provider", "kinescope")
+        .eq("status", "connected")
+        .limit(1)
+        .maybeSingle();
+      return data;
+    },
+  });
+
+  const kinescopeInstanceId = kinescopeInstance?.id;
+
   // Kinescope projects
   const { data: kinescopeProjects, isLoading: kinescopeProjectsLoading } = useQuery({
-    queryKey: ["kinescope-projects"],
+    queryKey: ["kinescope-projects", kinescopeInstanceId],
     queryFn: async () => {
       const { data } = await supabase.functions.invoke("kinescope-api", {
-        body: { action: "list_projects" },
+        body: { action: "list_projects", instance_id: kinescopeInstanceId },
       });
-      return (data?.data || []) as Array<{ id: string; name: string }>;
+      return (data?.projects || []) as Array<{ id: string; name: string }>;
     },
+    enabled: !!kinescopeInstanceId,
   });
 
   // Kinescope videos for selected project
   const { data: kinescopeVideos, isLoading: kinescopeVideosLoading } = useQuery({
-    queryKey: ["kinescope-videos", form.kinescope_project_id],
+    queryKey: ["kinescope-videos", form.kinescope_project_id, kinescopeInstanceId],
     queryFn: async () => {
       const { data } = await supabase.functions.invoke("kinescope-api", {
-        body: { action: "list_videos", project_id: form.kinescope_project_id },
+        body: { action: "list_videos", project_id: form.kinescope_project_id, instance_id: kinescopeInstanceId },
       });
-      return (data?.data || []) as Array<{ id: string; title: string; status: string }>;
+      return (data?.videos || []) as Array<{ id: string; title: string; status: string }>;
     },
-    enabled: !!form.kinescope_project_id && form.kinescope_mode === "picker",
+    enabled: !!form.kinescope_project_id && !!kinescopeInstanceId && form.kinescope_mode === "picker",
   });
 
   // --- Pre-publish validation ---
