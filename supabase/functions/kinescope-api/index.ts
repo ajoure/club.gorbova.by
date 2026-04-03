@@ -20,8 +20,6 @@ interface KinescopeRequest {
   per_page?: number;
   // For create_live_event
   name?: string;
-  type?: string;
-  record?: boolean;
 }
 
 async function makeRequest(
