@@ -19,7 +19,7 @@ interface LiveResolveResult {
   message?: string;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "scheduled" | "live" | "ended_no_replay" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "error";
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
