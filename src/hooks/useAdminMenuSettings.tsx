@@ -87,6 +87,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Upload,
   PanelTop,
   Bot,
+  Video,
 };
 
 // Default menu configuration - Reorganized structure
