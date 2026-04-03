@@ -5143,6 +5143,55 @@ export type Database = {
           },
         ]
       }
+      live_event_access_rules: {
+        Row: {
+          created_at: string
+          id: string
+          live_event_id: string
+          product_id: string
+          sort_order: number
+          tariff_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          live_event_id: string
+          product_id: string
+          sort_order?: number
+          tariff_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          live_event_id?: string
+          product_id?: string
+          sort_order?: number
+          tariff_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_access_rules_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_access_rules_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_access_rules_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_events: {
         Row: {
           access_rule: Json
@@ -5152,9 +5201,9 @@ export type Database = {
           id: string
           invite_mode: string
           is_published: boolean
-          kinescope_video_id: string
+          kinescope_video_id: string | null
           metadata: Json | null
-          product_id: string
+          product_id: string | null
           replay_enabled: boolean
           scheduled_at: string | null
           slug: string
@@ -5170,9 +5219,9 @@ export type Database = {
           id?: string
           invite_mode?: string
           is_published?: boolean
-          kinescope_video_id: string
+          kinescope_video_id?: string | null
           metadata?: Json | null
-          product_id: string
+          product_id?: string | null
           replay_enabled?: boolean
           scheduled_at?: string | null
           slug: string
@@ -5188,9 +5237,9 @@ export type Database = {
           id?: string
           invite_mode?: string
           is_published?: boolean
-          kinescope_video_id?: string
+          kinescope_video_id?: string | null
           metadata?: Json | null
-          product_id?: string
+          product_id?: string | null
           replay_enabled?: boolean
           scheduled_at?: string | null
           slug?: string
