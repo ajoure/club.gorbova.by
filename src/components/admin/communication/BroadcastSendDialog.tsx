@@ -15,6 +15,12 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -31,6 +37,7 @@ import {
   AlertTriangle,
   Info,
   Shield,
+  X,
 } from "lucide-react";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
 
@@ -38,8 +45,8 @@ interface BroadcastFilters {
   hasActiveSubscription: boolean;
   hasTelegram: boolean;
   hasEmail: boolean;
-  productId: string;
-  tariffId: string;
+  productIds: string[];
+  tariffIds: string[];
   clubId: string;
 }
 
@@ -62,8 +69,8 @@ export function BroadcastSendDialog({
     hasActiveSubscription: false,
     hasTelegram: true,
     hasEmail: false,
-    productId: "",
-    tariffId: "",
+    productIds: [],
+    tariffIds: [],
     clubId: "",
   });
 
