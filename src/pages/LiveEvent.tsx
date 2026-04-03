@@ -139,6 +139,21 @@ export default function LiveEvent() {
     );
   }
 
+  if (state === "invite_required") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <Lock className="h-16 w-16 text-muted-foreground" />
+        <h1 className="text-2xl font-bold text-foreground">Требуется приглашение</h1>
+        {data?.title && (
+          <h2 className="text-lg text-muted-foreground">{data.title}</h2>
+        )}
+        <p className="text-muted-foreground text-center max-w-md">
+          Доступ к этому эфиру возможен только по персональной пригласительной ссылке. Проверьте сообщения в Telegram или электронной почте.
+        </p>
+      </div>
+    );
+  }
+
   if (state === "scheduled") {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
