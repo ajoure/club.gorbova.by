@@ -442,11 +442,15 @@ Deno.serve(async (req) => {
         failed,
         total: sent + failed,
         message_preview: resolveSystemTokens(message, broadcastNow)
-          .replace(/\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}/g, '')
+          .replace(/[,\s]*\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}[,\s]*/g, ' ')
           .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
           .replace(/\s{2,}/g, ' ')
           .trim()
           .substring(0, 80),
+        message_template: message,
+        include_button: includeButton,
+        button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
+        button_url: includeButton ? appUrl : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
