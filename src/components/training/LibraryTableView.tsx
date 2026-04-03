@@ -183,7 +183,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     if (safeL === 0) return null;
     if (safeC >= safeL) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+        <span className="inline-flex items-center gap-1 text-xs text-primary font-medium">
           <Check className="h-3 w-3" />
           <span className="hidden sm:inline">Завершено</span>
         </span>
