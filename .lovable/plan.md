@@ -2,367 +2,290 @@
 
 &nbsp;
 
-1. **PATCH A расширить до proof-first, а не только fix поля record**
+1. **sync_live_event должен возвращать не только status_code, но и нормализованный provider-state**
   &nbsp;
-  - Перед финальным фиксированием payload обязателен один прямой runtime-proof через edge function:
+  - Добавить в response поля:
     &nbsp;
-    - сохранить в логах и/или в admin debug-block полный request payload;
-    - сохранить полный raw response от Kinescope при create_live_event;
-    - отдельно зафиксировать, какие поля реально обязательны для create: parent_id, record.parent_id, name, возможно type.
+    - provider_source_status: ok | missing | broken | draft
+    - provider_error_message
+    - provider_stream_status
     &nbsp;
-  - В DoD добавить не только 200, но и факт, что в ответе реально пришли:
-    &nbsp;
-    - id,
-    - play_link,
-    - [stream.id](http://stream.id),
-    - rtmp_link,
-    - streamkey.
-    &nbsp;
-  - Если какое-то из этих полей не приходит на create, делать обязательный follow-up get_live_event / sync_live_event сразу после create и уже оттуда добирать данные.
+  - UI не должен сам догадываться по комбинации 404 / нет stream / нет play_link.
   &nbsp;
-2. **Не затирать существующий metadata, а делать merge**
+2. **Ввести два отдельных статуса**
   &nbsp;
-  - В AdminLiveEvents.tsx при сохранении live-stream нельзя перезаписывать metadata целиком.
-  - Нужно merge:
+  - Не смешивать состояние источника и состояние последней синхронизации.
+  - Нужны:
     &nbsp;
-    - старый metadata
+    - provider_source_status: draft | ok | missing | broken
+    - provider_sync_status: idle | syncing | success | error
+    &nbsp;
+  - Это уберёт путаницу в control panel и readiness.
+  &nbsp;
+3. **Пересоздание разрешать только при наличии обязательных идентификаторов**
+  &nbsp;
+  - Для recreate проверить:
+    &nbsp;
+    - kinescope_folder_id
     - kinescope_project_id
-    - [provider.live](http://provider.live)_event
-    - [provider.stream](http://provider.stream)
-    - [provider.play](http://provider.play)_link
-    - provider.rtmp_link
-    - provider.streamkey
-    - provider_status
-    - last_provider_sync_at
     &nbsp;
-  - Это обязательный add-only принцип для уже накопленных данных.
-  &nbsp;
-3. **Control Panel вынести в отдельную секцию только после успешного create**
-  &nbsp;
-  - До создания эфира:
+  - Если чего-то нет, кнопка неактивна, под ней явный blocker:
     &nbsp;
-    - выбор проекта,
-    - кнопка создания,
-    - понятный readiness.
-    &nbsp;
-  - После создания:
-    &nbsp;
-    - отдельный блок **«Управление трансляцией»**.
-    &nbsp;
-  - В этом блоке показать:
-    &nbsp;
-    - статус провайдера,
-    - kinescope_live_event_id,
-    - kinescope_stream_id,
-    - play_link,
-    - rtmp_link,
-    - streamkey,
-    - время последней синхронизации.
-    &nbsp;
-  - streamkey по умолчанию скрыт, с кнопкой показать/скрыть и копировать.
-  &nbsp;
-4. **Инструкцию ведущему заменить на рабочий операторский блок**
-  &nbsp;
-  - Не писать общий текст “идите в Kinescope”.
-  - Сделать блок:
-    &nbsp;
-    - “Ссылка для просмотра”
-    - “RTMP сервер”
-    - “Ключ трансляции”
-    - “Статус трансляции”
-    - “Запустить эфир”
-    - “Завершить эфир”
-    - “Обновить статус”
-    &nbsp;
-  - Если для полного управления всё же нужен переход в Kinescope, оставить его как вторичную ссылку “Открыть в Kinescope”, а не как основной сценарий.
-  &nbsp;
-5. **PATCH C дополнить явным автопереходом readiness-состояний**
-  &nbsp;
-  - После успешного create live event:
-    &nbsp;
-    - снимать blocker “нет источника Kinescope”;
-    - автоматически пересчитывать publish_ready;
-    - если scheduled_at и access rules уже заполнены, показывать CTA:
-      &nbsp;
-      - “Опубликовать эфир”
-      - после публикации — “Создать приглашение”.
-      &nbsp;
-    &nbsp;
-  - В BroadcastTemplateDialog причина disabled должна быть не только “Черновик”, а конкретная:
-    &nbsp;
-    - “Не опубликован”
-    - “Не задана дата”
-    - “Не создан источник трансляции”
-    - “Не заданы правила доступа”.
+    - «Не выбрана папка live-эфиров»
+    - «Не выбран проект для записи»
     &nbsp;
   &nbsp;
-6. **Добавить обязательный PATCH D — sync provider → platform status**
+4. **provider_history[] сохранить в полной, но безопасной структуре**
   &nbsp;
-  - При sync_live_event должен выполняться mapping статусов провайдера в platform lifecycle:
+  - Для history хранить:
     &nbsp;
-    - provider pending → scheduled
-    - provider active/live → live
-    - provider completed/finished → ended
-    - если найдена запись и replay_enabled=true → replay_available
+    - live_event_id
+    - stream_id
+    - play_link
+    - rtmp_link
+    - streamkey_masked или has_streamkey=true
+    - provider_stream_status
+    - detached_at
+    - reason
     &nbsp;
-  - Сохранять в БД:
-    &nbsp;
-    - platform_status
-    - provider raw status
-    - last_provider_sync_at
-    - найденный replay source.
-    &nbsp;
-  - Без этого control panel будет неполной.
+  - Полный streamkey в history не дублировать без необходимости.
   &nbsp;
-7. **Добавить обязательный PATCH E — replay binding после завершения**
+5. **Сделать каноническую структуру metadata**
   &nbsp;
-  - После complete_live_event или sync_live_event нужно:
+  - Использовать:
     &nbsp;
-    - вызвать get_live_event_videos;
-    - если запись появилась, сохранить источник записи в kinescope_video_id или отдельный replay-source в metadata;
-    - перевести эфир в replay_available, если это разрешено.
+    - metadata.provider.current
+    - metadata.provider_history[]
     &nbsp;
-  - Это критично, чтобы одна и та же ссылка /live/:slug после живого эфира открывала запись, а не ломалась.
+  - Не хранить дубли provider-данных в нескольких разных ветках metadata без явной причины.
   &nbsp;
-8. **Комментарии и вопросы встроить в admin control panel и в live page с одним источником данных**
+6. **Top-level поля всегда синхронизировать с provider.current**
   &nbsp;
-  - Не дублировать модели.
-  - Использовать уже созданные LiveEventComments и LiveEventQuestions, но:
+  - При recreate:
     &nbsp;
-    - на странице эфира для пользователя;
-    - в админке в control panel для модерации.
+    - обновлять kinescope_live_event_id
+    - обновлять kinescope_stream_id
     &nbsp;
-  - Для admin view добавить:
+  - При detach:
     &nbsp;
-    - счётчик комментариев,
-    - счётчик вопросов,
-    - быстрый фильтр “без ответа”.
+    - очищать kinescope_live_event_id
+    - очищать kinescope_stream_id
     &nbsp;
-  &nbsp;
-9. **Сделать нормальный текст ошибок вместо raw API-сообщений**
-  &nbsp;
-  - Если create не удался:
+  - При обнаружении replay:
     &nbsp;
-    - не показывать только provider raw error;
-    - показывать человекочитаемый текст + кнопку “Показать технические детали”.
-    &nbsp;
-  - Формат:
-    &nbsp;
-    - основной текст для пользователя,
-    - код,
-    - raw JSON в collapsible debug block.
+    - обновлять kinescope_video_id
+    - переводить platform_status в replay_available
     &nbsp;
   &nbsp;
-10. **DoD усилить**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Недостаточно “вернул 200”.
-- Финальный DoD по PATCH A–E:
+7. **detach и recreate вынести в отдельные обработчики**
   &nbsp;
-  1. Create live event из админки успешен.
-  2. В БД сохранены kinescope_live_event_id, kinescope_stream_id, provider metadata.
-  3. В админке видны play_link, rtmp_link, streamkey.
-  4. enable_live_event меняет статус на live.
-  5. complete_live_event меняет статус на ended.
-  6. sync_live_event подтягивает provider status и запись.
-  7. После публикации эфир становится выбираемым в BroadcastTemplateDialog.
-  8. После завершения и появления записи тот же /live/:slug работает как replay.
-  9. Recorded flow не сломан.
-  10. Все изменения подтверждены runtime-proof, а не только кодом.
+  - Не держать эту логику прямо внутри JSX/control panel.
+  - Нужны отдельные методы:
+    &nbsp;
+    - handleSyncProvider
+    - handleRecreateProvider
+    - handleDetachProvider
+    &nbsp;
+  - Это уменьшит риск дальнейшей поломки перегруженного AdminLiveEvents.tsx.
+  &nbsp;
+8. **После sync/recreate/detach обязательно пересчитывать readiness и доступность кнопок**
+  &nbsp;
+  - Не ограничиваться только invalidateQueries.
+  - Если editor открыт, локальный state тоже должен обновляться сразу, чтобы badge/кнопки/блокеры менялись без перезахода.
+  &nbsp;
+9. **В BroadcastTemplateDialog показывать точную причину именно для live-stream**
+  &nbsp;
+  - Отдельные причины:
+    &nbsp;
+    - «Источник трансляции не создан»
+    - «Источник трансляции удалён в Kinescope»
+    - «Источник трансляции повреждён»
+    &nbsp;
+  - Не сводить всё к общему “Не готов”.
+  &nbsp;
+10. **Confirm dialog усилить**
+  &nbsp;
+  - Для recreate и detach явно показать:
+    &nbsp;
+    - ссылка /live/:slug сохранится
+    - комментарии и вопросы сохранятся
+    - меняется только provider-source
+    - приглашения начнут работать только после повторной readiness-проверки
+    &nbsp;
+  &nbsp;
+11. **Audit meta сделать доказуемым**
+  &nbsp;
+  - Для событий
+    &nbsp;
+    - live_provider_synced
+    - live_provider_missing
+    - live_provider_recreated
+    - live_provider_detached
+    &nbsp;
+  - записывать в meta:
+    &nbsp;
+    - platform_live_event_id
+    - old_provider_live_event_id
+    - new_provider_live_event_id
+    - old_stream_id
+    - new_stream_id
+    - reason
+    - provider_source_status_before
+    - provider_source_status_after
+    &nbsp;
+  &nbsp;
+12. **DoD усилить runtime-proof**
+  &nbsp;
+  - Обязательно показать отдельно:
+    &nbsp;
+    1. sync_live_event вернул 404 → UI показывает missing
+    2. recreate создал новый provider-event и обновил top-level поля + metadata
+    3. detach очистил provider-связку, но slug/comments/questions/access rules сохранены
+    4. После recreate эфир снова становится selectable в BroadcastTemplateDialog
+    &nbsp;
+  &nbsp;
+13. **Ничего не менять в recorded flow**
+  &nbsp;
+  - PATCH E применять только к event_type='live_stream'.
+  - Для recorded_webinar новые provider-source проверки не должны блокировать существующий сценарий.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: PATCH E — Пересоздание / перепривязка live event + provider status management
 
-11. **Ничего из текущего recorded flow не удалять**
+## Что есть сейчас
 
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- Обязательно зафиксировать в плане отдельно:
-  &nbsp;
-  - текущий выбор видео из Kinescope v1,
-  - manual kinescope_video_id,
-  - текущие access rules,
-  - session/heartbeat/invite flow
-    остаются без удаления и без деградации.
-  &nbsp;
-- Live-stream добавляется как второй параллельный режим.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. **Нужен один consolidated финальный proof-пакет**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- После выполнения не отдельные словесные отчёты, а единый proof:
-  &nbsp;
-  - request/response create,
-  - состояние записи в БД,
-  - скрин control panel,
-  - скрин selectable эфира в BroadcastTemplateDialog,
-  - скрин /live/:slug,
-  - proof replay после завершения.
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-План: Исправление создания live event в Kinescope + Admin Control Panel
-
-## Диагностика
-
-### Корневая причина ошибки 400
-
-Лог edge function:
-
-```
-json: cannot unmarshal bool into Go struct field CreateForm.record of type meta.Record
-```
-
-Код отправляет `record: true` (boolean), но Kinescope API v2 ожидает **объект**:
-
-```json
-{ "record": { "parent_id": "project_uuid" } }
-```
-
-Это подтверждено реальным ответом API — существующие live events в Kinescope содержат:
-
-```json
-"record": { "parent_id": "14a07c2e-c2e8-4d50-930c-cf15151f08ea" }
-```
-
-### Что API реально возвращает (доказано вызовом list_live_events)
-
-```text
-id:            "019d4f81-75e7-..."          ← kinescope_live_event_id
-play_link:     "https://kinescope.io/..."   ← embed/player URL
-rtmp_link:     "rtmp://rtmp.kinescope.io/live"
-streamkey:     "a147f216f410..."             ← OBS stream key
-stream.id:     "2dda40d6-..."               ← kinescope_stream_id
-stream.status: "pending"                    ← provider status
-poster.*:      poster URLs
-```
+- `LiveStreamControlPanel` показывает данные провайдера и кнопки (Запустить / Завершить / Обновить статус)
+- `handleSync` делает sync но не обрабатывает 404 (удалённый event в Kinescope)
+- `sync_live_event` в edge function не возвращает `status_code` — нельзя отличить 404 от других ошибок
+- Нет механизма пересоздания или отвязки провайдера
+- Metadata перезаписывается без истории
 
 ---
 
-## PATCH A — Исправить create_live_event (blocker)
+## Изменения
 
-### Файл: `supabase/functions/kinescope-api/index.ts`
+### 1. Edge function: kinescope-api/index.ts
 
-Строка 230-235 — заменить:
+**sync_live_event** — добавить `status_code` в ответ:
 
-```typescript
-// БЫЛО:
-record: request.record !== false, // boolean — ОШИБКА
-
-// СТАЛО:
-record: { parent_id: project_id },  // объект с parent_id проекта
 ```
-
-Также убрать `type: request.type || "webinar"` — по умолчанию Kinescope использует `"one-time"`, что корректно.
-
-Итоговый body для create:
-
-```typescript
-const body = {
-  name: request.name || "Новый эфир",
-  parent_id: project_id,   // проект Kinescope
-  record: { parent_id: project_id },
-};
-```
-
-### Файл: `src/pages/admin/AdminLiveEvents.tsx`
-
-Строки 323-331 — убрать `record: true`, добавить логирование полного response:
-
-```typescript
-body: {
-  action: "create_live_event",
-  instance_id: kinescopeInstanceId,
-  project_id: form.kinescope_project_id,
-  name: form.title || "Новый эфир",
+result = {
+  success: eventResult.success,
+  status_code: eventResult.status_code,
+  data: { event, videos, error }
 }
 ```
 
-После успешного создания — сохранять дополнительные поля из ответа API:
+Это позволит UI отличить 404 (deleted) от других ошибок.
 
-- `kinescope_live_event_id` = `eventData.id`
-- `kinescope_stream_id` = `eventData.stream?.id`
-- provider metadata: `rtmp_link`, `streamkey`, `play_link`, `stream.status`
+### 2. LiveStreamControlPanel — полная переработка
 
-Обновлять запись в БД сразу после создания (update live_events с новыми ID).
+Разбить на 3 визуальных блока:
 
-### Proof после деплоя
+**Блок A: Источник трансляции Kinescope**
 
-Вызвать `create_live_event` через curl edge function и проверить успешный 200.
+- Dual badge: Платформа (scheduled/live/ended) + Kinescope (ok/missing/broken/draft)
+- Provider source status определяется при sync:
+  - `ok` — sync вернул 200 и есть stream
+  - `missing` — sync вернул 404
+  - `broken` — sync вернул 200, но нет stream/play_link
+  - `draft` — kinescope_live_event_id пустой
+- ID и время последней синхронизации
 
----
+**Блок B: Настройки трансляции (OBS)** — без изменений (play_link, rtmp, streamkey)
 
-## PATCH B — Admin Control Panel для live_stream
+**Блок C: Действия**
 
-### Файл: `src/pages/admin/AdminLiveEvents.tsx`
+- **Обновить источник** — вызов sync_live_event (уже есть)
+- **Пересоздать эфир** — новая кнопка с confirm dialog
+- **Отвязать источник** — новая кнопка с confirm dialog
+- **Запустить / Завершить** — существующие кнопки, но disabled если source status = missing/broken
 
-В форме редактирования live_stream (после создания в Kinescope) добавить блок **«Управление трансляцией»**:
+### 3. Логика «Пересоздать эфир»
 
-1. **Статус эфира**: badge с текущим provider status (`pending` / `active` / `completed`)
-2. **RTMP / Stream Key**: показать rtmp_link и streamkey из metadata (для OBS)
-3. **Player link**: play_link из Kinescope
-4. **Кнопки управления**:
-  - Запустить эфир (enable)
-  - Завершить эфир (complete)
-  - Обновить статус (sync)
-5. **Вкладки**: Комментарии / Вопросы (LiveEventComments, LiveEventQuestions — уже есть компоненты)
+1. Сохранить текущие provider данные в `metadata.provider_history[]`
+2. Вызвать `create_live_event` с текущими title, folder_id, project_id
+3. Записать новые kinescope_live_event_id, stream_id, play_link, rtmp_link, streamkey в `metadata.provider.current`
+4. Обновить top-level поля: kinescope_live_event_id, kinescope_stream_id
+5. Записать audit event `live_provider_recreated`
 
-Metadata сохранять в поле `metadata` jsonb при create и при sync.
+Provider history entry:
 
----
+```json
+{
+  "live_event_id": "old-id",
+  "stream_id": "old-stream",
+  "detached_at": "ISO",
+  "reason": "recreated"
+}
+```
 
-## PATCH C — Readiness auto-recalculate + selectable invite flow
+### 4. Логика «Отвязать источник»
 
-После успешного create_live_event:
+1. Сохранить текущие provider данные в `metadata.provider_history[]` с reason = `manual_reset`
+2. Очистить: kinescope_live_event_id, kinescope_stream_id
+3. Очистить metadata.provider.current (но сохранить folder_id, project_id)
+4. НЕ трогать: slug, title, access_rules, comments, questions
+5. Записать audit event `live_provider_detached`
 
-- `kinescope_live_event_id` заполнен → readiness blocker «Нет источника Kinescope» снимается
-- Если published + scheduled_at заполнен + access rules есть → эфир становится invite_ready
-- В BroadcastTemplateDialog readiness пересчитывается по тем же полям — уже работает, нужно только убедиться, что данные сохранены
+### 5. Авто-детект 404
+
+В `handleSync`:
+
+- Если `status_code === 404` → обновить provider source status на `missing`
+- Показать badge "Источник удалён в Kinescope"
+- Кнопки: Пересоздать / Отвязать доступны, Запустить — disabled
+- Записать audit event `live_provider_missing`
+
+### 6. Confirm dialogs
+
+Для «Пересоздать эфир» и «Отвязать источник» — AlertDialog с текстом:
+
+- Платформенная ссылка /live/:slug сохранится
+- Комментарии и вопросы не потеряются
+- Будет заменён/удалён только источник трансляции
+
+### 7. Readiness update
+
+В `validationItems` и в `BroadcastTemplateDialog.getEventReadiness`:
+
+- Если kinescope_live_event_id есть, но provider source status = `missing` или `broken`:
+  - Blocker: "Источник трансляции отсутствует или недоступен"
+  - Эфир не selectable в шаблоне
+
+### 8. Audit events
+
+В handleSync (при 404), handleRecreate, handleDetach — вызывать `DomainEventService.emitEvent()` с event_type:
+
+- `live_provider_synced`
+- `live_provider_missing`
+- `live_provider_recreated`
+- `live_provider_detached`
 
 ---
 
 ## Файлы
 
 
-| Файл                                        | Действие                                                                 |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `supabase/functions/kinescope-api/index.ts` | Исправить `record` field + deploy                                        |
-| `src/pages/admin/AdminLiveEvents.tsx`       | Убрать `record: true`, сохранять stream metadata, добавить control panel |
+| Файл                                                             | Действие                                                                                                   |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `supabase/functions/kinescope-api/index.ts`                      | sync_live_event: добавить status_code в response                                                           |
+| `src/pages/admin/AdminLiveEvents.tsx`                            | LiveStreamControlPanel: добавить source status, recreate, detach, confirm dialogs, audit, provider_history |
+| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | getEventReadiness: учитывать provider source broken/missing                                                |
 
 
 ## DoD
 
-1. `create_live_event` возвращает 200 с event ID
-2. `kinescope_live_event_id` и `kinescope_stream_id` сохраняются в БД
-3. RTMP link и stream key видны в админке
-4. Кнопки управления (запуск/завершение/обновление) работают
-5. Комментарии и вопросы доступны в блоке управления
-6. Эфир после создания + публикации становится selectable в BroadcastTemplateDialog
-7. Recorded flow не затронут
+1. sync_live_event при 404 показывает «Источник удалён в Kinescope» вместо общей ошибки
+2. Кнопка «Пересоздать эфир» создает новый event и перепривязывает
+3. Кнопка «Отвязать источник» очищает provider-связку без удаления платформенного эфира
+4. Старые provider-данные сохраняются в metadata.provider_history[]
+5. Confirm dialog предупреждает о последствиях
+6. Dual badge показывает статус платформы и статус источника
+7. BroadcastTemplateDialog не позволяет выбрать эфир с missing/broken source
+8. Audit events записываются
+9. Recorded flow не затронут
