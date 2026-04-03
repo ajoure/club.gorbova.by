@@ -306,6 +306,17 @@ export default function AdminLiveEvents() {
         { key: "kinescope", label: "Живой эфир создан в Kinescope", ok: !!form.kinescope_live_event_id.trim(), blocker: true },
         { key: "scheduled", label: "Дата и время эфира заданы", ok: !!form.scheduled_at, blocker: true },
       );
+      // Check provider_source_status from metadata for live_stream
+      const currentEvent = events?.find(e => e.id === editingId);
+      const providerStatus = (currentEvent?.metadata as any)?.provider_source_status;
+      if (providerStatus === "missing" || providerStatus === "broken") {
+        items.push({
+          key: "provider_source",
+          label: "Источник трансляции недоступен",
+          ok: false,
+          blocker: true,
+        });
+      }
     } else {
       items.push(
         { key: "kinescope", label: "Источник видео привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
@@ -318,7 +329,7 @@ export default function AdminLiveEvents() {
     );
 
     return items;
-  }, [form, isLiveStream]);
+  }, [form, isLiveStream, events, editingId]);
 
   const blockers = validationItems.filter(i => i.blocker && !i.ok);
   const canPublish = blockers.length === 0;
