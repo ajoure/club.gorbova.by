@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChevronRight, ChevronDown, Play, BookOpen, Check, Search,
-  FolderOpen, FileText, Video, Headphones, Clock, Filter,
+  FileText, Video, Headphones, Clock, Filter,
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -193,13 +193,50 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     );
   };
 
-  const renderActionLabel = (lessonCount: number, completedCount: number) => {
+  const renderActionLabel = (
+    lessonCount: number,
+    completedCount: number,
+    moduleSlug?: string,
+    moduleId?: string,
+  ) => {
     const safeL = lessonCount || 0;
     const safeC = completedCount || 0;
     if (safeL === 0) return null;
+
+    const resolveTarget = (): string => {
+      if (!moduleSlug) return "#";
+      const basePath = `/library/${moduleSlug}`;
+      if (!moduleId) return basePath;
+      const lessons = getLessons(moduleId);
+      if (!lessons || lessons.length === 0) return basePath;
+
+      if (safeC > 0 && safeC < safeL) {
+        // Continue: first incomplete, non-scheduled lesson
+        const next = lessons.find((l) => !l.is_completed && !l.isScheduled)
+          || lessons.find((l) => !l.is_completed)
+          || lessons[0];
+        return `${basePath}/${next.slug}`;
+      }
+      if (safeC === 0) {
+        // Start: first available lesson
+        const first = lessons.find((l) => !l.isScheduled) || lessons[0];
+        return `${basePath}/${first.slug}`;
+      }
+      // Completed: go to module
+      return basePath;
+    };
+
+    const handleClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigate(resolveTarget());
+    };
+
     if (safeC >= safeL) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-primary font-medium">
+        <span
+          className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+          onClick={handleClick}
+        >
           <Check className="h-3 w-3" />
           <span className="hidden sm:inline">Завершено</span>
         </span>
@@ -207,14 +244,20 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     }
     if (safeC > 0) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline">
+        <span
+          className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+          onClick={handleClick}
+        >
           <Play className="h-3 w-3" />
           <span className="hidden sm:inline">Продолжить</span>
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline">
+      <span
+        className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+        onClick={handleClick}
+      >
         <Play className="h-3 w-3" />
         <span className="hidden sm:inline">Начать</span>
       </span>
@@ -343,7 +386,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
           {renderProgress(lessonCount, completedCount, true)}
         </TableCell>
         <TableCell className="py-2">
-          {renderActionLabel(lessonCount, completedCount)}
+          {renderActionLabel(lessonCount, completedCount, child.slug, child.id)}
         </TableCell>
       </TableRow>,
       ...(isExpanded ? [renderModuleLessons(child.id, child.slug, 3)] : []),
@@ -394,7 +437,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
         </TableCell>
         <TableCell className="py-2.5">
           <div className="flex items-center gap-2">
-            {renderActionLabel(lessonCount, completedCount)}
+            {renderActionLabel(lessonCount, completedCount, rm.module.slug, rm.module.id)}
           </div>
         </TableCell>
       </TableRow>,
@@ -410,7 +453,6 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
   /* ── Group row ────────────────────────────────────── */
   const renderGroup = (group: LibraryGroup) => {
     const isExpanded = effectiveExpandedGroups.has(group.productId);
-    const isSingleRoot = group.rootModules.length === 1;
     const isFlat = group.isFlattenable && group.flattenedRoot;
 
     // For flattened groups, data comes from flattenedRoot
@@ -418,81 +460,60 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     const displayLessons = isFlat ? (flatRoot!.module.lesson_count || 0) : group.totalLessons;
     const displayCompleted = isFlat ? (flatRoot!.module.completed_count || 0) : group.totalCompleted;
 
-    // For non-flat single root, auto-expand
-    const effectiveExpanded = isExpanded || (isSingleRoot && !isFlat);
-
-    // For flattened groups, expand state is only on group level
-    const flatExpanded = isFlat && isExpanded;
-
-    const showGroupRow = filteredGroups.length > 1 || group.rootModules.length > 1 || isFlat;
-
     return [
-      // Group header row
-      ...(showGroupRow ? [
-        <TableRow
-          key={`group-${group.productId}`}
-          className="bg-muted/20 hover:bg-muted/40"
-        >
-          <TableCell className="py-2.5" colSpan={isFlat ? 1 : 4}>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => toggleGroup(group.productId)}
-                className="p-0.5 rounded hover:bg-muted transition-colors"
-              >
-                {(isFlat ? flatExpanded : effectiveExpanded)
-                  ? <ChevronDown className="h-4 w-4 text-foreground" />
-                  : <ChevronRight className="h-4 w-4 text-foreground" />
-                }
-              </button>
-              {isFlat && flatRoot!.module.color_gradient && (
-                <div className={cn("w-1 h-5 rounded-full bg-gradient-to-b", flatRoot!.module.color_gradient)} />
+      // Group header row — always shown
+      <TableRow
+        key={`group-${group.productId}`}
+        className="bg-muted/20 hover:bg-muted/40"
+      >
+        <TableCell className="py-2.5">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); toggleGroup(group.productId); }}
+              className="p-0.5 rounded hover:bg-muted transition-colors"
+            >
+              {isExpanded
+                ? <ChevronDown className="h-4 w-4 text-foreground" />
+                : <ChevronRight className="h-4 w-4 text-foreground" />
+              }
+            </button>
+            {isFlat && flatRoot!.module.color_gradient && (
+              <div className={cn("w-1 h-5 rounded-full bg-gradient-to-b", flatRoot!.module.color_gradient)} />
+            )}
+            <span
+              className={cn(
+                "text-sm font-semibold",
+                isFlat && "cursor-pointer hover:text-primary transition-colors"
               )}
-              {!isFlat && <FolderOpen className="h-4 w-4 text-primary" />}
-              <span
-                className={cn(
-                  "text-sm font-semibold",
-                  isFlat && "cursor-pointer hover:text-primary transition-colors"
-                )}
-                onClick={isFlat ? () => navigate(`/library/${flatRoot!.module.slug}`) : undefined}
-              >
-                {group.productName}
-              </span>
-              {!isFlat && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 ml-1">
-                  {group.rootModules.length}
-                </Badge>
-              )}
-              {isFlat && flatRoot && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 ml-1">
-                  {flatRoot.accessLabel}
-                </Badge>
-              )}
-              <div className="flex-1" />
-              <div className="hidden sm:flex items-center gap-3 mr-2">
-                {renderProgress(displayLessons, displayCompleted, true)}
-              </div>
-            </div>
-          </TableCell>
-          {isFlat && (
-            <>
-              <TableCell className="py-2.5 hidden sm:table-cell">
-                <span className="text-xs text-muted-foreground">{displayLessons}</span>
-              </TableCell>
-              <TableCell className="py-2.5 hidden sm:table-cell">
-                {renderProgress(displayLessons, displayCompleted)}
-              </TableCell>
-              <TableCell className="py-2.5">
-                {renderActionLabel(displayLessons, displayCompleted)}
-              </TableCell>
-            </>
-          )}
-        </TableRow>
-      ] : []),
+              onClick={isFlat ? (e: React.MouseEvent) => { e.stopPropagation(); navigate(`/library/${flatRoot!.module.slug}`); } : undefined}
+            >
+              {group.productName}
+            </span>
+            {isFlat && flatRoot && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 ml-1">
+                {flatRoot.accessLabel}
+              </Badge>
+            )}
+          </div>
+        </TableCell>
+        <TableCell className="py-2.5 hidden sm:table-cell">
+          <span className="text-xs text-muted-foreground">{displayLessons}</span>
+        </TableCell>
+        <TableCell className="py-2.5 hidden sm:table-cell">
+          {renderProgress(displayLessons, displayCompleted)}
+        </TableCell>
+        <TableCell className="py-2.5">
+          {isFlat
+            ? renderActionLabel(displayLessons, displayCompleted, flatRoot!.module.slug, flatRoot!.module.id)
+            : renderActionLabel(displayLessons, displayCompleted)
+          }
+        </TableCell>
+      </TableRow>,
 
       // Content rows
       ...(isFlat
         // Flattened: skip root module row, render children/lessons directly
-        ? (flatExpanded
+        ? (isExpanded
           ? (flatRoot!.hasChildren
             ? flatRoot!.children.flatMap((c) => renderChildModule(c, flatRoot!.module.slug))
             : [renderModuleLessons(flatRoot!.module.id, flatRoot!.module.slug, 1)].flat()
@@ -500,7 +521,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
           : []
         )
         // Normal: render root modules
-        : (effectiveExpanded
+        : (isExpanded
           ? group.rootModules.flatMap((rm) => renderRootModule(rm, true) || [])
           : []
         )
