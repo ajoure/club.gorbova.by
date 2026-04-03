@@ -1576,11 +1576,14 @@ function LiveStreamControlPanel({
         return;
       }
 
-      // 3. Update DB with new provider data
+      // 3. Update DB with new provider data (status will be confirmed by auto-sync)
       const newMeta = {
         ...existingMeta,
         kinescope_project_id: projectId || existingMeta.kinescope_project_id,
         kinescope_folder_id: folderId,
+        provider_source_status: "ok", // will be confirmed by auto-sync
+        provider_error_message: null,
+        provider_status_code: null,
         provider: {
           current: {
             live_event_id: newEventId,
