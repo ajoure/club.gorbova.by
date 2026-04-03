@@ -139,11 +139,18 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
 
   /* ── Fetch lessons when modules are expanded ──────── */
   useEffect(() => {
-    const ids = [...effectiveExpandedModules];
-    if (ids.length > 0) {
-      fetchLessonsForModules(ids);
+    const ids = new Set([...effectiveExpandedModules]);
+    // For flattened groups without children, lessons load when group is expanded
+    for (const g of groups) {
+      if (g.isFlattenable && g.flattenedRoot && !g.flattenedRoot.hasChildren && effectiveExpandedGroups.has(g.productId)) {
+        ids.add(g.flattenedRoot.module.id);
+      }
     }
-  }, [effectiveExpandedModules, fetchLessonsForModules]);
+    const arr = [...ids];
+    if (arr.length > 0) {
+      fetchLessonsForModules(arr);
+    }
+  }, [effectiveExpandedModules, effectiveExpandedGroups, groups, fetchLessonsForModules]);
 
   /* ── Filter groups by search + incomplete filter ─── */
   const filteredGroups = useMemo(() => {
