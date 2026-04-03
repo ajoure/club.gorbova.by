@@ -1275,3 +1275,230 @@ function SummaryItem({ icon: Icon, label, children }: { icon: React.ElementType;
     </div>
   );
 }
+
+// --- Live Stream Control Panel ---
+function LiveStreamControlPanel({
+  form,
+  editingId,
+  kinescopeInstanceId,
+  onLifecycleAction,
+  queryClient,
+}: {
+  form: LiveEventForm;
+  editingId: string | null;
+  kinescopeInstanceId: string | undefined;
+  onLifecycleAction: (eventId: string, action: "enable_live_event" | "complete_live_event" | "sync_live_event", liveEventId: string) => Promise<void>;
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
+  const [showStreamkey, setShowStreamkey] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  // Get provider data from DB
+  const { data: eventData } = useQuery({
+    queryKey: ["live-event-provider", editingId],
+    queryFn: async () => {
+      if (!editingId) return null;
+      const { data } = await supabase.from("live_events").select("metadata, platform_status, kinescope_stream_id").eq("id", editingId).single();
+      return data;
+    },
+    enabled: !!editingId,
+  });
+
+  const provider = (eventData?.metadata as any)?.provider || {};
+  const playLink = provider.play_link;
+  const rtmpLink = provider.rtmp_link || "rtmp://rtmp.kinescope.io/live";
+  const streamkey = provider.streamkey;
+  const streamStatus = provider.stream_status || "pending";
+  const platformStatus = eventData?.platform_status || "draft";
+  const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
+
+  const handleSync = async () => {
+    if (!editingId || !form.kinescope_live_event_id || !kinescopeInstanceId) return;
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
+        body: { action: "sync_live_event", instance_id: kinescopeInstanceId, live_event_id: form.kinescope_live_event_id },
+      });
+      if (error || !data?.success) {
+        toast.error(data?.error || "Ошибка синхронизации");
+        return;
+      }
+
+      const syncEvent = (data.data as any)?.event?.data || (data.data as any)?.event;
+      const syncVideos = (data.data as any)?.videos?.data || (data.data as any)?.videos;
+
+      // Map provider status to platform status
+      const providerStreamStatus = syncEvent?.stream?.status;
+      let newPlatformStatus = platformStatus;
+      if (providerStreamStatus === "pending") newPlatformStatus = "scheduled";
+      else if (providerStreamStatus === "active" || providerStreamStatus === "live") newPlatformStatus = "live";
+      else if (providerStreamStatus === "completed" || providerStreamStatus === "finished") newPlatformStatus = "ended";
+
+      // Check for replay videos
+      let replayVideoId: string | null = null;
+      if (Array.isArray(syncVideos) && syncVideos.length > 0) {
+        replayVideoId = syncVideos[0]?.id || null;
+        if (replayVideoId) newPlatformStatus = "replay_available";
+      }
+
+      // Merge metadata
+      const { data: current } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+      const existingMeta = (current?.metadata as Record<string, any>) || {};
+      const mergedMeta = {
+        ...existingMeta,
+        provider: {
+          ...(existingMeta.provider || {}),
+          stream_status: providerStreamStatus,
+          play_link: syncEvent?.play_link || existingMeta.provider?.play_link,
+          rtmp_link: syncEvent?.rtmp_link || existingMeta.provider?.rtmp_link,
+          streamkey: syncEvent?.streamkey || existingMeta.provider?.streamkey,
+          raw_sync_response: syncEvent,
+        },
+        last_provider_sync_at: new Date().toISOString(),
+        replay_video_id: replayVideoId || existingMeta.replay_video_id,
+      };
+
+      const updatePayload: Record<string, any> = {
+        metadata: mergedMeta,
+        platform_status: newPlatformStatus,
+        status: newPlatformStatus,
+      };
+      if (replayVideoId) {
+        updatePayload.kinescope_video_id = replayVideoId;
+      }
+
+      await supabase.from("live_events").update(updatePayload as any).eq("id", editingId);
+      toast.success("Статус обновлён");
+      queryClient.invalidateQueries({ queryKey: ["live-event-provider", editingId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+    } catch (err: any) {
+      toast.error(`Ошибка: ${err.message || String(err)}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} скопировано`);
+  };
+
+  const statusColors: Record<string, string> = {
+    pending: "bg-muted text-muted-foreground",
+    scheduled: "bg-muted text-muted-foreground",
+    active: "bg-primary/10 text-primary",
+    live: "bg-primary/10 text-primary",
+    completed: "bg-muted text-muted-foreground",
+    ended: "bg-muted text-muted-foreground",
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Status header */}
+      <div className="rounded-lg border bg-primary/5 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-medium text-primary">
+            <CheckCircle2 className="h-4 w-4" /> Эфир создан в Kinescope
+          </div>
+          <Badge className={statusColors[streamStatus] || "bg-muted"}>
+            {streamStatus === "pending" ? "Ожидает" : streamStatus === "active" ? "В эфире" : streamStatus === "completed" ? "Завершён" : streamStatus}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_live_event_id}</code>
+        </p>
+        {lastSync && (
+          <p className="text-[10px] text-muted-foreground">
+            Последняя синхронизация: {format(new Date(lastSync), "dd.MM.yyyy HH:mm:ss", { locale: ru })}
+          </p>
+        )}
+      </div>
+
+      {/* OBS / Streaming settings */}
+      <div className="rounded-lg border p-3 space-y-3">
+        <h4 className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5">
+          <Radio className="h-3.5 w-3.5" /> Настройки трансляции (OBS)
+        </h4>
+        
+        {playLink && (
+          <ProviderField label="Ссылка для просмотра" value={playLink} onCopy={() => copyToClipboard(playLink, "Ссылка")} />
+        )}
+        <ProviderField label="RTMP сервер" value={rtmpLink} onCopy={() => copyToClipboard(rtmpLink, "RTMP")} />
+        
+        {streamkey && (
+          <div className="space-y-1">
+            <Label className="text-[11px] text-muted-foreground">Ключ трансляции</Label>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 bg-muted px-2 py-1.5 rounded text-[11px] font-mono break-all">
+                {showStreamkey ? streamkey : "••••••••••••••••"}
+              </code>
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => setShowStreamkey(!showStreamkey)}>
+                {showStreamkey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={() => copyToClipboard(streamkey, "Ключ")}>
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2">
+        {editingId && platformStatus !== "live" && platformStatus !== "ended" && (
+          <Button variant="outline" size="sm" className="gap-1.5"
+            onClick={() => onLifecycleAction(editingId, "enable_live_event", form.kinescope_live_event_id)}>
+            <Zap className="h-3.5 w-3.5" /> Запустить эфир
+          </Button>
+        )}
+        {editingId && platformStatus === "live" && (
+          <Button variant="outline" size="sm" className="gap-1.5 text-destructive"
+            onClick={() => onLifecycleAction(editingId, "complete_live_event", form.kinescope_live_event_id)}>
+            <Square className="h-3.5 w-3.5" /> Завершить эфир
+          </Button>
+        )}
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={handleSync} disabled={syncing}>
+          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Обновить статус
+        </Button>
+      </div>
+
+      {/* Comments & Questions tabs */}
+      {editingId && (
+        <>
+          <Separator />
+          <Tabs defaultValue="comments" className="w-full">
+            <TabsList>
+              <TabsTrigger value="comments" className="gap-1.5 text-xs">
+                <MessageSquare className="h-3 w-3" /> Комментарии
+              </TabsTrigger>
+              <TabsTrigger value="questions" className="gap-1.5 text-xs">
+                <HelpCircle className="h-3 w-3" /> Вопросы
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="comments" className="border rounded-lg mt-2">
+              <LiveEventComments liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="questions" className="border rounded-lg mt-2">
+              <LiveEventQuestions liveEventId={editingId} />
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ProviderField({ label, value, onCopy }: { label: string; value: string; onCopy: () => void }) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px] text-muted-foreground">{label}</Label>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 bg-muted px-2 py-1.5 rounded text-[11px] font-mono break-all">{value}</code>
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onCopy}>
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
