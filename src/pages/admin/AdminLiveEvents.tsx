@@ -469,6 +469,21 @@ export default function AdminLiveEvents() {
 
       const sourceKind: SourceKind = data.event_type === "live_stream" ? "kinescope_live_event" : "kinescope_video";
 
+      // Merge metadata: preserve existing provider data
+      let mergedMetadata: Record<string, any> = {
+        kinescope_project_id: data.kinescope_project_id || null,
+        kinescope_folder_id: data.kinescope_folder_id || null,
+      };
+      
+      if (editingId) {
+        const { data: current } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+        const existingMeta = (current?.metadata as Record<string, any>) || {};
+        mergedMetadata = {
+          ...existingMeta,
+          ...mergedMetadata,
+        };
+      }
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
@@ -488,9 +503,7 @@ export default function AdminLiveEvents() {
         platform_status: data.status,
         kinescope_live_event_id: data.kinescope_live_event_id || null,
         kinescope_project_id: data.kinescope_project_id || null,
-        metadata: {
-          kinescope_project_id: data.kinescope_project_id || null,
-        },
+        metadata: mergedMetadata,
       };
 
       let eventId = editingId;
