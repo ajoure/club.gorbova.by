@@ -2,370 +2,237 @@
 
 &nbsp;
 
-1. **Не делать live_active_sessions с session_key как отдельным единственным источником доступа без жёсткой привязки к user.**
-  В heartbeat и session-check обязательно проверять одновременно:
+1. **session_missing не своди автоматически к session_expired без различения причины.**
+  Это два разных состояния:
   &nbsp;
-  - session_key
-  - user_id
-  - live_event_id
-    Иначе одна утёкшая session key может стать самостоятельным токеном доступа.
+  - session_missing — proof ещё валиден, но активной viewer-session нет;
+  - session_expired — session была, но истекла/стала невалидной.
+    Лучше либо:
+  - показать отдельное состояние “Требуется повторный вход по ссылке”,
+    либо
+  - хотя бы явно различать их в коде и audit, даже если UI текст пока общий.
   &nbsp;
-2. **session_key не передавать через URL param.**
-  В плане упомянуто “через URL param или sessionStorage”.
-  URL param нужно исключить полностью.
-  Оставить только:
+2. **Перед удалением autoCreateSession проверь, что re-entry flow реально достижим для пользователя без тупика.**
+  Если /live/:slug вернёт session_missing, пользователь должен иметь понятный путь назад:
   &nbsp;
-  - sessionStorage
-  - либо другой client storage, не попадающий в URL/history/referrer.
+  - либо через сохранённую token-link,
+  - либо через кнопку/redirect на /live-access/:token, если token ещё доступен,
+  - либо через явный текст “откройте пригласительную ссылку снова”.
+    Нельзя оставлять состояние, где доступ есть, proof жив, а пользователь не понимает, как восстановить session.
   &nbsp;
-3. **Не переименовывать consumed в activated, если это сломает уже созданные миграции и текущую реализацию без реальной необходимости.**
-  Для MVP безопаснее:
+3. **В handleCreate расширение revoke до consumed нужно делать только если это не ломает обычный owner re-entry.**
+  Для обычного create из broadcast/send-flow это нормально, потому что создаётся новая ссылка.
+  Но в плане надо явно указать:
   &nbsp;
-  - оставить статус consumed как “успешно активированная ссылка”,
-  - а новую semantics описать логически, без обязательного массового переименования схемы.
-    Иначе это лишний churn и риск конфликтов.
-    Если очень хочется новое имя, тогда это должен быть отдельный осознанный migration patch с проверкой всех мест использования.
+  - это безопасно, потому что create используется для новой выдачи/переотправки,
+  - текущий доступ владельца через старую ссылку после создания новой считается намеренно заменённым.
   &nbsp;
-4. **Если оставляете смену consumed -> activated, то надо явно обновить все места в коде и constraints без остаточных веток already_used.**
-  Сейчас план затрагивает это, но нужно явно прописать full sweep:
+4. **handleRevoke должен отзывать не только links/proof/session, но и быть идемпотентным.**
+  Если admin нажмёт revoke повторно:
   &nbsp;
-  - validate statuses
-  - DoD
-  - UI states
-  - audit labels
-  - existing DB constraints/checks
-  - admin screens/filters
-    Иначе можно получить смешанную модель consumed + activated.
+  - не должно быть ошибки,
+  - состояние должно остаться корректным,
+  - audit не должен вводить в заблуждение.
+    Это стоит явно добавить в план.
   &nbsp;
-5. **live_access_proofs и live_active_sessions должны иметь чёткую роль без дублирования.**
-  Прямо зафиксируй:
+5. **В PATCH D2 для revoke/reissue нужно отдельно указать порядок операций.**
+  Лучше зафиксировать последовательность:
   &nbsp;
-  - proof = право повторного входа после успешной первичной активации
-  - active_session = защита от параллельного просмотра
-    И отдельно запиши, что наличие proof **не равно** наличию активной viewer-session.
+  1. revoke active session
+  2. delete proof
+  3. revoke existing links
+  4. create new link (для reissue)
+    Либо другой выбранный порядок, но один канонический. Это важно для предсказуемости race conditions.
   &nbsp;
-6. **В live-resolve не стоит возвращать session_expired только по отсутствию active session, если proof ещё валиден и пользователь не пытается параллельный просмотр.**
-  Иначе обычный refresh/новая вкладка может ломаться слишком жёстко.
-  Нужна более мягкая модель:
+6. **В handleReissue audit лучше не заменять старые события новым кастомным live_link_reissue_full, а дополнять ими, если нет реальной необходимости.**
+  Для консистентности лучше:
   &nbsp;
-  - если proof валиден, но active session отсутствует, можно пересоздать/поднять новую session для этого же user, а не сразу отказывать;
-  - session_expired нужен именно когда proof уже невалиден или heartbeat/session реально истекли по политике.
+  - сохранить live_link_revoked
+  - сохранить live_link_created
+  - при необходимости добавить live_link_reissued как summary event
+    Но не заменять базовые события одним агрегатом.
   &nbsp;
-7. **Определи канонический момент создания active session.**
-  Сейчас написано:
+7. **После reissue старая token-link должна давать явно определённый статус.**
+  Нужно прописать в DoD:
   &nbsp;
-  - live-token-validate создаёт session при activate/re-enter
-    Это ок, но тогда live-resolve не должен параллельно создавать вторую session.
-    Нужно явно закрепить:
-  - session создаётся/заменяется только в live-token-validate
-  - live-resolve только проверяет её наличие/валидность
-    Либо наоборот. Но не оба сразу.
+  - старая ссылка после reissue возвращает token_revoked
+  - а не token_not_found, access_denied или другой размытый ответ.
   &nbsp;
-8. **Single-session policy должна быть user-safe при обычном refresh/перезаходе владельца.**
-  Новый вход того же пользователя не должен считаться “вторым человеком”.
-  Нужно явно описать:
+8. **Для revoke тоже нужен явный user-facing результат на старой вкладке и по старой ссылке.**
+  После ручного revoke:
   &nbsp;
-  - новый вход того же user с тем же proof заменяет старую session без потери доступа;
-  - старая вкладка/устройство получает session_revoked;
-  - новая продолжает просмотр.
+  - heartbeat в открытой вкладке должен привести к session_revoked
+  - повторное открытие старой ссылки должно давать token_revoked
   &nbsp;
-9. **Для live-session-heartbeat не писать audit на каждый ping.**
-  Ты это уже частично отметил, но лучше жёстко закрепить:
+9. **Добавь proof-сценарий “proof жив, session нет”.**
+  Это как раз основной смысл PATCH D1. Нужно отдельно проверить:
   &nbsp;
-  - heartbeat audit либо вообще не писать,
-  - либо агрегировать / rate-limit, например не чаще раза в 10–15 минут на session.
-    Иначе быстро засорите audit_logs.
+  - valid proof
+  - active session отсутствует
+  - /live/:slug возвращает session_missing
+  - пользователь после повторной активации снова получает доступ
   &nbsp;
-10. **В live_active_sessions нужен updated_at или эквивалентный служебный timestamp.**
-  Сейчас есть last_seen_at и created_at, но для диагностики и админки удобнее иметь ещё явный updated_at, либо чётко использовать last_seen_at как единственный operational timestamp.
-11. **RLS policy для live_active_sessions снова использует has_role_v2(auth.uid(), 'admin') — проверь, чтобы в SQL использовалось корректное имя параметра RPC или вообще не было повторения старой ошибки.**
-  Лучше прямо в плане отметить: использовать тот же корректный вызов, что и после hotfix, без возврата к _role.
-12. **В PATCH C2 не надо убирать mismatch из статусов, если он уже где-то физически появился в данных, без миграции очистки/нормализации.**
-  Если решили сделать mismatch только audit-only, нужно:
-  &nbsp;
-  - либо оставить старый статус как legacy-compatible, но больше не писать его,
-  - либо сделать явную data cleanup migration.
-    Не оставлять это в полусостоянии.
-  &nbsp;
-13. **already_activated лучше не делать отдельным жёстким стоп-статусом, если вы и так хотите автоматический re-entry.**
-  Для владельца ссылки логичнее:
-  &nbsp;
-  - validate → ok + redirect_slug + session refresh/replacement
-  - без лишнего промежуточного экрана
-    already_activated можно оставить только как fallback UI, если redirect невозможен.
-  &nbsp;
-14. **В DoD уточни пункт про “два одновременных просмотра невозможны”.**
-  Технически нужно сформулировать так:
-  &nbsp;
-  - две одновременно активные viewer-session для одного user_id и live_event_id невозможны;
-  - новый вход заменяет старую session;
-  - старая вкладка теряет доступ после heartbeat check.
-    Это точнее и проверяемее.
-  &nbsp;
-15. **Добавь отдельный DoD на unpublished/deleted event для уже активированной ссылки.**
-  Если эфир сняли с публикации после отправки ссылки:
-  &nbsp;
-  - владелец ссылки не должен проходить дальше,
-  - должен получить корректный event_unpublished / event_not_found,
-  - без утечки Kinescope config.
-  &nbsp;
+10. **Если session_missing маппится на существующий UI session_expired, зафиксируй это как временный MVP-компромисс.**
+  Чтобы потом не забыть, лучше прямо пометить:
 
 &nbsp;
 
 &nbsp;
 
-В остальном направление правильное: hotfix, уход от “одноразовой навсегда” модели, и переход к персональной активации + single active session — это верный контур.
+&nbsp;
+
+- backend distinction есть,
+- frontend пока использует общий overlay,
+- отдельный UX copy можно вынести в follow-up.
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH C — Hotfix + Activation Model + Single Active Session
+В остальном направление правильное: убрать скрытое автосоздание session из live-resolve и сделать reissue полным разрывом старой цепочки — это именно то, что сейчас нужно.
 
-## Диагностика текущего состояния
+&nbsp;
 
-### Что есть сейчас
+План: PATCH D — Закрытие архитектурных разрывов session lifecycle
 
-- `live-token-validate`: баг `_role` вместо `_role_code` (revoke/reissue сломаны)
-- Semantics: ссылка после consume навсегда "сгорает" — владелец получает `already_used` при повторном открытии
-- `live_access_proofs`: существует, TTL 24ч, но нет контроля одновременных сессий
-- Нет heartbeat, нет single-session enforcement
+## Диагностика
 
-### Что нужно
+### Блокер 1: `live-resolve` создаёт session без передачи `session_key` клиенту
 
-- Hotfix `_role_code`
-- Смена модели: consumed → activated (владелец может повторно входить)
-- Новая таблица `live_active_sessions` для single-session per user per event
-- Heartbeat на `/live/:slug`
-- `live-resolve` проверяет active session
+**Факт по коду (строки 102-116 live-resolve):** `autoCreateSession()` генерирует `session_key`, вставляет в БД, но `live-resolve` response (строки 182-190) НЕ содержит `session_key`. Клиент (`LiveEvent.tsx` строка 43) берёт ключ из `sessionStorage` — его там нет для авто-созданной session. Heartbeat не запускается.
 
----
+**Решение: Вариант A** — убрать `autoCreateSession` из `live-resolve`. Session создаётся ТОЛЬКО в `live-token-validate`. Если proof валиден, но session нет/expired, `live-resolve` возвращает `session_missing` → клиент показывает "Сессия истекла, обновите страницу" или автоматически повторяет активацию через token-link.
 
-## PATCH C1 — Hotfix `_role_code`
+### Блокер 2: `reissue` не отзывает `consumed` ссылку
 
-**Файл**: `supabase/functions/live-token-validate/index.ts`, строка 465
+**Факт по коду (строки 78-84 handleCreate):** `handleCreate` делает revoke только для `['created', 'sent']`. При `reissue` (строка 401) вызывается `handleCreate` — старая `consumed` ссылка остаётся рабочей.
 
-**Было**: `_role: 'admin'`
-**Будет**: `_role_code: 'admin'`
-
-Deploy + проверка revoke/reissue через curl.
+**Решение:** В `handleReissue` перед вызовом `handleCreate` явно revoke все ссылки пользователя на этот event (включая `consumed`), удалить proof, revoke active session.
 
 ---
 
-## PATCH C2 — Смена semantics: activation вместо one-time lock
+## PATCH D1 — Убрать autoCreateSession из live-resolve
 
-### Изменения в `live-token-validate`
+### `supabase/functions/live-resolve/index.ts`
 
-**validate flow** (строки 161-167): при `link.status === 'activated'` и `user.id === link.user_id`:
+**Удалить:** функцию `autoCreateSession` (строки 197-225) и её вызов (строки 102-116).
 
-- НЕ возвращать `already_used`
-- Обновить/создать proof и session
-- Вернуть `{ status: 'ok', redirect_slug }`
+**Заменить** блок строк 102-116 на:
 
-**consume** (строки 298-332): переименовать статус `consumed` → `activated`:
+```typescript
+// Check active session
+const { data: activeSession } = await supabase
+  .from('live_active_sessions')
+  .select('id, expires_at')
+  .eq('user_id', userId)
+  .eq('live_event_id', event.id)
+  .is('revoked_at', null)
+  .maybeSingle();
 
-- `link.status = 'activated'` вместо `consumed`
-- `consumed_at` → `activated_at` (или оставить `consumed_at` как timestamp первой активации)
-- `proof_type: 'invite_activated'`
-- Audit: `live_link_activated` вместо `live_link_consumed`
-
-### Миграция БД
-
-```sql
--- Обновить CHECK constraint: заменить 'consumed' на 'activated'
-ALTER TABLE public.live_access_links DROP CONSTRAINT chk_live_access_links_status;
-ALTER TABLE public.live_access_links 
-  ADD CONSTRAINT chk_live_access_links_status
-  CHECK (status IN ('created', 'sent', 'activated', 'expired', 'revoked'));
-
--- Убрать 'mismatch' из статусов (audit-only, не статус)
--- Добавить activated_at
-ALTER TABLE public.live_access_links ADD COLUMN activated_at TIMESTAMPTZ;
-
--- Обновить unique active index: включить 'activated' как допустимый для повторного входа
--- (active unique остаётся на created+sent — одна неактивированная ссылка на user+event)
+if (!activeSession || new Date(activeSession.expires_at) < new Date()) {
+  // Proof valid but no active session — client must re-enter via token-link
+  return jsonRes({
+    status: 'session_missing',
+    title: event.title,
+    description: event.description,
+    event_status: event.status,
+  }, 403);
+}
 ```
 
-### Frontend: `LiveAccessEntry.tsx`
+### `src/pages/LiveEvent.tsx`
 
-- `already_used` → `already_activated`: новый текст "Доступ уже активирован для вашего аккаунта" + кнопка "Перейти к эфиру" (ссылка на `/live/:slug`)
-- Если validate возвращает `already_activated` с `redirect_slug` — показать redirect-кнопку
+Добавить в `LiveResolveResult.status` тип `session_missing`.
 
-### Логика повторного открытия владельцем
+В switch (строка 104) добавить:
 
-В validate, после нахождения link со status=`activated`:
+```typescript
+case "session_missing":
+  setState("session_expired");
+  break;
+```
 
-1. Проверить `user.id === link.user_id` → да
-2. Проверить event exists + published
-3. Проверить canonical access
-4. Обновить proof (upsert, TTL 24ч)
-5. Создать/обновить active session
-6. Вернуть `{ status: 'ok', redirect_slug }`
+Это переиспользует существующий UI overlay "Сессия истекла. Обновите страницу" — при refresh пользователь может повторно пройти через `/live-access/:token`.
 
-Чужой пользователь на activated link → `token_mismatch` (как сейчас, audit-only).
+Добавить `PageState` значение уже есть (`session_expired`), UI overlay уже есть (строки 160+). Дополнительных UI-изменений не требуется.
 
 ---
 
-## PATCH C3 — Таблица `live_active_sessions` + single-session enforcement
+## PATCH D2 — Исправить reissue: полный revoke цепочки
 
-### Миграция
+### `supabase/functions/live-token-validate/index.ts`
 
-```sql
-CREATE TABLE public.live_active_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  live_event_id UUID NOT NULL REFERENCES public.live_events(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL,
-  session_key TEXT NOT NULL UNIQUE,
-  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ NOT NULL,
-  revoked_at TIMESTAMPTZ,
-  client_instance_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+**handleReissue** (строки 369-412) — переписать:
 
-CREATE UNIQUE INDEX idx_live_active_sessions_user_event
-  ON public.live_active_sessions(user_id, live_event_id)
-  WHERE revoked_at IS NULL;
+После получения `user_id` и `live_event_id` (строка 397), ПЕРЕД вызовом `handleCreate`:
 
-CREATE INDEX idx_live_active_sessions_session_key ON public.live_active_sessions(session_key);
-CREATE INDEX idx_live_active_sessions_expires ON public.live_active_sessions(expires_at);
+```typescript
+const now = new Date().toISOString();
 
-ALTER TABLE public.live_active_sessions ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Admins can manage live_active_sessions"
-  ON public.live_active_sessions FOR ALL TO authenticated
-  USING (public.has_role_v2(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role_v2(auth.uid(), 'admin'));
+// 1. Revoke ALL links for this user+event (including consumed)
+await supabase
+  .from('live_access_links')
+  .update({ status: 'revoked', revoked_at: now })
+  .eq('user_id', user_id)
+  .eq('live_event_id', live_event_id)
+  .in('status', ['created', 'sent', 'consumed']);
+
+// 2. Delete proof
+await supabase
+  .from('live_access_proofs')
+  .delete()
+  .eq('user_id', user_id)
+  .eq('live_event_id', live_event_id);
+
+// 3. Revoke active session
+await supabase
+  .from('live_active_sessions')
+  .update({ revoked_at: now })
+  .eq('user_id', user_id)
+  .eq('live_event_id', live_event_id)
+  .is('revoked_at', null);
 ```
 
-### Правило single-session
+Также в `handleCreate` (строки 78-84) расширить список отзываемых статусов до `['created', 'sent', 'consumed']` — для консистентности при любом вызове create.
 
-- Один user = одна активная (revoked_at IS NULL) сессия на один event
-- При новом входе: старая сессия → `revoked_at = now()`, новая создаётся
-- `session_key` = `crypto.randomUUID()`, возвращается клиенту
-- Session TTL: привязан к proof TTL (24ч) или к длительности эфира
+**handleRevoke** (строки 334-364) — расширить аналогично:
 
-### Кто создаёт session
-
-- `live-token-validate` при validate → после успешной активации/повторного входа
-- Revoke старую → insert новую → вернуть `session_key` в response
-
-### Кто проверяет session
-
-- `live-resolve`: после proof check, дополнительно проверить active session
-- Если session не найдена или revoked → `session_expired` (клиент должен повторно пройти через `/live-access/:token` или получить новый proof)
+- Revoke ссылки любого статуса кроме уже `revoked`/`expired`
+- Удалить proof
+- Revoke active session
 
 ---
 
-## PATCH C4 — Heartbeat + session check на `/live/:slug`
+## PATCH D3 — Аудит для полноты reissue
 
-### Новая Edge Function: `live-session-heartbeat`
+В `handleReissue` audit (строка 407) добавить мету:
 
+```typescript
+await logAudit(supabase, 'live_link_reissue_full', 'user', admin.id, {
+  old_link_id: link_id || null,
+  user_id,
+  live_event_id,
+  actions: ['revoke_links', 'delete_proof', 'revoke_session', 'create_new'],
+});
 ```
-POST /live-session-heartbeat
-Body: { session_key }
-Auth: user JWT
-
-Response:
-  { status: 'ok' } — сессия активна, last_seen_at обновлён
-  { status: 'session_revoked' } — вытеснена другим входом
-  { status: 'session_expired' } — TTL истёк
-```
-
-### Frontend: `LiveEvent.tsx`
-
-- После успешного `live-resolve`, получить `session_key` (передаётся в response или из localStorage)
-- Запустить `setInterval` (каждые 30-60 сек): POST `live-session-heartbeat`
-- Если `session_revoked` → показать overlay "Сессия завершена. Вы вошли с другого устройства"
-- Если `session_expired` → показать overlay "Сессия истекла. Обновите страницу"
-
-### Доработка `live-resolve`
-
-- В response добавить `session_key` (если session создана/обновлена)
-- Или: session создаётся только через `live-token-validate`, а `live-resolve` только проверяет наличие active session
-
-**Выбранная архитектура**: 
-
-- `live-token-validate` создаёт session при activate/re-enter → возвращает `session_key`
-- `live-resolve` проверяет: proof valid + active session exists для `required_one_time`
-- `live-session-heartbeat` обновляет `last_seen_at`
-- При новом входе через token-link: старая session revoked → heartbeat на старой вкладке → `session_revoked`
-
-### Передача session_key
-
-- `LiveAccessEntry` → validate → получает `session_key` в response → передаёт через URL param или sessionStorage
-- `LiveEvent` → берёт `session_key` из sessionStorage → использует для heartbeat
-- sessionStorage scoped per tab — потеря при закрытии вкладки, это нормально
-
----
-
-## Доработка `live-resolve` (итоговый flow для `required_one_time`)
-
-```
-1. Auth check
-2. Invite mode check:
-   if required_one_time && !direct_access_allowed:
-     a. Check proof (live_access_proofs, expires_at > now)
-     b. If no proof → invite_required
-     c. Check active session (live_active_sessions, revoked_at IS NULL, expires_at > now)
-     d. If no active session → session_expired (нужен re-entry через token или re-activate)
-3. Canonical access check
-4. Return ok + kinescope_video_id
-```
-
----
-
-## Audit events (новые)
-
-
-| Action                   | Actor  | Когда                                                           |
-| ------------------------ | ------ | --------------------------------------------------------------- |
-| `live_link_activated`    | user   | Первая успешная активация ссылки                                |
-| `live_link_reentry`      | user   | Повторный вход владельца через activated link                   |
-| `live_session_started`   | user   | Новая session создана                                           |
-| `live_session_replaced`  | system | Старая session revoked при новом входе                          |
-| `live_session_heartbeat` | user   | Периодический ping (писать audit не на каждый, а раз в N минут) |
-
-
----
-
-## UI тексты (замена)
-
-
-| Было                                                               | Стало                                                                         |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| "Ссылка уже использована. Каждая ссылка действует только один раз" | "Доступ уже активирован для вашего аккаунта" + кнопка "Перейти к эфиру"       |
-| `already_used`                                                     | `already_activated` (с redirect_slug)                                         |
-| Новое: `session_revoked`                                           | "Просмотр продолжен с другого устройства. Одновременный просмотр невозможен." |
-| Новое: `session_expired`                                           | "Сессия просмотра истекла. Обновите страницу для продолжения."                |
-
 
 ---
 
 ## Файлы
 
 
-| Файл                                                 | Действие                                                                         |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `supabase/functions/live-token-validate/index.ts`    | C1: `_role_code` fix. C2: activation model + re-entry. C3: session create/revoke |
-| `supabase/migrations/xxx_c2_activation_model.sql`    | ALTER status constraint, add `activated_at`, remove `mismatch` from statuses     |
-| `supabase/migrations/xxx_c3_active_sessions.sql`     | CREATE `live_active_sessions` + indexes + RLS                                    |
-| `supabase/functions/live-session-heartbeat/index.ts` | Новая: heartbeat endpoint                                                        |
-| `supabase/functions/live-resolve/index.ts`           | Добавить session check для required_one_time                                     |
-| `src/pages/LiveAccessEntry.tsx`                      | `already_activated` state + redirect кнопка                                      |
-| `src/pages/LiveEvent.tsx`                            | Heartbeat interval + session_revoked/expired overlays                            |
+| Файл                                              | Действие                                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `supabase/functions/live-resolve/index.ts`        | Убрать autoCreateSession, вернуть session_missing                                |
+| `supabase/functions/live-token-validate/index.ts` | Reissue: full revoke chain. Revoke: full revoke chain. Create: расширить статусы |
+| `src/pages/LiveEvent.tsx`                         | Обработка session_missing → session_expired UI                                   |
 
-
----
 
 ## DoD
 
-1. `_role_code` исправлен → revoke/reissue работают для admin
-2. Владелец ссылки после активации может повторно входить в эфир через свой аккаунт
-3. Повторное открытие token-link владельцем → обновляет proof/session → redirect на эфир
-4. Чужой пользователь по ссылке → `token_mismatch`, ссылка не сгорает
-5. Два одновременных просмотра под одним аккаунтом невозможны — второй вход вытесняет первый
-6. Heartbeat на live page обновляет `last_seen_at`; вытесненная вкладка получает `session_revoked`
-7. Refresh страницы `/live/:slug` → proof + session valid → доступ сохраняется
-8. Admin reissue: старая ссылка revoked, новая работает, audit корректен
-9. Token link после истечения TTL → `token_expired`
-10. Валидный token на unpublished/deleted event → `event_unpublished` / `event_not_found`
+1. `live-resolve` НЕ создаёт session — только проверяет наличие
+2. При отсутствии active session и valid proof → `session_missing` → клиент показывает "сессия истекла"
+3. `reissue` отзывает consumed ссылку + удаляет proof + revoke session + создаёт новую
+4. `revoke` отзывает ссылку любого активного статуса + удаляет proof + revoke session
+5. Старая вкладка после reissue теряет доступ через heartbeat → `session_revoked`
+6. Владелец новой ссылки проходит стандартную активацию и получает новый session_key
