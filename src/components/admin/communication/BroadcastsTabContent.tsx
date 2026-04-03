@@ -799,7 +799,7 @@ const [includeButton, setIncludeButton] = useState(true);
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">
-                            {String(meta?.message_preview || meta?.subject || "Рассылка")}
+                            {String(meta?.message_preview || meta?.subject || "Рассылка").replace(/\{\{\w+\}\}/g, '').replace(/\s{2,}/g, ' ').trim() || "Рассылка"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {format(new Date(item.created_at), "dd MMM yyyy, HH:mm", {

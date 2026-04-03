@@ -402,7 +402,11 @@ Deno.serve(async (req) => {
         sent,
         failed,
         total: sent + failed,
-        message_preview: message.substring(0, 50),
+        message_preview: resolveSystemTokens(message, now)
+          .replace(/\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}/g, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim()
+          .substring(0, 80),
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
