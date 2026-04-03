@@ -69,6 +69,7 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/fields': 'integrations-mapping',
   '/admin/audit': 'admin',
   '/admin/ai': 'admin',
+  '/admin/live-events': 'admin',
 };
 
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
