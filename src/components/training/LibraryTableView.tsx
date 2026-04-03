@@ -240,7 +240,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
         <TableCell className="py-2 hidden sm:table-cell" />
         <TableCell className="py-2">
           {lesson.is_completed ? (
-            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1 text-xs text-primary">
               <Check className="h-3 w-3" />
             </span>
           ) : lesson.isScheduled ? null : (
