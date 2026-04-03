@@ -55,6 +55,17 @@ function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reas
   if (event.event_type === "live_stream") {
     if (!event.kinescope_live_event_id) {
       reasons.push("Не создан источник трансляции");
+    } else {
+      // Check provider source status from metadata
+      const meta = event.metadata as any;
+      const providerCurrent = meta?.provider?.current || meta?.provider || {};
+      const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
+      const hasPlayLink = !!providerCurrent.play_link;
+      
+      // If provider_history has an entry with this ID being detached, or no stream data
+      if (!hasStream && !hasPlayLink) {
+        reasons.push("Источник трансляции повреждён");
+      }
     }
     if (!event.scheduled_at) {
       reasons.push("Не задана дата и время");

@@ -956,6 +956,7 @@ export default function AdminLiveEvents() {
                         kinescopeInstanceId={kinescopeInstanceId}
                         onLifecycleAction={handleLifecycleAction}
                         queryClient={queryClient}
+                        onFormUpdate={(updates) => setForm(f => ({ ...f, ...updates }))}
                       />
                     )}
                   </div>
