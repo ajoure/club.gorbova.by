@@ -142,9 +142,9 @@ serve(async (req) => {
       }
 
       case "list_videos": {
-        const endpoint = project_id 
-          ? `/projects/${project_id}/videos?page=${page}&per_page=${per_page}`
-          : `/videos?page=${page}&per_page=${per_page}`;
+        const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+        if (project_id) params.set("project_id", project_id);
+        const endpoint = `/videos?${params.toString()}`;
         
         const videosResult = await makeKinescopeRequest(endpoint, apiToken);
         

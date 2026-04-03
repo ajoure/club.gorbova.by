@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
@@ -32,20 +32,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "@/components/ui/tooltip";
-import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield } from "lucide-react";
 import { toast } from "sonner";
-import { format } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
+import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
 
 interface LiveEvent {
@@ -126,6 +122,50 @@ export default function AdminLiveEvents() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LiveEventForm>(defaultForm);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
+  const [publishAttempted, setPublishAttempted] = useState(false);
+
+  // Date/time state for DateTimePicker
+  const scheduledDate = useMemo(() => {
+    if (!form.scheduled_at) return undefined;
+    try { return parseISO(form.scheduled_at); } catch { return undefined; }
+  }, [form.scheduled_at]);
+
+  const scheduledTime = useMemo(() => {
+    if (!form.scheduled_at) return "";
+    try {
+      const d = parseISO(form.scheduled_at);
+      return format(d, "HH:mm");
+    } catch { return ""; }
+  }, [form.scheduled_at]);
+
+  const handleDateChange = useCallback((date: Date | undefined) => {
+    if (!date) {
+      setForm(f => ({ ...f, scheduled_at: "" }));
+      return;
+    }
+    // Preserve existing time or default to 00:00
+    const existingTime = scheduledTime || "00:00";
+    const [h, m] = existingTime.split(":").map(Number);
+    const combined = new Date(date);
+    combined.setHours(h, m, 0, 0);
+    setForm(f => ({ ...f, scheduled_at: combined.toISOString() }));
+  }, [scheduledTime]);
+
+  const handleTimeChange = useCallback((time: string) => {
+    if (!scheduledDate) return;
+    if (!time) {
+      // Keep date, remove time precision
+      const d = new Date(scheduledDate);
+      d.setHours(0, 0, 0, 0);
+      setForm(f => ({ ...f, scheduled_at: d.toISOString() }));
+      return;
+    }
+    const [h, m] = time.split(":").map(Number);
+    const combined = new Date(scheduledDate);
+    combined.setHours(h, m, 0, 0);
+    setForm(f => ({ ...f, scheduled_at: combined.toISOString() }));
+  }, [scheduledDate]);
 
   // --- Data queries ---
   const { data: events, isLoading } = useQuery({
@@ -140,7 +180,6 @@ export default function AdminLiveEvents() {
     },
   });
 
-  // Load access rules for the editing event
   const { data: existingRules } = useQuery({
     queryKey: ["live-event-access-rules", editingId],
     queryFn: async () => {
@@ -155,8 +194,8 @@ export default function AdminLiveEvents() {
     enabled: !!editingId,
   });
 
-  // Kinescope integration instance
-  const { data: kinescopeInstance } = useQuery({
+  // Kinescope integration instance (tolerant lookup)
+  const { data: kinescopeInstance, isLoading: kinescopeInstanceLoading } = useQuery({
     queryKey: ["kinescope-instance"],
     queryFn: async () => {
       const { data } = await supabase
@@ -173,50 +212,72 @@ export default function AdminLiveEvents() {
   const kinescopeInstanceId = kinescopeInstance?.id;
 
   // Kinescope projects
-  const { data: kinescopeProjects, isLoading: kinescopeProjectsLoading } = useQuery({
+  const { data: kinescopeProjects, isLoading: kinescopeProjectsLoading, error: kinescopeProjectsError } = useQuery({
     queryKey: ["kinescope-projects", kinescopeInstanceId],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke("kinescope-api", {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: { action: "list_projects", instance_id: kinescopeInstanceId },
       });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка загрузки проектов");
       return (data?.projects || []) as Array<{ id: string; name: string }>;
     },
     enabled: !!kinescopeInstanceId,
   });
 
   // Kinescope videos for selected project
-  const { data: kinescopeVideos, isLoading: kinescopeVideosLoading } = useQuery({
+  const { data: kinescopeVideos, isLoading: kinescopeVideosLoading, error: kinescopeVideosError } = useQuery({
     queryKey: ["kinescope-videos", form.kinescope_project_id, kinescopeInstanceId],
     queryFn: async () => {
-      const { data } = await supabase.functions.invoke("kinescope-api", {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: { action: "list_videos", project_id: form.kinescope_project_id, instance_id: kinescopeInstanceId },
       });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка загрузки видео");
       return (data?.videos || []) as Array<{ id: string; title: string; status: string }>;
     },
     enabled: !!form.kinescope_project_id && !!kinescopeInstanceId && form.kinescope_mode === "picker",
   });
 
-  // --- Pre-publish validation ---
-  const validationErrors = useMemo(() => {
-    const errors: string[] = [];
-    if (!form.title.trim()) errors.push("Название не заполнено");
-    if (!form.slug.trim()) errors.push("Slug не заполнен");
-    if (!form.kinescope_video_id.trim()) errors.push("Kinescope Video ID не задан");
-    if (form.access_rules.filter(r => r.product_id).length === 0) errors.push("Правила доступа не заданы");
-    return errors;
+  // --- Validation ---
+  const validationItems = useMemo(() => {
+    const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
+      { key: "title", label: "Название заполнено", ok: !!form.title.trim(), blocker: true },
+      { key: "slug", label: "Slug заполнен", ok: !!form.slug.trim(), blocker: true },
+      { key: "kinescope", label: "Источник трансляции/записи привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
+      { key: "access", label: "Правила доступа заданы", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
+      { key: "replay", label: "Запись будет доступна", ok: form.replay_enabled, blocker: false },
+    ];
+    return items;
   }, [form]);
 
-  const canPublish = validationErrors.length === 0;
+  const blockers = validationItems.filter(i => i.blocker && !i.ok);
+  const canPublish = blockers.length === 0;
+
+  // --- Slug uniqueness check ---
+  const { data: slugExists } = useQuery({
+    queryKey: ["slug-check", form.slug, editingId],
+    queryFn: async () => {
+      if (!form.slug.trim()) return false;
+      let q = supabase.from("live_events").select("id").eq("slug", form.slug.trim()).limit(1);
+      if (editingId) q = q.neq("id", editingId);
+      const { data } = await q;
+      return (data?.length ?? 0) > 0;
+    },
+    enabled: !!form.slug.trim(),
+  });
 
   // --- Save mutation ---
   const saveMutation = useMutation({
     mutationFn: async (data: LiveEventForm) => {
+      if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
         description: data.description || null,
         kinescope_video_id: data.kinescope_video_id || null,
-        product_id: null, // legacy — no longer primary
+        product_id: null,
         access_rule: { mode: "rules", product_id: null, tariff_id: null },
         status: data.status,
         is_published: data.is_published,
@@ -240,33 +301,17 @@ export default function AdminLiveEvents() {
         eventId = inserted.id;
       }
 
-      // Sync access rules
       if (eventId) {
-        // Delete old rules
         await supabase.from("live_event_access_rules").delete().eq("live_event_id", eventId);
-
-        // Insert new rules
         const validRules = data.access_rules.filter(r => r.product_id);
         const rows: Array<{ live_event_id: string; product_id: string; tariff_id: string | null; sort_order: number }> = [];
         
         validRules.forEach((rule, ruleIdx) => {
           if (rule.tariff_ids.length === 0) {
-            // All tariffs — single row with null tariff
-            rows.push({
-              live_event_id: eventId!,
-              product_id: rule.product_id,
-              tariff_id: null,
-              sort_order: ruleIdx * 10,
-            });
+            rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: null, sort_order: ruleIdx * 10 });
           } else {
-            // Specific tariffs — one row per tariff
             rule.tariff_ids.forEach((tariffId, tIdx) => {
-              rows.push({
-                live_event_id: eventId!,
-                product_id: rule.product_id,
-                tariff_id: tariffId,
-                sort_order: ruleIdx * 10 + tIdx,
-              });
+              rows.push({ live_event_id: eventId!, product_id: rule.product_id, tariff_id: tariffId, sort_order: ruleIdx * 10 + tIdx });
             });
           }
         });
@@ -282,6 +327,8 @@ export default function AdminLiveEvents() {
       setDialogOpen(false);
       setEditingId(null);
       setForm(defaultForm);
+      setSlugManuallyEdited(false);
+      setPublishAttempted(false);
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
       queryClient.invalidateQueries({ queryKey: ["live-event-access-rules"] });
     },
@@ -289,15 +336,29 @@ export default function AdminLiveEvents() {
   });
 
   // --- Handlers ---
+  const handleTitleChange = (title: string) => {
+    const updates: Partial<LiveEventForm> = { title };
+    if (!slugManuallyEdited) {
+      updates.slug = slugify(title);
+    }
+    setForm(f => ({ ...f, ...updates }));
+  };
+
+  const handleSlugChange = (slug: string) => {
+    setSlugManuallyEdited(true);
+    setForm(f => ({ ...f, slug }));
+  };
+
   const handleEdit = (event: LiveEvent) => {
     setEditingId(event.id);
-    // Will load rules via useQuery
+    setSlugManuallyEdited(true); // existing event = slug already set
+    setPublishAttempted(false);
     setForm({
       slug: event.slug,
       title: event.title,
       description: event.description || "",
       kinescope_video_id: event.kinescope_video_id || "",
-      kinescope_mode: "picker",
+      kinescope_mode: event.kinescope_video_id ? "picker" : "picker",
       kinescope_project_id: (event.metadata as any)?.kinescope_project_id || "",
       status: event.status,
       is_published: event.is_published,
@@ -305,16 +366,14 @@ export default function AdminLiveEvents() {
       replay_enabled: event.replay_enabled,
       invite_mode: (event.invite_mode as "none" | "optional_one_time" | "required_one_time") || "none",
       direct_access_allowed: event.direct_access_allowed ?? true,
-      access_rules: [], // loaded below via effect
+      access_rules: [],
     });
     setDialogOpen(true);
   };
 
   // Sync loaded rules into form when editing
-  const rulesLoaded = existingRules && editingId;
   useMemo(() => {
-    if (!rulesLoaded || !existingRules) return;
-    // Group by product_id
+    if (!existingRules || !editingId) return;
     const grouped = new Map<string, string[]>();
     for (const row of existingRules) {
       const pid = row.product_id;
@@ -333,17 +392,24 @@ export default function AdminLiveEvents() {
   const handleCreate = () => {
     setEditingId(null);
     setForm(defaultForm);
+    setSlugManuallyEdited(false);
+    setPublishAttempted(false);
     setAdvancedOpen(false);
     setDialogOpen(true);
   };
 
   const handlePublishToggle = (checked: boolean) => {
     if (checked && !canPublish) {
-      toast.error("Невозможно опубликовать: " + validationErrors[0]);
+      setPublishAttempted(true);
       return;
     }
-    setForm({ ...form, is_published: checked });
+    setPublishAttempted(false);
+    setForm(f => ({ ...f, is_published: checked }));
   };
+
+  // Kinescope state
+  const kinescopeNotConfigured = !kinescopeInstanceLoading && !kinescopeInstance;
+  const kinescopeApiError = kinescopeProjectsError || kinescopeVideosError;
 
   return (
     <AdminLayout>
@@ -437,21 +503,24 @@ export default function AdminLiveEvents() {
 
             <div className="space-y-6 py-2">
               {/* Section 1: Основное */}
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground/80">Основное</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Название *</Label>
-                    <Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Slug *</Label>
-                    <Input value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} placeholder="my-live-event" />
-                  </div>
+              <FormSection title="Основное">
+                <div className="space-y-2">
+                  <Label>Название *</Label>
+                  <Input value={form.title} onChange={(e) => handleTitleChange(e.target.value)} placeholder="Название эфира" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Slug</Label>
+                  <Input value={form.slug} onChange={(e) => handleSlugChange(e.target.value)} placeholder="my-live-event" />
+                  {slugExists && (
+                    <p className="text-xs text-destructive">Этот адрес уже занят. Выберите другой.</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Короткий адрес эфира в ссылке. Заполняется автоматически из названия, при необходимости можно изменить вручную.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label>Описание</Label>
-                  <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                  <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Краткое описание эфира" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -468,70 +537,124 @@ export default function AdminLiveEvents() {
                   </div>
                   <div className="space-y-2">
                     <Label>Дата и время эфира</Label>
-                    <Input type="datetime-local" value={form.scheduled_at} onChange={(e) => setForm({ ...form, scheduled_at: e.target.value })} />
+                    <DateTimePicker
+                      date={scheduledDate}
+                      time={scheduledTime}
+                      onDateChange={handleDateChange}
+                      onTimeChange={handleTimeChange}
+                    />
                   </div>
                 </div>
-              </section>
+              </FormSection>
 
               <Separator />
 
               {/* Section 2: Kinescope */}
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground/80">Kinescope</h3>
-                
-                {form.kinescope_mode === "picker" ? (
+              <FormSection title="Источник трансляции">
+                <p className="text-xs text-muted-foreground">
+                  Привяжите существующее видео или эфир из аккаунта Kinescope. Автоматическое создание эфира в Kinescope пока не поддерживается.
+                </p>
+
+                {kinescopeNotConfigured ? (
+                  <div className="rounded-lg border border-dashed p-4 text-center space-y-2">
+                    <p className="text-sm text-muted-foreground">Интеграция с Kinescope не настроена</p>
+                    <p className="text-xs text-muted-foreground">
+                      Используйте ручной ввод Kinescope Video ID в расширенных настройках ниже.
+                    </p>
+                  </div>
+                ) : kinescopeApiError ? (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-1">
+                    <p className="text-sm text-destructive font-medium">Не удалось подключиться к Kinescope</p>
+                    <p className="text-xs text-muted-foreground">
+                      {(kinescopeApiError as Error)?.message || "Проверьте настройки интеграции или используйте ручной ввод Video ID."}
+                    </p>
+                  </div>
+                ) : form.kinescope_mode === "picker" ? (
                   <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label>Проект Kinescope</Label>
-                      <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={kinescopeProjectsLoading ? "Загрузка..." : "Выберите проект"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {kinescopeProjects?.map((p) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    <div className="space-y-1.5">
+                      <Label>Проект</Label>
+                      {kinescopeProjectsLoading ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Загрузка проектов...
+                        </div>
+                      ) : (
+                        <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Выберите проект" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {kinescopeProjects && kinescopeProjects.length > 0 ? (
+                              kinescopeProjects.map((p) => (
+                                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                              ))
+                            ) : (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">Нет доступных проектов</div>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <p className="text-xs text-muted-foreground">Проект — папка в Kinescope, где хранятся видео</p>
                     </div>
 
                     {form.kinescope_project_id && (
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <Label>Видео</Label>
-                        <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
-                          <SelectTrigger>
-                            <SelectValue placeholder={kinescopeVideosLoading ? "Загрузка..." : "Выберите видео"} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {kinescopeVideos?.map((v) => (
-                              <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {kinescopeVideosLoading ? (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Загрузка видео...
+                          </div>
+                        ) : kinescopeVideosError ? (
+                          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                            <p className="text-sm text-destructive">Не удалось загрузить видео</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {(kinescopeVideosError as Error)?.message}
+                            </p>
+                          </div>
+                        ) : kinescopeVideos && kinescopeVideos.length === 0 ? (
+                          <div className="rounded-lg border border-dashed p-3 text-center">
+                            <p className="text-sm text-muted-foreground">В этом проекте нет видео</p>
+                          </div>
+                        ) : (
+                          <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Выберите видео" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {kinescopeVideos?.map((v) => (
+                                <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </div>
                     )}
 
                     <button
                       type="button"
-                      className="text-xs text-muted-foreground underline"
+                      className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
                       onClick={() => setForm({ ...form, kinescope_mode: "manual" })}
                     >
                       Ввести Video ID вручную
                     </button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <div className="space-y-2">
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
                       <Label>Kinescope Video ID</Label>
                       <Input
                         value={form.kinescope_video_id}
                         onChange={(e) => setForm({ ...form, kinescope_video_id: e.target.value })}
-                        placeholder="video-id-from-kinescope"
+                        placeholder="Вставьте ID из консоли Kinescope"
                       />
+                      <p className="text-xs text-muted-foreground">
+                        Используйте, если нужно вручную привязать существующий объект Kinescope.
+                      </p>
                     </div>
                     <button
                       type="button"
-                      className="text-xs text-muted-foreground underline"
+                      className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
                       onClick={() => setForm({ ...form, kinescope_mode: "picker" })}
                     >
                       Выбрать из списка
@@ -541,26 +664,25 @@ export default function AdminLiveEvents() {
 
                 {form.kinescope_video_id && (
                   <p className="text-xs text-muted-foreground">
-                    Video ID: <code className="bg-muted px-1 rounded">{form.kinescope_video_id}</code>
+                    Привязано: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_video_id}</code>
                   </p>
                 )}
-              </section>
+              </FormSection>
 
               <Separator />
 
               {/* Section 3: Access rules */}
-              <section>
+              <FormSection>
                 <LiveEventAccessRulesEditor
                   rules={form.access_rules}
                   onChange={(rules) => setForm({ ...form, access_rules: rules })}
                 />
-              </section>
+              </FormSection>
 
               <Separator />
 
               {/* Section 4: Invite mode */}
-              <section className="space-y-3">
-                <h3 className="text-sm font-semibold text-foreground/80">Приглашения</h3>
+              <FormSection title="Приглашения">
                 <Select
                   value={form.invite_mode}
                   onValueChange={(v) => {
@@ -579,81 +701,59 @@ export default function AdminLiveEvents() {
                 <p className="text-xs text-muted-foreground">
                   {inviteModeLabels[form.invite_mode]?.description}
                 </p>
-
                 {form.invite_mode === "optional_one_time" && (
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={form.direct_access_allowed}
-                      onCheckedChange={(v) => setForm({ ...form, direct_access_allowed: v })}
-                    />
-                    <Label className="text-sm">Разрешить прямой доступ без ссылки</Label>
-                  </div>
+                  <SwitchRow
+                    checked={form.direct_access_allowed}
+                    onCheckedChange={(v) => setForm({ ...form, direct_access_allowed: v })}
+                    label="Разрешить прямой доступ без ссылки"
+                  />
                 )}
-              </section>
+              </FormSection>
 
               <Separator />
 
               {/* Section 5: Publication & Recording */}
-              <section className="space-y-4">
-                <h3 className="text-sm font-semibold text-foreground/80">Публикация и запись</h3>
-                <TooltipProvider>
-                  <div className="flex items-center gap-6">
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={form.is_published}
-                        onCheckedChange={handlePublishToggle}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Label className="cursor-help flex items-center gap-1">
-                            Опубликован
-                            <Info className="h-3 w-3 text-muted-foreground" />
-                          </Label>
-                        </TooltipTrigger>
-                        <TooltipContent>Эфир виден системе и доступен по ссылке</TooltipContent>
-                      </Tooltip>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={form.replay_enabled}
-                        onCheckedChange={(v) => setForm({ ...form, replay_enabled: v })}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Label className="cursor-help flex items-center gap-1">
-                            Разрешить запись
-                            <Info className="h-3 w-3 text-muted-foreground" />
-                          </Label>
-                        </TooltipTrigger>
-                        <TooltipContent>После завершения эфира пользователи смогут смотреть запись</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
-                </TooltipProvider>
-                {form.replay_enabled && form.status !== "ended" && (
-                  <p className="text-xs text-muted-foreground">
-                    Запись станет доступна пользователям только после завершения эфира
-                  </p>
-                )}
-              </section>
+              <FormSection title="Публикация и запись">
+                <SwitchRow
+                  checked={form.is_published}
+                  onCheckedChange={handlePublishToggle}
+                  label="Опубликован"
+                  description="Эфир виден системе и доступен по ссылке"
+                  error={publishAttempted && !canPublish}
+                />
+                <SwitchRow
+                  checked={form.replay_enabled}
+                  onCheckedChange={(v) => setForm({ ...form, replay_enabled: v })}
+                  label="Разрешить доступ к записи после завершения"
+                  description={
+                    form.replay_enabled && form.status !== "ended"
+                      ? "Запись станет доступна пользователям только после завершения эфира"
+                      : "Пользователи смогут посмотреть запись после завершения эфира"
+                  }
+                />
+              </FormSection>
 
               <Separator />
 
               {/* Section 6: Readiness checklist */}
-              <section className="space-y-3">
-                <h3 className="text-sm font-semibold text-foreground/80">Проверка готовности</h3>
-                <div className="space-y-1.5">
-                  <CheckItem ok={!!form.title.trim()} label="Название заполнено" />
-                  <CheckItem ok={!!form.slug.trim()} label="Slug заполнен" />
-                  <CheckItem ok={!!form.kinescope_video_id.trim()} label="Kinescope Video ID задан" />
-                  <CheckItem ok={form.access_rules.filter(r => r.product_id).length > 0} label="Правила доступа заданы" />
+              <FormSection title="Проверка готовности">
+                <div className={`rounded-lg border p-3 space-y-1.5 ${publishAttempted && blockers.length > 0 ? "border-destructive/50 bg-destructive/5" : "bg-muted/20"}`}>
+                  {validationItems.map((item) => (
+                    <CheckItem
+                      key={item.key}
+                      ok={item.ok}
+                      label={item.label}
+                      blocker={item.blocker}
+                      highlight={publishAttempted && item.blocker && !item.ok}
+                    />
+                  ))}
                 </div>
-                {!canPublish && form.is_published && (
+                {publishAttempted && blockers.length > 0 && (
                   <p className="text-xs text-destructive">
-                    Публикация невозможна без выполнения всех условий
+                    Публикация невозможна: заполните обязательные поля выше
                   </p>
                 )}
-              </section>
+              </FormSection>
 
               {/* Advanced settings */}
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
@@ -662,7 +762,7 @@ export default function AdminLiveEvents() {
                   Расширенные настройки
                 </CollapsibleTrigger>
                 <CollapsibleContent className="pt-3 space-y-3">
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Kinescope Video ID (ручной override)</Label>
                     <Input
                       value={form.kinescope_video_id}
@@ -670,48 +770,46 @@ export default function AdminLiveEvents() {
                       className="text-xs"
                       placeholder="video-id"
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Используйте только если нужно вручную привязать существующий объект Kinescope.
+                    </p>
                   </div>
-                  <div className="rounded-lg border p-3 bg-muted/30">
+                  <div className="rounded-lg border p-3 bg-muted/20">
                     <h4 className="text-xs font-medium mb-1">Для ведущего</h4>
                     <p className="text-xs text-muted-foreground">
-                      Преподаватель/ведущий управляет эфиром через консоль Kinescope (dashboard.kinescope.io).
-                      Автоматизация host-доступа через API не поддерживается в текущей версии.
+                      Ведущий управляет эфиром через консоль Kinescope. Автоматизация host-доступа через API не поддерживается в текущей версии.
                     </p>
                   </div>
                 </CollapsibleContent>
               </Collapsible>
 
               {/* Summary block */}
-              <Card className="bg-muted/30">
-                <CardContent className="py-3 space-y-1.5">
-                  <h4 className="text-xs font-semibold">Как это работает для пользователя</h4>
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <p>
-                      Доступ: {form.access_rules.filter(r => r.product_id).length > 0
-                        ? `${form.access_rules.filter(r => r.product_id).length} правил(а) доступа`
-                        : "не задан"}
-                    </p>
-                    <p>
-                      Приглашения: {inviteModeLabels[form.invite_mode]?.label || form.invite_mode}
-                    </p>
-                    <p>
-                      Запись: {form.replay_enabled ? "будет доступна после завершения" : "не предусмотрена"}
-                    </p>
-                    <p>
-                      Вход: {form.invite_mode === "required_one_time"
-                        ? "только по персональной ссылке"
-                        : "напрямую по правам аккаунта"}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+              <div className="rounded-lg border bg-muted/20 p-4 space-y-2.5">
+                <h4 className="text-xs font-semibold text-foreground">Как это работает для пользователя</h4>
+                <div className="space-y-2">
+                  <SummaryItem icon={Users} label="Кто войдёт">
+                    {form.access_rules.filter(r => r.product_id).length > 0
+                      ? `${form.access_rules.filter(r => r.product_id).length} правил(а) доступа`
+                      : "Не задано"}
+                  </SummaryItem>
+                  <SummaryItem icon={Link2} label="Нужен invite">
+                    {form.invite_mode === "required_one_time" ? "Да, только по ссылке" : form.invite_mode === "optional_one_time" ? "Опционально" : "Нет"}
+                  </SummaryItem>
+                  <SummaryItem icon={PlayCircle} label="Запись">
+                    {form.replay_enabled ? "Будет доступна после завершения" : "Не предусмотрена"}
+                  </SummaryItem>
+                  <SummaryItem icon={Shield} label="Публикация">
+                    {form.is_published ? "Опубликован" : canPublish ? "Готов к публикации" : "Не готов"}
+                  </SummaryItem>
+                </div>
+              </div>
             </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Отмена</Button>
               <Button
                 onClick={() => saveMutation.mutate(form)}
-                disabled={(!form.title.trim() || !form.slug.trim()) || saveMutation.isPending}
+                disabled={(!form.title.trim() || !form.slug.trim() || !!slugExists) || saveMutation.isPending}
               >
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 {editingId ? "Сохранить" : "Создать"}
@@ -724,15 +822,65 @@ export default function AdminLiveEvents() {
   );
 }
 
-function CheckItem({ ok, label }: { ok: boolean; label: string }) {
+// --- Sub-components ---
+
+function FormSection({ title, children }: { title?: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3">
+      {title && <h3 className="text-sm font-semibold text-foreground/80">{title}</h3>}
+      {children}
+    </section>
+  );
+}
+
+function SwitchRow({
+  checked,
+  onCheckedChange,
+  label,
+  description,
+  error,
+}: {
+  checked: boolean;
+  onCheckedChange: (v: boolean) => void;
+  label: string;
+  description?: string;
+  error?: boolean;
+}) {
+  return (
+    <div className={`flex items-start gap-3 rounded-lg p-3 ${error ? "bg-destructive/5 border border-destructive/30" : "bg-muted/20"}`}>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} className="mt-0.5" />
+      <div className="space-y-0.5">
+        <Label className="text-sm cursor-pointer" onClick={() => onCheckedChange(!checked)}>{label}</Label>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
+      </div>
+    </div>
+  );
+}
+
+function CheckItem({ ok, label, blocker, highlight }: { ok: boolean; label: string; blocker: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       {ok ? (
-        <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+        <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
       ) : (
-        <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />
+        <AlertCircle className={`h-3.5 w-3.5 shrink-0 ${highlight ? "text-destructive" : "text-muted-foreground"}`} />
       )}
-      <span className={ok ? "text-foreground" : "text-muted-foreground"}>{label}</span>
+      <span className={ok ? "text-foreground" : highlight ? "text-destructive" : "text-muted-foreground"}>
+        {label}
+        {!blocker && !ok && " (рекомендация)"}
+      </span>
+    </div>
+  );
+}
+
+function SummaryItem({ icon: Icon, label, children }: { icon: React.ElementType; label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+      <div>
+        <span className="text-muted-foreground">{label}: </span>
+        <span className="text-foreground">{children}</span>
+      </div>
     </div>
   );
 }
