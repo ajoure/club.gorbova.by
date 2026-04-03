@@ -27,8 +27,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ status: 'error', message: 'Invalid action' }, 400);
     }
 
-    // ─── ACTION: CREATE ───
+    // ─── ACTION: CREATE (service role / internal backend only) ───
     if (action === 'create') {
+      // Guard: only service_role callers allowed (backend-to-backend)
+      const authHeader = req.headers.get('Authorization');
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      if (!authHeader || authHeader !== `Bearer ${serviceKey}`) {
+        return jsonResponse({ status: 'error', message: 'Service role access required' }, 403);
+      }
       return await handleCreate(supabase, body);
     }
 
