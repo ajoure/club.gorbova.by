@@ -2,10 +2,15 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
-import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff } from "lucide-react";
+import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { LiveEventComments } from "@/components/live/LiveEventComments";
+import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 
 interface LiveResolveResult {
   status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "error";
@@ -16,11 +21,17 @@ interface LiveResolveResult {
   scheduled_at?: string;
   replay_enabled?: boolean;
   message?: string;
+  event_type?: string;
+  source_kind?: string;
+  event_timezone?: string;
+  platform_status?: string;
+  kinescope_live_event_id?: string;
+  event_id?: string;
 }
 
 type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
 
-const HEARTBEAT_INTERVAL_MS = 45_000; // 45 seconds
+const HEARTBEAT_INTERVAL_MS = 45_000;
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
@@ -72,7 +83,6 @@ export default function LiveEvent() {
       }
     };
 
-    // First ping immediately
     ping();
     heartbeatRef.current = setInterval(ping, HEARTBEAT_INTERVAL_MS);
   }, [slug, session, stopHeartbeat]);
@@ -115,8 +125,6 @@ export default function LiveEvent() {
             setState("invite_required");
             break;
           case "session_missing":
-            // MVP: proof valid but no active session — reuse session_expired overlay
-            // User should re-enter via their token-link
             setState("session_expired");
             break;
           case "ok":
@@ -126,7 +134,6 @@ export default function LiveEvent() {
               setState("ended_no_replay");
             } else {
               setState("live");
-              // Start heartbeat after successful resolve
               startHeartbeat();
             }
             break;
@@ -238,12 +245,18 @@ export default function LiveEvent() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <CalendarClock className="h-16 w-16 text-primary" />
         <h1 className="text-2xl font-bold text-foreground">{data?.title || "Эфир"}</h1>
+        {data?.event_type && (
+          <Badge variant="outline">{data.event_type === "live_stream" ? "Живой эфир" : "Видео"}</Badge>
+        )}
         {data?.description && (
           <p className="text-muted-foreground text-center max-w-md">{data.description}</p>
         )}
         {data?.scheduled_at && (
           <div className="bg-primary/10 rounded-lg px-6 py-3 text-primary font-medium">
             Начало: {format(new Date(data.scheduled_at), "dd MMMM yyyy, HH:mm", { locale: ru })}
+            {data.event_timezone && (
+              <span className="text-xs ml-2 opacity-70">({data.event_timezone})</span>
+            )}
           </div>
         )}
         <p className="text-sm text-muted-foreground">
@@ -278,22 +291,64 @@ export default function LiveEvent() {
     );
   }
 
-  // state === "live" — show player
+  // state === "live" — show player + comments/questions
+  const eventId = data?.event_id;
+  const isReplay = data?.event_status === "ended" && data?.replay_enabled;
+
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-5xl mx-auto px-4 py-8">
-        <h1 className="text-2xl md:text-3xl font-bold text-foreground mb-2">{data?.title}</h1>
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground">{data?.title}</h1>
+          {data?.event_type && (
+            <Badge variant="outline" className="text-xs shrink-0">
+              {data.event_type === "live_stream" ? "Живой эфир" : "Видео"}
+            </Badge>
+          )}
+        </div>
         {data?.description && (
           <p className="text-muted-foreground mb-6">{data.description}</p>
         )}
-        {data?.event_status === "ended" && data?.replay_enabled && (
+        {isReplay && (
           <div className="mb-4 inline-flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5 text-sm text-muted-foreground">
             <Video className="h-4 w-4" /> Запись эфира
           </div>
         )}
-        {data?.kinescope_video_id && (
-          <KinescopePlayerWrapper videoId={data.kinescope_video_id} />
-        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Player */}
+          <div className="lg:col-span-2">
+            {data?.kinescope_video_id && (
+              <KinescopePlayerWrapper videoId={data.kinescope_video_id} />
+            )}
+          </div>
+
+          {/* Comments / Questions sidebar */}
+          {eventId && (
+            <div className="lg:col-span-1">
+              <Card className="h-[500px] flex flex-col overflow-hidden">
+                <Tabs defaultValue="comments" className="flex flex-col h-full">
+                  <TabsList className="w-full grid grid-cols-2 rounded-none border-b">
+                    <TabsTrigger value="comments" className="gap-1.5 text-xs">
+                      <MessageCircle className="h-3.5 w-3.5" />
+                      Чат
+                    </TabsTrigger>
+                    <TabsTrigger value="questions" className="gap-1.5 text-xs">
+                      <HelpCircle className="h-3.5 w-3.5" />
+                      Вопросы
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
+                    <LiveEventComments liveEventId={eventId} />
+                  </TabsContent>
+                  <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
+                    <LiveEventQuestions liveEventId={eventId} />
+                  </TabsContent>
+                </Tabs>
+              </Card>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
