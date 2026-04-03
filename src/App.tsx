@@ -188,6 +188,7 @@ const App = () => {
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
               <Route path="/live/:slug" element={<ProtectedRoute><LazyRoute><LiveEvent /></LazyRoute></ProtectedRoute>} />
+              <Route path="/live-access/:token" element={<LazyRoute><LiveAccessEntry /></LazyRoute>} />
               
               {/* Protected routes */}
               <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />
