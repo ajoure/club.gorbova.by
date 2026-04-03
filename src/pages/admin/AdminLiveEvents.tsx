@@ -1390,9 +1390,26 @@ function LiveStreamControlPanel({
       const returnedSourceStatus: ProviderSourceStatus = syncData?.provider_source_status || "ok";
       setProviderSourceStatus(returnedSourceStatus);
 
-      // Handle missing (404)
+      // Handle missing (404) — persist to DB
       if (returnedSourceStatus === "missing") {
         setSyncStatus("error");
+        // Save status to DB metadata
+        const { data: currentForMissing } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+        const existingMetaMissing = (currentForMissing?.metadata as Record<string, any>) || {};
+        const missingMeta = {
+          ...existingMetaMissing,
+          provider_source_status: "missing",
+          provider_error_message: syncData?.provider_error_message || "Событие удалено в Kinescope (404)",
+          provider_status_code: syncData?.status_code || 404,
+          last_provider_sync_at: new Date().toISOString(),
+          provider: {
+            ...(existingMetaMissing.provider || {}),
+            current: {}, // Clear current provider data
+          },
+          provider_history: existingMetaMissing.provider_history || [],
+        };
+        await supabase.from("live_events").update({ metadata: missingMeta } as any).eq("id", editingId);
+
         // Audit
         try {
           await DomainEventService.emitEvent("live_provider_missing", "admin", editingId, {
@@ -1406,15 +1423,31 @@ function LiveStreamControlPanel({
           description: "Вы можете пересоздать эфир или отвязать источник",
           duration: 8000,
         });
+        refetchProvider();
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
         return;
       }
 
+      // Handle broken — persist to DB
       if (returnedSourceStatus === "broken") {
         setSyncStatus("error");
+        const { data: currentForBroken } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+        const existingMetaBroken = (currentForBroken?.metadata as Record<string, any>) || {};
+        const brokenMeta = {
+          ...existingMetaBroken,
+          provider_source_status: "broken",
+          provider_error_message: syncData?.provider_error_message || "Отсутствуют stream или play_link",
+          provider_status_code: syncData?.status_code || 200,
+          last_provider_sync_at: new Date().toISOString(),
+        };
+        await supabase.from("live_events").update({ metadata: brokenMeta } as any).eq("id", editingId);
+
         toast.warning("Источник трансляции повреждён", {
           description: syncData?.provider_error_message || "Отсутствуют stream или play_link",
           duration: 6000,
         });
+        refetchProvider();
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
         return;
       }
 
