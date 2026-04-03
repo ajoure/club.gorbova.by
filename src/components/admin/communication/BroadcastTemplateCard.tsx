@@ -91,7 +91,15 @@ export function BroadcastTemplateCard({
               </p>
             </div>
           </div>
-          <Badge variant={variant}>{label}</Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={variant}>{label}</Badge>
+            {template.template_type === "webinar_invite" && (
+              <Badge variant="outline" className="gap-1">
+                <Video className="h-3 w-3" />
+                Вебинар
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
