@@ -193,13 +193,50 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     );
   };
 
-  const renderActionLabel = (lessonCount: number, completedCount: number) => {
+  const renderActionLabel = (
+    lessonCount: number,
+    completedCount: number,
+    moduleSlug?: string,
+    moduleId?: string,
+  ) => {
     const safeL = lessonCount || 0;
     const safeC = completedCount || 0;
     if (safeL === 0) return null;
+
+    const resolveTarget = (): string => {
+      if (!moduleSlug) return "#";
+      const basePath = `/library/${moduleSlug}`;
+      if (!moduleId) return basePath;
+      const lessons = getLessons(moduleId);
+      if (!lessons || lessons.length === 0) return basePath;
+
+      if (safeC > 0 && safeC < safeL) {
+        // Continue: first incomplete, non-scheduled lesson
+        const next = lessons.find((l) => !l.is_completed && !l.isScheduled)
+          || lessons.find((l) => !l.is_completed)
+          || lessons[0];
+        return `${basePath}/${next.slug}`;
+      }
+      if (safeC === 0) {
+        // Start: first available lesson
+        const first = lessons.find((l) => !l.isScheduled) || lessons[0];
+        return `${basePath}/${first.slug}`;
+      }
+      // Completed: go to module
+      return basePath;
+    };
+
+    const handleClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigate(resolveTarget());
+    };
+
     if (safeC >= safeL) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-primary font-medium">
+        <span
+          className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+          onClick={handleClick}
+        >
           <Check className="h-3 w-3" />
           <span className="hidden sm:inline">Завершено</span>
         </span>
@@ -207,14 +244,20 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
     }
     if (safeC > 0) {
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline">
+        <span
+          className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+          onClick={handleClick}
+        >
           <Play className="h-3 w-3" />
           <span className="hidden sm:inline">Продолжить</span>
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline">
+      <span
+        className="inline-flex items-center gap-1 text-xs text-primary font-medium cursor-pointer hover:underline"
+        onClick={handleClick}
+      >
         <Play className="h-3 w-3" />
         <span className="hidden sm:inline">Начать</span>
       </span>
