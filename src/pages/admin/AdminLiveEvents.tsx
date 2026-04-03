@@ -64,6 +64,8 @@ interface LiveEventForm {
   is_published: boolean;
   scheduled_at: string;
   replay_enabled: boolean;
+  invite_mode: "none" | "optional_one_time" | "required_one_time";
+  direct_access_allowed: boolean;
 }
 
 const defaultForm: LiveEventForm = {
