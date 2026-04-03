@@ -118,9 +118,9 @@ export function BroadcastTemplateDialog({
     queryFn: async () => {
       const { data } = await supabase
         .from("live_events")
-        .select("id, slug, title, is_published, status, event_type, platform_status, scheduled_at, kinescope_video_id, kinescope_live_event_id")
+        .select("id, slug, title, is_published, status, event_type, platform_status, scheduled_at, kinescope_video_id, kinescope_live_event_id, metadata")
         .order("created_at", { ascending: false });
-      return (data || []) as LiveEventForBroadcast[];
+      return (data || []) as unknown as LiveEventForBroadcast[];
     },
     enabled: open,
   });
