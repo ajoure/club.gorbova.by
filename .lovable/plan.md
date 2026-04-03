@@ -1,65 +1,46 @@
+# План: LIVE VIDEO MVP — Одноразовые ссылки + Приглашения
 
+## Статус: ✅ Фазы 1-6 реализованы
 
-# План: Логирование рассылок в переписку + детали истории рассылок
+### Выполнено
 
-## Диагностика
+#### Фаза 1 — Миграции БД ✅
+- `live_events` расширена: `invite_mode` (none/optional_one_time/required_one_time), `direct_access_allowed`
+- DB constraint: required_one_time + direct_access_allowed=true запрещена
+- `live_access_links` создана: token_hash (SHA-256), status, expires_at, unique active per user+event
+- `live_access_proofs` создана: server-side proof с TTL, unique per user+event
+- RLS: admin-only на обе новые таблицы
 
-### 1. Ангелина Залевская — получила ли сообщение?
-- **Да, получила.** В БД: `telegram_user_id = 655584168`, активная подписка на нужный продукт + тариф, совпадает с фильтрами рассылки. Рассылка: 127 sent, 0 failed. Она в выборке.
-- Проблема в том, что **рассылка не отображается в переписке** контакт-центра — сообщение ушло через Telegram API напрямую, но запись в таблицу `telegram_messages` не добавляется. Поэтому ни админ, ни пользователь не видят рассылку в истории чата.
+#### Фаза 2 — Edge Function `live-token-validate` ✅
+- action=create: генерация SHA-256 hash, auto-revoke старых, audit
+- action=validate: полный 11-шаговый pipeline (token→auth→user_match→event→access→consume)
+- consume только после полного success path
+- action=revoke/reissue: admin-only с RBAC
+- Все статусы: token_not_found, already_used, token_expired, token_revoked, token_mismatch, event_not_found, event_unpublished, access_denied
 
-### 2. Превью в истории — `, привет 👋` (запятая и пустота)
-- Токен `{{first_name}}` удаляется, но запятая после него остаётся. Нужна более умная очистка: удалять не только токен, но и смежную пунктуацию/пробелы.
+#### Фаза 3 — Доработка `live-resolve` ✅
+- Ветка invite_mode=required_one_time: проверка proof в live_access_proofs
+- Proof TTL 24ч, status=invite_required при отсутствии
+- Existing branches сохранены
 
-### 3. Нельзя открыть детали рассылки
-- Сейчас история — просто плоский список без возможности клика. Нужен раскрываемый блок с полным текстом, ссылкой кнопки, фильтрами.
+#### Фаза 4 — Frontend `/live-access/:token` ✅
+- `LiveAccessEntry.tsx`: все UX-состояния (already_used, token_mismatch, etc.)
+- Redirect to auth with returnUrl
+- Route добавлен в App.tsx
+- `LiveEvent.tsx`: добавлено состояние invite_required
 
----
+#### Фаза 5 — Персонализация рассылок ✅
+- Per-recipient token generation в telegram-mass-broadcast для webinar_invite
+- Batch-safe: ошибка генерации токена для одного не ломает остальных
+- В telegram_messages.meta: link_id (не raw URL)
+- В audit_logs: template-level данные, без персональных URL
 
-## Решение
+#### Фаза 6 — Admin UI ✅
+- AdminLiveEvents: invite_mode select + direct_access_allowed switch
+- Constraint enforcement: required_one_time → direct_access_allowed=false автоматически
 
-### Файл 1: `supabase/functions/telegram-mass-broadcast/index.ts`
-
-**A) Сохранять каждое отправленное сообщение в `telegram_messages`**
-В цикле отправки (строка ~366, после `if (result.ok)`):
-- Вставлять запись в `telegram_messages` с `direction: 'outgoing'`, `message_text: personalizedMessage`, `telegram_user_id`, `user_id`, `bot_id`, `status: 'sent'`, `meta: { broadcast: true, broadcast_id: <audit_log_id> }`
-- Использовать batch insert (собирать массив, вставлять пачками по 50) для производительности
-- Это даст видимость рассылки в переписке каждого контакта
-
-**B) Улучшить очистку `message_preview`**
-Строки 405-410: заменить regex на более умный — убирать токен вместе с прилегающей запятой/пробелом:
-```
-.replace(/,?\s*\{\{(?:first_name|...)\}\}\s*/g, '')
-```
-
-**C) Сохранять полный текст шаблона и параметры кнопки в `audit_logs.meta`**
-Добавить в meta:
-- `message_template` — полный текст шаблона
-- `button_text`, `button_url` — текст и ссылка кнопки
-- `include_button` — была ли кнопка
-
-### Файл 2: `src/components/admin/communication/BroadcastsTabContent.tsx`
-
-**A) Кликабельные карточки истории → раскрытие деталей**
-При клике на карточку рассылки открывать Dialog/Sheet с:
-- Полный текст сообщения (из `meta.message_template`)
-- Текст и URL кнопки (из `meta.button_text`, `meta.button_url`)
-- Фильтры аудитории (из `meta.filters`)
-- Статистика: sent / failed
-- Дата/время
-
-**B) Исправить regex очистки превью на фронте**
-Строка 802: учитывать запятые рядом с токенами.
-
-### Файлы
-
-| Файл | Действие |
-|------|----------|
-| `supabase/functions/telegram-mass-broadcast/index.ts` | Записывать сообщения в `telegram_messages` + улучшить preview + сохранять шаблон/кнопку в meta |
-| `src/components/admin/communication/BroadcastsTabContent.tsx` | Добавить раскрытие деталей рассылки + исправить regex |
-
-### DoD
-1. Каждое успешно отправленное сообщение рассылки видно в переписке контакт-центра
-2. Превью в истории показывает чистый текст без `, ` в начале
-3. Клик по рассылке в истории открывает полное сообщение, кнопку и фильтры
-
+### Отложено на follow-up
+- Секция invite links с фильтрами в AdminLiveEvents (admin UI для просмотра/revoke/reissue ссылок)
+- email-mass-broadcast per-recipient tokens
+- BroadcastsTabContent: три уровня отображения (шаблон/кампания/доставка)
+- Детали live_event в Dialog рассылки
