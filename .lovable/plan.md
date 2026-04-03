@@ -2,268 +2,367 @@
 
 &nbsp;
 
-1. **PATCH 3A — исправить создание live event в Kinescope**
+1. **PATCH A расширить до proof-first, а не только fix поля record**
   &nbsp;
-  - Разобрать фактическую ошибку Ошибка: [object Object] и заменить на нормальный parse backend-error → user-friendly message.
-  - В kinescope-api и AdminLiveEvents.tsx сделать нормализацию ответа Kinescope: показывать error.message, details, status, raw payload в console/log.
-  - После нажатия **«Создать живой эфир в Kinescope»** сохранять:
+  - Перед финальным фиксированием payload обязателен один прямой runtime-proof через edge function:
     &nbsp;
-    - kinescope_live_event_id
+    - сохранить в логах и/или в admin debug-block полный request payload;
+    - сохранить полный raw response от Kinescope при create_live_event;
+    - отдельно зафиксировать, какие поля реально обязательны для create: parent_id, record.parent_id, name, возможно type.
+    &nbsp;
+  - В DoD добавить не только 200, но и факт, что в ответе реально пришли:
+    &nbsp;
+    - id,
+    - play_link,
+    - [stream.id](http://stream.id),
+    - rtmp_link,
+    - streamkey.
+    &nbsp;
+  - Если какое-то из этих полей не приходит на create, делать обязательный follow-up get_live_event / sync_live_event сразу после create и уже оттуда добирать данные.
+  &nbsp;
+2. **Не затирать существующий metadata, а делать merge**
+  &nbsp;
+  - В AdminLiveEvents.tsx при сохранении live-stream нельзя перезаписывать metadata целиком.
+  - Нужно merge:
+    &nbsp;
+    - старый metadata
     - kinescope_project_id
-    - provider status / provider payload в metadata
+    - [provider.live](http://provider.live)_event
+    - [provider.stream](http://provider.stream)
+    - [provider.play](http://provider.play)_link
+    - provider.rtmp_link
+    - provider.streamkey
+    - provider_status
+    - last_provider_sync_at
     &nbsp;
-  - Добавить dry-run/proof:
+  - Это обязательный add-only принцип для уже накопленных данных.
+  &nbsp;
+3. **Control Panel вынести в отдельную секцию только после успешного create**
+  &nbsp;
+  - До создания эфира:
     &nbsp;
-    - реальный успешный create live event в Kinescope,
-    - запись созданного kinescope_live_event_id в live_events,
-    - скрин из UI без [object Object].
+    - выбор проекта,
+    - кнопка создания,
+    - понятный readiness.
+    &nbsp;
+  - После создания:
+    &nbsp;
+    - отдельный блок **«Управление трансляцией»**.
+    &nbsp;
+  - В этом блоке показать:
+    &nbsp;
+    - статус провайдера,
+    - kinescope_live_event_id,
+    - kinescope_stream_id,
+    - play_link,
+    - rtmp_link,
+    - streamkey,
+    - время последней синхронизации.
+    &nbsp;
+  - streamkey по умолчанию скрыт, с кнопкой показать/скрыть и копировать.
+  &nbsp;
+4. **Инструкцию ведущему заменить на рабочий операторский блок**
+  &nbsp;
+  - Не писать общий текст “идите в Kinescope”.
+  - Сделать блок:
+    &nbsp;
+    - “Ссылка для просмотра”
+    - “RTMP сервер”
+    - “Ключ трансляции”
+    - “Статус трансляции”
+    - “Запустить эфир”
+    - “Завершить эфир”
+    - “Обновить статус”
+    &nbsp;
+  - Если для полного управления всё же нужен переход в Kinescope, оставить его как вторичную ссылку “Открыть в Kinescope”, а не как основной сценарий.
+  &nbsp;
+5. **PATCH C дополнить явным автопереходом readiness-состояний**
+  &nbsp;
+  - После успешного create live event:
+    &nbsp;
+    - снимать blocker “нет источника Kinescope”;
+    - автоматически пересчитывать publish_ready;
+    - если scheduled_at и access rules уже заполнены, показывать CTA:
+      &nbsp;
+      - “Опубликовать эфир”
+      - после публикации — “Создать приглашение”.
+      &nbsp;
+    &nbsp;
+  - В BroadcastTemplateDialog причина disabled должна быть не только “Черновик”, а конкретная:
+    &nbsp;
+    - “Не опубликован”
+    - “Не задана дата”
+    - “Не создан источник трансляции”
+    - “Не заданы правила доступа”.
     &nbsp;
   &nbsp;
-2. **PATCH 3B — не уводить ведущего в Kinescope, а дать управление у нас в админке**
+6. **Добавить обязательный PATCH D — sync provider → platform status**
   &nbsp;
-  - Ничего не удалять из текущего recorded/autowebinar flow.
-  - Для live_stream добавить в админке отдельный блок **«Управление трансляцией»**:
+  - При sync_live_event должен выполняться mapping статусов провайдера в platform lifecycle:
     &nbsp;
-    - статус эфира,
-    - кнопка Создать эфир в Kinescope,
-    - кнопка Запустить эфир,
-    - кнопка Завершить эфир,
-    - кнопка Обновить статус,
-    - блок настроек источника/RTMP/OBS, если Kinescope API возвращает эти данные; если API не возвращает — явно зафиксировать это как provider limitation и не прятать.
+    - provider pending → scheduled
+    - provider active/live → live
+    - provider completed/finished → ended
+    - если найдена запись и replay_enabled=true → replay_available
     &nbsp;
-  - Под этим же блоком добавить живую правую колонку/вкладки:
+  - Сохранять в БД:
     &nbsp;
-    - комментарии,
-    - вопросы,
-    - список участников/кто вошёл,
-    - basic moderation actions.
+    - platform_status
+    - provider raw status
+    - last_provider_sync_at
+    - найденный replay source.
     &nbsp;
-  - Цель: преподаватель работает из нашей админки, а не через отдельное окно Kinescope, насколько это позволяет API.
+  - Без этого control panel будет неполной.
   &nbsp;
-3. **PATCH 3C — разделить две сущности в UI и логике**
+7. **Добавить обязательный PATCH E — replay binding после завершения**
   &nbsp;
-  - В админке и шаблонах явно разделить:
+  - После complete_live_event или sync_live_event нужно:
     &nbsp;
-    - **Живой эфир**
-    - **Эфир в записи / автовебинар**
+    - вызвать get_live_event_videos;
+    - если запись появилась, сохранить источник записи в kinescope_video_id или отдельный replay-source в metadata;
+    - перевести эфир в replay_available, если это разрешено.
     &nbsp;
-  - Не смешивать их readiness.
-  - Для live_stream обязательны:
-    &nbsp;
-    - title
-    - slug
-    - kinescope_live_event_id
-    - scheduled_at
-    - access rules
-    &nbsp;
-  - Для recorded_webinar обязательны:
-    &nbsp;
-    - title
-    - slug
-    - kinescope_video_id
-    - access rules
-    &nbsp;
-  - Везде в UI показывать читаемые подписи, какой именно тип сейчас настраивается.
+  - Это критично, чтобы одна и та же ссылка /live/:slug после живого эфира открывала запись, а не ломалась.
   &nbsp;
-4. **PATCH 4A — вернуть sidebar на пользовательскую страницу /live**
+8. **Комментарии и вопросы встроить в admin control panel и в live page с одним источником данных**
   &nbsp;
-  - LiveEvents.tsx обернуть в DashboardLayout, чтобы страница списка эфиров была полноценной частью пользовательского кабинета.
-  - /live/:slug оставить без sidebar только если это осознанный full-screen player mode; если нет — сделать единое решение и зафиксировать его.
-  - Нужен proof:
+  - Не дублировать модели.
+  - Использовать уже созданные LiveEventComments и LiveEventQuestions, но:
     &nbsp;
-    - скрин /live с боковым меню,
-    - переход из меню пользователя в раздел «Эфиры».
+    - на странице эфира для пользователя;
+    - в админке в control panel для модерации.
+    &nbsp;
+  - Для admin view добавить:
+    &nbsp;
+    - счётчик комментариев,
+    - счётчик вопросов,
+    - быстрый фильтр “без ответа”.
     &nbsp;
   &nbsp;
-5. **PATCH 4B — пользовательский раздел “Эфиры” сделать полноценным**
+9. **Сделать нормальный текст ошибок вместо raw API-сообщений**
   &nbsp;
-  - В меню пользователя оставить пункт **«Эфиры»**.
-  - Страница /live должна показывать:
+  - Если create не удался:
     &nbsp;
-    - только доступные пользователю эфиры,
-    - тип эфира,
-    - статус,
-    - время в локальной зоне пользователя,
-    - признак live/replay/scheduled.
+    - не показывать только provider raw error;
+    - показывать человекочитаемый текст + кнопку “Показать технические детали”.
     &nbsp;
-  - Проверить secure filtering server-side через live-events-list, не client-side.
-  &nbsp;
-6. **PATCH 5A — исправить выбор эфира в BroadcastTemplateDialog**
-  &nbsp;
-  - Сейчас эфир виден, но **не выбирается**.
-  - Проверить и исправить:
+  - Формат:
     &nbsp;
-    - SelectItem disabled,
-    - value/onValueChange,
-    - readiness-блокировку,
-    - pointer/focus issue внутри dialog.
-    &nbsp;
-  - Если эфир не готов к приглашениям — он должен быть либо:
-    &nbsp;
-    - явно disabled с понятной причиной,
-    - либо selectable, но с предупреждением.
-    &nbsp;
-  - Нельзя оставлять состояние “видно, но выбрать невозможно без объяснения”.
-  - В карточке/строке выбора показывать причину:
-    &nbsp;
-    - черновик,
-    - не опубликован,
-    - нет даты,
-    - не создан источник Kinescope,
-    - нет правил доступа.
-    &nbsp;
-  - Нужен proof:
-    &nbsp;
-    - минимум один live_stream selectable,
-    - минимум один recorded_webinar selectable,
-    - минимум один not-ready item с понятной причиной.
+    - основной текст для пользователя,
+    - код,
+    - raw JSON в collapsible debug block.
     &nbsp;
   &nbsp;
-7. **PATCH 5B — readiness для приглашений сделать отдельным и прозрачным**
+10. **DoD усилить**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Недостаточно “вернул 200”.
+- Финальный DoD по PATCH A–E:
   &nbsp;
-  - В BroadcastTemplateDialog readiness считать отдельно от publish/save.
-  - Для live_stream:
-    &nbsp;
-    - published
-    - есть дата/время
-    - есть provider live source
-    &nbsp;
-  - Для recorded_webinar:
-    &nbsp;
-    - published
-    - есть video source
-    &nbsp;
-  - В UI текстами, без технических фраз.
-  &nbsp;
-8. **PATCH 5C — после создания/сохранения эфира дать прямой CTA**
-  &nbsp;
-  - После save/create:
-    &nbsp;
-    - если ready → кнопка Создать приглашение
-    - если not ready → список, что осталось доделать
-    &nbsp;
-  - Убрать “замкнутый круг”, когда эфир создан, но дальше непонятно, что мешает отправить приглашение.
-  &nbsp;
-9. **PATCH 6A — proof-пакет по PATCH 4–6 сделать полностью**
-  &nbsp;
-  - Обязательный runtime-proof:
-    &nbsp;
-    - /live с sidebar,
-    - /live/:slug открывается,
-    - comments работают,
-    - questions работают,
-    - live-events-list реально фильтрует по доступу,
-    - BroadcastTemplateDialog реально позволяет выбрать готовый эфир,
-    - recorded flow не сломан.
-    &nbsp;
-  - Для comments/questions:
-    &nbsp;
-    - insert под обычным пользователем,
-    - delete/toggle answered под admin,
-    - realtime update или минимум invalidate proof.
-    &nbsp;
-  - Для live_stream:
-    &nbsp;
-    - реальный create в Kinescope,
-    - реальный ID сохранён,
-    - эфир проходит readiness до состояния selectable в шаблоне.
-    &nbsp;
-  &nbsp;
-10. **PATCH 6B — redesign ошибок и статусов**
-  &nbsp;
-  - Любая backend ошибка — не [object Object], а нормальный human-readable alert.
-  - Для операций Kinescope показывать:
-    &nbsp;
-    - что делали,
-    - что вернул provider,
-    - что сохранить/исправить дальше.
-    &nbsp;
-  - Все блокеры readiness выделять списком прямо под действием, а не общим красным тостом.
-  &nbsp;
-11. **PATCH 6C — зафиксировать долгосрочную цель live admin console**
-  &nbsp;
-  - Текущий спринт: сделать рабочий live event lifecycle + шаблоны + user section + comments/questions.
-  - Следующий слой в этом же направлении, без удаления текущего:
-    &nbsp;
-    - единая внутренняя консоль ведущего на нашей платформе,
-    - управление эфиром,
-    - просмотр комментариев/вопросов/участников,
-    - продажи и аналитика по действиям участников.
-    &nbsp;
-  - Всё это add-only, recorded/autowebinar flow не ломать.
-  &nbsp;
-12. **DoD обновить**
-  &nbsp;
-  - live_stream реально создаётся в Kinescope из нашей админки.
-  - Ошибка [object Object] устранена.
-  - Эфир после создания проходит в состояние, где его можно выбрать в шаблоне приглашения.
-  - /live имеет sidebar и виден в пользовательском меню.
-  - BroadcastTemplateDialog позволяет выбрать готовый эфир.
-  - Комментарии и вопросы работают с access-aware RLS.
-  - Recorded flow не сломан.
-  - Есть proof по каждому пункту, а не только описание кода.
+  1. Create live event из админки успешен.
+  2. В БД сохранены kinescope_live_event_id, kinescope_stream_id, provider metadata.
+  3. В админке видны play_link, rtmp_link, streamkey.
+  4. enable_live_event меняет статус на live.
+  5. complete_live_event меняет статус на ended.
+  6. sync_live_event подтягивает provider status и запись.
+  7. После публикации эфир становится выбираемым в BroadcastTemplateDialog.
+  8. После завершения и появления записи тот же /live/:slug работает как replay.
+  9. Recorded flow не сломан.
+  10. Все изменения подтверждены runtime-proof, а не только кодом.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План: Proof-пакет PATCH 4–6 + исправление отсутствующего sidebar
+&nbsp;
+
+11. **Ничего из текущего recorded flow не удалять**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Обязательно зафиксировать в плане отдельно:
+  &nbsp;
+  - текущий выбор видео из Kinescope v1,
+  - manual kinescope_video_id,
+  - текущие access rules,
+  - session/heartbeat/invite flow
+    остаются без удаления и без деградации.
+  &nbsp;
+- Live-stream добавляется как второй параллельный режим.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. **Нужен один consolidated финальный proof-пакет**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- После выполнения не отдельные словесные отчёты, а единый proof:
+  &nbsp;
+  - request/response create,
+  - состояние записи в БД,
+  - скрин control panel,
+  - скрин selectable эфира в BroadcastTemplateDialog,
+  - скрин /live/:slug,
+  - proof replay после завершения.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+План: Исправление создания live event в Kinescope + Admin Control Panel
 
 ## Диагностика
 
-### Найденные проблемы
+### Корневая причина ошибки 400
 
-1. **Нет sidebar на /live и /live/:slug** — Routes зарегистрированы напрямую без `DashboardLayout`. Все другие пользовательские страницы (`/dashboard`, `/knowledge`, `/money` и т.д.) оборачиваются в `DashboardLayout` внутри компонента страницы (например, `Dashboard.tsx` импортирует `DashboardLayout`). Страницы `LiveEvents.tsx` и `LiveEvent.tsx` этого не делают — отсюда отсутствие левого меню.
-2. **Только 1 тестовый эфир** — `recorded_webinar`, не опубликован, без kinescope_video_id. Для proof нужен хотя бы один опубликованный эфир с доступом.
-3. **RLS корректен** — comments/questions используют `user_has_live_event_access`, admin delete через `has_role_v2`.
-4. **Realtime включён** — таблицы добавлены в `supabase_realtime`.
+Лог edge function:
+
+```
+json: cannot unmarshal bool into Go struct field CreateForm.record of type meta.Record
+```
+
+Код отправляет `record: true` (boolean), но Kinescope API v2 ожидает **объект**:
+
+```json
+{ "record": { "parent_id": "project_uuid" } }
+```
+
+Это подтверждено реальным ответом API — существующие live events в Kinescope содержат:
+
+```json
+"record": { "parent_id": "14a07c2e-c2e8-4d50-930c-cf15151f08ea" }
+```
+
+### Что API реально возвращает (доказано вызовом list_live_events)
+
+```text
+id:            "019d4f81-75e7-..."          ← kinescope_live_event_id
+play_link:     "https://kinescope.io/..."   ← embed/player URL
+rtmp_link:     "rtmp://rtmp.kinescope.io/live"
+streamkey:     "a147f216f410..."             ← OBS stream key
+stream.id:     "2dda40d6-..."               ← kinescope_stream_id
+stream.status: "pending"                    ← provider status
+poster.*:      poster URLs
+```
 
 ---
 
-## Что нужно сделать
+## PATCH A — Исправить create_live_event (blocker)
 
-### 1. Обернуть LiveEvents.tsx в DashboardLayout
+### Файл: `supabase/functions/kinescope-api/index.ts`
 
-Импортировать `DashboardLayout` и обернуть контент — так же, как сделано в Dashboard, Knowledge и других user pages. Это вернёт sidebar.
+Строка 230-235 — заменить:
 
-### 2. LiveEvent.tsx — оставить без DashboardLayout (намеренно)
+```typescript
+// БЫЛО:
+record: request.record !== false, // boolean — ОШИБКА
 
-Страница просмотра эфира — full-screen player. Sidebar будет мешать просмотру. Это стандартное поведение для video player pages.
+// СТАЛО:
+record: { parent_id: project_id },  // объект с parent_id проекта
+```
 
-### 3. Runtime proof: secure filtering через live-events-list
+Также убрать `type: request.type || "webinar"` — по умолчанию Kinescope использует `"one-time"`, что корректно.
 
-- Вызвать edge function от имени текущего пользователя
-- Проверить, что неопубликованные и недоступные эфиры не возвращаются
-- Проверить ответ при отсутствии доступа
+Итоговый body для create:
 
-### 4. Runtime proof: comments/questions RLS
+```typescript
+const body = {
+  name: request.name || "Новый эфир",
+  parent_id: project_id,   // проект Kinescope
+  record: { parent_id: project_id },
+};
+```
 
-- Попробовать INSERT в comments через RLS (от текущего пользователя)
-- Проверить SELECT/DELETE для admin
+### Файл: `src/pages/admin/AdminLiveEvents.tsx`
 
-### 5. Runtime proof: BroadcastTemplateDialog
+Строки 323-331 — убрать `record: true`, добавить логирование полного response:
 
-- Визуально проверить через browser, что dialog показывает эфиры с readiness badges
+```typescript
+body: {
+  action: "create_live_event",
+  instance_id: kinescopeInstanceId,
+  project_id: form.kinescope_project_id,
+  name: form.title || "Новый эфир",
+}
+```
 
-### 6. Runtime proof: recorded flow без регрессии
+После успешного создания — сохранять дополнительные поля из ответа API:
 
-- Проверить, что live-resolve по существующему slug возвращает корректный ответ
-- Проверить, что admin page загружается без ошибок
+- `kinescope_live_event_id` = `eventData.id`
+- `kinescope_stream_id` = `eventData.stream?.id`
+- provider metadata: `rtmp_link`, `streamkey`, `play_link`, `stream.status`
+
+Обновлять запись в БД сразу после создания (update live_events с новыми ID).
+
+### Proof после деплоя
+
+Вызвать `create_live_event` через curl edge function и проверить успешный 200.
+
+---
+
+## PATCH B — Admin Control Panel для live_stream
+
+### Файл: `src/pages/admin/AdminLiveEvents.tsx`
+
+В форме редактирования live_stream (после создания в Kinescope) добавить блок **«Управление трансляцией»**:
+
+1. **Статус эфира**: badge с текущим provider status (`pending` / `active` / `completed`)
+2. **RTMP / Stream Key**: показать rtmp_link и streamkey из metadata (для OBS)
+3. **Player link**: play_link из Kinescope
+4. **Кнопки управления**:
+  - Запустить эфир (enable)
+  - Завершить эфир (complete)
+  - Обновить статус (sync)
+5. **Вкладки**: Комментарии / Вопросы (LiveEventComments, LiveEventQuestions — уже есть компоненты)
+
+Metadata сохранять в поле `metadata` jsonb при create и при sync.
+
+---
+
+## PATCH C — Readiness auto-recalculate + selectable invite flow
+
+После успешного create_live_event:
+
+- `kinescope_live_event_id` заполнен → readiness blocker «Нет источника Kinescope» снимается
+- Если published + scheduled_at заполнен + access rules есть → эфир становится invite_ready
+- В BroadcastTemplateDialog readiness пересчитывается по тем же полям — уже работает, нужно только убедиться, что данные сохранены
 
 ---
 
 ## Файлы
 
 
-| Файл                       | Действие                                  |
-| -------------------------- | ----------------------------------------- |
-| `src/pages/LiveEvents.tsx` | Обернуть в DashboardLayout                |
-| Runtime proofs             | curl edge functions + browser screenshots |
+| Файл                                        | Действие                                                                 |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| `supabase/functions/kinescope-api/index.ts` | Исправить `record` field + deploy                                        |
+| `src/pages/admin/AdminLiveEvents.tsx`       | Убрать `record: true`, сохранять stream metadata, добавить control panel |
 
 
 ## DoD
 
-- Sidebar виден на /live
-- Все runtime proofs собраны и задокументированы
-- Recorded flow не сломан
+1. `create_live_event` возвращает 200 с event ID
+2. `kinescope_live_event_id` и `kinescope_stream_id` сохраняются в БД
+3. RTMP link и stream key видны в админке
+4. Кнопки управления (запуск/завершение/обновление) работают
+5. Комментарии и вопросы доступны в блоке управления
+6. Эфир после создания + публикации становится selectable в BroadcastTemplateDialog
+7. Recorded flow не затронут
