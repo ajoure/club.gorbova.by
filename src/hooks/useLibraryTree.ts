@@ -49,6 +49,31 @@ export function resolveAccessLabel(module: TrainingModule): string {
 /* ── Tree builder ──────────────────────────────────────── */
 
 export function useLibraryTree(libraryModules: TrainingModule[], allModules: TrainingModule[]) {
+  // Fetch product names for group headers
+  const productIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const m of allModules) {
+      if (m.product_id) ids.add(m.product_id);
+    }
+    return [...ids];
+  }, [allModules]);
+
+  const { data: productsMap } = useQuery({
+    queryKey: ["library-product-names", productIds],
+    queryFn: async () => {
+      if (productIds.length === 0) return {} as Record<string, string>;
+      const { data } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .in("id", productIds);
+      const map: Record<string, string> = {};
+      (data || []).forEach((p: any) => { map[p.id] = p.name; });
+      return map;
+    },
+    enabled: productIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
   return useMemo(() => {
     if (!libraryModules.length) return [] as LibraryGroup[];
 
