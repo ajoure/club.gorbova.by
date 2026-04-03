@@ -54,19 +54,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
-    // 1. СНАЧАЛА подписываемся на изменения (рекомендация Supabase)
+    // 1. Subscribe to auth state changes (Supabase recommendation)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, currentSession) => {
         if (!isMounted) return;
-        
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          // Use setTimeout to avoid potential race conditions with Supabase internals
+
+        console.info(`[AuthContext] onAuthStateChange: event=${event}, hasSession=${!!currentSession}, userId=${currentSession?.user?.id ?? 'none'}`);
+
+        // PATCH 0: On SIGNED_OUT, retry getSession to guard against false positives
+        // (preview hot-reload / route remount can fire spurious SIGNED_OUT)
+        if (event === "SIGNED_OUT") {
+          try {
+            const { data: { session: retrySession } } = await supabase.auth.getSession();
+            if (retrySession) {
+              console.warn("[AuthContext] SIGNED_OUT was false-positive — session still valid, ignoring");
+              // Re-apply the valid session instead of clearing state
+              setSession(retrySession);
+              setUser(retrySession.user);
+              setTimeout(() => {
+                if (isMounted) {
+                  fetchUserRole(retrySession.user.id).then((r) => {
+                    if (isMounted) setRole(r);
+                  });
+                }
+              }, 0);
+              return; // skip the default SIGNED_OUT handling
+            }
+          } catch (err) {
+            console.error("[AuthContext] SIGNED_OUT retry getSession failed:", err);
+          }
+        }
+
+        setSession(currentSession);
+        setUser(currentSession?.user ?? null);
+
+        if (currentSession?.user) {
           setTimeout(() => {
             if (isMounted) {
-              fetchUserRole(session.user.id).then((r) => {
+              fetchUserRole(currentSession.user.id).then((r) => {
                 if (isMounted) setRole(r);
               });
             }
@@ -78,15 +103,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    // 2. ПОТОМ проверяем текущую сессию
+    // 2. Check current session
     supabase.auth.getSession()
-      .then(({ data: { session } }) => {
+      .then(({ data: { session: existingSession } }) => {
         if (!isMounted) return;
-        
-        if (session) {
-          setSession(session);
-          setUser(session.user);
-          fetchUserRole(session.user.id).then((r) => {
+
+        if (existingSession) {
+          setSession(existingSession);
+          setUser(existingSession.user);
+          fetchUserRole(existingSession.user.id).then((r) => {
             if (isMounted) setRole(r);
           });
         }
@@ -98,6 +123,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isMounted) setLoading(false);
       });
 
+    // 3. PATCH 0: Visibility change listener — refresh session when tab becomes visible
+    const handleVisibilityChange = () => {
+      if (document.hidden || !isMounted) return;
+      console.info("[AuthContext] Tab became visible — refreshing session");
+      supabase.auth.getSession().then(({ data: { session: refreshedSession } }) => {
+        if (!isMounted) return;
+        if (refreshedSession) {
+          setSession(refreshedSession);
+          setUser(refreshedSession.user);
+        }
+      }).catch((err) => {
+        console.error("[AuthContext] visibilitychange getSession error:", err);
+      });
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     // Safety timeout — prevent infinite loading if auth init hangs
     const safetyTimeout = setTimeout(() => {
       if (!isMounted) return;
@@ -108,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       subscription.unsubscribe();
     };
   }, []);
