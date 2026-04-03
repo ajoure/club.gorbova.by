@@ -137,6 +137,22 @@ const [includeButton, setIncludeButton] = useState(true);
     },
   });
 
+  // Fetch tariffs for selected products
+  const { data: tariffs } = useQuery({
+    queryKey: ["broadcast-tariffs", filters.productIds],
+    queryFn: async () => {
+      if (filters.productIds.length === 0) return [];
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name, product_id")
+        .in("product_id", filters.productIds)
+        .eq("is_active", true)
+        .order("name");
+      return data || [];
+    },
+    enabled: filters.productIds.length > 0,
+  });
+
   // Fetch telegram clubs
   const { data: clubs } = useQuery({
     queryKey: ["broadcast-clubs"],
