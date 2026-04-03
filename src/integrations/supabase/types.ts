@@ -4986,6 +4986,71 @@ export type Database = {
           },
         ]
       }
+      live_access_links: {
+        Row: {
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          last_opened_at: string | null
+          last_opened_by_user_id: string | null
+          live_event_id: string
+          meta: Json | null
+          opened_at: string | null
+          revoked_at: string | null
+          sent_at: string | null
+          sent_via: string | null
+          status: string
+          token_hash: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_opened_at?: string | null
+          last_opened_by_user_id?: string | null
+          live_event_id: string
+          meta?: Json | null
+          opened_at?: string | null
+          revoked_at?: string | null
+          sent_at?: string | null
+          sent_via?: string | null
+          status?: string
+          token_hash: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_opened_at?: string | null
+          last_opened_by_user_id?: string | null
+          live_event_id?: string
+          meta?: Json | null
+          opened_at?: string | null
+          revoked_at?: string | null
+          sent_at?: string | null
+          sent_via?: string | null
+          status?: string
+          token_hash?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_access_links_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_events: {
         Row: {
           access_rule: Json
