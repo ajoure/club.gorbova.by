@@ -268,6 +268,21 @@ export default function AdminLiveEvents() {
     enabled: !!form.kinescope_project_id && !!kinescopeInstanceId && form.kinescope_mode === "picker" && !isLiveStream,
   });
 
+  // Kinescope live folders (for live_stream)
+  const { data: kinescopeLiveFolders, isLoading: kinescopeLiveFoldersLoading } = useQuery({
+    queryKey: ["kinescope-live-folders", kinescopeInstanceId],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
+        body: { action: "list_live_folders", instance_id: kinescopeInstanceId },
+      });
+      if (error) throw error;
+      if (!data?.success) return [];
+      const folders = (data?.data as any)?.folders || (data?.data as any)?.data || [];
+      return folders as Array<{ id: string; name: string }>;
+    },
+    enabled: !!kinescopeInstanceId && isLiveStream,
+  });
+
   // --- Validation ---
   const validationItems = useMemo(() => {
     const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
