@@ -299,6 +299,7 @@ const App = () => {
               <Route path="/admin/kb-import" element={<ProtectedRoute><LazyRoute><AdminKbImport /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites" element={<ProtectedRoute><LazyRoute><AdminSiteBuilder /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/sites/:id" element={<ProtectedRoute><LazyRoute><AdminSiteEditor /></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/live-events" element={<ProtectedRoute><LazyRoute><AdminLiveEvents /></LazyRoute></ProtectedRoute>} />
               
               {/* Legacy redirects - для обратной совместимости */}
               <Route path="/admin/users" element={<Navigate to="/admin/contacts" replace />} />
