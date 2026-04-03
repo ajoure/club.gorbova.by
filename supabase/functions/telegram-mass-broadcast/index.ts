@@ -518,9 +518,12 @@ Deno.serve(async (req) => {
           .trim()
           .substring(0, 80),
         message_template: message,
+        template_type: templateType || 'general',
+        live_event_id: liveEventId || null,
         include_button: includeButton,
         button_text: includeButton ? (buttonText || 'Открыть платформу') : null,
-        button_url: includeButton ? appUrl : null,
+        // For webinar_invite, don't store button_url in audit (it's per-recipient)
+        button_url: (includeButton && !isWebinarInvite) ? appUrl : null,
         has_media: !!mediaBuffer,
         media_type: mediaType,
         filters,
