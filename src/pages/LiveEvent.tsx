@@ -29,7 +29,7 @@ interface LiveResolveResult {
   event_id?: string;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 
