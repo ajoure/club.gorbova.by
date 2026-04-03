@@ -30,6 +30,9 @@ export interface BroadcastTemplate {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  template_type: "general" | "webinar_invite";
+  live_event_id: string | null;
+  targeting_tariff_id: string | null;
 }
 
 interface BroadcastTemplateCardProps {
