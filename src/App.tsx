@@ -66,6 +66,7 @@ const SupportTicket = lazy(() => import("./pages/SupportTicket"));
 const Money = lazy(() => import("./pages/Money"));
 const AI = lazy(() => import("./pages/AI"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
+const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
 
