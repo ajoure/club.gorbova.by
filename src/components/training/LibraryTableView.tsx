@@ -386,7 +386,7 @@ export function LibraryTableView({ libraryModules, allModules }: LibraryTableVie
           {renderProgress(lessonCount, completedCount, true)}
         </TableCell>
         <TableCell className="py-2">
-          {renderActionLabel(lessonCount, completedCount)}
+          {renderActionLabel(lessonCount, completedCount, child.slug, child.id)}
         </TableCell>
       </TableRow>,
       ...(isExpanded ? [renderModuleLessons(child.id, child.slug, 3)] : []),
