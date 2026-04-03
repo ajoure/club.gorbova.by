@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Loader2, Radio, Video, CalendarClock, PlayCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,8 +60,8 @@ export default function LiveEvents() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-4xl mx-auto px-4 py-8">
+    <DashboardLayout>
+      <div className="max-w-4xl mx-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Radio className="h-6 w-6" />
@@ -110,6 +111,6 @@ export default function LiveEvents() {
           </div>
         )}
       </div>
-    </div>
+    </DashboardLayout>
   );
 }
