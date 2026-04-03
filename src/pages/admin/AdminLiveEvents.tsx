@@ -192,6 +192,8 @@ export default function AdminLiveEvents() {
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
       replay_enabled: event.replay_enabled,
+      invite_mode: (event.invite_mode as "none" | "optional_one_time" | "required_one_time") || "none",
+      direct_access_allowed: event.direct_access_allowed ?? true,
     });
     setDialogOpen(true);
   };
