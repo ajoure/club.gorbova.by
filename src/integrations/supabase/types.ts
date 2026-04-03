@@ -5192,21 +5192,101 @@ export type Database = {
           },
         ]
       }
+      live_event_comments: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          live_event_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          live_event_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          live_event_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_comments_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_questions: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          is_answered: boolean
+          live_event_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          is_answered?: boolean
+          live_event_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          is_answered?: boolean
+          live_event_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_questions_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_events: {
         Row: {
           access_rule: Json
           created_at: string
           description: string | null
           direct_access_allowed: boolean
+          event_timezone: string
+          event_type: string
           id: string
           invite_mode: string
           is_published: boolean
+          kinescope_live_event_id: string | null
+          kinescope_project_id: string | null
+          kinescope_stream_id: string | null
           kinescope_video_id: string | null
           metadata: Json | null
+          platform_status: string
           product_id: string | null
           replay_enabled: boolean
           scheduled_at: string | null
           slug: string
+          source_kind: string
           status: string
           title: string
           updated_at: string
@@ -5216,15 +5296,22 @@ export type Database = {
           created_at?: string
           description?: string | null
           direct_access_allowed?: boolean
+          event_timezone?: string
+          event_type?: string
           id?: string
           invite_mode?: string
           is_published?: boolean
+          kinescope_live_event_id?: string | null
+          kinescope_project_id?: string | null
+          kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
           metadata?: Json | null
+          platform_status?: string
           product_id?: string | null
           replay_enabled?: boolean
           scheduled_at?: string | null
           slug: string
+          source_kind?: string
           status?: string
           title: string
           updated_at?: string
@@ -5234,15 +5321,22 @@ export type Database = {
           created_at?: string
           description?: string | null
           direct_access_allowed?: boolean
+          event_timezone?: string
+          event_type?: string
           id?: string
           invite_mode?: string
           is_published?: boolean
+          kinescope_live_event_id?: string | null
+          kinescope_project_id?: string | null
+          kinescope_stream_id?: string | null
           kinescope_video_id?: string | null
           metadata?: Json | null
+          platform_status?: string
           product_id?: string | null
           replay_enabled?: boolean
           scheduled_at?: string | null
           slug?: string
+          source_kind?: string
           status?: string
           title?: string
           updated_at?: string
@@ -12627,6 +12721,10 @@ export type Database = {
       unlock_stuck_media_jobs: {
         Args: { stuck_seconds?: number }
         Returns: number
+      }
+      user_has_live_event_access: {
+        Args: { _live_event_id: string; _user_id: string }
+        Returns: boolean
       }
       validate_club_product_linkage: {
         Args: {
