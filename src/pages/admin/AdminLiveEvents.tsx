@@ -874,26 +874,49 @@ export default function AdminLiveEvents() {
               <FormSection title={isLiveStream ? "Живой эфир Kinescope" : "Источник видео"}>
                 {isLiveStream ? (
                   // Live stream mode
-                  <div className="space-y-3">
-                    <p className="text-xs text-muted-foreground">
-                      Создайте живой эфир в Kinescope для онлайн-трансляции. Выберите проект и нажмите «Создать».
-                    </p>
-
+                  <div className="space-y-4">
                     {kinescopeNotConfigured ? (
                       <div className="rounded-lg border border-dashed p-4 text-center space-y-2">
                         <p className="text-sm text-muted-foreground">Интеграция с Kinescope не настроена</p>
                       </div>
-                    ) : (
-                      <>
+                    ) : !form.kinescope_live_event_id ? (
+                      /* --- Pre-create: folder picker + create button --- */
+                      <div className="space-y-3">
+                        <p className="text-xs text-muted-foreground">
+                          Выберите папку для трансляций и создайте эфир.
+                        </p>
+
                         <div className="space-y-1.5">
-                          <Label>Проект Kinescope *</Label>
+                          <Label>Папка для трансляций *</Label>
+                          {kinescopeLiveFoldersLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка...
+                            </div>
+                          ) : kinescopeLiveFolders && kinescopeLiveFolders.length > 0 ? (
+                            <Select value={form.kinescope_folder_id} onValueChange={(v) => setForm({ ...form, kinescope_folder_id: v })}>
+                              <SelectTrigger><SelectValue placeholder="Выберите папку" /></SelectTrigger>
+                              <SelectContent>
+                                {kinescopeLiveFolders.map((f) => (
+                                  <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <div className="rounded-lg border border-dashed p-3 text-center">
+                              <p className="text-xs text-muted-foreground">Нет папок для трансляций. Создайте папку в Kinescope.</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <Label>Проект для записи (куда сохранится запись)</Label>
                           {kinescopeProjectsLoading ? (
                             <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка проектов...
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка...
                             </div>
                           ) : (
                             <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v })}>
-                              <SelectTrigger><SelectValue placeholder="Выберите проект" /></SelectTrigger>
+                              <SelectTrigger><SelectValue placeholder="Выберите проект (для записи)" /></SelectTrigger>
                               <SelectContent>
                                 {kinescopeProjects?.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
@@ -901,42 +924,28 @@ export default function AdminLiveEvents() {
                               </SelectContent>
                             </Select>
                           )}
+                          <p className="text-xs text-muted-foreground">Записи эфира будут сохранены в этот проект</p>
                         </div>
 
-                        {form.kinescope_live_event_id ? (
-                          <div className="rounded-lg border bg-primary/5 p-3 space-y-1">
-                            <div className="flex items-center gap-2 text-sm font-medium text-primary">
-                              <CheckCircle2 className="h-4 w-4" /> Эфир создан в Kinescope
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_live_event_id}</code>
-                            </p>
-                          </div>
-                        ) : (
-                          <Button
-                            onClick={handleCreateKinescopeLiveEvent}
-                            disabled={!form.kinescope_project_id || creatingLiveEvent}
-                            variant="outline"
-                            className="gap-2"
-                          >
-                            {creatingLiveEvent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
-                            Создать живой эфир в Kinescope
-                          </Button>
-                        )}
-
-                        {/* Host instructions */}
-                        <div className="rounded-lg border p-3 bg-muted/20">
-                          <h4 className="text-xs font-medium mb-1">Инструкция ведущему</h4>
-                          <p className="text-xs text-muted-foreground">
-                            Ведущий управляет трансляцией через консоль Kinescope. После создания эфира откройте консоль Kinescope, найдите событие и настройте OBS/RTMP.
-                          </p>
-                          {form.kinescope_live_event_id && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Kinescope Event ID: <code className="bg-muted px-1 rounded">{form.kinescope_live_event_id}</code>
-                            </p>
-                          )}
-                        </div>
-                      </>
+                        <Button
+                          onClick={handleCreateKinescopeLiveEvent}
+                          disabled={!form.kinescope_folder_id || creatingLiveEvent}
+                          variant="outline"
+                          className="gap-2"
+                        >
+                          {creatingLiveEvent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+                          Создать живой эфир в Kinescope
+                        </Button>
+                      </div>
+                    ) : (
+                      /* --- Post-create: Control Panel --- */
+                      <LiveStreamControlPanel
+                        form={form}
+                        editingId={editingId}
+                        kinescopeInstanceId={kinescopeInstanceId}
+                        onLifecycleAction={handleLifecycleAction}
+                        queryClient={queryClient}
+                      />
                     )}
                   </div>
                 ) : (
