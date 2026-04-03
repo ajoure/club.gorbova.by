@@ -402,8 +402,9 @@ Deno.serve(async (req) => {
         sent,
         failed,
         total: sent + failed,
-        message_preview: resolveSystemTokens(message, now)
+        message_preview: resolveSystemTokens(message, broadcastNow)
           .replace(/\{\{(?:first_name|last_name|full_name|name|email|phone|telegram_username)\}\}/g, '')
+          .replace(/\{\{cf\.product\.[^}]+\}\}/g, '')
           .replace(/\s{2,}/g, ' ')
           .trim()
           .substring(0, 80),
