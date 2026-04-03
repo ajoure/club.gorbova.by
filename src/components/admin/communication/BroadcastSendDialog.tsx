@@ -29,6 +29,8 @@ import {
   Send,
   Users,
   AlertTriangle,
+  Info,
+  Shield,
 } from "lucide-react";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
 
@@ -66,6 +68,7 @@ export function BroadcastSendDialog({
   });
 
   const isTelegram = template?.channel === "telegram";
+  const isWebinar = template?.template_type === "webinar_invite";
 
   // Fetch products
   const { data: products } = useQuery({
@@ -80,6 +83,22 @@ export function BroadcastSendDialog({
     },
   });
 
+  // Fetch tariffs for selected product
+  const { data: tariffs } = useQuery({
+    queryKey: ["broadcast-tariffs", filters.productId],
+    queryFn: async () => {
+      if (!filters.productId) return [];
+      const { data } = await supabase
+        .from("tariffs")
+        .select("id, name")
+        .eq("product_id", filters.productId)
+        .eq("is_active", true)
+        .order("name");
+      return data || [];
+    },
+    enabled: !!filters.productId,
+  });
+
   // Fetch telegram clubs
   const { data: clubs } = useQuery({
     queryKey: ["broadcast-clubs"],
@@ -91,6 +110,21 @@ export function BroadcastSendDialog({
         .order("club_name");
       return data || [];
     },
+  });
+
+  // Fetch live event access rule for webinar templates
+  const { data: liveEvent } = useQuery({
+    queryKey: ["broadcast-live-event", template?.live_event_id],
+    queryFn: async () => {
+      if (!template?.live_event_id) return null;
+      const { data } = await supabase
+        .from("live_events")
+        .select("id, title, access_rule, slug")
+        .eq("id", template.live_event_id)
+        .maybeSingle();
+      return data as { id: string; title: string; access_rule: { mode: string; product_id: string | null; tariff_id: string | null }; slug: string } | null;
+    },
+    enabled: !!template?.live_event_id,
   });
 
   // Fetch audience count
@@ -126,11 +160,17 @@ export function BroadcastSendDialog({
       }
 
       if (filters.productId) {
-        const { data: productSubs } = await supabase
+        const subQuery = supabase
           .from("subscriptions_v2")
           .select("user_id")
           .eq("product_id", filters.productId)
           .eq("status", "active");
+
+        if (filters.tariffId) {
+          subQuery.eq("tariff_id", filters.tariffId);
+        }
+
+        const { data: productSubs } = await subQuery;
 
         const productUserIds = new Set(productSubs?.map((s) => s.user_id) || []);
         filteredProfiles = filteredProfiles.filter((p) =>
@@ -170,6 +210,16 @@ export function BroadcastSendDialog({
       (template.message_text && template.message_text.length > 200 ? "..." : "")
     : template.email_subject;
 
+  const accessRulePreview = liveEvent?.access_rule
+    ? liveEvent.access_rule.mode === "all"
+      ? "Ссылка откроется всем авторизованным пользователям"
+      : liveEvent.access_rule.mode === "tariff"
+        ? "Только пользователи с определённым тарифом смогут войти"
+        : "Только пользователи с доступом к продукту смогут войти"
+    : null;
+
+  const canSend = isWebinar ? !!template.live_event_id && (audience?.count || 0) > 0 : (audience?.count || 0) > 0;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
@@ -193,6 +243,9 @@ export function BroadcastSendDialog({
                 <Mail className="h-4 w-4 text-orange-500" />
               )}
               <span className="font-medium">{template.name}</span>
+              {isWebinar && (
+                <Badge variant="outline" className="text-xs">Вебинар</Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">{preview}</p>
             {isTelegram && template.button_url && (
@@ -202,13 +255,27 @@ export function BroadcastSendDialog({
             )}
           </div>
 
+          {/* Access rule preview for webinar */}
+          {isWebinar && accessRulePreview && (
+            <div className="rounded-lg border p-4 bg-primary/5">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield className="h-4 w-4 text-primary" />
+                <span className="font-medium text-sm">Кому разрешён вход</span>
+              </div>
+              <p className="text-sm text-muted-foreground">{accessRulePreview}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Эта настройка берётся из эфира и не может быть изменена здесь
+              </p>
+            </div>
+          )}
+
           <Separator />
 
-          {/* Filters */}
+          {/* Targeting Filters */}
           <div className="space-y-4">
             <h4 className="font-medium flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Фильтры аудитории
+              Кому отправляем (targeting)
             </h4>
 
             <div className="flex items-center justify-between">
@@ -229,7 +296,7 @@ export function BroadcastSendDialog({
               <Select
                 value={filters.productId || "all"}
                 onValueChange={(v) =>
-                  setFilters((f) => ({ ...f, productId: v === "all" ? "" : v }))
+                  setFilters((f) => ({ ...f, productId: v === "all" ? "" : v, tariffId: "" }))
                 }
               >
                 <SelectTrigger>
@@ -245,6 +312,30 @@ export function BroadcastSendDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {filters.productId && (
+              <div className="space-y-2">
+                <Label>Тариф</Label>
+                <Select
+                  value={filters.tariffId || "all"}
+                  onValueChange={(v) =>
+                    setFilters((f) => ({ ...f, tariffId: v === "all" ? "" : v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Все тарифы" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все тарифы</SelectItem>
+                    {tariffs?.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {isTelegram && (
               <div className="space-y-2">
@@ -285,6 +376,16 @@ export function BroadcastSendDialog({
             </div>
           </div>
 
+          {isWebinar && (
+            <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                Фильтры выше определяют, кому будет отправлено сообщение. 
+                Доступ к эфиру по ссылке определяется правилом доступа из эфира — это разные настройки.
+              </span>
+            </div>
+          )}
+
           {(audience?.count || 0) > 500 && (
             <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
               <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -301,7 +402,7 @@ export function BroadcastSendDialog({
           </Button>
           <Button
             onClick={handleSend}
-            disabled={!audience?.count || isSending}
+            disabled={!canSend || isSending}
             className="gap-2"
           >
             {isSending ? (
