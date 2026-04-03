@@ -61,6 +61,11 @@ const mainMenuItems: MainMenuItem[] = [{
   url: "/ai",
   icon: Cpu
 }, {
+  key: "live",
+  title: "Эфиры",
+  url: "/live",
+  icon: Radio
+}, {
   key: "products",
   title: "Обучение",
   url: "/products",
