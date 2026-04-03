@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // 1. Find event by slug
     const { data: event, error: eventError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id')
+      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id, metadata')
       .eq('slug', slug)
       .maybeSingle();
 
@@ -52,6 +52,23 @@ Deno.serve(async (req) => {
     if (!event.is_published) {
       await logAudit(supabase, 'live_access_unpublished', null, slug, event.id);
       return jsonRes({ status: 'unpublished' }, 403);
+    }
+
+    // Guard: live_stream with missing/broken provider source
+    if (event.event_type === 'live_stream') {
+      const meta = event.metadata as Record<string, any> | null;
+      const providerSourceStatus = meta?.provider_source_status;
+      if (providerSourceStatus === 'missing' || providerSourceStatus === 'broken') {
+        await logAudit(supabase, 'live_access_source_unavailable', null, slug, event.id, {
+          provider_source_status: providerSourceStatus,
+        });
+        return jsonRes({
+          status: 'source_unavailable',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+        }, 503);
+      }
     }
 
     // 3. Auth check

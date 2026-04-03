@@ -56,15 +56,22 @@ function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reas
     if (!event.kinescope_live_event_id) {
       reasons.push("Не создан источник трансляции");
     } else {
-      // Check provider source status from metadata
+      // Check provider_source_status first (canonical check)
       const meta = event.metadata as any;
-      const providerCurrent = meta?.provider?.current || meta?.provider || {};
-      const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
-      const hasPlayLink = !!providerCurrent.play_link;
+      const providerStatus = meta?.provider_source_status;
       
-      // If provider_history has an entry with this ID being detached, or no stream data
-      if (!hasStream && !hasPlayLink) {
+      if (providerStatus === "missing") {
+        reasons.push("Источник трансляции удалён в Kinescope");
+      } else if (providerStatus === "broken") {
         reasons.push("Источник трансляции повреждён");
+      } else if (!providerStatus || providerStatus === "ok") {
+        // Fallback: check provider.current fields
+        const providerCurrent = meta?.provider?.current || meta?.provider || {};
+        const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
+        const hasPlayLink = !!providerCurrent.play_link;
+        if (!hasStream && !hasPlayLink) {
+          reasons.push("Источник трансляции повреждён");
+        }
       }
     }
     if (!event.scheduled_at) {

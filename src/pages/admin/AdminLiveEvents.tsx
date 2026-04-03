@@ -306,6 +306,17 @@ export default function AdminLiveEvents() {
         { key: "kinescope", label: "Живой эфир создан в Kinescope", ok: !!form.kinescope_live_event_id.trim(), blocker: true },
         { key: "scheduled", label: "Дата и время эфира заданы", ok: !!form.scheduled_at, blocker: true },
       );
+      // Check provider_source_status from metadata for live_stream
+      const currentEvent = events?.find(e => e.id === editingId);
+      const providerStatus = (currentEvent?.metadata as any)?.provider_source_status;
+      if (providerStatus === "missing" || providerStatus === "broken") {
+        items.push({
+          key: "provider_source",
+          label: "Источник трансляции недоступен",
+          ok: false,
+          blocker: true,
+        });
+      }
     } else {
       items.push(
         { key: "kinescope", label: "Источник видео привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
@@ -318,7 +329,7 @@ export default function AdminLiveEvents() {
     );
 
     return items;
-  }, [form, isLiveStream]);
+  }, [form, isLiveStream, events, editingId]);
 
   const blockers = validationItems.filter(i => i.blocker && !i.ok);
   const canPublish = blockers.length === 0;
@@ -730,7 +741,26 @@ export default function AdminLiveEvents() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
+                          {event.event_type === "live_stream" && (() => {
+                            const meta = event.metadata as any;
+                            const pss = meta?.provider_source_status;
+                            if (!event.kinescope_live_event_id && !pss) {
+                              return <Badge variant="outline" className="text-[9px] bg-muted text-muted-foreground">⚪ Не создан</Badge>;
+                            }
+                            if (pss === "missing") {
+                              return <Badge variant="destructive" className="text-[9px]">🔴 Источник удалён</Badge>;
+                            }
+                            if (pss === "broken") {
+                              return <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-700 border-amber-500/30">🟡 Источник повреждён</Badge>;
+                            }
+                            if (event.kinescope_live_event_id) {
+                              return <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/30">🟢 Источник активен</Badge>;
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {event.is_published ? (
@@ -1350,15 +1380,19 @@ function LiveStreamControlPanel({
   const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
   const kinescopeLiveEventId = eventData?.kinescope_live_event_id || form.kinescope_live_event_id;
 
-  // Determine provider source status from local state
+  // Determine provider source status from DB metadata (source of truth)
   useEffect(() => {
     if (!kinescopeLiveEventId) {
       setProviderSourceStatus("draft");
     } else {
-      // Default to ok if we have an ID, will be refined by sync
-      if (providerSourceStatus === "draft") setProviderSourceStatus("ok");
+      const metaStatus = (eventData?.metadata as any)?.provider_source_status as ProviderSourceStatus | undefined;
+      if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
+        setProviderSourceStatus(metaStatus);
+      } else if (providerSourceStatus === "draft") {
+        setProviderSourceStatus("ok");
+      }
     }
-  }, [kinescopeLiveEventId]);
+  }, [kinescopeLiveEventId, eventData]);
 
   // Can recreate only if folder_id and project_id are available
   const canRecreate = !!(form.kinescope_folder_id || (eventData?.metadata as any)?.kinescope_folder_id);
@@ -1386,9 +1420,26 @@ function LiveStreamControlPanel({
       const returnedSourceStatus: ProviderSourceStatus = syncData?.provider_source_status || "ok";
       setProviderSourceStatus(returnedSourceStatus);
 
-      // Handle missing (404)
+      // Handle missing (404) — persist to DB
       if (returnedSourceStatus === "missing") {
         setSyncStatus("error");
+        // Save status to DB metadata
+        const { data: currentForMissing } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+        const existingMetaMissing = (currentForMissing?.metadata as Record<string, any>) || {};
+        const missingMeta = {
+          ...existingMetaMissing,
+          provider_source_status: "missing",
+          provider_error_message: syncData?.provider_error_message || "Событие удалено в Kinescope (404)",
+          provider_status_code: syncData?.status_code || 404,
+          last_provider_sync_at: new Date().toISOString(),
+          provider: {
+            ...(existingMetaMissing.provider || {}),
+            current: {}, // Clear current provider data
+          },
+          provider_history: existingMetaMissing.provider_history || [],
+        };
+        await supabase.from("live_events").update({ metadata: missingMeta } as any).eq("id", editingId);
+
         // Audit
         try {
           await DomainEventService.emitEvent("live_provider_missing", "admin", editingId, {
@@ -1402,15 +1453,31 @@ function LiveStreamControlPanel({
           description: "Вы можете пересоздать эфир или отвязать источник",
           duration: 8000,
         });
+        refetchProvider();
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
         return;
       }
 
+      // Handle broken — persist to DB
       if (returnedSourceStatus === "broken") {
         setSyncStatus("error");
+        const { data: currentForBroken } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+        const existingMetaBroken = (currentForBroken?.metadata as Record<string, any>) || {};
+        const brokenMeta = {
+          ...existingMetaBroken,
+          provider_source_status: "broken",
+          provider_error_message: syncData?.provider_error_message || "Отсутствуют stream или play_link",
+          provider_status_code: syncData?.status_code || 200,
+          last_provider_sync_at: new Date().toISOString(),
+        };
+        await supabase.from("live_events").update({ metadata: brokenMeta } as any).eq("id", editingId);
+
         toast.warning("Источник трансляции повреждён", {
           description: syncData?.provider_error_message || "Отсутствуют stream или play_link",
           duration: 6000,
         });
+        refetchProvider();
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
         return;
       }
 
@@ -1435,6 +1502,10 @@ function LiveStreamControlPanel({
       const existingMeta = (current?.metadata as Record<string, any>) || {};
       const mergedMeta = {
         ...existingMeta,
+        provider_source_status: "ok",
+        provider_error_message: null,
+        provider_status_code: syncData?.status_code || 200,
+        last_provider_sync_at: new Date().toISOString(),
         provider: {
           ...(existingMeta.provider || {}),
           current: {
@@ -1445,7 +1516,6 @@ function LiveStreamControlPanel({
             streamkey: syncEvent?.streamkey || providerCurrent.streamkey,
           },
         },
-        last_provider_sync_at: new Date().toISOString(),
         replay_video_id: replayVideoId || existingMeta.replay_video_id,
       };
 
@@ -1536,11 +1606,14 @@ function LiveStreamControlPanel({
         return;
       }
 
-      // 3. Update DB with new provider data
+      // 3. Update DB with new provider data (status will be confirmed by auto-sync)
       const newMeta = {
         ...existingMeta,
         kinescope_project_id: projectId || existingMeta.kinescope_project_id,
         kinescope_folder_id: folderId,
+        provider_source_status: "ok", // will be confirmed by auto-sync
+        provider_error_message: null,
+        provider_status_code: null,
         provider: {
           current: {
             live_event_id: newEventId,
@@ -1575,7 +1648,7 @@ function LiveStreamControlPanel({
         });
       } catch {}
 
-      // 5. Update local state
+      // 5. Update local state and auto-sync to confirm
       setProviderSourceStatus("ok");
       setSyncStatus("idle");
       onFormUpdate?.({ kinescope_live_event_id: newEventId });
@@ -1583,6 +1656,11 @@ function LiveStreamControlPanel({
       toast.success("Эфир пересоздан в Kinescope", { description: `Новый ID: ${newEventId}` });
       refetchProvider();
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+
+      // 6. Auto-sync the newly created event to confirm its state
+      setTimeout(() => {
+        handleSyncProvider();
+      }, 1500);
     } catch (err: any) {
       toast.error(`Ошибка пересоздания: ${err.message || String(err)}`);
     } finally {
@@ -1618,6 +1696,9 @@ function LiveStreamControlPanel({
         ...existingMeta,
         provider: { current: {} },
         provider_history: providerHistory,
+        provider_source_status: "draft",
+        provider_error_message: null,
+        provider_status_code: null,
         last_provider_sync_at: new Date().toISOString(),
       };
       // Keep folder_id and project_id at top level of metadata

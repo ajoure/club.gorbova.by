@@ -13,7 +13,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -29,7 +29,7 @@ interface LiveResolveResult {
   event_id?: string;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 
@@ -127,6 +127,9 @@ export default function LiveEvent() {
           case "session_missing":
             setState("session_expired");
             break;
+          case "source_unavailable":
+            setState("source_unavailable");
+            break;
           case "ok":
             if (json.event_status === "scheduled") {
               setState("scheduled");
@@ -203,6 +206,22 @@ export default function LiveEvent() {
         <p className="text-muted-foreground text-center max-w-md">
           Этот эфир ещё не опубликован. Пожалуйста, дождитесь анонса.
         </p>
+      </div>
+    );
+  }
+
+  if (state === "source_unavailable") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <AlertTriangle className="h-16 w-16 text-amber-500" />
+        <h1 className="text-2xl font-bold text-foreground">Источник трансляции временно недоступен</h1>
+        {data?.title && (
+          <h2 className="text-lg text-muted-foreground">{data.title}</h2>
+        )}
+        <p className="text-muted-foreground text-center max-w-md">
+          Трансляция временно недоступна по техническим причинам. Пожалуйста, попробуйте позже.
+        </p>
+        <Button onClick={() => window.location.reload()}>Обновить</Button>
       </div>
     );
   }
