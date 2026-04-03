@@ -2,128 +2,106 @@
 
 &nbsp;
 
-1. В пункте про renderActionLabel не привязывай навигацию к уже загруженным lessons, иначе кнопки снова будут нестабильными:
+1. Оставь scope патча строго минимальным:
   &nbsp;
-  - Начать / Продолжить должны работать даже если уроки этого модуля еще не раскрывались и не подгружались
-  - правило:
-    &nbsp;
-    - если lessons уже есть в кеше — использовать их
-    - если уроков нет в кеше — fallback сразу на /library/{moduleSlug}
-    &nbsp;
-  - не делать нерабочую кнопку в ожидании lazy-load
+  - менять только src/components/training/LibraryTableView.tsx
+  - useLibraryTree.ts, useLibraryLessons.ts, search/filter, progress/count/access label не трогать, если верификация подтверждает текущее корректное поведение
   &nbsp;
-2. Для Продолжить уточни порядок выбора:
+2. Добавь явную проверку stale localStorage state:
   &nbsp;
-  - сначала первый **незавершенный и не запланированный** урок
-  - если таких нет, fallback на первый доступный урок
-  - если уроков нет/не загружены — fallback на модуль
+  - после flatten скрытый root больше не рендерится отдельной строкой
+  - старые expandedModuleIds, указывающие на скрытый root, не должны ломать отображение
+  - если такой id остался в storage, UI должен либо корректно игнорировать его, либо безопасно использовать только для показа children без артефактов
   &nbsp;
-3. Для flattened single-root группы зафиксируй источник данных:
+3. В логике action-навигации зафиксируй exact fallback:
   &nbsp;
-  - progress, lesson_count, action и slug брать из flattenedRoot.module
-  - children/lessons рендерить сразу под group row
-  - не пересчитывать эти значения из group aggregate, если это single-root flatten case
+  - Начать → первый незапланированный урок → любой первый урок → модуль
+  - Продолжить → первый незавершенный и незапланированный урок → первый незавершенный урок → любой первый урок → модуль
+  - Завершено → всегда модуль
+  - ни один action не должен зависеть от того, раскрыта строка или нет
   &nbsp;
-4. В LibraryTableView.tsx добавь явный guard:
+4. В DoD добавь не только общие проверки, но и 2 конкретных proof-кейса:
   &nbsp;
-  - клик по chevron только раскрывает/сворачивает
-  - клик по названию строки только навигирует
-  - клик по action-column не должен одновременно триггерить expand/collapse строки
+  - Подоходный налог ИП — без промежуточной root-строки
+  - Закрой год — иерархия multi-root сохранена
   &nbsp;
-5. В DoD добавь отдельную проверку для flattened single-root:
+5. Добавь проверку кликов:
   &nbsp;
-  - у строки продукта остается только один верхний уровень
-  - после раскрытия сразу видны child modules или lessons
-  - скрытый root-level не рендерится ни визуально, ни как пустая промежуточная строка
+  - chevron раскрывает/сворачивает
+  - название строки навигирует
+  - action-column навигирует
+  - ни один из этих кликов не вызывает соседнее действие по bubbling
   &nbsp;
-6. По localStorage уточни ключи и совместимость:
+6. Итоговый отчет потребуй в формате proof:
   &nbsp;
-  - не ломать уже сохраненные expandedGroupIds / expandedModuleIds
-  - если структура ключей меняется, добавить мягкую миграцию или fallback на старые ключи
-  - после flatten старый expanded-state не должен вызывать «призрачное» раскрытие несуществующего промежуточного root-уровня
-  &nbsp;
-7. Добавь в DoD еще один UX-check:
-  &nbsp;
-  - в collapsed состоянии список остается компактным
-  - в expanded состоянии строки не дублируются
-  - ни один single-root продукт не показывает «продукт → такой же root → child»
-  &nbsp;
-8. Add-only guard:
-  &nbsp;
-  - не трогать useLibraryLessons.ts
-  - не менять lazy-loading уроков
-  - не менять search/filter механику, кроме сохранения текущего ручного expanded-state
-  - не менять существующие access labels, progress bars и counts
+  - до/после по single-root
+  - до/после по multi-root
+  - proof сохранения состояния после refresh
+  - proof рабочей навигации Начать / Продолжить / Завершено
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План: Убрать папки, починить flatten и action-навигацию
+План: Верификация и доработка flatten + action-навигации
 
-## Проблема
+## Текущее состояние
 
-1. Иконки папок (`FolderOpen`) и badge с количеством root modules создают визуальный шум
-2. Не все single-root группы flatten'ятся — только с совпадающим названием, а нужно все
-3. Кнопки «Начать/Продолжить/Завершено» не имеют навигации — мёртвый UI
-4. Single-root группы авто-раскрываются (строка 422), нарушая требование «всё свёрнуто»
+Код уже реализует основные требования:
 
-## Изменения
+- `shouldFlattenSingleRoot` в `useLibraryTree.ts` (строка 37-45) — flatten всех single-root групп без проверки названий ✓
+- Нет иконок папок и badge с количеством root modules ✓
+- Action-навигация с fallback на модуль если уроки не загружены ✓
+- Разделение кликов: chevron → expand, название → navigate, action → navigate ✓
+- localStorage persistence для expandedGroups/Modules ✓
+- Все продукты свёрнуты при первом входе ✓
 
-### 1. `src/hooks/useLibraryTree.ts` — flatten все single-root группы
+## Что нужно проверить и при необходимости починить
 
-Изменить `shouldFlattenSingleRoot`: если у группы ровно 1 root module — всегда `flatten: true`, без проверки совпадения названий. Multi-root группы не трогать.
+### 1. `src/components/training/LibraryTableView.tsx`
 
-### 2. `src/components/training/LibraryTableView.tsx`
+**Action-навигация — уточнить логику «Продолжить»** (строки 213-218):
 
-**Убрать визуальный шум:**
+- Текущий код: `lessons.find(l => !l.is_completed && !l.isScheduled)` — корректно
+- Добавить второй fallback: если все незавершённые запланированы → первый доступный урок → fallback на модуль
 
-- Убрать `FolderOpen` иконку (строка 450)
-- Убрать badge с количеством root modules (строки 460-464)
-- Все group rows выглядят одинаково — clean строка без папки
+**Guard: action-column не триггерит expand** (строки 229-231):
 
-**Убрать авто-раскрытие single-root:**
+- `e.stopPropagation()` уже есть ✓
 
-- Строка 422: `effectiveExpanded = isExpanded` (убрать `|| (isSingleRoot && !isFlat)`)
-- Первый вход = всё свёрнуто, сохранение через localStorage
+**Flattened group row** (строки 454-530):
 
-**Починить action-навигацию в `renderActionLabel`:**
+- progress/lesson_count из `flattenedRoot.module` ✓
+- children рендерятся на depth=1 (через `renderChildModule`) ✓
+- lessons без children рендерятся на depth=1 ✓
 
-- Принимать дополнительные параметры: `moduleSlug`, `lessons` (если загружены)
-- **Начать**: навигация на первый доступный урок → `/library/{moduleSlug}/{lessonSlug}`, fallback → `/library/{moduleSlug}`
-- **Продолжить**: первый незавершённый урок → `/library/{moduleSlug}/{lessonSlug}`, fallback → `/library/{moduleSlug}`
-- **Завершено**: рабочая ссылка на модуль → `/library/{moduleSlug}`
-- Обернуть в `onClick` с `navigate()`
+### 2. Без изменений (add-only guard)
 
-**Прокинуть навигацию во все вызовы `renderActionLabel`:**
+- `useLibraryLessons.ts` — не трогать
+- `useLibraryTree.ts` — структура уже корректна, flatten работает
+- search/filter — логика поиска по скрытому root title уже есть (строка 169-173)
+- progress/count/access label расчёты — без изменений
+- маршруты `/library/{slug}` и `/library/{slug}/{lessonSlug}` — без изменений
 
-- В `renderGroup` (flattened): slug из `flatRoot.module.slug`, lessons из `getLessons(flatRoot.module.id)`
-- В `renderRootModule`: slug из `rm.module.slug`, lessons из `getLessons(rm.module.id)`
-- В `renderChildModule`: slug из `child.slug`, lessons из `getLessons(child.id)`
-
-**Гарантировать showGroupRow = true всегда** (строка 427 → убрать условие)
-
-### Файлы
+## Файлы
 
 
-| Файл                                           | Изменения                                                               |
-| ---------------------------------------------- | ----------------------------------------------------------------------- |
-| `src/hooks/useLibraryTree.ts`                  | `shouldFlattenSingleRoot` → flatten все single-root группы              |
-| `src/components/training/LibraryTableView.tsx` | Убрать FolderOpen, badge count, auto-expand; починить action navigation |
+| Файл                                           | Изменения                                     |
+| ---------------------------------------------- | --------------------------------------------- |
+| `src/components/training/LibraryTableView.tsx` | Минимальная доработка fallback в «Продолжить» |
 
 
-### DoD
+## DoD
 
-- Нет иконок папок в таблице
-- Single-root product не показывает «папку в папке»
-- Multi-root product показывает корректную иерархию
+- Single-root продукт не показывает промежуточную root-строку
+- Multi-root продукт сохраняет иерархию
 - Все продукты свёрнуты при первом входе
-- После раскрытия и refresh — состояние сохраняется
-- Поиск не перетирает ручное раскрытие
-- Клик «Начать» → первый урок или модуль (работает)
-- Клик «Продолжить» → первый незавершённый урок (работает)
-- Клик «Завершено» → модуль (работает)
-- Нет мёртвых кнопок в action-column
-- Маршруты `/library/{slug}` и `/library/{slug}/{lessonSlug}` не изменены
-- Progress / lesson counts / access labels не изменены
+- После refresh раскрытое состояние сохраняется
+- Клик «Начать» → первый доступный урок или модуль
+- Клик «Продолжить» → первый незавершённый незапланированный урок → первый доступный → модуль
+- Клик «Завершено» → модуль
+- Нет мёртвых кнопок
+- Поиск по скрытому root title находит группу
+- Нет иконок папок, нет badge count
+- progress/lesson_count/access labels не изменены
