@@ -348,17 +348,53 @@ async function handleRevoke(
     return jsonResponse({ status: 'error', message: 'link_id required' }, 400);
   }
 
+  // Fetch link to get user_id and live_event_id for full chain revoke
+  const { data: link } = await supabase
+    .from('live_access_links')
+    .select('user_id, live_event_id, status')
+    .eq('id', link_id)
+    .single();
+
+  if (!link) {
+    return jsonResponse({ status: 'error', message: 'Link not found' }, 404);
+  }
+
+  const now = new Date().toISOString();
+
+  // 1. Revoke active session
+  await supabase
+    .from('live_active_sessions')
+    .update({ revoked_at: now })
+    .eq('user_id', link.user_id)
+    .eq('live_event_id', link.live_event_id)
+    .is('revoked_at', null);
+
+  // 2. Delete proof
+  await supabase
+    .from('live_access_proofs')
+    .delete()
+    .eq('user_id', link.user_id)
+    .eq('live_event_id', link.live_event_id);
+
+  // 3. Revoke the link (any active status including consumed)
+  // Idempotent: already revoked/expired links are not matched
   const { error } = await supabase
     .from('live_access_links')
-    .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+    .update({ status: 'revoked', revoked_at: now })
     .eq('id', link_id)
-    .in('status', ['created', 'sent']);
+    .in('status', ['created', 'sent', 'consumed']);
 
   if (error) {
     return jsonResponse({ status: 'error', message: 'Failed to revoke' }, 500);
   }
 
-  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, { link_id });
+  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, {
+    link_id,
+    user_id: link.user_id,
+    live_event_id: link.live_event_id,
+    previous_status: link.status,
+    chain: ['revoke_session', 'delete_proof', 'revoke_link'],
+  });
 
   return jsonResponse({ status: 'ok' });
 }
