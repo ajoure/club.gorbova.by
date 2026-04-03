@@ -10,7 +10,8 @@ import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ModuleCard } from "@/components/training/ModuleCard";
+import { LibraryTableView } from "@/components/training/LibraryTableView";
+import { LibraryTableSkeleton } from "@/components/training/LibraryTableSkeleton";
 import { 
   ShoppingBag, 
   BookOpen, 
@@ -470,20 +471,8 @@ export default function Learning() {
 
           {/* Library Tab */}
           <TabsContent value="library" className="mt-6">
-            {/* PATCH-B: Show skeleton while loading, not empty state */}
             {isLibraryLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {[1, 2, 3].map((i) => (
-                  <GlassCard key={i} className="h-80 animate-pulse">
-                    <div className="h-48 bg-muted rounded-t-2xl" />
-                    <div className="p-5 space-y-3">
-                      <div className="h-4 bg-muted rounded w-3/4" />
-                      <div className="h-3 bg-muted rounded w-full" />
-                      <div className="h-3 bg-muted rounded w-2/3" />
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
+              <LibraryTableSkeleton />
             ) : libraryItemsCount === 0 ? (
               <GlassCard className="text-center py-16">
                 <FolderOpen className="h-16 w-16 mx-auto text-muted-foreground mb-4" />
@@ -497,12 +486,10 @@ export default function Learning() {
                 </Button>
               </GlassCard>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {/* PATCH-3: Только ModuleCard по has_access, без статичных ProductCard */}
-                {libraryModules.map((module) => (
-                  <ModuleCard key={module.id} module={module} />
-                ))}
-              </div>
+              <LibraryTableView
+                libraryModules={libraryModules}
+                allModules={modules}
+              />
             )}
           </TabsContent>
         </Tabs>
