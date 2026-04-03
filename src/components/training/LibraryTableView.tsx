@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TrainingModule } from "@/hooks/useTrainingModules";
-import { useLibraryTree, resolveAccessLabel } from "@/hooks/useLibraryTree";
+import { useLibraryTree, resolveAccessLabel, shouldFlattenSingleRoot } from "@/hooks/useLibraryTree";
 import { useLibraryLessons, type LibraryLesson } from "@/hooks/useLibraryLessons";
 import type { LibraryGroup, LibraryRootModule } from "@/hooks/useLibraryTree";
 
