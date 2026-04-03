@@ -1,64 +1,99 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Явно зафиксируй, что Katerina = mixed, а не module_only.  
-Иначе текст местами противоречит сам себе:  
-
-  - у нее есть split-child module orders
-  - и отдельная root/history purchase  
-  Значит, по нормализованной классификации это mixed.  
-  Тогда строка OK = 82 root_only + 3 mixed = 85 остается математически корректной.
-2. &nbsp;
-3. Убери двусмысленную фразу standalone root order.  
-Замени на одну из двух точных формулировок:  
-
-  - отдельная root purchase с module-specific display name
-  - или отдельная historical purchase, которая дает 4-й mapped module  
-  Потому что standalone root order звучит как логическое противоречие.
-4. &nbsp;
-5. В блоке по Katerina раздели purchase_type и scope.  
-Прямо так:  
-
-  - purchase_type = mixed
-  - scope_resolution_mode = module_scope_only  
-  Это разные сущности, их нельзя визуально смешивать в одном абзаце.
-6. &nbsp;
-7. В строке 87 active cb20 entitlements total уточни базу подсчета.  
-Напиши:  
-
-  - 87 active cb20 entitlements among BUSINESS users  
-  Чтобы не выглядело как глобальный total по всей системе.
-8. &nbsp;
-9. В блоке Runtime visibility audit оставь текущую оговорку, но усили формулировку.  
-Вместо:  
-
-  - Все 86 valid-scope entitlements резолвятся...  
-  лучше:
-  - Все 86 valid-scope entitlements проходят audit-level rule resolution without content blockers  
-  Это точнее и не звучит как уже завершенный per-user UI proof.
-10. &nbsp;
-11. Для a.bruylo явно укажи, что user входит в expected_access_total, но исключен из auto-fix по policy.  
-Формулировка:  
-
-  - included in expected_access_total, but classified as manual/staff exception by design  
-  Это снимает вопрос, почему он входит в 89, но не идет в repair.
-12. &nbsp;
-13. Для irinkazar зафиксируй, что старый blocker уже неактуален.  
-Одной строкой:  
-
-  - previous content blocker removed; current blocker = missing entitlement only  
-  Это важный итог спринта.
-14. &nbsp;
-15. В финальной таблице OK-группы не оставляй скрытую расшифровку через текст.  
-Лучше явно показать:  
-
-  - root_only OK = 82
-  - mixed OK = 3
-  - module_only OK = 0
-  - total OK = 85  
-  Тогда арифметика читается сразу, без догадок.
-16. &nbsp;
+1. **Исправь итоговую математику.**
+  Сейчас снова не сходится:
+  &nbsp;
+  - expected_access_total = 89
+  - OK 88 + MANUAL REVIEW 2 = 90
+    Это нельзя отдавать в работу в таком виде.
+    Нужна одна строгая база классификации:
+  - либо MANUAL REVIEW входит в expected_access_total,
+  - либо staff/manual cases исключаются из expected_access_total.
+    Сначала пересчитать totals, потом фиксировать v4.
+  &nbsp;
+2. **Не делай raw SQL INSERT для irinkazar без dry-run proof структуры entitlement.**
+  Для Царёвой нельзя просто вставить entitlement “по аналогии”.
+  Обязательно сначала показать:
+  &nbsp;
+  - какой scope_resolution_mode выбран и почему,
+  - какие historical_module_product_ids,
+  - какие mapped_training_module_ids,
+  - какой historical_tariff_id/basis used,
+  - почему именно union_scope, а не module_scope_only.
+    Без этого INSERT слишком рискованный.
+  &nbsp;
+3. **Для irinkazar сначала зафиксируй, root-only это кейс или mixed-normalized.**
+  В тексте сейчас одновременно:
+  &nbsp;
+  - “missing entitlement”
+  - “mixed purchase: root + 3 module children”
+    Нужно явно указать, считаются ли split child orders источником entitlement logic или только purchase history normalization.
+    Иначе выбор union_scope не доказан.
+  &nbsp;
+4. **[447417148@mail.ru](mailto:447417148@mail.ru) не выноси в repair без явного правила, что любой drift чинится, даже <24ч.**
+  Ранее в логике audit было:
+  &nbsp;
+  - <24h = ok
+    Сейчас ты предлагаешь repair при -9h.
+    Это допустимо только если в проекте утверждено новое правило:
+  - expires_at must equal business_access_end_at exactly, без tolerance.
+    Если такого правила нет, этот кейс не должен идти в repair.
+  &nbsp;
+5. **По overchenko и elena.shirshova.21 обязательно покажи current entitlement IDs и exact target dates до execute.**
+  В плане один ent_id не указан вообще.
+  Нельзя утверждать SQL-ремонт без:
+  &nbsp;
+  - entitlement_id
+  - current_expires_at
+  - target_expires_at
+  - drift_hours
+  - reason_for_repair
+  &nbsp;
+6. **mazepina77 сначала проверь причину expired статуса до update.**
+  Нужен mini-proof:
+  &nbsp;
+  - entitlement действительно должен быть active,
+  - BUSINESS подписка действительно active/past_due с действующим access_end_at,
+  - expired не является ожидаемым результатом ручного revoke/older source.
+    Иначе есть риск “реанимировать” entitlement, который истёк не по ошибке.
+  &nbsp;
+7. **Все repair-операции делай через единый repair script/patch с preview table, а не пятью разрозненными SQL-командами.**
+  Нужен формат:
+  &nbsp;
+  - preview table
+  - execute table
+  - post-check table
+    Иначе потом невозможно нормально доказать, что ничего лишнего не обновили.
+  &nbsp;
+8. **Audit log должен быть не просто “запись будет”, а с проверяемым DoD.**
+  Добавь в план:
+  &nbsp;
+  - после каждого repair проверить, что в audit_logs появилась запись
+  - actor_type
+  - actor_user_id / actor_label
+  - action = entitlement.repaired
+  - meta с old/new expires и user/profile identifiers.
+    Без post-check логов пункт считается невыполненным.
+  &nbsp;
+9. **Не обновляй audit v4 до завершения post-check.**
+  Сейчас документ не должен называться “после ремонта”, пока:
+  &nbsp;
+  - SQL/repair не выполнен,
+  - post-check не подтвержден,
+  - итоговая математика не сошлась.
+    Сначала repair proof, потом обновление audit.
+  &nbsp;
+10. **Добавь отдельный блок “что уже можно проверять руками в ЛК, а что еще нет”.**
+  Сейчас это главный практический вопрос.
+  В плане должен быть явный статус:
+  &nbsp;
+  - кого уже можно логинить и проверять в личном кабинете,
+  - кого пока нельзя,
+  - какие кейсы зависят от repair,
+  - какие уже полностью готовы к UI/runtime проверке.
+  &nbsp;
 
 &nbsp;
 
@@ -66,254 +101,136 @@
 
 Копируемый блок для Lovable:
 
-Дополни аудит правками.
+```
+Дополни план правками:
 
-&nbsp;
-
-1. Явно зафиксируй:
-
-- Katerina = purchase_type `mixed`
-
-- Katerina = scope_resolution_mode `module_scope_only`
-
-&nbsp;
-
-Это разные сущности. Не смешивай purchase_type и scope в одном описании.
-
-&nbsp;
-
-2. Убери формулировку `standalone root order`.
-
-Замени на:
-
-- `отдельная root purchase с module-specific display name`
-
-или
-
-- `отдельная historical purchase, которая дает 4-й mapped module`
-
-&nbsp;
-
-3. В entitlement summary уточни базу:
-
-- `87 active cb20 entitlements among BUSINESS users`
-
-&nbsp;
-
-4. В runtime audit усили формулировку:
-
-вместо `Все 86 valid-scope entitlements резолвятся...`
-
-напиши:
-
-- `Все 86 valid-scope entitlements проходят audit-level rule resolution without content blockers`
-
-&nbsp;
-
-5. Для a.bruylo явно укажи:
-
-- `included in expected_access_total, but classified as manual/staff exception by design`
-
-&nbsp;
-
-6. Для irinkazar явно укажи:
-
-- `previous content blocker removed; current blocker = missing entitlement only`
-
-&nbsp;
-
-7. В финальной расшифровке OK-группы покажи числа явно:
-
-- root_only OK = 82
-
-- mixed OK = 3
-
-- module_only OK = 0
-
-- total OK = 85
-
-&nbsp;
-
-8. Не меняй итоговую математику:
-
+1. Исправь итоговую математику. Сейчас снова несхождение:
 - expected_access_total = 89
+- OK 88 + MANUAL REVIEW 2 = 90
+Нужна одна строгая база классификации. Явно укажи, входят ли MANUAL REVIEW / staff cases в expected_access_total или нет. Пока математика не сошлась, план не финальный.
 
-- OK 85 + REPAIR 2 + MANUAL 2 + BLOCKED 0 = 89
+2. Не делай raw SQL INSERT для irinkazar без dry-run proof структуры entitlement.
+Перед execute покажи:
+- почему выбран именно scope_resolution_mode
+- historical_module_product_ids
+- mapped_training_module_ids
+- basis для scope (root / modules / normalized mixed history)
+- почему union_scope, а не module_scope_only
 
-- total BUSINESS = 89 + 16 = 105
+3. Уточни классификацию irinkazar:
+- это root-only кейс
+или
+- mixed-normalized кейс с учетом split children
+Нужно одно точное определение, потому что от этого зависит entitlement logic.
 
-&nbsp;
+4. 447417148@mail.ru не выносить в repair автоматически, пока явно не зафиксировано правило:
+- expires_at must equal business_access_end_at exactly, без tolerance.
+Если tolerance <24h всё еще допустим, этот кейс не repair.
 
-9. После этих правок текущую версию можно считать согласованной audit-версией.
+5. Для overchenko.lina и elena.shirshova.21 добавь preview-таблицу:
+- email
+- entitlement_id
+- current_expires_at
+- target_expires_at
+- drift_hours
+- reason_for_repair
 
-&nbsp;
+6. Для mazepina77 перед update покажи mini-proof:
+- current entitlement status
+- current expires_at
+- business subscription status
+- business access_end_at
+- почему expired является ошибкой, а не ожидаемым состоянием
 
-# Исправленный аудит: BUSINESS → ЦБ 2.0
+7. Все repair-операции оформить как единый repair-пакет:
+- preview table
+- execute step
+- post-check table
+Не пять разрозненных SQL-команд без общего proof.
 
-## Критическое исправление: нормализация и математика
+8. Для audit_logs добавь явный DoD:
+после каждого repair должна существовать проверяемая запись в audit_logs с:
+- action = entitlement.repaired
+- actor_type / actor_label
+- old_expires_at
+- new_expires_at
+- user/profile identifiers
 
-### Ошибка предыдущего аудита
+9. Audit v4 обновлять только после post-check.
+Сначала repair proof и пересчитанные totals, потом обновление audit-документа.
 
-Предыдущий подсчёт не включал split-child module orders (product_id != cb20 root) как нормализованные покупки. Из-за этого a.bruylo (у которой только split-children с module product IDs) выпадала из expected_access.
+10. Добавь отдельный practical-status блок:
+- кого уже можно проверять руками в личном кабинете
+- кого пока нельзя
+- какие кейсы готовы к UI/runtime проверке уже сейчас
+- какие кейсы зависят от repair
 
-Кроме того, join по `profiles.id = subscriptions.user_id` был неверным — корректный join: `profiles.id = subscriptions.profile_id`.
-
----
-
-## Таблица 1 — BUSINESS users summary
-
-
-| Показатель                             | Значение |
-| -------------------------------------- | -------- |
-| Всего BUSINESS (active/trial/past_due) | **105**  |
-| С нормализованными покупками ЦБ 2.0    | **89**   |
-| Без отношения к ЦБ 2.0                 | **16**   |
-
-
-### Формула expected_access_total (нормализованная)
-
-
-| purchase_type             | Подсчёт | Примечание                                                     |
-| ------------------------- | ------- | -------------------------------------------------------------- |
-| root_only                 | 83      | Только root cb20 orders (без split-parent)                     |
-| mixed                     | 5       | root + module orders (вкл. split-children)                     |
-| module_only               | 1       | Только split-child module orders, root = split-parent excluded |
-| **expected_access_total** | **89**  | 83 + 5 + 1                                                     |
-| none (NO CB20)            | 16      | &nbsp;                                                         |
-
-
-Правила нормализации:
-
-- Orders с `meta.split_status IN ('children_created','finalized')` исключены как split-parents
-- Split-child module orders (product_id ∈ {abee24cd, 064dd768, d7effaf4, 64d9f812, 9187db54, f833c846}) включены как живые нормализованные покупки
-- Для split-кейсов source of truth = child orders
-
----
-
-## Таблица 2 — CB20 purchase/access audit
-
-### Entitlement summary
-
-- 87 active cb20 entitlements total
-- 86 valid-for-visibility (scope IS NOT NULL)
-- 1 invalid scope (NULL) — [sonne.e@inbox.ru](mailto:sonne.e@inbox.ru)
-
-### Проблемные пользователи
-
-
-| #   | email                                                     | purchase_type | has_split_parent  | has_ent | scope       | drift_hours | category      | next_action               |
-| --- | --------------------------------------------------------- | ------------- | ----------------- | ------- | ----------- | ----------- | ------------- | ------------------------- |
-| 1   | [irinkazar@inbox.ru](mailto:irinkazar@inbox.ru)           | mixed         | yes               | **нет** | —           | —           | REPAIR NEEDED | repair_create_entitlement |
-| 2   | [overchenko.lina@mail.ru](mailto:overchenko.lina@mail.ru) | mixed         | yes               | да      | union_scope | **+39h**    | REPAIR NEEDED | repair_realign_expiry     |
-| 3   | [sonne.e@inbox.ru](mailto:sonne.e@inbox.ru)               | root_only     | нет               | да      | **NULL**    | —           | MANUAL REVIEW | manual_decision_required  |
-| 4   | [a.bruylo@ajoure.by](mailto:a.bruylo@ajoure.by)           | module_only   | yes (parent only) | нет     | —           | —           | MANUAL REVIEW | no_action_staff_exception |
-
-
-### По каждому проблемному:
-
-**irinkazar (Царёва)**:
-
-- 1 live normalized cb20 purchase (root, d9a29949)
-- 1 split-parent history record (excluded from normalized purchase counting, status=paid, NOT finalized/canceled)
-- Entitlement отсутствует. Контент теперь 128/128 active. Это REPAIR NEEDED, не BLOCKED BY CONTENT.
-
-**overchenko.lina**:
-
-- expires_at = 2026-05-03 12:00, biz_end = 2026-05-01 21:00
-- Drift = +39h. По правилу проекта (expires_at = business_access_end_at) это REPAIR NEEDED.
-
-**sonne.e**:
-
-- Проблема НЕ в контенте. Проблема: scope_resolution_mode = NULL + BUSINESS past_due + business_access_end_at = NULL
-- Entitlement существует, но без scope runtime блокирует доступ (entitlement-scope-safe-default)
-
-**a.bruylo**:
-
-- missing entitlement by design (staff_skip rule)
-- Единственный cb20 order = split-parent (children_created). Split-children существуют (5 module orders), но entitlement intentionally not created.
-
-### Katerina (Рыштакова) — в OK, пояснение по 4 модулям
-
-- **Источник 4 mapped modules**: 3 из split-children (Розничная торговля, Производство, Маркетплейсы) + 1 из отдельного standalone root order d9a29949 (Грузо- и пассажироперевозки)
-- Это корректно: 2 исторических покупки → 1 split-parent (3 модуля) + 1 standalone (1 модуль) = 4 модуля
-- scope = module_scope_only
-- Expected visible modules based on mapped_training_module_ids and active lessons = 4
-- Expected visible lessons = подсчёт по active lessons в этих 4 модулях
-
----
-
-## Таблица 3 — Runtime visibility audit
-
-**Важная оговорка**: OK по 85 пользователям = **audit-level expected visibility**, рассчитанная по scope/rules + active lesson inventory. Это НЕ per-user UI/runtime proof.
-
-Основание для expected visibility:
-
-- 3 active training_content access_rules для cb20 (Бухгалтер, Главный бухгалтер, Бизнес-леди)
-- 39 active modules, 128 active lessons (0 inactive)
-- Все 86 valid-scope entitlements резолвятся через эти rules
-
-На момент аудита для текущего дерева ЦБ 2.0: 39 active modules, 128 active lessons, blocked-by-content cases not detected.
-
-Per-user UI/browser proof не выполнялся для всех 85 OK-пользователей.
-
----
-
-## Duplicate entitlement audit
-
-
-| Показатель                            | Значение |
-| ------------------------------------- | -------- |
-| Users with >1 active cb20 entitlement | **0**    |
-| Duplicate risk                        | **none** |
-
-
----
-
-## Финальная классификация (4 группы)
-
-
-| Группа                 | Кол-во | Пользователи                                                 |
-| ---------------------- | ------ | ------------------------------------------------------------ |
-| **OK**                 | **85** | 82 root_only + 3 mixed (excl. overchenko, irinkazar)         |
-| **REPAIR NEEDED**      | **2**  | irinkazar (missing ent), overchenko.lina (expiry drift +39h) |
-| **BLOCKED BY CONTENT** | **0**  | —                                                            |
-| **MANUAL REVIEW**      | **2**  | sonne.e (NULL scope + past_due), a.bruylo (staff_exception)  |
-| *NO CB20 RELATION*     | *16*   | *вне expected_access_total*                                  |
-
-
-### Контрольная формула
-
-```text
-expected_access_total = root_only(83) + mixed(5) + module_only(1) = 89
-OK(85) + REPAIR(2) + BLOCKED(0) + MANUAL(2) = 89
-89 = 89 ✓
-
-Total BUSINESS = expected(89) + no_cb20(16) = 105 ✓
+План: Полная проверка и ремонт доступа BUSINESS → ЦБ 2.0
 ```
 
----
+## Диагностика
 
-## Итоговый summary
+### Ольга Севериненко ([447417148@mail.ru](mailto:447417148@mail.ru))
 
-```text
-BUSINESS users total:               105
-CB20 expected access (normalized):    89
-  → OK:                               85  (expected visibility, audit-level)
-  → REPAIR NEEDED:                      2  (irinkazar, overchenko.lina)
-  → BLOCKED BY CONTENT:                0
-  → MANUAL REVIEW:                      2  (sonne.e, a.bruylo[staff])
-NO CB20 RELATION:                     16  (норма)
-Duplicate active entitlements:          0
+Данные в БД **корректны**: entitlement active, scope = `union_scope`, expires_at = 2026-04-08 12:00:00. Однако обнаружен **drift -9 часов** (entitlement истекает на 9 часов раньше, чем BUSINESS подписка). Runtime-резолвер должен показывать полный доступ. Возможная причина жалобы — кеш браузера или не выполнен вход. Drift будет устранён.
+
+### Новый проблемный пользователь (не был в audit v3)
+
+**[mazepina77@mail.ru](mailto:mazepina77@mail.ru)** — entitlement **EXPIRED сегодня** (expires_at = 2026-04-03 05:41). Batch repair использовал неверный `source_access_end_at` (взял дату из другого источника вместо BUSINESS subscription `access_end_at = 2026-05-03`). Сейчас пользователь потерял доступ к ЦБ 2.0.
+
+### Полный список проблем (5 пользователей)
+
+
+| #   | email                                                               | проблема                    | действие                                              |
+| --- | ------------------------------------------------------------------- | --------------------------- | ----------------------------------------------------- |
+| 1   | [mazepina77@mail.ru](mailto:mazepina77@mail.ru)                     | entitlement expired сегодня | reactivate + realign expires_at → 2026-05-03 20:59:59 |
+| 2   | [irinkazar@inbox.ru](mailto:irinkazar@inbox.ru)                     | missing entitlement         | create с expires_at → 2026-04-18 20:59:59             |
+| 3   | [447417148@mail.ru](mailto:447417148@mail.ru)                       | drift -9h                   | realign expires_at → 2026-04-08 20:59:59              |
+| 4   | [overchenko.lina@mail.ru](mailto:overchenko.lina@mail.ru)           | drift +39h                  | realign expires_at → 2026-05-01 20:59:59              |
+| 5   | [elena.shirshova.21@gmail.com](mailto:elena.shirshova.21@gmail.com) | drift +15h                  | realign expires_at → 2026-05-02 20:59:59              |
+
+
+Без изменений (как в v3):
+
+- [sonne.e@inbox.ru](mailto:sonne.e@inbox.ru) — MANUAL REVIEW (NULL scope + past_due)
+- [a.bruylo@ajoure.by](mailto:a.bruylo@ajoure.by) — staff exception
+
+## Что будет сделано
+
+### Шаг 1 — Миграция SQL для ремонта 5 пользователей
+
+Один SQL-скрипт с 5 операциями:
+
+1. **mazepina77**: `UPDATE entitlements SET status = 'active', expires_at = '2026-05-03 20:59:59+00' WHERE id = 'c00c0e63-...'`
+2. **irinkazar**: `INSERT INTO entitlements (user_id, product_code, product_id, status, expires_at, meta)` — scope `union_scope` (mixed purchase: root + 3 module children: Розничная, Грузо-, Производство)
+3. **[447417148@mail.ru](mailto:447417148@mail.ru)**: `UPDATE entitlements SET expires_at = '2026-04-08 20:59:59+00' WHERE id = '9dc327cc-...'`
+4. **overchenko.lina**: `UPDATE entitlements SET expires_at = '2026-05-01 20:59:59+00' WHERE id = '261df383-...'`
+5. **elena.shirshova.21**: `UPDATE entitlements SET expires_at = '2026-05-02 20:59:59+00' WHERE id = ...` (нужно получить ent_id)
+
+Каждая операция пишет audit_logs запись с `action = 'entitlement.repaired'`.
+
+### Шаг 2 — Обновление audit-документа
+
+Обновить `docs/audits/business-cb20-access-audit-v3.md` → v4:
+
+- mazepina77 добавлена в проблемный список и отмечена как repaired
+- Drift-кейсы (Ольга, elena.shirshova.21) добавлены и отмечены как repaired
+- Пересчитанная финальная математика
+
+### Итоговая формула после ремонта
+
+```
+expected_access_total = 89
+  OK (после ремонта): 88 (+3 repaired)
+  REPAIR NEEDED: 0
+  MANUAL REVIEW: 2 (sonne.e, a.bruylo)
+  BLOCKED BY CONTENT: 0
+  NO CB20 RELATION: 16
 ```
 
----
+## Жёсткие правила
 
-## Рекомендуемые следующие шаги
-
-1. **irinkazar** — repair_create_entitlement через edge function
-2. **overchenko.lina** — repair_realign_expiry (sync expires_at с biz_end)
-3. **sonne.e** — manual_decision_required (scope + past_due status)
-4. **a.bruylo** — no_action_staff_exception (закрыть без правок)
-5. **Per-user runtime proof** — для перевода 85 OK из "expected visibility" в "confirmed visibility" требуется runtime check
-
-Никаких изменений в данных на этом шаге не производится.
+- Каждое изменение с audit_logs записью
+- Только точечные UPDATE/INSERT по конкретным entitlement ID
+- Никаких массовых операций без предпросмотра
+- irinkazar: scope = union_scope (mixed: root + modules)
