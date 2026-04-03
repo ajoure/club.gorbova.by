@@ -114,7 +114,8 @@ const [includeButton, setIncludeButton] = useState(true);
   const [buttonUrl, setButtonUrl] = useState("https://club.gorbova.by/products");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
-  
+  const [selectedBroadcast, setSelectedBroadcast] = useState<Record<string, unknown> | null>(null);
+
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
