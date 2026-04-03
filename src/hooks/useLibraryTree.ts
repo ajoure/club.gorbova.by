@@ -177,5 +177,5 @@ export function useLibraryTree(libraryModules: TrainingModule[], allModules: Tra
     });
 
     return groups;
-  }, [libraryModules, allModules]);
+  }, [libraryModules, allModules, productsMap]);
 }
