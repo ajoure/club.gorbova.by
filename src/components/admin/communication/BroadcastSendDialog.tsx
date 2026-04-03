@@ -166,15 +166,15 @@ export function BroadcastSendDialog({
         );
       }
 
-      if (filters.productId) {
-        const subQuery = supabase
+      if (filters.productIds.length > 0) {
+        let subQuery = supabase
           .from("subscriptions_v2")
           .select("user_id")
-          .eq("product_id", filters.productId)
+          .in("product_id", filters.productIds)
           .eq("status", "active");
 
-        if (filters.tariffId) {
-          subQuery.eq("tariff_id", filters.tariffId);
+        if (filters.tariffIds.length > 0) {
+          subQuery = subQuery.in("tariff_id", filters.tariffIds);
         }
 
         const { data: productSubs } = await subQuery;
