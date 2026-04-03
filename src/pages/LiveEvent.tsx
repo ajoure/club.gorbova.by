@@ -65,6 +65,9 @@ export default function LiveEvent() {
           case "access_denied":
             setState("access_denied");
             break;
+          case "invite_required":
+            setState("invite_required");
+            break;
           case "ok":
             if (json.event_status === "scheduled") {
               setState("scheduled");
