@@ -1658,6 +1658,9 @@ function LiveStreamControlPanel({
         ...existingMeta,
         provider: { current: {} },
         provider_history: providerHistory,
+        provider_source_status: "draft",
+        provider_error_message: null,
+        provider_status_code: null,
         last_provider_sync_at: new Date().toISOString(),
       };
       // Keep folder_id and project_id at top level of metadata
