@@ -54,6 +54,23 @@ Deno.serve(async (req) => {
       return jsonRes({ status: 'unpublished' }, 403);
     }
 
+    // Guard: live_stream with missing/broken provider source
+    if (event.event_type === 'live_stream') {
+      const meta = event.metadata as Record<string, any> | null;
+      const providerSourceStatus = meta?.provider_source_status;
+      if (providerSourceStatus === 'missing' || providerSourceStatus === 'broken') {
+        await logAudit(supabase, 'live_access_source_unavailable', null, slug, event.id, {
+          provider_source_status: providerSourceStatus,
+        });
+        return jsonRes({
+          status: 'source_unavailable',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+        }, 503);
+      }
+    }
+
     // 3. Auth check
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
