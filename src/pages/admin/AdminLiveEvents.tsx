@@ -329,9 +329,22 @@ export default function AdminLiveEvents() {
           record: true,
         },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Ошибка создания эфира в Kinescope");
+
+      if (error) {
+        const msg = typeof error === "object" && error.message ? error.message : String(error);
+        toast.error(`Ошибка вызова: ${msg}`);
+        return;
+      }
       
+      if (!data?.success) {
+        const errorMsg = data?.error || "Неизвестная ошибка Kinescope";
+        const details = data?.details ? `\n\nПодробности: ${JSON.stringify(data.details, null, 2)}` : "";
+        toast.error(errorMsg, { description: details ? `Код: ${data?.status_code || "—"}` : undefined, duration: 8000 });
+        console.error("[AdminLiveEvents] create_live_event failed:", data);
+        return;
+      }
+      
+      // Extract event ID from various response shapes
       const eventData = data.data as any;
       const eventId = eventData?.data?.id || eventData?.id;
       
@@ -339,11 +352,13 @@ export default function AdminLiveEvents() {
         setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
         toast.success(`Эфир создан в Kinescope (ID: ${eventId})`);
       } else {
-        toast.success("Эфир создан в Kinescope");
-        console.log("[AdminLiveEvents] create_live_event response:", data);
+        toast.warning("Эфир создан, но ID не получен. Проверьте консоль.");
+        console.warn("[AdminLiveEvents] create_live_event — no ID in response:", data);
       }
-    } catch (err) {
-      toast.error("Ошибка: " + (err as Error).message);
+    } catch (err: any) {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка создания эфира: ${msg}`);
+      console.error("[AdminLiveEvents] create_live_event exception:", err);
     } finally {
       setCreatingLiveEvent(false);
     }
