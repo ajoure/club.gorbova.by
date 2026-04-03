@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // 1. Find event by slug
     const { data: event, error: eventError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id')
+      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id, metadata')
       .eq('slug', slug)
       .maybeSingle();
 
