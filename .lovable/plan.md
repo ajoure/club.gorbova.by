@@ -1,231 +1,319 @@
-# План: PATCH E dry_run + reference proofs + price truth audit + decision matrix
+да, согласен, с учетом правок:
 
-## Главная цель спринта
+&nbsp;
 
-1. Historical standalone deals корректно разделены
-2. Цены child deals корректны (per-module, sum = parent)
-3. Parent/child визуальные дубли устранены
-4. Названия модулей единообразны на всех экранах
-5. Standalone entitlements repaired по доказуемо корректным кейсам
-6. Срок доступа и фактическая видимость контента подтверждены proof-таблицами
+1. Явно зафиксируй, что Katerina = mixed, а не module_only.  
+Иначе текст местами противоречит сам себе:  
 
-**PATCH G/H/I/J — поддерживающие нормализационные шаги.**
-**Основная тема спринта неизменна:** корректная цепочка продукт → тариф → тренинг → сделка → доступ → срок.
+  - у нее есть split-child module orders
+  - и отдельная root/history purchase  
+  Значит, по нормализованной классификации это mixed.  
+  Тогда строка OK = 82 root_only + 3 mixed = 85 остается математически корректной.
+2. &nbsp;
+3. Убери двусмысленную фразу standalone root order.  
+Замени на одну из двух точных формулировок:  
 
-## Статусы патчей
+  - отдельная root purchase с module-specific display name
+  - или отдельная historical purchase, которая дает 4-й mapped module  
+  Потому что standalone root order звучит как логическое противоречие.
+4. &nbsp;
+5. В блоке по Katerina раздели purchase_type и scope.  
+Прямо так:  
 
-| Patch | Статус |
-|---|---|
-| PATCH F | ⏳ verify after I (system-wide UI proof needed) |
-| PATCH C | ✅ done / verify only |
-| PATCH D | ⏳ proof base ready |
-| PATCH G | G1 ✅, G2 ✅, G3 ⏳ (badges deployed), G4 ⏳ (blocked until post-checks) |
-| PATCH H | H1 ✅ data-fix, H2 ✅ code-fix, **H3 ✅ price_truth_audit generated** |
-| PATCH I | ✅ UI badges deployed |
-| PATCH J | ✅ audit CSV generated |
-| PATCH E | **✅ EXECUTED — Рыштакова updated, Царёва blocked** |
-| PATCH B | ⏳ final browser proof |
+  - purchase_type = mixed
+  - scope_resolution_mode = module_scope_only  
+  Это разные сущности, их нельзя визуально смешивать в одном абзаце.
+6. &nbsp;
+7. В строке 87 active cb20 entitlements total уточни базу подсчета.  
+Напиши:  
 
-## PATCH H3 — Price Truth Audit ✅
+  - 87 active cb20 entitlements among BUSINESS users  
+  Чтобы не выглядело как глобальный total по всей системе.
+8. &nbsp;
+9. В блоке Runtime visibility audit оставь текущую оговорку, но усили формулировку.  
+Вместо:  
 
-**Deliverable:** `/mnt/documents/patch_h3_price_truth_audit.csv`
+  - Все 86 valid-scope entitlements резолвятся...  
+  лучше:
+  - Все 86 valid-scope entitlements проходят audit-level rule resolution without content blockers  
+  Это точнее и не звучит как уже завершенный per-user UI proof.
+10. &nbsp;
+11. Для a.bruylo явно укажи, что user входит в expected_access_total, но исключен из auto-fix по policy.  
+Формулировка:  
 
-Все 22 child orders проверены:
+  - included in expected_access_total, but classified as manual/staff exception by design  
+  Это снимает вопрос, почему он входит в 89, но не идет в repair.
+12. &nbsp;
+13. Для irinkazar зафиксируй, что старый blocker уже неактуален.  
+Одной строкой:  
 
-| Группа | Parent final | Modules | Expected per child | Actual | Match |
-|---|---|---|---|---|---|
-| katerina5515530 | 250.00 | 3 | 83.33/83.33/83.34 | 83.33/83.33/83.34 | ✅ match |
-| lori-30 | 19204.08 | 2 | 9602.04/9602.04 | 9602.04/9602.04 | ✅ match |
-| overchenko.lina | 1100.00 | 2 | 550.00/550.00 | 550.00/550.00 | ✅ match |
-| princessa_elena1 | 28823.23 | 3 | 9607.74/9607.74/9607.75 | 9607.74/9607.74/9607.75 | ✅ match |
-| a.bruylo | 0 | 5 | 0×5 | 0×5 | ✅ trivial_match |
-| irinkazar | 0 | 3 | 0×3 | 0×3 | ✅ trivial_match |
-| irkaguzarevich | 0 | 4 | 0×4 | 0×4 | ✅ trivial_match |
+  - previous content blocker removed; current blocker = missing entitlement only  
+  Это важный итог спринта.
+14. &nbsp;
+15. В финальной таблице OK-группы не оставляй скрытую расшифровку через текст.  
+Лучше явно показать:  
 
-**Price source:** `parent_final / module_count` — единственный исторический источник. Альтернативного source (отдельная цена за модуль) в системе нет.
+  - root_only OK = 82
+  - mixed OK = 3
+  - module_only OK = 0
+  - total OK = 85  
+  Тогда арифметика читается сразу, без догадок.
+16. &nbsp;
 
-**Особый кейс Рыштаковой:** parent = 250 / 3 = 83.33 per module. Это единственный доступный исторический source цены.
+&nbsp;
 
-**Статус PATCH H:** незакрыт формально до бизнес-подтверждения, что `parent_final / module_count` является корректной ценовой логикой.
+&nbsp;
 
-## PATCH E — Dry Run результаты ✅
+Копируемый блок для Lovable:
 
-### Cohort Summary (dry_run batch_id: batch_business_cb20_repair_v1_1775164054828)
+Дополни аудит правками.
 
-| Метрика | Значение |
-|---|---|
-| business_users_total | 105 |
-| noop_count | 99 |
-| safe_execute_count | 1 (shkurenochek — expires alignment) |
-| standalone_safe_count | 1 (Рыштакова — partial_safe candidate) |
-| standalone_only_blocked_count | 1 (Царёва — zero visibility) |
-| staff_skip_count | 2 |
-| manual_review_count | 2 |
+&nbsp;
 
-### PATCH E1 — Pre-execute proof: Рыштакова (katerina5515530@gmail.com) ✅
+1. Явно зафиксируй:
 
-**partial_safe execute_scope = [Маркетплейсы only]**
+- Katerina = purchase_type `mixed`
 
-| child_order | display_purchase_name | final_price | matched_training_module_id | matched_training_module_title | active_lessons | included_in_entitlement |
-|---|---|---|---|---|---|---|
-| GC-3831920-M1 | ЦБ 2.0: Розничная торговля | 83.33 | 1ede03b4-03fc-4386-89a1-0f3f198d9ced | РОЗНИЧНАЯ ТОРГОВЛЯ | 0 | ❌ (0 lessons) |
-| GC-3831920-M2 | ЦБ 2.0: Производство | 83.33 | a4a5102d-fdb1-4171-a0de-f6e151155431 | ПРОИЗВОДСТВО | 0 | ❌ (0 lessons) |
-| GC-3831920-M3 | ЦБ 2.0: Маркетплейсы | 83.34 | 4c97d21c-ce30-4d96-8487-f810ae33b563 | Маркетплейсы | 5 | ✅ |
+- Katerina = scope_resolution_mode `module_scope_only`
 
-**DB Cross-check:**
+&nbsp;
 
-| Поле | Значение |
-|---|---|
-| profile_id | 01e91e53-664a-49b9-bb7c-ced7033ae4b8 |
-| user_id | 7c53b6af-92d0-4a8d-881f-3fe9de45dffd |
-| business_subscription_id | f7bf26da-c06f-4e10-9d8b-eb89cc0b7a2c |
-| business_access_end_at | 2026-04-18T12:00:00+00:00 |
-| existing_cb20_entitlement | 5875992d (active, expires_at=NULL, source=admin_edit) |
-| target_expires_at | 2026-04-18T12:00:00+00:00 |
-| mapped_training_module_ids | [4c97d21c] (Маркетплейсы) |
-| visible_recursive_lesson_count | 5 |
+Это разные сущности. Не смешивай purchase_type и scope в одном описании.
 
-**✅ RESOLVED:** Lookup bug исправлен (fallback по product_code='cb20' + anti-duplicate guard). Post-fix dry-run подтвердил: `current_entitlement_match_by: product_code`, `planned_action: repair_metadata_and_align`.
+&nbsp;
 
-**✅ EXECUTED:** Entitlement `5875992d` обновлён (не дублирован):
-- product_id backfilled: `7101ed3c`
-- scope_resolution_mode: `module_scope_only`
-- mapped_training_module_ids: 4 модуля (все сматчены)
-- expires_at: `2026-04-18T12:00:00+00:00`
-- active_cb20_entitlement_count: **1** (дублей нет)
+2. Убери формулировку `standalone root order`.
 
-**Expected runtime result после execute:**
-- Пользователь видит только модуль Маркетплейсы (5 lessons)
-- Другие child orders остаются историей покупки, но не дают доступ к inactive content
-- Розничная торговля и Производство в entitlement **не включать** (active_lessons = 0)
+Замени на:
 
-### PATCH E2 — Blocked proof: Царёва (irinkazar@inbox.ru) ✅
+- `отдельная root purchase с module-specific display name`
 
-| child_order | module_name | matched_training_module_id | active_lessons | block_reason |
-|---|---|---|---|---|
-| GC-1767629483208-M1 | Розничная торговля | 1ede03b4-03fc-4386-89a1-0f3f198d9ced | 0 | zero_active_lessons |
-| GC-1767629483208-M2 | Грузо- и пассажироперевозки | 8f71d4a8-2358-4a1a-9082-e4b501909bb1 | 0 | zero_active_lessons |
-| GC-1767629483208-M3 | Производство | a4a5102d-fdb1-4171-a0de-f6e151155431 | 0 | zero_active_lessons |
-| (mapped via parent) | Строительство | b7bae7fd-3a39-4438-8ec6-ced99f79c327 | 0 | zero_active_lessons |
+или
 
-**DB Cross-check:**
+- `отдельная historical purchase, которая дает 4-й mapped module`
 
-| Поле | Значение |
-|---|---|
-| profile_id | f18d750e-16e9-4a44-b9f7-bbd9a4287cd9 |
-| user_id | 5c6e6e0f-7b19-4ebf-957c-fa491c7e52cb |
-| business_subscription_id | 161a0644-07f1-4048-8c19-891185538831 |
-| business_access_end_at | 2026-04-18T20:59:59+00:00 |
-| existing_cb20_entitlement | отсутствует |
-| hold_reason | runtime_preview_zero_visibility |
+&nbsp;
 
-**Итог:**
-- mapping_ok = ✅ (4/4 модуля сматчены)
-- execute_block_reason = inactive content / zero active lessons
-- Это исключает повторные попытки чинить mapping вместо контента
+3. В entitlement summary уточни базу:
 
-**Expected manual path:**
-- Repair НЕ выполняется в этом спринте
-- Следующий шаг только после активации уроков/контента
-- После активации контента требуется повторный dry-run, а не прямой execute
+- `87 active cb20 entitlements among BUSINESS users`
 
-## Decision Matrix (обязательный gate) ✅
+&nbsp;
 
-**Deliverable:** `/mnt/documents/patch_e_decision_matrix.csv`
+4. В runtime audit усили формулировку:
 
-| email | split_normalized | prices_verified | mapping_ok | active_lessons>0 | execute_allowed | final_action |
-|---|---|---|---|---|---|---|
-| katerina5515530@gmail.com | ✅ | ✅ (83.33/83.33/83.34=250) | ✅ (1/3: Маркетплейсы) | ✅ (5 lessons partial) | ✅ partial_safe | execute: Маркетплейсы only |
-| irinkazar@inbox.ru | ✅ | ✅ (trivial_zero) | ✅ (4/4 mapped, 0 active) | ❌ (0/4) | ❌ | blocked: manual_review |
-| a.bruylo@ajoure.by | ✅ | ✅ (trivial_zero) | — | — | ❌ | staff_skip |
-| irkaguzarevich@mail.ru | ✅ | ✅ (trivial_zero) | n/a | n/a | ❌ | has cb20 entitlement, not in scope |
-| lori-30@tut.by | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
-| overchenko.lina@mail.ru | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
-| princessa_elena1@mail.ru | ✅ | ✅ match | n/a | n/a | ❌ | already repaired (union_scope) |
+вместо `Все 86 valid-scope entitlements резолвятся...`
 
-**Без заполненной decision matrix execute PATCH E и finalize PATCH G запрещены.**
+напиши:
 
-## Entitlement Uniqueness Check ✅
+- `Все 86 valid-scope entitlements проходят audit-level rule resolution without content blockers`
 
-**Deliverable:** `/mnt/documents/patch_e_entitlement_uniqueness.csv`
+&nbsp;
 
-| email | existing_active_cb20 | details | expected_after_execute | duplicate_risk |
-|---|---|---|---|---|
-| katerina5515530@gmail.com | 1 | active, expires=NULL, src=admin_edit | UPDATE existing (set scope+expires) | LOW (update, not insert) |
-| irinkazar@inbox.ru | 0 | — | no action (blocked) | none |
+5. Для a.bruylo явно укажи:
 
-## ⚠️ BLOCKER перед PATCH E execute
+- `included in expected_access_total, but classified as manual/staff exception by design`
 
-**Edge function bug обнаружен при dry_run:**
-- Функция `repair-cb20-entitlements` не обнаруживает существующий cb20 entitlement для Рыштаковой
-- dry_run показывает `current_entitlement_id: null`, `planned_action: create`
-- Фактически в БД есть `5875992d` (active, product_code=cb20, user_id=7c53b6af)
-- **Execute без исправления создаст дубль entitlement**
+&nbsp;
 
-**Требуется:** точечная правка в edge function для корректного lookup entitlement перед execute.
+6. Для irinkazar явно укажи:
 
-## Execution order (обновлённый)
+- `previous content blocker removed; current blocker = missing entitlement only`
+
+&nbsp;
+
+7. В финальной расшифровке OK-группы покажи числа явно:
+
+- root_only OK = 82
+
+- mixed OK = 3
+
+- module_only OK = 0
+
+- total OK = 85
+
+&nbsp;
+
+8. Не меняй итоговую математику:
+
+- expected_access_total = 89
+
+- OK 85 + REPAIR 2 + MANUAL 2 + BLOCKED 0 = 89
+
+- total BUSINESS = 89 + 16 = 105
+
+&nbsp;
+
+9. После этих правок текущую версию можно считать согласованной audit-версией.
+
+&nbsp;
+
+# Исправленный аудит: BUSINESS → ЦБ 2.0
+
+## Критическое исправление: нормализация и математика
+
+### Ошибка предыдущего аудита
+
+Предыдущий подсчёт не включал split-child module orders (product_id != cb20 root) как нормализованные покупки. Из-за этого a.bruylo (у которой только split-children с module product IDs) выпадала из expected_access.
+
+Кроме того, join по `profiles.id = subscriptions.user_id` был неверным — корректный join: `profiles.id = subscriptions.profile_id`.
+
+---
+
+## Таблица 1 — BUSINESS users summary
+
+
+| Показатель                             | Значение |
+| -------------------------------------- | -------- |
+| Всего BUSINESS (active/trial/past_due) | **105**  |
+| С нормализованными покупками ЦБ 2.0    | **89**   |
+| Без отношения к ЦБ 2.0                 | **16**   |
+
+
+### Формула expected_access_total (нормализованная)
+
+
+| purchase_type             | Подсчёт | Примечание                                                     |
+| ------------------------- | ------- | -------------------------------------------------------------- |
+| root_only                 | 83      | Только root cb20 orders (без split-parent)                     |
+| mixed                     | 5       | root + module orders (вкл. split-children)                     |
+| module_only               | 1       | Только split-child module orders, root = split-parent excluded |
+| **expected_access_total** | **89**  | 83 + 5 + 1                                                     |
+| none (NO CB20)            | 16      | &nbsp;                                                         |
+
+
+Правила нормализации:
+
+- Orders с `meta.split_status IN ('children_created','finalized')` исключены как split-parents
+- Split-child module orders (product_id ∈ {abee24cd, 064dd768, d7effaf4, 64d9f812, 9187db54, f833c846}) включены как живые нормализованные покупки
+- Для split-кейсов source of truth = child orders
+
+---
+
+## Таблица 2 — CB20 purchase/access audit
+
+### Entitlement summary
+
+- 87 active cb20 entitlements total
+- 86 valid-for-visibility (scope IS NOT NULL)
+- 1 invalid scope (NULL) — [sonne.e@inbox.ru](mailto:sonne.e@inbox.ru)
+
+### Проблемные пользователи
+
+
+| #   | email                                                     | purchase_type | has_split_parent  | has_ent | scope       | drift_hours | category      | next_action               |
+| --- | --------------------------------------------------------- | ------------- | ----------------- | ------- | ----------- | ----------- | ------------- | ------------------------- |
+| 1   | [irinkazar@inbox.ru](mailto:irinkazar@inbox.ru)           | mixed         | yes               | **нет** | —           | —           | REPAIR NEEDED | repair_create_entitlement |
+| 2   | [overchenko.lina@mail.ru](mailto:overchenko.lina@mail.ru) | mixed         | yes               | да      | union_scope | **+39h**    | REPAIR NEEDED | repair_realign_expiry     |
+| 3   | [sonne.e@inbox.ru](mailto:sonne.e@inbox.ru)               | root_only     | нет               | да      | **NULL**    | —           | MANUAL REVIEW | manual_decision_required  |
+| 4   | [a.bruylo@ajoure.by](mailto:a.bruylo@ajoure.by)           | module_only   | yes (parent only) | нет     | —           | —           | MANUAL REVIEW | no_action_staff_exception |
+
+
+### По каждому проблемному:
+
+**irinkazar (Царёва)**:
+
+- 1 live normalized cb20 purchase (root, d9a29949)
+- 1 split-parent history record (excluded from normalized purchase counting, status=paid, NOT finalized/canceled)
+- Entitlement отсутствует. Контент теперь 128/128 active. Это REPAIR NEEDED, не BLOCKED BY CONTENT.
+
+**overchenko.lina**:
+
+- expires_at = 2026-05-03 12:00, biz_end = 2026-05-01 21:00
+- Drift = +39h. По правилу проекта (expires_at = business_access_end_at) это REPAIR NEEDED.
+
+**sonne.e**:
+
+- Проблема НЕ в контенте. Проблема: scope_resolution_mode = NULL + BUSINESS past_due + business_access_end_at = NULL
+- Entitlement существует, но без scope runtime блокирует доступ (entitlement-scope-safe-default)
+
+**a.bruylo**:
+
+- missing entitlement by design (staff_skip rule)
+- Единственный cb20 order = split-parent (children_created). Split-children существуют (5 module orders), но entitlement intentionally not created.
+
+### Katerina (Рыштакова) — в OK, пояснение по 4 модулям
+
+- **Источник 4 mapped modules**: 3 из split-children (Розничная торговля, Производство, Маркетплейсы) + 1 из отдельного standalone root order d9a29949 (Грузо- и пассажироперевозки)
+- Это корректно: 2 исторических покупки → 1 split-parent (3 модуля) + 1 standalone (1 модуль) = 4 модуля
+- scope = module_scope_only
+- Expected visible modules based on mapped_training_module_ids and active lessons = 4
+- Expected visible lessons = подсчёт по active lessons в этих 4 модулях
+
+---
+
+## Таблица 3 — Runtime visibility audit
+
+**Важная оговорка**: OK по 85 пользователям = **audit-level expected visibility**, рассчитанная по scope/rules + active lesson inventory. Это НЕ per-user UI/runtime proof.
+
+Основание для expected visibility:
+
+- 3 active training_content access_rules для cb20 (Бухгалтер, Главный бухгалтер, Бизнес-леди)
+- 39 active modules, 128 active lessons (0 inactive)
+- Все 86 valid-scope entitlements резолвятся через эти rules
+
+На момент аудита для текущего дерева ЦБ 2.0: 39 active modules, 128 active lessons, blocked-by-content cases not detected.
+
+Per-user UI/browser proof не выполнялся для всех 85 OK-пользователей.
+
+---
+
+## Duplicate entitlement audit
+
+
+| Показатель                            | Значение |
+| ------------------------------------- | -------- |
+| Users with >1 active cb20 entitlement | **0**    |
+| Duplicate risk                        | **none** |
+
+
+---
+
+## Финальная классификация (4 группы)
+
+
+| Группа                 | Кол-во | Пользователи                                                 |
+| ---------------------- | ------ | ------------------------------------------------------------ |
+| **OK**                 | **85** | 82 root_only + 3 mixed (excl. overchenko, irinkazar)         |
+| **REPAIR NEEDED**      | **2**  | irinkazar (missing ent), overchenko.lina (expiry drift +39h) |
+| **BLOCKED BY CONTENT** | **0**  | —                                                            |
+| **MANUAL REVIEW**      | **2**  | sonne.e (NULL scope + past_due), a.bruylo (staff_exception)  |
+| *NO CB20 RELATION*     | *16*   | *вне expected_access_total*                                  |
+
+
+### Контрольная формула
 
 ```text
-1. ✅ PATCH H3 — price_truth_audit CSV
-2. ✅ PATCH E1 — pre-execute proof Рыштакова
-3. ✅ PATCH E2 — blocked proof Царёва
-4. ✅ Decision matrix + entitlement_uniqueness_check
-5. ✅ PATCH E dry_run (edge function) — completed with findings
-6. ✅ Plan.md updated
-7. ⏳ FIX: edge function entitlement lookup bug
-8. ⏳ PATCH E execute only approved (Рыштакова partial_safe)
-9. ⏳ Post-execute proof
-10. ⏳ PATCH G finalize_parents
-11. ⏳ PATCH B browser proof
+expected_access_total = root_only(83) + mixed(5) + module_only(1) = 89
+OK(85) + REPAIR(2) + BLOCKED(0) + MANUAL(2) = 89
+89 = 89 ✓
+
+Total BUSINESS = expected(89) + no_cb20(16) = 105 ✓
 ```
 
-## STOP-guards перед execute
+---
 
-- ✅ child prices verified by historical truth audit (H3)
-- ✅ parent rows have UI badges (I)
-- ⏳ titles consistent across all UI layers (F/I)
-- ✅ reference proof for Рыштакова и Царёва собран
-- ❌ edge function entitlement lookup bug — **BLOCKER**
+## Итоговый summary
 
-## STOP-guards перед finalize_parents
+```text
+BUSINESS users total:               105
+CB20 expected access (normalized):    89
+  → OK:                               85  (expected visibility, audit-level)
+  → REPAIR NEEDED:                      2  (irinkazar, overchenko.lina)
+  → BLOCKED BY CONTENT:                0
+  → MANUAL REVIEW:                      2  (sonne.e, a.bruylo[staff])
+NO CB20 RELATION:                     16  (норма)
+Duplicate active entitlements:          0
+```
 
-- ✅ цены подтверждены по business truth (H3)
-- ⏳ split-parent не мешает child визуально (I)
-- ⏳ titles consistent across all UI (F/I)
-- ✅ reference proofs собраны
-- ⏳ execute/blocked outcome documented
-- ⏳ post-execute proof for Рыштакова
-- ⏳ entitlement реально создан/обновлён, expires_at = business_access_end_at
+---
 
-## PATCH D — Reference-case summary
+## Рекомендуемые следующие шаги
 
-| Email | Роль | Статус |
-|---|---|---|
-| katerina5515530@gmail.com (Рыштакова) | non-staff | partial_safe candidate, 1/3 modules with active content |
-| irinkazar@inbox.ru (Царёва) | non-staff | blocked: 0 active lessons in all 4 modules |
-| a.bruylo@ajoure.by | staff | staff_skip |
+1. **irinkazar** — repair_create_entitlement через edge function
+2. **overchenko.lina** — repair_realign_expiry (sync expires_at с biz_end)
+3. **sonne.e** — manual_decision_required (scope + past_due status)
+4. **a.bruylo** — no_action_staff_exception (закрыть без правок)
+5. **Per-user runtime proof** — для перевода 85 OK из "expected visibility" в "confirmed visibility" требуется runtime check
 
-## Ограничения текущего шага
-
-- Не создаются новые продукты/тренинги/уроки
-- Не решается контентная проблема inactive lessons у Царёвой
-- Для blocked case — proof и manual decision, не автоматический repair
-- Execute запрещён без decision matrix
-- Finalize parents запрещён до завершения PATCH E
-- PATCH B не блокирует G/E finalize-decision по данным
-
-## Add-only правило
-
-- Не создавать новые products/tariffs/training_modules
-- Не удалять child orders
-- Parent не переводить в canceled до полного proof-пакета
-- Все изменения parent/child обратимо диагностируемы через meta
-
-## Финальный expected outcome
-
-- Рыштакова — partial_safe executed (после fix edge function)
-- Царёва — blocked/manual_review (documented)
-- Parent multi-module orders — finalized only after execute-proof
-- Child orders — prices/truth verified ✅
-- Titles consistent across UI — pending browser proof
+Никаких изменений в данных на этом шаге не производится.
