@@ -75,13 +75,13 @@ async function handleCreate(supabase: any, body: any) {
   const tokenHash = await hashToken(rawToken);
   const expiresAt = new Date(Date.now() + ttl * 60 * 60 * 1000).toISOString();
 
-  // Revoke any existing active link for this user+event
+  // Revoke any existing active link for this user+event (including consumed)
   await supabase
     .from('live_access_links')
     .update({ status: 'revoked', revoked_at: new Date().toISOString() })
     .eq('user_id', user_id)
     .eq('live_event_id', live_event_id)
-    .in('status', ['created', 'sent']);
+    .in('status', ['created', 'sent', 'consumed']);
 
   const { data: link, error: insertError } = await supabase
     .from('live_access_links')
