@@ -131,19 +131,9 @@ export function useLibraryTree(libraryModules: TrainingModule[], allModules: Tra
     for (const [, root] of rootModuleMap) {
       const pid = root.product_id || NO_PRODUCT_ID;
       if (!groupMap.has(pid)) {
-        // Resolve product name
         let productName = NO_PRODUCT_NAME;
-        if (root.product_id) {
-          // Try to get from accessible_products
-          const ap = root.accessible_products?.find(
-            (p) => p.product_name && p.product_name !== "Без продукта"
-          );
-          if (ap) {
-            productName = ap.product_name;
-          } else {
-            // Fallback to module title as group name
-            productName = root.title;
-          }
+        if (root.product_id && productsMap?.[root.product_id]) {
+          productName = productsMap[root.product_id];
         }
         groupMap.set(pid, { productName, roots: [] });
       }
