@@ -1,14 +1,14 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { Loader2, Lock, AlertTriangle, Clock, ShieldX, UserX, Ban } from "lucide-react";
+import { Loader2, Lock, AlertTriangle, Clock, ShieldX, UserX, Ban, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 type EntryState =
   | "loading"
   | "auth_required"
   | "token_not_found"
-  | "already_used"
+  | "already_activated"
   | "token_expired"
   | "token_revoked"
   | "token_mismatch"
@@ -23,6 +23,7 @@ export default function LiveAccessEntry() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const [state, setState] = useState<EntryState>("loading");
+  const [redirectSlug, setRedirectSlug] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -31,7 +32,6 @@ export default function LiveAccessEntry() {
     }
 
     if (!session) {
-      // Redirect to auth with return URL
       const returnUrl = `/live-access/${token}`;
       navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`, { replace: true });
       return;
@@ -58,6 +58,10 @@ export default function LiveAccessEntry() {
 
         switch (json.status) {
           case "ok":
+            // Store session_key in sessionStorage (never URL)
+            if (json.session_key) {
+              sessionStorage.setItem(`live_session_${json.redirect_slug}`, json.session_key);
+            }
             setState("redirecting");
             navigate(`/live/${json.redirect_slug}`, { replace: true });
             break;
@@ -65,7 +69,9 @@ export default function LiveAccessEntry() {
             setState("token_not_found");
             break;
           case "already_used":
-            setState("already_used");
+            // Legacy fallback — should not happen with new model
+            setRedirectSlug(json.redirect_slug || null);
+            setState("already_activated");
             break;
           case "token_expired":
             setState("token_expired");
@@ -119,10 +125,10 @@ export default function LiveAccessEntry() {
       title: "Ссылка не найдена",
       description: "Пригласительная ссылка не найдена. Проверьте правильность ссылки или обратитесь в поддержку.",
     },
-    already_used: {
-      icon: <Ban className="h-16 w-16 text-muted-foreground" />,
-      title: "Ссылка уже использована",
-      description: "Эта пригласительная ссылка уже была использована. Каждая ссылка действует только один раз.",
+    already_activated: {
+      icon: <CheckCircle className="h-16 w-16 text-primary" />,
+      title: "Доступ уже активирован",
+      description: "Доступ уже активирован для вашего аккаунта. Вы можете перейти к эфиру.",
     },
     token_expired: {
       icon: <Clock className="h-16 w-16 text-muted-foreground" />,
@@ -173,6 +179,11 @@ export default function LiveAccessEntry() {
       {config.icon}
       <h1 className="text-2xl font-bold text-foreground">{config.title}</h1>
       <p className="text-muted-foreground text-center max-w-md">{config.description}</p>
+      {state === "already_activated" && redirectSlug && (
+        <Button onClick={() => navigate(`/live/${redirectSlug}`)}>
+          Перейти к эфиру
+        </Button>
+      )}
       {state === "auth_required" && (
         <Button
           onClick={() => {

@@ -4988,6 +4988,7 @@ export type Database = {
       }
       live_access_links: {
         Row: {
+          activated_at: string | null
           consumed_at: string | null
           created_at: string
           expires_at: string
@@ -5006,6 +5007,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          activated_at?: string | null
           consumed_at?: string | null
           created_at?: string
           expires_at: string
@@ -5024,6 +5026,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          activated_at?: string | null
           consumed_at?: string | null
           created_at?: string
           expires_at?: string
@@ -5089,6 +5092,50 @@ export type Database = {
           },
           {
             foreignKeyName: "live_access_proofs_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_active_sessions: {
+        Row: {
+          client_instance_id: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          last_seen_at: string
+          live_event_id: string
+          revoked_at: string | null
+          session_key: string
+          user_id: string
+        }
+        Insert: {
+          client_instance_id?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_seen_at?: string
+          live_event_id: string
+          revoked_at?: string | null
+          session_key: string
+          user_id: string
+        }
+        Update: {
+          client_instance_id?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_seen_at?: string
+          live_event_id?: string
+          revoked_at?: string | null
+          session_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_active_sessions_live_event_id_fkey"
             columns: ["live_event_id"]
             isOneToOne: false
             referencedRelation: "live_events"

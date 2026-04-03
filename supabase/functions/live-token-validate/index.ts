@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const PROOF_TTL_HOURS = 24;
+const SESSION_TTL_HOURS = 24;
 const DEFAULT_LINK_TTL_HOURS = 72;
 
 Deno.serve(async (req) => {
@@ -29,16 +30,15 @@ Deno.serve(async (req) => {
 
     // ─── ACTION: CREATE (service role / internal backend only) ───
     if (action === 'create') {
-      // Guard: only service_role callers allowed (backend-to-backend)
       const authHeader = req.headers.get('Authorization');
-      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      if (!authHeader || authHeader !== `Bearer ${serviceKey}`) {
+      const svcKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      if (!authHeader || authHeader !== `Bearer ${svcKey}`) {
         return jsonResponse({ status: 'error', message: 'Service role access required' }, 403);
       }
       return await handleCreate(supabase, body);
     }
 
-    // ─── ACTION: VALIDATE (includes consume on success) ───
+    // ─── ACTION: VALIDATE ───
     if (action === 'validate') {
       return await handleValidate(supabase, req, body, supabaseUrl, anonKey);
     }
@@ -62,12 +62,8 @@ Deno.serve(async (req) => {
 
 // ════════════════════════════════════════════════════════════
 // ACTION: CREATE
-// Called by: broadcast send flow or admin reissue
 // ════════════════════════════════════════════════════════════
-async function handleCreate(
-  supabase: any,
-  body: any,
-) {
+async function handleCreate(supabase: any, body: any) {
   const { live_event_id, user_id, ttl_hours, sent_via } = body;
 
   if (!live_event_id || !user_id) {
@@ -87,7 +83,6 @@ async function handleCreate(
     .eq('live_event_id', live_event_id)
     .in('status', ['created', 'sent']);
 
-  // Insert new link
   const { data: link, error: insertError } = await supabase
     .from('live_access_links')
     .insert({
@@ -106,12 +101,8 @@ async function handleCreate(
     return jsonResponse({ status: 'error', message: 'Failed to create link' }, 500);
   }
 
-  // Audit
   await logAudit(supabase, 'live_link_created', 'system', null, {
-    link_id: link.id,
-    live_event_id,
-    user_id,
-    sent_via: sent_via || null,
+    link_id: link.id, live_event_id, user_id, sent_via: sent_via || null,
   });
 
   return jsonResponse({
@@ -123,8 +114,7 @@ async function handleCreate(
 }
 
 // ════════════════════════════════════════════════════════════
-// ACTION: VALIDATE (+ internal CONSUME on success)
-// Called by: frontend /live-access/:token via backend
+// ACTION: VALIDATE (+ activate/re-enter on success)
 // ════════════════════════════════════════════════════════════
 async function handleValidate(
   supabase: any,
@@ -150,7 +140,7 @@ async function handleValidate(
     return jsonResponse({ status: 'token_not_found' }, 404);
   }
 
-  // 2. Record opened timestamp (audit only, no status change)
+  // 2. Record first opened timestamp
   if (!link.opened_at) {
     await supabase
       .from('live_access_links')
@@ -158,17 +148,8 @@ async function handleValidate(
       .eq('id', link.id);
   }
 
-  // 3. already_used
-  if (link.status === 'consumed') {
-    await logAudit(supabase, 'live_link_opened', 'user', null, {
-      link_id: link.id, result: 'already_used',
-    });
-    return jsonResponse({ status: 'already_used' }, 403);
-  }
-
-  // 4. token_expired
+  // 3. Token expired (check before status checks)
   if (new Date(link.expires_at) < new Date()) {
-    // Auto-update status to expired
     await supabase
       .from('live_access_links')
       .update({ status: 'expired' })
@@ -177,12 +158,12 @@ async function handleValidate(
     return jsonResponse({ status: 'token_expired' }, 403);
   }
 
-  // 5. token_revoked
+  // 4. Token revoked
   if (link.status === 'revoked') {
     return jsonResponse({ status: 'token_revoked' }, 403);
   }
 
-  // 6. Authenticate user via JWT
+  // 5. Authenticate user via JWT
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
     return jsonResponse({ status: 'auth_required' }, 401);
@@ -198,14 +179,13 @@ async function handleValidate(
     return jsonResponse({ status: 'auth_required' }, 401);
   }
 
-  // 7. Write live_link_opened audit (after successful auth, with user context)
+  // 6. Audit: link opened (after auth, with user context)
   await logAudit(supabase, 'live_link_opened', 'user', user.id, {
-    link_id: link.id, result: 'pending_validation',
+    link_id: link.id, link_status: link.status, result: 'pending_validation',
   });
 
-  // 8. User match — audit-only, do NOT burn the link
+  // 7. User mismatch — audit-only, do NOT change link status
   if (user.id !== link.user_id) {
-    // Record telemetry on link without changing status
     await supabase
       .from('live_access_links')
       .update({
@@ -222,7 +202,44 @@ async function handleValidate(
     return jsonResponse({ status: 'token_mismatch' }, 403);
   }
 
-  // 9. Check event exists + published
+  // 8. If link already activated — owner re-entry flow
+  // Skip re-validation of access for activated links — just refresh proof+session
+  if (link.status === 'consumed') {
+    // Fetch event for slug + published check
+    const { data: event } = await supabase
+      .from('live_events')
+      .select('id, slug, is_published')
+      .eq('id', link.live_event_id)
+      .maybeSingle();
+
+    if (!event) {
+      return jsonResponse({ status: 'event_not_found' }, 404);
+    }
+    if (!event.is_published) {
+      return jsonResponse({ status: 'event_unpublished' }, 403);
+    }
+
+    // Refresh proof + session for owner re-entry
+    await upsertProof(supabase, event.id, user.id, link.id);
+    const sessionKey = await createOrReplaceSession(supabase, event.id, user.id);
+
+    await logAudit(supabase, 'live_link_reentry', 'user', user.id, {
+      link_id: link.id, live_event_id: event.id,
+    });
+
+    return jsonResponse({
+      status: 'ok',
+      redirect_slug: event.slug,
+      session_key: sessionKey,
+    });
+  }
+
+  // 9. First activation: link must be in created/sent status
+  if (!['created', 'sent'].includes(link.status)) {
+    return jsonResponse({ status: 'error', message: 'Unexpected link status' }, 400);
+  }
+
+  // 10. Check event exists + published
   const { data: event, error: eventErr } = await supabase
     .from('live_events')
     .select('id, slug, is_published, product_id, access_rule, status')
@@ -230,20 +247,14 @@ async function handleValidate(
     .maybeSingle();
 
   if (eventErr || !event) {
-    await logAudit(supabase, 'live_link_opened', 'user', user.id, {
-      link_id: link.id, result: 'event_not_found',
-    });
     return jsonResponse({ status: 'event_not_found' }, 404);
   }
 
   if (!event.is_published) {
-    await logAudit(supabase, 'live_link_opened', 'user', user.id, {
-      link_id: link.id, result: 'event_unpublished',
-    });
     return jsonResponse({ status: 'event_unpublished' }, 403);
   }
 
-  // 10. Canonical access check
+  // 11. Canonical access check
   const accessRule = event.access_rule as { mode: string; product_id?: string; tariff_id?: string };
   let accessValid = false;
 
@@ -257,7 +268,6 @@ async function handleValidate(
       accessValid = true;
     }
 
-    // Tariff check
     if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
       const { data: tariffSub } = await supabase
         .from('subscriptions_v2')
@@ -288,58 +298,38 @@ async function handleValidate(
 
   if (!accessValid) {
     await logAudit(supabase, 'live_access_denied', 'user', user.id, {
-      link_id: link.id,
-      live_event_id: event.id,
-      access_rule_mode: accessRule.mode,
+      link_id: link.id, live_event_id: event.id, access_rule_mode: accessRule.mode,
     });
     return jsonResponse({ status: 'access_denied' }, 403);
   }
 
-  // ─── 11. CONSUME (only after full success path) ───
-  // Mark link as consumed
+  // ─── 12. ACTIVATE (first successful activation) ───
   await supabase
     .from('live_access_links')
     .update({
       status: 'consumed',
       consumed_at: new Date().toISOString(),
+      activated_at: new Date().toISOString(),
     })
     .eq('id', link.id);
 
-  // Create/upsert proof (TTL 24h)
-  const proofExpiresAt = new Date(Date.now() + PROOF_TTL_HOURS * 60 * 60 * 1000).toISOString();
+  // Create proof + session
+  await upsertProof(supabase, event.id, user.id, link.id);
+  const sessionKey = await createOrReplaceSession(supabase, event.id, user.id);
 
-  // Delete existing proof for this user+event (upsert via delete+insert for unique index)
-  await supabase
-    .from('live_access_proofs')
-    .delete()
-    .eq('user_id', user.id)
-    .eq('live_event_id', event.id);
-
-  await supabase
-    .from('live_access_proofs')
-    .insert({
-      live_event_id: event.id,
-      user_id: user.id,
-      link_id: link.id,
-      proof_type: 'invite_consumed',
-      expires_at: proofExpiresAt,
-    });
-
-  // Audit: consumed
-  await logAudit(supabase, 'live_link_consumed', 'user', user.id, {
-    link_id: link.id,
-    live_event_id: event.id,
+  await logAudit(supabase, 'live_link_activated', 'user', user.id, {
+    link_id: link.id, live_event_id: event.id,
   });
 
   return jsonResponse({
     status: 'ok',
     redirect_slug: event.slug,
+    session_key: sessionKey,
   });
 }
 
 // ════════════════════════════════════════════════════════════
 // ACTION: REVOKE
-// Called by: admin only
 // ════════════════════════════════════════════════════════════
 async function handleRevoke(
   supabase: any,
@@ -368,16 +358,13 @@ async function handleRevoke(
     return jsonResponse({ status: 'error', message: 'Failed to revoke' }, 500);
   }
 
-  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, {
-    link_id,
-  });
+  await logAudit(supabase, 'live_link_revoked', 'user', admin.id, { link_id });
 
   return jsonResponse({ status: 'ok' });
 }
 
 // ════════════════════════════════════════════════════════════
 // ACTION: REISSUE
-// Called by: admin only — revokes old, creates new
 // ════════════════════════════════════════════════════════════
 async function handleReissue(
   supabase: any,
@@ -393,7 +380,6 @@ async function handleReissue(
 
   let { link_id, user_id, live_event_id } = body;
 
-  // If link_id provided, get user_id and live_event_id from old link
   if (link_id) {
     const { data: oldLink } = await supabase
       .from('live_access_links')
@@ -412,20 +398,14 @@ async function handleReissue(
     return jsonResponse({ status: 'error', message: 'user_id and live_event_id required' }, 400);
   }
 
-  // Create new link (handleCreate will auto-revoke old active ones)
   const createResult = await handleCreate(supabase, {
-    live_event_id,
-    user_id,
+    live_event_id, user_id,
     ttl_hours: body.ttl_hours,
     sent_via: body.sent_via,
   });
 
-  // Add admin audit for reissue
   await logAudit(supabase, 'live_link_revoked', 'user', admin.id, {
-    link_id: link_id || null,
-    reissue: true,
-    user_id,
-    live_event_id,
+    link_id: link_id || null, reissue: true, user_id, live_event_id,
   });
 
   return createResult;
@@ -459,14 +439,94 @@ async function authenticateAdmin(
   const { data: { user }, error } = await userClient.auth.getUser();
   if (error || !user) return null;
 
-  // Check admin role
+  // C1 hotfix: use correct parameter name _role_code
   const { data: hasRole } = await supabase.rpc('has_role_v2', {
     _user_id: user.id,
-    _role: 'admin',
+    _role_code: 'admin',
   });
 
   if (!hasRole) return null;
   return { id: user.id };
+}
+
+/** Upsert proof: delete existing + insert new (TTL 24h) */
+async function upsertProof(
+  supabase: any,
+  eventId: string,
+  userId: string,
+  linkId: string,
+) {
+  const proofExpiresAt = new Date(Date.now() + PROOF_TTL_HOURS * 60 * 60 * 1000).toISOString();
+
+  await supabase
+    .from('live_access_proofs')
+    .delete()
+    .eq('user_id', userId)
+    .eq('live_event_id', eventId);
+
+  await supabase
+    .from('live_access_proofs')
+    .insert({
+      live_event_id: eventId,
+      user_id: userId,
+      link_id: linkId,
+      proof_type: 'invite_consumed',
+      expires_at: proofExpiresAt,
+    });
+}
+
+/**
+ * Create or replace active session for user+event.
+ * Revokes any existing active session first (single-session enforcement).
+ * Returns the new session_key.
+ */
+async function createOrReplaceSession(
+  supabase: any,
+  eventId: string,
+  userId: string,
+): Promise<string> {
+  const now = new Date().toISOString();
+
+  // Revoke existing active session for this user+event
+  const { data: existingSession } = await supabase
+    .from('live_active_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('live_event_id', eventId)
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  if (existingSession) {
+    await supabase
+      .from('live_active_sessions')
+      .update({ revoked_at: now })
+      .eq('id', existingSession.id);
+
+    await logAudit(supabase, 'live_session_replaced', 'system', null, {
+      old_session_id: existingSession.id,
+      user_id: userId,
+      live_event_id: eventId,
+    });
+  }
+
+  // Create new session
+  const sessionKey = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+
+  await supabase
+    .from('live_active_sessions')
+    .insert({
+      live_event_id: eventId,
+      user_id: userId,
+      session_key: sessionKey,
+      expires_at: expiresAt,
+    });
+
+  await logAudit(supabase, 'live_session_started', 'user', userId, {
+    live_event_id: eventId,
+  });
+
+  return sessionKey;
 }
 
 async function logAudit(
