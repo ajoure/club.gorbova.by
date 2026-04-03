@@ -156,6 +156,8 @@ export default function AdminLiveEvents() {
         is_published: data.is_published,
         scheduled_at: data.scheduled_at || null,
         replay_enabled: data.replay_enabled,
+        invite_mode: data.invite_mode,
+        direct_access_allowed: data.direct_access_allowed,
       };
 
       if (editingId) {
