@@ -12,6 +12,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Video,
 } from "lucide-react";
 
 export interface BroadcastTemplate {
