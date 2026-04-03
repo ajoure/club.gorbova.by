@@ -370,8 +370,21 @@ export default function AdminLiveEvents() {
       const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: { action, instance_id: kinescopeInstanceId, live_event_id: liveEventId },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Ошибка");
+      
+      if (error) {
+        const msg = typeof error === "object" && error.message ? error.message : String(error);
+        toast.error(`Ошибка вызова: ${msg}`);
+        return;
+      }
+      
+      if (!data?.success) {
+        toast.error(data?.error || "Kinescope вернул ошибку", {
+          description: data?.status_code ? `Код: ${data.status_code}` : undefined,
+          duration: 6000,
+        });
+        console.error(`[AdminLiveEvents] ${action} failed:`, data);
+        return;
+      }
       
       // Update platform_status based on action
       let newStatus: string | null = null;
@@ -384,8 +397,10 @@ export default function AdminLiveEvents() {
 
       toast.success(action === "enable_live_event" ? "Эфир запущен" : action === "complete_live_event" ? "Эфир завершён" : "Статус обновлён");
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
-    } catch (err) {
-      toast.error("Ошибка: " + (err as Error).message);
+    } catch (err: any) {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка: ${msg}`);
+      console.error(`[AdminLiveEvents] ${action} exception:`, err);
     }
   };
 
