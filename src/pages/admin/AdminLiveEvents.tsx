@@ -334,8 +334,8 @@ export default function AdminLiveEvents() {
 
   // --- Create live event in Kinescope ---
   const handleCreateKinescopeLiveEvent = async () => {
-    if (!form.kinescope_project_id || !kinescopeInstanceId) {
-      toast.error("Выберите проект Kinescope");
+    if (!form.kinescope_folder_id || !kinescopeInstanceId) {
+      toast.error("Выберите папку для живых эфиров");
       return;
     }
     setCreatingLiveEvent(true);
@@ -344,9 +344,9 @@ export default function AdminLiveEvents() {
         body: {
           action: "create_live_event",
           instance_id: kinescopeInstanceId,
-          project_id: form.kinescope_project_id,
+          folder_id: form.kinescope_folder_id,
+          project_id: form.kinescope_project_id || undefined,
           name: form.title || "Новый эфир",
-          record: true,
         },
       });
 
@@ -358,19 +358,57 @@ export default function AdminLiveEvents() {
       
       if (!data?.success) {
         const errorMsg = data?.error || "Неизвестная ошибка Kinescope";
-        const details = data?.details ? `\n\nПодробности: ${JSON.stringify(data.details, null, 2)}` : "";
-        toast.error(errorMsg, { description: details ? `Код: ${data?.status_code || "—"}` : undefined, duration: 8000 });
-        console.error("[AdminLiveEvents] create_live_event failed:", data);
+        toast.error(`Не удалось создать эфир: ${errorMsg}`, {
+          description: data?.status_code ? `Код ответа: ${data.status_code}` : undefined,
+          duration: 8000,
+        });
+        console.error("[AdminLiveEvents] create_live_event failed:", JSON.stringify(data));
         return;
       }
       
-      // Extract event ID from various response shapes
-      const eventData = data.data as any;
-      const eventId = eventData?.data?.id || eventData?.id;
+      // Extract event data from response
+      const eventData = (data.data as any)?.data || data.data;
+      const eventId = eventData?.id;
+      const streamId = eventData?.stream?.id;
+      const playLink = eventData?.play_link;
+      const rtmpLink = eventData?.rtmp_link;
+      const streamkey = eventData?.streamkey;
+      const streamStatus = eventData?.stream?.status;
       
       if (eventId) {
         setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
-        toast.success(`Эфир создан в Kinescope (ID: ${eventId})`);
+        
+        // If editing, save provider data to DB immediately with metadata merge
+        if (editingId) {
+          const { data: current } = await supabase.from("live_events").select("metadata").eq("id", editingId).single();
+          const existingMeta = (current?.metadata as Record<string, any>) || {};
+          const mergedMeta = {
+            ...existingMeta,
+            kinescope_project_id: form.kinescope_project_id || existingMeta.kinescope_project_id,
+            kinescope_folder_id: form.kinescope_folder_id,
+            provider: {
+              ...(existingMeta.provider || {}),
+              live_event_id: eventId,
+              stream_id: streamId,
+              play_link: playLink,
+              rtmp_link: rtmpLink,
+              streamkey: streamkey,
+              stream_status: streamStatus,
+              raw_create_response: eventData,
+            },
+            last_provider_sync_at: new Date().toISOString(),
+          };
+          await supabase.from("live_events").update({
+            kinescope_live_event_id: eventId,
+            kinescope_stream_id: streamId || null,
+            metadata: mergedMeta,
+          } as any).eq("id", editingId);
+        }
+        
+        toast.success("Эфир создан в Kinescope", {
+          description: `ID: ${eventId}`,
+        });
+        queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
       } else {
         toast.warning("Эфир создан, но ID не получен. Проверьте консоль.");
         console.warn("[AdminLiveEvents] create_live_event — no ID in response:", data);
