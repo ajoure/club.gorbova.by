@@ -203,13 +203,17 @@ async function handleValidate(
     return jsonResponse({ status: 'auth_required' }, 401);
   }
 
-  // 8. User match
+  // 7. Write live_link_opened audit (after successful auth, with user context)
+  await logAudit(supabase, 'live_link_opened', 'user', user.id, {
+    link_id: link.id, result: 'pending_validation',
+  });
+
+  // 8. User match — audit-only, do NOT burn the link
   if (user.id !== link.user_id) {
-    // Record mismatch
+    // Record telemetry on link without changing status
     await supabase
       .from('live_access_links')
       .update({
-        status: 'mismatch',
         last_opened_by_user_id: user.id,
         last_opened_at: new Date().toISOString(),
       })
