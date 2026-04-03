@@ -46,6 +46,8 @@ interface LiveEvent {
   is_published: boolean;
   scheduled_at: string | null;
   replay_enabled: boolean;
+  invite_mode: string;
+  direct_access_allowed: boolean;
   created_at: string;
 }
 
