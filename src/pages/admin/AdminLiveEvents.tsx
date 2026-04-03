@@ -248,7 +248,7 @@ export default function AdminLiveEvents() {
                     </TableCell>
                     <TableCell>
                       {event.is_published ? (
-                        <Badge className="bg-green-100 text-green-700">Да</Badge>
+                        <Badge variant="default">Да</Badge>
                       ) : (
                         <Badge variant="outline">Нет</Badge>
                       )}

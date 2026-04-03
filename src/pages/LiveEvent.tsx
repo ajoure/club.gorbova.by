@@ -208,7 +208,6 @@ function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
   useKinescopePlayer({
     videoId,
     containerId,
-    autoplay: true,
   });
 
   return (
