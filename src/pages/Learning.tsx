@@ -10,7 +10,8 @@ import { useTrainingModules } from "@/hooks/useTrainingModules";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { ModuleCard } from "@/components/training/ModuleCard";
+import { LibraryTableView } from "@/components/training/LibraryTableView";
+import { LibraryTableSkeleton } from "@/components/training/LibraryTableSkeleton";
 import { 
   ShoppingBag, 
   BookOpen, 
