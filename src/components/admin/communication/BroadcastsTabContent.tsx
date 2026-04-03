@@ -194,12 +194,18 @@ const [includeButton, setIncludeButton] = useState(true);
         filteredProfiles = filteredProfiles.filter((p) => activeUserIds.has(p.user_id));
       }
 
-      if (filters.productId) {
-        const { data: productSubs } = await supabase
+      if (filters.productIds.length > 0) {
+        let subQuery = supabase
           .from("subscriptions_v2")
           .select("user_id")
-          .eq("product_id", filters.productId)
+          .in("product_id", filters.productIds)
           .eq("status", "active");
+
+        if (filters.tariffIds.length > 0) {
+          subQuery = subQuery.in("tariff_id", filters.tariffIds);
+        }
+
+        const { data: productSubs } = await subQuery;
 
         const productUserIds = new Set(productSubs?.map((s) => s.user_id) || []);
         filteredProfiles = filteredProfiles.filter((p) => productUserIds.has(p.user_id));
