@@ -30,7 +30,7 @@ async function makeRequest(
   apiToken: string,
   method: string = "GET",
   body?: Record<string, unknown>
-): Promise<{ success: boolean; data?: unknown; error?: string }> {
+): Promise<{ success: boolean; data?: unknown; error?: string; details?: unknown; status_code?: number }> {
   try {
     const response = await fetch(`${baseUrl}${endpoint}`, {
       method,
@@ -41,27 +41,46 @@ async function makeRequest(
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    const data = await response.json();
+    let data: unknown;
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      const text = await response.text();
+      data = { raw: text };
+    }
 
     if (response.ok) {
-      return { success: true, data };
-    } else if (response.status === 401) {
-      return { success: false, error: "Неверный API токен Kinescope" };
-    } else if (response.status === 403) {
-      return { success: false, error: "Доступ запрещён" };
-    } else if (response.status === 404) {
-      return { success: false, error: "Ресурс не найден" };
-    } else {
-      return { 
-        success: false, 
-        error: data.message || data.error || `HTTP ${response.status}` 
-      };
+      return { success: true, data, status_code: response.status };
     }
-  } catch (e) {
-    console.error("Kinescope API error:", e);
+
+    // Normalize error from various Kinescope response shapes
+    const d = data as Record<string, unknown> | null;
+    let errorMsg = `HTTP ${response.status}`;
+    if (d) {
+      if (typeof d.message === "string") errorMsg = d.message;
+      else if (typeof d.error === "string") errorMsg = d.error;
+      else if (typeof d.title === "string") errorMsg = d.title;
+      else if (d.errors && Array.isArray(d.errors)) errorMsg = (d.errors as Array<{message?: string}>).map(e => e.message || JSON.stringify(e)).join("; ");
+    }
+
+    if (response.status === 401) errorMsg = "Неверный API токен Kinescope";
+    else if (response.status === 403) errorMsg = "Доступ запрещён";
+    else if (response.status === 404) errorMsg = "Ресурс не найден в Kinescope";
+
+    console.error(`[kinescope-api] ${method} ${endpoint} → ${response.status}:`, JSON.stringify(data));
+
     return { 
       success: false, 
-      error: e instanceof Error ? e.message : "Ошибка подключения к Kinescope" 
+      error: errorMsg,
+      details: data,
+      status_code: response.status,
+    };
+  } catch (e) {
+    console.error("[kinescope-api] Network error:", e);
+    return { 
+      success: false, 
+      error: e instanceof Error ? e.message : "Ошибка подключения к Kinescope",
     };
   }
 }

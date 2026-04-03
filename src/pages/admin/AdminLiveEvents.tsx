@@ -329,9 +329,22 @@ export default function AdminLiveEvents() {
           record: true,
         },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Ошибка создания эфира в Kinescope");
+
+      if (error) {
+        const msg = typeof error === "object" && error.message ? error.message : String(error);
+        toast.error(`Ошибка вызова: ${msg}`);
+        return;
+      }
       
+      if (!data?.success) {
+        const errorMsg = data?.error || "Неизвестная ошибка Kinescope";
+        const details = data?.details ? `\n\nПодробности: ${JSON.stringify(data.details, null, 2)}` : "";
+        toast.error(errorMsg, { description: details ? `Код: ${data?.status_code || "—"}` : undefined, duration: 8000 });
+        console.error("[AdminLiveEvents] create_live_event failed:", data);
+        return;
+      }
+      
+      // Extract event ID from various response shapes
       const eventData = data.data as any;
       const eventId = eventData?.data?.id || eventData?.id;
       
@@ -339,11 +352,13 @@ export default function AdminLiveEvents() {
         setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
         toast.success(`Эфир создан в Kinescope (ID: ${eventId})`);
       } else {
-        toast.success("Эфир создан в Kinescope");
-        console.log("[AdminLiveEvents] create_live_event response:", data);
+        toast.warning("Эфир создан, но ID не получен. Проверьте консоль.");
+        console.warn("[AdminLiveEvents] create_live_event — no ID in response:", data);
       }
-    } catch (err) {
-      toast.error("Ошибка: " + (err as Error).message);
+    } catch (err: any) {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка создания эфира: ${msg}`);
+      console.error("[AdminLiveEvents] create_live_event exception:", err);
     } finally {
       setCreatingLiveEvent(false);
     }
@@ -355,8 +370,21 @@ export default function AdminLiveEvents() {
       const { data, error } = await supabase.functions.invoke("kinescope-api", {
         body: { action, instance_id: kinescopeInstanceId, live_event_id: liveEventId },
       });
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || "Ошибка");
+      
+      if (error) {
+        const msg = typeof error === "object" && error.message ? error.message : String(error);
+        toast.error(`Ошибка вызова: ${msg}`);
+        return;
+      }
+      
+      if (!data?.success) {
+        toast.error(data?.error || "Kinescope вернул ошибку", {
+          description: data?.status_code ? `Код: ${data.status_code}` : undefined,
+          duration: 6000,
+        });
+        console.error(`[AdminLiveEvents] ${action} failed:`, data);
+        return;
+      }
       
       // Update platform_status based on action
       let newStatus: string | null = null;
@@ -369,8 +397,10 @@ export default function AdminLiveEvents() {
 
       toast.success(action === "enable_live_event" ? "Эфир запущен" : action === "complete_live_event" ? "Эфир завершён" : "Статус обновлён");
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
-    } catch (err) {
-      toast.error("Ошибка: " + (err as Error).message);
+    } catch (err: any) {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка: ${msg}`);
+      console.error(`[AdminLiveEvents] ${action} exception:`, err);
     }
   };
 
@@ -438,16 +468,37 @@ export default function AdminLiveEvents() {
       }
     },
     onSuccess: () => {
+      const wasPublished = form.is_published;
       const wasInviteReady = isInviteReady;
+      
       toast.success(editingId ? "Эфир обновлён" : "Эфир создан");
-      if (wasInviteReady && !editingId) {
+      
+      if (wasPublished && wasInviteReady) {
         toast.info("Эфир готов к приглашениям", {
           action: {
             label: "Создать приглашение",
             onClick: () => window.open("/admin/communication?tab=broadcasts", "_blank"),
           },
+          duration: 8000,
         });
+      } else if (wasPublished && !wasInviteReady) {
+        // Show what's still needed
+        const missing: string[] = [];
+        if (isLiveStream && !form.scheduled_at) missing.push("дата и время эфира");
+        if (isLiveStream && !form.kinescope_live_event_id) missing.push("живой эфир в Kinescope");
+        if (!isLiveStream && !form.kinescope_video_id) missing.push("видео Kinescope");
+        if (form.access_rules.filter(r => r.product_id).length === 0) missing.push("правила доступа");
+        
+        if (missing.length > 0) {
+          toast.info(`Для приглашений осталось: ${missing.join(", ")}`, { duration: 8000 });
+        }
+      } else if (!wasPublished) {
+        const remainingBlockers = blockers.map(b => b.label.toLowerCase());
+        if (remainingBlockers.length > 0) {
+          toast.info(`Для публикации: ${remainingBlockers.join(", ")}`, { duration: 6000 });
+        }
       }
+      
       setDialogOpen(false);
       setEditingId(null);
       setForm(defaultForm);
@@ -456,7 +507,10 @@ export default function AdminLiveEvents() {
       queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
       queryClient.invalidateQueries({ queryKey: ["live-event-access-rules"] });
     },
-    onError: (err) => toast.error("Ошибка: " + (err as Error).message),
+    onError: (err: any) => {
+      const msg = err?.message || (typeof err === "object" ? JSON.stringify(err) : String(err));
+      toast.error(`Ошибка сохранения: ${msg}`);
+    },
   });
 
   // --- Handlers ---
