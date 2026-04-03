@@ -2,74 +2,73 @@
 
 &nbsp;
 
-1. **Не ослабляй текущую модель доступа из-за product_id nullable без явного migration mapping.**
-  Если live_events.product_id переводится в legacy/fallback, нужно в плане прямо добавить:
+1. **Сначала исправить источник проблемы Kinescope, а не только UI.**
+  В плане правильно указано, что нужно проверить integration_instances, но это надо сделать как отдельный обязательный шаг discovery/proof:
   &nbsp;
-  - backfill/mapping для уже созданных эфиров;
-  - правило, как существующие записи превращаются в live_event_access_rules;
-  - запрет на потерю текущего access behavior при миграции.
+  - есть ли реально provider='kinescope' и status='connected';
+  - какой instance_id выбран;
+  - что возвращает kinescope-api на list_projects;
+  - что возвращает list_videos по конкретному project_id.
+    Без этого можно красиво перерисовать модалку, но оставить поломанный data flow.
   &nbsp;
-2. **live_event_access_rules должна стать единственным SoT для multi-access после миграции, а fallback — только временным.**
-  Иначе архитектура останется раздвоенной.
-  Добавь явный этап:
+2. **Не завязывать весь UX только на provider='kinescope', если в проекте уже использовалось integration_type.**
+  В плане нужно явно зафиксировать:
   &nbsp;
-  - migrate old single-rule data into rules table;
-  - после этого new writes идут только в live_event_access_rules;
-  - legacy access_rule/product_id читаются только для старых записей до завершения backfill.
+  - какой именно столбец является каноническим для поиска инстанса (provider или integration_type);
+  - если в проекте есть смешение старой и новой схемы, сделать tolerant lookup, а не один жёсткий фильтр.
   &nbsp;
-3. **Для multi-rule access нужен точный приоритет проверки и дедупликации.**
-  Зафиксируй:
+3. **slugify нужно вынести в общий util без потери текущих кейсов кириллицы/спецсимволов.**
+  При переносе в src/utils/slugify.ts нужно не просто копировать функцию, а:
   &nbsp;
-  - если есть правило product_id=X, tariff_id=NULL, то более узкие правила для этого же продукта уже избыточны;
-  - UI должен либо запрещать такие комбинации, либо автоматически схлопывать их;
-  - нельзя хранить конфликтующие/дублирующие rules.
+  - проверить существующее поведение;
+  - не сломать уже используемые места;
+  - зафиксировать reuse во всех новых формах, где нужен slug.
   &nbsp;
-4. **Multi-select тарифов лучше хранить как отдельные строки, как ты и предложил, но это нужно прямо закрепить в UI/DB mapping.**
+4. **Для slug нужен guard от дублей, не только автогенерация.**
+  В плане добавь:
+  &nbsp;
+  - проверку уникальности перед сохранением;
+  - понятную ошибку, если такой slug уже есть;
+  - при автогенерации можно предлагать safe suffix, если адрес занят.
+  &nbsp;
+5. **Kinescope секция должна иметь 3 состояния, а не 2.**
+  Сейчас описаны “нет интеграции” и “есть интеграция”. Нужен ещё третий:
+  &nbsp;
+  - интеграция есть, но API вернул ошибку / токен невалиден / проекты не загрузились.
+    Это должен быть отдельный error-state с понятным текстом, а не маскироваться под empty-state.
+  &nbsp;
+6. **Список видео Kinescope нужно показывать только если продуктовый сценарий реально “привязать существующее видео”.**
+  Добавь в UI-текст явное объяснение:
+  &nbsp;
+  - “На текущем этапе система привязывает уже существующее видео/эфир Kinescope”
+  - либо “Автоматическое создание эфира в Kinescope пока не поддерживается”.
+    Иначе пользователь всё равно будет ожидать, что эфир создаётся автоматически прямо здесь.
+  &nbsp;
+7. **DateTimePicker использовать как единый стандарт, но сначала проверить, что он подходит для admin modal по UX и z-index.**
+  Это особенно важно внутри Dialog:
+  &nbsp;
+  - popup не должен обрезаться;
+  - не должен конфликтовать со скроллом модалки;
+  - должен нормально работать в overlay.
+    Добавь это в DoD и proof.
+  &nbsp;
+8. **Запрет на input type="datetime-local" зафиксировать как общее правило для проекта.**
+  Не только заменить в Live Events, но и записать:
+  &nbsp;
+  - новые date/time поля создаются только через существующие DatePicker / DateTimePicker;
+  - нативный datetime-local больше не использовать.
+  &nbsp;
+9. **Убрать toast при publish-block не просто в одном месте, а заменить его на inline validation state у switch/action.**
   То есть:
   &nbsp;
-  - один продукт + 3 тарифа = 3 строки в live_event_access_rules
-  - “все тарифы продукта” = 1 строка с tariff_id=NULL
-    Это нужно прописать явно, чтобы подрядчик не ушёл в JSON внутри строки.
+  - publish toggle не спамит toast;
+  - рядом/ниже видно, что именно блокирует публикацию;
+  - blocked items в readiness panel выделены явно.
+    Это лучше, чем просто “не показывать toast”.
   &nbsp;
-5. **Pre-publish validation должна учитывать не только наличие kinescope_video_id, но и Kinescope readiness.**
-  Добавь в checklist:
-  &nbsp;
-  - выбранный/введённый kinescope_video_id реально существует или валидируется через integration layer;
-  - если видео не найдено/недоступно — publish blocked.
-  &nbsp;
-6. **Если kinescope-api остаётся “без изменений”, это нужно подтвердить достаточностью current actions.**
-  В плане сейчас написано “без изменений, уже достаточен”. Лучше явно добавить:
-  &nbsp;
-  - reuse existing list_projects + list_videos
-  - manual fallback для video_id
-  - отсутствие automation по live creation признано ограничением, а не забыто.
-  &nbsp;
-7. **Статус Запись доступна не должен зависеть только от status='ended' на уровне UI.**
-  Правильнее:
-  &nbsp;
-  - setting можно включить заранее как намерение;
-  - но фактическая доступность записи пользователю наступает только после ended и валидной Kinescope replay source.
-    Иначе UX будет странным. Лучше разделить:
-  - “Разрешить доступ к записи после завершения”
-  - фактический replay availability
-  &nbsp;
-8. **Опубликован должен быть не просто switch, а результат readiness-check.**
-  В плане стоит добавить:
-  &nbsp;
-  - publish action валидирует всё и либо включает публикацию, либо показывает список блокеров;
-  - не просто toggle без контекста.
-  &nbsp;
-9. **Нужен явный summary block “Как это будет работать для пользователя”.**
-  В карточке/форме эфира показывать:
-  &nbsp;
-  - доступ у кого;
-  - нужен ли персональный invite;
-  - доступна ли запись;
-  - как пользователь войдёт: напрямую или только по ссылке.
-    Это снимет основную путаницу из текущего UI.
-  &nbsp;
-10. **Для BroadcastTemplateDialog нужен не только empty-state, но и возвратный flow после создания эфира.**
-  Зафиксируй:
+10. **Readiness panel должна разделять ошибки и предупреждения.**
+  Не всё одинаково критично.
+  Нужно:
 
 &nbsp;
 
@@ -77,9 +76,9 @@
 
 &nbsp;
 
-- “Создать эфир” открывает /admin/live-events;
-- после сохранения эфир можно выбрать без ручного перезахода/потери формы, если это возможно;
-- если нет — хотя бы явно написать, что нужен refresh списка.
+- blockers: без этого нельзя публиковать;
+- warnings: полезно знать, но публикацию не блокирует.
+  Например, отсутствие Kinescope ID — blocker; отсутствие записи — не blocker.
 
 &nbsp;
 
@@ -87,8 +86,8 @@
 
 &nbsp;
 
-11. **Token picker bugfix не смешивай с empty dropdown of live events.**
-  В плане их надо держать как 2 независимых проблемы:
+11. **Блок “Как это работает для пользователя” надо сделать действительно human-readable, без технички вроде Kinescope Video ID.**
+  Он должен отвечать на 4 вопроса:
 
 &nbsp;
 
@@ -96,9 +95,11 @@
 
 &nbsp;
 
-- dropdown пуст из-за отсутствия данных;
-- token picker/dropdown interaction bug inside Dialog.
-  Это важно для DoD и proof.
+- кто войдёт;
+- нужен ли invite;
+- будет ли запись;
+- готов ли эфир к публикации.
+  Технические детали туда не тянуть.
 
 &nbsp;
 
@@ -106,8 +107,8 @@
 
 &nbsp;
 
-12. **AdminLiveEvents должен быть встроен в AdminLayout без потери existing admin guards.**
-  Прямо зафиксируй:
+12. **Визуальную унификацию нужно привязывать не просто к “как контакты”, а к конкретным existing components/tokens.**
+  В плане лучше зафиксировать:
 
 &nbsp;
 
@@ -115,8 +116,8 @@
 
 &nbsp;
 
-- route остаётся под admin-only protection;
-- sidebar/title/breadcrumb работают как у остальных admin pages.
+- использовать те же DialogContent / section cards / spacing tokens / text styles, что в contact detail/admin sheets;
+- не изобретать новый visual dialect.
 
 &nbsp;
 
@@ -124,8 +125,9 @@
 
 &nbsp;
 
-13. **Нужен отдельный smoke-test на multi-rule с несколькими продуктами и смешанной логикой тарифов.**
-  Не только “2 продукта, у одного 2 тарифа”, а конкретно:
+13. **Для Kinescope video select нужны loading, empty и error states внутри самого dropdown, а не только снаружи.**
+  Иначе снова получится белая пустота.
+  Нужно явно прописать:
 
 &nbsp;
 
@@ -133,11 +135,10 @@
 
 &nbsp;
 
-- продукт A — все тарифы;
-- продукт B — только тарифы X,Y;
-- пользователь с A проходит;
-- пользователь с B+X проходит;
-- пользователь с B+Z не проходит.
+- loading item;
+- empty item;
+- error item;
+- disable select when instance/project not ready.
 
 &nbsp;
 
@@ -145,8 +146,8 @@
 
 &nbsp;
 
-14. **Host flow ограничение нужно вынести в явный раздел “что не автоматизировано”.**
-  Сейчас это есть, но лучше жёстче:
+14. **Нужен proof, что instance_id реально прокинут и shape response обработан правильно.**
+  Добавь в DoD:
 
 &nbsp;
 
@@ -154,9 +155,10 @@
 
 &nbsp;
 
-- host/instructor flow через Kinescope console;
-- viewer flow через платформу;
-- в текущем спринте host automation не обещается.
+- list_projects реально возвращает список;
+- после выбора проекта list_videos реально возвращает видео;
+- UI отображает их без белой полосы;
+- если список пуст — показывает понятный текст.
 
 &nbsp;
 
@@ -164,8 +166,8 @@
 
 &nbsp;
 
-15. **Kinescope Video ID как fallback-поле лучше скрывать по умолчанию.**
-  В плане запиши:
+15. **Если интеграция Kinescope не настроена, publish logic должна учитывать это честно.**
+  То есть:
 
 &nbsp;
 
@@ -173,9 +175,9 @@
 
 &nbsp;
 
-- default UX = выбор проекта/видео;
-- manual ID — только в “Расширенные настройки”.
-  Это важный UX-фикс.
+- либо publish blocked без kinescope_video_id;
+- либо разрешён draft без публикации;
+- но интерфейс должен ясно говорить, что сначала нужно привязать источник трансляции/записи.
 
 &nbsp;
 
@@ -183,8 +185,8 @@
 
 &nbsp;
 
-16. **DoD нужно расширить proof по sidebar/navigation и by-role сценариям.**
-  Добавь:
+16. **Добавь отдельный proof по модалке в финальном виде, а не только по коду.**
+  Обязательно:
 
 &nbsp;
 
@@ -192,369 +194,154 @@
 
 &nbsp;
 
-- admin видит страницу в sidebar и открывает её;
-- шаблон вебинара видит созданный эфир;
-- пользователь с нужным multi-rule доступом входит;
-- пользователь без доступа не входит;
-- ограничения host flow отражены в UI.
+- скрин/видео slug auto-fill;
+- скрин стандартного DateTimePicker;
+- скрин Kinescope error/empty state;
+- скрин нормального layout switches/help-text/readiness;
+- proof, что текст и controls не наезжают друг на друга.
 
 &nbsp;
 
 &nbsp;
 
-В остальном направление верное: semi-auto Kinescope, нормальная навигация, multi-rule access и human-readable workflow — это именно то, чего сейчас не хватает.
+В остальном план правильный: сначала привести модалку к стандартному UX, убрать ложные/ломаные состояния Kinescope, заменить календарь на существующий стандарт и сделать slug человеческим.
 
 &nbsp;
 
-План: Перестройка Live Events — навигация, множественный доступ, Kinescope интеграция, UX
+План: UX-переработка модалки Live Events
 
-## Kinescope API Discovery — факты
+## Диагностика
 
-### Что есть в API (подтверждено)
+### Kinescope videos не загружаются
 
-- **v1/projects** — CRUD проектов (GET/POST/PUT/DELETE). Работает, проверено реальным вызовом. 28 проектов в аккаунте.
-- **v1/videos** — CRUD видео, загрузка, получение embed/play/hls ссылок. Поля: `id`, `project_id`, `play_link`, `embed_link`, `hls_link`, `status`, `duration`.
-- **v1/projects/{id}/videos** — список видео в проекте.
-- **Embed URL** — формируется как `https://kinescope.io/embed/{video_id}` — это уже используется в системе.
+Edge function возвращает 400 `API токен не найден` — значит `instance_id` не передаётся или не найден. Нужно проверить, есть ли реально `integration_instances` с `provider=kinescope` и `status=connected`. Если нет — picker бессмысленен, нужен empty state. Если есть — нужно передавать корректный `instance_id`.
 
-### Что указано в OpenAPI spec, но НЕ документировано
+### Пустая белая полоса вместо списка видео
 
-- **v2/live** — тег существует в spec (`The event object: id, type: one-time|recurring`), но ни одного endpoint path (`/v2/live/...`) в spec не описано.
-- **v2/live/restreams** — тег есть, paths нет.
-- **v1/speak/rooms** — тег есть (Speak = вебинарная комната Kinescope), paths не документированы.
+`SelectContent` рендерит пустой список без empty state. Нет обработки ошибок и loading states для video select.
 
-### Вывод
+### Slug ручной без автогенерации
 
-**Full auto (Mode A) невозможен** на основании имеющейся документации. Нет подтверждённых endpoints для:
+Нет связи между title и slug. Существующая `slugify` функция есть в `EntityCustomFields.tsx` — можно переиспользовать.
 
-- создания live stream/event через API
-- получения RTMP credentials через API  
-- получения host URL через API
-- управления записью через API
+### Календарь
 
-**Выбранный режим: Mode B — semi-auto.**
+Используется `<Input type="datetime-local">` — это не кастомный календарь, а нативный. Существующие стандартные компоненты: `DatePicker` (date-only) и `DateTimePicker` (date+time с wheel). `DateTimePicker` из `datetime-picker.tsx` — правильный выбор для scheduled_at.
 
-Kinescope используется как video hosting + embed player. Создание live stream / настройка RTMP выполняется в консоли Kinescope. Наша система получает `video_id` (или `embed_link`) и управляет доступом.
+### Дизайн модалки
+
+Текущая модалка не соответствует стилю платформы (ContactDetailSheet). Нужно привести к единому стандарту: белый фон секций, чёткие отступы, разделители, компактные help-text.
 
 ---
 
-## Единый продуктовый сценарий (backbone)
+## Изменения
 
-```text
-1. Админ создаёт эфир в системе
-2. Привязывает Kinescope video/stream (ручной ID или выбор из списка видео)
-3. Настраивает множественные правила доступа (продукты + тарифы)
-4. Выбирает режим приглашений
-5. Публикует эфир (с pre-publish validation)
-6. Создаёт шаблон рассылки и отправляет приглашения
-7. Пользователь входит по ссылке (viewer flow)
-8. После завершения — запись доступна по тем же access rules
+### 1. Slug автогенерация
+
+Добавить в `AdminLiveEvents.tsx`:
+
+- Извлечь `slugify` в `src/utils/slugify.ts` (реюз из `EntityCustomFields.tsx`)
+- State `slugManuallyEdited: boolean` (default false)
+- При изменении `title`: если `!slugManuallyEdited` → автозаполнять slug
+- При ручном изменении slug → `slugManuallyEdited = true`
+- Help-text под полем: "Короткий адрес эфира в ссылке. Заполняется автоматически из названия."
+
+### 2. Kinescope секция — переработка
+
+**Если `kinescopeInstance` не найден:**
+
+```
+Интеграция с Kinescope не настроена.
+Используйте ручной ввод Kinescope Video ID в расширенных настройках.
 ```
 
-Host/instructor flow — вне текущего спринта (Kinescope API не даёт host URL, преподаватель работает через Kinescope native console).
+**Если найден, picker mode:**
 
----
+- Проект select с пояснением: "Проект — папка в Kinescope, где хранятся видео"
+- Видео select:
+  - Loading: `<Loader2>` + "Загрузка видео..."
+  - Пусто: "В этом проекте нет видео"
+  - Ошибка: "Не удалось загрузить видео"
+- Под секцией: "Выберите существующее видео или эфир из аккаунта Kinescope"
+- Ссылка "Ввести Video ID вручную" → переключает на manual mode
 
-## Scope текущего спринта vs Follow-up
+**Manual mode:**
 
-### Current sprint
+- Input + пояснение: "Вставьте ID видео или эфира из консоли Kinescope"
+- Ссылка "Выбрать из списка" → назад
 
-- Навигация: Live Events в sidebar
-- Multi-rule access model (таблица `live_event_access_rules`)
-- UI конструктор правил доступа
-- Semi-auto Kinescope (выбор из списка видео + ручной fallback)
-- Pre-publish validation
-- UX-тексты на русском
-- Empty state + CTA в BroadcastTemplateDialog
-- Token picker bugfix
-- Smoke-test flow
+### 3. Дата/время — заменить на DateTimePicker
 
-### Follow-up (не в этом спринте)
+Заменить `<Input type="datetime-local">` на существующий `DateTimePicker` из `src/components/ui/datetime-picker.tsx`. Адаптировать: `form.scheduled_at` (ISO string) ↔ `DateTimePicker` (Date + time string).
 
-- Host/instructor automation (зависит от Kinescope API v2/live/speak)
-- Kinescope webhook для автоматического определения начала/конца эфира
-- Advanced moderation
-- Analytics
+### 4. Видео select empty/error states
 
----
+В `AdminLiveEvents.tsx` — после `SelectContent` для видео:
 
-## Фаза 1 — Навигация
+- Если `kinescopeVideosLoading` → показать loading внутри SelectContent
+- Если `!kinescopeVideosLoading && kinescopeVideos?.length === 0` → "В этом проекте нет видео"
+- Обернуть fetch в try/catch с error state
 
-### AdminSidebar: добавить пункт
+### 5. Визуальная унификация модалки
 
-В `src/hooks/useAdminMenuSettings.tsx`, группа `service`, добавить:
+- `DialogContent`: убрать лишние отступы, единый `space-y-6`
+- Секции: `<div className="space-y-3">` с `<h3 className="text-sm font-semibold">` заголовком
+- Help-text: `<p className="text-xs text-muted-foreground">` строго под контролом, не рядом
+- Switches "Опубликован" / "Разрешить запись": вертикально (не горизонтально), каждый с help-text под ним
+- Readiness checklist: компактный `rounded-lg border p-3 bg-muted/20` блок
+- Summary "Как это работает": аккуратная карточка с иконками
 
-```typescript
-{ id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 6.5, permission: "content.edit" }
+### 6. Публикация / Запись — layout fix
+
+Текущий горизонтальный flex с tooltip ломает layout. Заменить на:
+
+```
+[ ] Опубликован
+    Эфир виден системе и доступен по ссылке
+
+[ ] Разрешить доступ к записи после завершения
+    Запись станет доступна пользователям после завершения эфира
 ```
 
-Добавить `Video` в `MENU_ICONS`.
+Каждый switch в отдельном блоке с help-text снизу. Tooltip убрать (заменить на inline text).
 
-### AdminLayout route fix
+### 7. Readiness panel — cleanup
 
-В `src/App.tsx` строка 304: обернуть `AdminLiveEvents` в `AdminLayout` (сейчас без неё).
+Убрать toast при попытке публикации. Вместо этого:
 
-### routeToTitle
-
-В `src/components/layout/AdminLayout.tsx`: добавить `'/admin/live-events': 'Эфиры'`.
-
----
-
-## Фаза 2 — Multi-rule access model
-
-### Миграция: таблица `live_event_access_rules`
-
-```sql
-CREATE TABLE public.live_event_access_rules (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  live_event_id UUID NOT NULL REFERENCES public.live_events(id) ON DELETE CASCADE,
-  product_id UUID NOT NULL REFERENCES public.products_v2(id),
-  tariff_id UUID REFERENCES public.tariffs(id),
-  sort_order INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(live_event_id, product_id, tariff_id)
-);
-
-CREATE INDEX idx_live_event_access_rules_event ON public.live_event_access_rules(live_event_id);
-
-ALTER TABLE public.live_event_access_rules ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Admins can manage live_event_access_rules"
-  ON public.live_event_access_rules FOR ALL TO authenticated
-  USING (public.has_role_v2(auth.uid(), 'admin'))
-  WITH CHECK (public.has_role_v2(auth.uid(), 'admin'));
-```
-
-### Миграция: make `product_id` nullable на `live_events`
-
-```sql
-ALTER TABLE public.live_events ALTER COLUMN product_id DROP NOT NULL;
-ALTER TABLE public.live_events ALTER COLUMN kinescope_video_id DROP NOT NULL;
-```
-
-`product_id` остаётся как legacy fallback. Source of truth переносится в `live_event_access_rules`.
-
-### `live-resolve`: обновить access check
-
-Новая логика:
-
-```text
-1. Загрузить rules из live_event_access_rules WHERE live_event_id = event.id
-2. Если rules пусты — fallback на legacy access_rule
-3. Для каждого rule: проверить product access через resolveEffectiveProductAccess
-4. Если rule.tariff_id задан — дополнительно проверить tariff match
-5. Доступ = хотя бы одно rule matched
-```
-
----
-
-## Фаза 3 — Semi-auto Kinescope integration
-
-### Расширить `kinescope-api` Edge Function
-
-Добавить action `list_videos_for_project` — уже есть как `list_videos`. Достаточно текущего API.
-
-### UI: Kinescope-блок в форме эфира
-
-Два режима:
-
-- **Выбрать из Kinescope** — Select проекта → Select видео из проекта → auto-fill `kinescope_video_id`
-- **Ввести вручную** — текстовое поле (advanced/fallback)
-
-По умолчанию — режим выбора. Ручной ввод — в секции "Расширенные настройки".
-
-При выборе видео — сохранять `kinescope_video_id` и `metadata.kinescope_project_id` для повторного использования.
-
----
-
-## Фаза 4 — UI конструктор правил доступа
-
-### Компонент `LiveEventAccessRulesEditor`
-
-Заменяет текущий single-select "Правило доступа" в `AdminLiveEvents.tsx`.
-
-```text
-┌────────────────────────────────────────┐
-│ Кто может войти                        │
-│                                        │
-│ [Продукт A]  [Все тарифы     ▼]   [✕] │
-│ [Продукт B]  [VIP, Premium   ▼]   [✕] │
-│                                        │
-│ [+ Добавить правило]                   │
-│                                        │
-│ Итог: доступ у пользователей           │
-│ продуктов A, B (для B — только VIP,    │
-│ Premium)                               │
-└────────────────────────────────────────┘
-```
-
-- Select продукта — из `products_v2`
-- Multi-select тарифов для выбранного продукта — из `tariffs`
-- Пустой список тарифов = любой тариф продукта
-- Дедупликация: нельзя добавить одинаковый product+tariff дважды
-- Audience preview — текстовое описание итогового правила
-
----
-
-## Фаза 5 — UX тексты и человекочитаемые подписи
-
-### Режим приглашений (invite_mode)
-
-
-| Значение          | Текущий текст                   | Новый текст                          |
-| ----------------- | ------------------------------- | ------------------------------------ |
-| none              | Без приглашений                 | Без приглашений                      |
-| optional_one_time | Опциональные одноразовые ссылки | Персональные ссылки можно отправлять |
-| required_one_time | Обязательные одноразовые ссылки | Вход только по персональной ссылке   |
-
-
-Под каждым вариантом — пояснение:
-
-- none: "Доступ по правам аккаунта, без персональной ссылки"
-- optional: "По ссылке вход удобнее, но пользователь с нужными правами может войти и без неё"
-- required: "Даже при наличии прав аккаунта нужен вход через выданную ссылку"
-
-### Переключатели
-
-- **Опубликован** → tooltip: "Эфир виден системе и доступен по ссылке"
-- **Запись доступна** → tooltip: "После завершения эфира пользователи смогут смотреть запись"
-- Если status != `ended`, switch "Запись доступна" → disabled + пояснение "Эфир ещё не завершён"
-
----
-
-## Фаза 6 — Pre-publish validation
-
-Перед включением `is_published = true` — чек-лист:
-
-1. `kinescope_video_id` заполнен
-2. Хотя бы одно правило доступа задано (или legacy access_rule)
-3. `title` и `slug` заполнены
-
-Если не проходит — показать ошибки, не дать опубликовать.
-
----
-
-## Фаза 7 — Структура формы эфира (workflow-экран)
-
-Перестроить `AdminLiveEvents.tsx` dialog в секционный wizard:
-
-1. **Основное** — Название, Slug, Описание, Дата, Статус
-2. **Kinescope** — Выбор видео из аккаунта или ручной ID
-3. **Кто может войти** — Конструктор правил доступа (Фаза 4)
-4. **Приглашения** — Режим приглашений + пояснения (Фаза 5)
-5. **Публикация и запись** — Переключатели с пояснениями + pre-publish validation
-6. **Проверка готовности** — read-only чек-лист (Фаза 6)
-
----
-
-## Фаза 8 — Empty state + CTA в BroadcastTemplateDialog
-
-В `BroadcastTemplateDialog.tsx` (строки 175-206):
-
-Если `liveEvents` загружены и пустые:
-
-```tsx
-<div className="text-center py-4 space-y-2">
-  <p className="text-sm text-muted-foreground">Нет созданных эфиров</p>
-  <Button variant="outline" size="sm" onClick={() => window.open('/admin/live-events', '_blank')}>
-    Создать эфир
-  </Button>
-</div>
-```
-
----
-
-## Фаза 9 — Token picker bugfix
-
-### `src/components/admin/TokenizedRichInput.tsx`
-
-- На dropdown div добавить `onWheel={(e) => e.stopPropagation()}`
-- На каждый `CommandItem` добавить `data-token-picker="true"`
-
-### `src/components/ui/dialog.tsx`
-
-- В `onPointerDownOutside` guard расширить проверку на `[cmdk-item]`, `[cmdk-list]`
-
----
-
-## Фаза 10 — Audience/access preview
-
-### В форме эфира
-
-Текстовый preview: "Доступ у пользователей продуктов A, B. Для продукта C — только тарифы X, Y."
-
-### В BroadcastTemplateDialog
-
-После выбора эфира показать summary:
-
-- Статус эфира (черновик / опубликован)
-- Режим приглашений
-- Список продуктов/тарифов доступа
-- Запись вкл/выкл
-
----
-
-## Фаза 11 — Host/instructor flow (зафиксировать ограничения)
-
-Kinescope API НЕ предоставляет:
-
-- Endpoint для создания live stream
-- Host URL для преподавателя
-- RTMP credentials через API
-
-**Решение для текущего спринта:**
-
-- Преподаватель работает через Kinescope native console (dashboard.kinescope.io)
-- В `live_events.metadata` можно сохранить `host_instructions` — текстовая подсказка для ведущего
-- В UI эфира — read-only секция "Для ведущего" с инструкцией
-
-**Follow-up:** когда Kinescope откроет v2/live API — добавить автоматизацию.
-
----
-
-## Smoke-test flow (обязательный)
-
-
-| #   | Сценарий                                            | Ожидание                       |
-| --- | --------------------------------------------------- | ------------------------------ |
-| 1   | Админ создаёт эфир, видит его в sidebar и в списке  | Эфир виден                     |
-| 2   | Шаблон вебинара может выбрать этот эфир             | Select показывает эфир         |
-| 3   | Пустой список эфиров — показывает CTA               | "Создать эфир" кнопка          |
-| 4   | Multi-rule: 2 продукта, у одного 2 тарифа           | Rules сохраняются в БД         |
-| 5   | Пользователь с подходящим продуктом входит          | `live-resolve` → ok            |
-| 6   | Пользователь без доступа не входит                  | `live-resolve` → access_denied |
-| 7   | Pre-publish: без kinescope_video_id не опубликовать | Validation блокирует           |
-| 8   | Token picker: клик/скролл работают в Dialog         | Нет серых/disabled items       |
-
+- Чек-лист всегда виден
+- Невыполненные условия — серые с `AlertCircle`
+- При попытке включить switch "Опубликован" без readiness — подсветить красным невыполненные пункты, не закрывать dialog
 
 ---
 
 ## Файлы
 
 
-| Файл                                                             | Действие                                                              |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `src/hooks/useAdminMenuSettings.tsx`                             | Добавить "Эфиры" + Video icon                                         |
-| `src/App.tsx`                                                    | Обернуть AdminLiveEvents в AdminLayout                                |
-| `src/components/layout/AdminLayout.tsx`                          | routeToTitle                                                          |
-| `supabase/migrations/xxx_live_event_access_rules.sql`            | Новая таблица + make product_id nullable                              |
-| `src/pages/admin/AdminLiveEvents.tsx`                            | Полная перестройка: секции, multi-rule, Kinescope select, pre-publish |
-| `src/components/admin/live/LiveEventAccessRulesEditor.tsx`       | Новый компонент                                                       |
-| `supabase/functions/live-resolve/index.ts`                       | Multi-rule access check                                               |
-| `supabase/functions/kinescope-api/index.ts`                      | (без изменений, уже достаточен)                                       |
-| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Empty state + summary                                                 |
-| `src/components/admin/TokenizedRichInput.tsx`                    | Scroll/click fix                                                      |
-| `src/components/ui/dialog.tsx`                                   | Pointer guard расширение                                              |
+| Файл                                  | Действие                                                                                                   |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `src/utils/slugify.ts`                | Новый: извлечь slugify из EntityCustomFields                                                               |
+| `src/pages/admin/AdminLiveEvents.tsx` | Полная переработка модалки: slug auto, DateTimePicker, Kinescope empty states, layout fix, readiness panel |
 
+
+## Аудит календарей
+
+
+| Компонент                              | Используется                     | Стандарт                         |
+| -------------------------------------- | -------------------------------- | -------------------------------- |
+| `DatePicker` (date-picker.tsx)         | Payments, Filters, Legal forms   | Да — стандарт для дат            |
+| `DateTimePicker` (datetime-picker.tsx) | Eisenhower tasks                 | Да — стандарт для дата+время     |
+| `Calendar` (calendar.tsx)              | Внутри DatePicker/DateTimePicker | Base component                   |
+| `<Input type="datetime-local">`        | AdminLiveEvents                  | Нет — заменить на DateTimePicker |
+
+
+Правило: новые date/time поля используют только `DatePicker` или `DateTimePicker`. Нативный `<input type="datetime-local">` запрещён.
 
 ## DoD
 
-1. "Эфиры" доступны из sidebar
-2. Форма эфира — секционная, с human-readable текстами
-3. Multi-rule access работает (несколько продуктов/тарифов)
-4. `live-resolve` проверяет по новой таблице rules
-5. Kinescope video выбирается из списка или вводится вручную
-6. Pre-publish validation блокирует публикацию без обязательных полей
-7. Empty state в шаблоне вебинара показывает CTA
-8. Token picker кликабелен и скроллится
-9. Audience preview показывает итог правил доступа
-10. Host flow = Kinescope console (documented limitation)
+1. Slug автогенерируется из названия, ручная правка останавливает автообновление
+2. Kinescope: empty state при отсутствии интеграции, видео, или ошибке
+3. Дата/время через стандартный DateTimePicker
+4. Switches вертикально с inline help-text, без tooltip overlap
+5. Readiness panel — компактный, без toast spam
+6. Модалка визуально соответствует стилю платформы
