@@ -12,6 +12,9 @@ export interface LibraryGroup {
   /** Aggregate: total lessons across all root modules in this group */
   totalLessons: number;
   totalCompleted: number;
+  /** true when single root module title duplicates group name — skip root row */
+  isFlattenable: boolean;
+  flattenedRoot?: LibraryRootModule;
 }
 
 export interface LibraryRootModule {
