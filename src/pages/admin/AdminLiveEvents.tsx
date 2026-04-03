@@ -37,12 +37,15 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
 import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
+
+type EventType = "live_stream" | "recorded_webinar";
+type SourceKind = "kinescope_live_event" | "kinescope_video";
 
 interface LiveEvent {
   id: string;
@@ -60,6 +63,13 @@ interface LiveEvent {
   direct_access_allowed: boolean;
   created_at: string;
   metadata: Record<string, any> | null;
+  event_type: EventType;
+  source_kind: SourceKind;
+  event_timezone: string;
+  platform_status: string;
+  kinescope_live_event_id: string | null;
+  kinescope_project_id: string | null;
+  kinescope_stream_id: string | null;
 }
 
 interface LiveEventForm {
@@ -76,6 +86,9 @@ interface LiveEventForm {
   invite_mode: "none" | "optional_one_time" | "required_one_time";
   direct_access_allowed: boolean;
   access_rules: AccessRuleRow[];
+  event_type: EventType;
+  event_timezone: string;
+  kinescope_live_event_id: string;
 }
 
 const defaultForm: LiveEventForm = {
@@ -92,13 +105,23 @@ const defaultForm: LiveEventForm = {
   invite_mode: "none",
   direct_access_allowed: true,
   access_rules: [],
+  event_type: "recorded_webinar",
+  event_timezone: "Europe/Minsk",
+  kinescope_live_event_id: "",
 };
 
-const statusLabels: Record<string, string> = {
+const platformStatusLabels: Record<string, string> = {
   draft: "Черновик",
   scheduled: "Запланирован",
   live: "В эфире",
   ended: "Завершён",
+  replay_available: "Запись доступна",
+  archived: "Архив",
+};
+
+const eventTypeLabels: Record<string, string> = {
+  live_stream: "Живой эфир",
+  recorded_webinar: "Видео / Автовебинар",
 };
 
 const inviteModeLabels: Record<string, { label: string; description: string }> = {
@@ -124,6 +147,9 @@ export default function AdminLiveEvents() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
+  const [creatingLiveEvent, setCreatingLiveEvent] = useState(false);
+
+  const isLiveStream = form.event_type === "live_stream";
 
   // Date/time state for DateTimePicker
   const scheduledDate = useMemo(() => {
@@ -144,7 +170,6 @@ export default function AdminLiveEvents() {
       setForm(f => ({ ...f, scheduled_at: "" }));
       return;
     }
-    // Preserve existing time or default to 00:00
     const existingTime = scheduledTime || "00:00";
     const [h, m] = existingTime.split(":").map(Number);
     const combined = new Date(date);
@@ -155,7 +180,6 @@ export default function AdminLiveEvents() {
   const handleTimeChange = useCallback((time: string) => {
     if (!scheduledDate) return;
     if (!time) {
-      // Keep date, remove time precision
       const d = new Date(scheduledDate);
       d.setHours(0, 0, 0, 0);
       setForm(f => ({ ...f, scheduled_at: d.toISOString() }));
@@ -194,7 +218,7 @@ export default function AdminLiveEvents() {
     enabled: !!editingId,
   });
 
-  // Kinescope integration instance (tolerant lookup)
+  // Kinescope integration instance
   const { data: kinescopeInstance, isLoading: kinescopeInstanceLoading } = useQuery({
     queryKey: ["kinescope-instance"],
     queryFn: async () => {
@@ -225,7 +249,7 @@ export default function AdminLiveEvents() {
     enabled: !!kinescopeInstanceId,
   });
 
-  // Kinescope videos for selected project
+  // Kinescope videos for selected project (only for recorded_webinar)
   const { data: kinescopeVideos, isLoading: kinescopeVideosLoading, error: kinescopeVideosError } = useQuery({
     queryKey: ["kinescope-videos", form.kinescope_project_id, kinescopeInstanceId],
     queryFn: async () => {
@@ -236,7 +260,7 @@ export default function AdminLiveEvents() {
       if (!data?.success) throw new Error(data?.error || "Ошибка загрузки видео");
       return (data?.videos || []) as Array<{ id: string; title: string; status: string }>;
     },
-    enabled: !!form.kinescope_project_id && !!kinescopeInstanceId && form.kinescope_mode === "picker",
+    enabled: !!form.kinescope_project_id && !!kinescopeInstanceId && form.kinescope_mode === "picker" && !isLiveStream,
   });
 
   // --- Validation ---
@@ -244,15 +268,36 @@ export default function AdminLiveEvents() {
     const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
       { key: "title", label: "Название заполнено", ok: !!form.title.trim(), blocker: true },
       { key: "slug", label: "Slug заполнен", ok: !!form.slug.trim(), blocker: true },
-      { key: "kinescope", label: "Источник трансляции/записи привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
-      { key: "access", label: "Правила доступа заданы", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
-      { key: "replay", label: "Запись будет доступна", ok: form.replay_enabled, blocker: false },
     ];
+
+    if (isLiveStream) {
+      items.push(
+        { key: "kinescope", label: "Живой эфир создан в Kinescope", ok: !!form.kinescope_live_event_id.trim(), blocker: true },
+        { key: "scheduled", label: "Дата и время эфира заданы", ok: !!form.scheduled_at, blocker: true },
+      );
+    } else {
+      items.push(
+        { key: "kinescope", label: "Источник видео привязан", ok: !!form.kinescope_video_id.trim(), blocker: true },
+      );
+    }
+
+    items.push(
+      { key: "access", label: "Указано, кто может войти на эфир", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
+      { key: "replay", label: "Запись будет доступна после завершения", ok: form.replay_enabled, blocker: false },
+    );
+
     return items;
-  }, [form]);
+  }, [form, isLiveStream]);
 
   const blockers = validationItems.filter(i => i.blocker && !i.ok);
   const canPublish = blockers.length === 0;
+
+  // Invite readiness
+  const isInviteReady = useMemo(() => {
+    if (!form.is_published) return false;
+    if (isLiveStream) return !!form.scheduled_at;
+    return true;
+  }, [form.is_published, form.scheduled_at, isLiveStream]);
 
   // --- Slug uniqueness check ---
   const { data: slugExists } = useQuery({
@@ -267,10 +312,74 @@ export default function AdminLiveEvents() {
     enabled: !!form.slug.trim(),
   });
 
+  // --- Create live event in Kinescope ---
+  const handleCreateKinescopeLiveEvent = async () => {
+    if (!form.kinescope_project_id || !kinescopeInstanceId) {
+      toast.error("Выберите проект Kinescope");
+      return;
+    }
+    setCreatingLiveEvent(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
+        body: {
+          action: "create_live_event",
+          instance_id: kinescopeInstanceId,
+          project_id: form.kinescope_project_id,
+          name: form.title || "Новый эфир",
+          record: true,
+        },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка создания эфира в Kinescope");
+      
+      const eventData = data.data as any;
+      const eventId = eventData?.data?.id || eventData?.id;
+      
+      if (eventId) {
+        setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
+        toast.success(`Эфир создан в Kinescope (ID: ${eventId})`);
+      } else {
+        toast.success("Эфир создан в Kinescope");
+        console.log("[AdminLiveEvents] create_live_event response:", data);
+      }
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    } finally {
+      setCreatingLiveEvent(false);
+    }
+  };
+
+  // --- Admin lifecycle actions ---
+  const handleLifecycleAction = async (eventId: string, action: "enable_live_event" | "complete_live_event" | "sync_live_event", liveEventId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke("kinescope-api", {
+        body: { action, instance_id: kinescopeInstanceId, live_event_id: liveEventId },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Ошибка");
+      
+      // Update platform_status based on action
+      let newStatus: string | null = null;
+      if (action === "enable_live_event") newStatus = "live";
+      else if (action === "complete_live_event") newStatus = "ended";
+
+      if (newStatus) {
+        await supabase.from("live_events").update({ platform_status: newStatus, status: newStatus } as any).eq("id", eventId);
+      }
+
+      toast.success(action === "enable_live_event" ? "Эфир запущен" : action === "complete_live_event" ? "Эфир завершён" : "Статус обновлён");
+      queryClient.invalidateQueries({ queryKey: ["admin-live-events"] });
+    } catch (err) {
+      toast.error("Ошибка: " + (err as Error).message);
+    }
+  };
+
   // --- Save mutation ---
   const saveMutation = useMutation({
     mutationFn: async (data: LiveEventForm) => {
       if (slugExists) throw new Error("Такой slug уже существует. Выберите другой.");
+
+      const sourceKind: SourceKind = data.event_type === "live_stream" ? "kinescope_live_event" : "kinescope_video";
 
       const payload: Record<string, any> = {
         slug: data.slug,
@@ -285,6 +394,12 @@ export default function AdminLiveEvents() {
         replay_enabled: data.replay_enabled,
         invite_mode: data.invite_mode,
         direct_access_allowed: data.direct_access_allowed,
+        event_type: data.event_type,
+        source_kind: sourceKind,
+        event_timezone: data.event_timezone,
+        platform_status: data.status,
+        kinescope_live_event_id: data.kinescope_live_event_id || null,
+        kinescope_project_id: data.kinescope_project_id || null,
         metadata: {
           kinescope_project_id: data.kinescope_project_id || null,
         },
@@ -323,7 +438,16 @@ export default function AdminLiveEvents() {
       }
     },
     onSuccess: () => {
+      const wasInviteReady = isInviteReady;
       toast.success(editingId ? "Эфир обновлён" : "Эфир создан");
+      if (wasInviteReady && !editingId) {
+        toast.info("Эфир готов к приглашениям", {
+          action: {
+            label: "Создать приглашение",
+            onClick: () => window.open("/admin/communication?tab=broadcasts", "_blank"),
+          },
+        });
+      }
       setDialogOpen(false);
       setEditingId(null);
       setForm(defaultForm);
@@ -351,7 +475,7 @@ export default function AdminLiveEvents() {
 
   const handleEdit = (event: LiveEvent) => {
     setEditingId(event.id);
-    setSlugManuallyEdited(true); // existing event = slug already set
+    setSlugManuallyEdited(true);
     setPublishAttempted(false);
     setForm({
       slug: event.slug,
@@ -359,7 +483,7 @@ export default function AdminLiveEvents() {
       description: event.description || "",
       kinescope_video_id: event.kinescope_video_id || "",
       kinescope_mode: event.kinescope_video_id ? "picker" : "picker",
-      kinescope_project_id: (event.metadata as any)?.kinescope_project_id || "",
+      kinescope_project_id: event.kinescope_project_id || (event.metadata as any)?.kinescope_project_id || "",
       status: event.status,
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
@@ -367,6 +491,9 @@ export default function AdminLiveEvents() {
       invite_mode: (event.invite_mode as "none" | "optional_one_time" | "required_one_time") || "none",
       direct_access_allowed: event.direct_access_allowed ?? true,
       access_rules: [],
+      event_type: (event.event_type as EventType) || "recorded_webinar",
+      event_timezone: event.event_timezone || "Europe/Minsk",
+      kinescope_live_event_id: event.kinescope_live_event_id || "",
     });
     setDialogOpen(true);
   };
@@ -420,7 +547,7 @@ export default function AdminLiveEvents() {
               <Video className="h-5 w-5" />
               Эфиры
             </h2>
-            <p className="text-sm text-muted-foreground">Управление видеоэфирами</p>
+            <p className="text-sm text-muted-foreground">Управление живыми эфирами и автовебинарами</p>
           </div>
           <Button onClick={handleCreate} className="gap-2">
             <Plus className="h-4 w-4" />
@@ -445,7 +572,7 @@ export default function AdminLiveEvents() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Название</TableHead>
-                    <TableHead>Slug</TableHead>
+                    <TableHead>Тип</TableHead>
                     <TableHead>Статус</TableHead>
                     <TableHead>Опубликован</TableHead>
                     <TableHead>Дата</TableHead>
@@ -456,9 +583,17 @@ export default function AdminLiveEvents() {
                   {events.map((event) => (
                     <TableRow key={event.id}>
                       <TableCell className="font-medium">{event.title}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">/live/{event.slug}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{statusLabels[event.status] || event.status}</Badge>
+                        <Badge variant={event.event_type === "live_stream" ? "default" : "secondary"} className="text-[10px]">
+                          {event.event_type === "live_stream" ? (
+                            <><Radio className="h-3 w-3 mr-1" />Живой эфир</>
+                          ) : (
+                            <><Video className="h-3 w-3 mr-1" />Видео</>
+                          )}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{platformStatusLabels[event.platform_status] || event.platform_status}</Badge>
                       </TableCell>
                       <TableCell>
                         {event.is_published ? (
@@ -473,17 +608,33 @@ export default function AdminLiveEvents() {
                           : "—"}
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-2">
+                        <div className="flex gap-1">
                           <Button variant="ghost" size="sm" onClick={() => handleEdit(event)}>
                             <Edit2 className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => window.open(`/live/${event.slug}`, "_blank")}
-                          >
+                          <Button variant="ghost" size="sm" onClick={() => window.open(`/live/${event.slug}`, "_blank")}>
                             <ExternalLink className="h-4 w-4" />
                           </Button>
+                          {event.event_type === "live_stream" && event.kinescope_live_event_id && (
+                            <>
+                              {event.platform_status === "scheduled" && (
+                                <Button variant="ghost" size="sm" title="Запустить эфир"
+                                  onClick={() => handleLifecycleAction(event.id, "enable_live_event", event.kinescope_live_event_id!)}>
+                                  <Zap className="h-4 w-4 text-green-600" />
+                                </Button>
+                              )}
+                              {event.platform_status === "live" && (
+                                <Button variant="ghost" size="sm" title="Завершить эфир"
+                                  onClick={() => handleLifecycleAction(event.id, "complete_live_event", event.kinescope_live_event_id!)}>
+                                  <Square className="h-4 w-4 text-red-600" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" title="Обновить статус"
+                                onClick={() => handleLifecycleAction(event.id, "sync_live_event", event.kinescope_live_event_id!)}>
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -502,6 +653,46 @@ export default function AdminLiveEvents() {
             </DialogHeader>
 
             <div className="space-y-6 py-2">
+              {/* Step 0: Event type selector (only for new events) */}
+              {!editingId && (
+                <FormSection title="Тип эфира">
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      className={`rounded-lg border-2 p-4 text-left transition-colors ${form.event_type === "live_stream" ? "border-primary bg-primary/5" : "border-muted hover:border-muted-foreground/30"}`}
+                      onClick={() => setForm(f => ({ ...f, event_type: "live_stream", kinescope_video_id: "" }))}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Radio className="h-4 w-4 text-primary" />
+                        <span className="font-medium text-sm">Живой эфир</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Онлайн-трансляция в реальном времени</p>
+                    </button>
+                    <button
+                      type="button"
+                      className={`rounded-lg border-2 p-4 text-left transition-colors ${form.event_type === "recorded_webinar" ? "border-primary bg-primary/5" : "border-muted hover:border-muted-foreground/30"}`}
+                      onClick={() => setForm(f => ({ ...f, event_type: "recorded_webinar", kinescope_live_event_id: "" }))}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Video className="h-4 w-4 text-primary" />
+                        <span className="font-medium text-sm">Видео / Автовебинар</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Готовое видео, показываемое как вебинар</p>
+                    </button>
+                  </div>
+                </FormSection>
+              )}
+
+              {editingId && (
+                <div className="flex items-center gap-2">
+                  <Badge variant={isLiveStream ? "default" : "secondary"}>
+                    {isLiveStream ? <><Radio className="h-3 w-3 mr-1" />Живой эфир</> : <><Video className="h-3 w-3 mr-1" />Видео / Автовебинар</>}
+                  </Badge>
+                </div>
+              )}
+
+              <Separator />
+
               {/* Section 1: Основное */}
               <FormSection title="Основное">
                 <div className="space-y-2">
@@ -515,7 +706,7 @@ export default function AdminLiveEvents() {
                     <p className="text-xs text-destructive">Этот адрес уже занят. Выберите другой.</p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Короткий адрес эфира в ссылке. Заполняется автоматически из названия, при необходимости можно изменить вручную.
+                    Короткий адрес эфира в ссылке. Заполняется автоматически из названия.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -532,140 +723,184 @@ export default function AdminLiveEvents() {
                         <SelectItem value="scheduled">Запланирован</SelectItem>
                         <SelectItem value="live">В эфире</SelectItem>
                         <SelectItem value="ended">Завершён</SelectItem>
+                        <SelectItem value="replay_available">Запись доступна</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>Дата и время эфира</Label>
+                    <Label>{isLiveStream ? "Дата и время эфира *" : "Дата и время (анонс)"}</Label>
                     <DateTimePicker
                       date={scheduledDate}
                       time={scheduledTime}
                       onDateChange={handleDateChange}
                       onTimeChange={handleTimeChange}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Часовой пояс: {form.event_timezone}
+                    </p>
                   </div>
                 </div>
               </FormSection>
 
               <Separator />
 
-              {/* Section 2: Kinescope */}
-              <FormSection title="Источник трансляции">
-                <p className="text-xs text-muted-foreground">
-                  Привяжите существующее видео или эфир из аккаунта Kinescope. Автоматическое создание эфира в Kinescope пока не поддерживается.
-                </p>
-
-                {kinescopeNotConfigured ? (
-                  <div className="rounded-lg border border-dashed p-4 text-center space-y-2">
-                    <p className="text-sm text-muted-foreground">Интеграция с Kinescope не настроена</p>
-                    <p className="text-xs text-muted-foreground">
-                      Используйте ручной ввод Kinescope Video ID в расширенных настройках ниже.
-                    </p>
-                  </div>
-                ) : kinescopeApiError ? (
-                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-1">
-                    <p className="text-sm text-destructive font-medium">Не удалось подключиться к Kinescope</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(kinescopeApiError as Error)?.message || "Проверьте настройки интеграции или используйте ручной ввод Video ID."}
-                    </p>
-                  </div>
-                ) : form.kinescope_mode === "picker" ? (
+              {/* Section 2: Kinescope source */}
+              <FormSection title={isLiveStream ? "Живой эфир Kinescope" : "Источник видео"}>
+                {isLiveStream ? (
+                  // Live stream mode
                   <div className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label>Проект</Label>
-                      {kinescopeProjectsLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Загрузка проектов...
-                        </div>
-                      ) : (
-                        <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Выберите проект" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {kinescopeProjects && kinescopeProjects.length > 0 ? (
-                              kinescopeProjects.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                              ))
-                            ) : (
-                              <div className="px-3 py-2 text-sm text-muted-foreground">Нет доступных проектов</div>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      )}
-                      <p className="text-xs text-muted-foreground">Проект — папка в Kinescope, где хранятся видео</p>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Создайте живой эфир в Kinescope для онлайн-трансляции. Выберите проект и нажмите «Создать».
+                    </p>
 
-                    {form.kinescope_project_id && (
-                      <div className="space-y-1.5">
-                        <Label>Видео</Label>
-                        {kinescopeVideosLoading ? (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Загрузка видео...
-                          </div>
-                        ) : kinescopeVideosError ? (
-                          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
-                            <p className="text-sm text-destructive">Не удалось загрузить видео</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {(kinescopeVideosError as Error)?.message}
+                    {kinescopeNotConfigured ? (
+                      <div className="rounded-lg border border-dashed p-4 text-center space-y-2">
+                        <p className="text-sm text-muted-foreground">Интеграция с Kinescope не настроена</p>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-1.5">
+                          <Label>Проект Kinescope *</Label>
+                          {kinescopeProjectsLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка проектов...
+                            </div>
+                          ) : (
+                            <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v })}>
+                              <SelectTrigger><SelectValue placeholder="Выберите проект" /></SelectTrigger>
+                              <SelectContent>
+                                {kinescopeProjects?.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+
+                        {form.kinescope_live_event_id ? (
+                          <div className="rounded-lg border bg-primary/5 p-3 space-y-1">
+                            <div className="flex items-center gap-2 text-sm font-medium text-primary">
+                              <CheckCircle2 className="h-4 w-4" /> Эфир создан в Kinescope
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              ID: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_live_event_id}</code>
                             </p>
                           </div>
-                        ) : kinescopeVideos && kinescopeVideos.length === 0 ? (
-                          <div className="rounded-lg border border-dashed p-3 text-center">
-                            <p className="text-sm text-muted-foreground">В этом проекте нет видео</p>
-                          </div>
                         ) : (
-                          <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Выберите видео" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {kinescopeVideos?.map((v) => (
-                                <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <Button
+                            onClick={handleCreateKinescopeLiveEvent}
+                            disabled={!form.kinescope_project_id || creatingLiveEvent}
+                            variant="outline"
+                            className="gap-2"
+                          >
+                            {creatingLiveEvent ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+                            Создать живой эфир в Kinescope
+                          </Button>
                         )}
+
+                        {/* Host instructions */}
+                        <div className="rounded-lg border p-3 bg-muted/20">
+                          <h4 className="text-xs font-medium mb-1">Инструкция ведущему</h4>
+                          <p className="text-xs text-muted-foreground">
+                            Ведущий управляет трансляцией через консоль Kinescope. После создания эфира откройте консоль Kinescope, найдите событие и настройте OBS/RTMP.
+                          </p>
+                          {form.kinescope_live_event_id && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Kinescope Event ID: <code className="bg-muted px-1 rounded">{form.kinescope_live_event_id}</code>
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  // Recorded webinar mode (existing flow, unchanged)
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Привяжите существующее видео из аккаунта Kinescope.
+                    </p>
+
+                    {kinescopeNotConfigured ? (
+                      <div className="rounded-lg border border-dashed p-4 text-center space-y-2">
+                        <p className="text-sm text-muted-foreground">Интеграция с Kinescope не настроена</p>
+                        <p className="text-xs text-muted-foreground">
+                          Используйте ручной ввод Kinescope Video ID в расширенных настройках ниже.
+                        </p>
+                      </div>
+                    ) : kinescopeApiError ? (
+                      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 space-y-1">
+                        <p className="text-sm text-destructive font-medium">Не удалось подключиться к Kinescope</p>
+                        <p className="text-xs text-muted-foreground">
+                          {(kinescopeApiError as Error)?.message || "Проверьте настройки интеграции или используйте ручной ввод Video ID."}
+                        </p>
+                      </div>
+                    ) : form.kinescope_mode === "picker" ? (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label>Проект</Label>
+                          {kinescopeProjectsLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка проектов...
+                            </div>
+                          ) : (
+                            <Select value={form.kinescope_project_id} onValueChange={(v) => setForm({ ...form, kinescope_project_id: v, kinescope_video_id: "" })}>
+                              <SelectTrigger><SelectValue placeholder="Выберите проект" /></SelectTrigger>
+                              <SelectContent>
+                                {kinescopeProjects?.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+
+                        {form.kinescope_project_id && (
+                          <div className="space-y-1.5">
+                            <Label>Видео</Label>
+                            {kinescopeVideosLoading ? (
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Загрузка видео...
+                              </div>
+                            ) : kinescopeVideos && kinescopeVideos.length === 0 ? (
+                              <div className="rounded-lg border border-dashed p-3 text-center">
+                                <p className="text-sm text-muted-foreground">В этом проекте нет видео</p>
+                              </div>
+                            ) : (
+                              <Select value={form.kinescope_video_id} onValueChange={(v) => setForm({ ...form, kinescope_video_id: v })}>
+                                <SelectTrigger><SelectValue placeholder="Выберите видео" /></SelectTrigger>
+                                <SelectContent>
+                                  {kinescopeVideos?.map((v) => (
+                                    <SelectItem key={v.id} value={v.id}>{v.title || v.id}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          </div>
+                        )}
+                        <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
+                          onClick={() => setForm({ ...form, kinescope_mode: "manual" })}>
+                          Ввести Video ID вручную
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="space-y-1.5">
+                          <Label>Kinescope Video ID</Label>
+                          <Input value={form.kinescope_video_id} onChange={(e) => setForm({ ...form, kinescope_video_id: e.target.value })} placeholder="Вставьте ID из консоли Kinescope" />
+                        </div>
+                        <button type="button" className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
+                          onClick={() => setForm({ ...form, kinescope_mode: "picker" })}>
+                          Выбрать из списка
+                        </button>
                       </div>
                     )}
 
-                    <button
-                      type="button"
-                      className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
-                      onClick={() => setForm({ ...form, kinescope_mode: "manual" })}
-                    >
-                      Ввести Video ID вручную
-                    </button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="space-y-1.5">
-                      <Label>Kinescope Video ID</Label>
-                      <Input
-                        value={form.kinescope_video_id}
-                        onChange={(e) => setForm({ ...form, kinescope_video_id: e.target.value })}
-                        placeholder="Вставьте ID из консоли Kinescope"
-                      />
+                    {form.kinescope_video_id && (
                       <p className="text-xs text-muted-foreground">
-                        Используйте, если нужно вручную привязать существующий объект Kinescope.
+                        Привязано: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_video_id}</code>
                       </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-xs text-muted-foreground underline hover:text-foreground transition-colors"
-                      onClick={() => setForm({ ...form, kinescope_mode: "picker" })}
-                    >
-                      Выбрать из списка
-                    </button>
+                    )}
                   </div>
-                )}
-
-                {form.kinescope_video_id && (
-                  <p className="text-xs text-muted-foreground">
-                    Привязано: <code className="bg-muted px-1.5 py-0.5 rounded text-[11px]">{form.kinescope_video_id}</code>
-                  </p>
                 )}
               </FormSection>
 
@@ -714,13 +949,27 @@ export default function AdminLiveEvents() {
 
               {/* Section 5: Publication & Recording */}
               <FormSection title="Публикация и запись">
-                <SwitchRow
-                  checked={form.is_published}
-                  onCheckedChange={handlePublishToggle}
-                  label="Опубликован"
-                  description="Эфир виден системе и доступен по ссылке"
-                  error={publishAttempted && !canPublish}
-                />
+                {canPublish ? (
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant={form.is_published ? "outline" : "default"}
+                      size="sm"
+                      onClick={() => handlePublishToggle(!form.is_published)}
+                    >
+                      {form.is_published ? "Снять публикацию" : "Опубликовать эфир"}
+                    </Button>
+                    {form.is_published && <Badge variant="default">Опубликован</Badge>}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Button variant="outline" size="sm" disabled className="opacity-50">
+                      Опубликовать эфир
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Заполните обязательные поля для публикации
+                    </p>
+                  </div>
+                )}
                 <SwitchRow
                   checked={form.replay_enabled}
                   onCheckedChange={(v) => setForm({ ...form, replay_enabled: v })}
@@ -738,14 +987,11 @@ export default function AdminLiveEvents() {
               {/* Section 6: Readiness checklist */}
               <FormSection title="Проверка готовности">
                 <div className={`rounded-lg border p-3 space-y-1.5 ${publishAttempted && blockers.length > 0 ? "border-destructive/50 bg-destructive/5" : "bg-muted/20"}`}>
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                    {isLiveStream ? "Для публикации живого эфира:" : "Для публикации автовебинара:"}
+                  </p>
                   {validationItems.map((item) => (
-                    <CheckItem
-                      key={item.key}
-                      ok={item.ok}
-                      label={item.label}
-                      blocker={item.blocker}
-                      highlight={publishAttempted && item.blocker && !item.ok}
-                    />
+                    <CheckItem key={item.key} ok={item.ok} label={item.label} blocker={item.blocker} highlight={publishAttempted && item.blocker && !item.ok} />
                   ))}
                 </div>
                 {publishAttempted && blockers.length > 0 && (
@@ -770,16 +1016,18 @@ export default function AdminLiveEvents() {
                       className="text-xs"
                       placeholder="video-id"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Используйте только если нужно вручную привязать существующий объект Kinescope.
-                    </p>
                   </div>
-                  <div className="rounded-lg border p-3 bg-muted/20">
-                    <h4 className="text-xs font-medium mb-1">Для ведущего</h4>
-                    <p className="text-xs text-muted-foreground">
-                      Ведущий управляет эфиром через консоль Kinescope. Автоматизация host-доступа через API не поддерживается в текущей версии.
-                    </p>
-                  </div>
+                  {isLiveStream && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Kinescope Live Event ID (ручной override)</Label>
+                      <Input
+                        value={form.kinescope_live_event_id}
+                        onChange={(e) => setForm({ ...form, kinescope_live_event_id: e.target.value })}
+                        className="text-xs"
+                        placeholder="live-event-id"
+                      />
+                    </div>
+                  )}
                 </CollapsibleContent>
               </Collapsible>
 
@@ -787,6 +1035,9 @@ export default function AdminLiveEvents() {
               <div className="rounded-lg border bg-muted/20 p-4 space-y-2.5">
                 <h4 className="text-xs font-semibold text-foreground">Как это работает для пользователя</h4>
                 <div className="space-y-2">
+                  <SummaryItem icon={isLiveStream ? Radio : Video} label="Тип">
+                    {isLiveStream ? "Живой эфир" : "Видео / Автовебинар"}
+                  </SummaryItem>
                   <SummaryItem icon={Users} label="Кто войдёт">
                     {form.access_rules.filter(r => r.product_id).length > 0
                       ? `${form.access_rules.filter(r => r.product_id).length} правил(а) доступа`
@@ -801,6 +1052,11 @@ export default function AdminLiveEvents() {
                   <SummaryItem icon={Shield} label="Публикация">
                     {form.is_published ? "Опубликован" : canPublish ? "Готов к публикации" : "Не готов"}
                   </SummaryItem>
+                  {isInviteReady && (
+                    <SummaryItem icon={Send} label="Приглашения">
+                      Готов к приглашениям
+                    </SummaryItem>
+                  )}
                 </div>
               </div>
             </div>
