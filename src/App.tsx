@@ -119,6 +119,8 @@ const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramD
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
+const AdminLiveEvents = lazy(() => import("./pages/admin/AdminLiveEvents"));
+const LiveEvent = lazy(() => import("./pages/LiveEvent"));
 // AdminBepaidSubscriptions removed - redirects to /admin/payments/bepaid-subscriptions
 
 // Page loader component for Suspense fallback
