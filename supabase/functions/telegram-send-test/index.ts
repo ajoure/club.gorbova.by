@@ -66,16 +66,18 @@ Deno.serve(async (req: Request) => {
     // Admin client for reading data (RLS bypass)
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-    // Get current user
-    const { data: userData, error: authError } = await supabase.auth.getUser();
-    if (authError || !userData?.user?.id) {
+    // Get current user via getClaims (works with signing-keys / ES256 JWTs)
+    const token = authHeader.replace("Bearer ", "");
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+    if (claimsError || !claimsData?.claims?.sub) {
+      console.error("getClaims error:", claimsError);
       return new Response(JSON.stringify({ error: "Invalid token" }), { 
         status: 401, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
       });
     }
 
-    const userId = userData.user.id;
+    const userId = claimsData.claims.sub;
 
     // Get request body
     const body = await req.json();
