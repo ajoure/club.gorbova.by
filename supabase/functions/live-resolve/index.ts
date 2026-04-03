@@ -99,20 +99,29 @@ Deno.serve(async (req) => {
         }, 403);
       }
 
-      // Check active session — if none exists but proof is valid,
-      // auto-create a new session (soft model: proof valid = can re-enter)
+      // Check active session — session is created ONLY in live-token-validate
+      // live-resolve only verifies its existence
       const { data: activeSession } = await supabase
         .from('live_active_sessions')
-        .select('id, session_key, revoked_at, expires_at')
+        .select('id, expires_at')
         .eq('user_id', userId)
         .eq('live_event_id', event.id)
         .is('revoked_at', null)
         .maybeSingle();
 
       if (!activeSession || new Date(activeSession.expires_at) < new Date()) {
-        // No active session or expired — auto-create one since proof is valid
-        // This handles page refresh / new tab for the same user
-        await autoCreateSession(supabase, event.id, userId);
+        // Proof valid but no active session — client must re-enter via token-link
+        // MVP: frontend maps this to session_expired overlay
+        await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
+          reason: 'session_missing',
+          proof_id: proof.id,
+        });
+        return jsonRes({
+          status: 'session_missing',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+        }, 403);
       }
     }
 
