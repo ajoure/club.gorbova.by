@@ -6,7 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const KINESCOPE_API_BASE = "https://api.kinescope.io/v1";
+const KINESCOPE_API_V1 = "https://api.kinescope.io/v1";
+const KINESCOPE_API_V2 = "https://api.kinescope.io/v2";
 
 interface KinescopeRequest {
   action: string;
@@ -14,18 +15,24 @@ interface KinescopeRequest {
   instance_id?: string;
   project_id?: string;
   video_id?: string;
+  live_event_id?: string;
   page?: number;
   per_page?: number;
+  // For create_live_event
+  name?: string;
+  type?: string;
+  record?: boolean;
 }
 
-async function makeKinescopeRequest(
+async function makeRequest(
+  baseUrl: string,
   endpoint: string,
   apiToken: string,
   method: string = "GET",
   body?: Record<string, unknown>
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
   try {
-    const response = await fetch(`${KINESCOPE_API_BASE}${endpoint}`, {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
       method,
       headers: {
         "Authorization": `Bearer ${apiToken}`,
@@ -59,6 +66,16 @@ async function makeKinescopeRequest(
   }
 }
 
+// Shorthand for v1 requests (existing flow)
+function makeV1Request(endpoint: string, apiToken: string, method = "GET", body?: Record<string, unknown>) {
+  return makeRequest(KINESCOPE_API_V1, endpoint, apiToken, method, body);
+}
+
+// v2 requests for live events
+function makeV2Request(endpoint: string, apiToken: string, method = "GET", body?: Record<string, unknown>) {
+  return makeRequest(KINESCOPE_API_V2, endpoint, apiToken, method, body);
+}
+
 async function getApiTokenFromDb(
   supabaseUrl: string,
   supabaseKey: string,
@@ -88,7 +105,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     const request: KinescopeRequest = await req.json();
-    const { action, instance_id, api_token: directToken, project_id, video_id, page = 1, per_page = 100 } = request;
+    const { action, instance_id, api_token: directToken, project_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
     console.log(`Kinescope API action: ${action}`);
 
@@ -108,10 +125,10 @@ serve(async (req) => {
     let result: { success: boolean; data?: unknown; error?: string; projects?: unknown[]; videos?: unknown[] };
 
     switch (action) {
+      // ==================== V1 ACTIONS (existing) ====================
+      
       case "validate_token": {
-        // Validate token by fetching projects
-        const projectsResult = await makeKinescopeRequest("/projects", apiToken);
-        
+        const projectsResult = await makeV1Request("/projects", apiToken);
         if (projectsResult.success) {
           const projectsData = projectsResult.data as { data?: { id: string; name: string }[] };
           const projects = projectsData.data || [];
@@ -126,8 +143,7 @@ serve(async (req) => {
       }
 
       case "list_projects": {
-        const projectsResult = await makeKinescopeRequest(`/projects?page=${page}&per_page=${per_page}`, apiToken);
-        
+        const projectsResult = await makeV1Request(`/projects?page=${page}&per_page=${per_page}`, apiToken);
         if (projectsResult.success) {
           const projectsData = projectsResult.data as { data?: unknown[]; pagination?: unknown };
           result = {
@@ -145,9 +161,7 @@ serve(async (req) => {
         const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
         if (project_id) params.set("project_id", project_id);
         const endpoint = `/videos?${params.toString()}`;
-        
-        const videosResult = await makeKinescopeRequest(endpoint, apiToken);
-        
+        const videosResult = await makeV1Request(endpoint, apiToken);
         if (videosResult.success) {
           const videosData = videosResult.data as { data?: unknown[]; pagination?: unknown };
           result = {
@@ -166,9 +180,7 @@ serve(async (req) => {
           result = { success: false, error: "video_id обязателен" };
           break;
         }
-
-        const videoResult = await makeKinescopeRequest(`/videos/${video_id}`, apiToken);
-        result = videoResult;
+        result = await makeV1Request(`/videos/${video_id}`, apiToken);
         break;
       }
 
@@ -177,8 +189,6 @@ serve(async (req) => {
           result = { success: false, error: "video_id обязателен" };
           break;
         }
-
-        // Kinescope embed URL format
         const embedUrl = `https://kinescope.io/embed/${video_id}`;
         result = {
           success: true,
@@ -186,6 +196,85 @@ serve(async (req) => {
             video_id,
             embed_url: embedUrl,
             iframe: `<iframe src="${embedUrl}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen; picture-in-picture; encrypted-media; gyroscope; accelerometer; clipboard-write;" allowfullscreen></iframe>`,
+          },
+        };
+        break;
+      }
+
+      // ==================== V2 LIVE ACTIONS (new) ====================
+
+      case "create_live_event": {
+        if (!project_id) {
+          result = { success: false, error: "project_id обязателен" };
+          break;
+        }
+        const body: Record<string, unknown> = {
+          name: request.name || "Новый эфир",
+          project_id,
+          type: request.type || "webinar",
+          record: request.record !== false, // default true
+        };
+        result = await makeV2Request("/live/events", apiToken, "POST", body);
+        break;
+      }
+
+      case "get_live_event": {
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        result = await makeV2Request(`/live/events/${live_event_id}`, apiToken);
+        break;
+      }
+
+      case "list_live_events": {
+        const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+        if (project_id) params.set("project_id", project_id);
+        result = await makeV2Request(`/live/events?${params.toString()}`, apiToken);
+        break;
+      }
+
+      case "enable_live_event": {
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        result = await makeV2Request(`/live/events/${live_event_id}/enable`, apiToken, "PUT");
+        break;
+      }
+
+      case "complete_live_event": {
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        result = await makeV2Request(`/live/events/${live_event_id}/complete`, apiToken, "PUT");
+        break;
+      }
+
+      case "get_live_event_videos": {
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        result = await makeV2Request(`/live/events/${live_event_id}/videos`, apiToken);
+        break;
+      }
+
+      case "sync_live_event": {
+        // Sync provider status: get event details + videos (replay check)
+        if (!live_event_id) {
+          result = { success: false, error: "live_event_id обязателен" };
+          break;
+        }
+        const eventResult = await makeV2Request(`/live/events/${live_event_id}`, apiToken);
+        const videosResult = await makeV2Request(`/live/events/${live_event_id}/videos`, apiToken);
+        result = {
+          success: eventResult.success,
+          data: {
+            event: eventResult.data,
+            videos: videosResult.success ? videosResult.data : null,
+            error: eventResult.error || videosResult.error || null,
           },
         };
         break;
