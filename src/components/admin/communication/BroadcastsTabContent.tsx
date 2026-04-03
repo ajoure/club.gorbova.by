@@ -119,8 +119,8 @@ const [includeButton, setIncludeButton] = useState(true);
   }, [message, emailSubject, emailBody]);
 
   const productContextId = useMemo(() => {
-    return (filters.productId && filters.productId !== 'all') ? filters.productId : null;
-  }, [filters.productId]);
+    return filters.productIds.length === 1 ? filters.productIds[0] : null;
+  }, [filters.productIds]);
 
   const showCfWarning = hasCfTokens && !productContextId;
 
