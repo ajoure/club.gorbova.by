@@ -222,8 +222,31 @@ serve(async (req) => {
       // ==================== V2 LIVE ACTIONS (new) ====================
 
       case "list_live_folders": {
-        const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
-        result = await makeV2Request(`/live/folders?${params.toString()}`, apiToken);
+        const folderParams = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+        // Try v2 live folders endpoint
+        const foldersResult = await makeV2Request(`/live/folders?${folderParams.toString()}`, apiToken);
+        if (foldersResult.success) {
+          result = foldersResult;
+        } else {
+          // Fallback: extract unique parent_ids from existing live events
+          const eventsForFolders = await makeV2Request(`/live/events?per_page=50`, apiToken);
+          if (eventsForFolders.success) {
+            const evData = eventsForFolders.data as any;
+            const events = evData?.data || [];
+            const folderMap = new Map<string, string>();
+            for (const ev of events) {
+              if (ev.parent_id && !folderMap.has(ev.parent_id)) {
+                folderMap.set(ev.parent_id, ev.parent_id);
+              }
+            }
+            result = {
+              success: true,
+              data: { folders: Array.from(folderMap.keys()).map(id => ({ id, name: `Live Folder ${id.substring(0, 8)}...` })) },
+            };
+          } else {
+            result = eventsForFolders;
+          }
+        }
         break;
       }
 
