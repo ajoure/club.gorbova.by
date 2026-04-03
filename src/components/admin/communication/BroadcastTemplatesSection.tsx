@@ -57,6 +57,8 @@ export function BroadcastTemplatesSection() {
             button_url: data.button_url,
             email_subject: data.email_subject,
             email_body_html: data.email_body_html,
+            template_type: data.template_type || "general",
+            live_event_id: data.live_event_id || null,
           })
           .eq("id", data.id);
         if (error) throw error;
@@ -70,6 +72,8 @@ export function BroadcastTemplatesSection() {
           email_subject: data.email_subject,
           email_body_html: data.email_body_html,
           status: "draft",
+          template_type: data.template_type || "general",
+          live_event_id: data.live_event_id || null,
         });
         if (error) throw error;
       }
