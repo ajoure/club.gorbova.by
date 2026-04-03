@@ -212,7 +212,6 @@ Deno.serve(async (req) => {
 
     if (!accessValid) {
       await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
-        access_rule_mode: accessRule.mode,
         product_id: event.product_id,
       });
       return jsonRes({
@@ -225,7 +224,6 @@ Deno.serve(async (req) => {
 
     // 6. Access granted
     await logAudit(supabase, 'live_access_granted', userId, slug, event.id, {
-      access_rule_mode: accessRule.mode,
       product_id: event.product_id,
     });
 
