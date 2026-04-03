@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // 1. Find event by slug (using service role - bypasses RLS)
     const { data: event, error: eventError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled')
+      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed')
       .eq('slug', slug)
       .maybeSingle();
 
