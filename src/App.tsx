@@ -66,6 +66,7 @@ const SupportTicket = lazy(() => import("./pages/SupportTicket"));
 const Money = lazy(() => import("./pages/Money"));
 const AI = lazy(() => import("./pages/AI"));
 const Knowledge = lazy(() => import("./pages/Knowledge"));
+const LiveEvents = lazy(() => import("./pages/LiveEvents"));
 const BusinessTraining = lazy(() => import("./pages/BusinessTraining"));
 const BusinessTrainingContent = lazy(() => import("./pages/BusinessTrainingContent"));
 
@@ -187,6 +188,7 @@ const App = () => {
               <Route path="/club" element={<Landing />} />
               
               <Route path="/banned" element={<LazyRoute><Banned /></LazyRoute>} />
+              <Route path="/live" element={<ProtectedRoute><LazyRoute><LiveEvents /></LazyRoute></ProtectedRoute>} />
               <Route path="/live/:slug" element={<ProtectedRoute><LazyRoute><LiveEvent /></LazyRoute></ProtectedRoute>} />
               <Route path="/live-access/:token" element={<LazyRoute><LiveAccessEntry /></LazyRoute>} />
               

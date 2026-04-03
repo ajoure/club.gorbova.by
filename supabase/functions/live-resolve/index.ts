@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     // 1. Find event by slug
     const { data: event, error: eventError } = await supabase
       .from('live_events')
-      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed')
+      .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed, event_type, source_kind, event_timezone, platform_status, kinescope_live_event_id')
       .eq('slug', slug)
       .maybeSingle();
 
@@ -212,7 +212,6 @@ Deno.serve(async (req) => {
 
     if (!accessValid) {
       await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
-        access_rule_mode: accessRule.mode,
         product_id: event.product_id,
       });
       return jsonRes({
@@ -225,7 +224,6 @@ Deno.serve(async (req) => {
 
     // 6. Access granted
     await logAudit(supabase, 'live_access_granted', userId, slug, event.id, {
-      access_rule_mode: accessRule.mode,
       product_id: event.product_id,
     });
 
@@ -237,6 +235,12 @@ Deno.serve(async (req) => {
       event_status: event.status,
       scheduled_at: event.scheduled_at,
       replay_enabled: event.replay_enabled,
+      event_id: event.id,
+      event_type: event.event_type,
+      source_kind: event.source_kind,
+      event_timezone: event.event_timezone,
+      platform_status: event.platform_status,
+      kinescope_live_event_id: event.kinescope_live_event_id,
     });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);
