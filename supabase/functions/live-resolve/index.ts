@@ -91,6 +91,35 @@ Deno.serve(async (req) => {
 
     const userId = user.id;
 
+    // Branch 3.5: invite_mode check — require proof for required_one_time
+    if (event.invite_mode === 'required_one_time' && !event.direct_access_allowed) {
+      const { data: proof } = await supabase
+        .from('live_access_proofs')
+        .select('id, expires_at')
+        .eq('user_id', userId)
+        .eq('live_event_id', event.id)
+        .gt('expires_at', new Date().toISOString())
+        .limit(1)
+        .maybeSingle();
+
+      if (!proof) {
+        await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
+          reason: 'invite_required',
+          invite_mode: event.invite_mode,
+        });
+        return new Response(
+          JSON.stringify({
+            status: 'invite_required',
+            title: event.title,
+            description: event.description,
+            event_status: event.status,
+          }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      // proof found → continue to canonical access check
+    }
+
     // Branch 4: access check using canonical resolver
     const accessRule = event.access_rule as AccessRule;
     let accessValid = false;
