@@ -61,6 +61,8 @@ import {
   X,
   Paperclip,
   AlertTriangle,
+  ExternalLink,
+  MousePointerClick,
 } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
