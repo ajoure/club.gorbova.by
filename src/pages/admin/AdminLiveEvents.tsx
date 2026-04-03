@@ -1613,7 +1613,7 @@ function LiveStreamControlPanel({
         });
       }
 
-      const newMeta = {
+      const newMeta: Record<string, any> = {
         ...existingMeta,
         provider: { current: {} },
         provider_history: providerHistory,
