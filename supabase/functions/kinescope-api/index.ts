@@ -225,13 +225,15 @@ serve(async (req) => {
           result = { success: false, error: "project_id обязателен" };
           break;
         }
-        const body: Record<string, unknown> = {
+        const createBody: Record<string, unknown> = {
           name: request.name || "Новый эфир",
-          project_id,
-          type: request.type || "webinar",
-          record: request.record !== false, // default true
+          parent_id: project_id,
+          record: { parent_id: project_id },
         };
-        result = await makeV2Request("/live/events", apiToken, "POST", body);
+        console.log("[kinescope-api] create_live_event payload:", JSON.stringify(createBody));
+        const createResult = await makeV2Request("/live/events", apiToken, "POST", createBody);
+        console.log("[kinescope-api] create_live_event response:", JSON.stringify(createResult));
+        result = createResult;
         break;
       }
 
