@@ -14,14 +14,13 @@ interface KinescopeRequest {
   api_token?: string;
   instance_id?: string;
   project_id?: string;
+  folder_id?: string; // live folder ID for live events
   video_id?: string;
   live_event_id?: string;
   page?: number;
   per_page?: number;
   // For create_live_event
   name?: string;
-  type?: string;
-  record?: boolean;
 }
 
 async function makeRequest(
@@ -124,7 +123,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     const request: KinescopeRequest = await req.json();
-    const { action, instance_id, api_token: directToken, project_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
+    const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
     console.log(`Kinescope API action: ${action}`);
 
@@ -222,18 +221,52 @@ serve(async (req) => {
 
       // ==================== V2 LIVE ACTIONS (new) ====================
 
+      case "list_live_folders": {
+        const folderParams = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+        // Try v2 live folders endpoint
+        const foldersResult = await makeV2Request(`/live/folders?${folderParams.toString()}`, apiToken);
+        if (foldersResult.success) {
+          result = foldersResult;
+        } else {
+          // Fallback: extract unique parent_ids from existing live events
+          const eventsForFolders = await makeV2Request(`/live/events?per_page=50`, apiToken);
+          if (eventsForFolders.success) {
+            const evData = eventsForFolders.data as any;
+            const events = evData?.data || [];
+            const folderMap = new Map<string, string>();
+            for (const ev of events) {
+              if (ev.parent_id && !folderMap.has(ev.parent_id)) {
+                folderMap.set(ev.parent_id, ev.parent_id);
+              }
+            }
+            result = {
+              success: true,
+              data: { folders: Array.from(folderMap.keys()).map(id => ({ id, name: `Live Folder ${id.substring(0, 8)}...` })) },
+            };
+          } else {
+            result = eventsForFolders;
+          }
+        }
+        break;
+      }
+
       case "create_live_event": {
-        if (!project_id) {
-          result = { success: false, error: "project_id обязателен" };
+        const liveFolderId = folder_id;
+        if (!liveFolderId) {
+          result = { success: false, error: "folder_id (live folder) обязателен" };
           break;
         }
-        const body: Record<string, unknown> = {
+        const recordParent = project_id || liveFolderId;
+        const createBody: Record<string, unknown> = {
           name: request.name || "Новый эфир",
-          project_id,
-          type: request.type || "webinar",
-          record: request.record !== false, // default true
+          parent_id: liveFolderId,
+          type: "one-time",
+          record: { parent_id: recordParent },
         };
-        result = await makeV2Request("/live/events", apiToken, "POST", body);
+        console.log("[kinescope-api] create_live_event payload:", JSON.stringify(createBody));
+        const createResult = await makeV2Request("/live/events", apiToken, "POST", createBody);
+        console.log("[kinescope-api] create_live_event response:", JSON.stringify(createResult));
+        result = createResult;
         break;
       }
 

@@ -44,25 +44,30 @@ interface LiveEventForBroadcast {
   kinescope_live_event_id: string | null;
 }
 
-function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reason: string | null; label: string } {
+function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reasons: string[]; label: string } {
+  const reasons: string[] = [];
+  
   if (!event.is_published) {
-    return { ready: false, reason: "Черновик — сначала опубликуйте", label: "Черновик" };
+    reasons.push("Не опубликован");
   }
 
   if (event.event_type === "live_stream") {
     if (!event.kinescope_live_event_id) {
-      return { ready: false, reason: "Нет источника — привяжите Kinescope Live Event", label: "Нет источника" };
+      reasons.push("Не создан источник трансляции");
     }
     if (!event.scheduled_at) {
-      return { ready: false, reason: "Нет даты — задайте дату и время эфира", label: "Нет даты" };
+      reasons.push("Не задана дата и время");
     }
   } else {
     if (!event.kinescope_video_id) {
-      return { ready: false, reason: "Нет видео — привяжите видео Kinescope", label: "Нет видео" };
+      reasons.push("Не привязано видео");
     }
   }
 
-  return { ready: true, reason: null, label: "Готов к приглашениям" };
+  if (reasons.length === 0) {
+    return { ready: true, reasons: [], label: "Готов" };
+  }
+  return { ready: false, reasons, label: reasons[0] };
 }
 
 function getEventTypeLabel(eventType: string): string {
@@ -256,8 +261,12 @@ export function BroadcastTemplateDialog({
                                     {readiness.label}
                                   </Badge>
                                 </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-xs">{readiness.reason}</p>
+                                  <TooltipContent>
+                                    <div className="text-xs space-y-0.5">
+                                      {readiness.reasons.map((r, i) => (
+                                        <p key={i}>• {r}</p>
+                                      ))}
+                                    </div>
                                 </TooltipContent>
                               </Tooltip>
                             )}
@@ -288,10 +297,14 @@ export function BroadcastTemplateDialog({
                         {selectedReadiness?.ready ? "Готов к приглашениям" : selectedReadiness?.label}
                       </Badge>
                     </p>
-                    {!selectedReadiness?.ready && selectedReadiness?.reason && (
+                    {!selectedReadiness?.ready && selectedReadiness?.reasons.length > 0 && (
                       <div className="flex items-start gap-1.5 text-destructive bg-destructive/5 rounded p-1.5 mt-1">
                         <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                        <span>{selectedReadiness.reason}</span>
+                        <div className="space-y-0.5">
+                          {selectedReadiness.reasons.map((r, i) => (
+                            <p key={i} className="text-xs">• {r}</p>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
