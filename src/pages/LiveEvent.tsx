@@ -210,7 +210,22 @@ export default function LiveEvent() {
     );
   }
 
-  if (state === "access_denied") {
+  if (state === "source_unavailable") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <AlertTriangle className="h-16 w-16 text-amber-500" />
+        <h1 className="text-2xl font-bold text-foreground">Источник трансляции временно недоступен</h1>
+        {data?.title && (
+          <h2 className="text-lg text-muted-foreground">{data.title}</h2>
+        )}
+        <p className="text-muted-foreground text-center max-w-md">
+          Трансляция временно недоступна по техническим причинам. Пожалуйста, попробуйте позже.
+        </p>
+        <Button onClick={() => window.location.reload()}>Обновить</Button>
+      </div>
+    );
+  }
+
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
         <Lock className="h-16 w-16 text-muted-foreground" />
