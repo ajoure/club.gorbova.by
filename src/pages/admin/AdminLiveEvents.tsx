@@ -710,7 +710,7 @@ function CheckItem({ ok, label }: { ok: boolean; label: string }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       {ok ? (
-        <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+        <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
       ) : (
         <AlertCircle className="h-3.5 w-3.5 text-muted-foreground" />
       )}

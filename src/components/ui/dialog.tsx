@@ -42,7 +42,11 @@ const DialogContent = React.forwardRef<
         const target = e.target as HTMLElement | null;
         const composedPath = (e as any).composedPath?.() as EventTarget[] | undefined;
         const isTokenPicker = target?.closest?.('[data-token-picker]') ||
-          composedPath?.some((el: any) => el instanceof HTMLElement && el.hasAttribute?.('data-token-picker'));
+          target?.closest?.('[cmdk-item]') ||
+          target?.closest?.('[cmdk-list]') ||
+          composedPath?.some((el: any) => el instanceof HTMLElement && (
+            el.hasAttribute?.('data-token-picker') || el.hasAttribute?.('cmdk-item') || el.hasAttribute?.('cmdk-list')
+          ));
         if (isTokenPicker) {
           e.preventDefault();
         }

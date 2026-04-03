@@ -178,22 +178,42 @@ export function BroadcastTemplateDialog({
                 <Video className="h-4 w-4 text-primary" />
                 <Label className="font-medium">Эфир</Label>
               </div>
-              <Select value={liveEventId} onValueChange={setLiveEventId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Выберите эфир" />
-                </SelectTrigger>
-                <SelectContent>
-                  {liveEvents?.map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {liveEvents && liveEvents.length === 0 ? (
+                <div className="text-center py-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">Нет созданных эфиров</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open("/admin/live-events", "_blank")}
+                  >
+                    Создать эфир
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    После создания обновите эту страницу, чтобы выбрать эфир
+                  </p>
+                </div>
+              ) : (
+                <Select value={liveEventId} onValueChange={setLiveEventId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите эфир" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {liveEvents?.map((e) => (
+                      <SelectItem key={e.id} value={e.id}>
+                        {e.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               {selectedEvent && (
                 <>
                   <div className="text-sm text-muted-foreground">
                     Ссылка кнопки: <code className="bg-muted px-1 rounded">{computedButtonUrl}</code>
+                  </div>
+                  <div className="space-y-1 text-xs text-muted-foreground bg-background rounded p-2">
+                    <p>Статус: <Badge variant="outline" className="text-[10px]">{selectedEvent.status === 'draft' ? 'Черновик' : selectedEvent.is_published ? 'Опубликован' : 'Не опубликован'}</Badge></p>
+                    <p>Приглашения: {selectedEvent.access_rule?.mode === 'all' ? 'Все авторизованные' : 'По правилам доступа'}</p>
                   </div>
                   {accessPreview && (
                     <div className="flex items-start gap-2 text-sm text-muted-foreground bg-background rounded p-2">
