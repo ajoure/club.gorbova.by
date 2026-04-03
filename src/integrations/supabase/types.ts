@@ -1514,12 +1514,15 @@ export type Database = {
           email_subject: string | null
           failed_count: number | null
           id: string
+          live_event_id: string | null
           message_text: string | null
           name: string
           scheduled_for: string | null
           sent_at: string | null
           sent_count: number | null
           status: string
+          targeting_tariff_id: string | null
+          template_type: string
           updated_at: string | null
         }
         Insert: {
@@ -1532,12 +1535,15 @@ export type Database = {
           email_subject?: string | null
           failed_count?: number | null
           id?: string
+          live_event_id?: string | null
           message_text?: string | null
           name: string
           scheduled_for?: string | null
           sent_at?: string | null
           sent_count?: number | null
           status?: string
+          targeting_tariff_id?: string | null
+          template_type?: string
           updated_at?: string | null
         }
         Update: {
@@ -1550,15 +1556,33 @@ export type Database = {
           email_subject?: string | null
           failed_count?: number | null
           id?: string
+          live_event_id?: string | null
           message_text?: string | null
           name?: string
           scheduled_for?: string | null
           sent_at?: string | null
           sent_count?: number | null
           status?: string
+          targeting_tariff_id?: string | null
+          template_type?: string
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_templates_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_templates_targeting_tariff_id_fkey"
+            columns: ["targeting_tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       card_profile_links: {
         Row: {
@@ -4958,6 +4982,65 @@ export type Database = {
             columns: ["lesson_id"]
             isOneToOne: false
             referencedRelation: "training_lessons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_events: {
+        Row: {
+          access_rule: Json
+          created_at: string
+          description: string | null
+          id: string
+          is_published: boolean
+          kinescope_video_id: string
+          metadata: Json | null
+          product_id: string
+          replay_enabled: boolean
+          scheduled_at: string | null
+          slug: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          access_rule?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_published?: boolean
+          kinescope_video_id: string
+          metadata?: Json | null
+          product_id: string
+          replay_enabled?: boolean
+          scheduled_at?: string | null
+          slug: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          access_rule?: Json
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_published?: boolean
+          kinescope_video_id?: string
+          metadata?: Json | null
+          product_id?: string
+          replay_enabled?: boolean
+          scheduled_at?: string | null
+          slug?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_events_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
             referencedColumns: ["id"]
           },
         ]
