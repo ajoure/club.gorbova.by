@@ -36,6 +36,12 @@ import {
   AlertDescription,
 } from "@/components/ui/alert";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Send,
   Mail,
   MessageCircle,
