@@ -221,16 +221,24 @@ serve(async (req) => {
 
       // ==================== V2 LIVE ACTIONS (new) ====================
 
+      case "list_live_folders": {
+        const params = new URLSearchParams({ page: String(page), per_page: String(per_page) });
+        result = await makeV2Request(`/live/folders?${params.toString()}`, apiToken);
+        break;
+      }
+
       case "create_live_event": {
-        if (!project_id) {
-          result = { success: false, error: "project_id обязателен" };
+        const liveFolderId = folder_id;
+        if (!liveFolderId) {
+          result = { success: false, error: "folder_id (live folder) обязателен" };
           break;
         }
+        const recordParent = project_id || liveFolderId;
         const createBody: Record<string, unknown> = {
           name: request.name || "Новый эфир",
-          parent_id: project_id,
+          parent_id: liveFolderId,
           type: "one-time",
-          record: { parent_id: project_id },
+          record: { parent_id: recordParent },
         };
         console.log("[kinescope-api] create_live_event payload:", JSON.stringify(createBody));
         const createResult = await makeV2Request("/live/events", apiToken, "POST", createBody);
