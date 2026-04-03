@@ -14,6 +14,7 @@ interface KinescopeRequest {
   api_token?: string;
   instance_id?: string;
   project_id?: string;
+  folder_id?: string; // live folder ID for live events
   video_id?: string;
   live_event_id?: string;
   page?: number;
