@@ -315,11 +315,14 @@ Deno.serve(async (req) => {
       meta: Record<string, unknown>;
     }> = [];
 
-    const keyboard = includeButton ? {
+    const baseKeyboard = includeButton && !isWebinarInvite ? {
       inline_keyboard: [[
         { text: buttonText || 'Открыть платформу', url: appUrl }
       ]]
     } : undefined;
+
+    // For webinar_invite, determine origin for personal links
+    const appOrigin = Deno.env.get('APP_URL') || Deno.env.get('SUPABASE_URL')?.replace('.supabase.co', '') || 'https://gorbova.lovable.app';
 
     // Extract token usage from original template (before substitution)
     const tokensInfo = extractUsedTokens(message);
