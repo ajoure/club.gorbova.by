@@ -127,6 +127,9 @@ export default function LiveEvent() {
           case "session_missing":
             setState("session_expired");
             break;
+          case "source_unavailable":
+            setState("source_unavailable");
+            break;
           case "ok":
             if (json.event_status === "scheduled") {
               setState("scheduled");
