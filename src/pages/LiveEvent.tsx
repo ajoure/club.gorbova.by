@@ -8,7 +8,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
