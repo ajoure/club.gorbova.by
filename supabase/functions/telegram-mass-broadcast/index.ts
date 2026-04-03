@@ -341,12 +341,64 @@ Deno.serve(async (req) => {
       cfTokensIgnored = cfResult.cfTokensIgnored;
     }
 
+    // Helper: generate personal invite token via live-token-validate
+    async function createInviteToken(userId: string, eventId: string): Promise<{ token: string; link_id: string } | null> {
+      try {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+        const response = await fetch(`${supabaseUrl}/functions/v1/live-token-validate`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!}`,
+            'apikey': Deno.env.get('SUPABASE_ANON_KEY')!,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'create',
+            live_event_id: eventId,
+            user_id: userId,
+            sent_via: 'telegram',
+          }),
+        });
+        const data = await response.json();
+        if (data.status === 'ok') {
+          return { token: data.token, link_id: data.link_id };
+        }
+        console.error(`[broadcast] Token create failed for user ${userId}:`, data);
+        return null;
+      } catch (e) {
+        console.error(`[broadcast] Token create error for user ${userId}:`, e);
+        return null;
+      }
+    }
+
     // Send messages with token substitution
     for (const profile of profiles) {
       // Resolve chain: Contact → System (cf already resolved above)
       const afterContact = resolveContactTokens(messageAfterCf, profile);
       const personalizedMessage = resolveSystemTokens(afterContact, broadcastNow);
       try {
+        // Per-recipient keyboard: generate personal invite link for webinar_invite
+        let keyboard = baseKeyboard;
+        let inviteLinkId: string | null = null;
+
+        if (isWebinarInvite && liveEventId) {
+          const tokenResult = await createInviteToken(profile.user_id, liveEventId);
+          if (tokenResult) {
+            const personalUrl = `${appOrigin}/live-access/${tokenResult.token}`;
+            inviteLinkId = tokenResult.link_id;
+            keyboard = {
+              inline_keyboard: [[
+                { text: buttonText || 'Смотреть эфир', url: personalUrl }
+              ]]
+            };
+          } else {
+            // Token generation failed for this recipient — log and skip
+            failed++;
+            console.error(`[broadcast] Skipping ${profile.user_id}: token generation failed`);
+            continue;
+          }
+        }
+
         let result;
         
         if (mediaBuffer && mediaType && mediaFileName) {
@@ -397,6 +449,12 @@ Deno.serve(async (req) => {
         if (result.ok) {
           sent++;
           const telegramMsgId = result.result?.message_id || null;
+          // Store link_id in meta, NOT raw token/URL
+          const msgMeta: Record<string, unknown> = { broadcast: true };
+          if (inviteLinkId) {
+            msgMeta.link_id = inviteLinkId;
+            msgMeta.live_event_id = liveEventId;
+          }
           messageLogBatch.push({
             user_id: profile.user_id,
             telegram_user_id: profile.telegram_user_id,
@@ -406,7 +464,7 @@ Deno.serve(async (req) => {
             message_id: telegramMsgId,
             sent_by_admin: user.id,
             status: 'sent',
-            meta: { broadcast: true },
+            meta: msgMeta,
           });
           // Batch insert every 50 messages
           if (messageLogBatch.length >= 50) {
