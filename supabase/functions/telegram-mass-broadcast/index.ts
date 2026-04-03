@@ -282,10 +282,29 @@ Deno.serve(async (req) => {
     }
 
     const botToken = bots[0].bot_token_encrypted;
+    // Get bot id for telegram_messages logging
+    const { data: botIdRows } = await supabase
+      .from('telegram_bots')
+      .select('id')
+      .eq('status', 'active')
+      .limit(1);
+    const activeBotId = botIdRows?.[0]?.id || null;
+
     const appUrl = buttonUrl || Deno.env.get('APP_URL') || 'https://app.example.com';
 
     let sent = 0;
     let failed = 0;
+    const messageLogBatch: Array<{
+      user_id: string;
+      telegram_user_id: number;
+      bot_id: string | null;
+      direction: string;
+      message_text: string;
+      message_id: number | null;
+      sent_by_admin: string;
+      status: string;
+      meta: Record<string, unknown>;
+    }> = [];
 
     const keyboard = includeButton ? {
       inline_keyboard: [[
