@@ -543,6 +543,7 @@ export default function AdminLiveEvents() {
       kinescope_video_id: event.kinescope_video_id || "",
       kinescope_mode: event.kinescope_video_id ? "picker" : "picker",
       kinescope_project_id: event.kinescope_project_id || (event.metadata as any)?.kinescope_project_id || "",
+      kinescope_folder_id: (event.metadata as any)?.kinescope_folder_id || "",
       status: event.status,
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
