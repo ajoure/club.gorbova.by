@@ -261,8 +261,12 @@ export function BroadcastTemplateDialog({
                                     {readiness.label}
                                   </Badge>
                                 </TooltipTrigger>
-                                <TooltipContent>
-                                  <p className="text-xs">{readiness.reason}</p>
+                                  <TooltipContent>
+                                    <div className="text-xs space-y-0.5">
+                                      {readiness.reasons.map((r, i) => (
+                                        <p key={i}>• {r}</p>
+                                      ))}
+                                    </div>
                                 </TooltipContent>
                               </Tooltip>
                             )}
