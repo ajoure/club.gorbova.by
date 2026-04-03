@@ -123,7 +123,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     const request: KinescopeRequest = await req.json();
-    const { action, instance_id, api_token: directToken, project_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
+    const { action, instance_id, api_token: directToken, project_id, folder_id, video_id, live_event_id, page = 1, per_page = 100 } = request;
 
     console.log(`Kinescope API action: ${action}`);
 
