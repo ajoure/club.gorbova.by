@@ -5051,6 +5051,51 @@ export type Database = {
           },
         ]
       }
+      live_access_proofs: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          link_id: string | null
+          live_event_id: string
+          proof_type: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          link_id?: string | null
+          live_event_id: string
+          proof_type?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          link_id?: string | null
+          live_event_id?: string
+          proof_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_access_proofs_link_id_fkey"
+            columns: ["link_id"]
+            isOneToOne: false
+            referencedRelation: "live_access_links"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_access_proofs_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_events: {
         Row: {
           access_rule: Json
