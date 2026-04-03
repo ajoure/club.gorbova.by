@@ -32,6 +32,7 @@ import {
   Upload,
   PanelTop,
   Bot,
+  Video,
   LucideIcon,
 } from "lucide-react";
 
@@ -86,6 +87,7 @@ export const MENU_ICONS: Record<string, LucideIcon> = {
   Upload,
   PanelTop,
   Bot,
+  Video,
 };
 
 // Default menu configuration - Reorganized structure
@@ -121,6 +123,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "club-members", label: "Участники клуба", path: "/admin/integrations/telegram", icon: "MessageCircle", order: 8 },
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 9, permission: "news.view" },
       { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 10, permission: "roles.view" },
+      { id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 11, permission: "content.edit" },
       // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
   },

@@ -37,6 +37,7 @@ const routeToTitle: Record<string, string> = {
   '/admin/content': 'Контент',
   '/admin/fields': 'Поля',
   '/admin/ai': 'Нейросеть',
+  '/admin/live-events': 'Эфиры',
   '/admin/docs': 'Документация системы',
 };
 
@@ -68,6 +69,7 @@ const routeToHelpAnchor: Record<string, string> = {
   '/admin/fields': 'integrations-mapping',
   '/admin/audit': 'admin',
   '/admin/ai': 'admin',
+  '/admin/live-events': 'admin',
 };
 
 export function AdminLayout({ children, fullHeight }: AdminLayoutProps) {
