@@ -386,6 +386,47 @@ export default function AdminLiveEvents() {
               </CardContent>
             </Card>
 
+            {/* Invite Mode */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium">Режим приглашений</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Select
+                  value={form.invite_mode}
+                  onValueChange={(v) => {
+                    const newMode = v as "none" | "optional_one_time" | "required_one_time";
+                    // If required_one_time, force direct_access_allowed=false
+                    const newDirect = newMode === "required_one_time" ? false : form.direct_access_allowed;
+                    setForm({ ...form, invite_mode: newMode, direct_access_allowed: newDirect });
+                  }}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без приглашений</SelectItem>
+                    <SelectItem value="optional_one_time">Опциональные одноразовые ссылки</SelectItem>
+                    <SelectItem value="required_one_time">Обязательные одноразовые ссылки</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {form.invite_mode !== "none" && form.invite_mode !== "required_one_time" && (
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={form.direct_access_allowed}
+                      onCheckedChange={(v) => setForm({ ...form, direct_access_allowed: v })}
+                    />
+                    <Label>Разрешить прямой доступ без ссылки</Label>
+                  </div>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  {form.invite_mode === "none" && "Приглашения не используются, доступ по правилу доступа"}
+                  {form.invite_mode === "optional_one_time" && "Можно отправить персональные ссылки, но прямой доступ тоже работает"}
+                  {form.invite_mode === "required_one_time" && "Вход возможен только по персональной одноразовой ссылке. Прямой доступ запрещён."}
+                </p>
+              </CardContent>
+            </Card>
+
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <Switch checked={form.is_published} onCheckedChange={(v) => setForm({ ...form, is_published: v })} />
