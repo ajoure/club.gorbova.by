@@ -107,8 +107,8 @@ const [includeButton, setIncludeButton] = useState(true);
     hasActiveSubscription: false,
     hasTelegram: true,
     hasEmail: false,
-    productId: "",
-    tariffId: "",
+    productIds: [],
+    tariffIds: [],
     clubId: "",
   });
 
