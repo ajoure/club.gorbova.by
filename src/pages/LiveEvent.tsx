@@ -1,9 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
-import { Loader2, Lock, CalendarClock, AlertTriangle, Video } from "lucide-react";
+import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -19,13 +18,68 @@ interface LiveResolveResult {
   message?: string;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+
+const HEARTBEAT_INTERVAL_MS = 45_000; // 45 seconds
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
   const { session } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+    }
+  }, []);
+
+  const startHeartbeat = useCallback(() => {
+    if (!slug || !session) return;
+    stopHeartbeat();
+
+    const sessionKey = sessionStorage.getItem(`live_session_${slug}`);
+    if (!sessionKey) return;
+
+    const ping = async () => {
+      try {
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const response = await fetch(
+          `${supabaseUrl}/functions/v1/live-session-heartbeat`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ session_key: sessionKey }),
+          }
+        );
+        const json = await response.json();
+
+        if (json.status === "session_revoked") {
+          stopHeartbeat();
+          setState("session_revoked");
+        } else if (json.status === "session_expired") {
+          stopHeartbeat();
+          setState("session_expired");
+        }
+      } catch (err) {
+        console.error("[LiveEvent] heartbeat error:", err);
+      }
+    };
+
+    // First ping immediately
+    ping();
+    heartbeatRef.current = setInterval(ping, HEARTBEAT_INTERVAL_MS);
+  }, [slug, session, stopHeartbeat]);
+
+  useEffect(() => {
+    return () => stopHeartbeat();
+  }, [stopHeartbeat]);
 
   useEffect(() => {
     if (!slug || !session) return;
@@ -33,14 +87,6 @@ export default function LiveEvent() {
     const resolve = async () => {
       setState("loading");
       try {
-        const { data: result, error } = await supabase.functions.invoke("live-resolve", {
-          body: null,
-          headers: { "Content-Type": "application/json" },
-          method: "GET",
-        });
-
-        // supabase.functions.invoke wraps the response, so we need to handle it
-        // Actually, for GET with query params we need to use fetch directly
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const response = await fetch(
           `${supabaseUrl}/functions/v1/live-resolve?slug=${encodeURIComponent(slug)}`,
@@ -75,6 +121,8 @@ export default function LiveEvent() {
               setState("ended_no_replay");
             } else {
               setState("live");
+              // Start heartbeat after successful resolve
+              startHeartbeat();
             }
             break;
           default:
@@ -87,12 +135,38 @@ export default function LiveEvent() {
     };
 
     resolve();
-  }, [slug, session]);
+  }, [slug, session, startHeartbeat]);
 
   if (state === "loading") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (state === "session_revoked") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <MonitorX className="h-16 w-16 text-destructive" />
+        <h1 className="text-2xl font-bold text-foreground">Сессия завершена</h1>
+        <p className="text-muted-foreground text-center max-w-md">
+          Просмотр продолжен с другого устройства. Одновременный просмотр невозможен.
+        </p>
+        <Button onClick={() => window.location.reload()}>Обновить</Button>
+      </div>
+    );
+  }
+
+  if (state === "session_expired") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <TimerOff className="h-16 w-16 text-muted-foreground" />
+        <h1 className="text-2xl font-bold text-foreground">Сессия просмотра истекла</h1>
+        <p className="text-muted-foreground text-center max-w-md">
+          Сессия просмотра истекла. Обновите страницу для продолжения.
+        </p>
+        <Button onClick={() => window.location.reload()}>Обновить</Button>
       </div>
     );
   }

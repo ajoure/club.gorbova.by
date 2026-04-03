@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 1. Find event by slug (using service role - bypasses RLS)
+    // 1. Find event by slug
     const { data: event, error: eventError } = await supabase
       .from('live_events')
       .select('id, slug, title, description, kinescope_video_id, product_id, access_rule, status, is_published, scheduled_at, replay_enabled, invite_mode, direct_access_allowed')
@@ -41,38 +41,24 @@ Deno.serve(async (req) => {
 
     if (eventError) {
       console.error('[live-resolve] DB error:', eventError);
-      return new Response(
-        JSON.stringify({ status: 'error', message: 'Internal error' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({ status: 'error', message: 'Internal error' }, 500);
     }
 
-    // Branch 1: slug not found
     if (!event) {
       await logAudit(supabase, 'live_access_not_found', null, slug, null);
-      return new Response(
-        JSON.stringify({ status: 'not_found' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({ status: 'not_found' }, 404);
     }
 
-    // Branch 2: not published
     if (!event.is_published) {
       await logAudit(supabase, 'live_access_unpublished', null, slug, event.id);
-      return new Response(
-        JSON.stringify({ status: 'unpublished' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({ status: 'unpublished' }, 403);
     }
 
-    // Branch 3: check authentication
+    // 3. Auth check
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       await logAudit(supabase, 'live_access_attempt', null, slug, event.id, { reason: 'no_auth_header' });
-      return new Response(
-        JSON.stringify({ status: 'auth_required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({ status: 'auth_required' }, 401);
     }
 
     const token = authHeader.replace('Bearer ', '');
@@ -83,16 +69,14 @@ Deno.serve(async (req) => {
 
     if (authError || !user) {
       await logAudit(supabase, 'live_access_attempt', null, slug, event.id, { reason: 'invalid_token' });
-      return new Response(
-        JSON.stringify({ status: 'auth_required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({ status: 'auth_required' }, 401);
     }
 
     const userId = user.id;
 
-    // Branch 3.5: invite_mode check — require proof for required_one_time
+    // 4. Invite mode check — require proof for required_one_time
     if (event.invite_mode === 'required_one_time' && !event.direct_access_allowed) {
+      // Check proof
       const { data: proof } = await supabase
         .from('live_access_proofs')
         .select('id, expires_at')
@@ -107,39 +91,47 @@ Deno.serve(async (req) => {
           reason: 'invite_required',
           invite_mode: event.invite_mode,
         });
-        return new Response(
-          JSON.stringify({
-            status: 'invite_required',
-            title: event.title,
-            description: event.description,
-            event_status: event.status,
-          }),
-          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return jsonRes({
+          status: 'invite_required',
+          title: event.title,
+          description: event.description,
+          event_status: event.status,
+        }, 403);
       }
-      // proof found → continue to canonical access check
+
+      // Check active session — if none exists but proof is valid,
+      // auto-create a new session (soft model: proof valid = can re-enter)
+      const { data: activeSession } = await supabase
+        .from('live_active_sessions')
+        .select('id, session_key, revoked_at, expires_at')
+        .eq('user_id', userId)
+        .eq('live_event_id', event.id)
+        .is('revoked_at', null)
+        .maybeSingle();
+
+      if (!activeSession || new Date(activeSession.expires_at) < new Date()) {
+        // No active session or expired — auto-create one since proof is valid
+        // This handles page refresh / new tab for the same user
+        await autoCreateSession(supabase, event.id, userId);
+      }
     }
 
-    // Branch 4: access check using canonical resolver
+    // 5. Canonical access check
     const accessRule = event.access_rule as AccessRule;
     let accessValid = false;
 
     if (accessRule.mode === 'all') {
-      // Any authenticated user can access
       accessValid = true;
     } else {
-      // mode='product' or mode='tariff' — check canonical product access
       const productId = accessRule.product_id || event.product_id;
       const snapshot = await resolveEffectiveProductAccess(supabase, userId, productId);
 
       if (snapshot.effectiveEndAt !== undefined || snapshot.isUnlimited) {
-        // Has some access source
         if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
           accessValid = true;
         }
       }
 
-      // Additional tariff check for mode='tariff'
       if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
         const { data: tariffSub } = await supabase
           .from('subscriptions_v2')
@@ -152,7 +144,6 @@ Deno.serve(async (req) => {
           .maybeSingle();
 
         if (!tariffSub) {
-          // Check entitlements with tariff in meta
           const { data: tariffEnt } = await supabase
             .from('entitlements')
             .select('id')
@@ -162,7 +153,6 @@ Deno.serve(async (req) => {
             .limit(1)
             .maybeSingle();
 
-          // If no tariff-specific subscription, deny
           if (!tariffEnt) {
             accessValid = false;
           }
@@ -175,43 +165,71 @@ Deno.serve(async (req) => {
         access_rule_mode: accessRule.mode,
         product_id: event.product_id,
       });
-      return new Response(
-        JSON.stringify({
-          status: 'access_denied',
-          title: event.title,
-          description: event.description,
-          event_status: event.status,
-        }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return jsonRes({
+        status: 'access_denied',
+        title: event.title,
+        description: event.description,
+        event_status: event.status,
+      }, 403);
     }
 
-    // Branch 5: access granted — return full data including kinescope_video_id
+    // 6. Access granted
     await logAudit(supabase, 'live_access_granted', userId, slug, event.id, {
       access_rule_mode: accessRule.mode,
       product_id: event.product_id,
     });
 
-    return new Response(
-      JSON.stringify({
-        status: 'ok',
-        title: event.title,
-        description: event.description,
-        kinescope_video_id: event.kinescope_video_id,
-        event_status: event.status,
-        scheduled_at: event.scheduled_at,
-        replay_enabled: event.replay_enabled,
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonRes({
+      status: 'ok',
+      title: event.title,
+      description: event.description,
+      kinescope_video_id: event.kinescope_video_id,
+      event_status: event.status,
+      scheduled_at: event.scheduled_at,
+      replay_enabled: event.replay_enabled,
+    });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);
-    return new Response(
-      JSON.stringify({ status: 'error', message: 'Internal error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonRes({ status: 'error', message: 'Internal error' }, 500);
   }
 });
+
+/** Auto-create session when proof is valid but no active session exists */
+async function autoCreateSession(
+  supabase: any,
+  eventId: string,
+  userId: string,
+) {
+  const SESSION_TTL_HOURS = 24;
+  const now = new Date().toISOString();
+
+  // Revoke any existing (might be expired)
+  await supabase
+    .from('live_active_sessions')
+    .update({ revoked_at: now })
+    .eq('user_id', userId)
+    .eq('live_event_id', eventId)
+    .is('revoked_at', null);
+
+  const sessionKey = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+
+  await supabase
+    .from('live_active_sessions')
+    .insert({
+      live_event_id: eventId,
+      user_id: userId,
+      session_key: sessionKey,
+      expires_at: expiresAt,
+    });
+}
+
+function jsonRes(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
 
 async function logAudit(
   supabase: any,
