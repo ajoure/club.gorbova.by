@@ -1139,6 +1139,100 @@ const [includeButton, setIncludeButton] = useState(true);
       </div>
         </TabsContent>
       </Tabs>
+
+      {/* Broadcast detail dialog */}
+      <Dialog open={!!selectedBroadcast} onOpenChange={(open) => !open && setSelectedBroadcast(null)}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedBroadcast?.action === "telegram_mass_broadcast" ? (
+                <MessageCircle className="h-5 w-5" />
+              ) : (
+                <Mail className="h-5 w-5" />
+              )}
+              Детали рассылки
+            </DialogTitle>
+          </DialogHeader>
+          {selectedBroadcast && (() => {
+            const m = (selectedBroadcast._meta || selectedBroadcast.meta) as Record<string, unknown> | null;
+            const fullText = String(m?.message_template || m?.message_preview || m?.subject || "—");
+            const btnText = m?.button_text as string | null;
+            const btnUrl = m?.button_url as string | null;
+            const includeBtn = m?.include_button as boolean | undefined;
+            const filtersData = m?.filters as Record<string, unknown> | null;
+            const sentCount = Number(m?.sent || 0);
+            const failedCount = Number(m?.failed || 0);
+            return (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Дата</p>
+                  <p className="text-sm">
+                    {format(new Date(selectedBroadcast.created_at as string), "dd MMMM yyyy, HH:mm", { locale: ru })}
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Текст сообщения</p>
+                  <div className="rounded-lg bg-muted p-3 text-sm whitespace-pre-wrap break-words max-h-60 overflow-y-auto">
+                    {fullText}
+                  </div>
+                </div>
+
+                {includeBtn && btnText && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Кнопка</p>
+                    <div className="flex items-center gap-2 rounded-lg bg-muted p-3 text-sm">
+                      <MousePointerClick className="h-4 w-4 shrink-0" />
+                      <span className="font-medium">{btnText}</span>
+                      {btnUrl && (
+                        <a href={btnUrl} target="_blank" rel="noopener noreferrer" className="ml-auto text-primary hover:underline flex items-center gap-1 text-xs">
+                          <ExternalLink className="h-3 w-3" />
+                          Ссылка
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Отправлено</p>
+                    <Badge variant="outline" className="gap-1">
+                      <CheckCircle className="h-3 w-3 text-green-500" />
+                      {sentCount}
+                    </Badge>
+                  </div>
+                  {failedCount > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Ошибки</p>
+                      <Badge variant="outline" className="gap-1">
+                        <XCircle className="h-3 w-3 text-red-500" />
+                        {failedCount}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+
+                {filtersData && Object.keys(filtersData).length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Фильтры</p>
+                    <div className="rounded-lg bg-muted p-3 text-xs space-y-1">
+                      {(filtersData.productIds as string[])?.length > 0 && (
+                        <p>Продукты: {(filtersData.productIds as string[]).length} шт.</p>
+                      )}
+                      {(filtersData.tariffIds as string[])?.length > 0 && (
+                        <p>Тарифы: {(filtersData.tariffIds as string[]).length} шт.</p>
+                      )}
+                      {filtersData.hasActiveSubscription && <p>Только с активной подпиской</p>}
+                      {filtersData.clubId && <p>Клуб: задан</p>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
