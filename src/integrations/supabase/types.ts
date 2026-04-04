@@ -5227,6 +5227,63 @@ export type Database = {
           },
         ]
       }
+      live_event_notification_log: {
+        Row: {
+          channel: string
+          created_at: string
+          error: string | null
+          id: string
+          live_event_id: string
+          notify_offset_minutes: number
+          scheduled_for: string
+          sent_at: string | null
+          status: string
+          template_id: string | null
+          user_id: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          live_event_id: string
+          notify_offset_minutes: number
+          scheduled_for: string
+          sent_at?: string | null
+          status?: string
+          template_id?: string | null
+          user_id: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          error?: string | null
+          id?: string
+          live_event_id?: string
+          notify_offset_minutes?: number
+          scheduled_for?: string
+          sent_at?: string | null
+          status?: string
+          template_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_notification_log_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_notification_log_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "broadcast_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_event_questions: {
         Row: {
           content: string

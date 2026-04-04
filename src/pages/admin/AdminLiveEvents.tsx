@@ -86,6 +86,12 @@ interface LiveEvent {
   kinescope_stream_id: string | null;
 }
 
+interface NotificationOffset {
+  minutes: number;
+  enabled: boolean;
+  label: string;
+}
+
 interface LiveEventForm {
   slug: string;
   title: string;
@@ -114,6 +120,10 @@ interface LiveEventForm {
     stream_status?: string;
     raw_create_response?: any;
   } | null;
+  notification_enabled: boolean;
+  notification_template_id: string;
+  notification_channels: string[];
+  notification_offsets: NotificationOffset[];
 }
 
 const defaultForm: LiveEventForm = {
@@ -135,6 +145,13 @@ const defaultForm: LiveEventForm = {
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
   _providerDraft: null,
+  notification_enabled: false,
+  notification_template_id: "",
+  notification_channels: ["telegram"],
+  notification_offsets: [
+    { minutes: 1440, enabled: true, label: "За 1 день" },
+    { minutes: 60, enabled: true, label: "За 1 час" },
+  ],
 };
 
 const platformStatusLabels: Record<string, string> = {
@@ -305,7 +322,21 @@ export default function AdminLiveEvents() {
     enabled: !!kinescopeInstanceId && isLiveStream,
   });
 
-  // --- Validation ---
+  // Broadcast templates for notification picker
+  const { data: broadcastTemplates } = useQuery({
+    queryKey: ["broadcast-templates-for-notifications"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("broadcast_templates")
+        .select("id, name, template_type, channel")
+        .in("template_type", ["webinar_invite", "general"])
+        .order("name");
+      return data || [];
+    },
+    enabled: dialogOpen,
+  });
+
+
   const validationItems = useMemo(() => {
     const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
       { key: "title", label: "Название заполнено", ok: !!form.title.trim(), blocker: true },
@@ -547,6 +578,15 @@ export default function AdminLiveEvents() {
         mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
+      // Always persist notification_settings
+      mergedMetadata.notification_settings = {
+        enabled: data.notification_enabled,
+        template_id: data.notification_template_id || null,
+        channels: data.notification_channels,
+        offsets: data.notification_offsets,
+      };
+
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
@@ -665,14 +705,16 @@ export default function AdminLiveEvents() {
     setEditingId(event.id);
     setSlugManuallyEdited(true);
     setPublishAttempted(false);
+    const meta = (event.metadata as Record<string, any>) || {};
+    const ns = meta.notification_settings || {};
     setForm({
       slug: event.slug,
       title: event.title,
       description: event.description || "",
       kinescope_video_id: event.kinescope_video_id || "",
       kinescope_mode: event.kinescope_video_id ? "picker" : "picker",
-      kinescope_project_id: event.kinescope_project_id || (event.metadata as any)?.kinescope_project_id || "",
-      kinescope_folder_id: (event.metadata as any)?.kinescope_folder_id || "",
+      kinescope_project_id: event.kinescope_project_id || meta.kinescope_project_id || "",
+      kinescope_folder_id: meta.kinescope_folder_id || "",
       status: event.status,
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
@@ -683,6 +725,13 @@ export default function AdminLiveEvents() {
       event_type: (event.event_type as EventType) || "recorded_webinar",
       event_timezone: event.event_timezone || "Europe/Minsk",
       kinescope_live_event_id: event.kinescope_live_event_id || "",
+      notification_enabled: ns.enabled ?? false,
+      notification_template_id: ns.template_id || "",
+      notification_channels: ns.channels || ["telegram"],
+      notification_offsets: ns.offsets || [
+        { minutes: 1440, enabled: true, label: "За 1 день" },
+        { minutes: 60, enabled: true, label: "За 1 час" },
+      ],
     });
     setDialogOpen(true);
   };
@@ -1162,6 +1211,109 @@ export default function AdminLiveEvents() {
                   />
                 )}
               </FormSection>
+
+              {/* Section 4.5: Notifications (live_stream only) */}
+              {isLiveStream && (
+                <>
+                  <Separator />
+                  <FormSection title="Уведомления">
+                    <SwitchRow
+                      checked={form.notification_enabled}
+                      onCheckedChange={(v) => setForm({ ...form, notification_enabled: v })}
+                      label="Включить автоматические уведомления"
+                      description="Уведомления будут отправлены пользователям с доступом к эфиру"
+                    />
+
+                    {form.notification_enabled && (
+                      <div className="space-y-4 pl-1">
+                        {/* Template picker */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Шаблон уведомления</Label>
+                          <Select
+                            value={form.notification_template_id}
+                            onValueChange={(v) => setForm({ ...form, notification_template_id: v })}
+                          >
+                            <SelectTrigger className="text-xs">
+                              <SelectValue placeholder="Выберите шаблон" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {broadcastTemplates?.map((t) => (
+                                <SelectItem key={t.id} value={t.id} className="text-xs">
+                                  {t.name} <span className="text-muted-foreground ml-1">({t.template_type})</span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-[10px] text-muted-foreground">
+                            Переменные: {"{{live_event.title}}"}, {"{{live_event.link}}"}, {"{{live_event.start_at_source_tz}}"}
+                          </p>
+                        </div>
+
+                        {/* Channels */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Каналы</Label>
+                          <div className="flex gap-4">
+                            {(["telegram", "email"] as const).map((ch) => (
+                              <label key={ch} className="flex items-center gap-2 text-xs cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={form.notification_channels.includes(ch)}
+                                  onChange={(e) => {
+                                    const channels = e.target.checked
+                                      ? [...form.notification_channels, ch]
+                                      : form.notification_channels.filter(c => c !== ch);
+                                    setForm({ ...form, notification_channels: channels.length > 0 ? channels : [ch] });
+                                  }}
+                                  className="rounded border-input"
+                                />
+                                {ch === "telegram" ? "Telegram" : "Email"}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Offsets */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Когда уведомлять</Label>
+                          <div className="space-y-2">
+                            {form.notification_offsets.map((offset, idx) => (
+                              <label key={idx} className="flex items-center gap-2 text-xs cursor-pointer">
+                                <Switch
+                                  checked={offset.enabled}
+                                  onCheckedChange={(v) => {
+                                    const newOffsets = [...form.notification_offsets];
+                                    newOffsets[idx] = { ...offset, enabled: v };
+                                    setForm({ ...form, notification_offsets: newOffsets });
+                                  }}
+                                  className="scale-75"
+                                />
+                                {offset.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Summary */}
+                        <div className="rounded-lg bg-muted/30 p-3 text-xs space-y-1">
+                          <p className="font-medium text-foreground/80">Итого:</p>
+                          <p className="text-muted-foreground">
+                            Шаблон: {broadcastTemplates?.find(t => t.id === form.notification_template_id)?.name || "не выбран"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Каналы: {form.notification_channels.map(c => c === "telegram" ? "Telegram" : "Email").join(", ")}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Сроки: {form.notification_offsets.filter(o => o.enabled).map(o => o.label).join(", ") || "нет"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Получатели: все пользователи с доступом к эфиру по правилам доступа
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </FormSection>
+                </>
+              )}
 
               <Separator />
 
@@ -1991,6 +2143,43 @@ function LiveStreamControlPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Instruction block */}
+      <Collapsible>
+        <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+          <ChevronDown className="h-3 w-3" />
+          Инструкция для администратора и ведущего
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3 space-y-4">
+          <div className="rounded-lg border p-3 space-y-2">
+            <h4 className="text-xs font-semibold text-foreground/80">Для администратора</h4>
+            <ol className="list-decimal pl-4 text-xs text-muted-foreground space-y-1">
+              <li>Создайте эфир, выберите тип «Живой эфир»</li>
+              <li>Выберите папку для трансляций и проект для записи</li>
+              <li>Создайте источник в Kinescope</li>
+              <li>Задайте дату, время, правила доступа</li>
+              <li>Настройте уведомления: шаблон, каналы, сроки</li>
+              <li>Сохраните эфир</li>
+              <li>Опубликуйте эфир</li>
+              <li>Перед стартом проверьте статус источника</li>
+              <li>В момент старта — нажмите «Запустить эфир»</li>
+              <li>После завершения — «Завершить эфир» → «Обновить источник»</li>
+            </ol>
+          </div>
+          <div className="rounded-lg border p-3 space-y-2">
+            <h4 className="text-xs font-semibold text-foreground/80">Для ведущего / преподавателя</h4>
+            <ol className="list-decimal pl-4 text-xs text-muted-foreground space-y-1">
+              <li>Откройте карточку эфира в админке</li>
+              <li>Скопируйте RTMP сервер и Ключ трансляции</li>
+              <li>В OBS: Настройки → Вещание → Сервис: Пользовательский</li>
+              <li>Вставьте RTMP сервер и ключ трансляции</li>
+              <li>Запустите трансляцию в OBS</li>
+              <li>Ведите эфир</li>
+              <li>По окончании остановите OBS, со стороны админки — завершить эфир и синхронизировать</li>
+            </ol>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Comments & Questions tabs */}
       {editingId && (

@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
       title: event.title,
       description: event.description,
       kinescope_video_id: event.kinescope_video_id,
-      event_status: event.status,
+      event_status: event.platform_status,
       scheduled_at: event.scheduled_at,
       replay_enabled: event.replay_enabled,
       event_id: event.id,

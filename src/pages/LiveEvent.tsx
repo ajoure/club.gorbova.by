@@ -131,8 +131,11 @@ export default function LiveEvent() {
             setState("source_unavailable");
             break;
           case "ok":
-            if (json.event_status === "scheduled") {
+            if (json.event_status === "scheduled" || json.platform_status === "scheduled") {
               setState("scheduled");
+            } else if (json.platform_status === "replay_available" || 
+                       (json.event_status === "ended" && json.replay_enabled)) {
+              setState("live"); // show player with recording
             } else if (json.event_status === "ended" && !json.replay_enabled) {
               setState("ended_no_replay");
             } else {
@@ -312,7 +315,8 @@ export default function LiveEvent() {
 
   // state === "live" — show player + comments/questions
   const eventId = data?.event_id;
-  const isReplay = data?.event_status === "ended" && data?.replay_enabled;
+  const isReplay = data?.platform_status === "replay_available" || 
+    (data?.event_status === "ended" && data?.replay_enabled);
 
   return (
     <div className="min-h-screen bg-background">
