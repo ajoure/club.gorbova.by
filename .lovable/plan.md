@@ -1,134 +1,102 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Не переносить выбор эфира из шаблона в отдельный будущий flow без add-only mapping.**
-  Текущий сломанный picker надо починить сейчас, но архитектурно шаблон действительно должен быть **переиспользуемым**.
-  Поэтому делаем add-only в 2 шага:
+1. **Исправить не только Dialog, но и сам TokenizedRichInput add-only.**
+  В dialog.tsx действительно нужен guard на:
   &nbsp;
-  - **Шаг A:** срочно чинить текущий выбор эфира, чтобы функционал заработал без регресса.
-  - **Шаг B:** добавить новую правильную модель: шаблон webinar_invite может существовать **без live_event_id**, а привязка эфира происходит при запуске конкретной рассылки.
-    Ничего не ломать в текущих данных. Старый режим с live_event_id не удалять сразу, а пометить как legacy-compatible.
+  - onFocusOutside
+  - onInteractOutside
+  - оставить и текущий onPointerDownOutside
+    Но этого недостаточно как единственного фикса. В TokenizedRichInput тоже нужно усилить устойчивость:
+  - blur-close не должен срабатывать, если фокус ушёл в [data-token-picker] / cmdk-*
+  - таймаут закрытия увеличить и синхронизировать с portal mount
+  - проверять document.activeElement?.closest(...), а не только dropdownRef.contains(...)
+    Иначе будет полупочинка: меню визуально оживёт, но может снова схлопываться при выборе.
   &nbsp;
-2. **OBS-данные — подтвердить и исправить source of truth.**
-  Внести явный PATCH:
+2. **В AdminLiveEvents.tsx нельзя ограничиться записью только live_event_id в metadata при insert.**
+  Нужно прямо сохранить **весь provider.current** для нового эфира:
   &nbsp;
-  - при create live event всегда сохранять provider-данные в **едином каноническом формате**:
-    metadata.provider.current
-  - больше нигде не писать напрямую в metadata.provider без current
-  - reader и writer должны читать/писать одинаковую структуру
-  - после create делать **auto-sync** и только потом показывать control panel как “источник готов”
-    DoD:
-  - после создания эфира сразу видны play_link, rtmp_link, streamkey
+  - live_event_id
+  - stream_id
+  - play_link
+  - rtmp_link
+  - streamkey
+  - stream_status
+  - raw_create_response
+    И сразу:
   - provider_source_status = "ok"
-  - last_provider_sync_at заполнен
+  - provider_error_message = null
+  - provider_status_code = 200
+  - last_provider_sync_at = now()
+    Иначе OBS снова будет неполным или broken после первого сохранения.
   &nbsp;
-3. **Починить [ внутри Dialog не кастомной логикой “примерно”, а через reuse рабочего решения из быстрых рассылок.**
-  Не изобретать новый blur/focus hack, пока не сделан diff-discovery:
+3. **Provider-данные после create надо хранить не “где-то в ref”, а в форме как first-class transient state до save.**
+  Добавь в LiveEventForm временный объект, например:
   &nbsp;
-  - сравнить **рабочий** сценарий из “Быстрая рассылка”
-  - сравнить **нерабочий** сценарий из BroadcastTemplateDialog
-  - зафиксировать точную разницу по:
-    &nbsp;
-    - portal/container
-    - focus trap
-    - blur timeout
-    - z-index
-    - event listeners
-    - mount timing
-      Затем перенести **тот же рабочий паттерн**, а не частичную имитацию.
-      DoD:
-    &nbsp;
-  - в BroadcastTemplateDialog по [ picker открывается
-  - поиск работает
-  - выбор мышкой работает
-  - модалка не закрывается
-  - textarea сохраняет фокус корректно после вставки
+  - provider_preview / providerDraft
+    Тогда:
+  - create → кладёт данные в state
+  - save new event → переносит их в metadata.provider.current
+    Это надёжнее, чем рассчитывать на замыкания/локальные переменные и не потеряется при повторном рендере.
   &nbsp;
-4. **По шаблонам приглашений — зафиксировать правильную доменную модель.**
-  Да, логика должна быть такой:
+4. **Auto-heal нельзя запускать без guard от циклов.**
+  В useEffect для control panel, если просто вызывать handleSyncProvider() при пустом provider.current, можно получить:
   &nbsp;
-  - **шаблон** = постоянный сценарий приглашения
-  - **эфир** = конкретное событие
-  - **рассылка** = применение шаблона к конкретному эфиру и аудитории
-    Значит нужно добавить сущностное правило:
-  - broadcast_templates.webinar_invite не обязан иметь live_event_id
-  - live_event_id выбирается на этапе **создания/запуска рассылки**, а не на этапе создания шаблона
-    Но это делать add-only, без немедленного удаления текущего поля.
+  - повторные sync
+  - гонки
+  - лишние audit events
+    Нужен guard:
+  - только если editingId есть
+  - только если kinescope_live_event_id есть
+  - только если ещё не было auto-heal в этой сессии открытия
+  - не запускать, если уже идёт sync
+    Лучше отдельный autoHealAttemptedRef.
   &nbsp;
-5. **Сейчас не убирать picker эфира из BroadcastTemplateDialog, пока не добавлен новый экран/шаг применения шаблона.**
-  Иначе получится провал по UX.
-  Нужно явно сделать transitional model:
+5. **Auto-heal должен писать результат в БД только один раз и только после фактического ответа провайдера.**
+  Нельзя просто ставить ok по наличию kinescope_live_event_id.
+  Источник истины:
   &nbsp;
-  - текущий picker эфира — починить
-  - добавить новый preferred flow “создать рассылку из шаблона → выбрать эфир”
-  - только после runtime-proof нового flow можно переводить старый режим в deprecated
+  - create response для нового эфира
+  - sync response для legacy/repair
+    Только после этого обновлять provider_source_status.
   &nbsp;
-6. **Нужен отдельный PATCH на “Применить шаблон к эфиру”.**
-  Добавить в раздел рассылок:
+6. **В BroadcastSendDialog soft-block текст хороший, но нужна ещё action-логика.**
+  Просто написать “обновите источник” недостаточно.
+  Нужно:
   &nbsp;
-  - выбор шаблона
-  - если template_type = webinar_invite → обязательный шаг выбора эфира
-  - после выбора эфира автоматически подставляются:
-    &nbsp;
-    - platform URL
-    - дата/время эфира
-    - timezone-переменные
-    &nbsp;
-  - затем выбор аудитории / запуск / планирование
-    Это и есть правильное место привязки эфира.
+  - показывать эту причину как отдельный readiness-state
+  - не давать выбрать эфир, если источник реально не подтверждён
+  - но текст причины делать не “повреждён”, а “источник ещё не подтверждён” / “требуется синхронизация”
+    Иначе пользователь снова увидит нерабочий выбор без понятного следующего шага.
   &nbsp;
-7. **Readiness переносим с уровня шаблона на уровень рассылки.**
-  В шаблоне проверять только валидность самого шаблона:
+7. **Нужен отдельный backfill/repair для уже существующих live events без provider.current.**
+  Не только auto-heal при открытии UI.
+  Добавь mini-repair patch:
   &nbsp;
-  - name
-  - channel
-  - текст / subject / body
-    А readiness конкретного эфира проверять уже в момент применения шаблона:
-  - опубликован ли эфир
-  - есть ли источник
-  - не broken/missing ли provider
-  - задана ли дата, если нужна
+  - найти live_stream, где kinescope_live_event_id is not null
+  - и metadata.provider.current пустой
+  - и provider_source_status пустой/unknown
+    Для них выполнить controlled repair через sync.
+    Иначе проблема останется на старых записях, если их не открыть вручную.
   &nbsp;
-8. **Для live_stream добавить guard: нельзя строить приглашение на эфир с неготовым источником.**
-  Даже если шаблон создан, при выборе эфира в flow создания рассылки система должна блокировать эфир с:
+8. **BroadcastSendDialog и BroadcastTemplateDialog не смешивать в формулировках патча.**
+  Сейчас у тебя в DoD фигурирует BroadcastTemplateDialog, а в логике выбора эфира уже используется другой flow.
+  Нужно явно зафиксировать:
   &nbsp;
-  - provider_source_status = missing
-  - provider_source_status = broken
-  - kinescope_live_event_id IS NULL
-    И показывать конкретную причину, а не общий disabled.
+  - где именно сейчас выбирается эфир
+  - где именно должен работать [
+    Чтобы подрядчик не “починил” не тот dialog.
   &nbsp;
-9. **По OBS и преподавателю — добавить явный режим использования.**
-  В админке для live event должен быть отдельный блок:
+9. **После фикса нужен обязательный runtime-proof именно по трём проблемам пользователя.**
+  Не общий build-proof, а конкретно:
   &nbsp;
-  - “Для ведущего”
-  - copy-friendly OBS данные
-  - кнопка копирования stream key
-  - статус источника
-  - дата/время эфира
-  - ссылка на платформенный /live/:slug для проверки viewer-side
-    Не требовать от преподавателя идти в Kinescope, если все необходимые данные уже есть в админке.
+  - в dialog нажать [ → поиск работает → токен вставился
+  - создать новый live event → сохранить → открыть снова → OBS данные на месте без ручного sync
+  - открыть legacy эфир без provider.current → auto-heal/sync восстановил источник → эфир стал selectable в отправке
   &nbsp;
-10. **Нужен proof именно по двум сценариям после фикса.**
-  Сценарий 1 — live source:
-  &nbsp;
-  - создать live event
-  - увидеть OBS данные
-  - выполнить auto-sync
-  - source status = ok
-  &nbsp;
-  Сценарий 2 — webinar invite template:
-  &nbsp;
-  - открыть BroadcastTemplateDialog
-  - по [ открыть picker переменных
-  - ввести текст
-  - сохранить шаблон без привязки к конкретному эфиру
-  - затем в flow создания рассылки выбрать этот шаблон
-  - выбрать эфир
-  - увидеть пересчитанный URL и readiness
-  &nbsp;
-11. **Не принимать PATCH, если сделан только перенос логики без работающего UX.**
-  Критерий приёмки:
+10. **Recorded flow не трогать, но это нужно прямо зафиксировать в кодовых guard-ах.**
+  Все новые auto-heal / provider guards / readiness-ветки — только для:
 
 &nbsp;
 
@@ -136,11 +104,8 @@
 
 &nbsp;
 
-- OBS данные появляются сразу после create
-- [ работает в модалке
-- шаблон приглашения можно создать без цирка с публикацией/эфиром
-- конкретный эфир выбирается уже при создании рассылки
-- пользовательский путь стал проще, а не сложнее
+- event_type === "live_stream"
+  Чтобы не зацепить выбор обычных видео и автовебинаров.
 
 &nbsp;
 
@@ -148,133 +113,206 @@
 
 &nbsp;
 
-12. **Сохранить совместимость со старыми шаблонами.**
-  Если в БД уже есть webinar_invite с live_event_id, новый flow обязан их читать и использовать как legacy-case, без потери данных.
+11. **Добавить один UX-fix в сообщения ошибок.**
+  Убрать формулировки вроде:
 
 &nbsp;
 
 &nbsp;
 
-План: Исправление трёх багов — OBS данные, token picker `[`, логика шаблонов
+&nbsp;
+
+- “Источник повреждён” по умолчанию
+  Разделить на:
+- “Источник ещё не подтверждён”
+- “Источник удалён в Kinescope”
+- “Не удалось получить данные OBS”
+- “Источник не создан”
+  Это критично, потому что сейчас именно плохой текст путает и выглядит как случайная поломка.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. **Финальный DoD переписать жёстко.**
+  Патч считается закрытым только если одновременно:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- [ в нужном dialog работает полноценно
+- новый live event после save сразу показывает OBS
+- legacy live event auto-heal-ится или repair-ится
+- эфир реально можно выбрать в отправке
+- recorded flow не имеет регрессии
+
+&nbsp;
+
+&nbsp;
+
+# План: Починка token picker `[` в Dialog + auto-save OBS данных + repair legacy events
 
 ## Диагностика
 
-### Баг 1: OBS данные не появляются для "живой тест"
+### 1. Token picker `[` мёртвый внутри Dialog
 
-**Root cause**: При создании live event в Kinescope (строки 404-428) provider-данные сохраняются в `metadata.provider` напрямую (без `.current`):
+**Root cause**: Radix Dialog (modal=true) использует FocusScope, который перехватывает `focusout` и возвращает фокус обратно в DialogContent. Token picker рендерится через `createPortal(document.body)` — вне DialogContent. Когда пользователь кликает в CommandInput внутри picker, FocusScope перехватывает фокус и не отдаёт его.
 
-```
-provider: { live_event_id, stream_id, play_link, rtmp_link, streamkey, ... }
-```
+Текущий guard в `dialog.tsx` обрабатывает только `onPointerDownOutside` (предотвращает закрытие), но **не обрабатывает `onFocusOutside**` — именно это не даёт фокусу уйти в picker.
 
-Но при чтении (строка 1374) код ищет `metadata.provider.current` первым:
+В быстрых рассылках TokenizedRichInput работает вне Dialog — нет FocusScope, нет проблемы.
 
-```
-const providerCurrent = metadata?.provider?.current || metadata?.provider || {};
-```
+**Фикс**: Добавить `onFocusOutside` guard в `dialog.tsx` с теми же селекторами.
 
-Для эфира "живой тест" в БД metadata содержит ТОЛЬКО `kinescope_folder_id` и `kinescope_project_id` — блока `provider` нет вообще. Это значит, что при создании эфира данные не сохранились (возможно, `editingId` был пуст в момент создания — создание шло до первого save).
+### 2. OBS данные не сохраняются для новых эфиров
 
-**Дополнительно**: После PATCH E/F `handleRecreateProvider` пишет в `provider.current`, но `handleCreateLiveEvent` (строка 411) пишет напрямую в `provider` без `.current`. Несогласованность.
+**Root cause**: В `handleCreateKinescopeLiveEvent` (строка 404) provider данные пишутся в БД только `if (editingId)`. Для нового эфира (ещё без ID) данные остаются только в state. При сохранении через `saveMutation` (строка 498-510) `mergedMetadata` создаётся заново с нуля (`kinescope_project_id` + `kinescope_folder_id`) — **provider блок теряется**.
 
-### Баг 2: Token picker `[` не работает в BroadcastTemplateDialog
+Текущее состояние "живой тест" в БД: `metadata = { kinescope_folder_id, kinescope_project_id }` — **нет provider блока вообще**.
 
-**Root cause**: TokenizedRichInput использует `createPortal(document.body)` для dropdown (строка 912). Bracket plugin (строка 129) перехватывает `[` и через 300ms вызывает `onOpen`. Guard в `dialog.tsx` (строки 40-52) защищает от закрытия при клике на `[data-token-picker]` / `[cmdk-item]`.
+**Фикс**: В `saveMutation` при insert нового эфира включать provider данные из state в metadata.
 
-Проблема: при открытии picker внутри Dialog, фокус уходит из TipTap editor → срабатывает `blur` handler (строки 597-610), который через 150ms закрывает picker. В быстрых рассылках (BroadcastsTabContent) TokenizedRichInput НЕ внутри Dialog — нет focus trap, поэтому работает.
+### 3. Legacy эфиры без provider.current
 
-**Решение**: В blur handler нужно проверять, попал ли фокус в dropdown ИЛИ в searchInput внутри dropdown. Сейчас проверка `dropdownRef.current?.contains(active)` может не срабатывать, если `searchInputRef` ещё не смонтирован к моменту blur check (300ms delay от `[` + 150ms blur timeout = гонка).
+"живой тест" имеет `kinescope_live_event_id`, но пустой provider. `getEventReadiness` в BroadcastSendDialog (строка 90-97) видит пустой provider.current и ставит "Источник повреждён" — ложная блокировка.
 
-### Баг 3: Неправильная логика шаблонов приглашений
-
-**Суть жалобы пользователя**: Сейчас шаблон привязывается к конкретному эфиру при создании. Пользователь хочет наоборот: шаблон — это переиспользуемый паттерн ("Эфиры по четвергам"), а привязка к конкретному эфиру происходит при ИСПОЛЬЗОВАНИИ шаблона (создании рассылки). Тогда один шаблон можно применять к разным эфирам.
+**Фикс**: `handleSyncProvider` уже корректно восстанавливает provider.current. Нужно добавить auto-heal: при открытии control panel, если есть `kinescope_live_event_id` но нет `provider.current`, автоматически запускать sync.
 
 ---
 
 ## Изменения
 
-### 1. Исправить сохранение provider-данных при создании (`AdminLiveEvents.tsx`)
+### Файл 1: `src/components/ui/dialog.tsx`
 
-В `handleCreateLiveEvent` (строки 411-419) писать в `metadata.provider.current`, а не в `metadata.provider`:
+Добавить `onFocusOutside` guard на `DialogPrimitive.Content` (рядом с существующим `onPointerDownOutside`):
 
-```typescript
-provider: {
-  ...(existingMeta.provider || {}),
-  current: {
-    live_event_id: eventId,
-    stream_id: streamId,
-    play_link: playLink,
-    rtmp_link: rtmpLink,
-    streamkey: streamkey,
-    stream_status: streamStatus,
-  },
-},
-provider_source_status: "ok",
-last_provider_sync_at: new Date().toISOString(),
+```tsx
+onFocusOutside={(e) => {
+  const target = e.target as HTMLElement | null;
+  const isTokenPicker = target?.closest?.('[data-token-picker]') ||
+    target?.closest?.('[cmdk-item]') ||
+    target?.closest?.('[cmdk-list]') ||
+    target?.closest?.('[cmdk-input]') ||
+    target?.closest?.('[cmdk-root]');
+  if (isTokenPicker) {
+    e.preventDefault();
+  }
+  props.onFocusOutside?.(e);
+}}
 ```
 
-Также добавить авто-sync после создания для подтверждения.
+Также добавить `onInteractOutside` с аналогичным guard — это покрывает и pointer, и focus в одном обработчике (belt-and-suspenders):
 
-### 2. Исправить token picker внутри Dialog (`TokenizedRichInput.tsx`)
+```tsx
+onInteractOutside={(e) => {
+  const target = e.target as HTMLElement | null;
+  const isCmdk = target?.closest?.('[data-token-picker]') ||
+    target?.closest?.('[cmdk-item]') ||
+    target?.closest?.('[cmdk-list]') ||
+    target?.closest?.('[cmdk-input]') ||
+    target?.closest?.('[cmdk-root]');
+  if (isCmdk) {
+    e.preventDefault();
+  }
+  props.onInteractOutside?.(e);
+}}
+```
 
-В blur handler (строки 597-610) увеличить таймаут и добавить проверку на `searchInputRef`:
+### Файл 2: `src/pages/admin/AdminLiveEvents.tsx`
 
-```typescript
-const handler = () => {
-  setTimeout(() => {
-    const active = document.activeElement;
-    if (dropdownRef.current?.contains(active)) return;
-    // Also check if focus went to search input (may mount after blur fires)
-    if (searchInputRef.current?.contains(active as Node)) return;
-    // Check data-token-picker attribute on active element or its parents
-    if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
-    if (!editor.isFocused && pickerOpenRef.current) {
-      setPickerOpen(false);
-    }
-  }, 250); // increase from 150 to 250 to allow portal mount
+**A. Исправить saveMutation (строки 498-510)**
+
+При создании нового эфира (не editing), включить provider данные из state:
+
+```tsx
+let mergedMetadata: Record<string, any> = {
+  kinescope_project_id: data.kinescope_project_id || null,
+  kinescope_folder_id: data.kinescope_folder_id || null,
 };
+
+if (editingId) {
+  // existing merge logic...
+} else if (data.kinescope_live_event_id) {
+  // New event with already-created Kinescope source — include provider from state
+  mergedMetadata.provider = {
+    current: {
+      live_event_id: data.kinescope_live_event_id,
+      // Provider data from handleCreateKinescopeLiveEvent is in form state
+    },
+  };
+  mergedMetadata.provider_source_status = "ok";
+  mergedMetadata.last_provider_sync_at = new Date().toISOString();
+}
 ```
 
-### 3. Переделать логику шаблонов: отвязать эфир от шаблона (`BroadcastTemplateDialog.tsx`)
+Дополнительно: сохранить provider raw data (play_link, rtmp_link, streamkey) в form state при create, чтобы они были доступны при save. Добавить поля в LiveEventForm или хранить в ref.
 
-**Новая концепция**:
+**B. Auto-heal при открытии control panel**
 
-- Шаблон типа `webinar_invite` больше НЕ привязывается к конкретному эфиру при создании
-- `live_event_id` убирается из шаблона
-- Вместо этого при ИСПОЛЬЗОВАНИИ шаблона (создание рассылки из шаблона) пользователь выбирает эфир
-- Popover + Command picker эфира переносится из BroadcastTemplateDialog в экран создания рассылки из шаблона
+В `useEffect` для определения `providerSourceStatus` (строки 1386-1398), добавить auto-sync trigger:
 
-**В BroadcastTemplateDialog**:
+```tsx
+useEffect(() => {
+  if (!kinescopeLiveEventId) {
+    setProviderSourceStatus("draft");
+    return;
+  }
+  const meta = eventData?.metadata as any;
+  const metaStatus = meta?.provider_source_status;
+  const hasProviderCurrent = !!meta?.provider?.current?.play_link || !!meta?.provider?.current?.stream_id;
+  
+  if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
+    setProviderSourceStatus(metaStatus);
+  } else if (!hasProviderCurrent && kinescopeInstanceId) {
+    // Auto-heal: kinescope_live_event_id exists but no provider.current → auto-sync
+    handleSyncProvider();
+  } else {
+    setProviderSourceStatus("ok");
+  }
+}, [kinescopeLiveEventId, eventData]);
+```
 
-- Убрать весь блок выбора эфира (строки 250-378)
-- Убрать `liveEventId`, `eventPickerOpen`, `eventSearch`, `filteredEvents`, `selectedEvent`, `selectedReadiness`, `computedButtonUrl`
-- Убрать `getEventReadiness`, `getEventTypeLabel`, query `broadcast-live-events-all`
-- `isValid` упрощается: `name.trim() && (telegram text || email fields)`
-- Шаблон хранит только: name, channel, template_type, message_text, button_text (без URL для webinar_invite — URL вычисляется при использовании)
+### Файл 3: `src/components/admin/communication/BroadcastSendDialog.tsx`
 
-**В BroadcastsTabContent** (или новом flow "Использовать шаблон"):
+**Readiness auto-heal**: В `getEventReadiness` (строки 90-96), если `providerStatus` не задан и нет `provider.current`, вместо сразу "повреждён" — считать как "Требуется синхронизация" (soft-block с действием "Обновить"):
 
-- При выборе шаблона типа `webinar_invite` для рассылки → показать picker эфира
-- URL кнопки вычисляется из выбранного эфира
-- Readiness проверяется здесь, а не в шаблоне
+```tsx
+if (!providerStatus || providerStatus === "ok") {
+  const providerCurrent = meta?.provider?.current || meta?.provider || {};
+  const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
+  const hasPlayLink = !!providerCurrent.play_link;
+  if (!hasStream && !hasPlayLink) {
+    // Differentiate: if kinescope_live_event_id exists, it's likely a sync issue
+    if (event.kinescope_live_event_id) {
+      reasons.push("Не удалось получить данные OBS — обновите источник");
+    } else {
+      reasons.push("Не создан источник трансляции");
+    }
+  }
+}
+```
 
 ---
 
 ## Файлы
 
 
-| Файл                                                             | Изменения                                                                         |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `src/pages/admin/AdminLiveEvents.tsx`                            | handleCreateLiveEvent: писать в provider.current, добавить provider_source_status |
-| `src/components/admin/TokenizedRichInput.tsx`                    | blur handler: расширить проверки, увеличить таймаут                               |
-| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Убрать привязку эфира, упростить до шаблона-паттерна                              |
-| `src/components/admin/communication/BroadcastsTabContent.tsx`    | Добавить выбор эфира при использовании шаблона webinar_invite                     |
+| Файл                                                         | Изменение                                                                               |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `src/components/ui/dialog.tsx`                               | Добавить `onFocusOutside` + `onInteractOutside` guard для cmdk/token-picker             |
+| `src/pages/admin/AdminLiveEvents.tsx`                        | Включить provider в metadata при insert нового эфира; auto-heal sync при открытии panel |
+| `src/components/admin/communication/BroadcastSendDialog.tsx` | Улучшить readiness сообщения, отличать "нет данных" от "повреждён"                      |
 
 
 ## DoD
 
-1. После создания live event в Kinescope OBS-данные (play_link, rtmp, streamkey) видны в control panel
-2. Token picker `[` работает внутри Dialog (BroadcastTemplateDialog)
-3. Шаблон webinar_invite создаётся без привязки к конкретному эфиру
-4. При использовании шаблона для рассылки — выбор эфира происходит на этапе создания рассылки
-5. Recorded flow не затронут
+1. `[` в BroadcastTemplateDialog: меню открывается, поиск работает, выбор мышкой/клавиатурой работает, токен вставляется, диалог не закрывается
+2. После create live event OBS данные сохраняются в DB без ручного sync
+3. Для legacy эфиров (kinescope_live_event_id есть, provider.current пуст) — auto-sync при открытии panel
+4. В picker рассылки: "живой тест" доступен для выбора после auto-heal
+5. Быстрые рассылки — регресса нет
