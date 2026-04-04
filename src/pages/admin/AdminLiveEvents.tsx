@@ -145,6 +145,13 @@ const defaultForm: LiveEventForm = {
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
   _providerDraft: null,
+  notification_enabled: false,
+  notification_template_id: "",
+  notification_channels: ["telegram"],
+  notification_offsets: [
+    { minutes: 1440, enabled: true, label: "За 1 день" },
+    { minutes: 60, enabled: true, label: "За 1 час" },
+  ],
 };
 
 const platformStatusLabels: Record<string, string> = {
