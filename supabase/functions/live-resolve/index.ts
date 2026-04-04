@@ -146,11 +146,15 @@ Deno.serve(async (req) => {
     let accessValid = false;
 
     // Admin bypass — admins and super_admins get unconditional access
-    const { data: isAdmin } = await supabase.rpc('has_any_role_v2', {
+    const { data: isAdmin } = await supabase.rpc('has_role_v2', {
       _user_id: userId,
-      _role_codes: ['admin', 'super_admin'],
+      _role_code: 'admin',
     });
-    if (isAdmin === true) {
+    const { data: isSuperAdmin } = await supabase.rpc('has_role_v2', {
+      _user_id: userId,
+      _role_code: 'super_admin',
+    });
+    if (isAdmin === true || isSuperAdmin === true) {
       accessValid = true;
     }
 
