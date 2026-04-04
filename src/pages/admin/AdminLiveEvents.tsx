@@ -528,6 +528,23 @@ export default function AdminLiveEvents() {
           ...existingMeta,
           ...mergedMetadata,
         };
+      } else if (data._providerDraft && data.kinescope_live_event_id) {
+        // New event with already-created Kinescope source — include full provider.current
+        mergedMetadata.provider = {
+          current: {
+            live_event_id: data._providerDraft.live_event_id,
+            stream_id: data._providerDraft.stream_id,
+            play_link: data._providerDraft.play_link,
+            rtmp_link: data._providerDraft.rtmp_link,
+            streamkey: data._providerDraft.streamkey,
+            stream_status: data._providerDraft.stream_status,
+            raw_create_response: data._providerDraft.raw_create_response,
+          },
+        };
+        mergedMetadata.provider_source_status = "ok";
+        mergedMetadata.provider_error_message = null;
+        mergedMetadata.provider_status_code = 200;
+        mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
       const payload: Record<string, any> = {
