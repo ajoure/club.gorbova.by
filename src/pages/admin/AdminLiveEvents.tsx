@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AdminLayout } from "@/components/layout/AdminLayout";
@@ -104,6 +104,16 @@ interface LiveEventForm {
   event_type: EventType;
   event_timezone: string;
   kinescope_live_event_id: string;
+  /** Transient provider data from create — persisted on save for new events */
+  _providerDraft?: {
+    live_event_id: string;
+    stream_id?: string;
+    play_link?: string;
+    rtmp_link?: string;
+    streamkey?: string;
+    stream_status?: string;
+    raw_create_response?: any;
+  } | null;
 }
 
 const defaultForm: LiveEventForm = {
@@ -124,6 +134,7 @@ const defaultForm: LiveEventForm = {
   event_type: "recorded_webinar",
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
+  _providerDraft: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
@@ -398,7 +409,17 @@ export default function AdminLiveEvents() {
       const streamStatus = eventData?.stream?.status;
       
       if (eventId) {
-        setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
+        // Store provider draft in form state for new events (persisted on save)
+        const providerDraftData = {
+          live_event_id: eventId,
+          stream_id: streamId,
+          play_link: playLink,
+          rtmp_link: rtmpLink,
+          streamkey: streamkey,
+          stream_status: streamStatus,
+          raw_create_response: eventData,
+        };
+        setForm(f => ({ ...f, kinescope_live_event_id: eventId, _providerDraft: providerDraftData }));
         
         // If editing, save provider data to DB immediately with metadata merge
         if (editingId) {
@@ -507,6 +528,23 @@ export default function AdminLiveEvents() {
           ...existingMeta,
           ...mergedMetadata,
         };
+      } else if (data._providerDraft && data.kinescope_live_event_id) {
+        // New event with already-created Kinescope source — include full provider.current
+        mergedMetadata.provider = {
+          current: {
+            live_event_id: data._providerDraft.live_event_id,
+            stream_id: data._providerDraft.stream_id,
+            play_link: data._providerDraft.play_link,
+            rtmp_link: data._providerDraft.rtmp_link,
+            streamkey: data._providerDraft.streamkey,
+            stream_status: data._providerDraft.stream_status,
+            raw_create_response: data._providerDraft.raw_create_response,
+          },
+        };
+        mergedMetadata.provider_source_status = "ok";
+        mergedMetadata.provider_error_message = null;
+        mergedMetadata.provider_status_code = 200;
+        mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
       const payload: Record<string, any> = {
@@ -1362,6 +1400,7 @@ function LiveStreamControlPanel({
   const [detachDialogOpen, setDetachDialogOpen] = useState(false);
   const [recreating, setRecreating] = useState(false);
   const [detaching, setDetaching] = useState(false);
+  const autoHealAttemptedRef = useRef(false);
 
   // Get provider data from DB
   const { data: eventData, refetch: refetchProvider } = useQuery({
@@ -1383,17 +1422,32 @@ function LiveStreamControlPanel({
   const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
   const kinescopeLiveEventId = eventData?.kinescope_live_event_id || form.kinescope_live_event_id;
 
+  // Reset auto-heal flag when editing a different event
+  useEffect(() => {
+    autoHealAttemptedRef.current = false;
+  }, [editingId]);
+
   // Determine provider source status from DB metadata (source of truth)
+  // Auto-heal: if kinescope_live_event_id exists but provider.current is empty, trigger sync once
   useEffect(() => {
     if (!kinescopeLiveEventId) {
       setProviderSourceStatus("draft");
-    } else {
-      const metaStatus = (eventData?.metadata as any)?.provider_source_status as ProviderSourceStatus | undefined;
-      if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
-        setProviderSourceStatus(metaStatus);
-      } else if (providerSourceStatus === "draft") {
-        setProviderSourceStatus("ok");
-      }
+      return;
+    }
+    const meta = eventData?.metadata as any;
+    const metaStatus = meta?.provider_source_status as ProviderSourceStatus | undefined;
+    if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
+      setProviderSourceStatus(metaStatus);
+      return;
+    }
+    
+    const hasProviderCurrent = !!meta?.provider?.current?.play_link || !!meta?.provider?.current?.stream_id;
+    if (!hasProviderCurrent && editingId && kinescopeInstanceId && !autoHealAttemptedRef.current && syncStatus !== "syncing") {
+      // Auto-heal: legacy event without provider.current — trigger sync once
+      autoHealAttemptedRef.current = true;
+      handleSyncProvider();
+    } else if (providerSourceStatus === "draft") {
+      setProviderSourceStatus("ok");
     }
   }, [kinescopeLiveEventId, eventData]);
 
