@@ -148,6 +148,13 @@ export function BroadcastTemplateDialog({
     enabled: open,
   });
 
+  const filteredEvents = useMemo(() => {
+    if (!liveEvents) return [];
+    if (!eventSearch.trim()) return liveEvents;
+    const q = eventSearch.toLowerCase();
+    return liveEvents.filter((e) => e.title?.toLowerCase().includes(q));
+  }, [liveEvents, eventSearch]);
+
   const selectedEvent = liveEvents?.find((e) => e.id === liveEventId);
   const selectedReadiness = selectedEvent ? getEventReadiness(selectedEvent) : null;
 
