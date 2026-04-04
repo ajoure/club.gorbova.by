@@ -682,14 +682,16 @@ export default function AdminLiveEvents() {
     setEditingId(event.id);
     setSlugManuallyEdited(true);
     setPublishAttempted(false);
+    const meta = (event.metadata as Record<string, any>) || {};
+    const ns = meta.notification_settings || {};
     setForm({
       slug: event.slug,
       title: event.title,
       description: event.description || "",
       kinescope_video_id: event.kinescope_video_id || "",
       kinescope_mode: event.kinescope_video_id ? "picker" : "picker",
-      kinescope_project_id: event.kinescope_project_id || (event.metadata as any)?.kinescope_project_id || "",
-      kinescope_folder_id: (event.metadata as any)?.kinescope_folder_id || "",
+      kinescope_project_id: event.kinescope_project_id || meta.kinescope_project_id || "",
+      kinescope_folder_id: meta.kinescope_folder_id || "",
       status: event.status,
       is_published: event.is_published,
       scheduled_at: event.scheduled_at || "",
@@ -700,6 +702,13 @@ export default function AdminLiveEvents() {
       event_type: (event.event_type as EventType) || "recorded_webinar",
       event_timezone: event.event_timezone || "Europe/Minsk",
       kinescope_live_event_id: event.kinescope_live_event_id || "",
+      notification_enabled: ns.enabled ?? false,
+      notification_template_id: ns.template_id || "",
+      notification_channels: ns.channels || ["telegram"],
+      notification_offsets: ns.offsets || [
+        { minutes: 1440, enabled: true, label: "За 1 день" },
+        { minutes: 60, enabled: true, label: "За 1 час" },
+      ],
     });
     setDialogOpen(true);
   };
