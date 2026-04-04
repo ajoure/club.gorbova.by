@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -29,6 +29,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   MessageCircle,
   Mail,
   Loader2,
@@ -38,8 +46,70 @@ import {
   Info,
   Shield,
   X,
+  Video,
+  Radio,
+  AlertCircle,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
+
+interface LiveEventForBroadcast {
+  id: string;
+  slug: string;
+  title: string;
+  is_published: boolean;
+  status: string;
+  event_type: string;
+  platform_status: string;
+  scheduled_at: string | null;
+  kinescope_video_id: string | null;
+  kinescope_live_event_id: string | null;
+  metadata: Record<string, any> | null;
+}
+
+function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reasons: string[]; label: string } {
+  const reasons: string[] = [];
+  
+  if (!event.is_published) {
+    reasons.push("Не опубликован");
+  }
+
+  if (event.event_type === "live_stream") {
+    if (!event.kinescope_live_event_id) {
+      reasons.push("Не создан источник трансляции");
+    } else {
+      const meta = event.metadata as any;
+      const providerStatus = meta?.provider_source_status;
+      
+      if (providerStatus === "missing") {
+        reasons.push("Источник трансляции удалён в Kinescope");
+      } else if (providerStatus === "broken") {
+        reasons.push("Источник трансляции повреждён");
+      } else if (!providerStatus || providerStatus === "ok") {
+        const providerCurrent = meta?.provider?.current || meta?.provider || {};
+        const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
+        const hasPlayLink = !!providerCurrent.play_link;
+        if (!hasStream && !hasPlayLink) {
+          reasons.push("Источник трансляции повреждён");
+        }
+      }
+    }
+    if (!event.scheduled_at) {
+      reasons.push("Не задана дата и время");
+    }
+  } else {
+    if (!event.kinescope_video_id) {
+      reasons.push("Не привязано видео");
+    }
+  }
+
+  if (reasons.length === 0) {
+    return { ready: true, reasons: [], label: "Готов" };
+  }
+  return { ready: false, reasons, label: reasons[0] };
+}
 
 interface BroadcastFilters {
   hasActiveSubscription: boolean;
@@ -74,8 +144,52 @@ export function BroadcastSendDialog({
     clubId: "",
   });
 
+  // Event picker state for webinar_invite templates
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
+
   const isTelegram = template?.channel === "telegram";
   const isWebinar = template?.template_type === "webinar_invite";
+
+  // For webinar_invite: use legacy live_event_id from template OR selected event
+  const effectiveEventId = isWebinar ? (selectedEventId || template?.live_event_id || "") : "";
+
+  // Fetch live events for webinar picker
+  const { data: liveEvents } = useQuery({
+    queryKey: ["broadcast-send-live-events"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("live_events")
+        .select("id, slug, title, is_published, status, event_type, platform_status, scheduled_at, kinescope_video_id, kinescope_live_event_id, metadata")
+        .order("created_at", { ascending: false });
+      return (data || []) as unknown as LiveEventForBroadcast[];
+    },
+    enabled: open && isWebinar,
+  });
+
+  const filteredEvents = useMemo(() => {
+    if (!liveEvents) return [];
+    if (!eventSearch.trim()) return liveEvents;
+    const q = eventSearch.toLowerCase();
+    return liveEvents.filter((e) => e.title?.toLowerCase().includes(q));
+  }, [liveEvents, eventSearch]);
+
+  const selectedEvent = liveEvents?.find((e) => e.id === effectiveEventId);
+  const selectedReadiness = selectedEvent ? getEventReadiness(selectedEvent) : null;
+  const computedButtonUrl = selectedEvent ? `/live/${selectedEvent.slug}` : "";
+
+  // Initialize selectedEventId from legacy template.live_event_id
+  // Reset when dialog opens/template changes
+  // Using a ref-like pattern to avoid extra effect
+  const templateId = template?.id;
+  const legacyEventId = template?.live_event_id;
+  const [lastTemplateId, setLastTemplateId] = useState("");
+  if (templateId && templateId !== lastTemplateId) {
+    setLastTemplateId(templateId);
+    setSelectedEventId(legacyEventId || "");
+    setEventSearch("");
+  }
 
   // Fetch products
   const { data: products } = useQuery({
@@ -119,19 +233,19 @@ export function BroadcastSendDialog({
     },
   });
 
-  // Fetch live event access rule for webinar templates
-  const { data: liveEvent } = useQuery({
-    queryKey: ["broadcast-live-event", template?.live_event_id],
+  // Fetch live event access rule for the selected event
+  const { data: liveEventAccess } = useQuery({
+    queryKey: ["broadcast-live-event", effectiveEventId],
     queryFn: async () => {
-      if (!template?.live_event_id) return null;
+      if (!effectiveEventId) return null;
       const { data } = await supabase
         .from("live_events")
         .select("id, title, access_rule, slug")
-        .eq("id", template.live_event_id)
+        .eq("id", effectiveEventId)
         .maybeSingle();
       return data as { id: string; title: string; access_rule: { mode: string; product_id: string | null; tariff_id: string | null }; slug: string } | null;
     },
-    enabled: !!template?.live_event_id,
+    enabled: !!effectiveEventId,
   });
 
   // Fetch audience count
@@ -207,7 +321,13 @@ export function BroadcastSendDialog({
 
   const handleSend = async () => {
     if (!template) return;
-    await onSend(template, filters);
+    
+    // For webinar_invite, override button_url with computed URL
+    const sendTemplate = isWebinar && computedButtonUrl
+      ? { ...template, button_url: computedButtonUrl, live_event_id: effectiveEventId }
+      : template;
+    
+    await onSend(sendTemplate, filters);
   };
 
   if (!template) return null;
@@ -217,26 +337,28 @@ export function BroadcastSendDialog({
       (template.message_text && template.message_text.length > 200 ? "..." : "")
     : template.email_subject;
 
-  const accessRulePreview = liveEvent?.access_rule
-    ? liveEvent.access_rule.mode === "all"
+  const accessRulePreview = liveEventAccess?.access_rule
+    ? liveEventAccess.access_rule.mode === "all"
       ? "Ссылка откроется всем авторизованным пользователям"
-      : liveEvent.access_rule.mode === "tariff"
+      : liveEventAccess.access_rule.mode === "tariff"
         ? "Только пользователи с определённым тарифом смогут войти"
         : "Только пользователи с доступом к продукту смогут войти"
     : null;
 
-  const canSend = isWebinar ? !!template.live_event_id && (audience?.count || 0) > 0 : (audience?.count || 0) > 0;
+  const canSend = isWebinar
+    ? !!effectiveEventId && selectedReadiness?.ready && (audience?.count || 0) > 0
+    : (audience?.count || 0) > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Send className="h-5 w-5" />
             Отправить рассылку
           </DialogTitle>
           <DialogDescription>
-            Выберите аудиторию и подтвердите отправку
+            {isWebinar ? "Выберите эфир, аудиторию и подтвердите отправку" : "Выберите аудиторию и подтвердите отправку"}
           </DialogDescription>
         </DialogHeader>
 
@@ -251,16 +373,121 @@ export function BroadcastSendDialog({
               )}
               <span className="font-medium">{template.name}</span>
               {isWebinar && (
-                <Badge variant="outline" className="text-xs">Вебинар</Badge>
+                <Badge variant="outline" className="text-xs">Приглашение на эфир</Badge>
               )}
             </div>
             <p className="text-sm text-muted-foreground">{preview}</p>
-            {isTelegram && template.button_url && (
+            {isTelegram && template.button_text && (
               <div className="mt-2 text-xs text-muted-foreground">
-                Кнопка: {template.button_text} → {template.button_url}
+                Кнопка: {template.button_text} {computedButtonUrl ? `→ ${computedButtonUrl}` : "(URL будет из эфира)"}
               </div>
             )}
           </div>
+
+          {/* Event picker for webinar_invite */}
+          {isWebinar && (
+            <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
+              <div className="flex items-center gap-2">
+                <Video className="h-4 w-4 text-primary" />
+                <Label className="font-medium">Выберите эфир для рассылки</Label>
+              </div>
+
+              <Popover open={eventPickerOpen} onOpenChange={setEventPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={eventPickerOpen}
+                    className={cn(
+                      "w-full justify-between font-normal h-9 text-sm",
+                      !effectiveEventId && "text-muted-foreground"
+                    )}
+                  >
+                    {selectedEvent?.title || "Выберите эфир"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[460px] p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      placeholder="Поиск по названию..."
+                      value={eventSearch}
+                      onValueChange={setEventSearch}
+                    />
+                    <CommandList>
+                      <CommandEmpty>Эфир не найден</CommandEmpty>
+                      <CommandGroup>
+                        {filteredEvents.map((e) => {
+                          const readiness = getEventReadiness(e);
+                          return (
+                            <CommandItem
+                              key={e.id}
+                              value={e.id}
+                              onSelect={() => {
+                                if (!readiness.ready) return;
+                                setSelectedEventId(e.id);
+                                setEventPickerOpen(false);
+                                setEventSearch("");
+                              }}
+                              className={cn(
+                                !readiness.ready && "opacity-60 cursor-not-allowed"
+                              )}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4 shrink-0",
+                                  effectiveEventId === e.id ? "opacity-100" : "opacity-0"
+                                )}
+                              />
+                              <span className="truncate flex-1 mr-2">{e.title}</span>
+                              <Badge
+                                variant={e.event_type === "live_stream" ? "default" : "secondary"}
+                                className="text-[9px] shrink-0 ml-1"
+                              >
+                                {e.event_type === "live_stream" ? (
+                                  <><Radio className="h-2.5 w-2.5 mr-0.5" />Живой</>
+                                ) : (
+                                  <><Video className="h-2.5 w-2.5 mr-0.5" />Видео</>
+                                )}
+                              </Badge>
+                              {readiness.ready ? (
+                                <Badge variant="outline" className="text-[9px] text-primary border-primary/30 shrink-0">
+                                  ✓ Готов
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
+                                  <AlertCircle className="h-2.5 w-2.5 mr-0.5" />
+                                  {readiness.label}
+                                </Badge>
+                              )}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+
+              {selectedEvent && (
+                <div className="space-y-2">
+                  <div className="text-sm text-muted-foreground">
+                    Ссылка кнопки: <code className="bg-muted px-1 rounded">{computedButtonUrl}</code>
+                  </div>
+                  {!selectedReadiness?.ready && selectedReadiness?.reasons && selectedReadiness.reasons.length > 0 && (
+                    <div className="flex items-start gap-1.5 text-destructive bg-destructive/5 rounded p-1.5">
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        {selectedReadiness.reasons.map((r, i) => (
+                          <p key={i} className="text-xs">• {r}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Access rule preview for webinar */}
           {isWebinar && accessRulePreview && (

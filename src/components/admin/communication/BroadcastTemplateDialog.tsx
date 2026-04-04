@@ -1,6 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -23,89 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { MessageCircle, Mail, Loader2, Save, Video, Info, Radio, AlertCircle, Check, ChevronsUpDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MessageCircle, Mail, Loader2, Save, Video, Info } from "lucide-react";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
-
-interface LiveEventForBroadcast {
-  id: string;
-  slug: string;
-  title: string;
-  is_published: boolean;
-  status: string;
-  event_type: string;
-  platform_status: string;
-  scheduled_at: string | null;
-  kinescope_video_id: string | null;
-  kinescope_live_event_id: string | null;
-  metadata: Record<string, any> | null;
-}
-
-function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reasons: string[]; label: string } {
-  const reasons: string[] = [];
-  
-  if (!event.is_published) {
-    reasons.push("Не опубликован");
-  }
-
-  if (event.event_type === "live_stream") {
-    if (!event.kinescope_live_event_id) {
-      reasons.push("Не создан источник трансляции");
-    } else {
-      // Check provider_source_status first (canonical check)
-      const meta = event.metadata as any;
-      const providerStatus = meta?.provider_source_status;
-      
-      if (providerStatus === "missing") {
-        reasons.push("Источник трансляции удалён в Kinescope");
-      } else if (providerStatus === "broken") {
-        reasons.push("Источник трансляции повреждён");
-      } else if (!providerStatus || providerStatus === "ok") {
-        // Fallback: check provider.current fields
-        const providerCurrent = meta?.provider?.current || meta?.provider || {};
-        const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
-        const hasPlayLink = !!providerCurrent.play_link;
-        if (!hasStream && !hasPlayLink) {
-          reasons.push("Источник трансляции повреждён");
-        }
-      }
-    }
-    if (!event.scheduled_at) {
-      reasons.push("Не задана дата и время");
-    }
-  } else {
-    if (!event.kinescope_video_id) {
-      reasons.push("Не привязано видео");
-    }
-  }
-
-  if (reasons.length === 0) {
-    return { ready: true, reasons: [], label: "Готов" };
-  }
-  return { ready: false, reasons, label: reasons[0] };
-}
-
-function getEventTypeLabel(eventType: string): string {
-  return eventType === "live_stream" ? "Живой эфир" : "Видео / Автовебинар";
-}
 
 interface BroadcastTemplateDialogProps {
   open: boolean;
@@ -131,34 +48,6 @@ export function BroadcastTemplateDialog({
   const [includeButton, setIncludeButton] = useState(true);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBodyHtml, setEmailBodyHtml] = useState("");
-  const [liveEventId, setLiveEventId] = useState("");
-  const [eventPickerOpen, setEventPickerOpen] = useState(false);
-  const [eventSearch, setEventSearch] = useState("");
-
-  // Fetch ALL live events (not only published) for readiness display
-  const { data: liveEvents } = useQuery({
-    queryKey: ["broadcast-live-events-all"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("live_events")
-        .select("id, slug, title, is_published, status, event_type, platform_status, scheduled_at, kinescope_video_id, kinescope_live_event_id, metadata")
-        .order("created_at", { ascending: false });
-      return (data || []) as unknown as LiveEventForBroadcast[];
-    },
-    enabled: open,
-  });
-
-  const filteredEvents = useMemo(() => {
-    if (!liveEvents) return [];
-    if (!eventSearch.trim()) return liveEvents;
-    const q = eventSearch.toLowerCase();
-    return liveEvents.filter((e) => e.title?.toLowerCase().includes(q));
-  }, [liveEvents, eventSearch]);
-
-  const selectedEvent = liveEvents?.find((e) => e.id === liveEventId);
-  const selectedReadiness = selectedEvent ? getEventReadiness(selectedEvent) : null;
-
-  const computedButtonUrl = selectedEvent ? `/live/${selectedEvent.slug}` : "";
 
   useEffect(() => {
     if (template) {
@@ -168,10 +57,9 @@ export function BroadcastTemplateDialog({
       setMessageText(template.message_text || "");
       setButtonText(template.button_text || "Открыть платформу");
       setButtonUrl(template.button_url || "");
-      setIncludeButton(!!template.button_url);
+      setIncludeButton(!!template.button_url || template.template_type === "webinar_invite");
       setEmailSubject(template.email_subject || "");
       setEmailBodyHtml(template.email_body_html || "");
-      setLiveEventId(template.live_event_id || "");
     } else {
       setTemplateType("general");
       setChannel("telegram");
@@ -182,25 +70,23 @@ export function BroadcastTemplateDialog({
       setIncludeButton(true);
       setEmailSubject("");
       setEmailBodyHtml("");
-      setLiveEventId("");
     }
   }, [template, open]);
 
   const isWebinar = templateType === "webinar_invite";
 
   const handleSubmit = async () => {
-    const effectiveButtonUrl = isWebinar ? computedButtonUrl : buttonUrl;
-    const effectiveIncludeButton = isWebinar ? true : includeButton;
-
     const data: Partial<BroadcastTemplate> = {
       id: template?.id,
       name,
       channel,
       template_type: templateType,
-      live_event_id: isWebinar ? liveEventId || null : null,
+      // Legacy: keep live_event_id if template already had one, otherwise null
+      live_event_id: template?.live_event_id || null,
       message_text: channel === "telegram" ? messageText : null,
-      button_text: channel === "telegram" && effectiveIncludeButton ? buttonText : null,
-      button_url: channel === "telegram" && effectiveIncludeButton ? effectiveButtonUrl : null,
+      button_text: channel === "telegram" && (isWebinar || includeButton) ? buttonText : null,
+      // For webinar_invite: URL is computed at send time, save placeholder
+      button_url: channel === "telegram" && !isWebinar && includeButton ? buttonUrl : null,
       email_subject: channel === "email" ? emailSubject : null,
       email_body_html: channel === "email" ? emailBodyHtml : null,
       status: template?.status || "draft",
@@ -208,11 +94,11 @@ export function BroadcastTemplateDialog({
     await onSave(data);
   };
 
+  // Template-level validation: only name + content required
   const isValid =
     name.trim() &&
     ((channel === "telegram" && messageText.trim()) ||
-      (channel === "email" && emailSubject.trim() && emailBodyHtml.trim())) &&
-    (!isWebinar || (liveEventId && selectedReadiness?.ready));
+      (channel === "email" && emailSubject.trim() && emailBodyHtml.trim()));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -246,135 +132,14 @@ export function BroadcastTemplateDialog({
             </Select>
           </div>
 
-          {/* Webinar event selector with readiness */}
+          {/* Info for webinar_invite */}
           {isWebinar && (
-            <div className="space-y-3 rounded-lg border p-4 bg-muted/30">
-              <div className="flex items-center gap-2">
-                <Video className="h-4 w-4 text-primary" />
-                <Label className="font-medium">Эфир</Label>
-              </div>
-              {liveEvents && liveEvents.length === 0 ? (
-                <div className="text-center py-4 space-y-2">
-                  <p className="text-sm text-muted-foreground">Нет созданных эфиров</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => window.open("/admin/live-events", "_blank")}
-                  >
-                    Открыть эфиры
-                  </Button>
-                </div>
-              ) : (
-                <Popover open={eventPickerOpen} onOpenChange={setEventPickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      aria-expanded={eventPickerOpen}
-                      className={cn(
-                        "w-full justify-between font-normal h-9 text-sm",
-                        !liveEventId && "text-muted-foreground"
-                      )}
-                    >
-                      {selectedEvent?.title || "Выберите эфир"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[460px] p-0" align="start">
-                    <Command shouldFilter={false}>
-                      <CommandInput
-                        placeholder="Поиск по названию..."
-                        value={eventSearch}
-                        onValueChange={setEventSearch}
-                      />
-                      <CommandList>
-                        <CommandEmpty>Эфир не найден</CommandEmpty>
-                        <CommandGroup>
-                          {filteredEvents.map((e) => {
-                            const readiness = getEventReadiness(e);
-                            return (
-                              <CommandItem
-                                key={e.id}
-                                value={e.id}
-                                onSelect={() => {
-                                  if (!readiness.ready) return;
-                                  setLiveEventId(e.id);
-                                  setEventPickerOpen(false);
-                                  setEventSearch("");
-                                }}
-                                className={cn(
-                                  !readiness.ready && "opacity-60 cursor-not-allowed"
-                                )}
-                              >
-                                <Check
-                                  className={cn(
-                                    "mr-2 h-4 w-4 shrink-0",
-                                    liveEventId === e.id ? "opacity-100" : "opacity-0"
-                                  )}
-                                />
-                                <span className="truncate flex-1 mr-2">{e.title}</span>
-                                <Badge
-                                  variant={e.event_type === "live_stream" ? "default" : "secondary"}
-                                  className="text-[9px] shrink-0 ml-1"
-                                >
-                                  {e.event_type === "live_stream" ? (
-                                    <><Radio className="h-2.5 w-2.5 mr-0.5" />Живой</>
-                                  ) : (
-                                    <><Video className="h-2.5 w-2.5 mr-0.5" />Видео</>
-                                  )}
-                                </Badge>
-                                {readiness.ready ? (
-                                  <Badge variant="outline" className="text-[9px] text-primary border-primary/30 shrink-0">
-                                    ✓ Готов
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
-                                    <AlertCircle className="h-2.5 w-2.5 mr-0.5" />
-                                    {readiness.label}
-                                  </Badge>
-                                )}
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              {selectedEvent && (
-                <div className="space-y-2">
-                  <div className="text-sm text-muted-foreground">
-                    Ссылка кнопки: <code className="bg-muted px-1 rounded">{computedButtonUrl}</code>
-                  </div>
-                  <div className="space-y-1 text-xs text-muted-foreground bg-background rounded p-2">
-                    <p>
-                      Тип: <Badge variant="outline" className="text-[10px]">
-                        {getEventTypeLabel(selectedEvent.event_type)}
-                      </Badge>
-                    </p>
-                    <p>
-                      Статус: <Badge
-                        variant={selectedReadiness?.ready ? "default" : "outline"}
-                        className={`text-[10px] ${selectedReadiness?.ready ? "bg-primary" : ""}`}
-                      >
-                        {selectedReadiness?.ready ? "Готов к приглашениям" : selectedReadiness?.label}
-                      </Badge>
-                    </p>
-                    {!selectedReadiness?.ready && selectedReadiness?.reasons.length > 0 && (
-                      <div className="flex items-start gap-1.5 text-destructive bg-destructive/5 rounded p-1.5 mt-1">
-                        <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                        <div className="space-y-0.5">
-                          {selectedReadiness.reasons.map((r, i) => (
-                            <p key={i} className="text-xs">• {r}</p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+            <div className="flex items-start gap-2 text-sm text-muted-foreground bg-muted/50 rounded-lg p-3">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                Конкретный эфир выбирается при отправке рассылки, а не при создании шаблона. 
+                Это позволяет переиспользовать один шаблон для разных эфиров.
+              </span>
             </div>
           )}
 
@@ -383,7 +148,7 @@ export function BroadcastTemplateDialog({
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={isWebinar ? "Например: Приглашение на эфир 15 апреля" : "Например: Анонс новой функции"}
+              placeholder={isWebinar ? "Например: Приглашение на еженедельный эфир" : "Например: Анонс новой функции"}
             />
           </div>
 
@@ -438,14 +203,8 @@ export function BroadcastTemplateDialog({
                   </div>
                   {isWebinar ? (
                     <div className="space-y-2">
-                      <Label>URL кнопки</Label>
-                      <Input
-                        value={computedButtonUrl}
-                        disabled
-                        className="bg-muted"
-                      />
                       <p className="text-xs text-muted-foreground">
-                        URL формируется автоматически из выбранного эфира
+                        URL кнопки будет сформирован автоматически из выбранного эфира при отправке рассылки
                       </p>
                     </div>
                   ) : (
