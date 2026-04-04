@@ -86,6 +86,12 @@ interface LiveEvent {
   kinescope_stream_id: string | null;
 }
 
+interface NotificationOffset {
+  minutes: number;
+  enabled: boolean;
+  label: string;
+}
+
 interface LiveEventForm {
   slug: string;
   title: string;
@@ -114,6 +120,10 @@ interface LiveEventForm {
     stream_status?: string;
     raw_create_response?: any;
   } | null;
+  notification_enabled: boolean;
+  notification_template_id: string;
+  notification_channels: string[];
+  notification_offsets: NotificationOffset[];
 }
 
 const defaultForm: LiveEventForm = {
