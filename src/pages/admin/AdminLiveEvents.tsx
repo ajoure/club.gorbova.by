@@ -409,7 +409,17 @@ export default function AdminLiveEvents() {
       const streamStatus = eventData?.stream?.status;
       
       if (eventId) {
-        setForm(f => ({ ...f, kinescope_live_event_id: eventId }));
+        // Store provider draft in form state for new events (persisted on save)
+        const providerDraftData = {
+          live_event_id: eventId,
+          stream_id: streamId,
+          play_link: playLink,
+          rtmp_link: rtmpLink,
+          streamkey: streamkey,
+          stream_status: streamStatus,
+          raw_create_response: eventData,
+        };
+        setForm(f => ({ ...f, kinescope_live_event_id: eventId, _providerDraft: providerDraftData }));
         
         // If editing, save provider data to DB immediately with metadata merge
         if (editingId) {
