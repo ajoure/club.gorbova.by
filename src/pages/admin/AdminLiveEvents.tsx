@@ -564,6 +564,15 @@ export default function AdminLiveEvents() {
         mergedMetadata.last_provider_sync_at = new Date().toISOString();
       }
 
+      // Always persist notification_settings
+      mergedMetadata.notification_settings = {
+        enabled: data.notification_enabled,
+        template_id: data.notification_template_id || null,
+        channels: data.notification_channels,
+        offsets: data.notification_offsets,
+      };
+
+
       const payload: Record<string, any> = {
         slug: data.slug,
         title: data.title,
