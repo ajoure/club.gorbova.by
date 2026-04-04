@@ -410,14 +410,17 @@ export default function AdminLiveEvents() {
             kinescope_folder_id: form.kinescope_folder_id,
             provider: {
               ...(existingMeta.provider || {}),
-              live_event_id: eventId,
-              stream_id: streamId,
-              play_link: playLink,
-              rtmp_link: rtmpLink,
-              streamkey: streamkey,
-              stream_status: streamStatus,
-              raw_create_response: eventData,
+              current: {
+                live_event_id: eventId,
+                stream_id: streamId,
+                play_link: playLink,
+                rtmp_link: rtmpLink,
+                streamkey: streamkey,
+                stream_status: streamStatus,
+                raw_create_response: eventData,
+              },
             },
+            provider_source_status: "ok",
             last_provider_sync_at: new Date().toISOString(),
           };
           await supabase.from("live_events").update({

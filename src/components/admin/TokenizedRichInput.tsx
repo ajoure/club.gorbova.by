@@ -600,10 +600,14 @@ export function TokenizedRichInput({
       setTimeout(() => {
         const active = document.activeElement;
         if (dropdownRef.current?.contains(active)) return;
+        // Check if focus went to search input inside dropdown (may mount after blur fires)
+        if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
+        // Check cmdk elements (used by token picker Command)
+        if ((active as HTMLElement)?.closest?.('[cmdk-item]') || (active as HTMLElement)?.closest?.('[cmdk-list]') || (active as HTMLElement)?.closest?.('[cmdk-input]')) return;
         if (!editor.isFocused && pickerOpenRef.current) {
           setPickerOpen(false);
         }
-      }, 150);
+      }, 300);
     };
     editor.on("blur", handler);
     return () => { editor.off("blur", handler); };
