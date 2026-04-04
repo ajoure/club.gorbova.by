@@ -2,76 +2,74 @@
 
 &nbsp;
 
-1. Добавь обязательное сохранение в metadata не только provider_source_status, но и:
+1. Для поля **«Эфир»** в BroadcastTemplateDialog полностью убрать текущий Radix Select.
+  Не пытаться его чинить локальными хаками. Он конфликтует с Dialog по focus/pointer events и уже доказано сломан.
+2. Вместо него **полностью переиспользовать рабочий паттерн Popover + Command** по образцу из OrgFormCombobox.tsx.
+  Нужен именно reuse существующего боевого решения проекта:
   &nbsp;
-  - provider_error_message
-  - provider_status_code
-  - last_provider_sync_at
-    Это нужно, чтобы после reload UI не терял причину поломки и мог правильно показывать блокеры.
+  - Popover
+  - Command
+  - CommandInput
+  - CommandList
+  - CommandItem
   &nbsp;
-2. При provider_source_status = "missing" или "broken" нужно не только блокировать выбор в BroadcastTemplateDialog, но и:
+3. Блок выбора эфира переписать так:
   &nbsp;
-  - блокировать invite_ready
-  - блокировать публикацию/пере-публикацию live_stream
-  - показывать blocker в readiness panel админки:
-    **«Источник трансляции недоступен»**
+  - trigger-кнопка с текущим значением или placeholder Выберите эфир
+  - внутри PopoverContent поиск по названию
+  - список результатов с нормальным hover, scroll, keyboard navigation
+  - выбор item по мыши и Enter
+  - после выбора: setLiveEventId(...), закрытие popover, мгновенный пересчёт computedButtonUrl и readiness
   &nbsp;
-3. В LiveStreamControlPanel initial state нужно брать из БД, а не из локального useState по умолчанию.
-  Сейчас после reload возможен ложный ok/draft.
-  Источник истины:
+4. Для **неготовых эфиров** не использовать сломанный disabled у CommandItem, если он ломает interaction.
+  Разрешаю два варианта, но итог должен быть UX-рабочим:
   &nbsp;
-  - metadata.provider_source_status
-  - fallback только если поля нет
+  - либо item визуально disabled и не выбирается через onSelect
+  - либо item выбирается только для просмотра причин, но сохранение шаблона блокируется
+    Главное: список, поиск и мышка не должны ломаться.
   &nbsp;
-4. При missing:
+5. В item списка эфиров сохранить текущую бизнес-логику и визуал:
   &nbsp;
-  - сохранить provider_source_status: "missing"
-  - сохранить provider_error_message
-  - очистить provider.current
-  - **не очищать** provider_history
-  - kinescope_live_event_id оставить как есть до явного recreate/detach, чтобы была понятна привязка к удалённому источнику и был audit trail
+  - название
+  - badge типа Живой / Видео
+  - badge readiness
+  - причина блокировки
+    Меняем только механизм выбора, не правила readiness.
   &nbsp;
-5. При detach обязательно записывать в metadata:
+6. Обязательно проверить и сохранить совместимость с popup переменных в тексте сообщения.
+  После замены selector-а нужно доказать, что:
   &nbsp;
-  - provider_source_status: "draft"
-  - provider_error_message: null
-  - provider_status_code: null
-    Иначе после ручного сброса могут остаться старые причины ошибки.
+  - ввод в textarea работает
+  - popup переменных по [ открывается
+  - поиск переменных работает
+  - выбор переменной мышкой работает
+  - модалка не закрывается
+  - dropdown выбора эфира и popup переменных не конфликтуют по z-index/focus
   &nbsp;
-6. После recreate делать не просто auto-sync, а последовательность:
+7. Проверить dialog.tsx и оставить guard-совместимость с cmdk:
   &nbsp;
-  - создать новый provider event
-  - записать новые top-level id
-  - записать provider.current
-  - затем вызвать sync нового id
-  - только после успешного sync ставить provider_source_status: "ok"
-    Иначе можно получить ложный ok до фактической проверки.
+  - cmdk-item
+  - cmdk-list
+  - data-token-picker
+    Ничего не ломать в уже рабочем token picker.
   &nbsp;
-7. Добавь отдельный guard для пользовательской части:
+8. В BroadcastTemplateDialog не трогать:
   &nbsp;
-  - если live_stream опубликован, но provider_source_status in ("missing","broken")
-  - live-resolve должен возвращать отдельный статус, например source_unavailable
-  - на /live/:slug показывать понятный экран:
-    **«Источник трансляции временно недоступен»**
-    Иначе пользователь попадёт на мёртвую страницу.
+  - getEventReadiness()
+  - getEventTypeLabel()
+  - computedButtonUrl
+  - isValid
+  - сохранение шаблона
+    Эти части менять только если без этого новый selector не работает.
   &nbsp;
-8. Добавь badge статуса источника не только в таблицу эфиров, но и в:
+9. После выбора эфира должно происходить фактически:
   &nbsp;
-  - карточку редактирования эфира
-  - summary блока
-  - selector в BroadcastTemplateDialog
-    Чтобы статус был одинаково виден во всех ключевых точках.
+  - значение отображается в поле
+  - readiness summary обновляется
+  - URL кнопки пересчитывается
+  - если эфир готов и остальные поля заполнены, кнопка сохранения становится рабочей
   &nbsp;
-9. Для BroadcastTemplateDialog.getEventReadiness() зафиксируй порядок проверки:
-  &nbsp;
-  - is_published
-  - scheduled_at для live
-  - kinescope_live_event_id
-  - metadata.provider_source_status
-  - fallback на provider.current
-    То есть provider_source_status должен иметь приоритет над остаточными полями в provider.current.
-  &nbsp;
-10. Добавь proof в DoD:
+10. Нужен runtime-proof именно по этому патчу:
 
 &nbsp;
 
@@ -79,12 +77,17 @@
 
 &nbsp;
 
-- sync существующего источника → ok
-- sync удалённого источника → missing
-- recreate после missing → новый provider id, old id ушёл в provider_history
-- detach → provider cleared, slug/comments/questions сохранились
-- BroadcastTemplateDialog не даёт выбрать missing/broken эфир
-- /live/:slug для missing/broken live-stream показывает controlled error state, а не пустой player
+- открыть BroadcastTemplateDialog
+- выбрать тип Приглашение на эфир
+- кликнуть в поле Эфир
+- ввести поиск
+- найти эфир
+- выбрать мышкой
+- увидеть выбранное значение в поле
+- убедиться, что URL/summary обновились
+- ввести текст сообщения
+- через [ вставить переменную
+- успешно сохранить шаблон
 
 &nbsp;
 
@@ -92,149 +95,124 @@
 
 &nbsp;
 
-11. Recorded flow не трогать вообще:
+11. Этот патч считать blocker. Пока поле выбора эфира не работает мышкой и поиском, PATCH не принимать, даже если readiness и badges отображаются правильно.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
-
-- все новые guards и badges применять только при event_type === "live_stream"
-- для recorded_webinar не использовать provider_source_status как blocker, если есть валидный kinescope_video_id
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Если подрядчик будет менять provider.current, потребовать add-only структуру:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- metadata.provider.current
-- metadata.provider_history[]
-- без удаления старых history entries
-- без перезаписи истории одним объектом
-
-&nbsp;
-
-&nbsp;
-
-План: PATCH F — Proof + Guard (исправление незакрытых дыр PATCH E)
+План: Замена сломанного Select на рабочий Popover+Command в BroadcastTemplateDialog
 
 ## Диагностика
 
-### Что реально работает (runtime-proof собран)
+### Корневая причина
 
-1. **sync_live_event edge function** — корректно возвращает:
-  - `provider_source_status: "ok"`, `status_code: 200` для существующего события
-  - `provider_source_status: "missing"`, `status_code: 404` для несуществующего
-  - Все поля (play_link, rtmp_link, streamkey, stream.id, stream.status) приходят
-2. **Recreate** — работает: в БД есть 2 записи в `provider_history[]`, каждая с `detached_at`, `reason`, `has_streamkey`. Audit event `live_provider_recreated` записывается корректно.
-3. **Audit events** — реально пишутся в `domain_events`:
-  - `live_provider_recreated` (2 записи)
-  - `live_provider_missing` (1 запись)
-4. **Control panel UI** — dual badges, OBS block, кнопки пересоздания/отвязки, confirm dialogs присутствуют.
+Текущий селектор эфира использует Radix `Select` (строки 245-297 в `BroadcastTemplateDialog.tsx`). Radix Select внутри Radix Dialog конфликтует по focus trap и pointer events — dropdown не реагирует на мышь, поиск невозможен, items не кликаются.
 
-### Что НЕ работает / не закрыто
+### Рабочий паттерн
 
-**Баг 1: `provider_source_status` НЕ сохраняется в metadata при sync**
+`OrgFormCombobox.tsx` использует `Popover + Command (cmdk)` — тот же стек, что уже работает в проекте:
 
-- `handleSyncProvider` при `missing` (строки 1390-1406) делает return early, НЕ записывая `provider_source_status` в metadata
-- При `ok` (строки 1436-1450) тоже не пишет `provider_source_status` в merged metadata
-- Следствие: `BroadcastTemplateDialog.getEventReadiness()` не может определить, что источник удалён
+- Popover не конфликтует с Dialog focus trap
+- Command (cmdk) даёт встроенный поиск, навигацию клавиатурой, скролл
+- `onPointerDownOutside` guard в `dialog.tsx` уже защищает от закрытия диалога при клике в cmdk
 
-**Баг 2: `BroadcastTemplateDialog.getEventReadiness()` проверяет только stream/play_link, не проверяет `provider_source_status**`
+### TokenizedRichInput (popup переменных)
 
-- Строки 58-68: если `kinescope_live_event_id` есть и `provider.current` содержит старые данные (play_link, stream_id) — readiness пройдёт как "ok", даже если событие удалено в Kinescope
-- Нужно явно проверять `metadata.provider_source_status`
-
-**Баг 3: После `handleSyncProvider` при missing не обновляется metadata в БД**
-
-- provider.current не очищается и не помечается
-- Следствие: после перезагрузки страницы `providerSourceStatus` сбрасывается, т.к. оно только в React state
-
-**Баг 4: После recreate не вызывается автоматический sync**
-
-- `handleRecreateProvider` создаёт event и сохраняет provider.current, но не вызывает sync для проверки реального состояния
-
-**Баг 5: В таблице эфиров нет badge статуса источника**
-
-- Таблица показывает только platform status, не показывает source status
+Использует портал с `createPortal` и Command. Guard в `dialog.tsx` (строки 39-48) уже обрабатывает `data-token-picker` / `cmdk-item` / `cmdk-list`. После замены Select на Popover+Command конфликта не будет — оба используют один механизм.
 
 ---
 
 ## Изменения
 
-### 1. `handleSyncProvider` — всегда сохранять `provider_source_status` в metadata
+### Файл: `src/components/admin/communication/BroadcastTemplateDialog.tsx`
 
-При **missing**:
+**1. Заменить импорты**
 
-- Записать `provider_source_status: "missing"` в metadata
-- Очистить `provider.current` (чтобы readiness корректно блокировал)
+Убрать:
 
-При **broken**:
-
-- Записать `provider_source_status: "broken"` в metadata
-
-При **ok**:
-
-- Записать `provider_source_status: "ok"` в metadata
-
-### 2. `BroadcastTemplateDialog.getEventReadiness()` — добавить явную проверку `provider_source_status`
-
-```typescript
-// После проверки kinescope_live_event_id:
-const providerStatus = meta?.provider_source_status;
-if (providerStatus === "missing") {
-  reasons.push("Источник трансляции удалён в Kinescope");
-} else if (providerStatus === "broken") {
-  reasons.push("Источник трансляции повреждён");
-} else if (!hasStream && !hasPlayLink) {
-  reasons.push("Источник трансляции повреждён");
-}
+```
+Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 ```
 
-### 3. `handleRecreateProvider` — автоматический sync после создания
+Добавить:
 
-После успешного recreate → вызвать `handleSyncProvider()` для подтверждения состояния. Либо, если kinescope_live_event_id только что записан — делать sync на новый ID.
+```
+Popover, PopoverContent, PopoverTrigger
+Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem
+Check, ChevronsUpDown
+```
 
-### 4. Таблица эфиров — добавить badge источника
+**2. Заменить блок выбора эфира (строки 245-297)**
 
-В `TableRow` для `live_stream` показывать маленький badge:
+Вместо `<Select>` использовать паттерн из `OrgFormCombobox`:
 
-- 🟢 Источник активен (есть kinescope_live_event_id + provider_source_status ok)
-- 🔴 Источник удалён (provider_source_status = missing)
-- 🟡 Источник повреждён (provider_source_status = broken)
-- ⚪ Не создан (нет kinescope_live_event_id)
+```
+Popover (open/onOpenChange)
+  PopoverTrigger → Button с текущим названием эфира или placeholder
+  PopoverContent (z-50, p-0)
+    Command (shouldFilter={false}, ручная фильтрация по title)
+      CommandInput (поиск по названию)
+      CommandList
+        CommandEmpty ("Эфир не найден")
+        CommandGroup
+          CommandItem для каждого эфира:
+            - title
+            - badge типа (Живой / Видео)
+            - badge readiness (✓ Готов / причина блокировки)
+            - disabled items: pointer-events-none + opacity, но видимы
+            - onSelect: setLiveEventId, setOpen(false)
+```
 
-### 5. Detach — проверить сохранение платформенных данных
+**3. Disabled items — видимые, но не выбираемые**
 
-В `handleDetachProvider` уже корректно сохраняются slug/title/access_rules. Добавить явное сохранение `provider_source_status: "draft"` в metadata.
+Для `!readiness.ready`:
+
+- Рендерить как обычный `CommandItem`
+- Добавить `className="opacity-60 pointer-events-none"`
+- НЕ использовать `disabled` prop (он скрывает из навигации)
+- Tooltip с причинами блокировки остаётся
+
+**4. Сохранить Select для "Тип шаблона"**
+
+Select на строках 212-224 (general / webinar_invite) — он вне Popover, работает нормально. Не трогать.
+
+**5. Бизнес-логика без изменений**
+
+- `getEventReadiness()` — без изменений
+- `getEventTypeLabel()` — без изменений
+- `liveEventId` / `setLiveEventId` — без изменений
+- `computedButtonUrl` — без изменений
+- `isValid` — без изменений
+
+---
+
+## Проверка TokenizedRichInput
+
+После замены Select на Popover+Command:
+
+- Оба dropdown (эфир и переменные) используют cmdk
+- Guard в `dialog.tsx` (`onPointerDownOutside`) уже защищает cmdk-элементы
+- Конфликт невозможен — они открываются в разных Popover/Portal
+
+Если token picker всё же конфликтует — проверить `z-index` порталов (Popover эфира vs token picker portal). Token picker уже использует `createPortal(document.body)` с `z-[9999]`.
 
 ---
 
 ## Файлы
 
 
-| Файл                                                             | Изменения                                                                                                                                    |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/pages/admin/AdminLiveEvents.tsx`                            | handleSyncProvider: сохранять provider_source_status в metadata при всех кейсах; handleRecreateProvider: авто-sync; таблица: badge источника |
-| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | getEventReadiness: проверять provider_source_status из metadata                                                                              |
+| Файл                                                             | Изменения                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------- |
+| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Заменить Radix Select на Popover+Command для выбора эфира |
 
 
 ## DoD
 
-1. При sync missing — в metadata записан `provider_source_status: "missing"`, `provider.current` очищен
-2. При sync ok — в metadata записан `provider_source_status: "ok"`
-3. `BroadcastTemplateDialog` блокирует эфир с `provider_source_status: "missing"` или `"broken"` с понятной причиной
-4. После recreate автоматически выполняется sync
-5. В таблице эфиров виден badge статуса источника
-6. После detach `provider_source_status: "draft"` записан в metadata
-7. Recorded flow не затронут (изменения только для `event_type === "live_stream"`)
+1. Поле «Эфир» открывается кликом
+2. Поиск по названию работает
+3. Выбор мышкой и клавиатурой работает
+4. Недоступные эфиры видны с причиной, но не выбираются
+5. После выбора: liveEventId установлен, URL обновлён, шаблон можно сохранить
+6. Token picker (переменные через `[`) работает без конфликтов
+7. Recorded flow и readiness logic не затронуты
