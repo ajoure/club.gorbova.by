@@ -104,6 +104,16 @@ interface LiveEventForm {
   event_type: EventType;
   event_timezone: string;
   kinescope_live_event_id: string;
+  /** Transient provider data from create — persisted on save for new events */
+  _providerDraft?: {
+    live_event_id: string;
+    stream_id?: string;
+    play_link?: string;
+    rtmp_link?: string;
+    streamkey?: string;
+    stream_status?: string;
+    raw_create_response?: any;
+  } | null;
 }
 
 const defaultForm: LiveEventForm = {
@@ -124,6 +134,7 @@ const defaultForm: LiveEventForm = {
   event_type: "recorded_webinar",
   event_timezone: "Europe/Minsk",
   kinescope_live_event_id: "",
+  _providerDraft: null,
 };
 
 const platformStatusLabels: Record<string, string> = {
