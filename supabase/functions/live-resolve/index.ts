@@ -154,81 +154,81 @@ Deno.serve(async (req) => {
       accessValid = true;
     }
 
-    // Try new multi-rule table first (skip if admin already granted)
-    const { data: accessRules } = await supabase
-      .from('live_event_access_rules')
-      .select('product_id, tariff_id')
-      .eq('live_event_id', event.id);
+    if (!accessValid) {
+      // Try new multi-rule table first
+      const { data: accessRules } = await supabase
+        .from('live_event_access_rules')
+        .select('product_id, tariff_id')
+        .eq('live_event_id', event.id);
 
-    if (accessRules && accessRules.length > 0) {
-      // New multi-rule model
-      for (const rule of accessRules) {
-        const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
-        let productOk = false;
-        if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
-          productOk = true;
-        }
-
-        if (productOk && rule.tariff_id) {
-          // Check specific tariff
-          const { data: tariffSub } = await supabase
-            .from('subscriptions_v2')
-            .select('id')
-            .eq('user_id', userId)
-            .eq('product_id', rule.product_id)
-            .eq('tariff_id', rule.tariff_id)
-            .in('status', ['active', 'trial'])
-            .limit(1)
-            .maybeSingle();
-
-          if (!tariffSub) {
-            productOk = false;
-          }
-        }
-
-        if (productOk) {
-          accessValid = true;
-          break; // at least one rule matched
-        }
-      }
-    } else {
-      // Legacy fallback: use access_rule from event
-      const accessRule = event.access_rule as AccessRule;
-
-      if (accessRule.mode === 'all') {
-        accessValid = true;
-      } else {
-        const productId = accessRule.product_id || event.product_id;
-        if (productId) {
-          const snapshot = await resolveEffectiveProductAccess(supabase, userId, productId);
-
+      if (accessRules && accessRules.length > 0) {
+        for (const rule of accessRules) {
+          const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
+          let productOk = false;
           if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
-            accessValid = true;
+            productOk = true;
           }
 
-          if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
+          if (productOk && rule.tariff_id) {
             const { data: tariffSub } = await supabase
               .from('subscriptions_v2')
               .select('id')
               .eq('user_id', userId)
-              .eq('product_id', productId)
-              .eq('tariff_id', accessRule.tariff_id)
+              .eq('product_id', rule.product_id)
+              .eq('tariff_id', rule.tariff_id)
               .in('status', ['active', 'trial'])
               .limit(1)
               .maybeSingle();
 
             if (!tariffSub) {
-              const { data: tariffEnt } = await supabase
-                .from('entitlements')
+              productOk = false;
+            }
+          }
+
+          if (productOk) {
+            accessValid = true;
+            break;
+          }
+        }
+      } else {
+        // Legacy fallback: use access_rule from event
+        const accessRule = event.access_rule as AccessRule;
+
+        if (accessRule.mode === 'all') {
+          accessValid = true;
+        } else {
+          const productId = accessRule.product_id || event.product_id;
+          if (productId) {
+            const snapshot = await resolveEffectiveProductAccess(supabase, userId, productId);
+
+            if (snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > new Date())) {
+              accessValid = true;
+            }
+
+            if (accessValid && accessRule.mode === 'tariff' && accessRule.tariff_id) {
+              const { data: tariffSub } = await supabase
+                .from('subscriptions_v2')
                 .select('id')
                 .eq('user_id', userId)
                 .eq('product_id', productId)
-                .eq('status', 'active')
+                .eq('tariff_id', accessRule.tariff_id)
+                .in('status', ['active', 'trial'])
                 .limit(1)
                 .maybeSingle();
 
-              if (!tariffEnt) {
-                accessValid = false;
+              if (!tariffSub) {
+                const { data: tariffEnt } = await supabase
+                  .from('entitlements')
+                  .select('id')
+                  .eq('user_id', userId)
+                  .eq('product_id', productId)
+                  .eq('status', 'active')
+                  .limit(1)
+                  .maybeSingle();
+
+                if (!tariffEnt) {
+                  accessValid = false;
+                }
               }
             }
           }
