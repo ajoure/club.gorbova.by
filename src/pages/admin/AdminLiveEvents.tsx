@@ -1212,6 +1212,109 @@ export default function AdminLiveEvents() {
                 )}
               </FormSection>
 
+              {/* Section 4.5: Notifications (live_stream only) */}
+              {isLiveStream && (
+                <>
+                  <Separator />
+                  <FormSection title="Уведомления">
+                    <SwitchRow
+                      checked={form.notification_enabled}
+                      onCheckedChange={(v) => setForm({ ...form, notification_enabled: v })}
+                      label="Включить автоматические уведомления"
+                      description="Уведомления будут отправлены пользователям с доступом к эфиру"
+                    />
+
+                    {form.notification_enabled && (
+                      <div className="space-y-4 pl-1">
+                        {/* Template picker */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Шаблон уведомления</Label>
+                          <Select
+                            value={form.notification_template_id}
+                            onValueChange={(v) => setForm({ ...form, notification_template_id: v })}
+                          >
+                            <SelectTrigger className="text-xs">
+                              <SelectValue placeholder="Выберите шаблон" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {broadcastTemplates?.map((t) => (
+                                <SelectItem key={t.id} value={t.id} className="text-xs">
+                                  {t.name} <span className="text-muted-foreground ml-1">({t.template_type})</span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-[10px] text-muted-foreground">
+                            Переменные: {"{{live_event.title}}"}, {"{{live_event.link}}"}, {"{{live_event.start_at_source_tz}}"}
+                          </p>
+                        </div>
+
+                        {/* Channels */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Каналы</Label>
+                          <div className="flex gap-4">
+                            {(["telegram", "email"] as const).map((ch) => (
+                              <label key={ch} className="flex items-center gap-2 text-xs cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={form.notification_channels.includes(ch)}
+                                  onChange={(e) => {
+                                    const channels = e.target.checked
+                                      ? [...form.notification_channels, ch]
+                                      : form.notification_channels.filter(c => c !== ch);
+                                    setForm({ ...form, notification_channels: channels.length > 0 ? channels : [ch] });
+                                  }}
+                                  className="rounded border-input"
+                                />
+                                {ch === "telegram" ? "Telegram" : "Email"}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Offsets */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Когда уведомлять</Label>
+                          <div className="space-y-2">
+                            {form.notification_offsets.map((offset, idx) => (
+                              <label key={idx} className="flex items-center gap-2 text-xs cursor-pointer">
+                                <Switch
+                                  checked={offset.enabled}
+                                  onCheckedChange={(v) => {
+                                    const newOffsets = [...form.notification_offsets];
+                                    newOffsets[idx] = { ...offset, enabled: v };
+                                    setForm({ ...form, notification_offsets: newOffsets });
+                                  }}
+                                  className="scale-75"
+                                />
+                                {offset.label}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Summary */}
+                        <div className="rounded-lg bg-muted/30 p-3 text-xs space-y-1">
+                          <p className="font-medium text-foreground/80">Итого:</p>
+                          <p className="text-muted-foreground">
+                            Шаблон: {broadcastTemplates?.find(t => t.id === form.notification_template_id)?.name || "не выбран"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Каналы: {form.notification_channels.map(c => c === "telegram" ? "Telegram" : "Email").join(", ")}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Сроки: {form.notification_offsets.filter(o => o.enabled).map(o => o.label).join(", ") || "нет"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            Получатели: все пользователи с доступом к эфиру по правилам доступа
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </FormSection>
+                </>
+              )}
+
               <Separator />
 
               {/* Section 5: Publication & Recording */}
