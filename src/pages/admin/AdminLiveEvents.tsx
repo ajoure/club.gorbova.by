@@ -1400,6 +1400,7 @@ function LiveStreamControlPanel({
   const [detachDialogOpen, setDetachDialogOpen] = useState(false);
   const [recreating, setRecreating] = useState(false);
   const [detaching, setDetaching] = useState(false);
+  const autoHealAttemptedRef = useRef(false);
 
   // Get provider data from DB
   const { data: eventData, refetch: refetchProvider } = useQuery({
@@ -1421,17 +1422,32 @@ function LiveStreamControlPanel({
   const lastSync = (eventData?.metadata as any)?.last_provider_sync_at;
   const kinescopeLiveEventId = eventData?.kinescope_live_event_id || form.kinescope_live_event_id;
 
+  // Reset auto-heal flag when editing a different event
+  useEffect(() => {
+    autoHealAttemptedRef.current = false;
+  }, [editingId]);
+
   // Determine provider source status from DB metadata (source of truth)
+  // Auto-heal: if kinescope_live_event_id exists but provider.current is empty, trigger sync once
   useEffect(() => {
     if (!kinescopeLiveEventId) {
       setProviderSourceStatus("draft");
-    } else {
-      const metaStatus = (eventData?.metadata as any)?.provider_source_status as ProviderSourceStatus | undefined;
-      if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
-        setProviderSourceStatus(metaStatus);
-      } else if (providerSourceStatus === "draft") {
-        setProviderSourceStatus("ok");
-      }
+      return;
+    }
+    const meta = eventData?.metadata as any;
+    const metaStatus = meta?.provider_source_status as ProviderSourceStatus | undefined;
+    if (metaStatus && ["ok", "missing", "broken", "draft"].includes(metaStatus)) {
+      setProviderSourceStatus(metaStatus);
+      return;
+    }
+    
+    const hasProviderCurrent = !!meta?.provider?.current?.play_link || !!meta?.provider?.current?.stream_id;
+    if (!hasProviderCurrent && editingId && kinescopeInstanceId && !autoHealAttemptedRef.current && syncStatus !== "syncing") {
+      // Auto-heal: legacy event without provider.current — trigger sync once
+      autoHealAttemptedRef.current = true;
+      handleSyncProvider();
+    } else if (providerSourceStatus === "draft") {
+      setProviderSourceStatus("ok");
     }
   }, [kinescopeLiveEventId, eventData]);
 

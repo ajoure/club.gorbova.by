@@ -86,13 +86,17 @@ function getEventReadiness(event: LiveEventForBroadcast): { ready: boolean; reas
       if (providerStatus === "missing") {
         reasons.push("Источник трансляции удалён в Kinescope");
       } else if (providerStatus === "broken") {
-        reasons.push("Источник трансляции повреждён");
+        reasons.push("Не удалось получить данные OBS");
       } else if (!providerStatus || providerStatus === "ok") {
         const providerCurrent = meta?.provider?.current || meta?.provider || {};
         const hasStream = !!providerCurrent.stream_id || !!providerCurrent.stream_status;
         const hasPlayLink = !!providerCurrent.play_link;
         if (!hasStream && !hasPlayLink) {
-          reasons.push("Источник трансляции повреждён");
+          if (event.kinescope_live_event_id) {
+            reasons.push("Источник ещё не подтверждён — обновите источник в настройках эфира");
+          } else {
+            reasons.push("Не создан источник трансляции");
+          }
         }
       }
     }
