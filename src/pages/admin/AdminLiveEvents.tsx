@@ -2144,6 +2144,43 @@ function LiveStreamControlPanel({
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Instruction block */}
+      <Collapsible>
+        <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full">
+          <ChevronDown className="h-3 w-3" />
+          Инструкция для администратора и ведущего
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-3 space-y-4">
+          <div className="rounded-lg border p-3 space-y-2">
+            <h4 className="text-xs font-semibold text-foreground/80">Для администратора</h4>
+            <ol className="list-decimal pl-4 text-xs text-muted-foreground space-y-1">
+              <li>Создайте эфир, выберите тип «Живой эфир»</li>
+              <li>Выберите папку для трансляций и проект для записи</li>
+              <li>Создайте источник в Kinescope</li>
+              <li>Задайте дату, время, правила доступа</li>
+              <li>Настройте уведомления: шаблон, каналы, сроки</li>
+              <li>Сохраните эфир</li>
+              <li>Опубликуйте эфир</li>
+              <li>Перед стартом проверьте статус источника</li>
+              <li>В момент старта — нажмите «Запустить эфир»</li>
+              <li>После завершения — «Завершить эфир» → «Обновить источник»</li>
+            </ol>
+          </div>
+          <div className="rounded-lg border p-3 space-y-2">
+            <h4 className="text-xs font-semibold text-foreground/80">Для ведущего / преподавателя</h4>
+            <ol className="list-decimal pl-4 text-xs text-muted-foreground space-y-1">
+              <li>Откройте карточку эфира в админке</li>
+              <li>Скопируйте RTMP сервер и Ключ трансляции</li>
+              <li>В OBS: Настройки → Вещание → Сервис: Пользовательский</li>
+              <li>Вставьте RTMP сервер и ключ трансляции</li>
+              <li>Запустите трансляцию в OBS</li>
+              <li>Ведите эфир</li>
+              <li>По окончании остановите OBS, со стороны админки — завершить эфир и синхронизировать</li>
+            </ol>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
       {/* Comments & Questions tabs */}
       {editingId && (
         <>
