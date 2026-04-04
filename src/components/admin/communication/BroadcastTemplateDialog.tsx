@@ -132,6 +132,8 @@ export function BroadcastTemplateDialog({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBodyHtml, setEmailBodyHtml] = useState("");
   const [liveEventId, setLiveEventId] = useState("");
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
 
   // Fetch ALL live events (not only published) for readiness display
   const { data: liveEvents } = useQuery({
