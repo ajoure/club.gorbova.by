@@ -322,7 +322,21 @@ export default function AdminLiveEvents() {
     enabled: !!kinescopeInstanceId && isLiveStream,
   });
 
-  // --- Validation ---
+  // Broadcast templates for notification picker
+  const { data: broadcastTemplates } = useQuery({
+    queryKey: ["broadcast-templates-for-notifications"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("broadcast_templates")
+        .select("id, name, template_type, channel")
+        .in("template_type", ["webinar_invite", "general"])
+        .order("name");
+      return data || [];
+    },
+    enabled: dialogOpen,
+  });
+
+
   const validationItems = useMemo(() => {
     const items: Array<{ key: string; label: string; ok: boolean; blocker: boolean }> = [
       { key: "title", label: "Название заполнено", ok: !!form.title.trim(), blocker: true },
