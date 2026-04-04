@@ -38,19 +38,44 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       onPointerDownOutside={(e) => {
-        // Guard: don't dismiss dialog when clicking inside token picker dropdown
         const target = e.target as HTMLElement | null;
         const composedPath = (e as any).composedPath?.() as EventTarget[] | undefined;
         const isTokenPicker = target?.closest?.('[data-token-picker]') ||
           target?.closest?.('[cmdk-item]') ||
           target?.closest?.('[cmdk-list]') ||
+          target?.closest?.('[cmdk-input]') ||
+          target?.closest?.('[cmdk-root]') ||
           composedPath?.some((el: any) => el instanceof HTMLElement && (
-            el.hasAttribute?.('data-token-picker') || el.hasAttribute?.('cmdk-item') || el.hasAttribute?.('cmdk-list')
+            el.hasAttribute?.('data-token-picker') || el.hasAttribute?.('cmdk-item') || el.hasAttribute?.('cmdk-list') || el.hasAttribute?.('cmdk-input') || el.hasAttribute?.('cmdk-root')
           ));
         if (isTokenPicker) {
           e.preventDefault();
         }
         props.onPointerDownOutside?.(e);
+      }}
+      onFocusOutside={(e) => {
+        const target = e.target as HTMLElement | null;
+        const isTokenPicker = target?.closest?.('[data-token-picker]') ||
+          target?.closest?.('[cmdk-item]') ||
+          target?.closest?.('[cmdk-list]') ||
+          target?.closest?.('[cmdk-input]') ||
+          target?.closest?.('[cmdk-root]');
+        if (isTokenPicker) {
+          e.preventDefault();
+        }
+        props.onFocusOutside?.(e);
+      }}
+      onInteractOutside={(e) => {
+        const target = e.target as HTMLElement | null;
+        const isTokenPicker = target?.closest?.('[data-token-picker]') ||
+          target?.closest?.('[cmdk-item]') ||
+          target?.closest?.('[cmdk-list]') ||
+          target?.closest?.('[cmdk-input]') ||
+          target?.closest?.('[cmdk-root]');
+        if (isTokenPicker) {
+          e.preventDefault();
+        }
+        props.onInteractOutside?.(e);
       }}
       className={cn(
         // Default centered dialog

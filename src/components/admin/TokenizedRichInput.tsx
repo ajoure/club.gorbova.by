@@ -603,10 +603,17 @@ export function TokenizedRichInput({
         // Check if focus went to search input inside dropdown (may mount after blur fires)
         if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
         // Check cmdk elements (used by token picker Command)
-        if ((active as HTMLElement)?.closest?.('[cmdk-item]') || (active as HTMLElement)?.closest?.('[cmdk-list]') || (active as HTMLElement)?.closest?.('[cmdk-input]')) return;
-        if (!editor.isFocused && pickerOpenRef.current) {
-          setPickerOpen(false);
-        }
+        if ((active as HTMLElement)?.closest?.('[cmdk-item]') || (active as HTMLElement)?.closest?.('[cmdk-list]') || (active as HTMLElement)?.closest?.('[cmdk-input]') || (active as HTMLElement)?.closest?.('[cmdk-root]')) return;
+        // Extra safety: re-check after another tick in case portal mount is delayed
+        setTimeout(() => {
+          const activeAfter = document.activeElement;
+          if (dropdownRef.current?.contains(activeAfter)) return;
+          if ((activeAfter as HTMLElement)?.closest?.('[data-token-picker]')) return;
+          if ((activeAfter as HTMLElement)?.closest?.('[cmdk-item]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-list]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-input]') || (activeAfter as HTMLElement)?.closest?.('[cmdk-root]')) return;
+          if (!editor.isFocused && pickerOpenRef.current) {
+            setPickerOpen(false);
+          }
+        }, 100);
       }, 300);
     };
     editor.on("blur", handler);
