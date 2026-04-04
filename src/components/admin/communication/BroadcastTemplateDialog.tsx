@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
@@ -24,11 +24,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { MessageCircle, Mail, Loader2, Save, Video, Info, Radio, AlertCircle } from "lucide-react";
+import { MessageCircle, Mail, Loader2, Save, Video, Info, Radio, AlertCircle, Check, ChevronsUpDown } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { BroadcastTemplate } from "./BroadcastTemplateCard";
 
 interface LiveEventForBroadcast {
@@ -118,6 +132,8 @@ export function BroadcastTemplateDialog({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBodyHtml, setEmailBodyHtml] = useState("");
   const [liveEventId, setLiveEventId] = useState("");
+  const [eventPickerOpen, setEventPickerOpen] = useState(false);
+  const [eventSearch, setEventSearch] = useState("");
 
   // Fetch ALL live events (not only published) for readiness display
   const { data: liveEvents } = useQuery({
@@ -131,6 +147,13 @@ export function BroadcastTemplateDialog({
     },
     enabled: open,
   });
+
+  const filteredEvents = useMemo(() => {
+    if (!liveEvents) return [];
+    if (!eventSearch.trim()) return liveEvents;
+    const q = eventSearch.toLowerCase();
+    return liveEvents.filter((e) => e.title?.toLowerCase().includes(q));
+  }, [liveEvents, eventSearch]);
 
   const selectedEvent = liveEvents?.find((e) => e.id === liveEventId);
   const selectedReadiness = selectedEvent ? getEventReadiness(selectedEvent) : null;
@@ -242,59 +265,82 @@ export function BroadcastTemplateDialog({
                   </Button>
                 </div>
               ) : (
-                <Select value={liveEventId} onValueChange={setLiveEventId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите эфир" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {liveEvents?.map((e) => {
-                      const readiness = getEventReadiness(e);
-                      return (
-                        <SelectItem
-                          key={e.id}
-                          value={e.id}
-                          disabled={!readiness.ready}
-                          className="flex items-center"
-                        >
-                          <div className="flex items-center gap-2 w-full">
-                            <span className="truncate flex-1">{e.title}</span>
-                            <Badge
-                              variant={e.event_type === "live_stream" ? "default" : "secondary"}
-                              className="text-[9px] shrink-0 ml-1"
-                            >
-                              {e.event_type === "live_stream" ? (
-                                <><Radio className="h-2.5 w-2.5 mr-0.5" />Живой</>
-                              ) : (
-                                <><Video className="h-2.5 w-2.5 mr-0.5" />Видео</>
-                              )}
-                            </Badge>
-                            {readiness.ready ? (
-                              <Badge variant="outline" className="text-[9px] text-primary border-primary/30 shrink-0">
-                                ✓ Готов
-                              </Badge>
-                            ) : (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0 cursor-help">
+                <Popover open={eventPickerOpen} onOpenChange={setEventPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={eventPickerOpen}
+                      className={cn(
+                        "w-full justify-between font-normal h-9 text-sm",
+                        !liveEventId && "text-muted-foreground"
+                      )}
+                    >
+                      {selectedEvent?.title || "Выберите эфир"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[460px] p-0" align="start">
+                    <Command shouldFilter={false}>
+                      <CommandInput
+                        placeholder="Поиск по названию..."
+                        value={eventSearch}
+                        onValueChange={setEventSearch}
+                      />
+                      <CommandList>
+                        <CommandEmpty>Эфир не найден</CommandEmpty>
+                        <CommandGroup>
+                          {filteredEvents.map((e) => {
+                            const readiness = getEventReadiness(e);
+                            return (
+                              <CommandItem
+                                key={e.id}
+                                value={e.id}
+                                onSelect={() => {
+                                  if (!readiness.ready) return;
+                                  setLiveEventId(e.id);
+                                  setEventPickerOpen(false);
+                                  setEventSearch("");
+                                }}
+                                className={cn(
+                                  !readiness.ready && "opacity-60 cursor-not-allowed"
+                                )}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4 shrink-0",
+                                    liveEventId === e.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                <span className="truncate flex-1 mr-2">{e.title}</span>
+                                <Badge
+                                  variant={e.event_type === "live_stream" ? "default" : "secondary"}
+                                  className="text-[9px] shrink-0 ml-1"
+                                >
+                                  {e.event_type === "live_stream" ? (
+                                    <><Radio className="h-2.5 w-2.5 mr-0.5" />Живой</>
+                                  ) : (
+                                    <><Video className="h-2.5 w-2.5 mr-0.5" />Видео</>
+                                  )}
+                                </Badge>
+                                {readiness.ready ? (
+                                  <Badge variant="outline" className="text-[9px] text-primary border-primary/30 shrink-0">
+                                    ✓ Готов
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-[9px] text-muted-foreground shrink-0">
                                     <AlertCircle className="h-2.5 w-2.5 mr-0.5" />
                                     {readiness.label}
                                   </Badge>
-                                </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="text-xs space-y-0.5">
-                                      {readiness.reasons.map((r, i) => (
-                                        <p key={i}>• {r}</p>
-                                      ))}
-                                    </div>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                          </div>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                                )}
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               )}
 
               {selectedEvent && (
