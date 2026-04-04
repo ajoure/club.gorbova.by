@@ -315,7 +315,8 @@ export default function LiveEvent() {
 
   // state === "live" — show player + comments/questions
   const eventId = data?.event_id;
-  const isReplay = data?.event_status === "ended" && data?.replay_enabled;
+  const isReplay = data?.platform_status === "replay_available" || 
+    (data?.event_status === "ended" && data?.replay_enabled);
 
   return (
     <div className="min-h-screen bg-background">
