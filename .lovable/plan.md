@@ -2,74 +2,133 @@
 
 &nbsp;
 
-1. Для поля **«Эфир»** в BroadcastTemplateDialog полностью убрать текущий Radix Select.
-  Не пытаться его чинить локальными хаками. Он конфликтует с Dialog по focus/pointer events и уже доказано сломан.
-2. Вместо него **полностью переиспользовать рабочий паттерн Popover + Command** по образцу из OrgFormCombobox.tsx.
-  Нужен именно reuse существующего боевого решения проекта:
+1. **Не переносить выбор эфира из шаблона в отдельный будущий flow без add-only mapping.**
+  Текущий сломанный picker надо починить сейчас, но архитектурно шаблон действительно должен быть **переиспользуемым**.
+  Поэтому делаем add-only в 2 шага:
   &nbsp;
-  - Popover
-  - Command
-  - CommandInput
-  - CommandList
-  - CommandItem
+  - **Шаг A:** срочно чинить текущий выбор эфира, чтобы функционал заработал без регресса.
+  - **Шаг B:** добавить новую правильную модель: шаблон webinar_invite может существовать **без live_event_id**, а привязка эфира происходит при запуске конкретной рассылки.
+    Ничего не ломать в текущих данных. Старый режим с live_event_id не удалять сразу, а пометить как legacy-compatible.
   &nbsp;
-3. Блок выбора эфира переписать так:
+2. **OBS-данные — подтвердить и исправить source of truth.**
+  Внести явный PATCH:
   &nbsp;
-  - trigger-кнопка с текущим значением или placeholder Выберите эфир
-  - внутри PopoverContent поиск по названию
-  - список результатов с нормальным hover, scroll, keyboard navigation
-  - выбор item по мыши и Enter
-  - после выбора: setLiveEventId(...), закрытие popover, мгновенный пересчёт computedButtonUrl и readiness
+  - при create live event всегда сохранять provider-данные в **едином каноническом формате**:
+    metadata.provider.current
+  - больше нигде не писать напрямую в metadata.provider без current
+  - reader и writer должны читать/писать одинаковую структуру
+  - после create делать **auto-sync** и только потом показывать control panel как “источник готов”
+    DoD:
+  - после создания эфира сразу видны play_link, rtmp_link, streamkey
+  - provider_source_status = "ok"
+  - last_provider_sync_at заполнен
   &nbsp;
-4. Для **неготовых эфиров** не использовать сломанный disabled у CommandItem, если он ломает interaction.
-  Разрешаю два варианта, но итог должен быть UX-рабочим:
+3. **Починить [ внутри Dialog не кастомной логикой “примерно”, а через reuse рабочего решения из быстрых рассылок.**
+  Не изобретать новый blur/focus hack, пока не сделан diff-discovery:
   &nbsp;
-  - либо item визуально disabled и не выбирается через onSelect
-  - либо item выбирается только для просмотра причин, но сохранение шаблона блокируется
-    Главное: список, поиск и мышка не должны ломаться.
-  &nbsp;
-5. В item списка эфиров сохранить текущую бизнес-логику и визуал:
-  &nbsp;
-  - название
-  - badge типа Живой / Видео
-  - badge readiness
-  - причина блокировки
-    Меняем только механизм выбора, не правила readiness.
-  &nbsp;
-6. Обязательно проверить и сохранить совместимость с popup переменных в тексте сообщения.
-  После замены selector-а нужно доказать, что:
-  &nbsp;
-  - ввод в textarea работает
-  - popup переменных по [ открывается
-  - поиск переменных работает
-  - выбор переменной мышкой работает
+  - сравнить **рабочий** сценарий из “Быстрая рассылка”
+  - сравнить **нерабочий** сценарий из BroadcastTemplateDialog
+  - зафиксировать точную разницу по:
+    &nbsp;
+    - portal/container
+    - focus trap
+    - blur timeout
+    - z-index
+    - event listeners
+    - mount timing
+      Затем перенести **тот же рабочий паттерн**, а не частичную имитацию.
+      DoD:
+    &nbsp;
+  - в BroadcastTemplateDialog по [ picker открывается
+  - поиск работает
+  - выбор мышкой работает
   - модалка не закрывается
-  - dropdown выбора эфира и popup переменных не конфликтуют по z-index/focus
+  - textarea сохраняет фокус корректно после вставки
   &nbsp;
-7. Проверить dialog.tsx и оставить guard-совместимость с cmdk:
+4. **По шаблонам приглашений — зафиксировать правильную доменную модель.**
+  Да, логика должна быть такой:
   &nbsp;
-  - cmdk-item
-  - cmdk-list
-  - data-token-picker
-    Ничего не ломать в уже рабочем token picker.
+  - **шаблон** = постоянный сценарий приглашения
+  - **эфир** = конкретное событие
+  - **рассылка** = применение шаблона к конкретному эфиру и аудитории
+    Значит нужно добавить сущностное правило:
+  - broadcast_templates.webinar_invite не обязан иметь live_event_id
+  - live_event_id выбирается на этапе **создания/запуска рассылки**, а не на этапе создания шаблона
+    Но это делать add-only, без немедленного удаления текущего поля.
   &nbsp;
-8. В BroadcastTemplateDialog не трогать:
+5. **Сейчас не убирать picker эфира из BroadcastTemplateDialog, пока не добавлен новый экран/шаг применения шаблона.**
+  Иначе получится провал по UX.
+  Нужно явно сделать transitional model:
   &nbsp;
-  - getEventReadiness()
-  - getEventTypeLabel()
-  - computedButtonUrl
-  - isValid
-  - сохранение шаблона
-    Эти части менять только если без этого новый selector не работает.
+  - текущий picker эфира — починить
+  - добавить новый preferred flow “создать рассылку из шаблона → выбрать эфир”
+  - только после runtime-proof нового flow можно переводить старый режим в deprecated
   &nbsp;
-9. После выбора эфира должно происходить фактически:
+6. **Нужен отдельный PATCH на “Применить шаблон к эфиру”.**
+  Добавить в раздел рассылок:
   &nbsp;
-  - значение отображается в поле
-  - readiness summary обновляется
-  - URL кнопки пересчитывается
-  - если эфир готов и остальные поля заполнены, кнопка сохранения становится рабочей
+  - выбор шаблона
+  - если template_type = webinar_invite → обязательный шаг выбора эфира
+  - после выбора эфира автоматически подставляются:
+    &nbsp;
+    - platform URL
+    - дата/время эфира
+    - timezone-переменные
+    &nbsp;
+  - затем выбор аудитории / запуск / планирование
+    Это и есть правильное место привязки эфира.
   &nbsp;
-10. Нужен runtime-proof именно по этому патчу:
+7. **Readiness переносим с уровня шаблона на уровень рассылки.**
+  В шаблоне проверять только валидность самого шаблона:
+  &nbsp;
+  - name
+  - channel
+  - текст / subject / body
+    А readiness конкретного эфира проверять уже в момент применения шаблона:
+  - опубликован ли эфир
+  - есть ли источник
+  - не broken/missing ли provider
+  - задана ли дата, если нужна
+  &nbsp;
+8. **Для live_stream добавить guard: нельзя строить приглашение на эфир с неготовым источником.**
+  Даже если шаблон создан, при выборе эфира в flow создания рассылки система должна блокировать эфир с:
+  &nbsp;
+  - provider_source_status = missing
+  - provider_source_status = broken
+  - kinescope_live_event_id IS NULL
+    И показывать конкретную причину, а не общий disabled.
+  &nbsp;
+9. **По OBS и преподавателю — добавить явный режим использования.**
+  В админке для live event должен быть отдельный блок:
+  &nbsp;
+  - “Для ведущего”
+  - copy-friendly OBS данные
+  - кнопка копирования stream key
+  - статус источника
+  - дата/время эфира
+  - ссылка на платформенный /live/:slug для проверки viewer-side
+    Не требовать от преподавателя идти в Kinescope, если все необходимые данные уже есть в админке.
+  &nbsp;
+10. **Нужен proof именно по двум сценариям после фикса.**
+  Сценарий 1 — live source:
+  &nbsp;
+  - создать live event
+  - увидеть OBS данные
+  - выполнить auto-sync
+  - source status = ok
+  &nbsp;
+  Сценарий 2 — webinar invite template:
+  &nbsp;
+  - открыть BroadcastTemplateDialog
+  - по [ открыть picker переменных
+  - ввести текст
+  - сохранить шаблон без привязки к конкретному эфиру
+  - затем в flow создания рассылки выбрать этот шаблон
+  - выбрать эфир
+  - увидеть пересчитанный URL и readiness
+  &nbsp;
+11. **Не принимать PATCH, если сделан только перенос логики без работающего UX.**
+  Критерий приёмки:
 
 &nbsp;
 
@@ -77,17 +136,11 @@
 
 &nbsp;
 
-- открыть BroadcastTemplateDialog
-- выбрать тип Приглашение на эфир
-- кликнуть в поле Эфир
-- ввести поиск
-- найти эфир
-- выбрать мышкой
-- увидеть выбранное значение в поле
-- убедиться, что URL/summary обновились
-- ввести текст сообщения
-- через [ вставить переменную
-- успешно сохранить шаблон
+- OBS данные появляются сразу после create
+- [ работает в модалке
+- шаблон приглашения можно создать без цирка с публикацией/эфиром
+- конкретный эфир выбирается уже при создании рассылки
+- пользовательский путь стал проще, а не сложнее
 
 &nbsp;
 
@@ -95,124 +148,133 @@
 
 &nbsp;
 
-11. Этот патч считать blocker. Пока поле выбора эфира не работает мышкой и поиском, PATCH не принимать, даже если readiness и badges отображаются правильно.
+12. **Сохранить совместимость со старыми шаблонами.**
+  Если в БД уже есть webinar_invite с live_event_id, новый flow обязан их читать и использовать как legacy-case, без потери данных.
 
 &nbsp;
 
 &nbsp;
 
-План: Замена сломанного Select на рабочий Popover+Command в BroadcastTemplateDialog
+План: Исправление трёх багов — OBS данные, token picker `[`, логика шаблонов
 
 ## Диагностика
 
-### Корневая причина
+### Баг 1: OBS данные не появляются для "живой тест"
 
-Текущий селектор эфира использует Radix `Select` (строки 245-297 в `BroadcastTemplateDialog.tsx`). Radix Select внутри Radix Dialog конфликтует по focus trap и pointer events — dropdown не реагирует на мышь, поиск невозможен, items не кликаются.
+**Root cause**: При создании live event в Kinescope (строки 404-428) provider-данные сохраняются в `metadata.provider` напрямую (без `.current`):
 
-### Рабочий паттерн
+```
+provider: { live_event_id, stream_id, play_link, rtmp_link, streamkey, ... }
+```
 
-`OrgFormCombobox.tsx` использует `Popover + Command (cmdk)` — тот же стек, что уже работает в проекте:
+Но при чтении (строка 1374) код ищет `metadata.provider.current` первым:
 
-- Popover не конфликтует с Dialog focus trap
-- Command (cmdk) даёт встроенный поиск, навигацию клавиатурой, скролл
-- `onPointerDownOutside` guard в `dialog.tsx` уже защищает от закрытия диалога при клике в cmdk
+```
+const providerCurrent = metadata?.provider?.current || metadata?.provider || {};
+```
 
-### TokenizedRichInput (popup переменных)
+Для эфира "живой тест" в БД metadata содержит ТОЛЬКО `kinescope_folder_id` и `kinescope_project_id` — блока `provider` нет вообще. Это значит, что при создании эфира данные не сохранились (возможно, `editingId` был пуст в момент создания — создание шло до первого save).
 
-Использует портал с `createPortal` и Command. Guard в `dialog.tsx` (строки 39-48) уже обрабатывает `data-token-picker` / `cmdk-item` / `cmdk-list`. После замены Select на Popover+Command конфликта не будет — оба используют один механизм.
+**Дополнительно**: После PATCH E/F `handleRecreateProvider` пишет в `provider.current`, но `handleCreateLiveEvent` (строка 411) пишет напрямую в `provider` без `.current`. Несогласованность.
+
+### Баг 2: Token picker `[` не работает в BroadcastTemplateDialog
+
+**Root cause**: TokenizedRichInput использует `createPortal(document.body)` для dropdown (строка 912). Bracket plugin (строка 129) перехватывает `[` и через 300ms вызывает `onOpen`. Guard в `dialog.tsx` (строки 40-52) защищает от закрытия при клике на `[data-token-picker]` / `[cmdk-item]`.
+
+Проблема: при открытии picker внутри Dialog, фокус уходит из TipTap editor → срабатывает `blur` handler (строки 597-610), который через 150ms закрывает picker. В быстрых рассылках (BroadcastsTabContent) TokenizedRichInput НЕ внутри Dialog — нет focus trap, поэтому работает.
+
+**Решение**: В blur handler нужно проверять, попал ли фокус в dropdown ИЛИ в searchInput внутри dropdown. Сейчас проверка `dropdownRef.current?.contains(active)` может не срабатывать, если `searchInputRef` ещё не смонтирован к моменту blur check (300ms delay от `[` + 150ms blur timeout = гонка).
+
+### Баг 3: Неправильная логика шаблонов приглашений
+
+**Суть жалобы пользователя**: Сейчас шаблон привязывается к конкретному эфиру при создании. Пользователь хочет наоборот: шаблон — это переиспользуемый паттерн ("Эфиры по четвергам"), а привязка к конкретному эфиру происходит при ИСПОЛЬЗОВАНИИ шаблона (создании рассылки). Тогда один шаблон можно применять к разным эфирам.
 
 ---
 
 ## Изменения
 
-### Файл: `src/components/admin/communication/BroadcastTemplateDialog.tsx`
+### 1. Исправить сохранение provider-данных при создании (`AdminLiveEvents.tsx`)
 
-**1. Заменить импорты**
+В `handleCreateLiveEvent` (строки 411-419) писать в `metadata.provider.current`, а не в `metadata.provider`:
 
-Убрать:
-
-```
-Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-```
-
-Добавить:
-
-```
-Popover, PopoverContent, PopoverTrigger
-Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem
-Check, ChevronsUpDown
-```
-
-**2. Заменить блок выбора эфира (строки 245-297)**
-
-Вместо `<Select>` использовать паттерн из `OrgFormCombobox`:
-
-```
-Popover (open/onOpenChange)
-  PopoverTrigger → Button с текущим названием эфира или placeholder
-  PopoverContent (z-50, p-0)
-    Command (shouldFilter={false}, ручная фильтрация по title)
-      CommandInput (поиск по названию)
-      CommandList
-        CommandEmpty ("Эфир не найден")
-        CommandGroup
-          CommandItem для каждого эфира:
-            - title
-            - badge типа (Живой / Видео)
-            - badge readiness (✓ Готов / причина блокировки)
-            - disabled items: pointer-events-none + opacity, но видимы
-            - onSelect: setLiveEventId, setOpen(false)
+```typescript
+provider: {
+  ...(existingMeta.provider || {}),
+  current: {
+    live_event_id: eventId,
+    stream_id: streamId,
+    play_link: playLink,
+    rtmp_link: rtmpLink,
+    streamkey: streamkey,
+    stream_status: streamStatus,
+  },
+},
+provider_source_status: "ok",
+last_provider_sync_at: new Date().toISOString(),
 ```
 
-**3. Disabled items — видимые, но не выбираемые**
+Также добавить авто-sync после создания для подтверждения.
 
-Для `!readiness.ready`:
+### 2. Исправить token picker внутри Dialog (`TokenizedRichInput.tsx`)
 
-- Рендерить как обычный `CommandItem`
-- Добавить `className="opacity-60 pointer-events-none"`
-- НЕ использовать `disabled` prop (он скрывает из навигации)
-- Tooltip с причинами блокировки остаётся
+В blur handler (строки 597-610) увеличить таймаут и добавить проверку на `searchInputRef`:
 
-**4. Сохранить Select для "Тип шаблона"**
+```typescript
+const handler = () => {
+  setTimeout(() => {
+    const active = document.activeElement;
+    if (dropdownRef.current?.contains(active)) return;
+    // Also check if focus went to search input (may mount after blur fires)
+    if (searchInputRef.current?.contains(active as Node)) return;
+    // Check data-token-picker attribute on active element or its parents
+    if ((active as HTMLElement)?.closest?.('[data-token-picker]')) return;
+    if (!editor.isFocused && pickerOpenRef.current) {
+      setPickerOpen(false);
+    }
+  }, 250); // increase from 150 to 250 to allow portal mount
+};
+```
 
-Select на строках 212-224 (general / webinar_invite) — он вне Popover, работает нормально. Не трогать.
+### 3. Переделать логику шаблонов: отвязать эфир от шаблона (`BroadcastTemplateDialog.tsx`)
 
-**5. Бизнес-логика без изменений**
+**Новая концепция**:
 
-- `getEventReadiness()` — без изменений
-- `getEventTypeLabel()` — без изменений
-- `liveEventId` / `setLiveEventId` — без изменений
-- `computedButtonUrl` — без изменений
-- `isValid` — без изменений
+- Шаблон типа `webinar_invite` больше НЕ привязывается к конкретному эфиру при создании
+- `live_event_id` убирается из шаблона
+- Вместо этого при ИСПОЛЬЗОВАНИИ шаблона (создание рассылки из шаблона) пользователь выбирает эфир
+- Popover + Command picker эфира переносится из BroadcastTemplateDialog в экран создания рассылки из шаблона
 
----
+**В BroadcastTemplateDialog**:
 
-## Проверка TokenizedRichInput
+- Убрать весь блок выбора эфира (строки 250-378)
+- Убрать `liveEventId`, `eventPickerOpen`, `eventSearch`, `filteredEvents`, `selectedEvent`, `selectedReadiness`, `computedButtonUrl`
+- Убрать `getEventReadiness`, `getEventTypeLabel`, query `broadcast-live-events-all`
+- `isValid` упрощается: `name.trim() && (telegram text || email fields)`
+- Шаблон хранит только: name, channel, template_type, message_text, button_text (без URL для webinar_invite — URL вычисляется при использовании)
 
-После замены Select на Popover+Command:
+**В BroadcastsTabContent** (или новом flow "Использовать шаблон"):
 
-- Оба dropdown (эфир и переменные) используют cmdk
-- Guard в `dialog.tsx` (`onPointerDownOutside`) уже защищает cmdk-элементы
-- Конфликт невозможен — они открываются в разных Popover/Portal
-
-Если token picker всё же конфликтует — проверить `z-index` порталов (Popover эфира vs token picker portal). Token picker уже использует `createPortal(document.body)` с `z-[9999]`.
+- При выборе шаблона типа `webinar_invite` для рассылки → показать picker эфира
+- URL кнопки вычисляется из выбранного эфира
+- Readiness проверяется здесь, а не в шаблоне
 
 ---
 
 ## Файлы
 
 
-| Файл                                                             | Изменения                                                 |
-| ---------------------------------------------------------------- | --------------------------------------------------------- |
-| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Заменить Radix Select на Popover+Command для выбора эфира |
+| Файл                                                             | Изменения                                                                         |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `src/pages/admin/AdminLiveEvents.tsx`                            | handleCreateLiveEvent: писать в provider.current, добавить provider_source_status |
+| `src/components/admin/TokenizedRichInput.tsx`                    | blur handler: расширить проверки, увеличить таймаут                               |
+| `src/components/admin/communication/BroadcastTemplateDialog.tsx` | Убрать привязку эфира, упростить до шаблона-паттерна                              |
+| `src/components/admin/communication/BroadcastsTabContent.tsx`    | Добавить выбор эфира при использовании шаблона webinar_invite                     |
 
 
 ## DoD
 
-1. Поле «Эфир» открывается кликом
-2. Поиск по названию работает
-3. Выбор мышкой и клавиатурой работает
-4. Недоступные эфиры видны с причиной, но не выбираются
-5. После выбора: liveEventId установлен, URL обновлён, шаблон можно сохранить
-6. Token picker (переменные через `[`) работает без конфликтов
-7. Recorded flow и readiness logic не затронуты
+1. После создания live event в Kinescope OBS-данные (play_link, rtmp, streamkey) видны в control panel
+2. Token picker `[` работает внутри Dialog (BroadcastTemplateDialog)
+3. Шаблон webinar_invite создаётся без привязки к конкретному эфиру
+4. При использовании шаблона для рассылки — выбор эфира происходит на этапе создания рассылки
+5. Recorded flow не затронут
