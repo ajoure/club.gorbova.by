@@ -181,11 +181,15 @@ export function BroadcastSendDialog({
 
   // Initialize selectedEventId from legacy template.live_event_id
   // Reset when dialog opens/template changes
-  useState(() => {
-    if (template?.live_event_id && isWebinar) {
-      setSelectedEventId(template.live_event_id);
-    }
-  });
+  // Using a ref-like pattern to avoid extra effect
+  const templateId = template?.id;
+  const legacyEventId = template?.live_event_id;
+  const [lastTemplateId, setLastTemplateId] = useState("");
+  if (templateId && templateId !== lastTemplateId) {
+    setLastTemplateId(templateId);
+    setSelectedEventId(legacyEventId || "");
+    setEventSearch("");
+  }
 
   // Fetch products
   const { data: products } = useQuery({
