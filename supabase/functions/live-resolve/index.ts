@@ -142,10 +142,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. Canonical access check — multi-rule model with legacy fallback
+    // 5. Canonical access check — admin bypass + multi-rule model with legacy fallback
     let accessValid = false;
 
-    // Try new multi-rule table first
+    // Admin bypass — admins and super_admins get unconditional access
+    const { data: isAdmin } = await supabase.rpc('has_any_role_v2', {
+      _user_id: userId,
+      _role_codes: ['admin', 'super_admin'],
+    });
+    if (isAdmin === true) {
+      accessValid = true;
+    }
+
+    // Try new multi-rule table first (skip if admin already granted)
     const { data: accessRules } = await supabase
       .from('live_event_access_rules')
       .select('product_id, tariff_id')
