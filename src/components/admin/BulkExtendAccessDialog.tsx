@@ -97,7 +97,7 @@ export function BulkExtendAccessDialog({
       const userName = profile?.full_name || profile?.email || "—";
       const productName = product?.name || "—";
 
-      // Find subscription candidate
+      // Find subscription candidate — use the sub's own joined data
       const sub = subsData?.find(
         s => s.user_id === order.user_id && s.product_id === order.product_id
       ) || null;
@@ -108,10 +108,18 @@ export function BulkExtendAccessDialog({
         : new Date();
       const newEnd = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
 
-      // Use unified predicate
+      // Use unified predicate — pass sub with its own joined products_v2/tariffs
+      const subForCheck = sub ? {
+        status: sub.status,
+        access_end_at: sub.access_end_at,
+        product_id: sub.product_id,
+        products_v2: (sub as any).products_v2 || null,
+        tariffs: (sub as any).tariffs || null,
+      } : null;
+
       const check = checkExtendEligibility(
         order as any,
-        sub ? { ...sub, products_v2: product, tariffs: null } : null,
+        subForCheck,
         productsWithRules,
         newEnd,
       );
