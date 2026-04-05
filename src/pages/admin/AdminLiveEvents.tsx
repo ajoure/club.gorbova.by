@@ -57,6 +57,7 @@ import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/adm
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { DomainEventService } from "@/lib/domain-events";
+import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
@@ -192,6 +193,7 @@ export default function AdminLiveEvents() {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
   const [creatingLiveEvent, setCreatingLiveEvent] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const isLiveStream = form.event_type === "live_stream";
 
@@ -805,11 +807,17 @@ export default function AdminLiveEvents() {
             </h2>
             <p className="text-sm text-muted-foreground">Управление живыми эфирами и автовебинарами</p>
           </div>
-          <Button onClick={handleCreate} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Создать эфир
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={handleCreate} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Создать эфир
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => setHelpOpen(true)} title="Справка">
+              <HelpCircle className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
+        <LiveEventsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
 
         {isLoading ? (
           <div className="flex justify-center py-8">

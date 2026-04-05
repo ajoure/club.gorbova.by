@@ -86,6 +86,12 @@ export const SYSTEM_DOC_DOMAINS: SystemDocDomain[] = [
     sortOrder: 6,
     exportFileName: "open-tails.md",
   },
+  {
+    key: "live_events",
+    title: "Live Events v2",
+    sortOrder: 7,
+    exportFileName: "live-events-v2.md",
+  },
 ];
 
 export const AUTO_CURRENT_LABEL = "AUTO-CURRENT";
