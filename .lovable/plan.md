@@ -1,181 +1,98 @@
-## да, согласен, с учетом правок:
+# План: Strict-аудит доступов и Proof-пакет Фаз А/В/Г
 
-&nbsp;
+## Статус фаз
 
-1. **Добавить отдельный browser-proof сценарий №5: вертикальный скролл в модалке preview**
-  &nbsp;
-  - Открыть preview на наборе из 20+ строк.
-  - Проверить, что список внутри BulkExtendAccessDialog скроллится вертикально колесом/трекпадом.
-  - Проверить, что header и footer остаются доступны, а скролл идет именно внутри контентной области модалки.
-  - После Отмена и повторного открытия preview scroll position должен быть сброшен в верх.
-  &nbsp;
-2. **Добавить обязательный PATCH в scope Фазы Г: PATCH-BULK-EXTEND-MODAL-SCROLL**
-  &nbsp;
-  - Исправить отсутствие вертикального скролла при большом количестве сделок.
-  - Требование к реализации:
-    &nbsp;
-    - модалка ограничена по высоте viewport;
-    - список preview имеет отдельный overflow-y-auto;
-    - header/footer не уезжают вместе со списком;
-    - не должно быть двойного скролла страницы и модалки одновременно;
-    - на mobile и desktop поведение одинаково устойчивое.
-    &nbsp;
-  &nbsp;
-3. **Расширить DoD по Фазе Г**
-  &nbsp;
-  - Недостаточно только green/red/amber сценариев.
-  - Фаза Г считается закрытой только если подтверждены:
-    &nbsp;
-    - valid / no-rule / admin-override / cancel-reset;
-    - режим “до даты”;
-    - рабочий вертикальный scroll внутри preview-модалки.
-    &nbsp;
-  &nbsp;
-4. **Уточнить Блок 2 (Exact datetime proof)**
-  &nbsp;
-  - В proof добавить не только before/after SQL, но и:
-    &nbsp;
-    - screenshot setup-step с выбранной датой и временем;
-    - screenshot preview, где видно целевую дату/время;
-    - сравнение preview target datetime = DB access_end_at с точностью до минуты;
-    - если execute в browser снова упрётся в RLS, это фиксируется как blocker, а код/SQL proof сохраняется add-only.
-    &nbsp;
-  &nbsp;
-5. **Discovery CSV по связям расширить**
-  &nbsp;
-  - В 19_proof_product_access_reconciliation.csv добавить ещё поля:
-    &nbsp;
-    - has_active_rule
-    - subscription_status
-    - entitlement_status
-    - access_end_at
-    - diagnosis_reason_code
-    &nbsp;
-  - Это нужно, чтобы по продуктам вроде **ЗАКРОЙ ГОД** было видно: правило есть, product_id совпадает, проблема именно в subscription_expired, а не в отсутствии связи.
-  &nbsp;
-6. **Drift backlog не чинить в этом спринте**
-  &nbsp;
-  - Зафиксировать как отдельный backlog/PATCH:
-    &nbsp;
-    - PATCH-ACCESS-DURATION-ALIGNMENT
-    &nbsp;
-  - В текущем спринте только доказать масштаб проблемы и не смешивать это с закрытием Фазы Г.
-  &nbsp;
-7. **Обновить последовательность выполнения**
-  &nbsp;
-  - Сначала browser-proof сценарии 1–5.
-  - Потом exact datetime proof.
-  - Потом CSV reconciliation/drift.
-  - Потом обновление .lovable/[plan.md](http://plan.md).
-  &nbsp;
-8. **Обновить таблицу DoD**
-  &nbsp;
-  - Добавить строку:
-    &nbsp;
-    - Browser proof сценарий 5 → screenshot работающего вертикального scroll внутри preview-модалки.
-    &nbsp;
-  - Добавить строку:
-    &nbsp;
-    - Scroll reset proof → после Cancel + reopen список начинается сверху.
-    &nbsp;
-  &nbsp;
+| Фаза | Статус | Proof-пакет |
+|------|--------|-------------|
+| А v3 (Strict-аудит) | ✅ Закрыта | batch 20260405_160530_4e1f607b, 7 CSV + 6 proof CSV |
+| В (UI predicate) | ✅ Закрыта — UI proof подтверждён | proof_query_joins + proof_no_direct_update + proof_ui_counts_match (browser) + proof_predicate_conditions |
+| Г (Bulk extend) | ⚠️ **proof-in-progress** — код + scroll fix применены, RLS blocker на browser proof | PATCH-пакет применён, CSVs 19-20 сгенерированы |
+| Б (Data fixes) | ❌ Заблокирована | Ждёт dry-run и отдельного согласования |
 
-&nbsp;
+## Применённые PATCH (2026-04-05)
 
-&nbsp;
+| PATCH | Статус | Файлы |
+|-------|--------|-------|
+| PATCH-GLOBAL-CALENDAR-RU | ✅ | `calendar.tsx` — `locale={ru}` default |
+| PATCH-BULK-EXTEND-ADMIN-OVERRIDE | ✅ | `useAccessValidation.ts` + `BulkExtendAccessDialog.tsx` |
+| PATCH-BULK-EXTEND-DO-NOT-BLOCK-HISTORICAL | ✅ | `checkExtendEligibility` с `isAdminOverride` |
+| PATCH-BULK-EXTEND-MODE-DATE-OR-DAYS | ✅ | `BulkExtendAccessDialog.tsx` — radio days/date + DateTimePicker |
+| PATCH-BULK-EXTEND-SELECTION-RESET | ✅ | `resetState()` + `useEffect` на open/selection change |
+| PATCH-BULK-EXTEND-PREVIEW-SNAPSHOT | ✅ | `snapshotRef` при нажатии preview |
+| PATCH-BULK-EXTEND-REASON-CODES-EXPANDED | ✅ | `diagnoseAccessFailure` + reasonCode в preview rows |
+| PATCH-BULK-EXTEND-EXECUTE-TARGET-DATE | ✅ | `customAccessEndAt` в edge function + dialog |
+| PATCH-NOT-BREAK-CURRENT-PREDICATE | ✅ | `isCurrentValidAccess` без изменений |
+| PATCH-PRODUCT-ID-AFFINITY-AUDIT | ✅ | `17_proof_product_affinity_audit.csv` |
+| PATCH-ZAKROY-GOD-DIAGNOSIS | ✅ | `16_proof_zakrij_god_diagnosis.csv` |
+| PATCH-ACCESS-DURATION-DRIFT-DISCOVERY | ✅ | `18_proof_duration_drift_discovery.csv` — 50+ drift кейсов, backlog |
+| PATCH-BULK-EXTEND-MODAL-SCROLL | ✅ | `BulkExtendAccessDialog.tsx` — `overflow-hidden` + `min-h-0` + `flex-1` scroll |
+| PATCH-PROOF-REAL-BROWSER | ⏳ **BLOCKER** | RLS блокирует доступ к orders_v2 в browser session |
 
-План: Browser proof Фазы Г + discovery артефакты
+## Browser proof blocker
 
-### Текущее состояние кода
+**Причина:** Текущая сессия браузера (Сергей Федорчук / Администратор) не имеет RLS-доступа к таблице `orders_v2`. Страница `/admin/deals` показывает "Найдено: 0".
 
-Код всех PATCH-ей уже применён:
+**Данные в БД:** 2712 записей в `orders_v2` (подтверждено через service role).
 
-- `calendar.tsx` — `locale={ru}` ✅
-- `useAccessValidation.ts` — `diagnoseAccessFailure` + `isAdminOverride` в `checkExtendEligibility` ✅
-- `BulkExtendAccessDialog.tsx` — date mode, resetState, snapshotRef, reason codes, admin override UI ✅
-- `grant-access-for-order` — `customAccessEndAt` поддержан ✅
+**Для разблокировки:** Пользователь должен войти в preview под аккаунтом, у которого есть RLS-доступ к orders_v2, после чего 5 browser-proof сценариев можно выполнить.
 
-Console log показывает warning `Function components cannot be given refs` в Calendar/DayPicker — это cosmetic, не блокирует функциональность.
+## Proof-артефакты (add-only)
 
-### Что нужно сделать
+| Артефакт | Статус | Описание |
+|----------|--------|----------|
+| `19_proof_product_access_reconciliation.csv` | ✅ | 8808 строк, 5 продуктов, колонки: product_id/name, order/sub/entitlement/rule IDs, has_active_rule, subscription_status, access_end_at, diagnosis_reason_code, match_status |
+| `20_proof_drift_backlog.csv` | ✅ | 200 строк, parent/child drift cases, drift_days, fix_strategy |
 
-#### Блок 1: Browser proof Фазы Г (4 сценария)
+## Единый predicate (источник истины)
 
-Открыть `/admin/deals` в browser tool и выполнить:
+Файл: `src/hooks/useAccessValidation.ts`
 
-1. **Валидный кейс** — выбрать оплаченную сделку с active sub + active rule → preview → зелёная строка «применить»
-2. **Нет active rule** — выбрать сделку по продукту без active rule → preview → красная строка «заблокировано» с reasonCode `нет_правила_доступа_в_системе`
-3. **Historical/admin override** — выбрать expired/canceled сделку (напр. ЗАКРОЙ ГОД) → preview → amber строка «админ» с reasonCode `admin_override_historical_allowed`
-4. **Cancel + reset** — закрыть диалог → выбрать другие сделки → открыть снова → убедиться, что preview не содержит старых строк
+5 условий predicate (БЕЗ ИЗМЕНЕНИЙ):
+1. `status IN ('active','trial')`
+2. `access_end_at` не истёк
+3. `product_id` есть в active `access_rules`
+4. `products_v2.is_active != false`
+5. `tariffs.is_active != false`
 
-Каждый сценарий: screenshot + фиксация в proof CSV.
+## Admin override (только bulk extend)
 
-**Ограничение:** если RLS блокирует доступ к deals (как было ранее — 0 результатов), это фиксируется как blocker, фаза остаётся proof-in-progress.
+- Работает только при `isAdminOverride = true` (admin/super_admin)
+- Обходит условия #1 и #2 predicate
+- НЕ обходит: отсутствие access rule, деактивированный продукт, неоплаченную сделку
+- Preview помечает amber-стилем с reasonCode `admin_override_historical_allowed`
+- Execute через `grant-access-for-order` (без прямых update)
 
-#### Блок 2: Exact datetime proof
+## ЗАКРОЙ ГОД — диагноз
 
-1. Выбрать режим "до даты" в диалоге
-2. Указать конкретную дату/время
-3. Screenshot preview с target datetime
-4. Execute одной валидной сделки
-5. SQL before/after: `access_end_at` до и после
-6. Edge function logs: подтвердить `customAccessEndAt` в логе
-7. Сравнить preview datetime = DB datetime (до минуты)
+- Product `73c29914`: 1 active rule, `is_active = true`
+- ВСЕ подписки: `status = expired`, `access_end_at = 2026-04-01`
+- Причина блокировки: `subscription_expired` (НЕ отсутствие правила)
+- С admin override: продление разрешено
 
-#### Блок 3: Discovery CSV по связям (add-only)
+## Duration drift backlog → PATCH-ACCESS-DURATION-ALIGNMENT
 
-SQL dry-run по 5 проблемным продуктам → `/mnt/documents/`:
+- 200 drift кейсов зафиксировано
+- Требует отдельного PATCH в следующем спринте
+- Не чинить без отдельного подтверждения
 
-`**19_proof_product_access_reconciliation.csv**` с колонками:
+## Ожидающий browser proof (Фаза Г) — 5 сценариев
 
-- product_id, product_name, order_product_id, subscription_product_id, entitlement_product_id, access_rule_product_id, training_binding_id, match_status, notes
+1. Валидный кейс — применить
+2. Кейс нет_активного_правила_доступа — заблокировано
+3. Исторический кейс с admin override — amber применить
+4. Cancel → смена selection → чистый preview
+5. Вертикальный скролл в preview-модалке на 20+ строках + scroll reset после reopen
 
-Продукты: ЗАКРОЙ ГОД, Gorbova Club, Ценный бухгалтер, Подоходный налог ИП, Платная консультация.
+## Расширенный DoD
 
-`**20_proof_drift_backlog.csv**` с колонками:
-
-- parent_product, child_product, expected_end_at, actual_end_at, drift_days, fix_strategy
-
-#### Блок 4: Обновление plan.md
-
-- Фаза Г: статус по результатам browser proof (closed или blocker зафиксирован)
-- Добавить ссылки на новые proof артефакты
-
-### Последовательность
-
-```text
-1. SQL: найти конкретные order_id для 4 тестовых сценариев
-2. SQL: before snapshot access_end_at для валидной сделки
-3. Browser: /admin/deals → 4 сценария + screenshots
-4. SQL: after snapshot + edge function logs
-5. SQL: reconciliation по 5 продуктам → CSV
-6. SQL: drift discovery → CSV
-7. Обновить plan.md
-```
-
-### Файлы
-
-**Код не меняется** (если browser proof не обнаружит расхождений).
-
-**Новые артефакты (add-only):**
-
-- `19_proof_product_access_reconciliation.csv`
-- `20_proof_drift_backlog.csv`
-- Screenshots browser proof
-
-**Изменение:**
-
-- `.lovable/plan.md` — статус Фазы Г
-
-### DoD
-
-
-| Пункт                    | Критерий                                                      |
-| ------------------------ | ------------------------------------------------------------- |
-| Browser proof сценарий 1 | Screenshot зелёной строки «применить»                         |
-| Browser proof сценарий 2 | Screenshot красной строки с `нет_правила_доступа_в_системе`   |
+| Пункт | Критерий |
+|-------|----------|
+| Browser proof сценарий 1 | Screenshot зелёной строки «применить» |
+| Browser proof сценарий 2 | Screenshot красной строки с `нет_правила_доступа_в_системе` |
 | Browser proof сценарий 3 | Screenshot amber строки с `admin_override_historical_allowed` |
-| Browser proof сценарий 4 | Screenshot чистого preview после cancel+reselect              |
-| Datetime proof           | preview datetime = DB datetime (до минуты)                    |
-| Reconciliation           | CSV по 5 продуктам с match_status                             |
-| Drift backlog            | CSV с drift_days и fix_strategy                               |
+| Browser proof сценарий 4 | Screenshot чистого preview после cancel+reselect |
+| Browser proof сценарий 5 | Screenshot работающего вертикального scroll внутри preview-модалки |
+| Scroll reset proof | После Cancel + reopen список начинается сверху |
+| Datetime proof | preview datetime = DB datetime (до минуты) |
+| Reconciliation | CSV по 5 продуктам с match_status + diagnosis_reason_code |
+| Drift backlog | CSV с drift_days и fix_strategy |
