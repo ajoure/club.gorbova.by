@@ -5,13 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -25,7 +19,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HELP_SECTIONS, QUICK_START_STEPS, type HelpSection, type HelpCallout } from "./liveEventsHelpContent";
-import { useMediaQuery } from "@/hooks/use-media-query";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Video, Plus, Radio, Shield, Send, PlayCircle, AlertTriangle,
