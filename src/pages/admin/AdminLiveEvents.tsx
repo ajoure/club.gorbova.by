@@ -328,7 +328,7 @@ export default function AdminLiveEvents() {
     queryFn: async () => {
       const { data } = await supabase
         .from("broadcast_templates")
-        .select("id, name, template_type, channel")
+        .select("id, name, template_type, channel, message_text, email_subject, email_body_html")
         .in("template_type", ["webinar_invite", "general"])
         .order("name");
       return data || [];
