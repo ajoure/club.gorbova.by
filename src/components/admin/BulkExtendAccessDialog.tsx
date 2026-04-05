@@ -189,15 +189,20 @@ export function BulkExtendAccessDialog({
     let success = 0, errors = 0;
 
     for (const row of applicable) {
-      if (!row.subscriptionId || !row.newEnd) continue;
+      if (!row.orderId) continue;
       try {
-        const { error } = await supabase
-          .from("subscriptions_v2")
-          .update({ access_end_at: row.newEnd })
-          .eq("id", row.subscriptionId);
+        const { data, error } = await supabase.functions.invoke("grant-access-for-order", {
+          body: {
+            orderId: row.orderId,
+            customAccessDays: days,
+            extendFromCurrent,
+          },
+        });
         if (error) throw error;
+        if (data?.error) throw new Error(data.error);
         success++;
-      } catch {
+      } catch (e: any) {
+        console.error(`[BulkExtend] Error for order ${row.orderId}:`, e);
         errors++;
       }
     }
