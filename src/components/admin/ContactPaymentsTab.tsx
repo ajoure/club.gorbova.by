@@ -193,9 +193,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           .in('id', orderIds);
         ordersMap = new Map((orders || []).map(o => {
           const snapshot = o.purchase_snapshot as any;
-          const displayName = snapshot?.display_purchase_name;
           const fkName = (o.products_v2 as any)?.name || null;
-          const resolvedName = displayName || fkName;
+          const resolvedName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
           const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
           const missingDisplayName = isModuleStandalone && !displayName;
           return [

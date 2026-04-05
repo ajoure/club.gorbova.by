@@ -103,7 +103,6 @@ export function LinkDealDialog({
       
       setResults((data || []).map((o: any) => {
         const snapshot = o.purchase_snapshot;
-        const displayName = snapshot?.display_purchase_name;
         const fkName = o.product?.name || o.tariff?.name || null;
         const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
         return {

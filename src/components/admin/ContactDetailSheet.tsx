@@ -3022,11 +3022,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       })()}`}>
                         <div className="flex items-start justify-between mb-2">
                           <div>
-                            <div className="font-medium">{(() => {
-                              const snapshot = deal.purchase_snapshot as Record<string, any> | null;
-                              if (snapshot?.display_purchase_name) return snapshot.display_purchase_name;
-                              return (deal.products_v2 as any)?.name || "Продукт";
-                            })()}</div>
+                            <div className="font-medium">{getDealDisplayName({
+                              productsV2: deal.products_v2 as any,
+                              purchaseSnapshot: deal.purchase_snapshot,
+                              fallback: "Продукт",
+                            })}</div>
                             {deal.tariffs && (
                               <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                             )}

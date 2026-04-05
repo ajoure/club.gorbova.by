@@ -408,10 +408,11 @@ export default function AdminDeals() {
     { header: "Контакт", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.full_name || getLatestPayerName(d) || ""; } },
     { header: "Email", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return d.customer_email || p?.email || ""; } },
     { header: "Телефон", getValue: (d) => { const p = resolveDealProfile(d, fallbackProfilesMap); return p?.phone || ""; } },
-    { header: "Продукт", getValue: (d) => {
-      const snapshot = d.purchase_snapshot as Record<string, any> | null;
-      return snapshot?.display_purchase_name || (d.products_v2 as any)?.name || "";
-    } },
+    { header: "Продукт", getValue: (d) => getDealDisplayName({
+      productsV2: d.products_v2 as any,
+      purchaseSnapshot: d.purchase_snapshot,
+      fallback: "",
+    }) },
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
@@ -957,11 +958,10 @@ export default function AdminDeals() {
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-muted-foreground" />
                         <div>
-                          <div className="font-medium">{(() => {
-                            const snapshot = deal.purchase_snapshot as Record<string, any> | null;
-                            if (snapshot?.display_purchase_name) return snapshot.display_purchase_name;
-                            return (deal.products_v2 as any)?.name || "—";
-                          })()}</div>
+                          <div className="font-medium">{getDealDisplayName({
+                            productsV2: deal.products_v2 as any,
+                            purchaseSnapshot: deal.purchase_snapshot,
+                          })}</div>
                           {deal.tariffs && (
                             <div className="text-xs text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                           )}
