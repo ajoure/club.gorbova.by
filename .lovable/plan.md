@@ -2,128 +2,161 @@
 
 &nbsp;
 
-1. Не перезаписывать артефакты **in-place**. Сохранить add-only принцип:
+1. **Execute только по optimistic guards.**
+  Для каждой из 19 строк в UPDATE добавить проверку текущего ожидаемого состояния:
   &nbsp;
-  - 11_remediation_candidates_dry_run_v2.csv
-  - 13_final_report_[v2.md](http://v2.md)
-  - при необходимости 14_audit_validation_sanity_checks.csv
-    Старые файлы v1 оставить как baseline discovery.
+  - группа A: WHERE id = ... AND status = 'active' AND product_id IS NULL AND product_code = ...
+  - группа B: WHERE id = ... AND status = 'active' AND expires_at = <current_expires>
+    Если обновлено не 10/10 и 9/9 — **ROLLBACK / STOP**. Это нужно, чтобы не затронуть записи, если они уже изменились после dry-run. ID-driven и safe workflow обязательны.
   &nbsp;
-2. 09_parent_child_basis_matrix.csv пересобирать не обязательно, если в самом CSV данные уже корректны. Исправление нужно делать в markdown-рендере отчета:
+2. **Не использовать “migration tool” как DDL-миграцию.**
+  Здесь нужен **одноразовый data remediation script / transactional SQL patch**, а не обычная schema migration. В платформенных правилах критичны add-only, безопасное исполнение и недопущение поломки production-логики; для такого патча важнее controlled execute + verify, чем миграция схемы. 
+3. **Зафиксировать exact binding для 9 wrong_end_date.**
+  В плане сейчас указан target_expires, но нет явного subscription_id для каждой строки. Добавь в таблицу группы B колонку:
   &nbsp;
-  - экранировать | в 13_final_report_[v2.md](http://v2.md)
-  - отдельно явно написать, что проблема была не в CSV, а в отображении markdown-таблицы.
+  - source_subscription_id
+  - source_access_end_at
+  - binding_proof = audit_v2
+    Иначе остаётся риск неоднозначного источника, если у пользователя несколько подписок по продукту. Это уже проверялось в v2 как dry-run basis на 19 строк. 
   &nbsp;
-3. В sanity-check блок добавить не 4, а 6 проверок:
-  &nbsp;
-  - sum(entitlement classification buckets) = 515
-  - sum(subscription classification buckets) = 405
-  - count(null_product_but_resolvable) = 10
-  - count(remediation rows with SET product_id) = 10
-  - count(invalid_wrong_end_date) = 9
-  - count(remediation rows with SET expires_at) = 9
-  &nbsp;
-4. Example section по Любови Пилецкой строить строго по:
-  &nbsp;
-  - user_id = 012e765c-0151-4310-91eb-63866847af72
-  - дополнительно вывести profile_id, email, все entitlements, subscriptions, paid orders
-  - отдельно показать, в какие именно CSV она попадает и по каким строкам/ID.
-  &nbsp;
-5. В 11_remediation_candidates_dry_run_v2.csv явно добавить колонку:
+4. **Audit log сделать с batch_id / remediation_run_id.**
+  Не просто action='entitlement.remediated', а ещё единый batch_id, одинаковый для всех 19 записей, плюс в meta:
   &nbsp;
   - remediation_bucket
-    чтобы было видно, что строка относится к null_product_id или invalid_wrong_end_date, а не только proposed_action.
+  - before_snapshot
+  - after_snapshot
+  - source_subscription_id или resolved_product_id_by_code
+  - plan_name = PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE
+    Audit logging для критических операций обязателен. 
   &nbsp;
-6. В финальном отчете отдельным блоком зафиксировать root cause по каждой из 3 несостыковок:
+5. **Before/after/diff делать по тем же 19 ID и в том же порядке.**
+  Добавь явный machine-check:
   &nbsp;
-  - bug фильтра remediation
-  - bug example lookup по email вместо user_id
-  - bug markdown escaping для | в названиях продуктов
+  - 15_before_remediation.csv = ровно 19 строк
+  - 16_after_remediation.csv = ровно те же 19 entitlement_id
+  - 17_remediation_diff.csv не содержит изменений вне полей product_id, expires_at, updated_at
+    Это защищает от скрытых побочных эффектов и соответствует verify-этапу.
   &nbsp;
-7. Явно написать в отчете, что **аудит v1 не отменяется**, а **уточняется audit validation v2**, чтобы не потерять baseline и историю вывода.
-8. STOP-guard дополнить:
+6. **В DoD добавить отдельную проверку на scope leakage.**
+  Помимо “вне 19 ID изменено 0”, зафиксировать ещё:
   &nbsp;
-  - не менять классификацию v1 задним числом без отдельного mapping v1 -> v2
-  - если какая-то строка меняет bucket, это должно быть отдельно перечислено в diff-секции отчета.
+  - 13 current NULL product_id → после execute должно стать **3**, и это именно deferred cb_module_*
+  - classification buckets по v2 не пересчитываются и не должны использоваться как post-factum justification
+    V2 явно зафиксировал safe-scope именно как 10 + 9 = 19, а 3 cb_module_* — уже новый deferred факт. 
   &nbsp;
-9. DoD уточнить:
+7. **PATCH 2, PATCH 3, PATCH 4 оставить отдельными и не смешивать с PATCH 1.**
+  Это уже закреплено в v2 backlog: 17 missing_entitlement, 12 illegal_bonus_access, duration-alignment backlog — отдельные follow-up категории, не для текущего execute-safe. 
+8. **Формулировку про source of truth уточнить.**
+  Лучше так:
   &nbsp;
-  - 11_remediation_candidates_dry_run_v2.csv = **19 строк**
-  - SET product_id = **10**
-  - SET expires_at = **9**
-  - все sanity-check = **PASS**
-  - Любовь Пилецкая найдена детерминированно по user_id
-  - v1 артефакты сохранены без изменений
+  - entitlements — SoT по факту доступа;
+  - для **группы B** целевой срок берётся из **validated subscription binding** из audit v2.
+    Так формулировка не конфликтует с общим правилом платформы, где SoT доступа — entitlements. 
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH-AUDIT-VALIDATION — Исправление внутренних несостыковок аудита v1
+В остальном план собран правильно: scope жёстко ограничен, unsafe категории исключены, deferred вынесены отдельно, это соответствует v2 audit validation и правилам проверки планов.
 
-### Контекст
+&nbsp;
 
-Аудит v1 принят как baseline discovery. Обнаружены 3 внутренние несостыковки, которые делают remediation CSV и example-блок ненадёжными. Нужно пересобрать артефакты без изменения данных в БД.
+План: PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE
 
-### Три проблемы и их root cause
+### Основание
 
-**1. null_product_id = 10, но SET product_id = 0 в remediation**
+Audit validation v2 принят. Sanity-check 6/6 PASS. Scope зафиксирован: ровно 19 строк из `11_remediation_candidates_dry_run_v2.csv`.
 
-- В `08_null_or_orphan_accesses.csv` все 10 записей содержат `resolved_product_id_by_code`, `resolved_confidence=high`, `recommended_fix=SET product_id = '...'`
-- В `11_remediation_candidates_dry_run.csv` ни одна из этих 10 записей не включена — там только 9 строк с `invalid_wrong_end_date`
-- **Root cause**: в Python-скрипте фильтр remediation candidates собирал только `classification_status = 'invalid_wrong_end_date'`, а `null_product_id` не попал в условие выборки
+### Scope — строго 19 записей
 
-**2. Любовь Пилецкая "не найдена"**
-
-- Её user_id = `012e765c-0151-4310-91eb-63866847af72`, email = `luba021290@mail.ru`
-- Она присутствует в `11_remediation_candidates_dry_run.csv` (строка 2) и в `08_null_or_orphan_accesses.csv` (строка 2)
-- **Root cause**: example section искал по `ILIKE '%пилец%'` или `'%pilets%'` в email, а её email — `luba021290@mail.ru`. Поиск должен идти по `user_id` или `profile_id`, а не по email
-
-**3. Parent/child matrix — сломанные markdown-строки**
-
-- Названия продуктов содержат `|` (pipe), что ломает markdown-таблицу
-- Строка `Ценный бухгалтер | 2 ступень | | 1 | 0 |` парсится неверно
-- **Root cause**: при генерации MD pipe в product_name не экранировался
-
-### Что будет сделано
-
-Один Python-скрипт (SELECT-only), который:
-
-1. **Пересобирает `11_remediation_candidates_dry_run.csv**` — добавляет 10 строк null_product_id с `proposed_action = SET product_id = '<resolved_id>'`, `basis_confidence = high`, `safe_to_auto_fix = true`. Итого: 9 (wrong_end_date) + 10 (null_product_id) = 19 строк.
-2. **Перестраивает example section** в `13_final_report.md` — ищет Пилецкую по `user_id = '012e765c-0151-4310-91eb-63866847af72'`, выводит все её entitlements, subscriptions, orders.
-3. **Перегенерирует `09_parent_child_basis_matrix.csv**` — без изменений в данных, но `13_final_report.md` экранирует pipe в product_name при рендере markdown-таблицы (замена `|` на `\|` внутри ячеек).
-4. **Добавляет sanity-check блок** в конец `13_final_report.md`:
-  - `sum(classification_buckets) = 515` — проверка
-  - `sum(subscription_buckets) = 405` — проверка
-  - `count(null_product_but_resolvable)` = `count(remediation rows with SET product_id)` — проверка
-  - `count(missing_entitlement in report)` = `count(rows in 12_subscription_classification.csv with missing_entitlement)` — проверка
-  - Каждая проверка: PASS / FAIL с фактическими числами
-
-### Файлы, которые будут перегенерированы
+**Группа A — 10 null_product_id → SET product_id:**
 
 
-| Файл                                    | Изменение                                         |
-| --------------------------------------- | ------------------------------------------------- |
-| `11_remediation_candidates_dry_run.csv` | +10 строк null_product_id (было 9, станет 19)     |
-| `13_final_report.md`                    | Исправлен example section + matrix + sanity-check |
-| `09_parent_child_basis_matrix.csv`      | Без изменений (CSV не ломается pipe)              |
+| entitlement_id | product_code      | resolved_product_id                  |
+| -------------- | ----------------- | ------------------------------------ |
+| 81db3470       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| 02755e31       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| fc45e085       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| 4d34bb8d       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| d37fd2e8       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| a57a6ba6       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| 359c2767       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| 46495c6c       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
+| 4d7e34de       | buh_business      | 85046734-2282-4ded-b0d3-8c66c8f5bc2b |
+| 3dbfcfb8       | buh_business      | 85046734-2282-4ded-b0d3-8c66c8f5bc2b |
 
 
-CSV `09` не нужно пересобирать — в CSV формате pipe не мешает, проблема только в MD-рендере.
+**Группа B — 9 invalid_wrong_end_date → SET expires_at = subscription.access_end_at:**
 
-### STOP-guards
 
-- Никаких UPDATE/INSERT/DELETE
-- Не менять данные в БД
-- Не запускать remediation execute
-- Категории `illegal_bonus_access`, `bonus_access_without_parent_trace`, `unknown_needs_manual_review` вне auto-fix
-- Версионирование: файлы перезаписываются in-place (это v2 тех же артефактов)
+| entitlement_id | product_code       | current_expires  | target_expires      | direction    |
+| -------------- | ------------------ | ---------------- | ------------------- | ------------ |
+| 05494f6a       | club               | 2026-04-26 12:00 | 2026-04-24 20:59:59 | decrease     |
+| c20b325d       | club               | 2026-05-03 12:00 | 2026-04-30 20:59:59 | decrease     |
+| 2452715d       | club               | 2026-06-17 12:00 | 2026-05-17 12:00:00 | decrease     |
+| d3c3e069       | club               | 2026-05-03 12:00 | 2026-05-01 20:59:59 | decrease     |
+| 55a06e2c       | club               | 2026-04-20 12:00 | 2026-04-18 21:59:59 | decrease     |
+| aabeddb3       | 1769009596189-398a | 2026-04-08 17:54 | 2026-06-25 06:50:44 | **increase** |
+| 02c58778       | buh_business       | 2026-05-12 18:50 | 2026-05-03 20:59:59 | decrease     |
+| 80361311       | club               | 2026-05-08 12:00 | 2026-05-04 20:59:59 | decrease     |
+| 40e98595       | buh_business       | 2026-05-31 06:00 | 2026-05-03 20:59:59 | decrease     |
 
-### DoD
 
-1. `11_remediation_candidates_dry_run.csv` содержит 19 строк (9 wrong_end_date + 10 null_product_id)
-2. Example section по Пилецкой найден по user_id и показывает реальные данные
-3. Parent/child matrix в MD корректно отображается
-4. Sanity-check блок: все 4 проверки = PASS
-5. Никакие данные в БД не изменены
+Выравнивание по source of truth (subscription.access_end_at) допускает как увеличение, так и уменьшение expires_at.
+
+### Явные исключения из scope
+
+- 3 записи cb_module_* с NULL product_id — **не входят** в PATCH 1 (новый факт после v2, вынесены в deferred/discovery bucket)
+- 105 valid_rule_based_bonus — не трогать
+- 12 illegal_bonus_access — не трогать (PATCH 3)
+- 7 bonus_access_without_parent_trace — не трогать
+- 3 unknown_needs_manual_review — не трогать
+- 17 missing_entitlement — не трогать (PATCH 2)
+
+### Архитектурные guards
+
+1. **ID-driven**: все UPDATE по точным UUID из v2 CSV. Никаких решений по email/имени/тексту
+2. **Access SoT**: entitlements — источник истины по доступам; subscription.access_end_at — источник истины по срокам
+3. **Audit logging**: каждое изменение → INSERT в audit_logs с action='entitlement.remediated', actor_type='system', actor_label='PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE', meta содержит before/after snapshot
+4. **Safe workflow**: DIAGNOSE (v1) → PLAN (v2) → DRY RUN (before CSV) → EXECUTE → VERIFY (after CSV + diff)
+
+### Порядок выполнения
+
+1. **Before-snapshot**: SELECT 19 entitlements по ID → `15_before_remediation.csv`
+2. **Execute группа A**: UPDATE entitlements SET product_id, updated_at WHERE id IN (10 IDs) AND product_id IS NULL
+3. **Execute группа B**: 9 отдельных UPDATE entitlements SET expires_at, updated_at WHERE id = '...'
+4. **Audit logging**: INSERT 19 записей в audit_logs
+5. **After-snapshot**: SELECT same 19 → `16_after_remediation.csv`
+6. **Diff-report**: `17_remediation_diff.csv` с before/after по каждому полю
+7. **Verify guard**: SELECT count(*) FROM entitlements WHERE status='active' AND product_id IS NULL → ожидаем ≤3 (cb_module_*)
+
+### Machine-check DoD
+
+
+| Проверка                                           | Ожидание |
+| -------------------------------------------------- | -------- |
+| Строк в dry-run до execute                         | 19/19    |
+| product_id IS NOT NULL после execute (группа A)    | 10/10    |
+| expires_at = subscription.access_end_at (группа B) | 9/9      |
+| Записей вне 19 ID изменено                         | 0        |
+| audit_logs с action='entitlement.remediated'       | 19       |
+| illegal_bonus_access затронуто                     | 0        |
+| bonus_access_without_parent_trace затронуто        | 0        |
+| unknown_needs_manual_review затронуто              | 0        |
+| missing_entitlement затронуто                      | 0        |
+
+
+### Follow-up (отдельные патчи)
+
+- **PATCH 2**: 17 missing_entitlement (discovery → dry-run → execute)
+- **PATCH 3**: 12 illegal_bonus_access (manual review, auto-fix запрещён)
+- **PATCH 4**: drift/duration alignment backlog (38 child > parent + 10 child < parent)
+- **Deferred**: 3 cb_module_* с NULL product_id (новый discovery после v2)
+
+### Технические детали
+
+- Python-скрипт через code--exec
+- Database migration tool для UPDATE-запросов
+- Все артефакты в `/mnt/documents/access_audit/`
+- Все тексты на русском
