@@ -289,7 +289,7 @@ export function BulkExtendAccessDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>
             {step === "setup" && "Массовое продление доступа"}
@@ -387,7 +387,7 @@ export function BulkExtendAccessDialog({
         )}
 
         {step === "preview" && (
-          <ScrollArea className="flex-1 max-h-[50vh]">
+          <ScrollArea className="flex-1 min-h-0">
             <div className="space-y-2 pr-4">
               {previewRows.map(row => {
                 const isOverride = row.reasonCode === "admin_override_historical_allowed";
