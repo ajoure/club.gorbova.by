@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, UserPlus, Edit } from "lucide-react";
+import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, UserPlus, Edit, CalendarPlus } from "lucide-react";
 
 interface BulkActionsBarProps {
   selectedCount: number;
@@ -9,6 +9,7 @@ interface BulkActionsBarProps {
   onBulkMessage?: () => void;
   onBulkMerge?: () => void;
   onBulkArchive?: () => void;
+  onBulkExtendAccess?: () => void;
   onBulkCreateAccounts?: () => void;
   onBulkEdit?: () => void;
   onSelectAll?: () => void;
@@ -24,6 +25,7 @@ export function BulkActionsBar({
   onBulkMessage,
   onBulkMerge,
   onBulkArchive,
+  onBulkExtendAccess,
   onBulkCreateAccounts,
   onBulkEdit,
   onSelectAll,
@@ -106,6 +108,18 @@ export function BulkActionsBar({
           >
             <Edit className="h-4 w-4" />
             Редактировать
+          </Button>
+        )}
+
+        {onBulkExtendAccess && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkExtendAccess}
+            className="gap-2 text-green-600 hover:text-green-700"
+          >
+            <CalendarPlus className="h-4 w-4" />
+            Продлить доступ
           </Button>
         )}
 
