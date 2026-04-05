@@ -6,7 +6,7 @@
 |------|--------|-------------|
 | А v3 (Strict-аудит) | ✅ Закрыта | batch 20260405_160530_4e1f607b, 7 CSV + 6 proof CSV |
 | В (UI predicate) | ✅ Закрыта — UI proof подтверждён | proof_query_joins + proof_no_direct_update + proof_ui_counts_match (browser) + proof_predicate_conditions |
-| Г (Bulk extend) | ⚠️ **proof-in-progress** — код обновлён, ждёт browser/runtime proof | PATCH-пакет применён, ждёт 4 сценария browser proof |
+| Г (Bulk extend) | ⚠️ **proof-in-progress** — код + scroll fix применены, RLS blocker на browser proof | PATCH-пакет применён, CSVs 19-20 сгенерированы |
 | Б (Data fixes) | ❌ Заблокирована | Ждёт dry-run и отдельного согласования |
 
 ## Применённые PATCH (2026-04-05)
@@ -25,7 +25,23 @@
 | PATCH-PRODUCT-ID-AFFINITY-AUDIT | ✅ | `17_proof_product_affinity_audit.csv` |
 | PATCH-ZAKROY-GOD-DIAGNOSIS | ✅ | `16_proof_zakrij_god_diagnosis.csv` |
 | PATCH-ACCESS-DURATION-DRIFT-DISCOVERY | ✅ | `18_proof_duration_drift_discovery.csv` — 50+ drift кейсов, backlog |
-| PATCH-PROOF-REAL-BROWSER | ⏳ | Ждёт browser proof по 4 сценариям |
+| PATCH-BULK-EXTEND-MODAL-SCROLL | ✅ | `BulkExtendAccessDialog.tsx` — `overflow-hidden` + `min-h-0` + `flex-1` scroll |
+| PATCH-PROOF-REAL-BROWSER | ⏳ **BLOCKER** | RLS блокирует доступ к orders_v2 в browser session |
+
+## Browser proof blocker
+
+**Причина:** Текущая сессия браузера (Сергей Федорчук / Администратор) не имеет RLS-доступа к таблице `orders_v2`. Страница `/admin/deals` показывает "Найдено: 0".
+
+**Данные в БД:** 2712 записей в `orders_v2` (подтверждено через service role).
+
+**Для разблокировки:** Пользователь должен войти в preview под аккаунтом, у которого есть RLS-доступ к orders_v2, после чего 5 browser-proof сценариев можно выполнить.
+
+## Proof-артефакты (add-only)
+
+| Артефакт | Статус | Описание |
+|----------|--------|----------|
+| `19_proof_product_access_reconciliation.csv` | ✅ | 8808 строк, 5 продуктов, колонки: product_id/name, order/sub/entitlement/rule IDs, has_active_rule, subscription_status, access_end_at, diagnosis_reason_code, match_status |
+| `20_proof_drift_backlog.csv` | ✅ | 200 строк, parent/child drift cases, drift_days, fix_strategy |
 
 ## Единый predicate (источник истины)
 
@@ -53,15 +69,30 @@
 - Причина блокировки: `subscription_expired` (НЕ отсутствие правила)
 - С admin override: продление разрешено
 
-## Duration drift backlog
+## Duration drift backlog → PATCH-ACCESS-DURATION-ALIGNMENT
 
-- 50+ кейсов, максимальный drift: 246 дней (cb20 vs Gorbova Club)
+- 200 drift кейсов зафиксировано
 - Требует отдельного PATCH в следующем спринте
+- Не чинить без отдельного подтверждения
 
-## Ожидающий browser proof (Фаза Г)
+## Ожидающий browser proof (Фаза Г) — 5 сценариев
 
-4 сценария для закрытия:
 1. Валидный кейс — применить
 2. Кейс нет_активного_правила_доступа — заблокировано
 3. Исторический кейс с admin override — amber применить
 4. Cancel → смена selection → чистый preview
+5. Вертикальный скролл в preview-модалке на 20+ строках + scroll reset после reopen
+
+## Расширенный DoD
+
+| Пункт | Критерий |
+|-------|----------|
+| Browser proof сценарий 1 | Screenshot зелёной строки «применить» |
+| Browser proof сценарий 2 | Screenshot красной строки с `нет_правила_доступа_в_системе` |
+| Browser proof сценарий 3 | Screenshot amber строки с `admin_override_historical_allowed` |
+| Browser proof сценарий 4 | Screenshot чистого preview после cancel+reselect |
+| Browser proof сценарий 5 | Screenshot работающего вертикального scroll внутри preview-модалки |
+| Scroll reset proof | После Cancel + reopen список начинается сверху |
+| Datetime proof | preview datetime = DB datetime (до минуты) |
+| Reconciliation | CSV по 5 продуктам с match_status + diagnosis_reason_code |
+| Drift backlog | CSV с drift_days и fix_strategy |
