@@ -104,6 +104,7 @@ Deno.serve(async (req) => {
       orderId, 
       customAccessDays,
       customAccessStartAt,  // NEW: optional custom start date
+      customAccessEndAt,    // PATCH: exact target end date (priority over days)
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
