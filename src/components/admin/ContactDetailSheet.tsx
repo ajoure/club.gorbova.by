@@ -1402,23 +1402,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     return <Badge variant="outline">{sub.status}</Badge>;
   };
 
-  const activeSubscriptions = subscriptions?.filter(s => {
-    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    const product = s.products_v2 as any;
-    const tariff = s.tariffs as any;
-    const productActive = product?.is_active !== false;
-    const tariffActive = tariff?.is_active !== false;
-    return !isExpired && (s.status === "active" || s.status === "trial") && productActive && tariffActive;
-  }) || [];
+  const activeSubscriptions = subscriptions?.filter(s => 
+    isCurrentValidAccess(s as any, productsWithRules)
+  ) || [];
 
-  const finishedSubscriptions = subscriptions?.filter(s => {
-    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    const product = s.products_v2 as any;
-    const tariff = s.tariffs as any;
-    const productActive = product?.is_active !== false;
-    const tariffActive = tariff?.is_active !== false;
-    return isExpired || (s.status !== "active" && s.status !== "trial") || !productActive || !tariffActive;
-  }) || [];
+  const finishedSubscriptions = subscriptions?.filter(s => 
+    isHistoricalAccess(s as any, productsWithRules)
+  ) || [];
 
   if (!contact) return null;
 
