@@ -6,16 +6,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, Calendar, CreditCard, X } from "lucide-react";
+import { AlertTriangle, Calendar, CreditCard, X, ChevronDown, History } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { cn } from "@/lib/utils";
 
 export function UserSubscriptions() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
+  const [showFinished, setShowFinished] = useState(false);
 
   const { data: subscriptions, isLoading } = useQuery({
     queryKey: ["user-subscriptions", user?.id],
@@ -70,6 +72,10 @@ export function UserSubscriptions() {
 
   const getStatusBadge = (subscription: any) => {
     const status = subscription.status;
+    const isExpired = subscription.access_end_at && new Date(subscription.access_end_at) < new Date();
+    if (isExpired) {
+      return <Badge variant="outline">Истекла</Badge>;
+    }
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       active: "default",
       trial: "secondary",
@@ -91,6 +97,17 @@ export function UserSubscriptions() {
     );
   };
 
+  // Split into active and finished
+  const activeSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return !isExpired && (s.status === "active" || s.status === "trial");
+  }) || [];
+
+  const finishedSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return isExpired || (s.status !== "active" && s.status !== "trial");
+  }) || [];
+
   if (isLoading) {
     return <div className="text-center py-8 text-muted-foreground">Загрузка...</div>;
   }
@@ -105,86 +122,114 @@ export function UserSubscriptions() {
     );
   }
 
+  const renderSubscriptionCard = (subscription: any, compact = false) => (
+    <Card key={subscription.id} className={compact ? "border-dashed opacity-60" : ""}>
+      <CardHeader className={compact ? "pb-1 pt-3 px-4" : ""}>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className={compact ? "text-base" : "text-lg"}>
+              {subscription.products_v2?.name || "Подписка"}
+            </CardTitle>
+            <CardDescription>
+              Тариф: {subscription.tariffs?.name || "—"}
+            </CardDescription>
+          </div>
+          {getStatusBadge(subscription)}
+        </div>
+      </CardHeader>
+      <CardContent className={cn("space-y-4", compact && "pt-1 pb-3 px-4")}>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <span>
+              Доступ до:{" "}
+              {subscription.access_end_at
+                ? format(new Date(subscription.access_end_at), "dd.MM.yyyy", { locale: ru })
+                : "∞"}
+            </span>
+          </div>
+          {subscription.next_charge_at && subscription.status !== "canceled" && !compact && (
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-muted-foreground" />
+              <span>
+                Следующее списание:{" "}
+                {format(new Date(subscription.next_charge_at), "dd.MM.yyyy", { locale: ru })}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Trial info and cancel button — only for active */}
+        {!compact && subscription.is_trial && subscription.status === "trial" && !subscription.trial_canceled_at && (
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm">
+                <span className="text-muted-foreground">Trial до: </span>
+                <span className="font-medium">
+                  {subscription.trial_end_at
+                    ? format(new Date(subscription.trial_end_at), "dd.MM.yyyy HH:mm", { locale: ru })
+                    : "—"}
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCancelTrial(subscription)}
+                className="text-destructive hover:text-destructive"
+              >
+                <X className="h-4 w-4 mr-2" />
+                Отменить автосписание
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Trial canceled info */}
+        {subscription.trial_canceled_at && (
+          <div className="border-t pt-4">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <AlertTriangle className="h-4 w-4" />
+              <span>
+                Автосписание отменено{" "}
+                {format(new Date(subscription.trial_canceled_at), "dd.MM.yyyy", { locale: ru })}
+              </span>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <>
       <div className="space-y-4">
-        {subscriptions.map((subscription: any) => (
-          <Card key={subscription.id}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-lg">
-                    {subscription.products_v2?.name || "Подписка"}
-                  </CardTitle>
-                  <CardDescription>
-                    Тариф: {subscription.tariffs?.name || "—"}
-                  </CardDescription>
-                </div>
-                {getStatusBadge(subscription)}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <span>
-                    Доступ до:{" "}
-                    {subscription.access_end_at
-                      ? format(new Date(subscription.access_end_at), "dd.MM.yyyy", { locale: ru })
-                      : "∞"}
-                  </span>
-                </div>
-                {subscription.next_charge_at && subscription.status !== "canceled" && (
-                  <div className="flex items-center gap-2">
-                    <CreditCard className="h-4 w-4 text-muted-foreground" />
-                    <span>
-                      Следующее списание:{" "}
-                      {format(new Date(subscription.next_charge_at), "dd.MM.yyyy", { locale: ru })}
-                    </span>
-                  </div>
-                )}
-              </div>
+        {!activeSubscriptions.length && (
+          <div className="text-center py-4 text-muted-foreground text-sm">
+            Нет текущих активных подписок
+          </div>
+        )}
+        {activeSubscriptions.map(sub => renderSubscriptionCard(sub))}
 
-              {/* Trial info and cancel button */}
-              {subscription.is_trial && subscription.status === "trial" && !subscription.trial_canceled_at && (
-                <div className="border-t pt-4">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm">
-                      <span className="text-muted-foreground">Trial до: </span>
-                      <span className="font-medium">
-                        {subscription.trial_end_at
-                          ? format(new Date(subscription.trial_end_at), "dd.MM.yyyy HH:mm", { locale: ru })
-                          : "—"}
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCancelTrial(subscription)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <X className="h-4 w-4 mr-2" />
-                      Отменить автосписание
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Trial canceled info */}
-              {subscription.trial_canceled_at && (
-                <div className="border-t pt-4">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <AlertTriangle className="h-4 w-4" />
-                    <span>
-                      Автосписание отменено{" "}
-                      {format(new Date(subscription.trial_canceled_at), "dd.MM.yyyy", { locale: ru })}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ))}
+        {/* Finished toggle */}
+        {finishedSubscriptions.length > 0 && (
+          <div className="pt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowFinished(!showFinished)}
+              className="w-full gap-2 text-muted-foreground text-xs"
+            >
+              <History className="w-3.5 h-3.5" />
+              {showFinished ? "Скрыть завершённые" : `Показать завершённые (${finishedSubscriptions.length})`}
+              <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", showFinished && "rotate-180")} />
+            </Button>
+            {showFinished && (
+              <div className="space-y-3 mt-3">
+                {finishedSubscriptions.map(sub => renderSubscriptionCard(sub, true))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Cancel Confirmation Dialog */}
