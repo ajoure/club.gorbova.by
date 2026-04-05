@@ -111,6 +111,18 @@ export function BulkActionsBar({
           </Button>
         )}
 
+        {onBulkExtendAccess && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBulkExtendAccess}
+            className="gap-2 text-green-600 hover:text-green-700"
+          >
+            <CalendarPlus className="h-4 w-4" />
+            Продлить доступ
+          </Button>
+        )}
+
         {onBulkMessage && (
           <Button
             variant="ghost"
