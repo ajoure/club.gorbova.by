@@ -5230,11 +5230,20 @@ export type Database = {
       live_event_notification_log: {
         Row: {
           channel: string
+          correction_of_log_id: string | null
           created_at: string
+          dispatch_mode: string
           error: string | null
           id: string
+          incident_batch_id: string | null
           live_event_id: string
           notify_offset_minutes: number
+          provider_message_id: string | null
+          provider_response: Json | null
+          rendered_button_text: string | null
+          rendered_button_url: string | null
+          rendered_subject: string | null
+          rendered_text: string | null
           scheduled_for: string
           sent_at: string | null
           status: string
@@ -5243,11 +5252,20 @@ export type Database = {
         }
         Insert: {
           channel: string
+          correction_of_log_id?: string | null
           created_at?: string
+          dispatch_mode?: string
           error?: string | null
           id?: string
+          incident_batch_id?: string | null
           live_event_id: string
           notify_offset_minutes: number
+          provider_message_id?: string | null
+          provider_response?: Json | null
+          rendered_button_text?: string | null
+          rendered_button_url?: string | null
+          rendered_subject?: string | null
+          rendered_text?: string | null
           scheduled_for: string
           sent_at?: string | null
           status?: string
@@ -5256,11 +5274,20 @@ export type Database = {
         }
         Update: {
           channel?: string
+          correction_of_log_id?: string | null
           created_at?: string
+          dispatch_mode?: string
           error?: string | null
           id?: string
+          incident_batch_id?: string | null
           live_event_id?: string
           notify_offset_minutes?: number
+          provider_message_id?: string | null
+          provider_response?: Json | null
+          rendered_button_text?: string | null
+          rendered_button_url?: string | null
+          rendered_subject?: string | null
+          rendered_text?: string | null
           scheduled_for?: string
           sent_at?: string | null
           status?: string
@@ -5268,6 +5295,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "live_event_notification_log_correction_of_log_id_fkey"
+            columns: ["correction_of_log_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_notification_log"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "live_event_notification_log_live_event_id_fkey"
             columns: ["live_event_id"]
@@ -5407,6 +5441,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      live_notification_config: {
+        Row: {
+          enabled: boolean
+          id: number
+          production_approved: boolean
+          proof_mode: boolean
+          test_allowlist: string[]
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          id?: number
+          production_approved?: boolean
+          proof_mode?: boolean
+          test_allowlist?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          id?: number
+          production_approved?: boolean
+          proof_mode?: boolean
+          test_allowlist?: string[]
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
       }
       marketing_insights: {
         Row: {
