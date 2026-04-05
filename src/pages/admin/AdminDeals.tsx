@@ -1059,6 +1059,7 @@ export default function AdminDeals() {
           onClearSelection={clearSelection}
           onBulkDelete={() => setShowDeleteDialog(true)}
           onBulkEdit={() => setShowBulkEditDialog(true)}
+          onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
           totalCount={sortedDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
@@ -1073,6 +1074,18 @@ export default function AdminDeals() {
         onSuccess={() => {
           clearSelection();
           setShowBulkEditDialog(false);
+          queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+        }}
+      />
+
+      {/* Bulk Extend Access Dialog */}
+      <BulkExtendAccessDialog
+        open={showBulkExtendDialog}
+        onOpenChange={setShowBulkExtendDialog}
+        selectedOrderIds={Array.from(selectedDealIds)}
+        onSuccess={() => {
+          clearSelection();
+          setShowBulkExtendDialog(false);
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
         }}
       />
