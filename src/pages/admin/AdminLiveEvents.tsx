@@ -807,11 +807,17 @@ export default function AdminLiveEvents() {
             </h2>
             <p className="text-sm text-muted-foreground">Управление живыми эфирами и автовебинарами</p>
           </div>
-          <Button onClick={handleCreate} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Создать эфир
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button onClick={handleCreate} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Создать эфир
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => setHelpOpen(true)} title="Справка">
+              <HelpCircle className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
+        <LiveEventsHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
 
         {isLoading ? (
           <div className="flex justify-center py-8">
