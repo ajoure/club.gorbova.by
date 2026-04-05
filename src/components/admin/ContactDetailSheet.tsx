@@ -2592,327 +2592,393 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </CardContent>
               </Card>
 
-              {/* Existing subscriptions */}
+              {/* Current active subscriptions */}
               {subsLoading ? (
                 <div className="space-y-3">
                   {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
                 </div>
-              ) : !subscriptions?.length ? (
+              ) : !activeSubscriptions.length && !finishedSubscriptions.length ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Key className="w-12 h-12 mx-auto mb-3 opacity-30" />
                   <p>Нет подписок</p>
                 </div>
               ) : (
-                subscriptions.map(sub => {
-                  const product = sub.products_v2 as any;
-                  const tariff = sub.tariffs as any;
-                  const isSelected = selectedSubscription?.id === sub.id;
-                  const isCanceled = !!sub.canceled_at;
-                  const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
-                  const isActive = !isExpired && (sub.status === "active" || sub.status === "trial");
+                <>
+                  {!activeSubscriptions.length && (
+                    <div className="text-center py-4 text-muted-foreground text-sm">
+                      Нет текущих активных доступов
+                    </div>
+                  )}
+                  {activeSubscriptions.map(sub => {
+                    const product = sub.products_v2 as any;
+                    const tariff = sub.tariffs as any;
+                    const isSelected = selectedSubscription?.id === sub.id;
+                    const isCanceled = !!sub.canceled_at;
+                    const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
+                    const isActive = !isExpired && (sub.status === "active" || sub.status === "trial");
 
-                  return (
-                    <Card key={sub.id} className={`transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <div className="font-medium">{product?.name || "Продукт"}</div>
-                            <div className="text-sm text-muted-foreground">{tariff?.name}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {getSubscriptionStatusBadge(sub)}
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSubscriptionToEdit(sub);
-                                setEditSubscriptionOpen(true);
-                              }}
-                              className="h-6 w-6 text-muted-foreground hover:text-primary"
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => handleSubscriptionAction("delete", sub.id)}
-                              disabled={isProcessing}
-                              className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Access info badges with sync status */}
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {product?.telegram_club_id && (() => {
-                            const syncResults = (sub.meta as any)?.sync_results;
-                            const tgSync = syncResults?.telegram;
-                            const hasSync = tgSync !== undefined;
-                            const isSuccess = tgSync?.success === true;
-                            
-                            return (
-                              <Badge 
-                                variant="outline" 
-                                className={`text-xs gap-1 ${
-                                  hasSync 
-                                    ? (isSuccess ? "text-blue-600 border-blue-200" : "text-muted-foreground border-muted") 
-                                    : "text-blue-600 border-blue-200"
-                                }`}
-                                title={tgSync?.error || (isSuccess ? "Синхронизировано" : "")}
-                              >
-                                <Send className="w-3 h-3" />
-                                Telegram
-                                {hasSync && (
-                                  isSuccess 
-                                    ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
-                                    : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
-                                )}
-                              </Badge>
-                            );
-                          })()}
-                          {(tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) && (() => {
-                            const syncResults = (sub.meta as any)?.sync_results;
-                            const gcSync = syncResults?.getcourse;
-                            const hasSync = gcSync !== undefined;
-                            const isSuccess = gcSync?.success === true;
-                            
-                            return (
-                              <Badge 
-                                variant="outline" 
-                                className={`text-xs gap-1 ${
-                                  hasSync 
-                                    ? (isSuccess ? "text-purple-600 border-purple-200" : "text-muted-foreground border-muted") 
-                                    : "text-purple-600 border-purple-200"
-                                }`}
-                                title={gcSync?.error || (isSuccess ? "Синхронизировано" : "")}
-                              >
-                                <BookOpen className="w-3 h-3" />
-                                GetCourse
-                                {hasSync && (
-                                  isSuccess 
-                                    ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
-                                    : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
-                                )}
-                              </Badge>
-                            );
-                          })()}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                          <div>
-                            <span className="text-muted-foreground">Начало: </span>
-                            <span>{format(new Date(sub.access_start_at), "dd.MM.yy")}</span>
-                          </div>
-                          {sub.access_end_at && (
+                    return (
+                      <Card key={sub.id} className={`transition-all ${isSelected ? "ring-2 ring-primary" : ""}`}>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-2">
                             <div>
-                              <span className="text-muted-foreground">До: </span>
-                              <span className={isExpired ? "text-destructive" : ""}>{format(new Date(sub.access_end_at), "dd.MM.yy")}</span>
+                              <div className="font-medium">{product?.name || "Продукт"}</div>
+                              <div className="text-sm text-muted-foreground">{tariff?.name}</div>
                             </div>
-                          )}
-                          {sub.next_charge_at && !isCanceled && (
-                            <div className="col-span-2">
-                              <span className="text-muted-foreground">Попытка списания: </span>
-                              <span className="text-muted-foreground">{format(new Date(sub.next_charge_at), "dd.MM.yy")}</span>
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Auto-renewal status with toggle button */}
-                        {isActive && !isCanceled && (
-                          <div className="flex items-center justify-between gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
                             <div className="flex items-center gap-2">
-                              {sub.auto_renew ? (
-                                <>
-                                  <CheckCircle className="w-3.5 h-3.5 text-green-600" />
-                                  <span className="text-green-700">
-                                    Автопродление включено{!sub.payment_method_id && " (нет карты)"}
-                                  </span>
-                                  {sub.charge_attempts > 0 && (
-                                    <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs">
-                                      Попыток: {sub.charge_attempts}/3
-                                    </Badge>
-                                  )}
-                                </>
-                              ) : (
-                                <>
-                                  <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                                  <span className="text-muted-foreground">
-                                    {sub.auto_renew_disabled_by 
-                                      ? (
-                                        <>
-                                          Откл. {sub.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
-                                          {sub.auto_renew_disabled_at && (
-                                            <span className="ml-1 opacity-70">
-                                              ({format(new Date(sub.auto_renew_disabled_at), "dd.MM.yy")})
-                                            </span>
-                                          )}
-                                        </>
-                                      )
-                                      : "Автопродление отключено"
-                                    }
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                            {/* Toggle button */}
-                            <div className="flex items-center gap-1">
+                              {getSubscriptionStatusBadge(sub)}
                               <Button
-                                size="sm"
+                                size="icon"
                                 variant="ghost"
-                                className={cn(
-                                  "h-6 w-6 p-0",
-                                  sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
-                                )}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setAutoRenewTarget({
-                                    subscriptionId: sub.id,
-                                    currentValue: sub.auto_renew || false,
-                                    productName: product?.name || "Продукт",
-                                    hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
-                                  });
-                                  setAutoRenewConfirmOpen(true);
+                                  setSubscriptionToEdit(sub);
+                                  setEditSubscriptionOpen(true);
                                 }}
-                                title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
+                                className="h-6 w-6 text-muted-foreground hover:text-primary"
                               >
-                                <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
+                                <Pencil className="w-3 h-3" />
                               </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleSubscriptionAction("delete", sub.id)}
+                                disabled={isProcessing}
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Access info badges with sync status */}
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {product?.telegram_club_id && (() => {
+                              const syncResults = (sub.meta as any)?.sync_results;
+                              const tgSync = syncResults?.telegram;
+                              const hasSync = tgSync !== undefined;
+                              const isSuccess = tgSync?.success === true;
                               
-                              {/* Switch to provider-managed (bePaid) button */}
-                              {sub.billing_type !== 'provider_managed' && !contactProviderSubscriptions?.some((ps: any) => ps.subscription_v2_id === sub.id && ['active', 'trial', 'pending'].includes(ps.state)) && (
+                              return (
+                                <Badge 
+                                  variant="outline" 
+                                  className={`text-xs gap-1 ${
+                                    hasSync 
+                                      ? (isSuccess ? "text-blue-600 border-blue-200" : "text-muted-foreground border-muted") 
+                                      : "text-blue-600 border-blue-200"
+                                  }`}
+                                  title={tgSync?.error || (isSuccess ? "Синхронизировано" : "")}
+                                >
+                                  <Send className="w-3 h-3" />
+                                  Telegram
+                                  {hasSync && (
+                                    isSuccess 
+                                      ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                                      : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
+                                  )}
+                                </Badge>
+                              );
+                            })()}
+                            {(tariff?.getcourse_offer_code || tariff?.getcourse_offer_id) && (() => {
+                              const syncResults = (sub.meta as any)?.sync_results;
+                              const gcSync = syncResults?.getcourse;
+                              const hasSync = gcSync !== undefined;
+                              const isSuccess = gcSync?.success === true;
+                              
+                              return (
+                                <Badge 
+                                  variant="outline" 
+                                  className={`text-xs gap-1 ${
+                                    hasSync 
+                                      ? (isSuccess ? "text-purple-600 border-purple-200" : "text-muted-foreground border-muted") 
+                                      : "text-purple-600 border-purple-200"
+                                  }`}
+                                  title={gcSync?.error || (isSuccess ? "Синхронизировано" : "")}
+                                >
+                                  <BookOpen className="w-3 h-3" />
+                                  GetCourse
+                                  {hasSync && (
+                                    isSuccess 
+                                      ? <CheckCircle className="w-2.5 h-2.5 text-green-500" />
+                                      : <XCircle className="w-2.5 h-2.5 text-muted-foreground" />
+                                  )}
+                                </Badge>
+                              );
+                            })()}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                            <div>
+                              <span className="text-muted-foreground">Начало: </span>
+                              <span>{format(new Date(sub.access_start_at), "dd.MM.yy")}</span>
+                            </div>
+                            {sub.access_end_at && (
+                              <div>
+                                <span className="text-muted-foreground">До: </span>
+                                <span className={isExpired ? "text-destructive" : ""}>{format(new Date(sub.access_end_at), "dd.MM.yy")}</span>
+                              </div>
+                            )}
+                            {sub.next_charge_at && !isCanceled && (
+                              <div className="col-span-2">
+                                <span className="text-muted-foreground">Попытка списания: </span>
+                                <span className="text-muted-foreground">{format(new Date(sub.next_charge_at), "dd.MM.yy")}</span>
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Auto-renewal status with toggle button */}
+                          {isActive && !isCanceled && (
+                            <div className="flex items-center justify-between gap-2 mb-3 p-2 rounded-lg bg-muted/50 text-xs">
+                              <div className="flex items-center gap-2">
+                                {sub.auto_renew ? (
+                                  <>
+                                    <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+                                    <span className="text-green-700">
+                                      Автопродление включено{!sub.payment_method_id && " (нет карты)"}
+                                    </span>
+                                    {sub.charge_attempts > 0 && (
+                                      <Badge variant="outline" className="text-amber-600 border-amber-200 text-xs">
+                                        Попыток: {sub.charge_attempts}/3
+                                      </Badge>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
+                                    <span className="text-muted-foreground">
+                                      {sub.auto_renew_disabled_by 
+                                        ? (
+                                          <>
+                                            Откл. {sub.auto_renew_disabled_by === 'admin' ? 'админом' : 'клиентом'}
+                                            {sub.auto_renew_disabled_at && (
+                                              <span className="ml-1 opacity-70">
+                                                ({format(new Date(sub.auto_renew_disabled_at), "dd.MM.yy")})
+                                              </span>
+                                            )}
+                                          </>
+                                        )
+                                        : "Автопродление отключено"
+                                      }
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                              {/* Toggle button */}
+                              <div className="flex items-center gap-1">
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  className="h-6 px-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  className={cn(
+                                    "h-6 w-6 p-0",
+                                    sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
+                                  )}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    createProviderSubAdminMutation.mutate(sub.id);
+                                    setAutoRenewTarget({
+                                      subscriptionId: sub.id,
+                                      currentValue: sub.auto_renew || false,
+                                      productName: product?.name || "Продукт",
+                                      hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
+                                    });
+                                    setAutoRenewConfirmOpen(true);
                                   }}
-                                  disabled={createProviderSubAdminMutation.isPending}
-                                  title="Переключить на bePaid — для карт с 3D-Secure"
+                                  title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
                                 >
-                                  {createProviderSubAdminMutation.isPending ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <span className="text-xs">→ bePaid</span>
-                                  )}
+                                  <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
                                 </Button>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Quick actions - mobile friendly - only show for active subscriptions */}
-                        {isActive && (
-                          <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                            {/* Extend mode */}
-                            {isSelected ? (
-                              <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
-                                <div className="flex gap-1 items-center">
-                                <Input
-                                    type="number"
-                                    value={extendDays === 0 ? "" : extendDays}
-                                    onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
-                                    onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
-                                    className="h-9 sm:h-8 w-20"
-                                    min={1}
-                                  />
-                                  <span className="text-xs">дней</span>
-                                </div>
-                                <div className="flex gap-1 flex-1">
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
-                                    disabled={isProcessing}
-                                    className="h-9 sm:h-8 flex-1 sm:flex-none gap-1 text-xs sm:text-sm"
-                                  >
-                                    <Plus className="w-3 h-3" />
-                                    Продлить
-                                  </Button>
+                                
+                                {/* Switch to provider-managed (bePaid) button */}
+                                {sub.billing_type !== 'provider_managed' && !contactProviderSubscriptions?.some((ps: any) => ps.subscription_v2_id === sub.id && ['active', 'trial', 'pending'].includes(ps.state)) && (
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    onClick={() => setSelectedSubscription(null)}
-                                    className="h-9 sm:h-8 px-3"
+                                    className="h-6 px-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      createProviderSubAdminMutation.mutate(sub.id);
+                                    }}
+                                    disabled={createProviderSubAdminMutation.isPending}
+                                    title="Переключить на bePaid — для карт с 3D-Secure"
                                   >
-                                    ✕
+                                    {createProviderSubAdminMutation.isPending ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <span className="text-xs">→ bePaid</span>
+                                    )}
                                   </Button>
-                                </div>
+                                )}
                               </div>
-                            ) : (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setSelectedSubscription(sub)}
-                                  className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
-                                >
-                                  <Settings className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                  <span className="hidden xs:inline">Управление</span>
-                                  <span className="xs:hidden">⚙</span>
-                                </Button>
-                                
-                                {isCanceled ? (
+                            </div>
+                          )}
+
+                          {/* Quick actions - mobile friendly - only show for active subscriptions */}
+                          {isActive && (
+                            <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                              {/* Extend mode */}
+                              {isSelected ? (
+                                <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
+                                  <div className="flex gap-1 items-center">
+                                  <Input
+                                      type="number"
+                                      value={extendDays === 0 ? "" : extendDays}
+                                      onChange={(e) => setExtendDays(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)}
+                                      onBlur={() => { if (extendDays < 1) setExtendDays(1); }}
+                                      className="h-9 sm:h-8 w-20"
+                                      min={1}
+                                    />
+                                    <span className="text-xs">дней</span>
+                                  </div>
+                                  <div className="flex gap-1 flex-1">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleSubscriptionAction("extend", sub.id, { days: extendDays })}
+                                      disabled={isProcessing}
+                                      className="h-9 sm:h-8 flex-1 sm:flex-none gap-1 text-xs sm:text-sm"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                      Продлить
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      onClick={() => setSelectedSubscription(null)}
+                                      className="h-9 sm:h-8 px-3"
+                                    >
+                                      ✕
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => handleSubscriptionAction("resume", sub.id)}
-                                    disabled={isProcessing}
+                                    onClick={() => setSelectedSubscription(sub)}
                                     className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
                                   >
-                                    <RotateCcw className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                    Возобновить
+                                    <Settings className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                    <span className="hidden xs:inline">Управление</span>
+                                    <span className="xs:hidden">⚙</span>
                                   </Button>
-                                ) : (
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
+                                  
+                                  {isCanceled ? (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleSubscriptionAction("resume", sub.id)}
+                                      disabled={isProcessing}
+                                      className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1"
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                      Возобновить
+                                    </Button>
+                                  ) : (
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          disabled={isProcessing}
+                                          className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                        >
+                                          <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
+                                          <span className="hidden sm:inline">Управление доступом</span>
+                                          <span className="sm:hidden">Доступ</span>
+                                          <ChevronDown className="w-3 h-3 ml-1" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="start" className="w-56">
+                                        <DropdownMenuItem
+                                          onClick={() => handleSubscriptionAction("cancel", sub.id)}
+                                          className="gap-2 text-amber-600"
+                                        >
+                                          <Ban className="w-4 h-4" />
+                                          <div>
+                                            <div className="font-medium">Отменить автопродление</div>
+                                            <div className="text-xs text-muted-foreground">Доступ сохранится до конца периода</div>
+                                          </div>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
+                                          className="gap-2 text-destructive"
+                                        >
+                                          <XCircle className="w-4 h-4" />
+                                          <div>
+                                            <div className="font-medium">Заблокировать сейчас</div>
+                                            <div className="text-xs text-muted-foreground">Немедленно закрыть доступ</div>
+                                          </div>
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+
+                  {/* Toggle for finished subscriptions */}
+                  {finishedSubscriptions.length > 0 && (
+                    <div className="pt-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowFinishedSubs(!showFinishedSubs)}
+                        className="w-full gap-2 text-muted-foreground text-xs"
+                      >
+                        <History className="w-3.5 h-3.5" />
+                        {showFinishedSubs ? "Скрыть завершённые" : `Показать завершённые (${finishedSubscriptions.length})`}
+                        <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", showFinishedSubs && "rotate-180")} />
+                      </Button>
+                      
+                      {showFinishedSubs && (
+                        <div className="space-y-3 mt-3 opacity-60">
+                          {finishedSubscriptions.map(sub => {
+                            const product = sub.products_v2 as any;
+                            const tariff = sub.tariffs as any;
+                            const isExpired = sub.access_end_at && new Date(sub.access_end_at) < new Date();
+                            
+                            return (
+                              <Card key={sub.id} className="border-dashed">
+                                <CardContent className="p-3">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <div className="font-medium text-sm">{product?.name || "Продукт"}</div>
+                                      <div className="text-xs text-muted-foreground">{tariff?.name}</div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {getSubscriptionStatusBadge(sub)}
                                       <Button
-                                        size="sm"
-                                        variant="outline"
+                                        size="icon"
+                                        variant="ghost"
+                                        onClick={() => handleSubscriptionAction("delete", sub.id)}
                                         disabled={isProcessing}
-                                        className="h-9 sm:h-7 text-xs px-2.5 sm:px-3 gap-1 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                        className="h-5 w-5 text-muted-foreground hover:text-destructive"
                                       >
-                                        <Ban className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
-                                        <span className="hidden sm:inline">Управление доступом</span>
-                                        <span className="sm:hidden">Доступ</span>
-                                        <ChevronDown className="w-3 h-3 ml-1" />
+                                        <Trash2 className="w-3 h-3" />
                                       </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="start" className="w-56">
-                                      <DropdownMenuItem
-                                        onClick={() => handleSubscriptionAction("cancel", sub.id)}
-                                        className="gap-2 text-amber-600"
-                                      >
-                                        <Ban className="w-4 h-4" />
-                                        <div>
-                                          <div className="font-medium">Отменить автопродление</div>
-                                          <div className="text-xs text-muted-foreground">Доступ сохранится до конца периода</div>
-                                        </div>
-                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
-                                        onClick={() => handleSubscriptionAction("revoke_access", sub.id)}
-                                        className="gap-2 text-destructive"
-                                      >
-                                        <XCircle className="w-4 h-4" />
-                                        <div>
-                                          <div className="font-medium">Заблокировать сейчас</div>
-                                          <div className="text-xs text-muted-foreground">Немедленно закрыть доступ</div>
-                                        </div>
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-3 text-xs text-muted-foreground">
+                                    <span>Начало: {format(new Date(sub.access_start_at), "dd.MM.yy")}</span>
+                                    {sub.access_end_at && (
+                                      <span className={isExpired ? "text-destructive" : ""}>
+                                        До: {format(new Date(sub.access_end_at), "dd.MM.yy")}
+                                      </span>
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </TabsContent>
 
