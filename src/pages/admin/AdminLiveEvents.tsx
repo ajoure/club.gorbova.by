@@ -193,6 +193,7 @@ export default function AdminLiveEvents() {
   const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
   const [publishAttempted, setPublishAttempted] = useState(false);
   const [creatingLiveEvent, setCreatingLiveEvent] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const isLiveStream = form.event_type === "live_stream";
 
