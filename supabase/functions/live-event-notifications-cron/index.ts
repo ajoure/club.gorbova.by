@@ -263,14 +263,15 @@ Deno.serve(async (req) => {
               if (channel === 'telegram' && profile.telegram_user_id) {
                 const messageText = replaceTokens(template.message_text!, userTz);
                 
-                const { data: bot } = await supabase
-                  .from('telegram_bots')
-                  .select('bot_token')
+                const { data: club } = await supabase
+                  .from('telegram_clubs')
+                  .select('telegram_bots(bot_token_encrypted)')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
-                if (bot?.bot_token) {
+                const botToken = (club as any)?.telegram_bots?.bot_token_encrypted;
+                if (botToken) {
                   const keyboard = template.button_text ? {
                     inline_keyboard: [[{
                       text: replaceTokens(template.button_text, userTz),
