@@ -247,7 +247,7 @@ Deno.serve(async (req) => {
             // Get user profile for sending
             const { data: profile } = await supabase
               .from('profiles')
-              .select('id, email, telegram_chat_id, timezone, first_name')
+              .select('id, email, telegram_user_id, timezone, first_name')
               .eq('user_id', userId)
               .single();
 
@@ -260,17 +260,18 @@ Deno.serve(async (req) => {
             const userTz = profile.timezone || event.event_timezone || 'Europe/Minsk';
 
             try {
-              if (channel === 'telegram' && profile.telegram_chat_id) {
+              if (channel === 'telegram' && profile.telegram_user_id) {
                 const messageText = replaceTokens(template.message_text!, userTz);
                 
-                const { data: bot } = await supabase
-                  .from('telegram_bots')
-                  .select('bot_token')
+                const { data: club } = await supabase
+                  .from('telegram_clubs')
+                  .select('telegram_bots(bot_token_encrypted)')
                   .eq('is_active', true)
                   .limit(1)
-                  .single();
+                  .maybeSingle();
 
-                if (bot?.bot_token) {
+                const botToken = (club as any)?.telegram_bots?.bot_token_encrypted;
+                if (botToken) {
                   const keyboard = template.button_text ? {
                     inline_keyboard: [[{
                       text: replaceTokens(template.button_text, userTz),
@@ -278,11 +279,11 @@ Deno.serve(async (req) => {
                     }]],
                   } : undefined;
 
-                  const response = await fetch(`https://api.telegram.org/bot${bot.bot_token}/sendMessage`, {
+                  const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      chat_id: profile.telegram_chat_id,
+                      chat_id: profile.telegram_user_id,
                       text: messageText,
                       parse_mode: 'Markdown',
                       reply_markup: keyboard,
@@ -305,7 +306,7 @@ Deno.serve(async (req) => {
                 const subject = replaceTokens(template.email_subject!, userTz);
                 const html = replaceTokens(template.email_body_html!, userTz);
 
-                await supabase.functions.invoke('send-email', {
+                const { data: emailResult, error: emailError } = await supabase.functions.invoke('send-email', {
                   body: {
                     to: profile.email,
                     subject,
@@ -318,8 +319,15 @@ Deno.serve(async (req) => {
                   },
                 });
 
-                await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'sent');
-                totalSent++;
+                if (emailError) {
+                  console.error(`[live-notif-cron] Email invoke error for ${userId}:`, emailError);
+                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'failed', 
+                    emailError.message || String(emailError));
+                  totalFailed++;
+                } else {
+                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'sent');
+                  totalSent++;
+                }
               } else {
                 await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 
                   `no_${channel}_contact`);
