@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, UserPlus, Edit } from "lucide-react";
+import { X, Trash2, Mail, MessageCircle, CheckSquare, Combine, Archive, UserPlus, Edit, CalendarPlus } from "lucide-react";
 
 interface BulkActionsBarProps {
   selectedCount: number;
@@ -9,6 +9,7 @@ interface BulkActionsBarProps {
   onBulkMessage?: () => void;
   onBulkMerge?: () => void;
   onBulkArchive?: () => void;
+  onBulkExtendAccess?: () => void;
   onBulkCreateAccounts?: () => void;
   onBulkEdit?: () => void;
   onSelectAll?: () => void;
@@ -24,6 +25,7 @@ export function BulkActionsBar({
   onBulkMessage,
   onBulkMerge,
   onBulkArchive,
+  onBulkExtendAccess,
   onBulkCreateAccounts,
   onBulkEdit,
   onSelectAll,
