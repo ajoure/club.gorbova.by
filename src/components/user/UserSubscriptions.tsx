@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { cn } from "@/lib/utils";
+import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 
 export function UserSubscriptions() {
   const { user } = useAuth();
@@ -18,6 +19,7 @@ export function UserSubscriptions() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [showFinished, setShowFinished] = useState(false);
+  const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
 
   const { data: subscriptions, isLoading } = useQuery({
     queryKey: ["user-subscriptions", user?.id],

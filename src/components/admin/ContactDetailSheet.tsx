@@ -9,6 +9,7 @@ import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import { getEventLabel } from "@/lib/eventLabels";
 import { formatContactName } from "@/lib/nameUtils";
+import { useActiveAccessRuleProducts, isCurrentValidAccess, isHistoricalAccess } from "@/hooks/useAccessValidation";
 import {
   Sheet,
   SheetContent,
@@ -440,6 +441,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     () => deals?.find(d => d.id === refundDealId) ?? null,
     [deals, refundDealId]
   );
+
+  const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
