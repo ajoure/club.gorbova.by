@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useActiveAccessRuleProducts, checkExtendEligibility, isCurrentValidAccess } from "@/hooks/useAccessValidation";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -38,6 +39,7 @@ export function BulkExtendAccessDialog({
   open, onOpenChange, selectedOrderIds, onSuccess,
 }: BulkExtendAccessDialogProps) {
   const queryClient = useQueryClient();
+  const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
   const [step, setStep] = useState<Step>("setup");
   const [days, setDays] = useState(30);
   const [extendFromCurrent, setExtendFromCurrent] = useState(true);
@@ -95,89 +97,47 @@ export function BulkExtendAccessDialog({
       const userName = profile?.full_name || profile?.email || "—";
       const productName = product?.name || "—";
 
-      // STOP-guard: no user_id
-      if (!order.user_id) {
-        return {
-          orderId: order.id, orderNumber: order.order_number || "—",
-          productName, userName, currentEnd: null, newEnd: null,
-          action: "заблокировано" as const, reason: "Нет user_id у сделки",
-        };
-      }
-
-      // STOP-guard: no product_id
-      if (!order.product_id) {
-        return {
-          orderId: order.id, orderNumber: order.order_number || "—",
-          productName, userName, currentEnd: null, newEnd: null,
-          action: "заблокировано" as const, reason: "Нет product_id у сделки",
-        };
-      }
-
-      // STOP-guard: archived product
-      if (product && !product.is_active) {
-        return {
-          orderId: order.id, orderNumber: order.order_number || "—",
-          productName, userName, currentEnd: null, newEnd: null,
-          action: "заблокировано" as const, reason: "Архивный продукт — доступ не создаётся",
-        };
-      }
-
-      // STOP-guard: order not paid
-      if (order.status !== "paid") {
-        return {
-          orderId: order.id, orderNumber: order.order_number || "—",
-          productName, userName, currentEnd: null, newEnd: null,
-          action: "пропустить" as const, reason: `Сделка не оплачена (${order.status})`,
-        };
-      }
-
-      // Find active subscription
+      // Find subscription candidate
       const sub = subsData?.find(
         s => s.user_id === order.user_id && s.product_id === order.product_id
-          && (s.status === "active" || s.status === "trial")
-          && (!s.access_end_at || new Date(s.access_end_at) > new Date())
-      );
+      ) || null;
 
-      if (!sub) {
-        // No active subscription = historical, blocked
-        return {
-          orderId: order.id, orderNumber: order.order_number || "—",
-          productName, userName, currentEnd: null, newEnd: null,
-          action: "заблокировано" as const,
-          reason: "Нет текущего активного доступа — продление невозможно",
-        };
-      }
-
-      // Calculate new end date
-      const baseDate = extendFromCurrent && sub.access_end_at
+      // Calculate potential new end
+      const baseDate = extendFromCurrent && sub?.access_end_at
         ? new Date(sub.access_end_at)
         : new Date();
       const newEnd = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
 
-      // STOP-guard: new end would be before current end (shrinking)
-      if (sub.access_end_at && newEnd < new Date(sub.access_end_at)) {
+      // Use unified predicate
+      const check = checkExtendEligibility(
+        order as any,
+        sub ? { ...sub, products_v2: product, tariffs: null } : null,
+        productsWithRules,
+        newEnd,
+      );
+
+      if (check.action !== "применить") {
         return {
           orderId: order.id, orderNumber: order.order_number || "—",
           productName, userName,
-          currentEnd: sub.access_end_at,
-          newEnd: newEnd.toISOString(),
-          action: "заблокировано" as const,
-          reason: "Новый срок короче текущего — сокращение заблокировано",
-          subscriptionId: sub.id,
+          currentEnd: sub?.access_end_at || null,
+          newEnd: null,
+          action: check.action,
+          reason: check.reason,
         };
       }
 
       return {
         orderId: order.id, orderNumber: order.order_number || "—",
         productName, userName,
-        currentEnd: sub.access_end_at,
+        currentEnd: sub?.access_end_at || null,
         newEnd: newEnd.toISOString(),
         action: "применить" as const,
         reason: `Продление от ${extendFromCurrent ? "текущего срока" : "сегодня"} на ${days} дн.`,
-        subscriptionId: sub.id,
+        subscriptionId: sub?.id,
       };
     });
-  }, [orderData, subsData, days, extendFromCurrent]);
+  }, [orderData, subsData, days, extendFromCurrent, productsWithRules]);
 
   const applicable = previewRows.filter(r => r.action === "применить");
   const blocked = previewRows.filter(r => r.action === "заблокировано");
