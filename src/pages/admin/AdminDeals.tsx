@@ -62,6 +62,7 @@ import { useDragSelect } from "@/hooks/useDragSelect";
 import { SelectionBox } from "@/components/admin/SelectionBox";
 import { BulkActionsBar } from "@/components/admin/BulkActionsBar";
 import { BulkEditDealsDialog } from "@/components/admin/BulkEditDealsDialog";
+import { BulkExtendAccessDialog } from "@/components/admin/BulkExtendAccessDialog";
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -144,6 +145,7 @@ export default function AdminDeals() {
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
+  const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   
