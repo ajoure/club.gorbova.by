@@ -15,10 +15,10 @@ import {
 } from "@/components/ui/collapsible";
 import {
   Video, Plus, Radio, Shield, Send, PlayCircle, AlertTriangle,
-  ChevronDown, Zap, AlertCircle, Lightbulb, Info,
+  ChevronDown, Zap, AlertCircle, Lightbulb, Info, ImageOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HELP_SECTIONS, QUICK_START_STEPS, type HelpSection, type HelpCallout } from "./liveEventsHelpContent";
+import { HELP_SECTIONS, QUICK_START_STEPS, type HelpSection, type HelpCallout, type HelpIllustration } from "./liveEventsHelpContent";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Video, Plus, Radio, Shield, Send, PlayCircle, AlertTriangle,
@@ -27,6 +27,22 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+function IllustrationPlaceholder({ illustration }: { illustration: HelpIllustration }) {
+  return (
+    <div className="relative rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/30 p-6 flex flex-col items-center gap-3 text-center">
+      <Badge variant="outline" className="absolute top-2 right-2 text-[10px] bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-700">
+        Временная схема
+      </Badge>
+      <ImageOff className="h-10 w-10 text-muted-foreground/40" />
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-muted-foreground">{illustration.alt}</p>
+        <p className="text-[11px] text-muted-foreground/70">{illustration.description}</p>
+        <p className="text-[10px] italic text-muted-foreground/50">Скриншот будет добавлен позже</p>
+      </div>
+    </div>
+  );
 }
 
 function CalloutBlock({ callout }: { callout: HelpCallout }) {
@@ -66,9 +82,14 @@ function SectionContent({ section, detailed }: { section: HelpSection; detailed:
       </div>
 
       {!detailed ? (
-        <p className="text-sm text-muted-foreground">{section.shortContent}</p>
+        <>
+          <p className="text-sm text-muted-foreground">{section.shortContent}</p>
+          {section.illustration && <IllustrationPlaceholder illustration={section.illustration} />}
+        </>
       ) : (
         <>
+          {section.illustration && <IllustrationPlaceholder illustration={section.illustration} />}
+
           {section.paragraphs?.map((p, i) => (
             <p key={i} className="text-sm leading-relaxed" dangerouslySetInnerHTML={{
               __html: p.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/`(.*?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-xs">$1</code>')
@@ -154,11 +175,21 @@ function HelpBody() {
         ))}
       </div>
 
+      {/* Testing guide CTA */}
+      <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+        <p>
+          📋 <strong>Инструкция по тестированию</strong> — у ответственного сотрудника или в{" "}
+          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
+            техдокументации
+          </a>.
+        </p>
+      </div>
+
       {/* Link to tech docs */}
       <div className="text-center pt-2 border-t">
         <p className="text-xs text-muted-foreground">
           Техническая документация доступна в{" "}
-          <a href="/admin/system-docs?domain=live_events" className="text-primary hover:underline">
+          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
             Системной документации → Live Events v2
           </a>
         </p>
