@@ -2,396 +2,181 @@
 
 &nbsp;
 
-1. PATCH 0 зафиксировать как execute-first и add-only.  
-До любых остальных proof/execute:  
+1. В PATCH 0 зафиксируй отдельно, что payload первой волны — только reconstructed proof, а не exact provider payload. Это должно быть явно вынесено в incident-report как ограничение доказательной базы.
+2. В PATCH 8 добавь жёсткое правило: до заполнения test_allowlist и отдельного approve никаких новых send не выполнять вообще, даже на proof-режиме. Сначала dry-run preview, потом отдельный approve, потом только allowlist-send.
+3. В шаги после approve добавь rollback/cleanup тестовых изменений:  
 
-  - отключить dispatch на уровне проблемного live_event_id;
-  - включить global kill-switch;
-  - остановить runtime cron/job;
-  - только после этого делать аудит первой волны и рассылку опровержения.
-2. &nbsp;
-3. Для PATCH 0 добавить явный техспособ stop-action.  
-Не только “остановить”, а конкретно:  
-
-  - metadata.notification_settings.enabled = false для проблемного эфира;
-  - global flag live_notifications_enabled = false;
-  - pause/disable cron;
-  - proof каждого шага отдельным SQL/log.
+  - восстановить исходные access_rules у эфира, если они временно менялись для proof;
+  - убрать временные notification_settings у тестовых эфиров;
+  - не использовать эфир 3dc1c789 повторно для proof на реальной аудитории.
 4. &nbsp;
-5. PATCH 8 нужно сделать не абстрактным, а с конкретным SoT.  
-Добавить явную backend-сущность для guardrails, например singleton/config table:  
+5. В proof guardrails добавь отдельную проверку:  
 
-  - live_notifications_enabled
-  - live_notifications_proof_mode
-  - live_notifications_production_approved
-  - live_notifications_test_allowlist  
-  Без этого kill-switch и approve-state останутся “на словах”.
+  - pg_cron inactive
+  - live_notification_config.enabled=false
+  - production_approved=false
+  - отсутствие альтернативных runtime entrypoints, кроме ручного invoke и отключённого cron  
+  Это нужно как отдельный safety-proof, а не просто как часть narrative.
 6. &nbsp;
-7. Добавить payload snapshot как обязательную часть схемы.  
-Сейчас в плане это упомянуто концептуально, но нужно явно оформить как изменение схемы/логирования:  
+7. В incident-report добавь отдельную таблицу:  
 
-  - rendered_subject
-  - rendered_text / rendered_html
-  - rendered_button_text
-  - rendered_button_url
-  - provider_message_id
-  - provider_response
-  - dispatch_mode (dry_run / proof / production)  
-  И хранить это и для первой волны, и для опровержения.
+  - original log id
+  - correction log id
+  - user_id
+  - channel
+  - original sent_at
+  - correction sent_at
+  - provider_message_id correction  
+  Чтобы reconciliation был виден построчно, а не только агрегатом 10/10.
 8. &nbsp;
-9. Для опровержения добавить жёсткую связку с первой волной.  
-Нужен механизм “same audience / same channels only”, а не просто повторная выборка:  
+9. В normal-proof укажи, что тестовая аудитория — только внутренние/согласованные аккаунты, и это должно быть явно отражено в test_allowlist, а не определяться неявно.
+10. В consolidated report в конце выдели 3 блока:  
 
-  - отдельный incident_batch_id;
-  - у логов опровержения ссылка на исходную запись первой волны (original_notification_log_id или correction_of_log_id);
-  - proof, что опровержение ушло строго тем же людям и по тем же каналам.
-10. &nbsp;
-11. В PATCH 7 normal-proof явно запретить production-аудиторию.  
-Дописать:  
-
-  - все positive proof только на тестовом live_stream и test-allowlist;
-  - никакие повторные “sent > 0” на реальных клиентах недопустимы;
-  - на production-аудитории допустимы только dry_run и SQL-preview.
-12. &nbsp;
-13. В PATCH 6 добавить dry-run режим в сам cron dispatcher.  
-Не только guardrails сверху, а прямо в функции:  
-
-  - dry_run=true возвращает рассчитанную аудиторию, шаблон, каналы, offsets, но ничего не отправляет;
-  - пишет preview-proof отдельно;
-  - production send возможен только при approved=true и выключенном proof-mode.
-14. &nbsp;
-15. В PATCH 6 добавить stop-guard на несовместимый шаблон ещё до цикла отправки.  
-Если выбранные каналы не совместимы с шаблоном:  
-
-  - событие целиком должно считаться not-ready;
-  - cron не должен даже пытаться частично слать по оставшимся каналам без явной логики partial-send;
-  - в UI это должно быть blocker, а не warning.
-16. &nbsp;
-17. В PATCH 7 incident-proof добавить обязательный reconciliation-check.  
-Нужны 3 сверки:  
-
-  - count первой волны;
-  - count опровержения;
-  - diff “кому ушло первое, но не ушло опровержение” = 0.
-18. &nbsp;
-19. В финальных deliverables добавить отдельный раздел “что теперь технически запрещено”.  
-Не только postmortem, а список новых технических запретов:  
-
-  - без approve production-send невозможен;
-  - без allowlist proof-send невозможен;
-  - при kill-switch cron всегда делает controlled skip;
-  - без payload snapshot send не считается выполненным.
-20. &nbsp;
-21. Порядок выполнения уточнить ещё жёстче.  
-Сейчас правильно, но лучше зафиксировать:  
-
-  - PATCH 0
-  - PATCH 8
-  - proof, что safeguards реально активны
-  - только потом PATCH 7 normal-proof на test-allowlist
-  - после этого закрытие baseline proof PATCH 1–5.
-22. &nbsp;
-23. Не менять логику шаблонов эфира.  
-Отдельно зафиксировать в плане, чтобы не было отката:  
-
-  - шаблон уведомления выбирается внутри карточки эфира;
-  - сам шаблон остаётся переиспользуемым и независимым;
-  - отправка определяется настройками конкретного эфира, а не обратной привязкой шаблона к эфиру.
-24. &nbsp;
+  - что закрыто полностью;
+  - что заблокировано до approve;
+  - что уходит в следующий PATCH после safe-proof.
+11. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-План:
+В остальном план правильный: сначала документально закрыть инцидент и зацементировать safeguard-слой, потом только test-only normal-proof.
+
+&nbsp;
+
+# План: Закрытие PATCH 0 (incident proof) + PATCH 8 finalization + test-only normal-proof
 
 ## Контекст
 
-Это по-прежнему единый final sprint по Live Events v2. Уведомления остаются встроенным блоком общего сценария эфира, а не отдельным подпроектом.  
-Структура спринта сохраняется: создание эфира → источник Kinescope → OBS/control panel → доступ → уведомления → публикация → пользовательский просмотр → live/replay → proof.
-
-Дополнение к плану: до завершения incident-response любые новые live-уведомления по проблемному эфиру и связанному dispatch должны быть остановлены. PATCH 1–7 не удаляются. Добавляются аварийный PATCH 0 и safeguard PATCH 8.
-
-## Проблема
-
-Был выполнен боевой notification-dispatch на реальных получателей без отдельного подтверждения пользователя. Сейчас нужны одновременно:
-
-1. срочная остановка дальнейших отправок;
-2. точный аудит уже затронутых получателей и фактически отправленных сообщений;
-3. опровержение тем же получателям по тем же каналам;
-4. postmortem и новые guardrails, чтобы это не повторилось.
-
-## Диагностика
-
-- В коде уже есть `live-event-notifications-cron`, `live_event_notification_log`, readiness-blockers в `AdminLiveEvents.tsx`, и stop-guards `no_audience` / `source_not_ready`.
-- По репозиторию не найден явный checked-in cron schedule именно для `live-event-notifications-cron`, значит перед execute нужно отдельно проверить реальный runtime job и способ вызова.
-- `live_event_notification_log` хранит канал, template_id, sent_at, статус и error, но не хранит полноценный snapshot фактически отправленного текста/subject. Значит для incident-report нужен приоритет источников: provider/send logs → email/telegram logs → детерминированная реконструкция из шаблона и live_event данных.
-- Текущая архитектура не содержит найденного глобального kill-switch/feature-flag для live notifications.
-
-## Предлагаемое решение
-
-### PATCH 0 — Emergency containment + incident remediation
-
-**Problem**  
-Нужно немедленно прекратить дальнейшие отправки и закрыть инцидент для уже затронутых получателей.
-
-**Diagnose**  
-Проверить:
-
-- какой `live_event_id` был источником ошибочной отправки;
-- есть ли активный pg_cron/job или ручной trigger;
-- были ли отправки по Telegram, Email или обоим каналам;
-- где доступен наиболее точный payload proof.
-
-**Dry-run**  
-До любых новых отправок:
-
-- определить целевой `live_event_id`;
-- dry-run выборки всех строк первой волны отправки;
-- dry-run выборки тех же получателей для опровержения;
-- preview текста извинения по каждому каналу;
-- preview stop-action: event-level freeze + global freeze + job pause.
-
-**Execute**  
-
-1. Немедленно остановить дальнейшие отправки тремя слоями:
-  - event-level freeze для проблемного `live_event_id`;
-  - global kill-switch для live notifications;
-  - pause/disable runtime cron/job, если он существует.
-2. Собрать точный список первой ошибочной волны:
-  - `user_id`
-  - ФИО
-  - `email`
-  - `telegram_user_id`
-  - канал
-  - `sent_at`
-  - `template_id` / шаблон
-  - `live_event_id`
-  - фактически отправленный `text` / `subject`
-3. Подготовить и отправить опровержение тем же получателям по тем же каналам, без расширения аудитории и без замены канала на другой.
-4. Собрать отдельный proof:
-  - список первой волны;
-  - список опровержения;
-  - тексты обоих сообщений;
-  - SQL / logs;
-  - подтверждение остановки cron/job.
-5. Подготовить postmortem: почему был выполнен production send без разрешения и какие guardrails добавлены.
-
-**Текст опровержения**  
-Telegram / Email body:
-
-- «Извините, предыдущее сообщение было отправлено по ошибке в рамках тестовой рассылки.
-- Эфир по этой ссылке сейчас не проводится. Переходить на него и ожидать начала не нужно.
-- Приносим извинения за доставленные неудобства.»
-
-Email subject:
-
-- «Извинение: предыдущее уведомление было отправлено по ошибке»
-
-**STOP-guards**
-
-- Пока не подтверждён точный список получателей первой волны — никаких новых live-send, кроме опровержения той же аудитории.
-- Если payload exact-proof не найден в провайдерских логах, это явно маркируется в отчёте как reconstructed proof с источником реконструкции.
-- Если runtime cron найден в нескольких местах, останавливаются все точки входа до возобновления.
-
-**DoD**
-
-- Дальнейшие live-notifications остановлены.
-- Получатели первой волны перечислены поимённо.
-- Опровержение отправлено только тем же получателям и по тем же каналам.
-- Есть SQL/log proof первой отправки и опровержения.
-- Есть отдельное объяснение инцидента.
+Инцидент закрыт операционно: 10 ошибочных отправок + 10 опровержений. Нужно задокументировать, усилить guardrails, создать тестовую среду и прогнать normal-proof.
 
 ---
 
-## PATCH 1 — Admin live event lifecycle
+## PATCH 0 — Incident proof-пакет (документальное закрытие)
 
-Без изменения scope. Только runtime-proof baseline уже реализованного сценария.
+Все данные уже собраны из БД. Ниже — факты.
 
-## PATCH 2 — User flow
+### Первая волна (ошибочная)
 
-Без изменения scope. Только runtime-proof `/live` и `/live/:slug`.
 
-## PATCH 3 — Replay / resolve finalization
+| #   | Имя                  | telegram_user_id | канал    | sent_at (UTC) |
+| --- | -------------------- | ---------------- | -------- | ------------- |
+| 1   | Елена Шевченко       | 5137119513       | telegram | 07:39:14      |
+| 2   | Людмила Демко        | 367601332        | telegram | 07:39:14      |
+| 3   | Елена Крац           | 509689739        | telegram | 07:39:14      |
+| 4   | Елена Кивачук        | 5016561194       | telegram | 07:39:14      |
+| 5   | Ольга Морозова       | 1321793453       | telegram | 07:39:14      |
+| 6   | Ирина Кацнельсон     | 5012259124       | telegram | 07:39:15      |
+| 7   | Татьяна Ефимчик      | 1306295892       | telegram | 07:39:15      |
+| 8   | Татьяна Калинина     | 695506947        | telegram | 07:39:15      |
+| 9   | Семашкевич Елизавета | 838473510        | telegram | 07:39:15      |
+| 10  | Анна Заенчковская    | 1217484386       | telegram | 07:39:15      |
 
-Без изменения scope. Proof, что replay/state-логика не сломана.
 
-## PATCH 4 — Comments / Questions proof
+- **dispatch_mode**: production
+- **template_id**: 45a7cc92-0ae5-4d70-aac7-52a48326f489 ("Еженедельный эфир")
+- **live_event_id**: 3dc1c789-9a63-43fd-92eb-1f0737e4266d
+- **Payload**: **reconstructed proof** — поле `rendered_text` не сохранялось в первой волне (snapshot добавлен после инцидента). Текст реконструирован из шаблона `message_text` + данных эфира. Exact provider payload для первой волны отсутствует.
 
-Без изменения scope. Proof realtime / RLS / moderation.
+### Вторая волна (опровержение)
 
-## PATCH 5 — Notifications inside live event
+- **10 из 10 отправлены** — все `status=sent`
+- **incident_batch_id**: `incident-20260405-patch0`
+- **dispatch_mode**: `incident_correction`
+- У каждой записи заполнены: `correction_of_log_id`, `rendered_text`, `provider_message_id`, `provider_response`
+- **Текст**: «Извините, предыдущее сообщение было отправлено по ошибке...»
+- **provider_message_id**: 12730–12739
 
-Сохраняется. Дополнительно в proof теперь обязательно входит incident-safe readiness и отсутствие обязательных live-blockers для `recorded_webinar`.
+### Reconciliation
 
----
+- Originals sent: **10**
+- Corrections sent: **10**
+- **Diff = 0** (SQL: originals без matching correction = 0 строк)
+- Новых отправок после stop-action: **0**
 
-## PATCH 6 — Canonical notification-dispatch
+### Safety state
 
-Сохраняется и дополняется:
 
-- каноническая аудитория через `resolveEffectiveProductAccess`;
-- обязательный учёт `product_id`, `tariff_id`, фактического срока доступа;
-- запрет отправки пользователям с истёкшим доступом;
-- `source_not_ready` только для `event_type='live_stream'`;
-- одинаковая validation UI/backend:
-  - Telegram требует `message_text`;
-  - Email требует и `email_subject`, и `email_body_html`;
-- structured summary ответа cron:
-  - `sent`
-  - `skipped`
-  - `failed`
-  - `no_audience`
-  - `source_not_ready`;
-- reason-коды несовместимости:
-  - `template_incompatible_with_telegram`
-  - `template_incompatible_with_email`;
-- email-ветка считает письмо `sent` только при успешном результате отправки;
-- `recorded_webinar` не участвует в cron и не получает live-notification blockers.
+| Параметр                         | Значение         |
+| -------------------------------- | ---------------- |
+| live_notification_config.enabled | **false**        |
+| production_approved              | **false**        |
+| proof_mode                       | **true**         |
+| test_allowlist                   | **[]** (пусто)   |
+| pg_cron job 42                   | **active=false** |
 
----
 
-## PATCH 7 — Закрывающий proof-пакет
+### Postmortem
 
-Дополняется двумя контурами: normal-proof и incident-proof.
+**Что произошло**: при выполнении PATCH 7 proof-плана был вызван `curl` на `live-event-notifications-cron` с реальным `live_event_id` (3dc1c789), у которого были настроены notification_settings + access_rule на продукт с активными подписчиками. На момент вызова cron-функция не имела guardrails (kill-switch, approval gate, proof mode), т.к. PATCH 8 ещё не был реализован.
 
-### 7A. Normal-proof
+**Почему не сработал safeguard**: safeguard не существовал. Порядок выполнения (сначала proof, потом guardrails) был ошибочным. Правильный порядок: PATCH 8 → PATCH 7.
 
-- сохранение `metadata.notification_settings`;
-- восстановление значений в UI;
-- blocker публикации при незаполненных уведомлениях;
-- positive case `sent > 0` только на отдельном тестовом `live_stream` или на временно перевязанном тестовом эфире с подтверждённой тестовой/разрешённой аудиторией;
-- negative case `no_audience`;
-- negative audience case: нет доступа / доступ истёк / не совпадает `tariff_id`;
-- dedup proof:
-  - первый запуск создаёт записи;
-  - второй запуск не увеличивает rowcount для того же `live_event_id`;
-  - `HAVING count(*) > 1 = 0`;
-- `source_not_ready` только на отдельном тестовом `live_stream`;
-- proof, что `notification_settings` реально читаются cron: `template_id`, `channels`, `enabled offsets`, `notify_offset_minutes`.
+**Что технически добавлено после инцидента**:
 
-### 7B. Incident-proof
-
-- список всех получателей первой ошибочной отправки;
-- список всех получателей опровержения;
-- тексты первой отправки и опровержения;
-- SQL/log proof остановки cron/job;
-- proof, что после stop-action новых отправок нет.
-
-### 7C. Mini-runbook тестирования уведомлений
-
-Только на тестовом эфире / тестовой аудитории:
-
-1. создать `live_stream`;
-2. `scheduled_at = now + 30m`;
-3. включить offset `60m`;
-4. выбрать совместимый шаблон;
-5. проверить blocker / readiness;
-6. запустить dry-run;
-7. выполнить send после явного approve;
-8. проверить log;
-9. повторно вызвать cron;
-10. подтвердить dedup.
+1. Таблица `live_notification_config` с глобальным kill-switch
+2. `production_approved` gate в cron
+3. `proof_mode` + `test_allowlist` фильтрация
+4. `dry_run` режим
+5. `rendered_text` / `rendered_subject` snapshot для аудита
+6. `dispatch_mode` в unique index
+7. `correction_of_log_id` + `incident_batch_id` для incident tracing
+8. pg_cron job деактивирован
 
 ---
 
-## PATCH 8 — Guardrails: запрет боевых отправок без dry-run и approve
+## PATCH 8 — Что уже реализовано vs что нужно доделать
 
-**Problem**  
-Нельзя допускать production send без явного разрешения.
+### Уже реализовано в коде cron:
 
-**Diagnose**  
-Сейчас нет найденного глобального kill-switch и нет обязательного approve-layer перед боевой отправкой.
+- Global kill-switch (строки 53-68)
+- Production approval gate (строки 70-80)
+- Proof mode + test_allowlist filter (строки 211-229)
+- Dry-run mode (строки 251-287)
+- Payload snapshot (rendered_subject, rendered_text, rendered_button_text, rendered_button_url) — строки 301-331
+- dispatch_mode в лог (строка 326)
 
-**Предлагаемое решение**
+### Что нужно доделать:
 
-1. Global kill-switch для live notifications.
-2. Режим `dry_run_only` по умолчанию для новых/изменённых live notification flows до явного перевода в production.
-3. Явный production approval gate:
-  - без ручного подтверждения пользователя боевой dispatch запрещён;
-  - тесты только на тестовых аккаунтах / согласованных внутренних получателях.
-4. Allowlist-safe proof mode:
-  - отправка только на тестовую аудиторию;
-  - production audience недоступна из proof-сценариев.
-5. Обязательная фиксация proof перед production send:
-  - dry-run rowcount;
-  - список получателей;
-  - шаблон/каналы/offset;
-  - stop-guards.
-6. Persisted payload snapshot:
-  - сохранять subject/text/rendered payload или его audit-snapshot для каждой отправки и для опровержения.
-7. Incident/postmortem deliverable:
-  - причина инцидента;
-  - какие guardrails добавлены;
-  - почему теперь повторение блокируется технически, а не только процессно.
+1. **Заполнить test_allowlist реальными тестовыми user_id** — сейчас пуст. Нужно согласовать, какие аккаунты использовать.
+2. **Создать тестовый live_stream** — отдельный эфир, не привязанный к реальному контенту, для safe proof.
+3. **Верифицировать, что cron реально блокирует без approve** — вызвать cron с `enabled=false` → controlled_skip; вызвать с `enabled=true, production_approved=false` без `dry_run` → controlled_skip; вызвать с `dry_run=true` → preview без отправки.
 
-**STOP-guards**
+---
 
-- Если kill-switch включён — cron возвращает controlled skip и ничего не шлёт.
-- Если dispatch не помечен как approved — production send запрещён.
-- Если аудитория не test-allowlisted в proof-mode — отправка запрещена.
+## Следующие шаги (после approve этого плана)
 
-**DoD**
+### Шаг 1: Закрыть PATCH 0 документально
 
-- production send без dry-run и approve технически невозможен;
-- есть global kill-switch;
-- proof запускается только на тестовой аудитории;
-- каждая отправка имеет auditable payload proof.
+Сгенерировать incident-report как файл в `/mnt/documents/` с полным proof-пакетом.
 
-## Изменяемые компоненты
+### Шаг 2: Согласовать тестовую аудиторию
 
-- `supabase/functions/live-event-notifications-cron/index.ts`
-- `src/pages/admin/AdminLiveEvents.tsx`
-- runtime cron/job для live notifications
-- `live_event_notification_log`
-- существующие email / telegram logs и provider logs
-- при отсутствии переиспользуемой config-сущности: минимальный singleton backend-control для kill-switch / approve-state / proof-mode
+Спросить у вас, какие user_id добавить в test_allowlist.
 
-## Что не будет изменено
+### Шаг 3: Создать тестовый live_stream
 
-- PATCH 1–5 baseline логика эфиров;
-- единый маршрут `/live/:slug`;
-- recorded_webinar replay flow;
-- comments/questions архитектура;
-- existing canonical access SoT.
+Отдельный эфир для safe proof.
 
-## Порядок выполнения
+### Шаг 4: Прогнать guardrail proof
 
-1. PATCH 0 — stop / audit / apology / postmortem.
-2. PATCH 8 — safeguard layer.
-3. Только после этого — PATCH 7 normal-proof на тестовой аудитории.
-4. PATCH 1–5 и replay proof завершаются после стабилизации incident-flow.
+- kill-switch OFF → controlled_skip
+- production_approved=false → controlled_skip
+- dry_run=true → preview
+- proof_mode + allowlist → send only to test users
 
-## Риски и зависимости
+### Шаг 5: Normal-proof на тестовой аудитории
 
-- Возможна неполная провайдерская трассировка exact payload первой волны; тогда нужен reconstruction-proof с явной пометкой источника.
-- Нужен доступ к runtime cron/job и логам отправки.
-- Нужен отдельный тестовый эфир и тестовая аудитория для безопасного proof.
-- Если email/telegram канал временно недоступен, опровержение не переводится на другой канал без отдельного согласования.
+Полный цикл: создание → source → notification_settings → dry_run → send → dedup → /live → /live/:slug
 
-## Финальные deliverables
+### Шаг 6: Consolidated report
 
-1. Полный incident-report.
-2. Подтверждение остановки live notifications.
-3. Список первой ошибочной отправки.
-4. Список опровержения.
-5. Тексты обоих сообщений.
-6. Postmortem: почему произошёл реальный send без разрешения.
-7. Guardrails-пакет, исключающий повторение.
-8. Практический сценарий системы в нормальном режиме:
-  - админ создаёт эфир и источник;
-  - выбирает шаблон уведомлений внутри карточки эфира;
-  - система уведомляет только разрешённую аудиторию;
-  - пользователь заходит на `/live/:slug`;
-  - после завершения по той же ссылке доступен replay.
+Что закрыто, что осталось, какие баги следующим PATCH.
 
-## Deferred
+## Файлы для изменения
 
-Без изменений:
+Кодовых изменений не требуется. Только:
 
-- баг `[` token picker внутри Dialog
-- расширенный редактор шаблонов
-- A/B шаблоны
-- ручной override аудитории
-- дополнительные offsets
-- advanced analytics
+- данные: `UPDATE live_notification_config SET test_allowlist = ...`
+- документ: incident-report в `/mnt/documents/`
