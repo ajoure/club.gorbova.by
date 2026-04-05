@@ -2,1114 +2,456 @@
 
 &nbsp;
 
-&nbsp;
-
-**Главное исправление по логике плана**
-
-&nbsp;
-
-&nbsp;
-
-Текущий вариант слишком сузился до уведомлений. Это неверно.
-
-&nbsp;
-
-Правильный scope:
-
-уведомления — это один из блоков внутри полного спринта по эфирам, а не отдельный спринт.
-
-&nbsp;
-
-Нужен единый end-to-end спринт Live Events, где пользовательский путь выглядит так:
-
-&nbsp;
-
-1. админ создает эфир;
-2. настраивает источник;
-3. настраивает доступ;
-4. настраивает уведомления;
-5. публикует эфир;
-6. пользователи видят эфир в разделе Эфиры;
-7. заходят по /live/:slug;
-8. смотрят live / replay;
-9. пишут комментарии и вопросы.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**Финальный спринт: Live Events v2 — полный цикл эфиров**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 0 — Auth/session stability**
-
-&nbsp;
-
-&nbsp;
-
-Оставить как уже реализованный блокер-гейт.
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- 10–15 минут без forced logout;
-- просмотр эфира и работа в админке без выкидывания в логин.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 1 — Schema / RLS / realtime / logs**
-
-&nbsp;
-
-&nbsp;
-
-Финализировать схему как основу спринта:
-
-&nbsp;
-
-- live_events — использовать как SoT по эфиру;
-- live_event_access_rules — правила доступа;
-- live_event_comments — комментарии;
-- live_event_questions — вопросы;
-- live_event_notification_log — лог уведомлений.
-
-&nbsp;
-
-&nbsp;
-
-Добавить таблицу:
-
-live_event_notification_log
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- comments/questions/log tables существуют;
-- RLS корректен;
-- realtime включен.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 2 — Kinescope integration**
-
-&nbsp;
-
-&nbsp;
-
-Оставить как часть общего спринта, не выносить отдельно.
-
-&nbsp;
-
-Должно быть:
-
-&nbsp;
-
-- create_live_event
-- sync_live_event
-- enable_live_event
-- complete_live_event
-- get_live_event_videos
-- list_live_folders
-
-&nbsp;
-
-&nbsp;
-
-Плюс обязательная модель статуса источника:
-
-&nbsp;
-
-- draft
-- ok
-- missing
-- broken
-
-&nbsp;
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- live source создается;
-- sync работает;
-- recreate/detach работают;
-- replay определяется.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 3 — Admin UX: карточка эфира как единый центр управления**
-
-&nbsp;
-
-&nbsp;
-
-Это ключевая часть спринта.
-
-&nbsp;
-
-В карточке эфира должны быть все секции:
-
-&nbsp;
-
-&nbsp;
-
-**A. Основное**
-
-&nbsp;
-
-&nbsp;
-
-- title
-- slug
-- description
-- дата и время
-- timezone
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**B. Тип эфира**
-
-&nbsp;
-
-&nbsp;
-
-- live_stream
-- recorded_webinar
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**C. Источник Kinescope**
-
-&nbsp;
-
-Для live_stream:
-
-&nbsp;
-
-- live folder
-- project for recording
-- create source
-- sync
-- recreate
-- detach
-
-&nbsp;
-
-&nbsp;
-
-Для recorded_webinar:
-
-&nbsp;
-
-- video picker
-- manual fallback
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**D. OBS / source settings**
-
-&nbsp;
-
-&nbsp;
-
-- play link
-- rtmp
-- streamkey
-- copy buttons
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**E. Access rules**
-
-&nbsp;
-
-&nbsp;
-
-- кто может войти;
-- доступ по product/tariff rules.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**F. Уведомления**
-
-&nbsp;
-
-Это внутри карточки эфира, а не отдельно.
-
-&nbsp;
-
-Нужно добавить секцию:
-
-&nbsp;
-
-- toggle Включить уведомления
-- выбор шаблона из broadcast_templates
-- каналы:  
-
-  - Telegram
-  - Email
-- &nbsp;
-- сроки:  
-
-  - за 1 день
-  - за 1 час
-- &nbsp;
-- summary:  
-
-  - какой шаблон
-  - какие каналы
-  - за сколько уведомляем
-  - что уведомляем только тех, у кого есть доступ к эфиру
-- &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**G. Publish / readiness**
-
-&nbsp;
-
-&nbsp;
-
-- publish button
-- blockers
-- source health
-- invite readiness
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**H. Control panel**
-
-&nbsp;
-
-&nbsp;
-
-- platform badge
-- provider badge
-- start
-- complete
-- sync
-- comments/questions tabs
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**I. Инструкция**
-
-&nbsp;
-
-Обязательно добавить в UI:
-
-&nbsp;
-
-- инструкция для администратора;
-- инструкция для ведущего / преподавателя.
-
-&nbsp;
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- по карточке эфира полностью понятно, как его создать, опубликовать, провести и завершить.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 4 — Пользовательский раздел**
-
-&nbsp;
-
-&nbsp;
-
-Нужен полноценный user flow.
-
-&nbsp;
-
-&nbsp;
-
-**/live**
-
-&nbsp;
-
-Список доступных эфиров:
-
-&nbsp;
-
-- scheduled
-- live
-- replay
-- type badge
-- дата/время
-- переход на /live/:slug
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**/live/:slug**
-
-&nbsp;
-
-Страница эфира со всеми состояниями:
-
-&nbsp;
-
-- scheduled
-- live
-- replay_available
-- ended_no_replay
-- access_denied
-- invite_required
-- source_unavailable
-- unpublished
-- not_found
-
-&nbsp;
-
-&nbsp;
-
-Обязательная правка:
-
-&nbsp;
-
-- replay state fix;
-- использовать platform_status как source of truth;
-- heartbeat только для live, не для replay.
-
-&nbsp;
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- scheduled/live/replay работают корректно;
-- replay доступен по той же ссылке.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 5 — Comments + Questions**
-
-&nbsp;
-
-&nbsp;
-
-Это часть финального сценария эфира.
-
-&nbsp;
-
-Нужно:
-
-&nbsp;
-
-- realtime comments;
-- realtime questions;
-- profile linkage;
-- admin moderation.
-
-&nbsp;
-
-&nbsp;
-
-DoD:
-
-&nbsp;
-
-- пользователь может писать;
-- админ может модерировать;
-- всё хранится корректно.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**PATCH 6 — Уведомления как часть live event flow**
-
-&nbsp;
-
-&nbsp;
-
-Это не отдельный проект, а встроенный блок спринта.
-
-&nbsp;
-
-&nbsp;
-
-**Правильная бизнес-логика**
-
-&nbsp;
-
-&nbsp;
-
-Шаблон уведомления:
-
-&nbsp;
-
-- существует отдельно;
-- является обычным системным шаблоном;
-- не должен создаваться под каждый эфир заново.
-
-&nbsp;
-
-&nbsp;
-
-Эфир:
-
-&nbsp;
-
-- сам выбирает шаблон;
-- сам хранит настройки уведомлений;
-- сам определяет, за сколько и по каким каналам отправлять.
+1. Сделай одинаковую валидацию шаблона в UI и в cron.  
+Сейчас в PATCH 6D и 6E есть расхождение:  
 
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**То есть:**
-
-&nbsp;
-
-&nbsp;
-
-не шаблон привязывается к эфиру,
-
-а эфир выбирает шаблон.
-
-&nbsp;
-
-&nbsp;
-
-**Что хранить в**
-
-**live_events.metadata.notification_settings**
-
-&nbsp;
-
-&nbsp;
-
-- enabled
-- template_id
-- channels
-- offsets
-
-&nbsp;
-
-&nbsp;
-
-Пример:
-
-&nbsp;
-
-- за 1 день
-- за 1 час
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**Кому отправлять**
-
-&nbsp;
-
-&nbsp;
-
-Не ручная аудитория.
-
-&nbsp;
-
-Получатели = все пользователи, у которых на момент отправки есть доступ к эфиру по access rules.
-
-&nbsp;
-
-&nbsp;
-
-**Что делает cron**
-
-&nbsp;
-
-&nbsp;
-
-Новая функция:
-
-live-event-notifications-cron
-
-&nbsp;
-
-Она:
-
-&nbsp;
-
-1. берет опубликованные live-эфиры;
-2. проверяет notification settings;
-3. проверяет окно отправки;
-4. собирает аудиторию по access rules;
-5. берет выбранный шаблон;
-6. подставляет переменные эфира;
-7. отправляет Telegram / Email;
-8. пишет лог;
-9. не допускает дублей.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-**Переменные шаблона**
-
-&nbsp;
-
-&nbsp;
-
-- {{live_event.title}}
-- {{live_event.description}}
-- {{live_event.start_at_source_tz}}
-- {{live_event.start_at_user_tz}}
-- {{live_[event.link](http://event.link)}}
-- {{live_event.type}}
-
-&nbsp;
-
-&nbsp;
-
-DoD:
+  - в cron для Email ты проверяешь email_subject и email_body_html,
+  - в UI blocker для Email проверяет только email_subject.  
+  Это нужно выровнять. Для Email в readiness должно блокировать, если нет темы или нет html/body.
+2. &nbsp;
+3. В PATCH 6E явно добавь, что для validationItems нужны полные поля шаблона.  
+Сейчас для совместимости каналов тебе недостаточно id, name, template_type, channel.  
+Для UI-проверки нужно загрузить:  
 
-&nbsp;
+  - message_text
+  - email_subject
+  - email_body_html  
+  И прямо напиши это в плане, чтобы подрядчик не оставил текущий урезанный select.
+4. &nbsp;
+5. Уточни, что stop-guard по источнику применяется только к live_stream.  
+Это очевидно из контекста, но нужно зафиксировать явно, чтобы никто не начал случайно резать recorded_webinar.
+6. В PATCH 6B no_audience сделай не только console.log, но и явный счётчик в финальном summary cron-response.  
+То есть в ответе функции должны быть отдельные поля:  
 
-- уведомления настраиваются внутри эфира;
-- cron реально отправляет;
-- live_event_notification_log пишет записи;
-- повторных дублей нет.
+  - sent
+  - skipped
+  - failed
+  - no_audience
+  - source_not_ready  
+  Чтобы это можно было доказуемо проверять без чтения raw logs.
+7. &nbsp;
+8. В PATCH 6D для incompatible template/channel добавь отдельный reason в лог-таблицу.  
+Не просто skipped, а предсказуемый reason:  
 
-&nbsp;
+  - template_incompatible_with_telegram
+  - template_incompatible_with_email  
+  Это упростит proof и диагностику.
+9. &nbsp;
+10. В PATCH 7B добавь proof не только по template_id и channel, но и по offset.  
+Нужно показать, что cron использовал именно тот notify_offset_minutes, который был включён в notification_settings.
+11. В PATCH 7E уточни, что пользователь B должен быть именно реальным отрицательным кейсом одного из двух типов:  
 
-&nbsp;
+  - либо нет доступа вообще,
+  - либо доступ истёк,
+  - либо есть продукт, но не тот tariff_id.  
+  Хотя бы один такой кейс должен быть доказан отдельно, лучше два.
+12. &nbsp;
+13. Добавь отдельный proof, что notification readiness реально блокирует публикацию эфира.  
+Сейчас в DoD сказано, что readiness входит в общий checklist, но нет прямого proof.  
+Нужен отдельный тест:  
 
-&nbsp;
+  - включить уведомления,
+  - не выбрать шаблон/канал/offset,
+  - убедиться, что publication blocker появился,
+  - затем заполнить всё и убедиться, что blocker снялся.
+14. &nbsp;
+15. В PATCH 7H добавь практический сценарий тестирования уведомлений как отдельный короткий чек-лист.  
+Не только общий сценарий использования, а именно mini-runbook:  
 
-&nbsp;
+  - создать live_stream,
+  - поставить scheduled_at = now + 30m,
+  - включить offset 60m,
+  - вызвать cron,
+  - проверить log,
+  - повторно вызвать cron,
+  - убедиться в дедупликации.
+16. &nbsp;
+17. Не меняй общий scope.  
+Этот план уже финальный по структуре. Ничего больше не дробить и не уводить в отдельные подпроекты.  
+После внесения этих правок план можно считать финальным для исполнения.
 
 &nbsp;
-
-**PATCH 7 — Инструкция и QA**
 
 &nbsp;
 
-&nbsp;
+Текст для вставки:
 
-Подрядчик должен отдать не только код, но и понятную логику использования.
+Дополни план следующими правками:
 
 &nbsp;
-
-Обязательно отдать:
 
-&nbsp;
+1. Выровняй validation шаблон/канал между UI и cron:
 
-&nbsp;
+   - Telegram: нужен message_text
 
-**Инструкция для администратора**
+   - Email: нужны и email_subject, и email_body_html
 
-&nbsp;
+   Это должно быть одинаково и в Admin UI readiness, и в backend cron validation.
 
 &nbsp;
-
-- как создать шаблон уведомления;
-- как создать live_stream;
-- как выбрать live folder;
-- как создать source;
-- как включить уведомления;
-- как выбрать шаблон;
-- как выбрать каналы;
-- как включить offsets;
-- как опубликовать эфир;
-- как завершить эфир;
-- как получить replay.
 
-&nbsp;
+2. В PATCH 6E явно укажи, что для UI-проверки шаблона нужно загружать полные поля:
 
-&nbsp;
+   - message_text
 
-&nbsp;
+   - email_subject
 
-**Инструкция для ведущего**
+   - email_body_html
 
-&nbsp;
+   Без этого validationItems не сможет корректно проверить совместимость шаблона с каналами.
 
 &nbsp;
 
-- где взять RTMP;
-- где взять streamkey;
-- как вставить в OBS;
-- когда запускать OBS;
-- когда завершать эфир;
-- как проверить replay.
+3. Явно зафиксируй, что stop-guard по provider_source_status (missing/broken) применяется только к event_type='live_stream' и не затрагивает recorded_webinar.
 
 &nbsp;
 
-&nbsp;
-
-&nbsp;
+4. В PATCH 6B добавь в итоговый response cron отдельные поля:
 
-**Smoke-test / QA plan**
+   - sent
 
-&nbsp;
+   - skipped
 
-&nbsp;
+   - failed
 
-- scheduled state;
-- live state;
-- replay state;
-- source_unavailable;
-- comments/questions;
-- notification cron;
-- notification log;
-- no duplicate sends;
-- recorded_webinar без регрессии.
+   - no_audience
 
-&nbsp;
+   - source_not_ready
 
-&nbsp;
+   Это нужно для доказуемого proof без чтения сырых логов.
 
 &nbsp;
 
-&nbsp;
+5. В PATCH 6D для incompatible template/channel используй явные reason-коды:
 
-&nbsp;
+   - template_incompatible_with_telegram
 
-**Что уже есть и не нужно выносить как новый scope**
+   - template_incompatible_with_email
 
-&nbsp;
+   и записывай их в live_event_notification_log.
 
 &nbsp;
 
-Не надо делать вид, что эти части — новый отдельный проект. Они уже являются частью общего спринта:
+6. В PATCH 7B добавь proof, что cron использовал не только template_id и channel, но и правильный notify_offset_minutes.
 
 &nbsp;
 
-- auth/session stabilization;
-- comments/questions tables + realtime;
-- access rules;
-- user /live;
-- /live/:slug;
-- Kinescope source lifecycle;
-- provider sync/recreate/detach.
-
-&nbsp;
+7. В PATCH 7E уточни отрицательный proof по аудитории:
 
-&nbsp;
+   пользователь B должен быть проверен как минимум в одном реальном кейсе:
 
-Их нужно не заново перепридумывать, а довести до конца и собрать в единый рабочий сценарий.
+   - нет доступа вообще,
 
-&nbsp;
+   - доступ истёк,
 
-&nbsp;
+   - не совпадает tariff_id.
 
-&nbsp;
+   Лучше показать минимум 2 разных отрицательных кейса.
 
 &nbsp;
 
-**Deferred**
+8. Добавь отдельный proof, что notification readiness реально блокирует публикацию эфира:
 
-&nbsp;
-
-&nbsp;
+   - уведомления включены, но шаблон/канал/offset не заполнены → publication blocked,
 
-Отдельно зафиксировать, но не блокировать спринт:
+   - после заполнения blocker снимается.
 
 &nbsp;
 
-- баг [ внутри Dialog — deferred patch;
-- сложный редактор шаблонов;
-- A/B шаблоны;
-- ручной override аудитории;
-- дополнительные offsets;
-- advanced analytics.
+9. В PATCH 7H добавь отдельный mini-runbook тестирования уведомлений:
 
-&nbsp;
+   - создать live_stream,
 
-&nbsp;
+   - scheduled_at = now + 30 минут,
 
-&nbsp;
+   - включить offset 60 минут,
 
-&nbsp;
+   - вызвать cron,
 
-&nbsp;
+   - проверить log,
 
-**Финальный DoD всего спринта**
+   - вызвать cron повторно,
 
-&nbsp;
+   - проверить дедупликацию.
 
 &nbsp;
-
-Спринт закрыт только если доказано:
 
-&nbsp;
+10. Scope не менять.
 
-1. админ создает live_stream;
-2. админ создает recorded_webinar;
-3. OBS-данные реально видны;
-4. source sync/recreate/detach работают;
-5. /live показывает доступные эфиры;
-6. /live/:slug корректно работает для scheduled/live/replay;
-7. comments/questions работают;
-8. уведомления настраиваются внутри эфира;
-9. cron реально отправляет уведомления;
-10. live_event_notification_log пишет записи;
-11. повторный cron не делает дублей;
-12. replay доступен по той же ссылке;
-13. recorded flow не сломан;
-14. есть инструкция по использованию и тестированию.
+    Это остаётся единым final sprint по Live Events v2.
 
-&nbsp;
+    Ничего не выносить в отдельный подпроект.
 
-&nbsp;
+После этих правок план уже можно отдавать в работу как финальный.
 
 &nbsp;
-
-**Ключевая формулировка для подрядчика**
 
-&nbsp;
+# План: Финализация Live Events v2 — consolidated final sprint
 
-&nbsp;
+## Контекст
 
-Не делать отдельный мини-спринт “про уведомления”.
+Это полный final sprint по Live Events v2. Уведомления — встроенный блок внутри общей реализации эфиров, а не отдельный подпроект. Структура: создание эфира → источник Kinescope → OBS/control panel → доступ → уведомления → публикация → пользовательский просмотр → live/replay → proof.
 
-Нужно завершить весь сценарий эфиров целиком, а уведомления реализовать как встроенную часть карточки эфира и общего live-event flow.
+PATCH 1–5 — runtime-proof уже реализованных блоков. PATCH 6 — единственный обязательный кодовый добор. PATCH 7 — e2e proof и инструкция.
 
-&nbsp;
+## Baseline (уже реализовано, не трогаем)
 
-# План: Финализация Live Events v2 — полный end-to-end сценарий эфиров + уведомления
-
-## Текущее состояние (discovery)
-
-### Уже работает
-
-- **Таблица `live_events**` — все нужные колонки есть (event_type, platform_status, kinescope_live_event_id, metadata и т.д.)
-- `**live_event_access_rules**` — множественные правила доступа
-- `**live_event_comments` / `live_event_questions**` — таблицы, RLS через `user_has_live_event_access` RPC, realtime
-- `**AdminLiveEvents.tsx` (2033 строки)** — полная админка: форма, Kinescope source, OBS data, `_providerDraft`, sync/recreate/detach, control panel, comments/questions tabs
-- `**LiveEvent.tsx**` — все error states (not_found, access_denied, invite_required, source_unavailable, session_revoked/expired), player, heartbeat, comments/questions sidebar
-- `**LiveEvents.tsx**` — список эфиров через `live-events-list` edge function
-- `**live-resolve**` — admin bypass, source_unavailable guard, invite_mode check
-- `**live-events-list**` — фильтрация по доступу через `user_has_live_event_access` RPC
-- `**kinescope-api**` — create/sync/enable/complete/list_folders actions
-- `**broadcast_templates**` — есть `template_type`, `live_event_id` (nullable)
-- **Auth session stability** — visibility refresh, false SIGNED_OUT guard уже в AuthContext
-
-### Баги, которые нужно починить
-
-1. **Replay state**: `LiveEvent.tsx` строка 265 — `event_status: event.status` вместо `event.platform_status`. При `platform_status=replay_available` клиент видит `event_status=replay_available`, но `isReplay` проверяет только `event_status === "ended"` (строка 315)
-2. **Heartbeat при replay**: строка 140 — `startHeartbeat()` вызывается и для replay, хотя не нужен
-3. **Нет таблицы `live_event_notification_log**` — нужно создать
-4. **Нет cron-функции уведомлений** — нужно создать `live-event-notifications-cron`
-5. **Нет UI секции "Уведомления"** в карточке эфира
-6. **Нет инструкции** для администратора/ведущего в control panel
+- AdminLiveEvents.tsx (2222 строки): форма, Kinescope source, OBS, sync/recreate/detach, control panel, comments/questions, секция уведомлений, инструкция
+- LiveEvent.tsx: все error states, replay_available, isReplay, heartbeat guard
+- LiveEvents.tsx: список эфиров через live-events-list
+- live-resolve: event_status → platform_status (строка 265)
+- live_event_notification_log: таблица с UNIQUE constraint
+- live-event-notifications-cron: cron функция (требует доработки)
+- Comments/Questions: realtime, RLS, admin moderation
+- Auth session stability: visibility refresh, SIGNED_OUT guard
 
 ---
 
-## PATCH-структура
+## PATCH 1 — Admin live event lifecycle (proof)
 
-### PATCH 0 — Auth/session stability
+Уже реализован. Runtime proof через browser/curl:
 
-**Статус: уже реализован.** AuthContext уже содержит:
-
-- `getSession()` guard при SIGNED_OUT
-- `visibilitychange` listener для refresh
-- Structured logging
-
-DoD: подтвержден предыдущими патчами. Пропускаем.
+- Создание live_stream source через kinescope-api
+- OBS данные видны (play_link, rtmp_link, streamkey, copy buttons)
+- Sync / recreate / detach работают
+- Publish переключает is_published
+- Access rules сохраняются
+- Инструкция отображается в control panel
 
 ---
 
-### PATCH 1 — Schema: `live_event_notification_log`
+## PATCH 2 — User flow (proof)
 
-**Миграция:**
+Уже реализован. Runtime proof:
 
-```sql
-CREATE TABLE public.live_event_notification_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  live_event_id UUID NOT NULL REFERENCES public.live_events(id) ON DELETE CASCADE,
-  template_id UUID REFERENCES public.broadcast_templates(id) ON DELETE SET NULL,
-  user_id UUID NOT NULL,
-  channel TEXT NOT NULL CHECK (channel IN ('telegram', 'email')),
-  notify_offset_minutes INTEGER NOT NULL,
-  scheduled_for TIMESTAMPTZ NOT NULL,
-  sent_at TIMESTAMPTZ,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
-  error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(live_event_id, user_id, channel, notify_offset_minutes)
-);
+- /live — список эфиров
+- /live/:slug — states: scheduled, live, replay_available, source_unavailable, access_denied
 
-ALTER TABLE public.live_event_notification_log ENABLE ROW LEVEL SECURITY;
+---
 
-CREATE POLICY "Admins can manage notification log"
-  ON public.live_event_notification_log FOR ALL TO authenticated
-  USING (public.has_role_v2(auth.uid(), 'admin') OR public.has_role_v2(auth.uid(), 'super_admin'));
+## PATCH 3 — Replay / resolve finalization (proof)
+
+Уже реализован. live-resolve строка 265: `event_status: event.platform_status`. LiveEvent.tsx: replay_available обрабатывается, isReplay корректен, heartbeat guard работает.
+
+---
+
+## PATCH 4 — Comments / Questions (proof)
+
+Уже реализован. Realtime, RLS через user_has_live_event_access, admin moderation.
+
+---
+
+## PATCH 5 — Notifications UI inside live event (proof)
+
+Уже реализован. Секция уведомлений: template picker, channels, offsets, summary. Данные в metadata.notification_settings.
+
+---
+
+## PATCH 6 — Cron dispatcher: каноническая аудитория + guards (КОД)
+
+**Единственный блок, требующий изменения кода.** Три файла.
+
+### 6A. Каноническая аудитория в cron
+
+**Файл: `supabase/functions/live-event-notifications-cron/index.ts**`
+
+Текущие строки 84-117 заменить на каноническую логику:
+
+```typescript
+import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
+
+// Collect candidates, then verify each with canonical resolver
+const candidateUserIds = new Set<string>();
+for (const productId of productIds) {
+  // subscriptions_v2 + entitlements — collect all potential users
+  const { data: subs } = await supabase.from('subscriptions_v2')
+    .select('user_id').eq('product_id', productId).in('status', ['active', 'trial']);
+  subs?.forEach(s => candidateUserIds.add(s.user_id));
+  const { data: ents } = await supabase.from('entitlements')
+    .select('user_id').eq('product_id', productId).eq('status', 'active');
+  ents?.forEach(e => candidateUserIds.add(e.user_id));
+}
+
+// Verify with canonical access resolver + tariff_id filter
+const verifiedUserIds = new Set<string>();
+for (const userId of candidateUserIds) {
+  for (const rule of accessRules) {
+    const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id);
+    let ok = snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > now);
+    if (ok && rule.tariff_id) {
+      const { data: tariffSub } = await supabase.from('subscriptions_v2')
+        .select('id').eq('user_id', userId).eq('product_id', rule.product_id)
+        .eq('tariff_id', rule.tariff_id).in('status', ['active', 'trial'])
+        .limit(1).maybeSingle();
+      if (!tariffSub) ok = false;
+    }
+    if (ok) { verifiedUserIds.add(userId); break; }
+  }
+}
 ```
 
-Остальные таблицы (comments, questions, access_rules) уже существуют с корректным RLS.
+Использовать `verifiedUserIds` далее вместо `userIds`.
 
----
+### 6B. Stop-guard: пустая аудитория
 
-### PATCH 2 — Kinescope integration
+Если `verifiedUserIds.size === 0`:
 
-**Статус: уже реализован.** `kinescope-api` edge function поддерживает:
+- Логировать `console.log('[live-notif-cron] Event ${event.id}: no_audience — skipping')` 
+- Добавить в response summary `eventsWithNoAudience++`
+- В response JSON вернуть `{ no_audience: eventsWithNoAudience }`
 
-- `create_live_event`, `sync_live_event`, `enable_live_event`, `complete_live_event`
-- `get_live_event_videos`, `list_live_folders`
-- Provider source status: draft/ok/missing/broken
+### 6C. Stop-guard: источник не готов
 
-Пропускаем.
+Перед отправкой проверять `provider_source_status`:
 
----
+```typescript
+const providerStatus = meta?.provider_source_status;
+if (providerStatus === 'missing' || providerStatus === 'broken') {
+  console.log(`[live-notif-cron] Event ${event.id}: source_not_ready (${providerStatus}) — skipping`);
+  eventsSourceNotReady++;
+  continue;
+}
+```
 
-### PATCH 3 — Admin UX: секция "Уведомления" + инструкция
+### 6D. Валидация совместимости шаблон/канал в cron
+
+Перед отправкой по каналу:
+
+- Telegram: проверить `template.message_text` не пуст
+- Email: проверить `template.email_subject` и `template.email_body_html` не пусты
+
+Если несовместимо → `updateLogStatus(..., 'skipped', 'template_incompatible_with_channel')`.
+
+### 6E. Валидация совместимости шаблон/канал в UI
 
 **Файл: `src/pages/admin/AdminLiveEvents.tsx**`
 
-A. Добавить в `LiveEventForm`:
+В `validationItems` (строки 340-374) добавить notification readiness blocker:
 
 ```typescript
-notification_enabled: boolean;
-notification_template_id: string;
-notification_channels: string[];
-notification_offsets: Array<{ minutes: number; enabled: boolean; label: string }>;
-```
-
-B. Секция "Уведомления" в карточке `live_stream` (после access rules, перед control panel):
-
-- Toggle "Включить уведомления"
-- Select шаблона из `broadcast_templates` (type `webinar_invite` или `general`)
-- Чекбоксы каналов: Telegram / Email
-- Два пресета offset: "За 1 день" (1440 мин) / "За 1 час" (60 мин) с toggle
-- Summary: "Уведомления уйдут пользователям с доступом за 1 день и 1 час до начала через Telegram"
-
-C. Данные сохраняются в `metadata.notification_settings` при save.
-
-D. При загрузке формы (editing) — восстанавливать notification_settings из metadata.
-
-E. Collapsible-блок "Инструкция" в LiveStreamControlPanel:
-
-- Для администратора (10 шагов)
-- Для ведущего/преподавателя (7 шагов с OBS)
-
----
-
-### PATCH 4 — Replay state fix + live-resolve
-
-**Файл: `supabase/functions/live-resolve/index.ts**`
-
-- Строка 265: `event_status: event.platform_status` вместо `event.status`
-
-**Файл: `src/pages/LiveEvent.tsx**`
-
-- Строки 133-141: добавить явную обработку `replay_available`:
-
-```typescript
-case "ok":
-  if (json.event_status === "scheduled" || json.platform_status === "scheduled") {
-    setState("scheduled");
-  } else if (json.platform_status === "replay_available" || 
-             (json.event_status === "ended" && json.replay_enabled)) {
-    setState("live"); // показать плеер с записью
-  } else if (json.event_status === "ended" && !json.replay_enabled) {
-    setState("ended_no_replay");
-  } else {
-    setState("live");
-    startHeartbeat();
+if (form.notification_enabled) {
+  items.push(
+    { key: "notif_template", label: "Выбран шаблон уведомления", ok: !!form.notification_template_id, blocker: true },
+    { key: "notif_channels", label: "Выбран хотя бы один канал", ok: form.notification_channels.length > 0, blocker: true },
+    { key: "notif_offsets", label: "Включён хотя бы один срок уведомления", ok: form.notification_offsets.some(o => o.enabled), blocker: true },
+    { key: "notif_scheduled", label: "Задано время начала эфира", ok: !!form.scheduled_at, blocker: true },
+  );
+  // Template/channel compatibility
+  const selectedTemplate = broadcastTemplates?.find(t => t.id === form.notification_template_id);
+  if (selectedTemplate && form.notification_channels.includes('telegram') && !selectedTemplate.message_text) {
+    items.push({ key: "notif_tg_compat", label: "Шаблон не содержит текст для Telegram", ok: false, blocker: true });
   }
+  if (selectedTemplate && form.notification_channels.includes('email') && !selectedTemplate.email_subject) {
+    items.push({ key: "notif_email_compat", label: "Шаблон не содержит тему для Email", ok: false, blocker: true });
+  }
+}
 ```
 
-- Строка 315: `isReplay` — добавить `platform_status === "replay_available"`
-- Guard: не запускать heartbeat для replay
+Таким образом одна и та же логика валидации совпадает в UI (предупреждает заранее) и backend (cron повторно валидирует и не шлёт несовместимый шаблон).
+
+### 6F. Picker шаблона — использовать стабильный pattern
+
+Не менять текущую реализацию picker шаблона. Если она использует Select внутри Dialog — оставить как есть, т.к. это не тот же баг что с `[` token picker. При обнаружении проблем — переключить на Popover + Command (как зафиксировано в modal-selector-standard), но не в этом патче.
 
 ---
 
-### PATCH 5 — Comments + Questions
+## PATCH 7 — Final runtime proof + deliverables
 
-**Статус: уже реализован.** Компоненты `LiveEventComments` и `LiveEventQuestions` работают с realtime, RLS через `user_has_live_event_access`, admin moderation (delete comments, update questions). Пропускаем.
+### 7A. Proof notification_settings в UI
 
----
+- Открыть карточку эфира
+- Выбрать шаблон, каналы, offsets
+- Сохранить
+- SQL: `SELECT metadata->'notification_settings' FROM live_events WHERE id = '...'`
+- Закрыть и переоткрыть карточку — настройки восстановились
 
-### PATCH 6 — Edge function `live-event-notifications-cron`
+### 7B. Proof cron использует notification_settings
 
-**Новый файл: `supabase/functions/live-event-notifications-cron/index.ts**`
+- Вызвать cron через curl
+- В логах edge function показать: template_id, channels, offsets из notification_settings
+- В live_event_notification_log показать записи с правильным template_id и channel
 
-Логика:
+### 7C. Тест-кейс без ожидания
 
-1. Запрашивает `live_events` где `is_published=true`, `event_type='live_stream'`, `scheduled_at IS NOT NULL`, `platform_status IN ('draft','scheduled')`, `metadata->notification_settings->enabled = true`
-2. Для каждого эфира и каждого enabled offset: вычисляет `window = scheduled_at - offset_minutes`. Если `now() >= window` → пора отправлять
-3. Собирает аудиторию: через `live_event_access_rules` → находит product_id/tariff_id → ищет пользователей с активными подписками/entitlements
-4. Для каждого user+channel проверяет UNIQUE constraint в `live_event_notification_log` (дедупликация)
-5. Загружает шаблон из `broadcast_templates` по `template_id`
-6. Подставляет переменные эфира:
-  - `{{live_event.title}}`, `{{live_event.description}}`
-  - `{{live_event.start_at_source_tz}}`, `{{live_event.start_at_user_tz}}`
-  - `{{live_event.link}}` → полный URL `/live/${slug}`
-  - `{{live_event.type}}` → "Живой эфир" / "Эфир в записи"
-7. Отправляет:
-  - Telegram → через bot API (аналогично `telegram-mass-broadcast`)
-  - Email → через `send-email` edge function invoke
-8. Пишет результат в `live_event_notification_log`
+Для smoke-test: установить scheduled_at = now + 30 минут. Offset «За 1 час» (60 мин) уже сработает, т.к. `now >= scheduled_at - 60min`. Запустить cron вручную.
 
-**Cron job** (через insert tool):
+### 7D. Proof дедупликации — по response И по БД
 
-```sql
-SELECT cron.schedule(
-  'live-event-notifications',
-  '* * * * *',
-  $$ SELECT net.http_post(...) $$
-);
-```
+1. Первый curl → `sent > 0`
+2. Второй curl → `skipped > 0`
+3. SQL: `SELECT live_event_id, user_id, channel, notify_offset_minutes, count(*) FROM live_event_notification_log GROUP BY 1,2,3,4 HAVING count(*) > 1` → 0 строк
 
-**Регистрация** в `supabase/functions.registry.txt`.
+### 7E. Proof корректности аудитории (обязательно 2 пользователя)
 
----
+- Пользователь A с активной подпиской на продукт → получает уведомление
+- Пользователь B без доступа → не получает
+- Подтверждение через `live_event_notification_log`: запись есть только для A
 
-### PATCH 7 — Broadcast template alignment
+### 7F. Proof recorded_webinar не участвует в cron
 
-**Частично уже реализован.** `broadcast_templates.live_event_id` уже nullable. Шаблоны `webinar_invite` уже можно создавать без привязки к эфиру.
+- SQL: `SELECT * FROM live_event_notification_log WHERE live_event_id IN (SELECT id FROM live_events WHERE event_type = 'recorded_webinar')` → 0 строк
+- Открыть recorded_webinar через /live/:slug → работает
 
-Broadcast flow остаётся как дополнительный manual channel. Основной live-notification flow через `notification_settings` внутри эфира + cron.
+### 7G. Proof по всем состояниям
+
+- /live — список эфиров
+- /live/:slug scheduled
+- /live/:slug live (или имитация)
+- /live/:slug replay_available
+- Control panel: OBS данные, sync, инструкция
+
+### 7H. Deliverables: инструкции
+
+**Практический сценарий использования системы:**
+
+1. Админ создаёт эфир, выбирает тип «Живой эфир»
+2. Выбирает live folder, создаёт источник Kinescope
+3. Задаёт дату/время, правила доступа
+4. В секции «Уведомления» выбирает шаблон, каналы, offsets
+5. Сохраняет и публикует эфир
+6. Ведущий копирует RTMP + streamkey из карточки эфира
+7. Ведущий настраивает OBS: Настройки → Вещание → Пользовательский
+8. Пользователь получает уведомление за 1 день / 1 час
+9. Пользователь открывает /live/:slug — видит scheduled или live
+10. Ведущий запускает OBS, админ нажимает «Запустить эфир»
+11. Пользователь смотрит live, пишет комментарии/вопросы
+12. После завершения: админ → «Завершить эфир» → «Обновить источник»
+13. По той же ссылке доступен replay
 
 ---
 
 ## Файлы для изменения
 
 
-| Файл                                                        | Изменение                                         |
-| ----------------------------------------------------------- | ------------------------------------------------- |
-| миграция                                                    | Таблица `live_event_notification_log`             |
-| `src/pages/admin/AdminLiveEvents.tsx`                       | Секция "Уведомления" + инструкция в control panel |
-| `supabase/functions/live-resolve/index.ts`                  | `event_status → platform_status`                  |
-| `src/pages/LiveEvent.tsx`                                   | Replay state fix + heartbeat guard                |
-| `supabase/functions/live-event-notifications-cron/index.ts` | Новая edge function                               |
-| `supabase/functions.registry.txt`                           | Регистрация cron функции                          |
+| Файл                                                        | Изменение                                                                                                 |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `supabase/functions/live-event-notifications-cron/index.ts` | Каноническая аудитория через resolveEffectiveProductAccess + tariff_id + stop-guards + channel validation |
+| `src/pages/admin/AdminLiveEvents.tsx`                       | Notification readiness blockers в validationItems                                                         |
 
 
-## Что НЕ трогаем
+## Deferred (не входит в спринт)
 
-- `recorded_webinar` flow — не затрагивается
-- Существующие `broadcast_templates` / `BroadcastSendDialog` — остаются как есть
-- Auth/session — уже стабильно
-- Comments/Questions — уже работают
-- Kinescope integration — уже работает
-- `[ token picker` баг — deferred
+- Баг `[` token picker внутри Dialog
+- Расширенный редактор шаблонов
+- A/B шаблоны
+- Ручной override аудитории
+- Дополнительные offsets
+- Advanced analytics
 
 ## DoD
 
-1. В карточке live_stream можно настроить уведомления (шаблон, каналы, offsets)
-2. Cron реально отправляет уведомления по access rules
-3. `live_event_notification_log` пишет записи
-4. Дедупликация: повторный cron не создаёт дублей
-5. `/live/:slug` при `replay_available` показывает плеер + плашку "Запись"
-6. Heartbeat не запускается для replay
-7. Инструкция для администратора/ведущего видна в control panel
-8. `recorded_webinar` flow не сломан
-9. OBS данные сохраняются при создании (уже работает)
-10. Provider sync/recreate/detach работают (уже работает)
+1. Аудитория уведомлений через каноническую access logic с tariff_id
+2. Истёкшие подписки/entitlements не получают уведомления
+3. Cron не отправляет при source missing/broken
+4. Cron не отправляет при пустой аудитории (логирует no_audience)
+5. Валидация шаблон/канал совпадает в UI и cron
+6. Notification readiness входит в общий checklist публикации эфира
+7. Proof: curl cron → sent > 0
+8. Proof: повторный curl → skipped > 0
+9. Proof: SQL — 0 дублей в notification_log
+10. Proof: пользователь A с доступом получает, B без доступа — нет
+11. Proof: recorded_webinar не в cron, UI не сломан
+12. Proof: /live и /live/:slug — все states
+13. Proof: control panel — OBS, sync, инструкция
+14. Proof: notification_settings реально записались и восстановились
+15. Инструкция + практический сценарий использования
