@@ -168,26 +168,6 @@ function HelpBody() {
 }
 
 export function LiveEventsHelpDialog({ open, onOpenChange }: Props) {
-  const isDesktop = useMediaQuery("(min-width: 768px)");
-
-  if (!isDesktop) {
-    return (
-      <Drawer open={open} onOpenChange={onOpenChange}>
-        <DrawerContent className="max-h-[85vh]">
-          <DrawerHeader>
-            <DrawerTitle className="flex items-center gap-2">
-              <Video className="h-5 w-5" />
-              Справка: Эфиры
-            </DrawerTitle>
-          </DrawerHeader>
-          <ScrollArea className="px-4 pb-6 overflow-y-auto" style={{ maxHeight: "70vh" }}>
-            <HelpBody />
-          </ScrollArea>
-        </DrawerContent>
-      </Drawer>
-    );
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
