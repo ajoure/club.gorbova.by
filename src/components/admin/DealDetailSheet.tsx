@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
@@ -550,11 +551,11 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm text-muted-foreground shrink-0">Продукт</span>
                   <div className="text-right">
-                    <span className="font-medium">{(() => {
-                      const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
-                      if (snapshot?.display_purchase_name) return snapshot.display_purchase_name;
-                      return product?.name || "—";
-                    })()}</span>
+                    <span className="font-medium">{getDealDisplayName({
+                      productsV2: deal?.products_v2 as any,
+                      productName: product?.name,
+                      purchaseSnapshot: deal?.purchase_snapshot,
+                    })}</span>
                     {(() => {
                       const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
                       const meta = deal?.meta as Record<string, any> | null;

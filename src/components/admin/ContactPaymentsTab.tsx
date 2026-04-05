@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -193,11 +194,10 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           .in('id', orderIds);
         ordersMap = new Map((orders || []).map(o => {
           const snapshot = o.purchase_snapshot as any;
-          const displayName = snapshot?.display_purchase_name;
           const fkName = (o.products_v2 as any)?.name || null;
-          const resolvedName = displayName || fkName;
+          const resolvedName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
           const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
-          const missingDisplayName = isModuleStandalone && !displayName;
+          const missingDisplayName = isModuleStandalone && !snapshot?.display_purchase_name;
           return [
             o.id, 
             { id: o.id, product_name: resolvedName, _is_module_standalone: isModuleStandalone, _missing_display_name: missingDisplayName }

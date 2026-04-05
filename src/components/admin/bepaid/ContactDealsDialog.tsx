@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -101,15 +102,14 @@ export default function ContactDealsDialog({
 
       return data.map(deal => {
         const snapshot = deal.purchase_snapshot as any;
-        const displayName = snapshot?.display_purchase_name;
         const fkName = productsMap.get(deal.product_id) || null;
         const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
         return {
           ...deal,
-          product_name: displayName || fkName,
+          product_name: getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" }),
           tariff_name: tariffsMap.get(deal.tariff_id) || null,
           _is_module_standalone: isModuleStandalone,
-          _missing_display_name: isModuleStandalone && !displayName,
+          _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
         };
       });
     },
