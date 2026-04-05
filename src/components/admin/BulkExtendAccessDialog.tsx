@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Loader2, CheckCircle, XCircle, AlertTriangle, ShieldAlert, Shield } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +19,30 @@ import type { ExtendBlockReason } from "@/hooks/useAccessValidation";
 
 type Step = "setup" | "preview" | "executing" | "done";
 type ExtendMode = "days" | "date";
+
+type ReasonTone = "success" | "warning" | "danger" | "muted";
+
+const REASON_META: Record<string, { label: string; tone: ReasonTone }> = {
+  "не_оплачено": { label: "Сделка не оплачена — продление не выполняется", tone: "muted" },
+  "нет_user_id": { label: "Нет привязки к пользователю. Сначала свяжите сделку с пользователем или восстановите user_id", tone: "danger" },
+  "нет_product_id": { label: "У сделки не указан продукт", tone: "danger" },
+  "продукт_деактивирован": { label: "Продукт деактивирован — доступ не выдаётся", tone: "danger" },
+  "тариф_деактивирован": { label: "Тариф деактивирован", tone: "danger" },
+  "нет_правила_доступа_в_системе": { label: "Нет активного правила доступа для этого продукта", tone: "danger" },
+  "нет_активного_правила_доступа": { label: "Нет активного правила доступа для этого продукта", tone: "danger" },
+  "subscription_expired": { label: "Срок подписки истёк", tone: "warning" },
+  "subscription_canceled": { label: "Подписка отменена", tone: "warning" },
+  "admin_override_historical_allowed": { label: "Админ-продление: предыдущий срок истёк, доступ будет продлён вне обычных ограничений", tone: "warning" },
+  "order_subscription_product_mismatch": { label: "Продукт сделки не совпадает с продуктом подписки", tone: "danger" },
+  "историческая_покупка_без_текущего_основания": { label: "Историческая покупка без текущего активного доступа", tone: "muted" },
+  "неполные_данные_для_проверки": { label: "Неполные данные подписки для проверки", tone: "danger" },
+  "новый_срок_короче_текущего": { label: "Новый срок короче текущего — сокращение заблокировано", tone: "danger" },
+};
+
+function getReasonLabel(reasonCode?: string, fallback?: string): string {
+  if (reasonCode && REASON_META[reasonCode]) return REASON_META[reasonCode].label;
+  return fallback || reasonCode || "";
+}
 
 interface PreviewRow {
   orderId: string;
@@ -39,6 +62,59 @@ interface BulkExtendAccessDialogProps {
   onOpenChange: (open: boolean) => void;
   selectedOrderIds: string[];
   onSuccess: () => void;
+}
+
+function PreviewCard({ row, formatDate }: { row: PreviewRow; formatDate: (d: string | null) => string }) {
+  const isOverride = row.reasonCode === "admin_override_historical_allowed";
+  return (
+    <div
+      className={`p-3 rounded-lg border text-sm ${
+        isOverride
+          ? "border-amber-300 bg-amber-50 dark:bg-amber-900/10"
+          : row.action === "применить"
+          ? "border-green-200 bg-green-50 dark:bg-green-900/10"
+          : row.action === "заблокировано"
+          ? "border-destructive/30 bg-destructive/5"
+          : "border-muted bg-muted/30"
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="font-medium">{row.productName}</span>
+        <div className="flex items-center gap-1">
+          {row.reasonCode && (
+            <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0 text-muted-foreground">
+              {row.reasonCode}
+            </Badge>
+          )}
+          <Badge
+            variant={
+              isOverride ? "secondary" :
+              row.action === "применить" ? "default" :
+              row.action === "заблокировано" ? "destructive" : "secondary"
+            }
+            className={`text-xs ${isOverride ? "bg-amber-200 text-amber-900 dark:bg-amber-800 dark:text-amber-100" : ""}`}
+          >
+            {isOverride && <Shield className="w-3 h-3 mr-1" />}
+            {!isOverride && row.action === "применить" && <CheckCircle className="w-3 h-3 mr-1" />}
+            {row.action === "заблокировано" && <XCircle className="w-3 h-3 mr-1" />}
+            {row.action === "пропустить" && <AlertTriangle className="w-3 h-3 mr-1" />}
+            {isOverride ? "админ" : row.action}
+          </Badge>
+        </div>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        {row.userName} · #{row.orderNumber}
+      </div>
+      {row.action === "применить" && (
+        <div className="text-xs mt-1">
+          {formatDate(row.currentEnd)} → <span className={`font-medium ${isOverride ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400"}`}>{formatDate(row.newEnd)}</span>
+        </div>
+      )}
+      <div className="text-xs mt-1 text-muted-foreground">
+        {getReasonLabel(row.reasonCode, row.reason)}
+      </div>
+    </div>
+  );
 }
 
 export function BulkExtendAccessDialog({
@@ -64,6 +140,9 @@ export function BulkExtendAccessDialog({
   const snapshotRef = useRef<string[]>([]);
   const prevSelectedRef = useRef<string[]>([]);
 
+  // PATCH-SCROLL-RESET: ref for scroll container
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
   // PATCH-SELECTION-RESET: full reset function
   const resetState = useCallback(() => {
     setStep("setup");
@@ -75,6 +154,10 @@ export function BulkExtendAccessDialog({
     setResults({ success: 0, skipped: 0, errors: 0 });
     setProcessing(false);
     snapshotRef.current = [];
+    // Reset scroll position
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
   }, []);
 
   // Auto-reset when selection changes while dialog is open
@@ -97,6 +180,13 @@ export function BulkExtendAccessDialog({
       prevSelectedRef.current = [...selectedOrderIds];
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset scroll when entering preview step
+  useEffect(() => {
+    if (step === "preview" && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
+  }, [step]);
 
   // Compute target end date for "date" mode
   const targetEndDateFromPicker = useMemo(() => {
@@ -287,6 +377,8 @@ export function BulkExtendAccessDialog({
 
   const canPreview = mode === "days" ? days > 0 : !!targetEndDateFromPicker;
 
+  const hasNoPreviewData = previewRows.length === 0 && !isLoading;
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
@@ -387,61 +479,63 @@ export function BulkExtendAccessDialog({
         )}
 
         {step === "preview" && (
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="space-y-2 pr-4">
-              {previewRows.map(row => {
-                const isOverride = row.reasonCode === "admin_override_historical_allowed";
-                return (
-                  <div
-                    key={row.orderId}
-                    className={`p-3 rounded-lg border text-sm ${
-                      isOverride
-                        ? "border-amber-300 bg-amber-50 dark:bg-amber-900/10"
-                        : row.action === "применить"
-                        ? "border-green-200 bg-green-50 dark:bg-green-900/10"
-                        : row.action === "заблокировано"
-                        ? "border-destructive/30 bg-destructive/5"
-                        : "border-muted bg-muted/30"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-medium">{row.productName}</span>
-                      <div className="flex items-center gap-1">
-                        {row.reasonCode && (
-                          <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0">
-                            {row.reasonCode}
-                          </Badge>
-                        )}
-                        <Badge
-                          variant={
-                            isOverride ? "secondary" :
-                            row.action === "применить" ? "default" :
-                            row.action === "заблокировано" ? "destructive" : "secondary"
-                          }
-                          className={`text-xs ${isOverride ? "bg-amber-200 text-amber-900 dark:bg-amber-800 dark:text-amber-100" : ""}`}
-                        >
-                          {isOverride && <Shield className="w-3 h-3 mr-1" />}
-                          {!isOverride && row.action === "применить" && <CheckCircle className="w-3 h-3 mr-1" />}
-                          {row.action === "заблокировано" && <XCircle className="w-3 h-3 mr-1" />}
-                          {row.action === "пропустить" && <AlertTriangle className="w-3 h-3 mr-1" />}
-                          {isOverride ? "админ" : row.action}
-                        </Badge>
-                      </div>
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 min-h-0 overflow-y-auto pr-1 overscroll-contain"
+          >
+            {hasNoPreviewData ? (
+              <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                Нет данных для предварительного просмотра
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* К продлению */}
+                {applicable.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-green-700 dark:text-green-400 mb-2 flex items-center gap-1.5 sticky top-0 bg-background/95 backdrop-blur-sm py-1 z-10">
+                      <CheckCircle className="w-4 h-4" />
+                      К продлению ({applicable.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {applicable.map(row => (
+                        <PreviewCard key={row.orderId} row={row} formatDate={formatDate} />
+                      ))}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      {row.userName} · #{row.orderNumber}
-                    </div>
-                    {row.action === "применить" && (
-                      <div className="text-xs mt-1">
-                        {formatDate(row.currentEnd)} → <span className={`font-medium ${isOverride ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400"}`}>{formatDate(row.newEnd)}</span>
-                      </div>
-                    )}
-                    <div className="text-xs mt-1 text-muted-foreground">{row.reason}</div>
                   </div>
-                );
-              })}
-            </div>
-          </ScrollArea>
+                )}
+
+                {/* Пропущено */}
+                {skipped.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5 sticky top-0 bg-background/95 backdrop-blur-sm py-1 z-10">
+                      <AlertTriangle className="w-4 h-4" />
+                      Пропущено ({skipped.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {skipped.map(row => (
+                        <PreviewCard key={row.orderId} row={row} formatDate={formatDate} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Заблокировано */}
+                {blocked.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-destructive mb-2 flex items-center gap-1.5 sticky top-0 bg-background/95 backdrop-blur-sm py-1 z-10">
+                      <XCircle className="w-4 h-4" />
+                      Заблокировано ({blocked.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {blocked.map(row => (
+                        <PreviewCard key={row.orderId} row={row} formatDate={formatDate} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {step === "executing" && (
