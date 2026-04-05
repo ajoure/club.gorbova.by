@@ -79,7 +79,7 @@ export function BulkExtendAccessDialog({
 
       const { data, error } = await supabase
         .from("subscriptions_v2")
-        .select("id, user_id, product_id, status, access_end_at")
+        .select("id, user_id, product_id, status, access_end_at, products_v2(id, name, is_active), tariffs(id, name, is_active)")
         .in("user_id", userIds)
         .in("product_id", productIds);
       if (error) throw error;
