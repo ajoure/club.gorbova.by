@@ -5,13 +5,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -25,7 +19,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HELP_SECTIONS, QUICK_START_STEPS, type HelpSection, type HelpCallout } from "./liveEventsHelpContent";
-import { useMediaQuery } from "@/hooks/use-media-query";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Video, Plus, Radio, Shield, Send, PlayCircle, AlertTriangle,
@@ -175,26 +168,6 @@ function HelpBody() {
 }
 
 export function LiveEventsHelpDialog({ open, onOpenChange }: Props) {
-  const isDesktop = useMediaQuery("(min-width: 768px)");
-
-  if (!isDesktop) {
-    return (
-      <Drawer open={open} onOpenChange={onOpenChange}>
-        <DrawerContent className="max-h-[85vh]">
-          <DrawerHeader>
-            <DrawerTitle className="flex items-center gap-2">
-              <Video className="h-5 w-5" />
-              Справка: Эфиры
-            </DrawerTitle>
-          </DrawerHeader>
-          <ScrollArea className="px-4 pb-6 overflow-y-auto" style={{ maxHeight: "70vh" }}>
-            <HelpBody />
-          </ScrollArea>
-        </DrawerContent>
-      </Drawer>
-    );
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
