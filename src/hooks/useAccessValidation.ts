@@ -87,7 +87,8 @@ export type ExtendBlockReason =
   | "нет_текущего_подтверждённого_доступа"
   | "историческая_покупка_без_текущего_основания"
   | "нет_правила_доступа_в_системе"
-  | "новый_срок_короче_текущего";
+  | "новый_срок_короче_текущего"
+  | "неполные_данные_для_проверки";
 
 export interface ExtendCheckResult {
   action: "применить" | "пропустить" | "заблокировано";
@@ -132,6 +133,11 @@ export function checkExtendEligibility(
 
   if (!activeSub) {
     return { action: "заблокировано", reason: "Нет текущего подтверждённого доступа — продление невозможно", reasonCode: "нет_текущего_подтверждённого_доступа" };
+  }
+
+  // Guard: неполные данные — если у подписки нет join products_v2 или tariffs
+  if (!activeSub.products_v2 && !activeSub.product_id) {
+    return { action: "заблокировано", reason: "Неполные данные подписки для проверки (нет продукта)", reasonCode: "неполные_данные_для_проверки" };
   }
 
   if (!isCurrentValidAccess(activeSub, productsWithRules)) {
