@@ -247,7 +247,7 @@ Deno.serve(async (req) => {
             // Get user profile for sending
             const { data: profile } = await supabase
               .from('profiles')
-              .select('id, email, telegram_chat_id, timezone, first_name')
+              .select('id, email, telegram_user_id, timezone, first_name')
               .eq('user_id', userId)
               .single();
 
@@ -260,7 +260,7 @@ Deno.serve(async (req) => {
             const userTz = profile.timezone || event.event_timezone || 'Europe/Minsk';
 
             try {
-              if (channel === 'telegram' && profile.telegram_chat_id) {
+              if (channel === 'telegram' && profile.telegram_user_id) {
                 const messageText = replaceTokens(template.message_text!, userTz);
                 
                 const { data: bot } = await supabase
@@ -282,7 +282,7 @@ Deno.serve(async (req) => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      chat_id: profile.telegram_chat_id,
+                      chat_id: profile.telegram_user_id,
                       text: messageText,
                       parse_mode: 'Markdown',
                       reply_markup: keyboard,
