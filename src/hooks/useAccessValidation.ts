@@ -135,6 +135,11 @@ export function checkExtendEligibility(
     return { action: "заблокировано", reason: "Нет текущего подтверждённого доступа — продление невозможно", reasonCode: "нет_текущего_подтверждённого_доступа" };
   }
 
+  // Guard: неполные данные — если у подписки нет join products_v2 или tariffs
+  if (!activeSub.products_v2 && !activeSub.product_id) {
+    return { action: "заблокировано", reason: "Неполные данные подписки для проверки (нет продукта)", reasonCode: "неполные_данные_для_проверки" };
+  }
+
   if (!isCurrentValidAccess(activeSub, productsWithRules)) {
     return { action: "заблокировано", reason: "Техническая запись есть, но не подтверждена текущими правилами доступа", reasonCode: "историческая_покупка_без_текущего_основания" };
   }
