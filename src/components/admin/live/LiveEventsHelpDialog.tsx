@@ -175,24 +175,32 @@ function HelpBody() {
         ))}
       </div>
 
-      {/* Testing guide CTA */}
-      <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
-        <p>
-          📋 <strong>Инструкция по тестированию</strong> — у ответственного сотрудника или в{" "}
-          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
-            техдокументации
-          </a>.
-        </p>
-      </div>
-
-      {/* Link to tech docs */}
-      <div className="text-center pt-2 border-t">
-        <p className="text-xs text-muted-foreground">
-          Техническая документация доступна в{" "}
-          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
-            Системной документации → Live Events v2
-          </a>
-        </p>
+      {/* Dual CTA blocks */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t">
+        <a
+          href="/admin/docs?domain=live_events&mode=manual"
+          className="flex items-start gap-3 rounded-lg border bg-primary/5 p-4 hover:bg-primary/10 transition-colors group"
+        >
+          <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-primary/10 shrink-0">
+            <Info className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <p className="font-semibold text-sm group-hover:text-primary transition-colors">📚 Техническая документация</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Архитектура, API, схемы данных — для разработчиков</p>
+          </div>
+        </a>
+        <a
+          href="/admin/docs?domain=live_events_testing&mode=manual"
+          className="flex items-start gap-3 rounded-lg border bg-emerald-500/5 p-4 hover:bg-emerald-500/10 transition-colors group"
+        >
+          <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-emerald-500/10 shrink-0">
+            <Shield className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <div>
+            <p className="font-semibold text-sm group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">📋 Инструкция для тестировщика</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Пошаговый гайд, зелёные/красные зоны — для сотрудников</p>
+          </div>
+        </a>
       </div>
     </div>
   );

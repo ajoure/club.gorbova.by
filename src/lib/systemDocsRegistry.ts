@@ -92,6 +92,12 @@ export const SYSTEM_DOC_DOMAINS: SystemDocDomain[] = [
     sortOrder: 7,
     exportFileName: "live-events-v2.md",
   },
+  {
+    key: "live_events_testing",
+    title: "Live Events v2 — Тестирование",
+    sortOrder: 8,
+    exportFileName: "live-events-v2-testing.md",
+  },
 ];
 
 export const AUTO_CURRENT_LABEL = "AUTO-CURRENT";
