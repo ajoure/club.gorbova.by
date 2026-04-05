@@ -203,6 +203,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [isFetchingPhoto, setIsFetchingPhoto] = useState(false);
   const [activeTab, setActiveTab] = useState("profile");
+  const [showFinishedSubs, setShowFinishedSubs] = useState(false);
   const [createDealOnly, setCreateDealOnly] = useState(false);
   const [autoRenewConfirmOpen, setAutoRenewConfirmOpen] = useState(false);
   const [autoRenewTarget, setAutoRenewTarget] = useState<{
@@ -1404,6 +1405,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
     return !isExpired && (s.status === "active" || s.status === "trial");
+  }) || [];
+
+  const finishedSubscriptions = subscriptions?.filter(s => {
+    const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
+    return isExpired || (s.status !== "active" && s.status !== "trial");
   }) || [];
 
   if (!contact) return null;
