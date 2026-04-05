@@ -305,7 +305,7 @@ Deno.serve(async (req) => {
                 const subject = replaceTokens(template.email_subject!, userTz);
                 const html = replaceTokens(template.email_body_html!, userTz);
 
-                await supabase.functions.invoke('send-email', {
+                const { data: emailResult, error: emailError } = await supabase.functions.invoke('send-email', {
                   body: {
                     to: profile.email,
                     subject,
@@ -318,8 +318,15 @@ Deno.serve(async (req) => {
                   },
                 });
 
-                await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'sent');
-                totalSent++;
+                if (emailError) {
+                  console.error(`[live-notif-cron] Email invoke error for ${userId}:`, emailError);
+                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'failed', 
+                    emailError.message || String(emailError));
+                  totalFailed++;
+                } else {
+                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'sent');
+                  totalSent++;
+                }
               } else {
                 await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 
                   `no_${channel}_contact`);
