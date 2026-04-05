@@ -104,6 +104,7 @@ Deno.serve(async (req) => {
       orderId, 
       customAccessDays,
       customAccessStartAt,  // NEW: optional custom start date
+      customAccessEndAt,    // PATCH: exact target end date (priority over days)
       extendFromCurrent = true,
       grantTelegram = true,
       grantGetcourse = true,
@@ -200,7 +201,11 @@ Deno.serve(async (req) => {
     
     // Phase 1: Calculate access_end_at - calendar month from config, days for others
     let accessEndAt: Date;
-    if (isClubProduct && !customAccessDays) {
+    if (customAccessEndAt) {
+      // PATCH: exact target end date takes priority over all other calculations
+      accessEndAt = new Date(customAccessEndAt);
+      console.log(`[grant-access-for-order] Using customAccessEndAt: ${accessEndAt.toISOString()}`);
+    } else if (isClubProduct && !customAccessDays) {
       accessEndAt = calcCalendarMonthEnd(accessStartAt);
       console.log(`[grant-access-for-order] Calendar month product: ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
     } else {

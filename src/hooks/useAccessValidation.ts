@@ -83,12 +83,17 @@ export type ExtendBlockReason =
   | "нет_user_id"
   | "нет_product_id"
   | "продукт_деактивирован"
+  | "тариф_деактивирован"
   | "не_оплачено"
   | "нет_текущего_подтверждённого_доступа"
   | "историческая_покупка_без_текущего_основания"
   | "нет_правила_доступа_в_системе"
   | "новый_срок_короче_текущего"
-  | "неполные_данные_для_проверки";
+  | "неполные_данные_для_проверки"
+  | "subscription_expired"
+  | "subscription_canceled"
+  | "admin_override_historical_allowed"
+  | "order_subscription_product_mismatch";
 
 export interface ExtendCheckResult {
   action: "применить" | "пропустить" | "заблокировано";
@@ -97,8 +102,61 @@ export interface ExtendCheckResult {
 }
 
 /**
+ * Диагностика конкретной причины непрохождения predicate.
+ * Возвращает точный reasonCode вместо generic текста.
+ */
+export function diagnoseAccessFailure(
+  sub: SubscriptionLike | null,
+  productsWithRules: Set<string>
+): { reasonCode: ExtendBlockReason; reason: string } {
+  if (!sub) {
+    return { reasonCode: "нет_текущего_подтверждённого_доступа", reason: "Нет подписки для этого продукта" };
+  }
+
+  // Check status first
+  if (sub.status === "canceled" || sub.status === "cancelled") {
+    return { reasonCode: "subscription_canceled", reason: "Подписка отменена" };
+  }
+  if (sub.status !== "active" && sub.status !== "trial") {
+    return { reasonCode: "subscription_expired", reason: `Подписка истекла (статус: ${sub.status})` };
+  }
+
+  // Check expiry
+  if (sub.access_end_at && new Date(sub.access_end_at) < new Date()) {
+    return { reasonCode: "subscription_expired", reason: `Срок доступа истёк (${sub.access_end_at})` };
+  }
+
+  // Check product rule
+  const productId = sub.product_id || (sub.products_v2 as any)?.id;
+  if (!productId || !productsWithRules.has(productId)) {
+    return { reasonCode: "нет_правила_доступа_в_системе", reason: "Нет активного правила доступа для этого продукта" };
+  }
+
+  // Check product/tariff deactivation
+  const product = sub.products_v2 as any;
+  const tariff = sub.tariffs as any;
+  if (product?.is_active === false) {
+    return { reasonCode: "продукт_деактивирован", reason: "Продукт деактивирован" };
+  }
+  if (tariff?.is_active === false) {
+    return { reasonCode: "тариф_деактивирован", reason: "Тариф деактивирован" };
+  }
+
+  // Incomplete data
+  if (!sub.products_v2 && !sub.product_id) {
+    return { reasonCode: "неполные_данные_для_проверки", reason: "Неполные данные подписки (нет продукта)" };
+  }
+
+  return { reasonCode: "историческая_покупка_без_текущего_основания", reason: "Техническая запись без текущего основания" };
+}
+
+export interface CheckExtendOptions {
+  isAdminOverride?: boolean;
+}
+
+/**
  * Проверка сделки для массового продления.
- * Блокирует, если нет текущего подтверждённого доступа.
+ * С поддержкой admin override для исторических/expired кейсов.
  */
 export function checkExtendEligibility(
   order: {
@@ -110,7 +168,10 @@ export function checkExtendEligibility(
   activeSub: SubscriptionLike | null,
   productsWithRules: Set<string>,
   newEnd: Date | null,
+  options?: CheckExtendOptions,
 ): ExtendCheckResult {
+  const isAdmin = options?.isAdminOverride ?? false;
+
   if (!order.user_id) {
     return { action: "заблокировано", reason: "Нет user_id у сделки", reasonCode: "нет_user_id" };
   }
@@ -131,17 +192,40 @@ export function checkExtendEligibility(
     return { action: "пропустить", reason: `Сделка не оплачена (${order.status})`, reasonCode: "не_оплачено" };
   }
 
+  // Admin override: if admin and order is paid and product has active rule,
+  // allow even without active subscription
+  if (isAdmin) {
+    if (!activeSub) {
+      return {
+        action: "применить",
+        reason: "⚠️ Админ-доступ: нет текущей подписки — будет создана новая через grant-access-for-order",
+        reasonCode: "admin_override_historical_allowed",
+      };
+    }
+
+    if (!isCurrentValidAccess(activeSub, productsWithRules)) {
+      const diagnosis = diagnoseAccessFailure(activeSub, productsWithRules);
+      return {
+        action: "применить",
+        reason: `⚠️ Админ-доступ: ${diagnosis.reason}`,
+        reasonCode: "admin_override_historical_allowed",
+      };
+    }
+  }
+
+  // Standard flow (non-admin or admin with valid sub)
   if (!activeSub) {
     return { action: "заблокировано", reason: "Нет текущего подтверждённого доступа — продление невозможно", reasonCode: "нет_текущего_подтверждённого_доступа" };
   }
 
-  // Guard: неполные данные — если у подписки нет join products_v2 или tariffs
+  // Guard: неполные данные
   if (!activeSub.products_v2 && !activeSub.product_id) {
     return { action: "заблокировано", reason: "Неполные данные подписки для проверки (нет продукта)", reasonCode: "неполные_данные_для_проверки" };
   }
 
   if (!isCurrentValidAccess(activeSub, productsWithRules)) {
-    return { action: "заблокировано", reason: "Техническая запись есть, но не подтверждена текущими правилами доступа", reasonCode: "историческая_покупка_без_текущего_основания" };
+    const diagnosis = diagnoseAccessFailure(activeSub, productsWithRules);
+    return { action: "заблокировано", reason: diagnosis.reason, reasonCode: diagnosis.reasonCode };
   }
 
   if (newEnd && activeSub.access_end_at && newEnd < new Date(activeSub.access_end_at)) {

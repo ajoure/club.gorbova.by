@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useActiveAccessRuleProducts, checkExtendEligibility, isCurrentValidAccess } from "@/hooks/useAccessValidation";
+import { useRbac } from "@/hooks/useRbac";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -10,11 +11,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Loader2, CheckCircle, XCircle, AlertTriangle, ShieldAlert } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Loader2, CheckCircle, XCircle, AlertTriangle, ShieldAlert, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
+import type { ExtendBlockReason } from "@/hooks/useAccessValidation";
 
 type Step = "setup" | "preview" | "executing" | "done";
+type ExtendMode = "days" | "date";
 
 interface PreviewRow {
   orderId: string;
@@ -25,6 +30,7 @@ interface PreviewRow {
   newEnd: string | null;
   action: "применить" | "пропустить" | "заблокировано";
   reason: string;
+  reasonCode?: ExtendBlockReason;
   subscriptionId?: string;
 }
 
@@ -40,15 +46,77 @@ export function BulkExtendAccessDialog({
 }: BulkExtendAccessDialogProps) {
   const queryClient = useQueryClient();
   const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
+  const { isAdmin, isSuperAdmin } = useRbac();
+  const isAdminOverride = isAdmin || isSuperAdmin;
+
   const [step, setStep] = useState<Step>("setup");
   const [days, setDays] = useState(30);
   const [extendFromCurrent, setExtendFromCurrent] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [results, setResults] = useState<{ success: number; skipped: number; errors: number }>({ success: 0, skipped: 0, errors: 0 });
 
+  // PATCH-MODE-DATE-OR-DAYS
+  const [mode, setMode] = useState<ExtendMode>("days");
+  const [targetDate, setTargetDate] = useState<Date | undefined>(undefined);
+  const [targetTime, setTargetTime] = useState("");
+
+  // PATCH-PREVIEW-SNAPSHOT: immutable snapshot of selected order IDs
+  const snapshotRef = useRef<string[]>([]);
+  const prevSelectedRef = useRef<string[]>([]);
+
+  // PATCH-SELECTION-RESET: full reset function
+  const resetState = useCallback(() => {
+    setStep("setup");
+    setDays(30);
+    setMode("days");
+    setTargetDate(undefined);
+    setTargetTime("");
+    setExtendFromCurrent(true);
+    setResults({ success: 0, skipped: 0, errors: 0 });
+    setProcessing(false);
+    snapshotRef.current = [];
+  }, []);
+
+  // Auto-reset when selection changes while dialog is open
+  useEffect(() => {
+    if (open) {
+      const prevIds = prevSelectedRef.current;
+      const changed = prevIds.length !== selectedOrderIds.length ||
+        prevIds.some((id, i) => id !== selectedOrderIds[i]);
+      if (changed && prevIds.length > 0) {
+        resetState();
+      }
+      prevSelectedRef.current = [...selectedOrderIds];
+    }
+  }, [open, selectedOrderIds, resetState]);
+
+  // Reset on open
+  useEffect(() => {
+    if (open) {
+      resetState();
+      prevSelectedRef.current = [...selectedOrderIds];
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute target end date for "date" mode
+  const targetEndDateFromPicker = useMemo(() => {
+    if (mode !== "date" || !targetDate) return null;
+    const d = new Date(targetDate);
+    if (targetTime) {
+      const [h, m] = targetTime.split(":").map(Number);
+      d.setHours(h || 0, m || 0, 0, 0);
+    } else {
+      d.setHours(23, 59, 59, 0);
+    }
+    return d;
+  }, [mode, targetDate, targetTime]);
+
+  // PATCH-PREVIEW-SNAPSHOT: use snapshot for queries
+  const activeOrderIds = snapshotRef.current.length > 0 ? snapshotRef.current : selectedOrderIds;
+
   // Fetch order data for preview
   const { data: orderData, isLoading } = useQuery({
-    queryKey: ["bulk-extend-preview", selectedOrderIds],
+    queryKey: ["bulk-extend-preview", activeOrderIds],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("orders_v2")
@@ -57,16 +125,16 @@ export function BulkExtendAccessDialog({
           products_v2(id, name, is_active),
           profiles!orders_v2_profile_id_fkey(id, email, full_name)
         `)
-        .in("id", selectedOrderIds);
+        .in("id", activeOrderIds);
       if (error) throw error;
       return data;
     },
-    enabled: open && selectedOrderIds.length > 0,
+    enabled: open && activeOrderIds.length > 0,
   });
 
-  // Fetch active subscriptions for these users+products
+  // Fetch subscriptions for these users+products
   const { data: subsData } = useQuery({
-    queryKey: ["bulk-extend-subs", selectedOrderIds],
+    queryKey: ["bulk-extend-subs", activeOrderIds],
     queryFn: async () => {
       if (!orderData) return [];
       const pairs = orderData
@@ -89,7 +157,7 @@ export function BulkExtendAccessDialog({
   });
 
   const previewRows = useMemo((): PreviewRow[] => {
-    if (!orderData) return [];
+    if (!orderData || step !== "preview") return [];
 
     return orderData.map(order => {
       const product = order.products_v2 as any;
@@ -97,18 +165,23 @@ export function BulkExtendAccessDialog({
       const userName = profile?.full_name || profile?.email || "—";
       const productName = product?.name || "—";
 
-      // Find subscription candidate — use the sub's own joined data
+      // Find best subscription candidate
       const sub = subsData?.find(
         s => s.user_id === order.user_id && s.product_id === order.product_id
       ) || null;
 
-      // Calculate potential new end
-      const baseDate = extendFromCurrent && sub?.access_end_at
-        ? new Date(sub.access_end_at)
-        : new Date();
-      const newEnd = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+      // Calculate potential new end based on mode
+      let newEnd: Date;
+      if (mode === "date" && targetEndDateFromPicker) {
+        newEnd = targetEndDateFromPicker;
+      } else {
+        const baseDate = extendFromCurrent && sub?.access_end_at
+          ? new Date(sub.access_end_at)
+          : new Date();
+        newEnd = new Date(baseDate.getTime() + days * 24 * 60 * 60 * 1000);
+      }
 
-      // Use unified predicate — pass sub with its own joined products_v2/tariffs
+      // Use unified predicate with admin override
       const subForCheck = sub ? {
         status: sub.status,
         access_end_at: sub.access_end_at,
@@ -122,6 +195,7 @@ export function BulkExtendAccessDialog({
         subForCheck,
         productsWithRules,
         newEnd,
+        { isAdminOverride },
       );
 
       if (check.action !== "применить") {
@@ -132,8 +206,13 @@ export function BulkExtendAccessDialog({
           newEnd: null,
           action: check.action,
           reason: check.reason,
+          reasonCode: check.reasonCode,
         };
       }
+
+      const reasonText = mode === "date" && targetEndDateFromPicker
+        ? `До ${format(targetEndDateFromPicker, "dd.MM.yyyy HH:mm")}`
+        : `Продление от ${extendFromCurrent ? "текущего срока" : "сегодня"} на ${days} дн.`;
 
       return {
         orderId: order.id, orderNumber: order.order_number || "—",
@@ -141,15 +220,23 @@ export function BulkExtendAccessDialog({
         currentEnd: sub?.access_end_at || null,
         newEnd: newEnd.toISOString(),
         action: "применить" as const,
-        reason: `Продление от ${extendFromCurrent ? "текущего срока" : "сегодня"} на ${days} дн.`,
+        reason: check.reasonCode === "admin_override_historical_allowed" ? check.reason : reasonText,
+        reasonCode: check.reasonCode,
         subscriptionId: sub?.id,
       };
     });
-  }, [orderData, subsData, days, extendFromCurrent, productsWithRules]);
+  }, [orderData, subsData, days, extendFromCurrent, productsWithRules, step, mode, targetEndDateFromPicker, isAdminOverride]);
 
   const applicable = previewRows.filter(r => r.action === "применить");
   const blocked = previewRows.filter(r => r.action === "заблокировано");
   const skipped = previewRows.filter(r => r.action === "пропустить");
+  const adminOverrideCount = applicable.filter(r => r.reasonCode === "admin_override_historical_allowed").length;
+
+  const handlePreview = () => {
+    // PATCH-PREVIEW-SNAPSHOT: freeze selection at preview time
+    snapshotRef.current = [...selectedOrderIds];
+    setStep("preview");
+  };
 
   const handleExecute = async () => {
     setStep("executing");
@@ -159,13 +246,19 @@ export function BulkExtendAccessDialog({
     for (const row of applicable) {
       if (!row.orderId) continue;
       try {
-        const { data, error } = await supabase.functions.invoke("grant-access-for-order", {
-          body: {
-            orderId: row.orderId,
-            customAccessDays: days,
-            extendFromCurrent,
-          },
-        });
+        // PATCH-EXECUTE-TARGET-DATE: send customAccessEndAt for date mode
+        const body: Record<string, any> = {
+          orderId: row.orderId,
+          extendFromCurrent,
+        };
+
+        if (mode === "date" && targetEndDateFromPicker) {
+          body.customAccessEndAt = targetEndDateFromPicker.toISOString();
+        } else {
+          body.customAccessDays = days;
+        }
+
+        const { data, error } = await supabase.functions.invoke("grant-access-for-order", { body });
         if (error) throw error;
         if (data?.error) throw new Error(data.error);
         success++;
@@ -183,15 +276,16 @@ export function BulkExtendAccessDialog({
   };
 
   const handleClose = () => {
-    setStep("setup");
-    setDays(30);
-    setResults({ success: 0, skipped: 0, errors: 0 });
+    const wasDone = step === "done";
+    resetState();
     onOpenChange(false);
-    if (step === "done") onSuccess();
+    if (wasDone) onSuccess();
   };
 
   const formatDate = (d: string | null) =>
-    d ? format(new Date(d), "dd.MM.yy") : "∞";
+    d ? format(new Date(d), "dd.MM.yy HH:mm") : "∞";
+
+  const canPreview = mode === "days" ? days > 0 : !!targetEndDateFromPicker;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -208,6 +302,7 @@ export function BulkExtendAccessDialog({
             {step === "preview" && (
               <>
                 <span className="text-green-600">Применить: {applicable.length}</span>
+                {adminOverrideCount > 0 && <span className="ml-2 text-amber-600">(из них админ: {adminOverrideCount})</span>}
                 {blocked.length > 0 && <span className="ml-3 text-destructive">Заблокировано: {blocked.length}</span>}
                 {skipped.length > 0 && <span className="ml-3 text-muted-foreground">Пропущено: {skipped.length}</span>}
               </>
@@ -218,40 +313,72 @@ export function BulkExtendAccessDialog({
 
         {step === "setup" && (
           <div className="space-y-4 py-4">
+            {/* Mode selector */}
             <div>
-              <Label>Количество дней</Label>
-              <Input
-                type="number"
-                value={days}
-                onChange={e => setDays(parseInt(e.target.value) || 30)}
-                min={1}
-                className="w-40 mt-1"
-              />
+              <Label className="mb-2 block">Режим продления</Label>
+              <RadioGroup value={mode} onValueChange={(v) => setMode(v as ExtendMode)} className="flex gap-4">
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="days" id="mode-days" />
+                  <Label htmlFor="mode-days" className="cursor-pointer">+N дней</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="date" id="mode-date" />
+                  <Label htmlFor="mode-date" className="cursor-pointer">До конкретной даты</Label>
+                </div>
+              </RadioGroup>
             </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant={extendFromCurrent ? "default" : "outline"}
-                size="sm"
-                onClick={() => setExtendFromCurrent(true)}
-              >
-                От текущего срока
-              </Button>
-              <Button
-                variant={!extendFromCurrent ? "default" : "outline"}
-                size="sm"
-                onClick={() => setExtendFromCurrent(false)}
-              >
-                От сегодня
-              </Button>
-            </div>
+
+            {mode === "days" ? (
+              <>
+                <div>
+                  <Label>Количество дней</Label>
+                  <Input
+                    type="number"
+                    value={days}
+                    onChange={e => setDays(parseInt(e.target.value) || 30)}
+                    min={1}
+                    className="w-40 mt-1"
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant={extendFromCurrent ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setExtendFromCurrent(true)}
+                  >
+                    От текущего срока
+                  </Button>
+                  <Button
+                    variant={!extendFromCurrent ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setExtendFromCurrent(false)}
+                  >
+                    От сегодня
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div>
+                <Label className="mb-1 block">Целевая дата и время</Label>
+                <DateTimePicker
+                  date={targetDate}
+                  time={targetTime}
+                  onDateChange={setTargetDate}
+                  onTimeChange={setTargetTime}
+                />
+              </div>
+            )}
+
             <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm">
               <div className="flex items-start gap-2">
                 <ShieldAlert className="w-4 h-4 mt-0.5 text-amber-600 flex-shrink-0" />
                 <div>
                   <p className="font-medium text-amber-800 dark:text-amber-300">Гард основания</p>
                   <p className="text-amber-700 dark:text-amber-400 mt-1">
-                    Продление доступно только для сделок с текущим активным доступом. 
-                    Исторические, архивные и спорные случаи будут заблокированы.
+                    {isAdminOverride
+                      ? "Админ-режим: разрешено продление исторических и истёкших кейсов. Такие строки будут помечены предупреждением."
+                      : "Продление доступно только для сделок с текущим активным доступом. Исторические, архивные и спорные случаи будут заблокированы."
+                    }
                   </p>
                 </div>
               </div>
@@ -262,43 +389,57 @@ export function BulkExtendAccessDialog({
         {step === "preview" && (
           <ScrollArea className="flex-1 max-h-[50vh]">
             <div className="space-y-2 pr-4">
-              {previewRows.map(row => (
-                <div
-                  key={row.orderId}
-                  className={`p-3 rounded-lg border text-sm ${
-                    row.action === "применить"
-                      ? "border-green-200 bg-green-50 dark:bg-green-900/10"
-                      : row.action === "заблокировано"
-                      ? "border-destructive/30 bg-destructive/5"
-                      : "border-muted bg-muted/30"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium">{row.productName}</span>
-                    <Badge
-                      variant={
-                        row.action === "применить" ? "default" :
-                        row.action === "заблокировано" ? "destructive" : "secondary"
-                      }
-                      className="text-xs"
-                    >
-                      {row.action === "применить" && <CheckCircle className="w-3 h-3 mr-1" />}
-                      {row.action === "заблокировано" && <XCircle className="w-3 h-3 mr-1" />}
-                      {row.action === "пропустить" && <AlertTriangle className="w-3 h-3 mr-1" />}
-                      {row.action}
-                    </Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {row.userName} · #{row.orderNumber}
-                  </div>
-                  {row.action === "применить" && (
-                    <div className="text-xs mt-1">
-                      {formatDate(row.currentEnd)} → <span className="font-medium text-green-700 dark:text-green-400">{formatDate(row.newEnd)}</span>
+              {previewRows.map(row => {
+                const isOverride = row.reasonCode === "admin_override_historical_allowed";
+                return (
+                  <div
+                    key={row.orderId}
+                    className={`p-3 rounded-lg border text-sm ${
+                      isOverride
+                        ? "border-amber-300 bg-amber-50 dark:bg-amber-900/10"
+                        : row.action === "применить"
+                        ? "border-green-200 bg-green-50 dark:bg-green-900/10"
+                        : row.action === "заблокировано"
+                        ? "border-destructive/30 bg-destructive/5"
+                        : "border-muted bg-muted/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-medium">{row.productName}</span>
+                      <div className="flex items-center gap-1">
+                        {row.reasonCode && (
+                          <Badge variant="outline" className="text-[10px] font-mono px-1.5 py-0">
+                            {row.reasonCode}
+                          </Badge>
+                        )}
+                        <Badge
+                          variant={
+                            isOverride ? "secondary" :
+                            row.action === "применить" ? "default" :
+                            row.action === "заблокировано" ? "destructive" : "secondary"
+                          }
+                          className={`text-xs ${isOverride ? "bg-amber-200 text-amber-900 dark:bg-amber-800 dark:text-amber-100" : ""}`}
+                        >
+                          {isOverride && <Shield className="w-3 h-3 mr-1" />}
+                          {!isOverride && row.action === "применить" && <CheckCircle className="w-3 h-3 mr-1" />}
+                          {row.action === "заблокировано" && <XCircle className="w-3 h-3 mr-1" />}
+                          {row.action === "пропустить" && <AlertTriangle className="w-3 h-3 mr-1" />}
+                          {isOverride ? "админ" : row.action}
+                        </Badge>
+                      </div>
                     </div>
-                  )}
-                  <div className="text-xs mt-1 text-muted-foreground">{row.reason}</div>
-                </div>
-              ))}
+                    <div className="text-xs text-muted-foreground">
+                      {row.userName} · #{row.orderNumber}
+                    </div>
+                    {row.action === "применить" && (
+                      <div className="text-xs mt-1">
+                        {formatDate(row.currentEnd)} → <span className={`font-medium ${isOverride ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400"}`}>{formatDate(row.newEnd)}</span>
+                      </div>
+                    )}
+                    <div className="text-xs mt-1 text-muted-foreground">{row.reason}</div>
+                  </div>
+                );
+              })}
             </div>
           </ScrollArea>
         )}
@@ -324,7 +465,7 @@ export function BulkExtendAccessDialog({
           {step === "setup" && (
             <>
               <Button variant="outline" onClick={handleClose}>Отмена</Button>
-              <Button onClick={() => setStep("preview")} disabled={isLoading}>
+              <Button onClick={handlePreview} disabled={isLoading || !canPreview}>
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                 Предварительный просмотр
               </Button>
