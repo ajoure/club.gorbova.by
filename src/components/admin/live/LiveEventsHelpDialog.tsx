@@ -179,7 +179,7 @@ function HelpBody() {
       <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
         <p>
           📋 <strong>Инструкция по тестированию</strong> — у ответственного сотрудника или в{" "}
-          <a href="/admin/system-docs?domain=live_events" className="text-primary hover:underline">
+          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
             техдокументации
           </a>.
         </p>
@@ -189,7 +189,7 @@ function HelpBody() {
       <div className="text-center pt-2 border-t">
         <p className="text-xs text-muted-foreground">
           Техническая документация доступна в{" "}
-          <a href="/admin/system-docs?domain=live_events" className="text-primary hover:underline">
+          <a href="/admin/docs?domain=live_events" className="text-primary hover:underline">
             Системной документации → Live Events v2
           </a>
         </p>
