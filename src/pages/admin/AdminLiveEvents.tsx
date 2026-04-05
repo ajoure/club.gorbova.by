@@ -328,7 +328,7 @@ export default function AdminLiveEvents() {
     queryFn: async () => {
       const { data } = await supabase
         .from("broadcast_templates")
-        .select("id, name, template_type, channel")
+        .select("id, name, template_type, channel, message_text, email_subject, email_body_html")
         .in("template_type", ["webinar_invite", "general"])
         .order("name");
       return data || [];
@@ -369,6 +369,24 @@ export default function AdminLiveEvents() {
       { key: "access", label: "Указано, кто может войти на эфир", ok: form.access_rules.filter(r => r.product_id).length > 0, blocker: true },
       { key: "replay", label: "Запись будет доступна после завершения", ok: form.replay_enabled, blocker: false },
     );
+
+    // 6E. Notification readiness blockers
+    if (form.notification_enabled) {
+      items.push(
+        { key: "notif_template", label: "Выбран шаблон уведомления", ok: !!form.notification_template_id, blocker: true },
+        { key: "notif_channels", label: "Выбран хотя бы один канал", ok: form.notification_channels.length > 0, blocker: true },
+        { key: "notif_offsets", label: "Включён хотя бы один срок уведомления", ok: form.notification_offsets.some(o => o.enabled), blocker: true },
+        { key: "notif_scheduled", label: "Задано время начала эфира", ok: !!form.scheduled_at, blocker: true },
+      );
+      // Template/channel compatibility — same logic as in cron (6D)
+      const selectedTemplate = broadcastTemplates?.find(t => t.id === form.notification_template_id);
+      if (selectedTemplate && form.notification_channels.includes('telegram') && !selectedTemplate.message_text) {
+        items.push({ key: "notif_tg_compat", label: "Шаблон не содержит текст для Telegram", ok: false, blocker: true });
+      }
+      if (selectedTemplate && form.notification_channels.includes('email') && (!selectedTemplate.email_subject || !selectedTemplate.email_body_html)) {
+        items.push({ key: "notif_email_compat", label: "Шаблон не содержит тему или текст для Email", ok: false, blocker: true });
+      }
+    }
 
     return items;
   }, [form, isLiveStream, events, editingId]);

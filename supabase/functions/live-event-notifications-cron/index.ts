@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { resolveEffectiveProductAccess } from '../_shared/resolve-effective-access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,9 +32,12 @@ Deno.serve(async (req) => {
   let totalSent = 0;
   let totalSkipped = 0;
   let totalFailed = 0;
+  let eventsNoAudience = 0;
+  let eventsSourceNotReady = 0;
 
   try {
-    // 1. Find published live_stream events with notifications enabled and scheduled_at in the future or recent past
+    // 1. Find published live_stream events with notifications enabled
+    // IMPORTANT: only event_type = 'live_stream', recorded_webinar NEVER participates
     const { data: events, error: eventsError } = await supabase
       .from('live_events')
       .select('id, slug, title, description, scheduled_at, event_timezone, event_type, platform_status, metadata')
@@ -48,7 +52,7 @@ Deno.serve(async (req) => {
     }
 
     if (!events || events.length === 0) {
-      return jsonRes({ ok: true, message: 'No eligible events', sent: 0 });
+      return jsonRes({ ok: true, message: 'No eligible events', sent: 0, skipped: 0, failed: 0, no_audience: 0, source_not_ready: 0 });
     }
 
     for (const event of events) {
@@ -57,6 +61,14 @@ Deno.serve(async (req) => {
 
       if (!ns?.enabled || !ns.template_id || !ns.channels?.length) continue;
       if (!event.scheduled_at) continue;
+
+      // 6C. Stop-guard: source not ready (only for live_stream)
+      const providerStatus = meta?.provider_source_status;
+      if (providerStatus === 'missing' || providerStatus === 'broken') {
+        console.log(`[live-notif-cron] Event ${event.id}: source_not_ready (${providerStatus}) — skipping`);
+        eventsSourceNotReady++;
+        continue;
+      }
 
       const scheduledAt = new Date(event.scheduled_at);
 
@@ -81,7 +93,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // 3. Get audience via access rules
+        // 6A. Canonical audience via resolveEffectiveProductAccess
         const { data: accessRules } = await supabase
           .from('live_event_access_rules')
           .select('product_id, tariff_id')
@@ -89,39 +101,68 @@ Deno.serve(async (req) => {
 
         if (!accessRules || accessRules.length === 0) continue;
 
-        // Get users with active subscriptions or entitlements for these products
         const productIds = [...new Set(accessRules.map(r => r.product_id))];
         
-        const userIds = new Set<string>();
+        // Collect candidate users from subscriptions + entitlements
+        const candidateUserIds = new Set<string>();
         
-        // From subscriptions_v2
         for (const productId of productIds) {
           const { data: subs } = await supabase
             .from('subscriptions_v2')
             .select('user_id')
             .eq('product_id', productId)
             .in('status', ['active', 'trial']);
-          
-          subs?.forEach(s => userIds.add(s.user_id));
-        }
+          subs?.forEach(s => candidateUserIds.add(s.user_id));
 
-        // From entitlements
-        for (const productId of productIds) {
           const { data: ents } = await supabase
             .from('entitlements')
             .select('user_id')
             .eq('product_id', productId)
             .eq('status', 'active');
-          
-          ents?.forEach(e => userIds.add(e.user_id));
+          ents?.forEach(e => candidateUserIds.add(e.user_id));
         }
 
-        if (userIds.size === 0) continue;
+        // Verify each candidate with canonical resolver + tariff_id filter
+        const verifiedUserIds = new Set<string>();
+        for (const userId of candidateUserIds) {
+          for (const rule of accessRules) {
+            const snapshot = await resolveEffectiveProductAccess(supabase, userId, rule.product_id, now);
+            const hasAccess = snapshot.isUnlimited || (snapshot.effectiveEndAt && snapshot.effectiveEndAt > now);
+            
+            if (!hasAccess) continue;
+
+            // Check tariff_id if specified in rule
+            if (rule.tariff_id) {
+              const { data: tariffSub } = await supabase
+                .from('subscriptions_v2')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('product_id', rule.product_id)
+                .eq('tariff_id', rule.tariff_id)
+                .in('status', ['active', 'trial'])
+                .limit(1)
+                .maybeSingle();
+              if (!tariffSub) continue;
+            }
+
+            verifiedUserIds.add(userId);
+            break;
+          }
+        }
+
+        // 6B. Stop-guard: empty audience
+        if (verifiedUserIds.size === 0) {
+          console.log(`[live-notif-cron] Event ${event.id}, offset ${offset.minutes}min: no_audience (candidates=${candidateUserIds.size}, verified=0) — skipping`);
+          eventsNoAudience++;
+          continue;
+        }
+
+        console.log(`[live-notif-cron] Event ${event.id}, offset ${offset.minutes}min: audience verified (${verifiedUserIds.size}/${candidateUserIds.size}), template=${ns.template_id}, channels=${ns.channels.join(',')}`);
 
         // 4. Prepare template variables
         const siteUrl = Deno.env.get('SITE_URL') || 'https://gorbova.lovable.app';
         const eventLink = `${siteUrl}/live/${event.slug}`;
-        const eventTypeLabel = event.event_type === 'live_stream' ? 'Живой эфир' : 'Эфир в записи';
+        const eventTypeLabel = 'Живой эфир';
 
         const scheduledAtSourceTz = formatDateInTz(scheduledAt, event.event_timezone || 'Europe/Minsk');
 
@@ -137,9 +178,49 @@ Deno.serve(async (req) => {
           return result;
         };
 
-        // 5. Send to each user
-        for (const userId of userIds) {
+        // 5. Send to each verified user
+        for (const userId of verifiedUserIds) {
           for (const channel of ns.channels) {
+            // 6D. Template/channel compatibility validation
+            if (channel === 'telegram' && !template.message_text) {
+              // Log incompatibility with specific reason
+              const { error: insertErr } = await supabase
+                .from('live_event_notification_log')
+                .insert({
+                  live_event_id: event.id,
+                  template_id: ns.template_id,
+                  user_id: userId,
+                  channel,
+                  notify_offset_minutes: offset.minutes,
+                  scheduled_for: windowStart.toISOString(),
+                  status: 'skipped',
+                  error: 'template_incompatible_with_telegram',
+                });
+              if (!insertErr) totalSkipped++;
+              else if (insertErr.code === '23505') totalSkipped++;
+              else totalFailed++;
+              continue;
+            }
+
+            if (channel === 'email' && (!template.email_subject || !template.email_body_html)) {
+              const { error: insertErr } = await supabase
+                .from('live_event_notification_log')
+                .insert({
+                  live_event_id: event.id,
+                  template_id: ns.template_id,
+                  user_id: userId,
+                  channel,
+                  notify_offset_minutes: offset.minutes,
+                  scheduled_for: windowStart.toISOString(),
+                  status: 'skipped',
+                  error: 'template_incompatible_with_email',
+                });
+              if (!insertErr) totalSkipped++;
+              else if (insertErr.code === '23505') totalSkipped++;
+              else totalFailed++;
+              continue;
+            }
+
             // Check dedup via UNIQUE constraint
             const { error: insertError } = await supabase
               .from('live_event_notification_log')
@@ -154,7 +235,6 @@ Deno.serve(async (req) => {
               });
 
             if (insertError) {
-              // unique_violation = already sent
               if (insertError.code === '23505') {
                 totalSkipped++;
                 continue;
@@ -172,7 +252,7 @@ Deno.serve(async (req) => {
               .single();
 
             if (!profile) {
-              await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 'No profile found');
+              await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 'no_profile');
               totalSkipped++;
               continue;
             }
@@ -181,9 +261,8 @@ Deno.serve(async (req) => {
 
             try {
               if (channel === 'telegram' && profile.telegram_chat_id) {
-                const messageText = replaceTokens(template.message_text || event.title, userTz);
+                const messageText = replaceTokens(template.message_text!, userTz);
                 
-                // Get first active bot
                 const { data: bot } = await supabase
                   .from('telegram_bots')
                   .select('bot_token')
@@ -219,12 +298,12 @@ Deno.serve(async (req) => {
                     totalFailed++;
                   }
                 } else {
-                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 'No active bot');
+                  await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 'no_active_bot');
                   totalSkipped++;
                 }
               } else if (channel === 'email' && profile.email) {
-                const subject = replaceTokens(template.email_subject || `${event.title} — напоминание`, userTz);
-                const html = replaceTokens(template.email_body_html || template.message_text || event.title, userTz);
+                const subject = replaceTokens(template.email_subject!, userTz);
+                const html = replaceTokens(template.email_body_html!, userTz);
 
                 await supabase.functions.invoke('send-email', {
                   body: {
@@ -243,7 +322,7 @@ Deno.serve(async (req) => {
                 totalSent++;
               } else {
                 await updateLogStatus(supabase, event.id, userId, channel, offset.minutes, 'skipped', 
-                  `No ${channel} contact`);
+                  `no_${channel}_contact`);
                 totalSkipped++;
               }
             } catch (sendErr) {
@@ -257,7 +336,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonRes({ ok: true, sent: totalSent, skipped: totalSkipped, failed: totalFailed });
+    return jsonRes({ 
+      ok: true, 
+      sent: totalSent, 
+      skipped: totalSkipped, 
+      failed: totalFailed, 
+      no_audience: eventsNoAudience, 
+      source_not_ready: eventsSourceNotReady,
+    });
   } catch (err) {
     console.error('[live-notif-cron] Unexpected error:', err);
     return jsonRes({ error: 'Internal error' }, 500);
