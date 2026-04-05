@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,10 +113,10 @@ export function LinkDealDialog({
           final_price: Number(o.final_price),
           currency: o.currency,
           created_at: o.created_at,
-          product_name: displayName || fkName,
+          product_name: getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" }),
           profile_id: o.profile_id,
           user_id: o.user_id,
-          _missing_display_name: isModuleStandalone && !displayName,
+          _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
         };
       }));
     } catch (e: any) {
