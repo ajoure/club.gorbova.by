@@ -57,6 +57,7 @@ import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/adm
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { DomainEventService } from "@/lib/domain-events";
+import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
