@@ -28,8 +28,8 @@ export function UserSubscriptions() {
         .from("subscriptions_v2")
         .select(`
           *,
-          products_v2(id, name, code),
-          tariffs(id, name, code)
+          products_v2(id, name, code, is_active),
+          tariffs(id, name, code, is_active)
         `)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
@@ -100,12 +100,20 @@ export function UserSubscriptions() {
   // Split into active and finished
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return !isExpired && (s.status === "active" || s.status === "trial");
+    const product = s.products_v2 as any;
+    const tariff = s.tariffs as any;
+    const productActive = product?.is_active !== false;
+    const tariffActive = tariff?.is_active !== false;
+    return !isExpired && (s.status === "active" || s.status === "trial") && productActive && tariffActive;
   }) || [];
 
   const finishedSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return isExpired || (s.status !== "active" && s.status !== "trial");
+    const product = s.products_v2 as any;
+    const tariff = s.tariffs as any;
+    const productActive = product?.is_active !== false;
+    const tariffActive = tariff?.is_active !== false;
+    return isExpired || (s.status !== "active" && s.status !== "trial") || !productActive || !tariffActive;
   }) || [];
 
   if (isLoading) {

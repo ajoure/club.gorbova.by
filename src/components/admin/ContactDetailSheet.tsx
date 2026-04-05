@@ -457,8 +457,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .from("subscriptions_v2")
         .select(`
           *,
-          products_v2(id, name, code, telegram_club_id),
-          tariffs(id, name, code, getcourse_offer_code, getcourse_offer_id)
+          products_v2(id, name, code, telegram_club_id, is_active),
+          tariffs(id, name, code, getcourse_offer_code, getcourse_offer_id, is_active)
         `)
         .in("user_id", userIds)
         .order("created_at", { ascending: false });
@@ -1404,12 +1404,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   const activeSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return !isExpired && (s.status === "active" || s.status === "trial");
+    const product = s.products_v2 as any;
+    const tariff = s.tariffs as any;
+    const productActive = product?.is_active !== false;
+    const tariffActive = tariff?.is_active !== false;
+    return !isExpired && (s.status === "active" || s.status === "trial") && productActive && tariffActive;
   }) || [];
 
   const finishedSubscriptions = subscriptions?.filter(s => {
     const isExpired = s.access_end_at && new Date(s.access_end_at) < new Date();
-    return isExpired || (s.status !== "active" && s.status !== "trial");
+    const product = s.products_v2 as any;
+    const tariff = s.tariffs as any;
+    const productActive = product?.is_active !== false;
+    const tariffActive = tariff?.is_active !== false;
+    return isExpired || (s.status !== "active" && s.status !== "trial") || !productActive || !tariffActive;
   }) || [];
 
   if (!contact) return null;
