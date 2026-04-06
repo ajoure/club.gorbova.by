@@ -173,25 +173,26 @@ serve(async (req) => {
             }
           }
           
-          // Fallback: resolve product via club mapping if no subscription_id
+          // Fallback: resolve product via access_rules if no subscription_id
           let productResolveSource: string | null = null;
           if (!productName && item.club_id) {
-            const { data: clubMappings } = await supabase
-              .from("product_club_mappings")
-              .select("product_id, products_v2(name)")
-              .eq("club_id", item.club_id)
+            const { data: clubRules } = await supabase
+              .from("access_rules")
+              .select("product_id, products_v2:product_id(name)")
+              .eq("target_ref", item.club_id)
+              .eq("grant_target_type", "club")
               .eq("is_active", true);
 
-            if (clubMappings && clubMappings.length === 1) {
+            if (clubRules && clubRules.length === 1) {
               // @ts-ignore - nested join types
-              productName = clubMappings[0].products_v2?.name || null;
-              subscriptionProductId = subscriptionProductId || clubMappings[0].product_id;
-              productResolveSource = "club_mapping";
-              console.log(`[telegram-process-access-queue] Fallback: resolved product via club_mapping for club ${item.club_id}: product=${productName}, product_id=${subscriptionProductId}`);
-            } else if (clubMappings && clubMappings.length > 1) {
-              // Ambiguous: multiple active mappings for this club
-              productResolveSource = "club_mapping_ambiguous";
-              console.warn(`[telegram-process-access-queue] WARNING: ${clubMappings.length} active mappings for club ${item.club_id} — leaving product_name as UNKNOWN`);
+              productName = clubRules[0].products_v2?.name || null;
+              subscriptionProductId = subscriptionProductId || clubRules[0].product_id;
+              productResolveSource = "access_rules";
+              console.log(`[telegram-process-access-queue] Fallback: resolved product via access_rules for club ${item.club_id}: product=${productName}, product_id=${subscriptionProductId}`);
+            } else if (clubRules && clubRules.length > 1) {
+              // Ambiguous: multiple active rules for this club
+              productResolveSource = "access_rules_ambiguous";
+              console.warn(`[telegram-process-access-queue] WARNING: ${clubRules.length} active rules for club ${item.club_id} — leaving product_name as UNKNOWN`);
             }
           }
 
@@ -199,18 +200,19 @@ serve(async (req) => {
           productName = productName || "UNKNOWN";
 
           // ============================================================
-          // PATCH TG-CLUB-LINKAGE-INTEGRITY: Guard 3 — club-product mapping check
+          // PATCH TG-CLUB-LINKAGE-INTEGRITY: Guard 3 — club-product access_rules check
           // ============================================================
           if (subscriptionProductId) {
-            const { data: mappingCheck } = await supabase
-              .from("product_club_mappings")
+            const { data: ruleCheck } = await supabase
+              .from("access_rules")
               .select("id")
               .eq("product_id", subscriptionProductId)
-              .eq("club_id", item.club_id)
+              .eq("target_ref", item.club_id)
+              .eq("grant_target_type", "club")
               .eq("is_active", true)
               .maybeSingle();
 
-            if (!mappingCheck) {
+            if (!ruleCheck) {
               console.log(`[telegram-process-access-queue] SKIP item ${item.id}: club_product_mismatch — product ${subscriptionProductId} not mapped to club ${item.club_id}`);
               
               await supabase
