@@ -2,105 +2,77 @@
 
 &nbsp;
 
-1. **B2 сформулируй строже: usePermissions не просто “объединить оба запроса”, а сделать один canonical query-flight без повторного запуска на remount.**
-  Добавь явно:
+1. **Не делай search_deal_rows как SETOF jsonb.**
+  Лучше вернуть **табличную структуру с явными колонками**, чтобы не терять типизацию, сортировку и предсказуемость на клиенте.
+  Иначе получите:
   &nbsp;
-  - один queryKey
-  - staleTime: 5 min
-  - refetchOnMount: false если данные свежие
-  - refetchOnWindowFocus: false для permission graph, если это допустимо
-  - shell не ждет permissions, если для первого рендера уже хватает role
+  - слабую типизацию
+  - лишний парсинг
+  - более хрупкий контракт между SQL и UI
   &nbsp;
-2. **По user_roles_v2 = 2 уточни, что это целевое значение только для cold load, если AuthContext и usePermissions действительно остаются разными слоями.**
-  Если получится безопасно переиспользовать role из AuthContext внутри usePermissions без второго чтения roles — лучше целиться в:
+2. **Нужно зафиксировать стабильную сортировку и в RPC поиска.**
+  Не только в обычном query, но и в search_deal_rows:
   &nbsp;
-  - get_user_permissions = 1
-  - user_roles_v2 = 1
-    Но это только если без архитектурной грязи и без поломки separation of concerns.
+  - ORDER BY deal_date DESC NULLS LAST, id DESC
+  - LIMIT/OFFSET применять после этого
+    Иначе в поиске и при Показать ещё строки могут прыгать.
   &nbsp;
-3. **B1: banned/profile-status check обязательно включи в canonical profile source, если он уже читает profiles.status.**
-  Иначе цель profiles = 1 не будет достигнута.
-  Прямо допиши:
+3. **Counts RPC и rows RPC должны использовать один и тот же WHERE-блок буквально.**
+  Не “похожую логику”, а один и тот же search/filter contract:
   &nbsp;
-  - banned check не делает отдельный profiles query
-  - использует status из useAuthBootstrap().profile
+  - p_search
+  - p_product_id
+  - p_date_from
+  - p_date_to
+  - p_preset
+    Иначе снова будет рассинхрон между counters и rows.
   &nbsp;
-4. **B1: не раздувай useAuthBootstrap лишними полями сверх реально нужных для cold load.**
-  То, что ты перечислил по consent/onboarding — ок, но не добавляй туда ничего еще “на будущее”.
-  Зафиксируй правило:
+4. **В get_deal_tab_counts добавь тот же preset/filter contract, что и в rows.**
+  Сейчас ты пишешь про общую семантику, но нужно явно зафиксировать:
   &nbsp;
-  - только те поля profiles, которые уже сейчас дают убрать реальные дублирующие fetch
+  - counts считаются по той же отфильтрованной базе
+  - tabs не должны показывать значения из другой логики поиска/фильтрации
   &nbsp;
-5. **B3: для WelcomeOnboardingModal зафиксируй, что запрос has-active-setup не должен стартовать, если модалка уже dismissed/completed по bootstrap profile.**
-  Это позволит не только отложить, но и вообще избежать лишнего запроса в части сценариев.
-6. **B3: по useUnreadTicketsCount раздели два хука явно, чтобы подрядчик не “починил” только один из них.**
-  Напиши отдельно:
+5. **Нужен guard по производительности для поиска по ФИО.**
+  Поиск через JOIN с profiles ок, но в плане нужно добавить:
   &nbsp;
-  - src/hooks/useUnreadTicketsCount.tsx
-  - useUnreadTicketsCount внутри src/hooks/useTickets.ts
-    Для каждого — свой enabled, staleTime, правила запуска.
+  - тянуть только минимально нужные поля
+  - не раздувать payload при поиске
+  - payments_v2 не тащить “полным массивом”, если это можно безопасно сократить до минимально нужных полей/последнего платежа
   &nbsp;
-7. **B4 правильно влит в B1/B3, но это надо явно пометить как mapping, чтобы ничего не потерялось.**
-  Добавь строку:
-  &nbsp;
-  - B4 (Consent dedupe) -> покрывается шагами B1 + B3 1:1, без потери scope
-  &nbsp;
-8. **B5 сейчас слишком неопределенный.**
-  Формулировку “если warning от ImpersonationBar” нужно ужесточить:
-  &nbsp;
-  - сначала получить точный stack/source warning
-  - только потом менять DashboardLayout или ImpersonationBar
-  - не делать forwardRef “наугад”
-    Иначе это уже не plan, а гадание.
-  &nbsp;
-9. **В DoD добавь измеримый пункт по shell blocking.**
-  Сейчас “dashboard shell не блокируется” звучит общо.
-  Лучше:
-  &nbsp;
-  - shell рендерится без ожидания consent_logs, onboarding secondary setup-check и tickets counters
-  - эти запросы не удерживают global spinner / route gate
-  &nbsp;
-10. **В метриках добавь не только counts, но и время до первого осмысленного рендера.**
-  То есть таблицу расширить:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- login / refresh -> first meaningful shell paint
-  Это важнее, чем просто число запросов.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. **Нужен явный proof-блок в плане, не только в DoD.**
-  Добавь отдельным разделом:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- console proof
-- network proof
-- таблица до/после
-- проверка hard refresh
-- проверка route navigation без повторного bootstrap
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. **Нужен анти-регресс guard: не ломать кэш React Query между страницами.**
+6. **Показать ещё в режиме поиска нужно описать точнее.**
   Добавь:
+  &nbsp;
+  - при активном p_search вторая страница продолжает тот же result set
+  - не сбрасывает search context
+  - не смешивает результаты обычного списка и search-режима
+  &nbsp;
+7. **Нужен explicit anti-regression guard: без client-side fallback search.**
+  Прямо запиши:
+  &nbsp;
+  - не возвращать buildSearchIndex
+  - не искать по уже загруженным rows в браузере
+  - поиск только server-side
+  &nbsp;
+8. **Добавь proof по имени и фамилии отдельно.**
+  Не только “по ФИО работает”, а:
+  &nbsp;
+  - поиск по email
+  - поиск по фамилии
+  - поиск по имени
+  - поиск по записи вне первых 100
+    Это важный DoD.
+  &nbsp;
+9. **Добавь proof согласованности counts и rows.**
+  Например:
+  &nbsp;
+  - один и тот же search term
+  - count в табе
+  - фактическая rows-выдача по этому же term
+    Нужно показать, что после hotfix нет рассинхрона.
+  &nbsp;
+10. **Если search RPC вводится, то в AdminDeals.tsx надо явно сохранить два режима без лишнего дублирования логики.**
+  Укажи:
 
 &nbsp;
 
@@ -108,131 +80,118 @@
 
 &nbsp;
 
-- не пересоздавать query/data source на каждом route change
-- не делать новый parallel cache layer рядом с существующим bootstrap hook
+- без поиска — обычный lightweight paginated query
+- с поиском — RPC search query
+- общий UI/pagination contract один и тот же
+  Иначе подрядчик может сделать две расходящиеся реализации.
 
 &nbsp;
 
 &nbsp;
 
-В остальном план уже хороший и достаточно точный для исполнения.
+В остальном план правильный и уже достаточно точный для исполнения.
 
 &nbsp;
 
-План: PATCH-PERF-PHASE-B-COMPLETION
+План: HOTFIX-DEALS-COUNTS-AND-NAME-SEARCH
 
 ### Контекст
 
-Phase A (auth stability) принят. Phase B выполнен на 4/9. Текущий cold load: 16 запросов, profiles x4, get_user_permissions x2, user_roles_v2 x3.
+Два подтвержденных бага:
 
-### Scope изменений
+1. `get_deal_tab_counts` RPC падает с 400 — невалидное значение enum `'cancelled'`
+2. Поиск в Сделках не находит по ФИО — текущий `.or()` ищет только по `order_number`, `customer_email`, `customer_phone`, но не по `profiles.full_name` (PostgREST не поддерживает фильтрацию по related table fields внутри `.or()`)
 
----
+### Root cause
 
-#### B1 — Canonical profile source
+**Fix 1**: Строка 44 в `get_deal_tab_counts` содержит `'cancelled'` — это не валидное значение enum `order_status` (допустимо только `'canceled'`).
 
-**Проблема**: `useConsent` делает собственный `profiles` fetch (consent_version, consent_given_at, marketing_consent). `WelcomeOnboardingModal` делает собственный `profiles` fetch (onboarding_dismissed_at, onboarding_completed_at). Итого 4 запроса к profiles вместо 1.
+**Fix 2**: PostgREST `.or()` на строке 197-199 в `AdminDeals.tsx` не может фильтровать по `profiles.full_name`, т.к. это поле из связанной таблицы. Supabase PostgREST не поддерживает `relation.column` внутри `.or()`. Поэтому поиск по ФИО полностью отсутствует в rows query. При этом в RPC `get_deal_tab_counts` поиск по `p.full_name` уже есть (строка 34), что создает рассинхрон между counts и rows.
 
-**Решение**:
+### Решение
 
-1. Расширить `useAuthBootstrap` — добавить поля `consent_version`, `consent_given_at`, `marketing_consent`, `onboarding_dismissed_at`, `onboarding_completed_at` в canonical select. Эти поля уже лежат в `profiles` и не создают отдельного жизненного цикла.
-2. В `useConsent` — убрать собственный `profile-consent` useQuery. Вместо этого принимать `consent_version` из `useAuthBootstrap().profile`. `needsConsentUpdate` будет вычисляться на основе bootstrap profile. `privacy_policy_versions` оставить отдельным запросом (глобальный source). `consent_logs` — deferred (см. B3).
-3. В `WelcomeOnboardingModal` — убрать собственный `onboarding-state` useQuery. Брать `onboarding_dismissed_at`, `onboarding_completed_at` из `useAuthBootstrap().profile`.
+#### Fix 1 — SQL миграция
 
-**Файлы**: `useAuthBootstrap.ts`, `useConsent.tsx`, `WelcomeOnboardingModal.tsx`
+Пересоздать `get_deal_tab_counts` с исправлением строки 44:
 
-**Целевой результат**: profiles fetch = 1
+```sql
+WHERE status IN ('canceled', 'refunded')
+```
 
----
+#### Fix 2 — Поиск по ФИО: server-side RPC для rows
 
-#### B2 — Permissions dedupe
+Поскольку PostgREST `.or()` не может работать с relation fields, нужно вынести поисковый запрос rows на SQL-сторону. Создать новую RPC `search_deal_rows`:
 
-**Проблема**: `usePermissions` делает 2 параллельных запроса: RPC `get_user_permissions` + SELECT `user_roles_v2`. При этом `AuthContext` уже делает свой SELECT `user_roles_v2` для определения role. Итого user_roles_v2 x3, get_user_permissions x2.
+```text
+search_deal_rows(
+  p_search text,
+  p_product_id uuid,
+  p_date_from timestamptz,
+  p_date_to timestamptz,
+  p_preset text,        -- 'all' | 'trial' | 'canceled' | 'imported'
+  p_limit int,
+  p_offset int
+) RETURNS SETOF jsonb
+```
 
-**Решение**:
+Эта RPC:
 
-1. Переписать `usePermissions` на `useQuery` (вместо useState + useEffect + useCallback), добавить `staleTime: 5 * 60 * 1000` и `enabled: !!user?.id`.
-2. Объединить оба запроса (RPC + roles) в одну queryFn — один queryKey, один flight, один результат. Это убирает дубль при remount.
-3. AuthContext свой `user_roles_v2` оставить — он нужен для `role` до bootstrap. Но usePermissions больше не дублирует его отдельно: roles приходят вместе с permissions в одном запросе.
+- делает JOIN с profiles
+- ищет по `order_number`, `customer_email`, `customer_phone`, `profiles.full_name`, `profiles.email` (ILIKE, case-insensitive)
+- применяет те же фильтры preset/product/date что и клиентский код сейчас
+- возвращает paginated результат с теми же JOIN-данными (products_v2, tariffs, profiles, payments_v2)
+- использует **ту же search/filter семантику**, что и `get_deal_tab_counts`
 
-**Файлы**: `usePermissions.tsx`
+В клиентском коде `AdminDeals.tsx`:
 
-**Целевой результат**: get_user_permissions = 1, user_roles_v2 = 2 (AuthContext + usePermissions combined)
+- когда `debouncedSearch` задан: использовать RPC `search_deal_rows` вместо прямого PostgREST запроса
+- когда поиска нет: оставить текущий прямой PostgREST запрос (он работает корректно без name search)
+- `useInfiniteQuery` адаптировать для обоих режимов: queryFn выбирает между RPC и прямым запросом
 
----
+### Синхронизация search semantics
 
-#### B3 — Deferred/non-blocking secondary queries
+Обе RPC (`get_deal_tab_counts` и `search_deal_rows`) будут использовать одинаковый WHERE-блок:
 
-**Проблема**: `consent_logs`, `subscriptions_v2` (onboarding), `payment_methods` (onboarding), `support_tickets` count — все стартуют немедленно при mount shell.
-
-**Решение**:
-
-1. `useConsent` — `consent_logs` query: добавить `enabled: !!user?.id`, `staleTime: 5 * 60 * 1000`. Не блокировать `isLoading` consent_logs для shell.
-2. `WelcomeOnboardingModal` — `has-active-setup` query (subscriptions_v2 + payment_methods): добавить `enabled: bootstrapReady && !!user?.id`. Не стартовать до bootstrapReady.
-3. `useUnreadTicketsCount` (файл `src/hooks/useUnreadTicketsCount.tsx`, используется в `AdminCommunication`): добавить `enabled: !!user?.id` через useAuth, добавить `staleTime: 30_000`.
-4. AppSidebar использует `useUnreadTicketsCount` из `useTickets.ts` (другой хук!) — этот уже имеет `enabled: !!user?.id`, но нет `staleTime`. Добавить `staleTime: 30_000`.
-
-**Файлы**: `useConsent.tsx`, `WelcomeOnboardingModal.tsx`, `useUnreadTicketsCount.tsx`, `useTickets.ts`
-
----
-
-#### B4 — Consent dedupe (интегрирован в B1 и B3)
-
-Отдельного шага не нужно — покрыто B1 (profile consent из bootstrap) и B3 (consent_logs deferred).
-
-Дополнительно: `useConsent.isLoading` не должен включать `isLoadingHistory` — consent_logs не блокирует shell. Изменить на: `isLoading: isLoadingPolicy`.
-
----
-
-#### B5 — Ref warning cleanup
-
-**Проблема**: `Function components cannot be given refs` для `ImpersonationBar` внутри `DashboardLayout`.
-
-**Решение**: `ImpersonationBar` находится как прямой child `SidebarProvider`. Это не ref-related — warning скорее от другого компонента. Нужно проверить точный stack trace при выполнении. Если warning от ImpersonationBar — обернуть в `forwardRef` или вынести за пределы SidebarProvider.
-
-**Файлы**: `DashboardLayout.tsx`, возможно `ImpersonationBar.tsx`
-
----
+```sql
+(p_search IS NULL
+ OR o.order_number ILIKE '%' || p_search || '%'
+ OR o.customer_email ILIKE '%' || p_search || '%'
+ OR o.customer_phone ILIKE '%' || p_search || '%'
+ OR p.full_name ILIKE '%' || p_search || '%'
+ OR p.email ILIKE '%' || p_search || '%')
+```
 
 ### Изменяемые файлы
 
 
-| Файл                                                   | Что меняется                                                                                   |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `src/hooks/useAuthBootstrap.ts`                        | Добавить consent/onboarding поля в select и интерфейс                                          |
-| `src/hooks/useConsent.tsx`                             | Убрать profile-consent query, брать из bootstrap; consent_logs deferred; isLoading без history |
-| `src/hooks/usePermissions.tsx`                         | Переписать на useQuery, объединить RPC+roles, staleTime                                        |
-| `src/hooks/useUnreadTicketsCount.tsx`                  | Добавить enabled guard через useAuth, staleTime                                                |
-| `src/hooks/useTickets.ts`                              | Добавить staleTime к useUnreadTicketsCount                                                     |
-| `src/components/onboarding/WelcomeOnboardingModal.tsx` | Убрать onboarding-state query, брать из bootstrap; enabled guard на has-active-setup           |
-| `src/components/layout/DashboardLayout.tsx`            | Вынести ImpersonationBar за SidebarProvider если это source ref warning                        |
+| Файл                             | Что меняется                                                            |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| Новая SQL миграция               | Исправить enum в `get_deal_tab_counts` + создать `search_deal_rows` RPC |
+| `src/pages/admin/AdminDeals.tsx` | В `buildDealsQuery` при наличии search использовать RPC вместо `.or()`  |
 
 
 ### STOP-guards
 
-- Не менять AuthContext
-- Не менять signIn/signUp/signOut
-- Не менять RLS / SQL / edge functions
-- Не добавлять искусственные таймеры
-- Не создавать параллельный bootstrap layer
+- Не менять auth, RLS, edge functions
 - Не менять Phase A auth-fix
-- add-only: dependency audit перед любым удалением
+- Не ломать пагинацию / "Показать ещё" без search
+- Не создавать client-side search workaround
+- Не менять структуру таблиц
 
 ### DoD
 
-1. profiles на cold load = 1 canonical fetch
-2. get_user_permissions / user_roles_v2 без дублей при обычном mount
-3. dashboard shell не блокируется consent_logs / onboarding / tickets
-4. нет React ref warning в консоли
-5. обычная навигация не вызывает повторный cold bootstrap
-6. proof-пакет: console + network + метрики до/после
+1. `get_deal_tab_counts` возвращает 200 без ошибки enum
+2. Tab counts отображаются в UI
+3. Поиск по email работает
+4. Поиск по фамилии работает (по всей БД)
+5. Поиск по имени работает
+6. Counts и rows согласованы при активном поиске по ФИО
+7. "Показать ещё" работает в режиме поиска
 
-### Ожидаемые метрики после
+### Обязательный proof
 
-
-| Метрика                 | До  | После (цель) |
-| ----------------------- | --- | ------------ |
-| profiles fetch          | 4   | 1            |
-| get_user_permissions    | 2   | 1            |
-| user_roles_v2           | 3   | 2            |
-| Всего запросов за 5 сек | ~16 | ~10          |
+1. Поиск по email — строка найдена
+2. Поиск по фамилии из первых 100 — найдена
+3. Поиск по фамилии, которой нет в первых 100, но есть в БД — найдена
+4. Network: `get_deal_tab_counts` возвращает 200
+5. Network: counts и rows соответствуют одному search term
