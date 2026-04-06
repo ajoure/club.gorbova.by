@@ -1442,6 +1442,29 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     isHistoricalAccess(s as any, productsWithRules)
   ) || [];
 
+  // Entitlements for products NOT already covered by subscriptions (order_based_only)
+  const subscriptionProductIds = new Set(
+    (subscriptions || []).map(s => s.product_id).filter(Boolean)
+  );
+
+  const activeEntitlements = (entitlements || []).filter(e => {
+    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    if (e.status !== 'active') return false;
+    if (e.expires_at && new Date(e.expires_at) < new Date()) return false;
+    const product = e.products_v2 as any;
+    if (product?.is_active === false) return false;
+    const productId = e.product_id;
+    return productId && productsWithRules.has(productId);
+  });
+
+  const finishedEntitlements = (entitlements || []).filter(e => {
+    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    return !activeEntitlements.some(ae => ae.id === e.id);
+  });
+
+  // Unified effective access count
+  const totalActiveAccess = activeSubscriptions.length + activeEntitlements.length;
+
   if (!contact) return null;
 
   return (
