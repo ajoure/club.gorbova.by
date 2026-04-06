@@ -4,6 +4,33 @@
 
 ---
 
+### ОБЯЗАТЕЛЬНЫЙ ПРИНЦИП
+
+**«Названия могут быть похожими. ID — уникален. Все решения принимает только ID.»**
+
+Во всех runtime-цепочках source of truth:
+- product_id
+- tariff_id
+- offer_id
+- training_module_id
+- при необходимости order_id / subscription_id
+
+Названия, коды, slug, short label, snapshot text — только для отображения и текстового поиска.
+
+**Зафиксировано:**
+- cb20 = отдельный продукт «Ценный бухгалтер | 1 ступень 2.0» (product_id: 7101ed3c)
+- prd_0d01a2fdc477 = отдельный продукт «Ценный бухгалтер | 2 ступень» (product_id: 87a8870f)
+- Это НЕ parent/child, НЕ версии одного продукта. Любые выводы по похожести названий ошибочны.
+
+**Запрещено:**
+- Делать выводы по похожести имён
+- Связывать продукты по тексту
+- Считать code/name/slug surrogate key
+- Принимать execute-решения по доступам без ID и runtime proof
+- Если поле можно менять в UI, но runtime на него не смотрит — это SoT mismatch
+
+---
+
 ### СТАТУС ПАТЧЕЙ
 
 | Патч | Статус | Примечание |
@@ -11,15 +38,20 @@
 | PATCH 1 | **closed** | |
 | PATCH 2 | **closed** | 12 ghost кейсов — не баг |
 | PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** | |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** | Manual proof от пользователя: техподдержка и контакт-центр открывают одинаковые карточки |
+| PATCH-DERGELEVA-BROWSER-PROOF | **closed** | Manual proof от пользователя |
 | PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **closed** | Root cause доказан |
-| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **closed** | Guard A: proven (synthetic), Guard B: code-proved |
+| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **closed** | Guard A: proven, Guard B: code-proved |
 | PATCH 3 ACCESS-SCOPE-FORENSICS | **closed** | Все фазы завершены |
-| PATCH-DEALS-SEARCH-RESOLVER-FIX | **done** | RPC обновлены: поиск по product name, code, tariff name |
-| PATCH-NAMING-NORMALIZATION-UI-FIRST | **next** | UI badges + short labels + trim separators |
+| PATCH-DEALS-SEARCH-RESOLVER-FIX | **done** | RPC: поиск по product name, code, tariff name. UX-only text search, после выбора — только ID |
+| PATCH-NAMING-NORMALIZATION-UI-FIRST | **done** | Badges, short labels, trim pipes, product_id visible |
 | PATCH-REAL-FULFILLMENT-GAPS | **ready** | 4 gap-кейса, backfill после naming |
-| PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION | **discovery** | Сначала бизнес-проверка, потом execute |
-| 49 cb_module_ip | **hold** | manual_or_bulk_unconfirmed_business_basis, revoke запрещён |
+| PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION | **discovery** | Audit всех мест с text-based logic |
+| PATCH-PRODUCT-TARIFF-OFFER-FIELD-BINDING-AUDIT | **discovery** | Какие поля runtime vs decorative |
+| PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF | **discovery** | Доказать UI toggle → runtime binding |
+| PATCH-REMOVE-SLUG-DEPENDENCY-FROM-BUSINESS-LOGIC | **discovery** | slug/code только для display |
+| PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX | **pending** | Только после discovery matrix |
+| PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION | **discovery** | Сначала бизнес-проверка |
+| 49 cb_module_ip | **hold** | manual_or_bulk_unconfirmed, revoke запрещён |
 | PATCH 4 duration drift | pending | |
 
 ---
@@ -28,70 +60,55 @@
 
 | Вывод | Статус | Доказательство |
 |---|---|---|
-| covered_by_business_club_rule — легальный доступ | **FACT** | Правила BUSINESS-клуба дают исторический доступ к ЦБ |
-| historical_expired — не баг | **FACT** | Истекшие подписки, штатный жизненный цикл |
-| subscription_product_no_entitlement_needed | **FACT** | SoT для Club = subscriptions_v2, entitlement не обязателен |
-| Вкладка «Доступы» = config-view, не fact-view | **FACT** | Отображает access_rules, а не реальные entitlements |
+| covered_by_business_club_rule — легальный доступ | **FACT** | Правила BUSINESS-клуба |
+| historical_expired — не баг | **FACT** | Истекшие подписки, штатный цикл |
+| subscription_product_no_entitlement_needed | **FACT** | SoT для Club = subscriptions_v2 |
+| Вкладка «Доступы» = config-view, не fact-view | **FACT** | Отображает access_rules |
 | Default deny: нет binding = deny | **FACT** | Стандарт зафиксирован |
-| Guard A (stale date override) | **FACT** | Synthetic proof, audit log bba06866 |
-| Guard B (kick grace window) | **CODE-PROVED** | L365-396 telegram-kick-violators, нет production event |
-| DERGELEVA browser proof | **FACT** | Manual proof пользователем |
+| Guard A (stale date override) | **FACT** | Synthetic proof |
+| Guard B (kick grace window) | **CODE-PROVED** | Нет production event |
+| DERGELEVA browser proof | **FACT** | Manual proof |
+| Deals search SoT = RPC only | **FACT** | PostgREST — pill/filter/date only |
+| auto_renew hardcoded in grant-access-for-order | **UNDECIDED** | L525: true для всех. Требуется field-binding audit |
 
 ---
 
 ### ФИНАЛЬНЫЙ REBUCKETING: 477 paid orders
 
-**Фраза "paid_but_no_entitlement" как единая проблема — УБРАНА.**
-
 | Bucket | Count | Verdict |
 |---|---|---|
-| no_user_id_imported | 278 | NOT BUG — импорт без user_id |
-| historical_expired | 146 | NOT BUG — истекший срок |
-| subscription_product_no_entitlement_needed | 20 | LEGAL — SoT = subscriptions_v2 |
-| module_covered_by_parent_cb20 | 17 | LEGAL (if included in parent) |
-| covered_by_business_club_rule | 7 | LEGAL — BUSINESS-тариф клуба |
-| legacy_or_test_noise | 4 | NOT BUG — тест |
+| no_user_id_imported | 278 | NOT BUG |
+| historical_expired | 146 | NOT BUG |
+| subscription_product_no_entitlement_needed | 20 | LEGAL |
+| module_covered_by_parent_cb20 | 17 | LEGAL |
+| covered_by_business_club_rule | 7 | LEGAL |
+| legacy_or_test_noise | 4 | NOT BUG |
 | entitlement_exists_by_code | 1 | NOT BUG |
-| **real_fulfillment_gap** | **4** | **BUG** — 1 пользователь, 4 модуля |
+| **real_fulfillment_gap** | **4** | **BUG** |
 | **ИТОГО** | **477** | |
-
-**Реальных багов: 4** (Анна Бруйло, 4 модульных заказа без entitlement).
 
 ---
 
 ### ПОРЯДОК EXECUTE
 
 1. **PATCH-DEALS-SEARCH-RESOLVER-FIX** ✅ done
-   - RPC `search_deal_rows` и `get_deal_tab_counts` теперь ищут по `products_v2.name`, `products_v2.code`, `tariffs.name`
-
-2. **PATCH-NAMING-NORMALIZATION-UI-FIRST** — next
-   - UI badges: course / module / service / subscription
-   - Short labels для модулей
-   - Trim trailing `|` у cb20 и ЦБ 2
-   - Тариф — отдельное поле, не смешивать с продуктом
-   - Экраны: список сделок, карточка сделки, карточка контакта, история оплат
-   - После: убедиться что поиск находит и short label и canonical DB name
-
-3. **PATCH-REAL-FULFILLMENT-GAPS** — ready
-   - Только 4 реальных gap (Бруйло): cb_module_retail, catering, production, marketplaces
-   - Dry-run → backfill entitlements
-
-4. **DISCOVERY: GRANULAR-MODULE-BINDING-NORMALIZATION**
-   - Бизнес-проверка: standalone vs dual vs parent-only для каждого модуля
-   - Где visibility через parent, где через standalone entitlement
-   - Где content физически не развязан
-   - Только после discovery → execute plan
-
-5. **FOLLOW-UP: 49 cb_module_ip**
-   - Статус: manual_or_bulk_unconfirmed_business_basis
-   - Нужно: batch source, actor, reason, affected users
-   - Revoke запрещён до бизнес-proof
+2. **PATCH-NAMING-NORMALIZATION-UI-FIRST** ✅ done
+   - getCategoryBadge.ts, getShortDisplayName, ProductCategoryBadge
+   - Badges во всех 8 точках: AdminDeals, DealDetailSheet, ContactDetailSheet, ContactPaymentsTab, ContactDealsDialog, LinkDealDialog, LinkSubscriptionDealDialog
+   - Trailing pipes убраны у cb20 и prd_0d01a2fdc477
+   - Product ID виден в detail views (CopyableIdChip)
+3. **DISCOVERY: PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION** — next
+   - Артефакт: product_identity_runtime_matrix.csv
+   - Артефакт: id_vs_name_conflict_cases.csv
+4. **DISCOVERY: UI-FIELD-TO-RUNTIME-BINDING-PROOF** — parallel
+   - Артефакт: field_binding_runtime_matrix.csv
+5. **PATCH-REAL-FULFILLMENT-GAPS** — после discovery
+6. **DISCOVERY: GRANULAR-MODULE-BINDING**
+7. **FOLLOW-UP: 49 cb_module_ip** — hold
 
 ---
 
 ### КОНТРАКТ ВИДИМОСТИ
-
-Артефакт: `product_visibility_contract_matrix.csv`
 
 Правила:
 - Club, buh_business → SoT = subscriptions_v2
@@ -103,9 +120,25 @@
 
 ---
 
+### HIGH-RISK ЗОНЫ (ID-first audit)
+
+| Зона | Файл | Проблема |
+|---|---|---|
+| Hardcoded product_code sets | _shared/entitlement-sync.ts | SUBSCRIPTION_BASED_CODES, ORDER_BASED_ONLY_CODES |
+| Description-based matching | bepaid-auto-process | descLower.includes('клуб') |
+| Description-based fallback | bepaid-auto-process | descLower.includes('club') |
+| Static code→name map | product-names.ts | Hardcoded, не из БД |
+| Entitlement by product_code | bepaid-webhook, grant-access-for-order | resolution по code, не id |
+| Description mapping | bepaid-raw-transactions | PRODUCT_TARIFF_MAPPINGS |
+| Report fuzzy match | bepaid-report-import | desc.includes(plan_title) |
+| Name hack | course-prereg-notify | product_code === "cb20_predzapis" |
+
+---
+
 ### УРОВНИ ДОКАЗАТЕЛЬСТВ
 
 - **FACT**: доказано synthetic proof, production data, или code verification
 - **CODE-PROVED**: подтверждено анализом кода, нет production event
 - **HYPOTHESIS**: требует проверки
 - **CONFIG-VIEW**: отображает настройки, не реальное состояние
+- **UNDECIDED**: требуется field-binding audit
