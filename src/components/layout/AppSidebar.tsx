@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
-// Note: useSidebarModules removed - modules now appear inside page tabs, not sidebar dropdown
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -128,21 +128,8 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
 
-  // Note: Modules are now displayed inside page tabs, not in sidebar dropdown
-  // Fetch profile data including avatar_url from Telegram
-  const { data: profile } = useQuery({
-    queryKey: ["sidebar-profile", user?.id],
-    queryFn: async () => {
-      if (!user?.id) return null;
-      const { data } = await supabase
-        .from("profiles")
-        .select("avatar_url, full_name")
-        .eq("user_id", user.id)
-        .single();
-      return data;
-    },
-    enabled: !!user?.id,
-  });
+  // Use canonical bootstrap profile instead of separate query
+  const { profile } = useAuthBootstrap();
 
   const handleSignOut = async () => {
     await signOut();
