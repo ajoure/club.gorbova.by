@@ -130,8 +130,10 @@ export async function hasOtherActiveAccessSource(
     sources.push(`subscription:${otherSubs[0].id}`);
   }
 
-  // 2. Check if product is order-based (cb20) — never revoke from subscription path
-  if (ORDER_BASED_ONLY_CODES.has(product_code)) {
+  // 2. Check if product is order-based — never revoke from subscription path
+  // PATCH-ID-FIRST: Use DB-driven mode resolution
+  const mode = await resolveEntitlementMode(supabase, product_code);
+  if (mode === 'order_based_only') {
     sources.push('order_based_product');
   }
 
