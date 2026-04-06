@@ -79,6 +79,7 @@ export function useTelegramLinkStatus() {
     staleTime: 30000,
     refetchOnWindowFocus: false,
   });
+}
 
 export function useStartTelegramLink() {
   const queryClient = useQueryClient();
