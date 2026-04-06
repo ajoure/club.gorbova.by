@@ -2100,13 +2100,19 @@ export default function AdminProductDetailV2() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Автосписание через (дн.)</Label>
+                      <Label className="flex items-center gap-1.5">
+                        Автосписание через (дн.)
+                        <span className="text-xs text-amber-500 font-normal" title="Это поле сохраняется в БД, но НЕ используется runtime-логикой списания. Фактический срок определяется trial_days оффера.">
+                          ⚠️ display only
+                        </span>
+                      </Label>
                       <Input
                         type="number"
                         value={offerForm.auto_charge_delay_days === 0 ? "" : offerForm.auto_charge_delay_days}
                         onChange={(e) => setOfferForm({ ...offerForm, auto_charge_delay_days: e.target.value === "" ? 0 : parseInt(e.target.value) || 0 })}
                         onBlur={() => { if (offerForm.auto_charge_delay_days < 1) setOfferForm({ ...offerForm, auto_charge_delay_days: 1 }); }}
                         min={1}
+                        className="border-amber-300"
                       />
                     </div>
                   </div>
