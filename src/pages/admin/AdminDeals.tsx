@@ -173,7 +173,7 @@ function buildDealsQuery(
   if (activePreset === "trial") {
     query = query.eq("is_trial", true);
   } else if (activePreset === "canceled") {
-    query = query.in("status", ["canceled", "cancelled", "refunded"]);
+    query = query.in("status", ["canceled", "refunded"]);
   } else if (activePreset === "imported") {
     query = query.in("reconcile_source", [...IMPORT_SOURCES]);
   }
