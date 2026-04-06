@@ -1581,7 +1581,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 Письма
               </TabsTrigger>
               <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">
-                Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
+                Доступы {totalActiveAccess > 0 && <Badge variant="secondary" className="ml-1 text-xs">{totalActiveAccess}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
