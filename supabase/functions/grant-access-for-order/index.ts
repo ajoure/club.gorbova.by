@@ -548,7 +548,7 @@ Deno.serve(async (req) => {
         console.error("Error creating subscription:", createSubError);
       } else {
         console.log(`Created new subscription ${newSub?.id} for user ${userId}, product ${productId}`);
-        results.subscription = { action: "created", id: newSub?.id, auto_renew: true };
+        results.subscription = { action: "created", id: newSub?.id, auto_renew: shouldAutoRenew, payment_flow: paymentFlow };
       }
     }
 
