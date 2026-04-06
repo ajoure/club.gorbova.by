@@ -1,162 +1,207 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Execute только по optimistic guards.**
-  Для каждой из 19 строк в UPDATE добавить проверку текущего ожидаемого состояния:
-  &nbsp;
-  - группа A: WHERE id = ... AND status = 'active' AND product_id IS NULL AND product_code = ...
-  - группа B: WHERE id = ... AND status = 'active' AND expires_at = <current_expires>
-    Если обновлено не 10/10 и 9/9 — **ROLLBACK / STOP**. Это нужно, чтобы не затронуть записи, если они уже изменились после dry-run. ID-driven и safe workflow обязательны.
-  &nbsp;
-2. **Не использовать “migration tool” как DDL-миграцию.**
-  Здесь нужен **одноразовый data remediation script / transactional SQL patch**, а не обычная schema migration. В платформенных правилах критичны add-only, безопасное исполнение и недопущение поломки production-логики; для такого патча важнее controlled execute + verify, чем миграция схемы. 
-3. **Зафиксировать exact binding для 9 wrong_end_date.**
-  В плане сейчас указан target_expires, но нет явного subscription_id для каждой строки. Добавь в таблицу группы B колонку:
-  &nbsp;
-  - source_subscription_id
-  - source_access_end_at
-  - binding_proof = audit_v2
-    Иначе остаётся риск неоднозначного источника, если у пользователя несколько подписок по продукту. Это уже проверялось в v2 как dry-run basis на 19 строк. 
-  &nbsp;
-4. **Audit log сделать с batch_id / remediation_run_id.**
-  Не просто action='entitlement.remediated', а ещё единый batch_id, одинаковый для всех 19 записей, плюс в meta:
-  &nbsp;
-  - remediation_bucket
-  - before_snapshot
-  - after_snapshot
-  - source_subscription_id или resolved_product_id_by_code
-  - plan_name = PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE
-    Audit logging для критических операций обязателен. 
-  &nbsp;
-5. **Before/after/diff делать по тем же 19 ID и в том же порядке.**
-  Добавь явный machine-check:
-  &nbsp;
-  - 15_before_remediation.csv = ровно 19 строк
-  - 16_after_remediation.csv = ровно те же 19 entitlement_id
-  - 17_remediation_diff.csv не содержит изменений вне полей product_id, expires_at, updated_at
-    Это защищает от скрытых побочных эффектов и соответствует verify-этапу.
-  &nbsp;
-6. **В DoD добавить отдельную проверку на scope leakage.**
-  Помимо “вне 19 ID изменено 0”, зафиксировать ещё:
-  &nbsp;
-  - 13 current NULL product_id → после execute должно стать **3**, и это именно deferred cb_module_*
-  - classification buckets по v2 не пересчитываются и не должны использоваться как post-factum justification
-    V2 явно зафиксировал safe-scope именно как 10 + 9 = 19, а 3 cb_module_* — уже новый deferred факт. 
-  &nbsp;
-7. **PATCH 2, PATCH 3, PATCH 4 оставить отдельными и не смешивать с PATCH 1.**
-  Это уже закреплено в v2 backlog: 17 missing_entitlement, 12 illegal_bonus_access, duration-alignment backlog — отдельные follow-up категории, не для текущего execute-safe. 
-8. **Формулировку про source of truth уточнить.**
-  Лучше так:
-  &nbsp;
-  - entitlements — SoT по факту доступа;
-  - для **группы B** целевой срок берётся из **validated subscription binding** из audit v2.
-    Так формулировка не конфликтует с общим правилом платформы, где SoT доступа — entitlements. 
-  &nbsp;
+1. Зафиксируй execute-scope как immutable список из 13 subscription_id  
+Во время execute не делать повторный “живой” отбор по условиям.  
+Сначала сохранить exact scope в 18_patch2_before_missing_entitlement.csv, и далее INSERT выполнять только по этим 13 ID.
+2. Усиль duplicate guard  
+Проверять NOT EXISTS не только по user_id + product_id, но и дополнительно по user_id + product_code для active/trial entitlements.  
+Это важно, чтобы не создать дубль в кейсе, если уже есть legacy/null-product entitlement с тем же product_code.
+3. Явно зафиксируй ожидаемый post-state  
+После execute должно быть не просто “safe scope = 0”, а:  
+
+  - missing_entitlement по 13 safe = 0
+  - глобально missing_entitlement = ровно 4
+  - эти 4 — только:  
+
+    - 2130e4fc
+    - 64c68953
+    - 52af34ae
+    - 1703a459
+  - &nbsp;
+4. &nbsp;
+5. Добавь idempotency-guard  
+Если патч запускается повторно, результат должен быть:  
+
+  - created = 0
+  - skipped_duplicate_guard = 13
+  - без новых insert  
+  Это нужно отдельно проверить и отразить в финальном отчёте как свойство безопасного повторного запуска.
+6. &nbsp;
+7. Не использовать никаких inferred полей вне SoT  
+Для INSERT брать только:  
+
+  - user_id из subscriptions_v2
+  - product_id из subscriptions_v2
+  - product_code из products_v2
+  - order_id из subscriptions_v2
+  - expires_at = subscription.access_end_at  
+  Никаких попыток восстанавливать что-либо из purchase_snapshot, email, имени, UI.
+8. &nbsp;
+9. Расширь audit_logs meta  
+Помимо subscription_id, entitlement_id, user_id, product_id, product_code, batch_id, добавь:  
+
+  - subscription_access_end_at
+  - order_id
+  - duplicate_guard_result
+  - execution_scope='patch2-safe-13'  
+  Это упростит последующую сверку.
+10. &nbsp;
+11. Добавь machine-check на scope leakage по INSERT  
+Отдельной проверкой докажи:  
+
+  - новых entitlements создано ровно 13
+  - все 13 принадлежат exact target subscription_id
+  - вне target 13 новых entitlements = 0
+12. &nbsp;
+13. Финальный отчёт сделай в двух разрезах  
+Отдельно показать:  
+
+  - created / excluded / duplicate_guard / errors
+  - список created entitlement_id ↔ source subscription_id
+  - список 4 excluded с причинами
+  - глобальный diff bucket’ов до/после
+14. &nbsp;
+15. Формулировку STOP-guard уточни  
+Вместо “НЕ трогать cb_module_* NULL product_id” напиши точнее:  
+не трогать deferred legacy entitlements с NULL product_id; создание новых entitlements для safe subscriptions cb_module_ip разрешено в scope PATCH 2.  
+Иначе формулировка сейчас двусмысленная.
+16. Артефакт сверки дублей добавь отдельно  
+Добавь 25_patch2_duplicate_guard_proof.csv:
 
 &nbsp;
 
 &nbsp;
 
-В остальном план собран правильно: scope жёстко ограничен, unsafe категории исключены, deferred вынесены отдельно, это соответствует v2 audit validation и правилам проверки планов.
+&nbsp;
+
+- subscription_id
+- user_id
+- product_id
+- product_code
+- existing_active_entitlement_by_product
+- existing_active_entitlement_by_code
+- guard_result
 
 &nbsp;
 
-План: PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE
+&nbsp;
 
-### Основание
+После этих правок план можно исполнять.
 
-Audit validation v2 принят. Sanity-check 6/6 PASS. Scope зафиксирован: ровно 19 строк из `11_remediation_candidates_dry_run_v2.csv`.
+&nbsp;
 
-### Scope — строго 19 записей
+## План: PATCH-MISSING-ENTITLEMENTS-EXECUTE-SAFE
 
-**Группа A — 10 null_product_id → SET product_id:**
+### Discovery результат (post-PATCH1 baseline)
 
+Свежий запрос показал **17 active/trial subscriptions без entitlement** — ровно столько же, сколько было в v2 audit. Но sub-классификация выявила **неоднородность**, которая требует разделения scope.
 
-| entitlement_id | product_code      | resolved_product_id                  |
-| -------------- | ----------------- | ------------------------------------ |
-| 81db3470       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| 02755e31       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| fc45e085       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| 4d34bb8d       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| d37fd2e8       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| a57a6ba6       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| 359c2767       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| 46495c6c       | course_close_year | 73c29914-63a3-4f4f-ac42-9f5287e58696 |
-| 4d7e34de       | buh_business      | 85046734-2282-4ded-b0d3-8c66c8f5bc2b |
-| 3dbfcfb8       | buh_business      | 85046734-2282-4ded-b0d3-8c66c8f5bc2b |
+### Sub-классификация 17 missing_entitlement
 
 
-**Группа B — 9 invalid_wrong_end_date → SET expires_at = subscription.access_end_at:**
+| Категория                   | Count | Subscription IDs                                                                                   | Причина                                                                                                                                                                 |
+| --------------------------- | ----- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **safe: cb_module_ip**      | 10    | 4b930e75, 982843b3, 31930c10, 72fec27f, 0c3abfab, b1a6311e, 40e7faa6, b0086876, 087bb790, a0d29127 | Продукт существует (ea98d043), другие пользователи с тем же продуктом уже имеют entitlements, product_code и product_id однозначны, access_end_at = 2026-06-25 (future) |
+| **safe: buh_business**      | 1     | 052126fb                                                                                           | order_id=c015c84a, product_id=85046734, future access                                                                                                                   |
+| **safe: course_close_year** | 1     | 0c999415                                                                                           | order_id=0bb9ee3f, product_id=73c29914, future access                                                                                                                   |
+| **safe: prd_0d01a2fdc477**  | 1     | be19fa2e                                                                                           | product_id=87a8870f, access_end_at=2026-08-30 (future)                                                                                                                  |
+| **excluded: expired trial** | 1     | 2130e4fc                                                                                           | club, status=trial, access_end_at=**2026-03-12** (истёк 24 дня назад). Создавать entitlement для истёкшего trial бессмысленно                                           |
+| **excluded: test product**  | 3     | 64c68953, 52af34ae, 1703a459                                                                       | product_code=prd_3318c30fdf2c, name="Тестовый продукт для админов". Админские тестовые данные                                                                           |
 
 
-| entitlement_id | product_code       | current_expires  | target_expires      | direction    |
-| -------------- | ------------------ | ---------------- | ------------------- | ------------ |
-| 05494f6a       | club               | 2026-04-26 12:00 | 2026-04-24 20:59:59 | decrease     |
-| c20b325d       | club               | 2026-05-03 12:00 | 2026-04-30 20:59:59 | decrease     |
-| 2452715d       | club               | 2026-06-17 12:00 | 2026-05-17 12:00:00 | decrease     |
-| d3c3e069       | club               | 2026-05-03 12:00 | 2026-05-01 20:59:59 | decrease     |
-| 55a06e2c       | club               | 2026-04-20 12:00 | 2026-04-18 21:59:59 | decrease     |
-| aabeddb3       | 1769009596189-398a | 2026-04-08 17:54 | 2026-06-25 06:50:44 | **increase** |
-| 02c58778       | buh_business       | 2026-05-12 18:50 | 2026-05-03 20:59:59 | decrease     |
-| 80361311       | club               | 2026-05-08 12:00 | 2026-05-04 20:59:59 | decrease     |
-| 40e98595       | buh_business       | 2026-05-31 06:00 | 2026-05-03 20:59:59 | decrease     |
+### STOP-guard: scope ≠ 17
 
+По условиям PATCH-листа: "если fresh count missing_entitlement ≠ ожидаемому — STOP". Count = 17, совпадает. Но **безопасный scope = 13**, а не 17, потому что:
 
-Выравнивание по source of truth (subscription.access_end_at) допускает как увеличение, так и уменьшение expires_at.
+- 1 stale trial с истёкшим доступом — создание entitlement не имеет смысла и нарушает SoT (entitlement с будущим expires_at при expired подписке)
+- 3 тестовых продукта — не production-данные
 
-### Явные исключения из scope
-
-- 3 записи cb_module_* с NULL product_id — **не входят** в PATCH 1 (новый факт после v2, вынесены в deferred/discovery bucket)
-- 105 valid_rule_based_bonus — не трогать
-- 12 illegal_bonus_access — не трогать (PATCH 3)
-- 7 bonus_access_without_parent_trace — не трогать
-- 3 unknown_needs_manual_review — не трогать
-- 17 missing_entitlement — не трогать (PATCH 2)
-
-### Архитектурные guards
-
-1. **ID-driven**: все UPDATE по точным UUID из v2 CSV. Никаких решений по email/имени/тексту
-2. **Access SoT**: entitlements — источник истины по доступам; subscription.access_end_at — источник истины по срокам
-3. **Audit logging**: каждое изменение → INSERT в audit_logs с action='entitlement.remediated', actor_type='system', actor_label='PATCH-ACCESS-REMEDIATION-EXECUTE-SAFE', meta содержит before/after snapshot
-4. **Safe workflow**: DIAGNOSE (v1) → PLAN (v2) → DRY RUN (before CSV) → EXECUTE → VERIFY (after CSV + diff)
+**Решение**: execute по **13 строкам**. 4 excluded — зафиксировать в отчёте с причинами.
 
 ### Порядок выполнения
 
-1. **Before-snapshot**: SELECT 19 entitlements по ID → `15_before_remediation.csv`
-2. **Execute группа A**: UPDATE entitlements SET product_id, updated_at WHERE id IN (10 IDs) AND product_id IS NULL
-3. **Execute группа B**: 9 отдельных UPDATE entitlements SET expires_at, updated_at WHERE id = '...'
-4. **Audit logging**: INSERT 19 записей в audit_logs
-5. **After-snapshot**: SELECT same 19 → `16_after_remediation.csv`
-6. **Diff-report**: `17_remediation_diff.csv` с before/after по каждому полю
-7. **Verify guard**: SELECT count(*) FROM entitlements WHERE status='active' AND product_id IS NULL → ожидаем ≤3 (cb_module_*)
+1. **Before-snapshot** → `18_patch2_before_missing_entitlement.csv` (все 17 строк с sub-классификацией)
+2. **Duplicate guard**: для каждого из 13 target user_id + product_id проверить NOT EXISTS active/trial entitlement
+3. **Execute**: INSERT 13 entitlements:
+  - `user_id` = из subscription
+  - `product_id` = из subscription
+  - `product_code` = из products_v2
+  - `order_id` = из subscription (если есть)
+  - `expires_at` = subscription.access_end_at
+  - `status` = 'active'
+  - `meta` = `{source: 'subscription_remediation', subscription_id, batch_id: 'patch2-missing-ent-2026-04-05', plan_name: 'PATCH-MISSING-ENTITLEMENTS-EXECUTE-SAFE'}`
+4. **Audit logging**: 13 записей в audit_logs
+  - `action` = 'entitlement.created_from_subscription_remediation'
+  - `actor_type` = 'system'
+  - `actor_label` = 'PATCH-MISSING-ENTITLEMENTS-EXECUTE-SAFE'
+  - `meta`: subscription_id, entitlement_id, user_id, product_id, product_code, batch_id
+5. **After-snapshot + verification**:
+  - `19_patch2_execution_results.csv` (13 created + 4 excluded с причинами)
+  - `20_patch2_after_subscription_classification.csv` (повторная классификация)
+  - `21_patch2_created_entitlements.csv` (только созданные)
+  - `22_patch2_audit_logs.csv`
+  - `23_patch2_diff_summary.csv`
+  - `24_patch2_final_report.md`
+
+### Данные для 13 target INSERT
+
+
+| #   | subscription_id | user_id  | product_id | product_code      | order_id | expires_at          |
+| --- | --------------- | -------- | ---------- | ----------------- | -------- | ------------------- |
+| 1   | 052126fb        | 341e6f46 | 85046734   | buh_business      | c015c84a | 2026-05-05 21:59:59 |
+| 2   | 0c999415        | 17b35d62 | 73c29914   | course_close_year | 0bb9ee3f | 2026-05-01 21:59:59 |
+| 3   | be19fa2e        | 539ea1b3 | 87a8870f   | prd_0d01a2fdc477  | NULL     | 2026-08-30 23:59:59 |
+| 4   | 4b930e75        | a1dc94b8 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 5   | 982843b3        | 7d82bafe | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 6   | 31930c10        | 722f0e30 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 7   | 72fec27f        | 73d79b29 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 8   | 0c3abfab        | b1bcc844 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 9   | b1a6311e        | c34b515c | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 10  | 40e7faa6        | 6112b4d0 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 11  | b0086876        | 4ffb8977 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 12  | 087bb790        | deaa83d1 | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+| 13  | a0d29127        | eba22d2e | ea98d043   | cb_module_ip      | NULL     | 2026-06-25 06:56:49 |
+
+
+### Явные исключения
+
+
+| subscription_id | Причина исключения                                          |
+| --------------- | ----------------------------------------------------------- |
+| 2130e4fc        | club trial, access_end_at=2026-03-12 (expired 24 дня назад) |
+| 64c68953        | prd_3318c30fdf2c = "Тестовый продукт для админов"           |
+| 52af34ae        | prd_3318c30fdf2c = "Тестовый продукт для админов"           |
+| 1703a459        | prd_3318c30fdf2c = "Тестовый продукт для админов"           |
+
+
+### STOP-guards
+
+- НЕ трогать существующие entitlements (только INSERT новых)
+- НЕ создавать entitlements для excluded (4 строки)
+- Duplicate guard: NOT EXISTS active/trial entitlement по user_id + product_id
+- НЕ трогать valid_rule_based_bonus, illegal_bonus_access, drift, cb_module_* NULL product_id
+- Никаких UPDATE/DELETE
 
 ### Machine-check DoD
 
 
-| Проверка                                           | Ожидание |
-| -------------------------------------------------- | -------- |
-| Строк в dry-run до execute                         | 19/19    |
-| product_id IS NOT NULL после execute (группа A)    | 10/10    |
-| expires_at = subscription.access_end_at (группа B) | 9/9      |
-| Записей вне 19 ID изменено                         | 0        |
-| audit_logs с action='entitlement.remediated'       | 19       |
-| illegal_bonus_access затронуто                     | 0        |
-| bonus_access_without_parent_trace затронуто        | 0        |
-| unknown_needs_manual_review затронуто              | 0        |
-| missing_entitlement затронуто                      | 0        |
+| Проверка                                       | Ожидание                  |
+| ---------------------------------------------- | ------------------------- |
+| Строк в dry-run                                | 17 (13 safe + 4 excluded) |
+| Created                                        | 13                        |
+| Skipped (excluded)                             | 4                         |
+| Skipped (duplicate guard)                      | 0                         |
+| missing_entitlement после execute (safe scope) | 0 из 13                   |
+| Новых NULL product_id                          | 0                         |
+| Новых дублей (user_id + product_id)            | 0                         |
+| audit_logs count                               | 13                        |
+| Существующие entitlements изменены             | 0                         |
 
-
-### Follow-up (отдельные патчи)
-
-- **PATCH 2**: 17 missing_entitlement (discovery → dry-run → execute)
-- **PATCH 3**: 12 illegal_bonus_access (manual review, auto-fix запрещён)
-- **PATCH 4**: drift/duration alignment backlog (38 child > parent + 10 child < parent)
-- **Deferred**: 3 cb_module_* с NULL product_id (новый discovery после v2)
 
 ### Технические детали
 
 - Python-скрипт через code--exec
-- Database migration tool для UPDATE-запросов
+- INSERT через insert tool (не migration)
 - Все артефакты в `/mnt/documents/access_audit/`
-- Все тексты на русском
