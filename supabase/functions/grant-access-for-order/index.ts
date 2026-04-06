@@ -483,6 +483,32 @@ Deno.serve(async (req) => {
         });
       }
 
+      // GUARD A (PATCH-KOROLYOVA): If accessEndAt is stale (in the past),
+      // set a safe 48h placeholder to prevent immediate revoke by cron
+      // before bePaid sync can update the real date.
+      let safeAccessEndAt = accessEndAt;
+      const STALE_GUARD_HOURS = 48;
+      if (accessEndAt < now) {
+        const placeholder = new Date(now.getTime() + STALE_GUARD_HOURS * 60 * 60 * 1000);
+        console.warn(`[grant-access-for-order] GUARD A: accessEndAt ${accessEndAt.toISOString()} is in the past. Overriding to ${placeholder.toISOString()} (${STALE_GUARD_HOURS}h safe placeholder)`);
+        safeAccessEndAt = placeholder;
+
+        await supabase.from('audit_logs').insert({
+          action: 'subscription.stale_date_overridden',
+          actor_type: 'system',
+          actor_user_id: null,
+          actor_label: 'grant-access-for-order',
+          target_user_id: userId,
+          meta: {
+            order_id: orderId,
+            original_access_end_at: accessEndAt.toISOString(),
+            overridden_to: placeholder.toISOString(),
+            reason: 'stale_provider_date_guard',
+            guard: 'GUARD_A_KOROLYOVA',
+          },
+        });
+      }
+
       const { data: newSub, error: createSubError } = await supabase
         .from("subscriptions_v2")
         .insert({
@@ -493,7 +519,7 @@ Deno.serve(async (req) => {
           tariff_id: tariffId,
           status: "active",
           access_start_at: accessStartAt.toISOString(),
-          access_end_at: accessEndAt.toISOString(),
+          access_end_at: safeAccessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
           auto_renew: true,
