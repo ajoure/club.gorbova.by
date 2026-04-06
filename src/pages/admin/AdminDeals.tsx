@@ -470,7 +470,8 @@ export default function AdminDeals() {
       const uniqueUserIds = [...new Set(ordersToDelete.filter(o => o.user_id).map(o => o.user_id!))];
 
       if (subscriptionIds.length > 0) {
-        const { error: installmentsError } = await supabase
+        // Delete installment_schedules via raw RPC since table may not be in generated types
+        const { error: installmentsError } = await (supabase as any)
           .from("installment_schedules")
           .delete()
           .in("subscription_id", subscriptionIds);
