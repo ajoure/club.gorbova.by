@@ -229,7 +229,7 @@ const App = () => {
               <Route path="/settings/subscriptions" element={<Navigate to="/purchases" replace />} />
               
               {/* Admin routes - CRM */}
-              <Route path="/admin" element={<Navigate to="/admin/deals" replace />} />
+              <Route path="/admin" element={<Navigate to="/admin/communication" replace />} />
               <Route path="/admin/inbox" element={<Navigate to="/admin/communication" replace />} />
               <Route path="/admin/communication" element={<ProtectedRoute><LazyRoute><AdminCommunication /></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/broadcasts" element={<Navigate to="/admin/communication?tab=broadcasts" replace />} />

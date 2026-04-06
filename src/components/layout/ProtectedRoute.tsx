@@ -1,8 +1,7 @@
 import { ReactNode, useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { Loader2 } from "lucide-react";
 import { saveLastRoute } from "@/hooks/useLastRoute";
 
@@ -13,7 +12,7 @@ import { saveLastRoute } from "@/hooks/useLastRoute";
  *   loading === false && !user → redirect to /auth
  *   loading === false && user  → render children
  *
- * No artificial delays, no retry loops, no manual getSession calls.
+ * Banned check uses canonical bootstrap profile (no separate profiles SELECT).
  */
 
 interface ProtectedRouteProps {
@@ -22,24 +21,8 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
+  const { profile, bootstrapReady } = useAuthBootstrap();
   const location = useLocation();
-
-  // Check banned status (cached across remounts via React Query)
-  const { data: isBanned } = useQuery({
-    queryKey: ["user-banned-status", user?.id],
-    queryFn: async () => {
-      if (!user) return false;
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("status")
-        .eq("user_id", user.id)
-        .single();
-      return !error && data?.status === "banned";
-    },
-    enabled: !!user,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-  });
 
   // Save route for post-login redirect
   useEffect(() => {
@@ -65,7 +48,8 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <Navigate to={`/auth?redirectTo=${redirectTo}`} replace />;
   }
 
-  if (isBanned === true) {
+  // Banned check from canonical bootstrap profile — no separate profiles query
+  if (bootstrapReady && profile?.status === "banned") {
     return <Navigate to="/banned" replace />;
   }
 
