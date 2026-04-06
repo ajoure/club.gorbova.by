@@ -1786,22 +1786,25 @@ async function chargeSubscription(
       // Grant/update Telegram access: per-club membership check
       // If user already in club → update mirrors only. If not → queue grant.
       try {
-        const { data: clubMappings } = await supabase
-          .from('product_club_mappings')
-          .select('club_id')
+        const { data: clubRules } = await supabase
+          .from('access_rules')
+          .select('id, target_ref')
           .eq('product_id', product_id)
+          .eq('grant_target_type', 'club')
           .eq('is_active', true);
 
-        if (clubMappings && clubMappings.length > 0) {
+        const clubIds = (clubRules || []).map((r: any) => r.target_ref).filter(Boolean);
+
+        if (clubIds.length > 0) {
           const { resolveEffectiveClubAccess, effectiveEndAtIso } = await import('../_shared/resolve-effective-access.ts');
 
-          for (const mapping of clubMappings) {
+          for (const clubId of clubIds) {
             // Check if user is already a member of THIS specific club
             const { data: existingMember } = await supabase
               .from('telegram_club_members')
               .select('id, access_status, in_chat, in_channel')
               .eq('profile_id', profileId)
-              .eq('club_id', mapping.club_id)
+              .eq('club_id', clubId)
               .maybeSingle();
 
             const isAlreadyInClub = existingMember &&
@@ -1810,10 +1813,10 @@ async function chargeSubscription(
 
             if (isAlreadyInClub) {
               // User already in this club → update mirrors with effectiveEndAt, no grant
-              const clubSnapshot = await resolveEffectiveClubAccess(supabase, user_id, mapping.club_id);
+              const clubSnapshot = await resolveEffectiveClubAccess(supabase, user_id, clubId);
               const mirrorDate = effectiveEndAtIso(clubSnapshot);
 
-              console.log(`[TG-RENEW] User ${user_id} already in club ${mapping.club_id}, updating mirrors to ${mirrorDate}`);
+              console.log(`[TG-RENEW] User ${user_id} already in club ${clubId}, updating mirrors to ${mirrorDate}`);
 
               await supabase
                 .from('telegram_access')
@@ -1822,13 +1825,13 @@ async function chargeSubscription(
                   last_sync_at: new Date().toISOString(),
                 })
                 .eq('user_id', user_id)
-                .eq('club_id', mapping.club_id);
+                .eq('club_id', clubId);
 
               await supabase
                 .from('telegram_access_grants')
                 .update({ end_at: mirrorDate })
                 .eq('user_id', user_id)
-                .eq('club_id', mapping.club_id)
+                .eq('club_id', clubId)
                 .eq('status', 'active');
             } else {
               // User NOT in this club → queue grant as before
@@ -1836,7 +1839,7 @@ async function chargeSubscription(
                 .from('telegram_access_queue')
                 .upsert({
                   user_id,
-                  club_id: mapping.club_id,
+                  club_id: clubId,
                   subscription_id: id,
                   action: 'grant',
                   status: 'pending',
@@ -1851,12 +1854,12 @@ async function chargeSubscription(
               if (queueError) {
                 console.error('[TG-QUEUE] Failed to queue access grant:', queueError);
               } else {
-                console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${mapping.club_id}`);
+                console.log(`[TG-QUEUE] Queued grant for user ${user_id}, club ${clubId}`);
               }
             }
           }
         } else {
-          console.log('[TG-QUEUE] No active club mappings found for product:', product_id);
+          console.log('[TG-QUEUE] No active club rules found for product:', product_id);
         }
       } catch (queueErr) {
         console.error('[TG-QUEUE] Error queuing Telegram access:', queueErr);
