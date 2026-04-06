@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getCategoryBadge } from "@/lib/deals/getCategoryBadge";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
