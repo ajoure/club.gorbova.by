@@ -157,4 +157,21 @@ export function ImpersonationBar() {
 }
 
 // Helper function to start impersonation - call this before switching sessions
-export { saveImpersonationState as saveAdminSessionForImpersonation } from "@/lib/impersonationStorage";
+// Maintains backward-compatible signature: saveAdminSessionForImpersonation(returnUrl?)
+export async function saveAdminSessionForImpersonation(returnUrl: string = "/admin/contacts"): Promise<void> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData?.session) {
+      const { saveImpersonationState } = await import("@/lib/impersonationStorage");
+      saveImpersonationState(
+        {
+          access_token: sessionData.session.access_token,
+          refresh_token: sessionData.session.refresh_token,
+        },
+        returnUrl
+      );
+    }
+  } catch (e) {
+    console.error("Error saving admin session:", e);
+  }
+}
