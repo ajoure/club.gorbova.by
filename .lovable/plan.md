@@ -1,238 +1,222 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Не подменяй главную задачу UI-патчем.**
-  public_id/PRD-xxxx включи в этот же спринт как secondary add-only patch, но не выноси как отдельный смысловой блок. Основной результат спринта — **удаление всех параллельных runtime-path по доступам** и **реальный execute по cb20**, а не косметика UI.
-2. **Жёстко сформулируй SoT для клубов тоже.**
-  Нужно явно записать:
+1. **Вкладку “Доступы” не расширять второй сущностью и не превращать в технический дебаг-экран.**
+  Формулировку добавить entitlements замени на:
+  **“Сделать вкладку ‘Доступы’ единой витриной всех активных доступов пользователя.”**
+  Она должна показывать итоговый фактический доступ, а не только subscriptions_v2.
+  Допустимо хранить внутри тип записи (subscription / entitlement), но визуально это должен быть **единый список активных продуктов**, который полностью совпадает с реальным доступом пользователя.
+2. **Источник для вкладки “Доступы” — не сырые subscriptions и не сырые entitlements по отдельности, а канонический effective access.**
+  Иначе вы снова получите рассинхрон:
+  сделки ≠ entitlements ≠ subscriptions ≠ кабинет.
+  Нужно явно дописать:
+  **вкладка “Доступы” и личный кабинет должны строиться из одного и того же канонического результата доступа**
+  (access_rules → resolver/effective access → UI),
+  а не из двух разных запросов, склеенных на фронте.
+3. **По кейсу Елизаветы не фиксировать заранее, что cb20 “должна быть видна”.**
+  Сейчас это в плане звучит как предположение.
+  Заменить на:
+  **“Нужно доказать, какой именно доступ должен быть у Елизаветы по действующим правилам продукта, и только после этого привести вкладку ‘Доступы’ и кабинет к одному каноническому результату.”**
+  То есть сперва proof, потом repair.
+  Нельзя в плане заранее навязать вывод, что ей должен открываться весь cb20.
+4. **Отдельно зафиксировать правило по cb20:**
+  **если active access к cb20 не подтверждается действующим правилом продукта, он должен считаться закрытым по умолчанию.**
+  Это должно быть написано в блоке Problem/DoD явно, без двусмысленностей.
+5. **В блоке диагностики исправить арифметику по продуктам.**
+  У тебя написано:
+  5 subscription_based, но перечислено 6 позиций.
+  Нужен точный пересчёт без расхождений.
+6. **Добавить обязательный блок reconciliation по каждому продукту с 4 числами, а не с 3.**
+  Не только:
   &nbsp;
-  - выдача Telegram/club access тоже идёт **только через access_rules**;
-  - product_club_mappings после спринта допускается только как историческая таблица/данные, но **не как runtime source of truth**;
-  - любой read из product_club_mappings, который влияет на решение “дать/не дать доступ”, считается незакрытым дефектом.
+  - deals
+  - active access
+  - runtime visibility
+    Но ещё:
+  - **what is shown in Access tab**
+    Иначе нельзя доказать, что карточка контакта совпадает с кабинетом.
   &nbsp;
-3. **По cb20 убери двусмысленность в DoD.**
-  Недостаточно написать “все active cb20 имеют access_rule_id”.
-  Добавь жёстче:
+7. **Repair-листы делать не только по пользователям, но и по типу дефекта.**
+  Минимум 4 отдельных списка:
   &nbsp;
-  - после execute **не остаётся ни одного active cb20 без доказанного rule-based основания**;
-  - не остаётся ни одного active cb20 из legacy/import/export/backfill без переоценки через resolver;
-  - если entitlement оставлен active, в meta должен быть **канонический source_rule_id**, объясняющий текущее право доступа сейчас, а не исторически.
+  - paid_without_access
+  - access_without_rule
+  - shown_in_access_tab_but_not_visible_in_cabinet
+  - visible_in_cabinet_but_missing_in_access_tab
   &nbsp;
-4. **Для cb20 repair пропиши два режима отдельно.**
-  Сейчас у тебя смешано disable и reprovision. Нужно разделить:
-  &nbsp;
-  - disable_only для тех, у кого нет active BUSINESS и нет rule-proof;
-  - reprovision_via_resolver для тех, у кого BUSINESS есть, но текущий entitlement legacy/без source_rule_id;
-  - после execute не должно остаться “временно оставленных” legacy active cb20.
-  &nbsp;
-5. **Добавь after-proof не только по cb20, но и по club-chain.**
-  Для Gorbova Club и Бухгалтерия как бизнес нужен proof, что:
-  &nbsp;
-  - правило найдено в access_rules;
-  - resolver вернул именно это правило;
-  - executor использовал именно его;
-  - Telegram grant/access queue больше не читает product_club_mappings как решающий источник.
-    Это должен быть отдельный артефакт или отдельный блок в итоговом proof.
-  &nbsp;
-6. **В Execute 1 требуй не просто заменить lookup, а убрать decision-ветки целиком.**
-  Формулировка должна быть такой:
-  не “заменить запрос к product_club_mappings на access_rules”, а
-  **“вынести решение о club grants в единый resolver / shared rule lookup и запретить локальную самостоятельную decision-логику в каждом из 6 файлов”**.
-  Иначе подрядчик просто размножит одинаковый код по шести местам.
-7. **Добавь обязательный grep-proof.**
-  После execute нужен машинный proof:
-  &nbsp;
-  - product_club_mappings больше не встречается в runtime decision paths;
-  - source_rule_id пишется в entitlement/meta для rule-based grants;
-  - нет lookup/grant decision по product_code там, где должен использоваться product_id.
-    Это должен быть отдельный кусок финального отчёта, не “на словах”.
-  &nbsp;
-8. **UI patch по public_id сформулируй проще и жёстче.**
-  Во всех рабочих экранах админки:
-  &nbsp;
-  - показывать public_id (PRD-xxxx) для человека;
-  - UUID оставлять только как технический copyValue;
-  - fallback на UUID-фрагмент допустим только если public_id реально пустой.
-    Отдельно потребуй proof-скрины 3 экранов после правки.
-  &nbsp;
-9. **Добавь финальный stop-guard по незакрытым runtime paths.**
-  Если после спринта останется хотя бы один из следующих пунктов, спринт считается проваленным:
-  &nbsp;
-  - runtime read из product_club_mappings влияет на решение;
-  - active cb20 без канонического source_rule_id;
-  - клубный доступ выдается не из access_rules;
-  - UI показывает одно правило, а runtime живет по другой ветке;
-  - подрядчик сделал только dry-run без execute и after-proof.
-  &nbsp;
-10. **Финальный результат спринта сформулируй одной фразой в конце плана.**
-  После спринта:
-  **все решения по доступам к продуктам, бонусным продуктам, cb20 и Telegram-клубам принимаются только по access_rules и ID через единый resolver; legacy/runtime обходные пути отключены; invalid active cb20 устранены; UI показывает public_id, а не UUID.**
+8. **DoD усилить.**
+  Сейчас пункт 4 слишком мягкий.
+  Заменить на жёсткий вид:
+  **“Для Елизаветы Андреевой после спринта вкладка ‘Доступы’, сделки, entitlements/subscriptions и личный кабинет показывают один и тот же результат, и этот результат доказан действующим access_rule_id либо явно задокументирован как deny.”**
+9. **UserSubscriptions.tsx не помечать как “проверить, нужен ли патч”.**
+  Здесь не должно быть неопределённости.
+  Нужно написать прямо:
+  **“Проверить и при необходимости обязательно привести пользовательский экран к тому же каноническому effective access, что и вкладку ‘Доступы’ в админке.”**
+10. **Добавить итоговый артефакт верхнего уровня:**
+  effective_access_single_source_proof.csv
+  Колонки:
+  user_id | product_id | has_paid_source | has_rule_source | shown_in_access_tab | shown_in_personal_cabinet | final_verdict | mismatch_reason
+  Это должен быть главный proof, что система действительно сведена в одну картину.
+11. **Сформулировать главный результат спринта одной фразой в начале и в DoD:**
+  **“У каждого пользователя карточка ‘Доступы’ и личный кабинет обязаны показывать один и тот же набор активных продуктов, объяснимый только каноническими правилами доступа.”**
+12. **Не использовать формулировку “добавить fetch entitlements” как цель.**
+  Это техническая реализация, а не цель.
+  Цель — **сделать единый truth-view доступа**.
+  Fetch entitlements — лишь один из возможных шагов.
 
 &nbsp;
 
 &nbsp;
 
-План: PATCH-ACCESS-SOT-FINAL-UNIFICATION
+Если хочешь, следующим сообщением я соберу тебе уже финальный копируемый блок плана для Lovable в жёсткой форме без двусмысленностей.
 
-**Финальная цель: после спринта в системе существует только один путь принятия решений по доступам: access_rules → access-resolver → executor. Все остальные пути удалены или отключены.**
+&nbsp;
+
+## План: FULL-ACCESS-RECONCILIATION — полный инвентаризационный аудит и ремонт всей системы доступов
 
 ---
 
-### Текущий статус
+### Проблема
 
-Что уже сделано:
+1. **Вкладка «Доступы» показывает только `subscriptions_v2**`, но не `entitlements`. Продукты с `entitlement_mode = order_based_only` (cb20, модули, вебинары) полностью невидимы во вкладке «Доступы», даже если entitlement active.
+2. **Blocker-кейс: Елизавета Андреева** — BUSINESS-клуб, 3 paid сделки по cb20, active entitlement (id: `42e26b5b`, rule `1b497fba`), но вкладка «Доступы» не показывает cb20 (потому что нет subscription), и в личном кабинете cb20 не отображается (из-за `scope_resolution_mode: module_scope_only` — видна только 1 модуль Грузоперевозки).
+3. **Нет полной картины по всем 26 продуктам** — до сих пор аудиты касались только cb20.
 
-- `access-resolver.ts` создан и работает (универсальный, без product-specific хардкода)
-- `grant-access-for-order`: legacy fallback к `product_club_mappings` удалён (L867), secondary lookup по `product_id` (L1128-1133)
-- `entitlement-sync.ts`: hardcoded fallback sets удалены, hard fail при отсутствии `entitlement_mode`
-- `repair-cb20-entitlements`: переписан как mechanical executor
+### Диагностика (факты из БД)
 
-Что ещё НЕ сделано (и должно быть закрыто в этом патче):
+**Елизавета Андреева** (profile: `a13d99e5`, user: `692f22b7`):
 
+- Subscriptions active: Gorbova Club BUSINESS (до 06.05.26), ЗАКРОЙ ГОД (до 01.05.26), ЦБ 2 ступень Премиум (до 30.08.26)
+- Entitlements active: Gorbova Club, ЗАКРОЙ ГОД, ЦБ 2 ступень, **cb20** (до 06.05.26, rule `1b497fba`)
+- Вкладка «Доступы» = 3 записи (только subscriptions) — **cb20 не видна**
+- Личный кабинет: только ЗАКРОЙ ГОД + ЦБ 2 ступень — **cb20 не видна** (scope `module_scope_only`, разрешён только модуль Грузоперевозки, но даже он не отображается как отдельный root)
 
-| #   | Остаточный параллельный path                           | Файл                                       | Строки     |
-| --- | ------------------------------------------------------ | ------------------------------------------ | ---------- |
-| 1   | `product_club_mappings` lookup для Telegram            | `subscription-charge/index.ts`             | L1789-1793 |
-| 2   | `product_club_mappings` lookup для Telegram            | `bepaid-get-subscription-details/index.ts` | L607-611   |
-| 3   | `product_club_mappings` lookup для Telegram            | `bepaid-webhook/index.ts`                  | L5162-5166 |
-| 4   | `product_club_mappings` lookup для Telegram            | `_shared/resolve-effective-access.ts`      | L76-78     |
-| 5   | `product_club_mappings` lookup для Telegram            | `_shared/invite-link-helper.ts`            | L35-37     |
-| 6   | `product_club_mappings` lookup для Telegram            | `telegram-process-access-queue/index.ts`   | L180, L206 |
-| 7   | cb20 repair execute не выполнен (только dry-run готов) | —                                          | —          |
-| 8   | UUID вместо public_id в UI                             | 3 файла                                    | —          |
+**Корневая причина вкладки «Доступы»**: запрос идёт ТОЛЬКО к `subscriptions_v2` (L464-474 ContactDetailSheet.tsx). Entitlements не запрашиваются. Для `order_based_only` продуктов это = невидимость.
 
+**Корневая причина личного кабинета**: cb20 root training module (`c9f7e9b8`) привязан к product_id `7101ed3c`. Entitlement есть → `has_access=true`. НО `scope_resolution_mode: module_scope_only` + `historical_module_product_ids: [64d9f812]` = synthetic training_content rule разрешает только модуль Грузоперевозки. Root-модуль не показывается, если нет видимых children → cb20 скрыт.
+
+**26 активных продуктов в системе:**
+
+- 5 subscription_based (Gorbova Club, Бухгалтерия как бизнес, ЗАКРОЙ ГОД, ЦБ 2 ступень, Подоходный налог ИП, Учет у ИП) — видны во вкладке «Доступы»
+- 17 order_based_only (cb20, 8 модулей, вебинары) — **невидимы** во вкладке «Доступы»
+- 2 legacy_skip — исключены
 
 ---
 
-### EXECUTE 1: Удалить все оставшиеся `product_club_mappings` runtime paths
+### Предлагаемое решение
 
-Во всех 6 файлах (пункты 1-6 выше) заменить lookup из `product_club_mappings` на lookup из `access_rules`:
+#### EXECUTE 1: Вкладка «Доступы» — добавить entitlements
 
-```
-// БЫЛО:
-const { data: clubMappings } = await supabase
-  .from('product_club_mappings')
-  .select('club_id')
-  .eq('product_id', productId)
-  .eq('is_active', true);
-
-// СТАЛО:
-const { data: clubRules } = await supabase
-  .from('access_rules')
-  .select('id, target_ref')
-  .eq('product_id', productId)
-  .eq('grant_target_type', 'club')
-  .eq('is_active', true);
-const clubIds = (clubRules || []).map(r => r.target_ref).filter(Boolean);
-```
-
-Для `resolve-effective-access.ts` и `invite-link-helper.ts` — аналогичная замена.
-Для `telegram-process-access-queue` — замена обоих мест (L180 для display name, L206 для validation).
-
-Таблица `product_club_mappings` не удаляется физически, но все runtime reads переводятся на `access_rules`.
+Дополнить вкладку «Доступы» в `ContactDetailSheet.tsx` запросом к `entitlements` для `order_based_only` продуктов. Показывать их отдельной секцией или объединённым списком с маркером типа (subscription / entitlement).
 
 **Файлы:**
 
-- `supabase/functions/subscription-charge/index.ts`
-- `supabase/functions/bepaid-get-subscription-details/index.ts`
-- `supabase/functions/bepaid-webhook/index.ts`
-- `supabase/functions/_shared/resolve-effective-access.ts`
-- `supabase/functions/_shared/invite-link-helper.ts`
-- `supabase/functions/telegram-process-access-queue/index.ts`
+- `src/components/admin/ContactDetailSheet.tsx` — добавить fetch entitlements, объединить в общий список
+- `src/components/user/UserSubscriptions.tsx` — проверить, нужен ли аналогичный патч для пользовательского view
+
+#### EXECUTE 2: Полный инвентаризационный аудит всех 26 продуктов
+
+Для каждого из 26 активных продуктов собрать полную матрицу:
+
+- product_id, public_id, name, entitlement_mode
+- has_training_content_rules, has_product_access_rules, has_club_rules
+- active_deals_count, active_entitlements_count, active_subscriptions_count
+- users_with_runtime_visibility_count
+- status_verdict (ok / mismatch / orphan / expired_should_be_closed)
+
+**Артефакт:** `full_access_inventory.csv`
+
+#### EXECUTE 3: Контактный аудит — cross-check сделки vs доступы vs кабинет
+
+Для каждого пользователя с active сделками/подписками/entitlements:
+
+- что в сделках
+- что во вкладке «Доступы» (subscriptions)
+- что в entitlements
+- что реально видно в кабинете (sidebar modules)
+- mismatch → причина на уровне rule/resolver/entitlement/runtime/UI
+
+**Артефакты:**
+
+- `contact_access_vs_runtime_vs_ui.csv`
+- `product_access_reconciliation.csv`
+
+#### EXECUTE 4: Blocker-кейс Елизавета Андреева — полный разбор
+
+Пошаговый trace:
+
+1. profile_id: `a13d99e5`, user_id: `692f22b7`
+2. Сделки cb20: 3 paid (order `052e202c` с tariff Бизнес-леди, `0dc1cb3d` и `3f28d6c6` без tariff)
+3. Rule `1b497fba`: product=Gorbova Club, tariff=BUSINESS, type=product_access, condition=prior_purchase → target includes cb20
+4. Entitlement `42e26b5b`: active, expires 2026-05-06, source_rule_id=`1b497fba`, scope=`module_scope_only`
+5. Проблема 1: вкладка «Доступы» не показывает (нет subscription для cb20)
+6. Проблема 2: кабинет не показывает (scope ограничен одним модулем, root hidden)
+7. Вопрос: правильно ли `module_scope_only`? Она покупала cb20 напрямую (tariff Бизнес-леди) — значит по правилу `fc9e584e` (training_content для tariff Бизнес-леди) она должна видеть 28 модулей, а не 1.
+
+#### EXECUTE 5: Три числа по каждому продукту
+
+Для продуктов с тренингами:
+
+- users_with_paid_deals
+- users_with_active_access (subscription или entitlement)
+- users_with_runtime_visibility
+Mismatch → repair-list.
+
+#### EXECUTE 6: Специализированные repair-листы
+
+- `expired_products_access_leak.csv` — доступ есть, но должен быть закрыт
+- `paid_without_access_repair_list.csv` — сделка paid, но доступ не выдан
+- `access_without_rule_or_paid_source.csv` — доступ есть, но нет ни сделки, ни правила
+
+#### EXECUTE 7: UI public_id patch (secondary, из предыдущего спринта)
+
+Уже запланирован, включён как add-only.
 
 ---
 
-### EXECUTE 2: cb20 repair — dry-run → execute → after-proof
+### Изменяемые компоненты
 
-1. Вызвать `repair-cb20-entitlements` с `{ product_id: "7101ed3c-...", dry_run: true }` — получить repair-list
-2. Сгенерировать артефакт `cb20_mass_disable_repair_list.csv` из результата
-3. Вызвать с `dry_run: false` — выполнить disable всех invalid
-4. After-proof: повторный SELECT active cb20 → каждый должен иметь `access_rule_id` в meta
-5. Сгенерировать `cb20_active_full_proof.csv` и `cb20_rule_proven_active_only.csv`
-
----
-
-### EXECUTE 3: UI — заменить UUID на public_id (secondary patch)
-
-Три файла показывают `product_id.substring(0, 8)` вместо `public_id`:
-
-`**DealDetailSheet.tsx` (L565):**
-
-- Добавить `public_id` в select query (L242): `products_v2(name, code, telegram_club_id, public_id)`
-- Заменить `deal.product_id.substring(0, 8)` на `(deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)`
-
-`**ContactDetailSheet.tsx` (L3040):**
-
-- Добавить `public_id` в select query (L421): `products_v2(id, name, code, category, public_id)`
-- Заменить `deal.product_id.substring(0, 8)` на `(deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)`
-
-`**ContactDealsDialog.tsx` (L252):**
-
-- Добавить `public_id` в select query (L95): `supabase.from("products_v2").select("id, name, category, public_id")`
-- Передавать `public_id` в данные deal
-- Заменить `deal.product_id.substring(0, 8)` на `deal.public_id || deal.product_id.substring(0, 8)`
-
-UUID остаётся в `copyValue` — копирование полного UUID сохраняется для технических нужд.
-
----
-
-### EXECUTE 4: Генерация финальных артефактов
-
-12 артефактов в `/mnt/documents/`:
-
-1. `runtime_access_paths_matrix.csv` — полная матрица всех paths с вердиктом
-2. `cb20_business_rule_audit.csv` — все active cb20 с bucket
-3. `cb20_invalid_active_access.csv` — repair-list
-4. `cb20_business_crosscheck_matrix.csv`
-5. `cb20_active_full_proof.csv` — after-proof
-6. `cb20_mass_disable_repair_list.csv`
-7. `cb20_rule_proven_active_only.csv` — финальный список оставшихся active
-8. `cb20_rules_from_admin_ui_snapshot.csv`
-9. `module_access_visibility_chain_14_14.csv`
-10. `grant_access_tail_cleanup_audit.csv`
-11. `access_decision_paths_removed.csv` — колонки: old_path, file, why_forbidden, removed_or_redirected_to, final_resolver_path
-12. `access_rules_sot_mapping.csv`
-
-### EXECUTE 5: Финальный proof
-
-5-10 контрольных кейсов: product rule in UI → exact IDs → order/subscription → entitlement → visibility → proof из access_rule_id.
-
----
-
-### Файлы для изменения (полный список)
-
-1. `supabase/functions/subscription-charge/index.ts` — убрать `product_club_mappings`
-2. `supabase/functions/bepaid-get-subscription-details/index.ts` — убрать `product_club_mappings`
-3. `supabase/functions/bepaid-webhook/index.ts` — убрать `product_club_mappings`
-4. `supabase/functions/_shared/resolve-effective-access.ts` — убрать `product_club_mappings`
-5. `supabase/functions/_shared/invite-link-helper.ts` — убрать `product_club_mappings`
-6. `supabase/functions/telegram-process-access-queue/index.ts` — убрать `product_club_mappings`
-7. `src/components/admin/DealDetailSheet.tsx` — public_id вместо UUID
-8. `src/components/admin/ContactDetailSheet.tsx` — public_id вместо UUID
-9. `src/components/admin/bepaid/ContactDealsDialog.tsx` — public_id вместо UUID
+1. `src/components/admin/ContactDetailSheet.tsx` — fetch entitlements + отображение
+2. `src/components/user/UserSubscriptions.tsx` — проверить entitlements display
+3. Скрипты аудита (Python/SQL) → артефакты в `/mnt/documents/`
 
 ### Что НЕ изменяется
 
-- `access-resolver.ts` — уже готов
-- `grant-access-for-order/index.ts` — уже переведён
-- `repair-cb20-entitlements/index.ts` — уже mechanical executor
-- `entitlement-sync.ts` — уже без fallback sets
-- `product_club_mappings` таблица — не удаляется, только runtime reads переводятся
-- bepaid-webhook: минимальная правка club lookup (допустимо по плану)
+- access-resolver.ts, grant-access-for-order, entitlement-sync — уже переведены
+- Таблицы БД — без миграций
+- training_modules tree — без изменений
+
+### Dry-run
+
+1. SELECT-only аудит всех 26 продуктов
+2. Cross-check Елизаветы Андреевой по всей цепочке
+3. Подсчёт mismatches до execute
 
 ### STOP-guards
 
-1. Если после спринта остаётся хоть один runtime read из `product_club_mappings` для принятия решений — спринт не выполнен
-2. Если остаётся active cb20 без `access_rule_id` — спринт не выполнен
-3. Если в UI остаётся UUID вместо public_id — спринт не выполнен
-4. Если любая функция может записать entitlement без ссылки на access_rule_id — спринт не выполнен
+1. Если аудит выявляет > 50 пользователей с полным отсутствием доступа при paid сделках — STOP, ручная проверка
+2. Если entitlements query в ContactDetailSheet ломает существующий access tab — STOP
+3. Если после патча кол-во записей во вкладке «Доступы» изменилось неожиданно — STOP
 
 ### DoD
 
-1. 0 runtime reads из `product_club_mappings` (6 файлов переведены на `access_rules`)
-2. cb20 repair execute завершён, after-proof подтверждён
-3. После execute все active cb20 имеют `access_rule_id`
-4. UUID заменён на `public_id` в 3 UI-компонентах
-5. 12 артефактов в `/mnt/documents/`
-6. 5-10 контрольных кейсов с полной цепочкой rule→resolver→grant→visibility
+1. Вкладка «Доступы» показывает И subscriptions, И entitlements (для order_based_only продуктов)
+2. `full_access_inventory.csv` — все 26 продуктов с полной матрицей
+3. `contact_access_vs_runtime_vs_ui.csv` — cross-check по всем пользователям
+4. Елизавета Андреева: cb20 видна во вкладке «Доступы» и в кабинете (или задокументирована точная причина почему нет)
+5. 3 числа по каждому продукту (deals / access / visibility) совпадают или mismatch задокументирован
+6. 3 repair-листа сгенерированы
+7. 0 кейсов где в карточке одно, в сделках другое, в кабинете третье — без задокументированного объяснения
+8. 8+ артефактов в `/mnt/documents/`
+
+### Обязательные артефакты
+
+1. `full_access_inventory.csv`
+2. `product_access_reconciliation.csv`
+3. `contact_access_vs_runtime_vs_ui.csv`
+4. `expired_products_access_leak.csv`
+5. `paid_without_access_repair_list.csv`
+6. `access_without_rule_or_paid_source.csv`
+7. `elizaveta_andreeva_full_trace.csv`
+8. Final after-proof summary
