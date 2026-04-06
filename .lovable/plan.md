@@ -1,239 +1,205 @@
-## Да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Блок 1 approve к execute.**
-  PATCH-MODULE-FULFILLMENT-GAPS-ROUND-2 запускать по 14 order_id можно. Это ровно то, что нужно: закрыть подтвержденные paid + order_based_only + 0 entitlement + 0 exact sub через штатный grant-access-for-order.
-2. **Блок 2 в текущем виде не approve к execute.**
-  Массово **активировать / создавать product_access rules** сейчас нельзя. Это уже не точечный repair, а изменение общей модели доступа. Сначала нужен **dry-run impact proof**:
+1. **Primary entitlement только по product_id, не по product_code.**
+  Это оставить как обязательное правило во всей функции. product_code только как display/secondary metadata.
+2. **order_id collision clearing делать только с жёстким guard.**
+  Нельзя просто очищать любой entitlement с тем же order_id. Разрешить очистку только если одновременно:
   &nbsp;
-  - какие UI / resolver / guard реально читают именно product_access
-  - изменит ли это видимость модулей для уже существующих пользователей
-  - не появится ли доступ у тех, кому он не должен появиться
-    Пока этого proof нет — **только discovery, без миграции**.
+  - entitlements.user_id = orders_v2.user_id
+  - entitlements.product_id != orders_v2.product_id
+  - найденный entitlement не является уже корректным primary entitlement этого заказа
+  - писать отдельный audit entitlement.order_id_collision_cleared
+  - сохранять в meta: previous_entitlement_id, previous_product_id, previous_product_code, cleared_by_patch
   &nbsp;
-3. **cb_module_ip не трогать вообще.**
-  Это оставить в hold как legacy_backfill_access. Без revoke, без regrant, без нормализации в этом спринте.
-4. **Перед execute по 14 gaps добавить grouping по users и exact order list в артефакт.**
-  Чтобы после выполнения было видно:
+3. **Если collision найден у entitlement другого пользователя — hard STOP.**
+  Не чистить, не продолжать, вернуть 500 с order_id_collision_foreign_user.
+4. **Silent fail полностью запретить.**
+  После блока primary entitlement:
   &nbsp;
-  - какой user
-  - какой exact order
-  - какой exact product_id
-  - created entitlement id
-  - created subscription id
-  - changed access_end_at
-    Один consolidated before/after CSV обязателен.
+  - если exact entitlement по user_id + product_id не найден, функция обязана завершиться ошибкой;
+  - subscription и rule-based grants не должны выполняться, если primary entitlement не подтверждён.
   &nbsp;
-5. **После 14 вызовов обязателен повторный full re-scan по всем module products.**
-  Не только по 14 order_id, а по всем order_based_only модулям:
+5. **Разделить audit для primary и rule-based grant.**
+  В primary entitlement явно писать granted_by = 'primary_order_fulfillment'.
+  Для вторичных rule-based выдач — granted_by = 'rule_engine_product_access' или аналогичный отдельный label.
+  Это нужно, чтобы больше не смешивались основной продукт и побочные grants.
+6. **По split-multi-module-orders не делать слепой execute без точного proof.**
+  В этот патч добавить минимум read-proof:
   &nbsp;
-  - paid orders
-  - active entitlements
-  - exact active subs
-  - remaining gaps
-    Нужно доказать, что после этого у нас не осталось новых дырок в той же группе.
+  - точная строка/ветка, где split пишет order_id в entitlement;
+  - какие именно entitlement он трогает;
+  - на каком условии.
+    Только если proof есть — убрать этот write. Если proof нет, split не менять в этом патче.
   &nbsp;
-6. **Webhook proof не блокирует execute по gaps.**
-  PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-LIVE-PROOF оставить параллельно как proof-only. Не тормозить из-за него закрытие module fulfillment.
-7. **Финальный consolidated результат этого спринта должен быть только такой:**
+7. **Обязательный post-check для cee45419 и всех 14 orders.**
+  После фикса прогнать reverification:
   &nbsp;
-  - 14 gaps закрыты
-  - остаток gaps по module products пересчитан
-  - product_access rules пока **не менялись**, если нет отдельного impact-proof
-  - отдельным следующим спринтом уже решать нормализацию model/rules
+  - exact entitlement на exact product_id
+  - exact subscription на exact product_id
+  - нет entitlement на club вместо модуля
+  - нет новых side-effect entitlements
+  - counts без scope leakage
   &nbsp;
-8. **Добавить жёсткий STOP-guard в план:**
-  Если при after-scan выясняется, что активация product_access может поменять доступ хоть одному лишнему пользователю, этот блок автоматически переносится в отдельный discovery/execute sprint и не выполняется сейчас.
+8. **Добавить отдельный артефакт root-cause proof.**
+  Не только общий before/after, а отдельный файл:
+  &nbsp;
+  - grant_access_primary_entitlement_root_cause_cee45419.csv
+    с полями: order_id, user_id, expected_product_id, wrong_entitlement_id, wrong_product_id, wrong_product_code, collision_index, code_path, repair_action.
+  &nbsp;
+9. **DoD дополнить.**
+  Патч считается закрытым только если:
+  &nbsp;
+  - повторный execute для cee45419 и одного из остальных order после фикса даёт already_fulfilled: true
+  - никаких продлений/изменений дат не происходит
+  - exact product entitlement verified = true для всех 14/14.
+  &nbsp;
+10. **ID-first правило явно вписать в патч.**
+  Во всех решениях по fulfillment использовать:
+  &nbsp;
+  - order_id
+  - user_id
+  - product_id
+  - subscription_id
+    product_code не использовать как ключ принятия решения.
+  &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Итог: **делать сейчас надо только точечный execute по 14 gap-order через grant-access-for-order + полный before/after re-scan.**
+План: PATCH-GRANT-ACCESS-PRIMARY-ENTITLEMENT-EXACT-PRODUCT-FIX
 
-**Массовую активацию/создание product_access rules пока не делать.**
+### Root Cause (кейс cee45419)
 
-&nbsp;
+Полная цепочка сбоя:
 
-План: CONSOLIDATED MODULE EXECUTE — 3 патча одним пакетом
-
----
-
-### Данные из БД на момент планирования
-
-**14 fulfillment gaps** — paid orders с 0 active entitlements:
-
-
-| Модуль                 | Кол-во gaps | Users                                            |
-| ---------------------- | ----------- | ------------------------------------------------ |
-| cb_module_catering     | 1           | 1502c12e                                         |
-| cb_module_marketplaces | 4           | 1502c12e, 2b352bdf, 7c53b6af, f278876e           |
-| cb_module_production   | 4           | 1502c12e, 5c6e6e0f, 7c53b6af, e748983f           |
-| cb_module_retail       | 5           | 1502c12e, 5c6e6e0f, 7c53b6af, e748983f, f278876e |
-
-
-**6 уникальных пользователей** затронуты.
-
-**Ранее закрытые:** cb_module_construction (f278876e) и prd_08a84b2b7223 (3 users) — уже имеют active entitlements. Idempotency guard их защитит.
-
-**Критическая находка по access_rules:**
-
-- `product_access` правила **ВЫКЛЮЧЕНЫ** у 5 из 8 модулей (catering, construction, ip, production, pvt)
-- `product_access` правила **ОТСУТСТВУЮТ** у retail и prd_08a84b2b7223
-- Но `training_content` правила **АКТИВНЫ** у всех 8 — поэтому `isCurrentValidAccess` пройдёт
-- `grant-access-for-order` **не проверяет** product_access rules для создания entitlement — создаёт напрямую по order
-
----
-
-### Блок 1: PATCH-MODULE-FULFILLMENT-GAPS-ROUND-2
-
-**Что:** Вызвать `grant-access-for-order` для каждого из 14 order_id с gap.
-
-**Before-proof по каждому order (сохраняется в артефакт):**
-
-- order.status = paid
-- order.user_id не NULL
-- order.product_id = exact module product
-- entitlement_mode = order_based_only
-- active_ent_count = 0 по product_id
-- active_sub_count = 0 по product_id
-
-**Порядок:**
-
-1. SQL snapshot before (14 строк: order_id, user_id, product_code, ent_count, sub_count)
-2. Последовательный вызов `grant-access-for-order` для каждого из 14 orders
-3. SQL snapshot after (те же 14 строк + created_entitlement_id, created_subscription_id)
-4. Scope leakage check: total entitlements/subscriptions before vs after = ровно +14/+14
-5. Idempotency proof: повторный вызов одного order → `already_fulfilled: true`
-
-**Артефакт:** `module_fulfillment_gaps_round2_before_after.csv`
-
-**14 order_id для execute:**
+1. Функция `split-multi-module-orders` при разделении родительского заказа `19ff6e2b` создала дочерний order `cee45419` и установила его `order_id` на **club** entitlement `53a0616a` (вместо создания нового entitlement для модуля).
+2. Когда `grant-access-for-order(cee45419)` был вызван:
+  - **L283-288**: Поиск entitlement по `user_id + product_code = 'cb_module_production'` → не найден
+  - **L314-330**: INSERT нового entitlement с `order_id = cee45419`
+  - **FAIL**: Unique index `idx_entitlements_unique_order_id` заблокировал INSERT, т.к. club entitlement `53a0616a` уже занял этот `order_id`
+  - **L332-333**: Ошибка молча залогирована, функция продолжила как ни в чём не бывало
+  - Subscription создана корректно (65c0691e), ledger записан как "granted"
+3. Результат: **primary entitlement не создан**, subscription создана, функция вернула success.
 
 ```text
-cb_module_catering:    63c36a18-2efb-42c2-9060-6ecadec8a814 (user 1502c12e)
-cb_module_marketplaces: 243a2c95 (1502c12e), 00ca4946 (2b352bdf), f1c284d1 (7c53b6af), 9781e731 (f278876e)
-cb_module_production:  4c5209e1 (1502c12e), b5a8eca6 (5c6e6e0f), 34ae0f30 (7c53b6af), cee45419 (e748983f)
-cb_module_retail:      fad67bb7 (1502c12e), 12909f3f (5c6e6e0f), d2218e8e (7c53b6af), fe4809b1 (e748983f), f3c5ffb7 (f278876e)
+Точная ветка:    L314-330 INSERT → unique constraint idx_entitlements_unique_order_id → silent fail
+Какой rule:      не rule — order_id collision от split-multi-module-orders  
+Почему club:     split присвоил order_id на club entitlement, заблокировав INSERT для модуля
+Почему нет module: INSERT failed, ошибка проглочена (L332 console.error only)
 ```
 
-**Guards:**
+### Два дефекта для исправления
 
-- Не трогать cb_module_construction, prd_08a84b2b7223 — уже закрыты, idempotency guard отклонит
-- Не трогать cb_module_ip — subscription_based, не в scope
-- Не трогать cb_module_pvt — нет paid orders с gap
+**Дефект 1** (в `grant-access-for-order`):
 
----
+- Primary entitlement INSERT молча проглатывает ошибку и продолжает
+- Lookup по `product_code` вместо `product_id` — ненадёжно
+- Нет проверки, что после INSERT/UPDATE entitlement реально существует с correct product_id
 
-### Блок 2: PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION
+**Дефект 2** (в `split-multi-module-orders`):
 
-**Что:** Привести `product_access` rules к единому контракту.
+- При создании дочерних заказов устанавливает order_id на НЕ связанные entitlements (club вместо модуля)
+- Это блокирует последующий штатный fulfillment
 
-**Текущее состояние:**
+### Исправления
 
-- 5 модулей: `product_access` rule есть, но **is_active = false** (catering, construction, ip, production, pvt)
-- 2 модуля: `product_access` rule **отсутствует** (retail, prd_08a84b2b7223)
-- 1 модуль: `product_access` rule **active** (marketplaces)
+#### Файл 1: `supabase/functions/grant-access-for-order/index.ts`
 
-**Решение:**
+**Изменение A — L282-337**: Переписать primary entitlement блок:
 
-- Для 5 модулей с inactive rules — **активировать** (`is_active = true`) через миграцию
-- Для 2 модулей без rules — **создать** `product_access` rules через миграцию
-- Результат: все 8 модулей = active product_access rule + active training_content rule
+1. Lookup по `user_id + product_id` (вместо `product_code`) — использовать unique index `idx_entitlements_user_product_id`
+2. Перед INSERT: проверить, не занят ли `order_id` другим entitlement. Если занят — очистить (`SET order_id = NULL`) у чужого entitlement с audit log `entitlement.order_id_collision_cleared`
+3. При INSERT failure — **hard error**: вернуть HTTP 500 с деталями, НЕ продолжать
+4. После INSERT/UPDATE — post-check: SELECT entitlement по `user_id + product_id`, убедиться что `product_id = orders_v2.product_id`
 
-**Бизнес-модель каждого модуля (финальная):**
+**Изменение B — L807-1121** (product_access rules): Добавить audit label `granted_by: 'rule_engine_product_access'` в meta для отличия от primary. Уже не ставят order_id — OK.
 
+**Изменение C** — Добавить поле `results.primary_entitlement_verified = true/false` в ответ для трассировки.
 
-| Модуль                 | Модель                            | product_access | training_content |
-| ---------------------- | --------------------------------- | -------------- | ---------------- |
-| cb_module_catering     | dual_model                        | activate       | active           |
-| cb_module_construction | dual_model                        | activate       | active           |
-| cb_module_ip           | parent_only (subscription_based)  | keep inactive  | active           |
-| cb_module_marketplaces | dual_model                        | active         | active           |
-| cb_module_production   | dual_model                        | activate       | active           |
-| cb_module_pvt          | standalone_only (нет paid orders) | activate       | active           |
-| cb_module_retail       | dual_model                        | CREATE         | active           |
-| prd_08a84b2b7223       | dual_model                        | CREATE         | active           |
+#### Файл 2: `supabase/functions/split-multi-module-orders/index.ts`
 
+**Изменение**: При создании split-order НЕ устанавливать `order_id` на существующие entitlements. Split создаёт только orders — fulfillment делает `grant-access-for-order`.
 
-**Исключение:** cb_module_ip — `subscription_based`, не `order_based_only`. Его `product_access` rule остаётся inactive. Доступ через backfill entitlements, не через orders.
+### Конкретная логика Изменения A (pseudocode)
 
-**Файлы:** Только SQL-миграция. Без изменения edge functions или UI.
+```typescript
+// BEFORE (L282-288): lookup by product_code
+const { data: existingEntitlement } = await supabase
+  .from("entitlements")
+  .select("id, expires_at")
+  .eq("user_id", userId)
+  .eq("product_code", productCode)  // ← WRONG: should be product_id
+  .maybeSingle();
 
-**DoD:**
+// AFTER: lookup by product_id (canonical unique index)
+const { data: existingEntitlement } = await supabase
+  .from("entitlements")
+  .select("id, expires_at, product_code, product_id")
+  .eq("user_id", userId)
+  .eq("product_id", productId)
+  .maybeSingle();
 
-- Все 7 order_based_only модулей имеют active product_access rule
-- cb_module_ip остаётся без active product_access (subscription_based)
-- Контракт: paid order → entitlement → product_access rule → training_content rule → видимость
+// Pre-INSERT: clear order_id collision
+const { data: orderIdCollision } = await supabase
+  .from("entitlements")
+  .select("id, product_code, product_id")
+  .eq("order_id", orderId)
+  .neq("product_id", productId)  // only if it's a DIFFERENT product
+  .maybeSingle();
 
----
+if (orderIdCollision) {
+  await supabase.from("entitlements")
+    .update({ order_id: null, updated_at: now.toISOString() })
+    .eq("id", orderIdCollision.id);
+  // audit: entitlement.order_id_collision_cleared
+}
 
-### Блок 3: PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-LIVE-PROOF (параллельно)
+// INSERT с hard error check
+if (insertError) {
+  return new Response(JSON.stringify({
+    success: false,
+    error: "primary_entitlement_creation_failed",
+    details: insertError.message,
+  }), { status: 500, headers: corsHeaders });
+}
 
-**Что:** Проверить наличие первой live webhook-транзакции с заполненным `payment_flow`.
+// Post-check: verify entitlement exists with correct product_id
+const { data: verifyEnt } = await supabase
+  .from("entitlements")
+  .select("id, product_id")
+  .eq("user_id", userId)
+  .eq("product_id", productId)
+  .single();
 
-**Действия:**
+if (!verifyEnt) {
+  return new Response(JSON.stringify({
+    success: false, error: "primary_entitlement_verification_failed",
+  }), { status: 500, headers: corsHeaders });
+}
+```
 
-1. SQL: все orders с `payment_flow LIKE 'bepaid%'` после 2026-04-06
-2. Если есть — зафиксировать proof, закрыть тему
-3. Если нет — оставить CONDITIONAL_PASS, проверить при следующем спринте
+### DoD
 
-**Артефакт:** `webhook_payment_flow_live_proof.csv` (если есть данные)
+1. Root-cause proof по cee45419 зафиксирован (выше)
+2. Primary entitlement всегда создаётся на `orders_v2.product_id`
+3. При collision по `order_id` — collision cleared + audit log
+4. При failure INSERT — hard error 500, не silent continue
+5. Rule-based grants не подменяют primary (уже так, но добавить audit label)
+6. Re-verification 14/14 order_id: exact product entitlement + exact subscription + no wrong replacement + no scope leakage
+7. Before/after proof + root-cause proof по cee45419 как артефакт
 
----
+### Файлы
 
-### Порядок выполнения
-
-1. **Before snapshot** — SQL по 14 orders
-2. **Блок 1** — execute 14 grant-access-for-order вызовов
-3. **After snapshot** — verify +14 entitlements, +14 subscriptions
-4. **Блок 2** — SQL-миграция: activate/create product_access rules
-5. **Блок 3** — SQL-proof по webhook payment_flow
-6. **Финальный артефакт** — consolidated CSV
+1. `supabase/functions/grant-access-for-order/index.ts` — изменения A, B, C
+2. `supabase/functions/split-multi-module-orders/index.ts` — убрать установку order_id на entitlements (если есть)
 
 ### STOP-guards
 
-- Без revoke
-- Без изменения training_modules.product_id
-- Без изменения training_content rules
-- cb_module_ip не трогать
-- Scope leakage = 0
-
-### Техническая секция
-
-**Миграция для Блока 2 (SQL):**
-
-```sql
--- Activate existing inactive product_access rules (5 modules, excluding ip)
-UPDATE access_rules SET is_active = true, updated_at = now()
-WHERE id IN (
-  '1c6a6824-c4e7-4069-8c1f-388e5ab1ecde', -- catering
-  'c4da1b02-56f6-4e4f-b7dc-b2ab2093f04d', -- construction
-  '68cf63f1-c13d-47ca-bc45-a5f83aa6062b', -- production
-  '07aa5a5d-48d0-4b75-aed7-982a60eecc0f'  -- pvt
-);
-
--- Create missing product_access rules for retail and prd_08a84b2b7223
-INSERT INTO access_rules (product_id, grant_target_type, target_ref, target_label, is_active, conditions)
-VALUES
-  ('abee24cd-5c8b-4111-a6cb-7dee7acf168c', 'product_access',
-   'abee24cd-5c8b-4111-a6cb-7dee7acf168c',
-   'Ценный бухгалтер | 1 ступень 2.0 | Модуль: Розничная торговля',
-   true,
-   '{"target_product_ids":["abee24cd-5c8b-4111-a6cb-7dee7acf168c"]}'::jsonb),
-  ('64d9f812-617c-41a8-b3dc-bb113156d6f3', 'product_access',
-   '64d9f812-617c-41a8-b3dc-bb113156d6f3',
-   'Ценный бухгалтер | 1 ступень 2.0 | Модуль: Грузо- и пассажироперевозки',
-   true,
-   '{"target_product_ids":["64d9f812-617c-41a8-b3dc-bb113156d6f3"]}'::jsonb);
-```
-
-**Edge function вызовы для Блока 1:** 14 последовательных POST к `grant-access-for-order` с `{ "orderId": "..." }`.
-
-**Ожидаемый результат спринта:**
-
-- 14 fulfillment gaps закрыты
-- Все 7 order_based_only модулей имеют полный контракт (product_access + training_content)
-- Webhook payment_flow — статус зафиксирован
-- 0 scope leakage
+- Без миграций БД
+- Без изменения subscription логики
+- Без изменения club/telegram grant логики
+- Без revoke существующих entitlements
+- Split-функция: только убрать entitlement order_id write, без изменения order creation логики
