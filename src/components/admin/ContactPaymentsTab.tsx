@@ -213,6 +213,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         return {
           ...p,
           productName: orderInfo?.product_name || null,
+          category: orderInfo?.category || null,
           _is_module_standalone: orderInfo?._is_module_standalone || false,
           _missing_display_name: orderInfo?._missing_display_name || false,
         };
