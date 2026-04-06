@@ -393,10 +393,11 @@ Deno.serve(async (req) => {
         updateData.tariff_id = tariffId;
       }
 
-      // Attach payment method if not present
+      // Attach payment method if not present — auto_renew from SoT, not hardcoded
       if (!fullExistingSub?.payment_method_id && hasPaymentMethod) {
         updateData.payment_method_id = userPaymentMethod.id;
-        updateData.auto_renew = true;
+        // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: only enable auto_renew if subscription flow
+        updateData.auto_renew = shouldAutoRenew;
       }
 
       const { error: updateSubError } = await supabase
@@ -530,7 +531,7 @@ Deno.serve(async (req) => {
           access_end_at: safeAccessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
-          auto_renew: true,
+          auto_renew: shouldAutoRenew, // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: from payment_flow, not hardcoded
           meta: {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
