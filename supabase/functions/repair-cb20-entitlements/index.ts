@@ -256,7 +256,37 @@ Deno.serve(async (req) => {
         }
       }
 
-      console.log(`[repair-entitlements] Disabled ${disabledCount} entitlements`);
+      // Reprovision: for valid entries missing source_rule_id in meta, write it
+      const toReprovision = repairList.filter(r => r.planned_action === 'keep' && r.access_rule_id);
+      for (const entry of toReprovision) {
+        const { data: currentEnt } = await supabase.from('entitlements').select('meta').eq('id', entry.entitlement_id).maybeSingle();
+        const currentMeta = (currentEnt?.meta || {}) as Record<string, any>;
+        if (currentMeta.source_rule_id === entry.access_rule_id) continue; // already correct
+
+        const { error } = await supabase
+          .from('entitlements')
+          .update({
+            meta: {
+              ...currentMeta,
+              source_rule_id: entry.access_rule_id,
+              rule_source_product_id: entry.rule_source_product_id,
+              rule_source_tariff_id: entry.rule_source_tariff_id,
+              reprovisioned_by: 'repair-entitlements',
+              reprovisioned_at: new Date().toISOString(),
+              batch_id: batchId,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', entry.entitlement_id);
+
+        if (!error) {
+          reprovisionedCount++;
+        } else {
+          console.error(`[repair-entitlements] Failed to reprovision ${entry.entitlement_id}:`, error);
+        }
+      }
+
+      console.log(`[repair-entitlements] Disabled ${disabledCount}, reprovisioned ${reprovisionedCount} entitlements`);
     }
 
     return jsonRes({
