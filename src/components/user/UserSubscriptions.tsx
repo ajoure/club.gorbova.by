@@ -70,13 +70,13 @@ export function UserSubscriptions() {
       return data;
     },
     onSuccess: (data) => {
-      toast.success(data.message || "Trial отменен");
+      toast.success(data.message || "Пробный период отменён");
       queryClient.invalidateQueries({ queryKey: ["user-subscriptions"] });
       setCancelDialogOpen(false);
       setSelectedSubscription(null);
     },
     onError: (error: any) => {
-      toast.error(error.message || "Ошибка отмены trial");
+      toast.error(error.message || "Ошибка отмены пробного периода");
     },
   });
 
@@ -106,7 +106,7 @@ export function UserSubscriptions() {
     };
     const labels: Record<string, string> = {
       active: "Активна",
-      trial: "Trial",
+      trial: "Пробный",
       canceled: "Отменена",
       expired: "Истекла",
       past_due: "Просрочена",
@@ -206,7 +206,7 @@ export function UserSubscriptions() {
           <div className="border-t pt-4">
             <div className="flex items-center justify-between">
               <div className="text-sm">
-                <span className="text-muted-foreground">Trial до: </span>
+                <span className="text-muted-foreground">Пробный до: </span>
                 <span className="font-medium">
                   {subscription.trial_end_at
                     ? format(new Date(subscription.trial_end_at), "dd.MM.yyyy HH:mm", { locale: ru })

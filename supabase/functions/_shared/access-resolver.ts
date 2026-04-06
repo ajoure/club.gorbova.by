@@ -297,15 +297,19 @@ async function resolveProductAccessGrants(
           );
 
           // More precise check via DB
-          const { data: priorOrder } = await supabase
+          // Prefer orders with tariff_id (full product purchase) over module-only orders
+          const { data: priorOrders } = await supabase
             .from('orders_v2')
             .select('id, tariff_id, purchase_snapshot')
             .eq('user_id', userId)
             .eq('product_id', productToCheck)
             .eq('status', 'paid')
             .neq('id', orderId)
-            .limit(1)
-            .maybeSingle();
+            .order('tariff_id', { ascending: false, nullsFirst: false })
+            .limit(5);
+
+          // Pick best prior order: prefer one with tariff (full purchase)
+          const priorOrder = (priorOrders || []).find(o => o.tariff_id) || (priorOrders || [])[0] || null;
 
           if (!priorOrder) {
             grants.push({
