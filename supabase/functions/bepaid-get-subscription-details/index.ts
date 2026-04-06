@@ -603,27 +603,30 @@ Deno.serve(async (req) => {
               meta: { product_id: productId, access_end_at: accessEndAt, existed: !!existingEnt },
             });
 
-            // C3: Telegram grants — extend latest active
-            const { data: clubMappings } = await supabase
-              .from('product_club_mappings')
-              .select('club_id')
+            // C3: Telegram grants — extend latest active (via access_rules SoT)
+            const { data: clubRules } = await supabase
+              .from('access_rules')
+              .select('id, target_ref')
               .eq('product_id', productId)
+              .eq('grant_target_type', 'club')
               .eq('is_active', true);
 
-            if (!clubMappings || clubMappings.length === 0) {
+            if (!clubRules || clubRules.length === 0) {
               await supabase.from('audit_logs').insert({
-                action: 'bepaid.sync.no_club_mapping',
+                action: 'bepaid.sync.no_club_rule',
                 actor_type: 'system',
                 actor_label: 'bepaid-get-subscription-details',
                 meta: { product_id: productId, subscription_id },
               });
             } else {
-              for (const mapping of clubMappings) {
+              for (const rule of clubRules) {
+                const clubId = rule.target_ref;
+                if (!clubId) continue;
                 const { data: latestGrant } = await supabase
                   .from('telegram_access_grants')
                   .select('id, end_at')
                   .eq('user_id', chainUserId)
-                  .eq('club_id', mapping.club_id)
+                  .eq('club_id', clubId)
                   .in('status', ['active', 'granted'])
                   .order('end_at', { ascending: false, nullsFirst: false })
                   .limit(1)
@@ -644,14 +647,14 @@ Deno.serve(async (req) => {
                     .from('telegram_access_grants')
                     .insert({
                       user_id: chainUserId,
-                      club_id: mapping.club_id,
+                      club_id: clubId,
                       source: 'bepaid_sync',
                       source_id: subscription_id,
                       status: 'active',
                       start_at: new Date().toISOString(),
                       end_at: accessEndAt,
                     });
-                  console.log(`[access-chain] Created telegram grant for ${chainUserId}/${mapping.club_id}`);
+                  console.log(`[access-chain] Created telegram grant for ${chainUserId}/${clubId}`);
                 }
               }
 
@@ -664,7 +667,7 @@ Deno.serve(async (req) => {
                   subscription_id,
                   subscription_v2_id: effectiveSubV2Id,
                   access_end_at: accessEndAt,
-                  clubs: clubMappings.map(m => m.club_id),
+                  clubs: clubRules.map(r => r.target_ref),
                 },
               });
             }
