@@ -446,15 +446,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
+  // Use resolvedUserId (from DB) to ensure support-path also finds subscriptions
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
-    queryKey: ["contact-subscriptions", contact?.id, contact?.user_id],
+    queryKey: ["contact-subscriptions", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
       
       // Build array of IDs to search
       const userIds = [contact.id];
-      if (contact.user_id && contact.user_id !== contact.id) {
-        userIds.push(contact.user_id);
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
       }
       
       const { data, error } = await supabase
@@ -521,14 +522,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   });
 
   // Fetch communication history (audit logs for this user) with actor profiles
+  // Use resolvedUserId to ensure support-path also loads communications
   const { data: communications, isLoading: commsLoading } = useQuery({
-    queryKey: ["contact-communications", contact?.user_id],
+    queryKey: ["contact-communications", resolvedUserId],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!resolvedUserId) return [];
       const { data: logs, error } = await supabase
         .from("audit_logs")
         .select("*")
-        .eq("target_user_id", contact.user_id)
+        .eq("target_user_id", resolvedUserId)
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -550,14 +552,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       
       return logs.map(log => ({ ...log, actor_profile: null }));
     },
-    enabled: !!contact?.user_id,
+    enabled: !!resolvedUserId,
   });
 
   // Fetch notification events (telegram_logs + email_logs) for this contact
   const { data: notificationEvents } = useQuery({
-    queryKey: ["contact-notification-events", contact?.user_id],
+    queryKey: ["contact-notification-events", resolvedUserId],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!resolvedUserId) return [];
       
       // Telegram notification logs - FIX-3: Include ADMIN_DISABLED_AUTO_RENEW for batch disable visibility
       const { data: tgLogs } = await supabase
