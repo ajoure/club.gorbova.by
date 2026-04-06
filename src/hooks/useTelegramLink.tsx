@@ -158,10 +158,11 @@ export function useCheckTelegramStatus() {
 }
 
 export function usePendingNotificationsCount() {
+  const { user } = useAuth();
+  
   return useQuery({
-    queryKey: ['pending-telegram-notifications-count'],
+    queryKey: ['pending-telegram-notifications-count', user?.id],
     queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return 0;
       
       const { count } = await supabase
