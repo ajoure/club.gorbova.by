@@ -252,13 +252,16 @@ Verdict: поиск работает корректно по products_v2.name, p
 2. ✅ **PATCH-DEALS-SEARCH-BROWSER-PROOF** — done
 3. ✅ **PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF** — done
 4. ✅ **PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION-PROOF** — done
-5. **PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX** — execute next
-   - auto_renew: заменить hardcode на чтение из tariff_offers/DB flag
-   - tariffs.is_subscription: подключить или убрать
-6. **PATCH-ID-FIRST-HIGH-RISK-EXECUTE** — execute
-   - Замена hardcoded code sets на DB flags
-   - Перевод bepaid-auto-process на ID-based mapping
-7. **DISCOVERY: GRANULAR-MODULE-BINDING**
+5. ✅ **PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX** — done
+   - auto_renew: hardcode убран, теперь читается из order.meta.payment_flow
+   - subscription flow → auto_renew=true, one_time flow → auto_renew=false
+   - extend branch: auto_renew привязан к payment_flow, а не к наличию payment_method
+6. ✅ **PATCH-ID-FIRST-HIGH-RISK-EXECUTE** — done
+   - products_v2.entitlement_mode — новая DB-колонка (subscription_based, order_based_only, legacy_skip)
+   - entitlement-sync.ts: hardcoded sets → DB resolver с fallback
+   - bepaid-auto-process: добавлен ID-first resolution через tracking_id→order→product_id
+   - text-matching 'клуб'/'club' понижен до deprecated legacy fallback
+7. **DISCOVERY: GRANULAR-MODULE-BINDING** — next
 8. **FOLLOW-UP: 49 cb_module_ip** — hold
 
 ---
