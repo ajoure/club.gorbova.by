@@ -258,7 +258,42 @@ export default function AdminDeals() {
     staleTime: 30_000,
   });
 
+  // ─── Transform RPC flat row into nested shape matching PostgREST ───
+  function rpcRowToNested(r: any): any {
+    return {
+      id: r.id,
+      order_number: r.order_number,
+      status: r.status,
+      deal_date: r.deal_date,
+      created_at: r.created_at,
+      customer_email: r.customer_email,
+      customer_phone: r.customer_phone,
+      final_price: r.final_price,
+      currency: r.currency,
+      discount_percent: r.discount_percent,
+      is_trial: r.is_trial,
+      trial_end_at: r.trial_end_at,
+      product_id: r.product_id,
+      tariff_id: r.tariff_id,
+      user_id: r.user_id,
+      profile_id: r.profile_id,
+      reconcile_source: r.reconcile_source,
+      purchase_snapshot: r.purchase_snapshot,
+      meta: r.meta,
+      products_v2: r.product_name ? { id: r.product_id, name: r.product_name, code: r.product_code } : null,
+      tariffs: r.tariff_name ? { id: r.tariff_id, name: r.tariff_name } : null,
+      profiles: r.profile_full_name != null || r.profile_email != null
+        ? { id: r.profile_id, user_id: r.profile_user_id, full_name: r.profile_full_name, email: r.profile_email, phone: r.profile_phone, avatar_url: r.profile_avatar_url }
+        : null,
+      payments_v2: r.latest_payment_id
+        ? [{ id: r.latest_payment_id, status: r.latest_payment_status, paid_at: r.latest_payment_paid_at, created_at: r.latest_payment_paid_at, card_holder: r.latest_payment_card_holder, meta: r.latest_payment_meta }]
+        : [],
+    };
+  }
+
   // ─── Server-side paginated rows via useInfiniteQuery ───
+  const isSearchMode = Boolean(debouncedSearch);
+
   const {
     data: dealsData,
     isLoading,
@@ -269,6 +304,26 @@ export default function AdminDeals() {
   } = useInfiniteQuery({
     queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, dateFilter],
     queryFn: async ({ pageParam = 0 }) => {
+      // When search is active → use RPC for full-name search across profiles
+      if (debouncedSearch) {
+        const { data, error } = await supabase.rpc("search_deal_rows", {
+          p_search: debouncedSearch.trim(),
+          p_product_id: selectedProductId || null,
+          p_date_from: dateFilter.from ? `${dateFilter.from}T00:00:00Z` : null,
+          p_date_to: dateFilter.to ? `${dateFilter.to}T23:59:59Z` : null,
+          p_preset: activePreset || "all",
+          p_limit: PAGE_SIZE,
+          p_offset: pageParam,
+        });
+        if (error) throw error;
+        const rows = (data || []).map(rpcRowToNested);
+        return {
+          rows,
+          nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+        };
+      }
+
+      // Default mode → lightweight PostgREST query (no name search needed)
       const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
