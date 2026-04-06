@@ -296,6 +296,7 @@ export function useUnreadTicketsCount() {
     },
     enabled: !!user?.id,
     refetchInterval: 30000,
+    staleTime: 30_000,
   });
 
   // Realtime subscription for live unread updates
