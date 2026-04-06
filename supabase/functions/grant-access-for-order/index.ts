@@ -1067,16 +1067,18 @@ Deno.serve(async (req) => {
               let historicalModuleProductIds: string[] = [];
               let scopeResolutionMode = 'full_tariff_scope';
 
-              const { data: priorOrderData } = await supabase
+              // Prefer orders with tariff_id (full product purchase) over module-only orders
+              const { data: priorOrdersList } = await supabase
                 .from('orders_v2')
                 .select('id, tariff_id, purchase_snapshot')
                 .eq('user_id', userId)
                 .eq('product_id', targetProdId)
                 .eq('status', 'paid')
                 .neq('id', orderId)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+                .order('tariff_id', { ascending: false, nullsFirst: false })
+                .limit(5);
+
+              const priorOrderData = (priorOrdersList || []).find(o => o.tariff_id) || (priorOrdersList || [])[0] || null;
 
               if (priorOrderData) {
                 const snapshot = (priorOrderData.purchase_snapshot || {}) as Record<string, any>;
