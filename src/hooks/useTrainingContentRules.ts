@@ -327,7 +327,7 @@ async function resolveBonusScopeRules(
       finalAllowedModuleIds = [];
     } else if (mode === 'module_scope_only') {
       finalAllowedModuleIds = allowedModuleIds;
-    } else if (mode === 'union_scope') {
+    } else if (mode === 'union_scope' || mode === 'full_tariff_scope' || mode === 'full_access') {
       accessMode = "full";
     }
 
