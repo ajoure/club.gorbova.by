@@ -10,6 +10,7 @@ import { PullToRefresh } from "./PullToRefresh";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { ImpersonationBar } from "./ImpersonationBar";
 import { Loader2, Shield } from "lucide-react";
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 
 interface DashboardLayoutProps {
   children: ReactNode;
