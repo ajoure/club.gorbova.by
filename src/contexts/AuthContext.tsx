@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { clearImpersonationStorage, hasStaleImpersonationState } from "@/lib/impersonationStorage";
 
 type AppRole = "user" | "admin" | "superadmin";
 
@@ -22,99 +23,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<AppRole>("user");
   const [loading, setLoading] = useState(true);
 
-  const fetchUserRole = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("user_roles_v2")
-        .select("role_id, roles(code)")
-        .eq("user_id", userId);
-
-      if (error) {
-        console.error("Error fetching role:", error);
-        return "user" as AppRole;
-      }
-
-      if (data && data.length > 0) {
-        // Check for super_admin first, then admin
-        const roleCodes = data.map((r: any) => r.roles?.code).filter(Boolean);
-        if (roleCodes.includes("super_admin")) {
-          return "superadmin" as AppRole;
-        }
-        if (roleCodes.includes("admin")) {
-          return "admin" as AppRole;
-        }
-      }
-      return "user" as AppRole;
-    } catch (err) {
-      console.error("Error fetching role:", err);
-      return "user" as AppRole;
+  // Controlled effect: fetch role when user.id changes
+  useEffect(() => {
+    if (!user?.id) {
+      setRole("user");
+      return;
     }
-  };
+
+    let cancelled = false;
+
+    const fetchRole = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("user_roles_v2")
+          .select("role_id, roles(code)")
+          .eq("user_id", user.id);
+
+        if (cancelled || error) return;
+
+        if (data && data.length > 0) {
+          const roleCodes = data.map((r: any) => r.roles?.code).filter(Boolean);
+          if (roleCodes.includes("super_admin")) {
+            setRole("superadmin");
+            return;
+          }
+          if (roleCodes.includes("admin")) {
+            setRole("admin");
+            return;
+          }
+        }
+        setRole("user");
+      } catch {
+        if (!cancelled) setRole("user");
+      }
+    };
+
+    fetchRole();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Subscribe to auth state changes (Supabase recommendation)
+    // 1. Subscribe to auth state changes
+    // RULE: No await, no DB calls, no RPC, no heavy side-effects inside listener.
+    // Listener does ONLY synchronous state updates.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
+      (_event, currentSession) => {
         if (!isMounted) return;
 
-        console.info(`[AuthContext] onAuthStateChange: event=${event}, hasSession=${!!currentSession}, userId=${currentSession?.user?.id ?? 'none'}`);
-
-        // PATCH 0: On SIGNED_OUT, retry getSession to guard against false positives
-        // (preview hot-reload / route remount can fire spurious SIGNED_OUT)
-        if (event === "SIGNED_OUT") {
-          try {
-            const { data: { session: retrySession } } = await supabase.auth.getSession();
-            if (retrySession) {
-              console.warn("[AuthContext] SIGNED_OUT was false-positive — session still valid, ignoring");
-              // Re-apply the valid session instead of clearing state
-              setSession(retrySession);
-              setUser(retrySession.user);
-              setTimeout(() => {
-                if (isMounted) {
-                  fetchUserRole(retrySession.user.id).then((r) => {
-                    if (isMounted) setRole(r);
-                  });
-                }
-              }, 0);
-              return; // skip the default SIGNED_OUT handling
-            }
-          } catch (err) {
-            console.error("[AuthContext] SIGNED_OUT retry getSession failed:", err);
-          }
+        if (import.meta.env.DEV) {
+          console.info(`[AuthContext] onAuthStateChange: event=${_event}, hasSession=${!!currentSession}`);
         }
 
         setSession(currentSession);
         setUser(currentSession?.user ?? null);
-
-        if (currentSession?.user) {
-          setTimeout(() => {
-            if (isMounted) {
-              fetchUserRole(currentSession.user.id).then((r) => {
-                if (isMounted) setRole(r);
-              });
-            }
-          }, 0);
-        } else {
-          setRole("user");
-        }
         setLoading(false);
       }
     );
 
-    // 2. Check current session
+    // 2. Check current session (one-time on mount)
     supabase.auth.getSession()
       .then(({ data: { session: existingSession } }) => {
         if (!isMounted) return;
-
-        if (existingSession) {
-          setSession(existingSession);
-          setUser(existingSession.user);
-          fetchUserRole(existingSession.user.id).then((r) => {
-            if (isMounted) setRole(r);
-          });
-        }
+        setSession(existingSession);
+        setUser(existingSession?.user ?? null);
       })
       .catch((error) => {
         console.error("[AuthContext] getSession error:", error);
@@ -123,38 +96,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (isMounted) setLoading(false);
       });
 
-    // 3. PATCH 0: Visibility change listener — refresh session when tab becomes visible
-    const handleVisibilityChange = () => {
-      if (document.hidden || !isMounted) return;
-      console.info("[AuthContext] Tab became visible — refreshing session");
-      supabase.auth.getSession().then(({ data: { session: refreshedSession } }) => {
-        if (!isMounted) return;
-        if (refreshedSession) {
-          setSession(refreshedSession);
-          setUser(refreshedSession.user);
-        }
-      }).catch((err) => {
-        console.error("[AuthContext] visibilitychange getSession error:", err);
-      });
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
     // Safety timeout — prevent infinite loading if auth init hangs
     const safetyTimeout = setTimeout(() => {
       if (!isMounted) return;
-      console.warn("[AuthContext] Safety timeout — forcing loading=false after 5s");
+      if (import.meta.env.DEV) {
+        console.warn("[AuthContext] Safety timeout — forcing loading=false after 5s");
+      }
       setLoading(false);
     }, 5000);
 
     return () => {
       isMounted = false;
       clearTimeout(safetyTimeout);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
       subscription.unsubscribe();
     };
   }, []);
 
   const signIn = async (email: string, password: string) => {
+    // Clean stale impersonation state on normal login
+    if (hasStaleImpersonationState()) {
+      clearImpersonationStorage();
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -179,7 +142,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     
-    // If email exists but user has no identities (invited user without password)
     if (data?.user && !data?.session && data?.user?.identities?.length === 0) {
       return { 
         error: { message: "User already registered" } as Error,
@@ -191,6 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    // Always clear impersonation state on signOut
+    clearImpersonationStorage();
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);

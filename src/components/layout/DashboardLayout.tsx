@@ -8,7 +8,9 @@ import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
 import { PullToRefresh } from "./PullToRefresh";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { ImpersonationBar } from "./ImpersonationBar";
 import { Loader2, Shield } from "lucide-react";
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -17,12 +19,14 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { loading } = useAuth();
   const { needsConsentUpdate, isLoading: consentLoading } = useConsent();
+  const { bootstrapReady } = useAuthBootstrap();
   const location = useLocation();
   
   // Hide global breadcrumbs on /library routes (they have their own custom breadcrumbs)
   const hideGlobalBreadcrumbs = location.pathname.startsWith("/library");
 
-  if (loading || consentLoading) {
+  // Only block on auth loading — not on consent/bootstrap
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -30,8 +34,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     );
   }
 
-  // Block all content if consent is required - only show the modal
-  if (needsConsentUpdate) {
+  // Block content if consent is required — only after bootstrap is ready (no flash)
+  if (bootstrapReady && !consentLoading && needsConsentUpdate) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <ConsentUpdateModal />
@@ -48,6 +52,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider>
+      <ImpersonationBar />
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">

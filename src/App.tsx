@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { HelpModeProvider } from "@/contexts/HelpModeContext";
-import { ImpersonationBar } from "@/components/layout/ImpersonationBar";
+// ImpersonationBar moved inside DashboardLayout (authenticated shell only)
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
@@ -163,7 +163,6 @@ const App = () => {
             <HelpModeProvider>
               <ScrollToTop />
               <GlobalPaymentHandler />
-              <ImpersonationBar />
               <div className="impersonation-offset">
                 <Routes>
               {/* Public routes */}

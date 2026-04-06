@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 export type TelegramLinkStatus = 'not_linked' | 'pending' | 'active' | 'inactive';
 
@@ -25,10 +26,11 @@ export interface LinkSessionResult {
 }
 
 export function useTelegramLinkStatus() {
+  const { user } = useAuth();
+  
   return useQuery({
-    queryKey: ['telegram-link-status'],
+    queryKey: ['telegram-link-status', user?.id],
     queryFn: async (): Promise<TelegramLinkState> => {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         return {
           status: 'not_linked',
@@ -72,7 +74,8 @@ export function useTelegramLinkStatus() {
         error: profile.telegram_last_error,
       };
     },
-    staleTime: 30000, // 30 seconds
+    enabled: !!user?.id,
+    staleTime: 30000,
     refetchOnWindowFocus: false,
   });
 }
@@ -155,10 +158,11 @@ export function useCheckTelegramStatus() {
 }
 
 export function usePendingNotificationsCount() {
+  const { user } = useAuth();
+  
   return useQuery({
-    queryKey: ['pending-telegram-notifications-count'],
+    queryKey: ['pending-telegram-notifications-count', user?.id],
     queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
       if (!user) return 0;
       
       const { count } = await supabase

@@ -23,7 +23,7 @@ export function usePermissions() {
   const [loading, setLoading] = useState(true);
 
   const fetchPermissions = useCallback(async () => {
-    if (!user) {
+    if (!user?.id) {
       setPermissions([]);
       setUserRoles([]);
       setLoading(false);
