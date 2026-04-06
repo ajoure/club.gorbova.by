@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -186,21 +187,23 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         .filter(p => p.order_id)
         .map(p => p.order_id!);
 
-      let ordersMap = new Map<string, { id: string; product_name: string | null; _is_module_standalone: boolean; _missing_display_name: boolean }>();
+      let ordersMap = new Map<string, { id: string; product_name: string | null; category: string | null; _is_module_standalone: boolean; _missing_display_name: boolean }>();
       if (orderIds.length > 0) {
         const { data: orders } = await supabase
           .from('orders_v2')
-          .select('id, product_id, purchase_snapshot, products_v2(name)')
+          .select('id, product_id, purchase_snapshot, products_v2(name, category)')
           .in('id', orderIds);
         ordersMap = new Map((orders || []).map(o => {
           const snapshot = o.purchase_snapshot as any;
           const fkName = (o.products_v2 as any)?.name || null;
-          const resolvedName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
+          const category = (o.products_v2 as any)?.category || null;
+          const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
+          const resolvedName = getShortDisplayName(rawName, category);
           const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
           const missingDisplayName = isModuleStandalone && !snapshot?.display_purchase_name;
           return [
             o.id, 
-            { id: o.id, product_name: resolvedName, _is_module_standalone: isModuleStandalone, _missing_display_name: missingDisplayName }
+            { id: o.id, product_name: resolvedName, category, _is_module_standalone: isModuleStandalone, _missing_display_name: missingDisplayName }
           ];
         }));
       }
@@ -210,6 +213,7 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
         return {
           ...p,
           productName: orderInfo?.product_name || null,
+          category: orderInfo?.category || null,
           _is_module_standalone: orderInfo?._is_module_standalone || false,
           _missing_display_name: orderInfo?._missing_display_name || false,
         };
@@ -402,7 +406,8 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
                   
                   <div className="flex items-center gap-2">
                     {payment.productName && (
-                      <Badge variant="outline" className="text-xs gap-1 max-w-[150px] truncate">
+                      <Badge variant="outline" className="text-xs gap-1 max-w-[200px] truncate">
+                        <ProductCategoryBadge category={(payment as any).category} />
                         <Package className="w-3 h-3 shrink-0" />
                         <span className="truncate">{payment.productName}</span>
                       </Badge>

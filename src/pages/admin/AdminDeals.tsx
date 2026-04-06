@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getCategoryBadge } from "@/lib/deals/getCategoryBadge";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -163,7 +165,7 @@ function buildDealsQuery(
       reconcile_source,
       purchase_snapshot,
       meta,
-      products_v2(id, name, code),
+      products_v2(id, name, code, category),
       tariffs(id, name),
       profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
       payments_v2(id, status, paid_at, created_at, card_holder, meta)
@@ -432,6 +434,11 @@ export default function AdminDeals() {
       purchaseSnapshot: d.purchase_snapshot,
       fallback: "",
     }) },
+    { header: "Категория", getValue: (d) => {
+      const cat = (d.products_v2 as any)?.category;
+      const badge = cat ? getCategoryBadge(cat) : null;
+      return badge?.label || "";
+    } },
     { header: "Тариф", getValue: (d) => (d.tariffs as any)?.name || "" },
     { header: "Сумма", getValue: (d) => d.final_price ?? "" },
     { header: "Валюта", getValue: (d) => d.currency || "" },
@@ -952,10 +959,13 @@ export default function AdminDeals() {
                       <div className="flex items-center gap-2">
                         <Package className="h-4 w-4 text-muted-foreground" />
                         <div>
-                          <div className="font-medium">{getDealDisplayName({
-                            productsV2: deal.products_v2 as any,
-                            purchaseSnapshot: deal.purchase_snapshot,
-                          })}</div>
+                          <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                            <ProductCategoryBadge category={(deal.products_v2 as any)?.category} />
+                            <span>{getShortDisplayName(getDealDisplayName({
+                              productsV2: deal.products_v2 as any,
+                              purchaseSnapshot: deal.purchase_snapshot,
+                            }), (deal.products_v2 as any)?.category)}</span>
+                          </div>
                           {deal.tariffs && (
                             <div className="text-xs text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                           )}

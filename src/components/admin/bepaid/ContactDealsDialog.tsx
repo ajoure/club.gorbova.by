@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -90,23 +92,27 @@ export default function ContactDealsDialog({
 
       const [productsResult, tariffsResult] = await Promise.all([
         productIds.length > 0 
-          ? supabase.from("products_v2").select("id, name").in("id", productIds)
+          ? supabase.from("products_v2").select("id, name, category").in("id", productIds)
           : { data: [] },
         tariffIds.length > 0
           ? supabase.from("tariffs").select("id, name").in("id", tariffIds)
           : { data: [] },
       ]);
 
-      const productsMap = new Map((productsResult.data || []).map(p => [p.id, p.name]));
+      const productsMap = new Map((productsResult.data || []).map(p => [p.id, { name: p.name, category: p.category }]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
 
       return data.map(deal => {
         const snapshot = deal.purchase_snapshot as any;
-        const fkName = productsMap.get(deal.product_id) || null;
+        const productInfo = productsMap.get(deal.product_id);
+        const fkName = productInfo?.name || null;
+        const category = productInfo?.category || null;
         const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
+        const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
         return {
           ...deal,
-          product_name: getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" }),
+          product_name: getShortDisplayName(rawName, category),
+          product_category: category,
           tariff_name: tariffsMap.get(deal.tariff_id) || null,
           _is_module_standalone: isModuleStandalone,
           _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
@@ -222,7 +228,10 @@ export default function ContactDealsDialog({
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
                               {deal.product_name && (
-                                <span className="font-medium text-sm">{deal.product_name}</span>
+                                <span className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
+                                  <ProductCategoryBadge category={deal.product_category} />
+                                  {deal.product_name}
+                                </span>
                               )}
                               {deal._is_module_standalone && (
                                 <Badge variant="outline" className="text-xs w-fit bg-purple-500/10 text-purple-700 border-purple-300">
@@ -238,6 +247,9 @@ export default function ContactDealsDialog({
                                 <Badge variant="secondary" className="text-xs w-fit">
                                   {deal.tariff_name}
                                 </Badge>
+                              )}
+                              {deal.product_id && (
+                                <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
                               )}
                               {!deal.product_name && !deal.tariff_name && (
                                 <span className="text-muted-foreground text-sm">—</span>

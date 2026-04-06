@@ -50,6 +50,33 @@ function safeExtractSnapshotName(snapshot: unknown): string | null {
   return null;
 }
 
+/**
+ * getShortDisplayName — чисто UI-функция для сокращённого отображения.
+ *
+ * Для модулей: убирает префикс родителя (всё до последнего `|`), добавляет "Модуль: ".
+ * Для остальных: trim trailing `|` и пробелы.
+ *
+ * Canonical DB name НЕ меняется. Это только display metadata.
+ * Никогда не использовать для бизнес-логики, связки, fulfillment.
+ */
+export function getShortDisplayName(name: string, category: string | null | undefined): string {
+  if (!name?.trim()) return name;
+
+  if (category === "module") {
+    // Берём часть после последнего `|` как короткое имя модуля
+    const parts = name.split("|").map(p => p.trim()).filter(Boolean);
+    const lastPart = parts[parts.length - 1];
+    if (parts.length > 1 && lastPart) {
+      return `Модуль: ${lastPart}`;
+    }
+    // Если нет разделителя — возвращаем как есть с префиксом
+    return `Модуль: ${name.trim()}`;
+  }
+
+  // Для остальных: trim trailing | и пробелы
+  return name.replace(/[\s|]+$/, "").trim();
+}
+
 export function getDealDisplayName({
   productsV2,
   productName,

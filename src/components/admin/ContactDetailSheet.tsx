@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
@@ -416,7 +418,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .from("orders_v2")
         .select(`
           *,
-          products_v2(id, name, code),
+          products_v2(id, name, code, category),
           tariffs(id, name, code),
           payments_v2(id, status, provider_response)
         `)
@@ -3026,11 +3028,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                       })()}`}>
                         <div className="flex items-start justify-between mb-2">
                           <div>
-                            <div className="font-medium">{getDealDisplayName({
-                              productsV2: deal.products_v2 as any,
-                              purchaseSnapshot: deal.purchase_snapshot,
-                              fallback: "Продукт",
-                            })}</div>
+                            <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                              <ProductCategoryBadge category={(deal.products_v2 as any)?.category} />
+                              <span>{getShortDisplayName(getDealDisplayName({
+                                productsV2: deal.products_v2 as any,
+                                purchaseSnapshot: deal.purchase_snapshot,
+                                fallback: "Продукт",
+                              }), (deal.products_v2 as any)?.category)}</span>
+                            </div>
+                            {deal.product_id && (
+                              <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" className="mt-0.5" />
+                            )}
                             {deal.tariffs && (
                               <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                             )}
