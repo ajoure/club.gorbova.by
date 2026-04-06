@@ -476,6 +476,29 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id,
   });
 
+  // Fetch entitlements for order_based_only products (not covered by subscriptions)
+  const { data: entitlements, isLoading: entLoading } = useQuery({
+    queryKey: ["contact-entitlements", contact?.id, resolvedUserId],
+    queryFn: async () => {
+      if (!contact?.id) return [];
+      const userIds = [contact.id];
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
+      }
+      const { data, error } = await supabase
+        .from("entitlements")
+        .select(`
+          id, user_id, product_id, product_code, status, expires_at, meta, order_id, created_at, updated_at,
+          products_v2:product_id(id, name, code, is_active, entitlement_mode)
+        `)
+        .in("user_id", userIds)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.id,
+  });
+
   // Fetch products for grant access
   const { data: products } = useQuery({
     queryKey: ["products-for-grant"],
