@@ -393,12 +393,12 @@ ${safeUserName}, это последнее напоминание. Подпис�
     let logClubName: string | null = null;
     if (productId) {
       try {
-        const { data: cm } = await supabase.from('product_club_mappings')
-          .select('club_id').eq('product_id', productId).eq('is_active', true).limit(1).maybeSingle();
-        if (cm?.club_id) {
-          logClubId = cm.club_id;
+        const { data: cm } = await supabase.from('access_rules')
+          .select('target_ref').eq('product_id', productId).eq('grant_target_type', 'club').eq('is_active', true).limit(1).maybeSingle();
+        if (cm?.target_ref) {
+          logClubId = cm.target_ref;
           const { data: cl } = await supabase.from('telegram_clubs')
-            .select('club_name').eq('id', cm.club_id).maybeSingle();
+            .select('club_name').eq('id', cm.target_ref).maybeSingle();
           logClubName = cl?.club_name || null;
         }
       } catch {}

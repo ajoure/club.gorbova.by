@@ -5155,27 +5155,28 @@ ${userName}, к сожалению, не удалось провести опл�
         }
       }
 
-      // Grant Telegram access based on product_club_mappings (for selected products)
+      // Grant Telegram access based on access_rules (SoT)
       if (product) {
         try {
-          // Check if this product has club mappings
-          const { data: mappings } = await supabase
-            .from('product_club_mappings')
-            .select('*, telegram_clubs(id, club_name)')
+          // Check if this product has club rules in access_rules
+          const { data: clubRules } = await supabase
+            .from('access_rules')
+            .select('id, target_ref, duration_days')
             .eq('product_id', product.id)
+            .eq('grant_target_type', 'club')
             .eq('is_active', true);
 
-          if (mappings && mappings.length > 0) {
-            console.log(`Found ${mappings.length} club mappings for product ${product.name}`);
+          if (clubRules && clubRules.length > 0) {
+            console.log(`Found ${clubRules.length} club rules for product ${product.name}`);
             
-            for (const mapping of mappings) {
-              const durationDays = mapping.duration_days || product.duration_days || 30;
+            for (const rule of clubRules) {
+              const durationDays = rule.duration_days || product.duration_days || 30;
               
               // Grant access via edge function
               const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
                 body: { 
                   user_id: order.user_id,
-                  club_id: mapping.club_id,
+                  club_id: rule.target_ref,
                   duration_days: durationDays
                 },
               });
@@ -5195,7 +5196,7 @@ ${userName}, к сожалению, не удалось провести опл�
                 .from('telegram_access_grants')
                 .insert({
                   user_id: order.user_id,
-                  club_id: mapping.club_id,
+                  club_id: rule.target_ref,
                   source: 'order',
                   source_id: internalOrderId,
                   start_at: startAt.toISOString(),
@@ -5211,7 +5212,7 @@ ${userName}, к сожалению, не удалось провести опл�
                   },
                 });
             }
-            console.log('Telegram access grants created for', mappings.length, 'clubs via product mappings');
+            console.log('Telegram access grants created for', clubRules.length, 'clubs via access_rules');
           } else if (product.product_type === 'subscription' && product.duration_days) {
             // Fallback: if no explicit mapping but it's a subscription product, grant to all active clubs
             console.log('No explicit mappings, using fallback for subscription product');

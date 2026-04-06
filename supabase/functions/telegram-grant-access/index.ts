@@ -445,15 +445,16 @@ Deno.serve(async (req) => {
 
       if (sourceSub?.product_id) {
         for (const cid of resolvedClubIds) {
-          const { data: mapping } = await supabase
-            .from('product_club_mappings')
+          const { data: ruleCheck } = await supabase
+            .from('access_rules')
             .select('id')
             .eq('product_id', sourceSub.product_id)
-            .eq('club_id', cid)
+            .eq('target_ref', cid)
+            .eq('grant_target_type', 'club')
             .eq('is_active', true)
             .maybeSingle();
 
-          if (!mapping) {
+          if (!ruleCheck) {
             console.log(`[grant-access] BLOCKED: club_product_mismatch — product ${sourceSub.product_id} not mapped to club ${cid}`);
             
             await supabase.from('audit_logs').insert({

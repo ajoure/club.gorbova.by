@@ -30,16 +30,17 @@ export async function getProductClubInviteLinks(
 ): Promise<InviteLinksResult> {
   const result: InviteLinksResult = { links: [], inlineKeyboard: [] };
 
-  // Get clubs mapped to this product
-  const { data: mappings } = await supabase
-    .from('product_club_mappings')
-    .select('club_id')
+  // Get clubs mapped to this product via access_rules (SoT)
+  const { data: clubRules } = await supabase
+    .from('access_rules')
+    .select('id, target_ref')
     .eq('product_id', productId)
+    .eq('grant_target_type', 'club')
     .eq('is_active', true);
 
-  if (!mappings || mappings.length === 0) return result;
+  if (!clubRules || clubRules.length === 0) return result;
 
-  const clubIds = mappings.map((m: any) => m.club_id);
+  const clubIds = clubRules.map((r: any) => r.target_ref).filter(Boolean);
 
   // Get club details
   const { data: clubs } = await supabase

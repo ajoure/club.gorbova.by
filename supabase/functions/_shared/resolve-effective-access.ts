@@ -71,14 +71,15 @@ export async function resolveEffectiveClubAccess(
   const allSources: AccessSource[] = [];
   let isProtectedByBillingDay = false;
 
-  // 1. Get all active product_ids for this club
-  const { data: mappings } = await supabase
-    .from('product_club_mappings')
+  // 1. Get all active product_ids for this club via access_rules (SoT)
+  const { data: clubRules } = await supabase
+    .from('access_rules')
     .select('product_id')
-    .eq('club_id', clubId)
+    .eq('target_ref', clubId)
+    .eq('grant_target_type', 'club')
     .eq('is_active', true);
 
-  const productIds = (mappings || []).map((m: any) => m.product_id).filter(Boolean);
+  const productIds = (clubRules || []).map((r: any) => r.product_id).filter(Boolean);
 
   // 2. Check subscriptions (with 72h grace)
   if (productIds.length > 0) {

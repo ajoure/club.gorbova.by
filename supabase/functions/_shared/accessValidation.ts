@@ -38,12 +38,13 @@ async function getClubProductIds(
   if (!clubId) return null;
   
   const { data } = await supabase
-    .from('product_club_mappings')
+    .from('access_rules')
     .select('product_id')
-    .eq('club_id', clubId)
+    .eq('target_ref', clubId)
+    .eq('grant_target_type', 'club')
     .eq('is_active', true);
   
-  return (data || []).map((m: any) => m.product_id).filter(Boolean);
+  return (data || []).map((r: any) => r.product_id).filter(Boolean);
 }
 
 /**

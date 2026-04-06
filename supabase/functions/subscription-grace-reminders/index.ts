@@ -168,18 +168,20 @@ ${userName}, 72 часа прошли — прежняя цена больше �
               .eq('id', subscriptionId)
               .maybeSingle();
             if (subData?.product_id) {
-              const { data: clubMapping } = await supabase
-                .from('product_club_mappings')
-                .select('club_id')
+              const { data: clubRule } = await supabase
+                .from('access_rules')
+                .select('target_ref')
                 .eq('product_id', subData.product_id)
+                .eq('grant_target_type', 'club')
+                .eq('is_active', true)
                 .limit(1)
                 .maybeSingle();
-              if (clubMapping?.club_id) {
-                clubId = clubMapping.club_id;
+              if (clubRule?.target_ref) {
+                clubId = clubRule.target_ref;
                 const { data: club } = await supabase
                   .from('telegram_clubs')
                   .select('club_name')
-                  .eq('id', clubMapping.club_id)
+                  .eq('id', clubRule.target_ref)
                   .maybeSingle();
                 clubName = club?.club_name || null;
               }
