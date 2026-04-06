@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

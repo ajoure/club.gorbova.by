@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
+import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
 import { useNavigate } from "react-router-dom";
 import { format, addDays, differenceInDays } from "date-fns";
