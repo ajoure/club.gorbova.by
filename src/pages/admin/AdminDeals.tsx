@@ -1,9 +1,9 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { getDealDisplayName } from "@/lib/deals/getDealDisplayName";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  Loader2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -70,8 +71,9 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
-import { buildSearchIndex, matchSearchIndex } from "@/lib/multiTermSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+
+const PAGE_SIZE = 100;
 
 /** Profile shape from JOIN or fallback query */
 interface ResolvedProfile {
@@ -88,11 +90,9 @@ function resolveDealProfile(
   deal: any,
   fallbackMap: Map<string, ResolvedProfile> | undefined
 ): ResolvedProfile | null {
-  // Primary: profile from JOIN by profile_id
   if (deal.profiles && typeof deal.profiles === 'object' && deal.profiles.id) {
     return deal.profiles as ResolvedProfile;
   }
-  // Fallback: map keyed by user_id (for deals without profile_id)
   if (deal.user_id && fallbackMap) {
     return fallbackMap.get(deal.user_id) || null;
   }
@@ -112,12 +112,10 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   needs_mapping: { label: "Требует маппинга", color: "bg-orange-500/20 text-orange-600", icon: AlertTriangle },
 };
 
-/** Fallback for unknown statuses */
 function getStatusConfig(status: string) {
   return STATUS_CONFIG[status] || { label: status, color: "bg-muted text-muted-foreground", icon: AlertTriangle };
 }
 
-/** Import sources that count as "imported" deals */
 const IMPORT_SOURCES = ['bepaid_archive_import', 'getcourse_historical', 'csv_active_import'] as const;
 
 /** Extract payer name from latest payment (immutable sort) */
@@ -132,15 +130,85 @@ function getLatestPayerName(deal: any): string | null {
   return latest?.card_holder || (latest?.meta as any)?.payer_name || null;
 }
 
+/**
+ * Build server-side query with filters applied BEFORE pagination.
+ * Returns a Supabase query builder with all filters applied.
+ */
+function buildDealsQuery(
+  activePreset: string,
+  debouncedSearch: string,
+  selectedProductId: string | null,
+  dateFilter: DateFilter,
+) {
+  // Lightweight select: only columns used in the table row
+  let query = supabase
+    .from("orders_v2")
+    .select(`
+      id,
+      order_number,
+      status,
+      deal_date,
+      created_at,
+      customer_email,
+      customer_phone,
+      final_price,
+      currency,
+      discount_percent,
+      is_trial,
+      trial_end_at,
+      product_id,
+      tariff_id,
+      user_id,
+      profile_id,
+      reconcile_source,
+      purchase_snapshot,
+      meta,
+      products_v2(id, name, code),
+      tariffs(id, name),
+      profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
+      payments_v2(id, status, paid_at, created_at, card_holder, meta)
+    `);
+
+  // Server-side preset filters
+  if (activePreset === "trial") {
+    query = query.eq("is_trial", true);
+  } else if (activePreset === "canceled") {
+    query = query.in("status", ["canceled", "refunded"]);
+  } else if (activePreset === "imported") {
+    query = query.in("reconcile_source", [...IMPORT_SOURCES]);
+  }
+
+  // Product filter
+  if (selectedProductId) {
+    query = query.eq("product_id", selectedProductId);
+  }
+
+  // Date filter
+  if (dateFilter.from) {
+    query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
+  }
+  if (dateFilter.to) {
+    query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
+  }
+
+  // Server-side search — applied on DB, not on client
+  if (debouncedSearch) {
+    const s = debouncedSearch.trim();
+    query = query.or(
+      `order_number.ilike.%${s}%,customer_email.ilike.%${s}%,customer_phone.ilike.%${s}%`
+    );
+  }
+
+  return query;
+}
+
 export default function AdminDeals() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { canWrite, isSuperAdmin } = usePermissions();
-  
-  // Permission check - can user edit/delete deals?
   const canEdit = canWrite("deals") || isSuperAdmin();
-  
+
   const [search, setSearch] = useState("");
-  const [activeFilters, setActiveFilters] = useState<ActiveFilter[]>([]);
   const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -149,58 +217,81 @@ export default function AdminDeals() {
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
-  
-  // Contact sheet state (modal popup instead of navigation)
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+
+  // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
-  
+
   const queryClient = useQueryClient();
+  const debouncedSearch = useDebouncedValue(search, 200);
 
-  // Fetch ALL deals (orders_v2) with related data — batched pagination
-  const { data: deals, isLoading, refetch } = useQuery({
-    queryKey: ["admin-deals", dateFilter],
-    queryFn: async ({ signal }) => {
-      const PAGE_SIZE = 1000;
-      let from = 0;
-      const all: any[] = [];
+  // Reset display limit when filters change
+  useEffect(() => {
+    setDisplayLimit(PAGE_SIZE);
+  }, [activePreset, debouncedSearch, selectedProductId, dateFilter]);
 
-      for (;;) {
-        let query = supabase
-          .from("orders_v2")
-          .select(`
-            *,
-            products_v2(id, name, code),
-            tariffs(id, name, code, access_days),
-            flows(id, name),
-            payments_v2(id, status, amount, paid_at, created_at, card_holder, meta),
-            profiles:profile_id(id, user_id, full_name, email, phone, avatar_url)
-          `)
-          .order("deal_date", { ascending: false, nullsFirst: false })
-          .order("id", { ascending: false })
-          .range(from, from + PAGE_SIZE - 1);
+  // Check for deal query param to auto-open deal card
+  const dealFromUrl = searchParams.get("deal");
+  useEffect(() => {
+    if (dealFromUrl) {
+      setSelectedDealId(dealFromUrl);
+    }
+  }, [dealFromUrl]);
 
-        // Apply date filter
-        if (dateFilter.from) {
-          query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
-        }
-        if (dateFilter.to) {
-          query = query.lte("deal_date", `${dateFilter.to}T23:59:59Z`);
-        }
-
-        const { data, error } = await query.abortSignal(signal!);
-        if (error) throw error;
-        if (!data?.length) break;
-        all.push(...data);
-        if (data.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
+  // ─── Server-side tab counts via RPC ───
+  const { data: tabCounts } = useQuery({
+    queryKey: ["admin-deals-tab-counts", debouncedSearch, selectedProductId, dateFilter],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("get_deal_tab_counts", {
+        p_search: debouncedSearch || null,
+        p_product_id: selectedProductId || null,
+        p_date_from: dateFilter.from ? `${dateFilter.from}T00:00:00Z` : null,
+        p_date_to: dateFilter.to ? `${dateFilter.to}T23:59:59Z` : null,
+      });
+      if (error) {
+        console.error("[AdminDeals] tab counts error:", error);
+        return null;
       }
-
-      // Deduplicate by id
-      return Array.from(new Map(all.map(o => [o.id, o])).values());
+      return data as { all: number; paid: number; pending: number; failed: number; trial: number; canceled: number; imported: number };
     },
+    staleTime: 30_000,
   });
 
-  // Fetch products for filter
+  // ─── Server-side paginated rows via useInfiniteQuery ───
+  const {
+    data: dealsData,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    refetch,
+  } = useInfiniteQuery({
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, dateFilter],
+    queryFn: async ({ pageParam = 0 }) => {
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter);
+      const { data, error } = await query
+        .order("deal_date", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .range(pageParam, pageParam + PAGE_SIZE - 1);
+
+      if (error) throw error;
+      return {
+        rows: data || [],
+        nextOffset: (data?.length || 0) === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
+      };
+    },
+    getNextPageParam: (lastPage) => lastPage.nextOffset,
+    initialPageParam: 0,
+  });
+
+  // Flat array of all loaded deals
+  const allDeals = useMemo(
+    () => dealsData?.pages.flatMap((p) => p.rows) || [],
+    [dealsData]
+  );
+
+  // Fetch products for filter pills
   const { data: products } = useQuery({
     queryKey: ["products-filter"],
     queryFn: async () => {
@@ -210,51 +301,35 @@ export default function AdminDeals() {
         .eq("is_active", true);
       return data || [];
     },
-  });
-
-  // Fetch tariffs for filter
-  const { data: tariffs } = useQuery({
-    queryKey: ["tariffs-filter"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("tariffs")
-        .select("id, name, product_id, products_v2(name)")
-        .eq("is_active", true)
-        .order("name");
-      return data || [];
-    },
+    staleTime: 5 * 60 * 1000,
   });
 
   // Fallback: fetch profiles ONLY for deals without profile_id but with user_id
   const missingUserIds = useMemo(() => {
-    if (!deals) return [];
     const ids = new Set<string>();
-    for (const d of deals) {
-      // Only need fallback when JOIN didn't return a profile
+    for (const d of allDeals) {
       if (!d.profile_id && d.user_id) {
         ids.add(d.user_id);
       }
     }
     return Array.from(ids);
-  }, [deals]);
+  }, [allDeals]);
 
   const { data: fallbackProfilesMap } = useQuery({
     queryKey: ["deals-fallback-profiles", missingUserIds],
     queryFn: async () => {
       const map = new Map<string, ResolvedProfile>();
       if (missingUserIds.length === 0) return map;
-      // Chunk by 300 to avoid Supabase in() degradation
       const CHUNK = 300;
       const addToMap = (profiles: any[] | null) => {
         profiles?.forEach(p => {
           const rp = p as ResolvedProfile;
           if (p.user_id) map.set(p.user_id, rp);
-          map.set(p.id, rp); // also index by profile.id
+          map.set(p.id, rp);
         });
       };
       for (let i = 0; i < missingUserIds.length; i += CHUNK) {
         const chunk = missingUserIds.slice(i, i + CHUNK);
-        // Double lookup: user_id may actually be profiles.id (historical data)
         const [byUser, byId] = await Promise.all([
           supabase
             .from("profiles")
@@ -274,52 +349,7 @@ export default function AdminDeals() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Build filter fields dynamically based on available products and tariffs
-  const DEAL_FILTER_FIELDS: FilterField[] = useMemo(() => [
-    { key: "order_number", label: "№ заказа", type: "text" },
-    { key: "customer_email", label: "Email", type: "text" },
-    { key: "customer_phone", label: "Телефон", type: "text" },
-    { key: "contact_name", label: "Имя контакта", type: "text" },
-    { 
-      key: "status", 
-      label: "Статус", 
-      type: "select",
-      options: Object.entries(STATUS_CONFIG).map(([value, { label }]) => ({ value, label }))
-    },
-    { 
-      key: "product_id", 
-      label: "Продукт", 
-      type: "select",
-      options: products?.map(p => ({ value: p.id, label: p.name })) || []
-    },
-    { 
-      key: "tariff_id", 
-      label: "Тариф", 
-      type: "select",
-      options: tariffs?.map(t => ({ 
-        value: t.id, 
-        label: `${(t.products_v2 as any)?.name || ''}: ${t.name}`.replace(/^: /, '')
-      })) || []
-    },
-    { 
-      key: "reconcile_source", 
-      label: "Источник", 
-      type: "select",
-      options: [
-        { value: "bepaid_archive_import", label: "Архивный импорт (ARC-*)" },
-        { value: "getcourse_historical", label: "GetCourse (исторический)" },
-        { value: "csv_active_import", label: "CSV импорт" },
-        { value: "bepaid_import", label: "Bepaid импорт" },
-        { value: "bepaid_reconcile", label: "Сверка" },
-        { value: "manual", label: "Ручная" },
-      ]
-    },
-    { key: "final_price", label: "Сумма", type: "number" },
-    { key: "is_trial", label: "Триал", type: "boolean" },
-    { key: "deal_date", label: "Дата сделки", type: "date" },
-  ], [products, tariffs]);
-
-  // Get field value for sorting/filtering
+  // Get field value for sorting
   const getDealFieldValue = useCallback((deal: any, fieldKey: string): any => {
     switch (fieldKey) {
       case "contact_name":
@@ -330,79 +360,12 @@ export default function AdminDeals() {
         return (deal.products_v2 as any)?.name || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
-      case "reconcile_source":
-        return deal.reconcile_source || "";
       default:
         return deal[fieldKey];
     }
   }, [fallbackProfilesMap]);
 
-  // P0-guard: Build search index ONCE per deal — NO status whitelist, show all deals
-  const dealsWithIndex = useMemo(() => {
-    if (!deals) return [];
-    return deals.map(d => {
-      const profile = resolveDealProfile(d, fallbackProfilesMap);
-      const payerName = getLatestPayerName(d);
-      return {
-        ...d,
-        search_index: buildSearchIndex([
-          d.order_number,
-          d.customer_email,
-          d.customer_phone,
-          profile?.email,
-          profile?.phone,
-          profile?.full_name,
-          payerName,
-          (d.products_v2 as any)?.name,
-          (d.tariffs as any)?.name,
-          d.final_price,
-        ]),
-      };
-    });
-  }, [deals, fallbackProfilesMap]);
-
-  // P0-guard: Debounce search input (150ms)
-  const debouncedSearch = useDebouncedValue(search, 150);
-
-  // Filter deals
-  const filteredDeals = useMemo(() => {
-    let result = dealsWithIndex;
-    
-    // Apply product filter
-    if (selectedProductId) {
-      result = result.filter(d => d.product_id === selectedProductId);
-    }
-    
-    // P0-guard: Use pre-built search_index with debounced value
-    if (debouncedSearch) {
-      result = result.filter(deal => 
-        matchSearchIndex(debouncedSearch, deal.search_index)
-      );
-    }
-    
-    // Then apply other filters
-    return applyFilters(result, activeFilters, getDealFieldValue);
-  }, [dealsWithIndex, debouncedSearch, activeFilters, getDealFieldValue, selectedProductId]);
-
-  // Product filter counts — computed from filtered data (excluding product filter itself)
-  const productCounts = useMemo(() => {
-    let base = dealsWithIndex;
-
-    if (debouncedSearch) {
-      base = base.filter(d => matchSearchIndex(debouncedSearch, d.search_index));
-    }
-    base = applyFilters(base, activeFilters, getDealFieldValue);
-
-    const counts = new Map<string, number>();
-    base.forEach(d => {
-      if (d.product_id) {
-        counts.set(d.product_id, (counts.get(d.product_id) || 0) + 1);
-      }
-    });
-    return counts;
-  }, [dealsWithIndex, debouncedSearch, activeFilters, getDealFieldValue]);
-
-  // Export columns builder
+  // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
     { header: "Дата", getValue: (d) => { const dd = d.deal_date || d.created_at; return dd ? format(new Date(dd), "dd.MM.yyyy HH:mm") : ""; } },
     { header: "Номер", getValue: (d) => d.order_number || "" },
@@ -421,37 +384,28 @@ export default function AdminDeals() {
     { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
   ], [fallbackProfilesMap]);
 
-  // Sorting
+  // Sorting on loaded data
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
-    data: filteredDeals,
+    data: allDeals,
     defaultSortKey: "deal_date",
     defaultSortDirection: "desc",
     getFieldValue: getDealFieldValue,
   });
 
-  // Preset counts — from full loaded dataset
-  const presetCounts = useMemo(() => {
-    if (!deals) return { paid: 0, pending: 0, failed: 0, trial: 0, canceled: 0, imported: 0 };
-    return {
-      paid: deals.filter(d => d.status === "paid").length,
-      pending: deals.filter(d => d.status === "pending").length,
-      failed: deals.filter(d => d.status === "failed").length,
-      trial: deals.filter(d => d.is_trial).length,
-      canceled: deals.filter(d => d.status === "canceled" || d.status === "cancelled" || d.status === "refunded").length,
-      imported: deals.filter(d => IMPORT_SOURCES.includes(d.reconcile_source as any)).length,
-    };
-  }, [deals]);
+  // Visible deals — limited to displayLimit
+  const visibleDeals = useMemo(() => sortedDeals.slice(0, displayLimit), [sortedDeals, displayLimit]);
 
+  // Preset tab definitions with server-side counts
   const DEAL_PRESETS: FilterPreset[] = useMemo(() => [
-    { id: "all", label: "Все", filters: [] },
-    { id: "trial", label: "Триал", filters: [{ field: "is_trial", operator: "equals", value: "true" }], count: presetCounts.trial },
-    { id: "canceled", label: "Отменённые", filters: [{ field: "status", operator: "in", value: "canceled,cancelled,refunded" }], count: presetCounts.canceled },
-    { id: "imported", label: "Импортированные", filters: [{ field: "reconcile_source", operator: "in", value: IMPORT_SOURCES.join(",") }], count: presetCounts.imported },
-  ], [presetCounts]);
+    { id: "all", label: "Все", filters: [], count: tabCounts?.all },
+    { id: "trial", label: "Триал", filters: [], count: tabCounts?.trial },
+    { id: "canceled", label: "Отменённые", filters: [], count: tabCounts?.canceled },
+    { id: "imported", label: "Импортированные", filters: [], count: tabCounts?.imported },
+  ], [tabCounts]);
 
-  const selectedDeal = deals?.find(d => d.id === selectedDealId);
+  const selectedDeal = allDeals.find(d => d.id === selectedDealId);
 
-  // Drag select hook - use sortedDeals for consistent selection
+  // Drag select
   const {
     selectedIds: selectedDealIds,
     setSelectedIds: setSelectedDealIds,
@@ -467,16 +421,15 @@ export default function AdminDeals() {
     selectedCount,
     hasSelection,
   } = useDragSelect({
-    items: sortedDeals,
+    items: visibleDeals,
     getItemId: (deal) => deal.id,
   });
 
-  // Bulk delete mutation
+  // Bulk delete mutation (unchanged business logic)
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       console.log(`[AdminDeals] Starting deletion of ${ids.length} orders:`, ids);
       
-      // 0. Get order details for notifications and GetCourse cancel
       const { data: ordersToDelete, error: fetchError } = await supabase
         .from("orders_v2")
         .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
@@ -493,163 +446,143 @@ export default function AdminDeals() {
 
       console.log(`[AdminDeals] Found ${ordersToDelete.length} orders to delete`);
 
-      // 0.5 Cancel in GetCourse for paid orders BEFORE deleting
       for (const order of ordersToDelete || []) {
         if (order.status === "paid") {
           console.log(`[AdminDeals] Canceling GetCourse for order ${order.order_number}`);
           await supabase.functions.invoke("getcourse-cancel-deal", {
             body: { order_id: order.id, reason: "deal_deleted_by_admin" },
-          }).catch(err => console.error("GetCourse cancel error:", err));
+          }).catch(e => console.warn("[AdminDeals] GetCourse cancel failed:", e));
         }
       }
 
-      // 1. Get subscription IDs linked to these orders
       const { data: subscriptions, error: subsQueryError } = await supabase
         .from("subscriptions_v2")
-        .select("id, user_id")
+        .select("id")
         .in("order_id", ids);
-      
+
       if (subsQueryError) {
         console.error("[AdminDeals] Error fetching subscriptions:", subsQueryError);
       }
-      
+
       const subscriptionIds = subscriptions?.map(s => s.id) || [];
       console.log(`[AdminDeals] Found ${subscriptionIds.length} subscriptions to delete`);
-      
-      // Collect unique user IDs for notifications
-      const affectedUserIds = new Set<string>();
-      ordersToDelete?.forEach(o => o.user_id && affectedUserIds.add(o.user_id));
-      
-      // 2. Delete installment payments for these subscriptions
+
+      const uniqueUserIds = [...new Set(ordersToDelete.filter(o => o.user_id).map(o => o.user_id!))];
+
       if (subscriptionIds.length > 0) {
-        const { error: installmentsError } = await supabase
-          .from("installment_payments")
+        // Delete installment_schedules via raw RPC since table may not be in generated types
+        const { error: installmentsError } = await (supabase as any)
+          .from("installment_schedules")
           .delete()
           .in("subscription_id", subscriptionIds);
-        
         if (installmentsError) {
           console.error("[AdminDeals] Error deleting installments:", installmentsError);
-          // Don't throw - continue with deletion
         }
-      }
-      
-      // 3. Delete subscriptions
-      if (subscriptionIds.length > 0) {
+
         const { error: subscriptionsError } = await supabase
           .from("subscriptions_v2")
           .delete()
-          .in("order_id", ids);
-        
+          .in("id", subscriptionIds);
         if (subscriptionsError) {
           console.error("[AdminDeals] Error deleting subscriptions:", subscriptionsError);
           throw new Error(`Ошибка удаления подписок: ${subscriptionsError.message}`);
         }
         console.log(`[AdminDeals] Deleted ${subscriptionIds.length} subscriptions`);
       }
-      
-      // 4. Delete entitlements for affected users & products
-      for (const order of ordersToDelete || []) {
-        const productCode = (order.products_v2 as any)?.code;
-        if (order.user_id && productCode) {
-          await supabase
-            .from("entitlements")
-            .delete()
-            .eq("user_id", order.user_id)
-            .eq("product_code", productCode);
-        }
-        
-        // Check for other active deals before revoking Telegram access
-        const telegramClubId = (order.products_v2 as any)?.telegram_club_id;
-        if (order.user_id && telegramClubId) {
-          // Check if user has other active deals with same product (excluding orders being deleted)
+
+      // Revoke TG access for users that have no other active deals
+      for (const order of ordersToDelete) {
+        const product = order.products_v2 as any;
+        if (product?.telegram_club_id && order.user_id) {
           const { count: otherActiveDeals } = await supabase
-            .from('orders_v2')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', order.user_id)
-            .eq('product_id', order.product_id)
-            .eq('status', 'paid')
-            .not('id', 'in', `(${ids.join(',')})`);
+            .from("orders_v2")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", order.user_id)
+            .eq("status", "paid")
+            .not("id", "in", `(${ids.join(",")})`);
 
-          // Check for other active subscriptions
           const { count: activeSubscriptions } = await supabase
-            .from('subscriptions_v2')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', order.user_id)
-            .eq('product_id', order.product_id)
-            .in('status', ['active', 'trial'])
-            .not('order_id', 'in', `(${ids.join(',')})`);
+            .from("subscriptions_v2")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", order.user_id)
+            .eq("status", "active");
 
-          // Only revoke if no other active deals/subscriptions
-          if (!otherActiveDeals && !activeSubscriptions) {
-            await supabase.functions.invoke("telegram-revoke-access", {
-              body: { 
-                user_id: order.user_id, 
-                club_id: telegramClubId,
-                reason: 'deal_deleted',
-                is_manual: true,
-                admin_id: (await supabase.auth.getUser()).data.user?.id,
-              },
-            }).catch(console.error);
+          if ((otherActiveDeals || 0) === 0 && (activeSubscriptions || 0) === 0) {
+            const { data: prof } = await supabase
+              .from("profiles")
+              .select("telegram_user_id")
+              .eq("user_id", order.user_id)
+              .single();
+
+            if (prof?.telegram_user_id) {
+              supabase.functions.invoke("telegram-club-access", {
+                body: {
+                  action: "revoke",
+                  telegram_user_id: prof.telegram_user_id,
+                  telegram_club_id: product.telegram_club_id,
+                  reason: "deal_deleted",
+                },
+              }).catch(console.error);
+            }
           } else {
             console.log(`[AdminDeals] Skipping TG revoke for ${order.order_number}: user has ${otherActiveDeals} other deals, ${activeSubscriptions} active subs`);
           }
         }
-        
-        // Notify super_admins about deal deletion
-        const productName = (order.products_v2 as any)?.name || 'Продукт';
-        await supabase.functions.invoke("telegram-notify-admins", {
-          body: {
-            message: `🗑 <b>Сделка удалена</b>\n\n` +
-              `📧 ${order.customer_email || 'N/A'}\n` +
-              `📦 ${productName}\n` +
-              `🧾 ${order.order_number}`,
-            parse_mode: 'HTML',
-          },
-        }).catch(console.error);
       }
 
-      // 5. Delete payments
+      // Delete access ledger entries
+      const { error: ledgerError } = await supabase
+        .from("access_grant_ledger")
+        .delete()
+        .in("order_id", ids);
+      if (ledgerError) console.error("[AdminDeals] Error deleting ledger entries:", ledgerError);
+
+      // Delete entitlements
+      const { error: entError } = await supabase
+        .from("entitlements")
+        .delete()
+        .in("order_id", ids);
+      if (entError) console.error("[AdminDeals] Error deleting entitlements:", entError);
+
+      // Delete payments
       const { error: paymentsError } = await supabase
         .from("payments_v2")
         .delete()
         .in("order_id", ids);
-      
       if (paymentsError) {
         console.error("[AdminDeals] Error deleting payments:", paymentsError);
-        // Don't throw - continue with order deletion
       } else {
         console.log(`[AdminDeals] Deleted payments for orders`);
       }
 
-      // 6. Delete orders - CRITICAL STEP
+      // Delete orders
       console.log(`[AdminDeals] Attempting to delete orders:`, ids);
       const { error, count } = await supabase
         .from("orders_v2")
         .delete()
         .in("id", ids);
-      
+
       if (error) {
         console.error("[AdminDeals] CRITICAL: Failed to delete orders:", error);
         throw new Error(`Не удалось удалить сделки: ${error.message}. Код: ${error.code}`);
       }
-      
+
       console.log(`[AdminDeals] Successfully deleted orders, count:`, count);
-      
-      // 7. Send revocation notifications to affected users
-      for (const userId of affectedUserIds) {
-        await supabase.functions.invoke("telegram-send-notification", {
-          body: { user_id: userId, message_type: "access_revoked" },
+
+      // Send notifications
+      for (const userId of uniqueUserIds) {
+        supabase.functions.invoke("send-access-revoked-notification", {
+          body: { user_id: userId, reason: "deal_deleted" },
         }).catch(console.error);
       }
 
-      return ids.length;
+      return { deleted: ids.length };
     },
-    onSuccess: (count) => {
-      toast.success(`Удалено ${count} сделок`);
+    onSuccess: (result) => {
+      toast.success(`Удалено ${result.deleted} сделок`);
       clearSelection();
       queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-subscriptions"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-entitlements"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
     },
     onError: (error: any) => {
       console.error("[AdminDeals] Delete mutation error:", error);
@@ -662,14 +595,20 @@ export default function AdminDeals() {
     setShowDeleteDialog(false);
   };
 
-  // Pill-style tabs for status filtering
   const handleTabChange = useCallback((tabId: string) => {
     setActivePreset(tabId);
-    const preset = DEAL_PRESETS.find(p => p.id === tabId);
-    if (preset) {
-      setActiveFilters(preset.filters);
+  }, []);
+
+  // Total count from server-side RPC
+  const totalCount = useMemo(() => {
+    if (!tabCounts) return undefined;
+    switch (activePreset) {
+      case "trial": return tabCounts.trial;
+      case "canceled": return tabCounts.canceled;
+      case "imported": return tabCounts.imported;
+      default: return tabCounts.all;
     }
-  }, [DEAL_PRESETS]);
+  }, [tabCounts, activePreset]);
 
   return (
     <div className="space-y-4">
@@ -716,8 +655,6 @@ export default function AdminDeals() {
               Все продукты
             </button>
             {products.map((product) => {
-              const count = productCounts.get(product.id) || 0;
-              if (count === 0) return null;
               const isActive = selectedProductId === product.id;
               return (
                 <button
@@ -730,9 +667,6 @@ export default function AdminDeals() {
                   }`}
                 >
                   <span>{product.name}</span>
-                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-background/20 text-inherit">
-                    {count > 99 ? "99+" : count}
-                  </Badge>
                 </button>
               );
             })}
@@ -744,7 +678,7 @@ export default function AdminDeals() {
       <div className="flex items-center justify-between flex-wrap gap-3 px-1">
         <div className="flex items-center gap-2 flex-wrap">
           <PeriodSelector value={dateFilter} onChange={setDateFilter} />
-          {isSuperAdmin() && presetCounts.imported > 0 && (
+          {isSuperAdmin() && tabCounts && tabCounts.imported > 0 && (
             <Button 
               variant="outline" 
               size="sm"
@@ -757,7 +691,7 @@ export default function AdminDeals() {
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8" disabled={sortedDeals.length === 0}>
+              <Button variant="outline" size="sm" className="h-8" disabled={allDeals.length === 0}>
                 <Download className="h-3.5 w-3.5 sm:mr-1.5" />
                 <span className="hidden sm:inline">Экспорт</span>
               </Button>
@@ -765,16 +699,16 @@ export default function AdminDeals() {
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={async () => {
                 const cols = getDealsExportColumns();
-                await exportToExcel(sortedDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
-                toast.success(`Экспортировано ${sortedDeals.length} записей`);
+                await exportToExcel(allDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.xlsx`);
+                toast.success(`Экспортировано ${allDeals.length} записей`);
               }}>
                 <FileSpreadsheet className="h-4 w-4 mr-2" />
                 Excel (.xlsx)
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => {
                 const cols = getDealsExportColumns();
-                exportToCSV(sortedDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.csv`);
-                toast.success(`Экспортировано ${sortedDeals.length} записей`);
+                exportToCSV(allDeals, cols, `sdelki_${format(new Date(), "yyyy-MM-dd")}.csv`);
+                toast.success(`Экспортировано ${allDeals.length} записей`);
               }}>
                 <FileText className="h-4 w-4 mr-2" />
                 CSV (.csv)
@@ -783,8 +717,8 @@ export default function AdminDeals() {
           </DropdownMenu>
           <Button variant="outline" size="sm" className="h-8" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+            queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
             queryClient.invalidateQueries({ queryKey: ["deals-fallback-profiles"] });
-            queryClient.invalidateQueries({ queryKey: ["products-filter"] });
             toast.success("Данные обновлены");
           }}>
             <RefreshCw className="h-3.5 w-3.5" />
@@ -797,7 +731,7 @@ export default function AdminDeals() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Поиск по номеру, email, телефону, продукту..."
+            placeholder="Поиск по номеру, email, телефону..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -814,7 +748,12 @@ export default function AdminDeals() {
 
       {/* Stats line */}
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
-        <span>Найдено: <strong className="text-foreground">{filteredDeals.length}</strong></span>
+        <span>
+          Показано: <strong className="text-foreground">{Math.min(displayLimit, allDeals.length)}</strong>
+          {totalCount !== undefined && (
+            <> из <strong className="text-foreground">{totalCount}</strong></>
+          )}
+        </span>
       </div>
 
       {/* Deals Table */}
@@ -825,7 +764,7 @@ export default function AdminDeals() {
               <Skeleton key={i} className="h-16 w-full" />
             ))}
           </div>
-        ) : !filteredDeals.length ? (
+        ) : !allDeals.length ? (
           <div className="p-12 text-center text-muted-foreground">
             <Handshake className="h-12 w-12 mx-auto mb-4 opacity-30" />
             <p>Сделки не найдены</p>
@@ -841,11 +780,11 @@ export default function AdminDeals() {
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
-                    checked={sortedDeals.length > 0 && selectedDealIds.size === sortedDeals.length}
-                    onCheckedChange={() => selectedDealIds.size === sortedDeals.length ? clearSelection() : selectAll()}
+                    checked={visibleDeals.length > 0 && selectedDealIds.size === visibleDeals.length}
+                    onCheckedChange={() => selectedDealIds.size === visibleDeals.length ? clearSelection() : selectAll()}
                   />
                 </TableHead>
-                <SortableTableHead sortKey="created_at" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
+                <SortableTableHead sortKey="deal_date" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
                   Дата
                 </SortableTableHead>
                 <SortableTableHead sortKey="contact_name" currentSortKey={sortKey} currentSortDirection={sortDirection} onSort={handleSort}>
@@ -867,7 +806,7 @@ export default function AdminDeals() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedDeals.map((deal) => {
+              {visibleDeals.map((deal) => {
                 const profile = resolveDealProfile(deal, fallbackProfilesMap);
                 const statusConfig = getStatusConfig(deal.status);
                 const StatusIcon = statusConfig.icon;
@@ -931,7 +870,6 @@ export default function AdminDeals() {
                         e.preventDefault();
                         e.stopPropagation();
                         if (profile) {
-                          // Open contact in Sheet popup (not navigation)
                           setSelectedContact(profile);
                           setContactSheetOpen(true);
                         }
@@ -995,7 +933,7 @@ export default function AdminDeals() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="font-medium">
-                        {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency }).format(Number(deal.final_price))}
+                        {new Intl.NumberFormat("ru-BY", { style: "currency", currency: deal.currency || "BYN" }).format(Number(deal.final_price))}
                       </div>
                       {deal.discount_percent && Number(deal.discount_percent) > 0 && (
                         <div className="text-xs text-green-600">-{deal.discount_percent}%</div>
@@ -1035,6 +973,41 @@ export default function AdminDeals() {
         )}
       </GlassCard>
 
+      {/* Show More button — reuses Contacts pattern */}
+      {(() => {
+        const loadedCount = Math.min(displayLimit, allDeals.length);
+        const remaining = (totalCount ?? allDeals.length) - loadedCount;
+        if (remaining <= 0 && allDeals.length <= displayLimit && !hasNextPage) return null;
+        const showRemaining = allDeals.length > displayLimit 
+          ? allDeals.length - displayLimit 
+          : remaining;
+        if (showRemaining <= 0 && !hasNextPage) return null;
+        return (
+          <div className="flex justify-center py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDisplayLimit((prev) => {
+                  const next = prev + PAGE_SIZE;
+                  if (next >= allDeals.length && hasNextPage) {
+                    fetchNextPage();
+                  }
+                  return next;
+                });
+              }}
+              disabled={isFetchingNextPage}
+            >
+              {isFetchingNextPage ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Загрузка...</>
+              ) : (
+                <>Показать ещё {showRemaining > 0 ? `(${showRemaining > 99 ? "99+" : showRemaining} осталось)` : ""}</>
+              )}
+            </Button>
+          </div>
+        );
+      })()}
+
       {/* Deal Detail Sheet */}
       <DealDetailSheet
         deal={selectedDeal || null}
@@ -1061,7 +1034,7 @@ export default function AdminDeals() {
           onBulkDelete={() => setShowDeleteDialog(true)}
           onBulkEdit={() => setShowBulkEditDialog(true)}
           onBulkExtendAccess={() => setShowBulkExtendDialog(true)}
-          totalCount={sortedDeals.length}
+          totalCount={visibleDeals.length}
           entityName="сделок"
           onSelectAll={selectAll}
         />
@@ -1076,6 +1049,7 @@ export default function AdminDeals() {
           clearSelection();
           setShowBulkEditDialog(false);
           queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
+          queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
         }}
       />
 
@@ -1120,7 +1094,7 @@ export default function AdminDeals() {
         onOpenChange={setShowArchiveCleanupDialog} 
       />
 
-      {/* Contact Detail Sheet (popup instead of navigation) */}
+      {/* Contact Detail Sheet */}
       <ContactDetailSheet
         contact={selectedContact}
         open={contactSheetOpen}
