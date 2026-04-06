@@ -1,4 +1,4 @@
-## Отчет о выполнении: CONSOLIDATED SPRINT — ACCESS-SCOPE-FORENSICS
+## Отчет о выполнении: CONSOLIDATED SPRINT — FINAL REBUCKETING & EXECUTE PLANS
 
 Главный вопрос: **почему у пользователя есть конкретный доступ, почему он видит конкретный модуль, как это названо в UI, и совпадает ли с реальной сущностью в БД**.
 
@@ -10,226 +10,159 @@
 |---|---|
 | PATCH 1 | closed |
 | PATCH 2 | partial — 12 ghost кейсов |
-| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** — manual proof |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** — manual proof |
+| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** |
+| PATCH-DERGELEVA-BROWSER-PROOF | **closed** |
 | PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **root cause proved** |
-| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **implemented** — Guard A + Guard B deployed, proof incomplete (no real trigger yet) |
-| PATCH-GHOST-PLACEHOLDER-NORMALIZATION | pending |
-| PATCH-GHOST-CLAIM-BRIDGE-PROOF | pending |
-| PATCH 3 ACCESS-SCOPE-FORENSICS | **done — phases 1-9** |
-| — Phase 5: 43 overvisible classification | done |
-| — Phase 5b: 49 cb_module_ip basis audit | done |
-| — Phase 6: naming audit | done |
-| — Phase 7: default-deny visibility | done |
-| — Phase 8: purchase→access→visibility matrix | done |
-| — Phase 8b: 102→226 paid re-classification | done |
-| — Phase 9: product card access SoT | done |
-| PATCH-PRODUCT-MODULE-TARIFF-NAMING-AUDIT | **done** (Phase 6) |
-| PATCH-DEFAULT-DENY-TRAINING-VISIBILITY | **done** (Phase 7) |
-| PATCH-PRODUCT-CARD-ACCESS-SOT | **done** (Phase 9) |
+| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | Guard A: **proven (synthetic)**, Guard B: **code-proved** |
+| PATCH 3 ACCESS-SCOPE-FORENSICS | **done — all phases** |
+| PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION | **ready for execute** |
+| PATCH-NAMING-NORMALIZATION-UI-FIRST | **ready for execute** |
+| PATCH-REAL-FULFILLMENT-GAPS | **ready for execute** |
+| 49 cb_module_ip | **manual_or_bulk_unconfirmed_business_basis** — revoke запрещён |
 | PATCH 4 duration drift | pending |
 
 ---
 
-### PATCH-KOROLYOVA-REVOKE-GUARD-FIX — IMPLEMENTED, PROOF INCOMPLETE
+### ФИНАЛЬНЫЙ REBUCKETING: 477 paid orders без active entitlement
 
-**Guard A** (`grant-access-for-order`): если `accessEndAt < now()` при создании подписки → override на `now() + 48h`. Логирование: `subscription.stale_date_overridden`.
+**Фраза "122/461/469 paid_but_no_entitlement" — УБРАНА как вводящая в заблуждение.**
 
-**Guard B** (`telegram-kick-violators`): перед kick проверяет наличие `provider_managed` подписки, созданной < 48h назад → skip kick с audit `KICK_SKIP_PROVIDER_GRACE`.
+| Bucket | Count | Verdict | Объяснение |
+|---|---|---|---|
+| no_user_id_imported | 278 | NOT BUG | Импортированные заказы без user_id — entitlement физически невозможен |
+| historical_expired | 146 | NOT BUG | Истекшие подписки/entitlements, штатный жизненный цикл |
+| subscription_product_no_entitlement_needed | 20 | LEGAL | SoT = subscriptions_v2 (Club, buh_business, consultation) |
+| module_covered_by_parent_cb20 | 17 | LEGAL (if included) | У пользователя active cb20 entitlement |
+| covered_by_business_club_rule | 7 | LEGAL | BUSINESS-тариф клуба покрывает доступ к ЦБ |
+| legacy_or_test_noise | 4 | NOT BUG | Тестовый продукт |
+| entitlement_exists_by_code | 1 | NOT BUG | Entitlement есть, но привязан по product_code |
+| **real_fulfillment_gap** | **4** | **BUG** | 1 пользователь (Бруйло), 4 модуля |
+| **ИТОГО** | **477** | | |
 
-Оба guard-а задеплоены. В audit_logs пока нет ни одного срабатывания — guard-ы не триггерились в production. **Для полного proof нужен один из:** реальный audit-log после срабатывания ИЛИ воспроизводимый synthetic test-case.
+**Реальных багов: 4** (все — 1 пользователь, 4 модульных заказа без entitlement).
 
 ---
 
-### PATCH 3 ACCESS-SCOPE-FORENSICS — Результаты
+### KOROLYOVA GUARDS — PROOF STATUS
 
-#### Phase 5: 43 overvisible → re-bucketing в 4 группы
-
-| Bucket | Кол-во | Описание |
+| Guard | Proof | Статус |
 |---|---|---|
-| direct_order_legal | 0 | — |
-| bonus_rule_legal | 0 | — |
-| manual_or_bulk_legal_but_unconfirmed_reason | 49 | cb_module_ip, bulk_grant без order |
-| cleanup_candidate_no_basis | 0 | — |
+| Guard A (stale date override) | Synthetic curl → `subscription.stale_date_overridden` в audit_logs (id: bba06866) | ✅ PROVEN |
+| Guard B (kick grace window) | Code-verified: L365-396 в telegram-kick-violators, skip для provider_managed < 48h | ⚠️ CODE-PROVED, нет production event |
 
-**Все 49** overvisible = cb_module_ip, все через bulk_grant (batch a2ff3724) от 2026-03-27, entitlement через historical_backfill. Ни у одного нет paid order. Классификация: **admin bulk grant с неподтверждённым бизнес-основанием**.
+---
 
-#### Phase 5b: cb_module_ip basis audit (49 записей)
+### 3 TRAINING MODULES — БИЗНЕС-ПРОВЕРКА
 
-Единый паттерн для всех 49:
-- **Subscription source:** bulk_grant, batch_id=a2ff3724-19bd-44fd-8201-944cdfec174f, group=A, duration=90d
-- **Entitlement source:** historical_backfill, batch=BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z
-- **Paid order:** НЕТ (0 из 49)
-- **Billing type:** mit
-- **Grant actor:** admin bulk_grant
-- CSV: `cb_module_ip_basis_audit.csv`
-
-#### Phase 6: Naming audit
-
-| Anomaly | Кол-во | Описание |
-|---|---|---|
-| module_named_as_parent_prefix | 7 | cb_module_* — имя начинается с "Ценный бухгалтер \| 1 ступень 2.0 \|" |
-| module_named_as_parent_prefix_wrong_category | 1 | prd_08a84b2b7223 — category=course, но имя модульное |
-| trailing_pipe | 2 | cb20, prd_0d01a2fdc477 — trailing pipe в имени |
-| ok | остальные | — |
-
-**ЦБ zone продукты (карта сущностей):**
-
-| product_code | name | category | real_entity_type | paid_orders | active_ent |
-|---|---|---|---|---|---|
-| cb20 | Ценный бухгалтер \| 1 ступень 2.0 \| | course | **full_product** | 444 | 121 |
-| prd_0d01a2fdc477 | Ценный бухгалтер \| 2 ступень \| | course | **full_product** | 111 | 88 |
-| cb_module_ip | ...Модуль: Учет у ИП | module | **module** | 0 | 49 |
-| cb_module_catering | ...Модуль: Общепит | module | **module** | 2 | 0 |
-| cb_module_construction | ...Модуль: Строительство | module | **module** | 1 | 0 |
-| cb_module_marketplaces | ...Модуль: Маркетплейсы | module | **module** | 5 | 0 |
-| cb_module_production | ...Модуль: Производство | module | **module** | 5 | 0 |
-| cb_module_pvt | ...Модуль: ПВТ | module | **module** | 0 | 0 |
-| cb_module_retail | ...Модуль: Розничная торговля | module | **module** | 6 | 0 |
-| prd_08a84b2b7223 | ...Модуль: Грузо-/пассажироперевозки | course(!) | **module** | 3 | 0 |
-
-**Проблемы naming:**
-1. Все модули начинаются с имени parent product — в UI выглядят как будто полный продукт
-2. prd_08a84b2b7223 имеет category=course, но по naming — это модуль
-3. cb20 и prd_0d01a2fdc477 имеют trailing pipe в имени
-
-**Deal label resolution chain:**
-- Приоритет отображения: products_v2.name → purchase_snapshot.display_purchase_name → fallback
-- Для модулей HIGH collision risk — имя начинается с parent
-- **Fix target:** strip parent prefix в UI, показывать только "Модуль: X"
-
-#### Phase 7: Default-deny visibility audit
-
-| Anomaly | Кол-во | Описание |
-|---|---|---|
-| access_controlled | 5 | Имеют product + access_rules → корректно |
-| active_without_access_rule | 3 | product_id привязан, но access_rules нет |
-| no_product_no_rule_inactive | 7 | Нет product, нет rules, is_active=false |
-
-**3 тренинга без access_rules (активные):**
-1. `pn_s_fl` — Подоходный налог для физ лиц (0 entitlements, 0 subs)
-2. `prd_0e5fda1e2273` — Деньги BY 1 тариф (0 entitlements, 3 subs)  
-3. `1769009596189-398a` — Подоходный налог ИП (9 entitlements, 9 subs, 11 orders)
-
-**Целевой контракт Default Deny:**
-- current: если product_id есть → gated by entitlement; если нет → implicit allow
-- target: нет binding + нет access_rule = deny. Период отсутствия = невидимость
-
-**Mapping текущего → целевого:**
-
-| Сущность | Current | Target |
-|---|---|---|
-| 7 inactive без product | implicit allow (but inactive) | deny (уже inactive, ok) |
-| 3 active без access_rules | entitlement-gated but no rule path | добавить access_rules ИЛИ скрыть |
-| 5 с access_rules | access_controlled | ok |
-
-#### Phase 8: Purchase→Access→Visibility matrix
-
-Полная матрица: 1733 строки в `purchase_to_access_to_visibility_matrix.csv`.
-
-**Re-классификация "102 paid_but_no_entitlement"** (реально 226 кейсов после полного скана):
-
-| Sub-bucket | Кол-во | Коды продуктов | Описание |
-|---|---|---|---|
-| historical_expired | 102 | buh_business, cb20, club, consultation | Были entitlement, срок истёк — **не аномалия** |
-| paid_missing_active_entitlement | 103 | cb20, club, course_close_year, prd_0d01a2fdc477 и др. | **Реальный gap** — paid order, нет active entitlement |
-| module_paid_no_entitlement | 19 | cb_module_* | Модульные покупки без entitlement |
-| service_no_entitlement_expected | 2 | consultation | Услуга, entitlement не требуется |
-
-**Итого реальных проблемных:** 103 + 19 = **122 кейса** (paid order → нет active entitlement).
-
-#### Phase 9: Product card Access SoT
-
-- `ProductAccessRulesTab` читает из `access_rules` — это **конфигурационный инструмент**, не SoT фактического доступа.
-- Фактический SoT: `entitlements` (кто имеет) + `subscriptions_v2` (кто платит).
-- Вкладка «Доступы» продукта показывает **правила выдачи**, а не реальных получателей.
-
-**Расхождения config vs fact:**
-
-| Продукт | access_rules (config) | live entitlements (fact) | live subs | paid orders | Расхождение |
-|---|---|---|---|---|---|
-| cb_module_ip | 2 rules (1 active) | 49 | 59 | 0 | 49 ent без orders — bulk grant |
-| 1769009596189-398a | 0 rules | 9 | 9 | 11 | entitlements без rules |
-| prd_3318c30fdf2c | 0 rules | 0 | 3 | 4 | subs без rules (тестовый) |
-| consultation | 0 rules | 0 | 0 | 3 | orders без entitlements (service) |
-
-**Вывод:** вкладка «Доступы» = access_rules (config), НЕ entitlements (fact). До подтверждения обратного, **не использовать как SoT для execute-решений**.
-
-#### Sample-case: Протасевич
-
-| Слой | Продукт | Статус | Срок | Basis |
+| Модуль | Standalone заказы | Часть cb20 | Бизнес-модель | Рекомендация |
 |---|---|---|---|---|
-| ORDER | Gorbova Club (CHAT) | paid | 2026-01-26 | club expired |
-| ORDER | ЦБ 1 ступень (Бизнес-леди) | paid | 2026-03-28 | ✅ direct |
-| ORDER | ЦБ 2 ступень (Премиум) | paid | 2026-03-29 | ✅ direct |
-| ORDER | ЗАКРОЙ ГОД (x2) | paid | 2026-03-29 | ✅ direct |
-| SUB | cb_module_ip | active | 2026-06-25 | ⚠️ bulk_grant, no order |
-| SUB | prd_0d01a2fdc477 (2 ступень) | active | 2026-08-30 | ✅ from order |
-| ENT | cb_module_ip | active | 2026-06-25 | ⚠️ historical_backfill from sub |
-| ENT | prd_0d01a2fdc477 | active | 2026-08-30 | ✅ from order |
-| ENT | cb20 | active | 2026-12-23 | ✅ historical_backfill from order |
+| Общепит | 2 paid | да (parent=cb20_root) | **dual** | Rule-based visibility |
+| ПВТ | 0 | да (parent=cb20_root) | part_of_cb20 only | Rule-based visibility |
+| Строительство | 1 paid | да (parent=cb20_root) | **dual** | Rule-based visibility |
 
-**Вывод по Протасевич:** cb_module_ip — необоснованный доступ. Нет paid order. Subscription создана admin bulk_grant. UI-название `Ценный бухгалтер | 1 ступень 2.0 | Модуль: Учет у ИП` — содержит модуль, но начинается с названия основного продукта, создавая визуальную путаницу с cb20.
+**Все 3 модуля имеют product_id=NULL в training_modules.** Привязаны к дереву cb20 через parent_module_id.
+
+**Вывод:** Простой UPDATE product_id недостаточен, т.к. Общепит и Строительство — dual model (и standalone, и часть cb20). Нужен rule-based visibility через access_rules, а не жёсткая перепривязка.
 
 ---
 
-### Consolidated Summary Table (для execute-решений)
+### 49 cb_module_ip — СТАТУС
 
-| Bucket | Кол-во | Scope | Действие |
-|---|---|---|---|
-| legal_access | ~510 | orders+entitlements совпадают | ok |
-| legal_bonus_access | 0 | — | — |
-| legal_manual/bulk_access | 49 | cb_module_ip — bulk_grant | **бизнес-решение: оставить или revoke?** |
-| paid_but_missing_entitlement | 122 | 103 course + 19 module | **backfill entitlements** |
-| historical_expired | 102 | были, истекли | **не аномалия** |
-| visibility_mislabel_only | 10 | 8 module prefix + 2 trailing pipe | **fix UI labels** |
-| default_deny_gap | 3 | active trainings без access_rules | **добавить rules или скрыть** |
-| cleanup_candidates | 0 | — | — |
+**Классификация: `manual_or_bulk_unconfirmed_business_basis`**
+
+- Выданы через bulk_grant (batch a2ff3724, 2026-03-27)
+- Нет связанных paid orders
+- Массовый revoke **ЗАПРЕЩЁН** до выяснения бизнес-основания
+- Не является cleanup-candidate и не является auto-revoke
 
 ---
 
-### Source-of-Truth Hierarchy (зафиксировано)
+### EXECUTE PLAN: PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION
 
-1. **orders_v2** — факт оплаты (purchase basis)
-2. **subscriptions_v2** — период активного доступа (access period)
-3. **entitlements** — факт наличия права (access fact, canonical SoT)
-4. **access_rules** — конфигурационная логика выдачи (config)
-5. **training_modules + useSidebarModules** — UI visibility resolver (1:1 с entitlements)
+**Цель:** Пользователь с entitlement на cb20 не должен автоматически видеть модуль, который продаётся как самостоятельный продукт.
 
-Вкладка продукта «Доступы» = access_rules (config), НЕ entitlements (fact).
+**DoD:**
+1. Каждый продаваемый отдельно модуль имеет собственный product_id в training_modules
+2. Fallback на parent допустим ТОЛЬКО для модулей, входящих в основной продукт по бизнес-логике
+3. Для dual-модулей (Общепит, Строительство) — rule-based visibility через access_rules
+4. Default deny: нет binding/rule = visibility denied
 
----
-
-### Артефакты (CSV)
-
-| Файл | Строк | Описание |
-|---|---|---|
-| cb_module_ip_basis_audit.csv | 2 | Полный origin audit 49 cb_module_ip |
-| deal_product_naming_audit.csv | 1987 | Naming audit всех paid orders |
-| mislabelled_ui_entities.csv | 11 | Модули/продукты с проблемными UI-именами |
-| deal_label_resolution_chain.csv | 11 | Цепочка разрешения label для каждого ЦБ продукта |
-| default_deny_training_visibility_audit.csv | 15 | Все root training modules + binding status |
-| purchase_to_access_to_visibility_matrix.csv | 1734 | Полная матрица purchase→access→visibility |
-| product_access_tab_sot_audit.csv | 39 | Все active products + access data |
+**Блокер:** Нужно бизнес-решение по каждому из 3 модулей — какие пользователи cb20 должны видеть их бесплатно, а какие нет.
 
 ---
 
-### STOP-guards
+### EXECUTE PLAN: PATCH-NAMING-NORMALIZATION-UI-FIRST
 
-- **До утверждения execute-патча запрещено:**
-  - Массовые revoke по cb_module_ip
-  - Массовые revoke bonus access
-  - Изменение UI labels без матрицы
-- Не менять auth, RLS, edge functions (кроме Korolyova guards — done)
-- Сначала полная карта, потом execute
+**Стратегия: UI-First.** Не менять products_v2.name массово. 
+
+**Три уровня отображения:**
+- `canonical_name_db` — products_v2.name (только точечная чистка trailing pipes)
+- `short_display_name_ui` — короткий лейбл в UI (напр. "Модуль: Общепит")
+- `entity_badge` — course / module / subscription / service
+
+**Экраны для обновления (все используют getDealDisplayName):**
+1. Список сделок (AdminDeals.tsx) — HIGH
+2. Карточка сделки (DealDetailSheet.tsx) — HIGH
+3. Карточка контакта (ContactDetailSheet.tsx) — HIGH
+4. История оплат (ContactPaymentsTab.tsx) — HIGH
+5. Связанные сделки bePaid (ContactDealsDialog.tsx) — MEDIUM
+6. Привязка сделки/подписки (LinkDealDialog, LinkSubscriptionDealDialog) — MEDIUM
+
+**DB fixes (LOW):**
+- cb20: убрать trailing `|` → "Ценный бухгалтер 1 ступень 2.0"
+- prd_0d01a2fdc477: убрать trailing `| ` → "Ценный бухгалтер 2 ступень"
+
+**Зона ЦБ — обязательное разделение в UI:**
+- Основной продукт: badge "Курс"
+- Отдельный модуль: badge "Модуль" + короткое имя
+- Тариф: отдельная строка, не подменяет продукт
 
 ---
 
-### Следующие шаги (pending approval)
+### EXECUTE PLAN: PATCH-REAL-FULFILLMENT-GAPS
 
-1. **Execute-решение по 49 cb_module_ip** — revoke или оставить? Все от admin bulk_grant, без orders.
-2. **3 training modules без access_rules** — добавить rules или скрыть?
-3. **122 paid_but_no_entitlement** — backfill missing entitlements?
-4. **10 naming mislabels** — нормализовать UI-имена (strip parent prefix)?
-5. **prd_08a84b2b7223** — исправить category course→module?
-6. **Korolyova proof** — дождаться реального trigger или сделать synthetic test?
+**4 реальных бага** (1 пользователь — Анна Бруйло, a.bruylo@ajoure.by):
+- cb_module_retail (order GC-3830657-M1)
+- cb_module_catering (order GC-3830657-M2)
+- cb_module_production (order GC-3830657-M3)
+- cb_module_marketplaces (order GC-3830657-M5)
+
+**Root cause:** fulfillment_broken — paid order создан, но entitlement не был выдан.
+
+**Fix:** Backfill 4 entitlements для user_id 8482889a через grant-access-for-order.
+
+---
+
+### PRODUCT VISIBILITY CONTRACT MATRIX
+
+Артефакт: `product_visibility_contract_matrix.csv`
+
+Ключевые правила:
+- Club, buh_business → SoT = subscriptions_v2, entitlement не обязателен
+- cb20, course_close_year, ЦБ2 → SoT = entitlements (+ subscriptions для курсов)
+- Все модули → SoT = entitlements, requires_entitlement = yes
+- consultation → service, entitlement не применим
+- digital_product (вебинары) → entitlement не обязателен
+
+---
+
+### АРТЕФАКТЫ
+
+| Файл | Описание |
+|---|---|
+| paid_no_entitlement_final_rebucketed.csv | Финальная классификация 477 paid-no-entitlement |
+| real_fulfillment_gaps_detail.csv | 4 реальных бага с root cause |
+| product_visibility_contract_matrix.csv | Единый контракт видимости по всем продуктам |
+| naming_normalization_ui_first_plan.csv | План нормализации по экранам |
+| training_module_business_check.csv | Бизнес-проверка 3 модулей |
+
+---
+
+### СЛЕДУЮЩИЙ ШАГ
+
+Порядок execute-патчей (после утверждения):
+1. **PATCH-REAL-FULFILLMENT-GAPS** — backfill 4 entitlements (минимальный риск)
+2. **PATCH-NAMING-NORMALIZATION-UI-FIRST** — entity badges + trailing pipe cleanup
+3. **PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION** — rule-based visibility (требует бизнес-решения)
+
+Массовые revoke/cleanup запрещены до полной цепочки: покупка → продукт → subscription → entitlement → visibility → UI label.
