@@ -57,8 +57,8 @@
 | POST-FIX PROOF entitlement_mode | **done** | 0 NULL remaining |
 | FIELD-BINDING MATRIX final | **done** | 48 fields, 5 statuses |
 | PATCH-AUTO-RENEW-SOT-GAP | **pending** | Архитектурный разрыв |
-| PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL | **pending** | Hotfix-кандидат |
-| PATCH-REMOVE-DECORATIVE-SUBSCRIPTION-FIELDS | **pending** | Ждёт утверждения матрицы |
+| PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL | **done** | 4 точки в webhook исправлены |
+| PATCH-REMOVE-DECORATIVE-SUBSCRIPTION-FIELDS | **done** | auto_charge_delay_days помечен ⚠️ display only |
 | DISCOVERY: GRANULAR-MODULE-BINDING | **pending** | Read-only |
 | 49 cb_module_ip | **hold** | revoke запрещён |
 
