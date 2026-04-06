@@ -152,24 +152,28 @@ Deno.serve(async (req) => {
     const productId = order.product_id;
 
     // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
-    // If this order already fulfilled (both entitlement AND subscription exist),
-    // return strict no-op to prevent subscription extension on repeat calls.
+    // If this order already fulfilled (both entitlement AND subscription exist
+    // for the CORRECT product_id), return strict no-op.
     const { data: existingEntByOrder } = await supabase
       .from("entitlements")
-      .select("id, status, expires_at")
+      .select("id, status, expires_at, product_id")
       .eq("order_id", orderId)
       .eq("user_id", userId)
       .maybeSingle();
 
     const { data: existingSubByOrder } = await supabase
       .from("subscriptions_v2")
-      .select("id, status, access_end_at")
+      .select("id, status, access_end_at, product_id")
       .eq("order_id", orderId)
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (existingEntByOrder && existingSubByOrder) {
-      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled. Entitlement: ${existingEntByOrder.id}, Subscription: ${existingSubByOrder.id}. Strict no-op.`);
+    // Only consider fulfilled if entitlement matches the order's product_id
+    const entitlementMatchesProduct = existingEntByOrder && existingEntByOrder.product_id === productId;
+    const subscriptionMatchesProduct = existingSubByOrder && existingSubByOrder.product_id === productId;
+
+    if (entitlementMatchesProduct && subscriptionMatchesProduct) {
+      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled with correct product ${productId}. Entitlement: ${existingEntByOrder.id}, Subscription: ${existingSubByOrder.id}. Strict no-op.`);
 
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
@@ -179,6 +183,7 @@ Deno.serve(async (req) => {
         target_user_id: userId,
         meta: {
           order_id: orderId,
+          product_id: productId,
           existing_entitlement_id: existingEntByOrder.id,
           existing_subscription_id: existingSubByOrder.id,
           entitlement_status: existingEntByOrder.status,
@@ -200,6 +205,11 @@ Deno.serve(async (req) => {
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Log if entitlement exists for wrong product (collision case from split)
+    if (existingEntByOrder && !entitlementMatchesProduct) {
+      console.warn(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} has entitlement ${existingEntByOrder.id} but for WRONG product ${existingEntByOrder.product_id} (expected ${productId}). Proceeding to collision handling.`);
     }
     // ── END IDEMPOTENCY GUARD ───────────────────────────────────────────
     const tariffId = order.tariff_id;
