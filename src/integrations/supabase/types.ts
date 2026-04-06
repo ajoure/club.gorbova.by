@@ -12477,6 +12477,15 @@ export type Database = {
       }
       get_contact_tab_counts: { Args: { p_search?: string }; Returns: Json }
       get_db_now: { Args: never; Returns: string }
+      get_deal_tab_counts: {
+        Args: {
+          p_date_from?: string
+          p_date_to?: string
+          p_product_id?: string
+          p_search?: string
+        }
+        Returns: Json
+      }
       get_demo_profile_ids: {
         Args: never
         Returns: {
