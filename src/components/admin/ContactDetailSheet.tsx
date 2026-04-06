@@ -2645,19 +2645,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </CardContent>
               </Card>
 
-              {/* Current active subscriptions */}
-              {subsLoading ? (
+              {/* Current active access (subscriptions + entitlements) */}
+              {(subsLoading || entLoading) ? (
                 <div className="space-y-3">
                   {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
                 </div>
-              ) : !activeSubscriptions.length && !finishedSubscriptions.length ? (
+              ) : !totalActiveAccess && !finishedSubscriptions.length && !finishedEntitlements.length ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Key className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>Нет подписок</p>
+                  <p>Нет доступов</p>
                 </div>
               ) : (
                 <>
-                  {!activeSubscriptions.length && (
+                  {!totalActiveAccess && (
                     <div className="text-center py-4 text-muted-foreground text-sm">
                       Нет текущих активных доступов
                     </div>
