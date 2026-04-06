@@ -1,298 +1,227 @@
-## CONSOLIDATED SPRINT — EXECUTE PHASE
+## Да, согласен, с учетом правок:
 
-Основная нить: **purchase → subscription → entitlement → visibility → UI label → fact/config SoT**.
+&nbsp;
 
-Цель текущего спринта — не косметика, а окончательная увязка цепочки покупка → выдача → подписка/entitlement → видимость → UI → runtime SoT, без допущений по названиям и без решений по похожести строк.
+1. **Блок 2 не только proof, но и обязательно execute-backfill для entitlement_mode.**
+  Нельзя оставлять 19 из 26 продуктов на fallback. Это ломает сам смысл ID-first.
+  Добавь:
+  &nbsp;
+  - PATCH-ENTITLEMENT-MODE-BACKFILL-EXECUTE
+  - заполнить products_v2.entitlement_mode **для всех активных продуктов**
+  - после этого второй шаг: доказать, что fallback больше не используется для production-продуктов
+  - отдельный артефакт: entitlement_mode_post_backfill_proof.csv
+  - DoD: NULL entitlement_mode = 0 для всех боевых продуктов, fallback допустим только для legacy/test
+  &nbsp;
+2. **По auto_renew зафиксируй прямо в плане: найден не просто risk, а архитектурный разрыв SoT.**
+  Сейчас:
+  &nbsp;
+  - grant-access-for-order читает order.meta.payment_flow
+  - bepaid-webhook этот payment_flow массово не пишет
+  - значит логика auto_renew опирается на поле, которое не является гарантированным SoT
+    Это надо назвать прямо:
+  - PATCH-AUTO-RENEW-SOT-GAP
+  - SoT для автопродления должен определяться не из случайного meta.payment_flow, а из **нормализованного runtime-источника**: order/offer/provider mapping
+  - если для части путей источник не записывается, это баг модели, а не просто пробел в proof
+  &nbsp;
+3. **В Блок 1 добавь обязательную классификацию всех путей создания подписки.**
+  Не просто “проверить после деплоя”, а построить матрицу:
+  &nbsp;
+  - grant-access-for-order
+  - bepaid-webhook
+  - admin/manual path
+  - migrate/import/backfill
+  - extension path
+    Для каждого пути:
+  - откуда берётся auto_renew
+  - откуда берётся payment_flow
+  - обязателен ли payment_method_id
+  - какой источник истины используется
+    Артефакт:
+  - subscription_creation_path_matrix.csv
+  &nbsp;
+4. **Добавь отдельный hotfix-кандидат, если подтвердится NULL payment_flow на новых заказах webhook-пути.**
+  Это не просто “зафиксировать gap”, а сразу подготовить:
+  &nbsp;
+  - PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
+  - при paid/update order webhook должен явно писать в orders_v2.meta.payment_flow
+  - DoD: новые webhook-paid orders больше не имеют NULL payment_flow
+  &nbsp;
+5. **В field-binding matrix обязательно раздели 5 статусов, не 3-4.**
+  Для каждого поля нужен один из статусов:
+  &nbsp;
+  - runtime_sot
+  - runtime_used_secondary
+  - display_only
+  - dead_field
+  - misleading_ui_field
+    И отдельно колонка:
+  - must_be_removed_from_ui
+  - must_be_moved_to_advanced_settings
+  - must_become_sot
+  &nbsp;
+6. **По tariff_offers, tariffs, products_v2 добавь правило “ни одно поле не считается рабочим, пока не доказан runtime-read”.**
+  Это важно из-за твоего комментария: часть кнопок и настроек сейчас декоративные.
+  Прямо зафиксируй в плане:
+  &nbsp;
+  - отсутствие runtime-read = поле считается нефункциональным
+  - нефункциональные поля нельзя оставлять в основном UI без предупреждения
+  &nbsp;
+7. **В discovery по granular-module-binding добавь обязательную связку с ID-first.**
+  Для каждого модуля надо фиксировать:
+  &nbsp;
+  - product_id
+  - training_module_id
+  - access_rule_id
+  - parent training module id
+  - standalone / parent-covered / dual
+    Никаких классификаций по имени модуля, slug или похожести текста.
+  &nbsp;
+8. **Порядок выполнения уточни так:**
+  &nbsp;
+  - сначала POST-FIX PROOF auto_renew
+  - параллельно subscription_creation_path_matrix
+  - затем PATCH-ENTITLEMENT-MODE-BACKFILL-EXECUTE
+  - затем entitlement_mode_post_backfill_proof
+  - затем field_binding_runtime_matrix_final
+  - затем решение по hotfix webhook
+  - только после этого discovery по granular module binding считать следующей основной веткой
+  &nbsp;
+9. **Что не упустить:**
+  В план надо добавить явный вывод:
+  &nbsp;
+  - payment_flow сейчас не может считаться надёжным SoT, пока не доказана его обязательная запись во всех путях
+  - entitlement_mode сейчас ещё не завершён как migration-to-SoT, потому что часть продуктов сидит на fallback
+  - следовательно, execute по следующим access-патчам нельзя строить на недоведённой SoT-модели
+  &nbsp;
 
----
+&nbsp;
 
-### ОБЯЗАТЕЛЬНЫЙ ПРИНЦИП
+&nbsp;
 
-**«Названия могут быть похожими. ID — уникален. Все решения принимает только ID.»**
+Если коротко, то твой план правильный по направлению, но его надо ужесточить:
 
-Во всех runtime-цепочках source of truth:
-- product_id
-- tariff_id
-- offer_id
-- training_module_id
-- при необходимости order_id / subscription_id
+**сначала закрыть SoT для auto_renew и entitlement_mode, потом двигаться дальше.**
 
-Названия, коды, slug, short label, snapshot text — только для отображения и текстового поиска.
+&nbsp;
 
-**Зафиксировано:**
-- cb20 = отдельный продукт «Ценный бухгалтер | 1 ступень 2.0» (product_id: 7101ed3c)
-- prd_0d01a2fdc477 = отдельный продукт «Ценный бухгалтер | 2 ступень» (product_id: 87a8870f)
-- Это НЕ parent/child, НЕ версии одного продукта. Любые выводы по похожести названий ошибочны.
-
-**Запрещено:**
-- Делать выводы по похожести имён
-- Связывать продукты по тексту
-- Считать code/name/slug surrogate key
-- Принимать execute-решения по доступам без ID и runtime proof
-- Если поле можно менять в UI, но runtime на него не смотрит — это SoT mismatch
-
----
-
-### СТАТУС ПАТЧЕЙ
-
-| Патч | Статус | Примечание |
-|---|---|---|
-| PATCH 1 | **closed** | |
-| PATCH 2 | **closed** | 12 ghost кейсов — не баг |
-| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** | |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** | Manual proof от пользователя |
-| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **closed** | Root cause доказан |
-| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **closed** | Guard A: proven, Guard B: code-proved |
-| PATCH 3 ACCESS-SCOPE-FORENSICS | **closed** | Все фазы завершены |
-| PATCH-DEALS-SEARCH-RESOLVER-FIX | **done** | RPC: поиск по product name, code, tariff name. UX-only text search, после выбора — только ID |
-| PATCH-NAMING-NORMALIZATION-UI-FIRST | **done** | Badges, short labels, trim pipes, product_id visible |
-| PATCH-REAL-FULFILLMENT-GAPS | **done** | 4/4 entitlements created for user 8482889a. Scope leakage=0 |
-| PATCH-DEALS-SEARCH-BROWSER-PROOF | **done** | 9 терминов проверены, deals_search_proof.csv создан |
-| PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF | **done** | field_binding_runtime_matrix.csv создан, auto_renew hardcode доказан |
-| PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION-PROOF | **done** | product_identity_runtime_matrix.csv + id_vs_name_conflict_cases.csv |
-| PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX | **pending** | Только после discovery matrix. auto_renew hardcoded → нужен execute |
-| PATCH-GRANULAR-MODULE-BINDING-NORMALIZATION | **discovery** | Сначала бизнес-проверка |
-| 49 cb_module_ip | **hold** | manual_or_bulk_unconfirmed, revoke запрещён |
-| PATCH 4 duration drift | pending | |
-
----
-
-### УСТАНОВЛЕННЫЕ ВЫВОДЫ (fact SoT)
-
-| Вывод | Статус | Доказательство |
-|---|---|---|
-| covered_by_business_club_rule — легальный доступ | **FACT** | Правила BUSINESS-клуба |
-| historical_expired — не баг | **FACT** | Истекшие подписки, штатный цикл |
-| subscription_product_no_entitlement_needed | **FACT** | SoT для Club = subscriptions_v2 |
-| Вкладка «Доступы» = config-view, не fact-view | **FACT** | Отображает access_rules |
-| Default deny: нет binding = deny | **FACT** | Стандарт зафиксирован |
-| Guard A (stale date override) | **FACT** | Synthetic proof |
-| Guard B (kick grace window) | **CODE-PROVED** | Нет production event |
-| DERGELEVA browser proof | **FACT** | Manual proof |
-| Deals search SoT = RPC only | **FACT** | PostgREST — pill/filter/date only |
-| auto_renew hardcoded in grant-access-for-order | **FACT** | L525: true для всех. bepaid-webhook L3871 не ставит — DB default |
-| tariffs.is_subscription = dead_field | **FACT** | UI toggle есть, но ни один runtime код не читает |
-| auto_charge_delay_days = misleading_ui_field | **FACT** | Поле в tariff_offers, но charge logic не читает |
-| requires_card_tokenization = used_runtime | **FACT** | bepaid-webhook L3600, bepaid-create-token, direct-charge |
-| grace/retry logic = working correctly | **FACT** | subscription-charge: 3 attempts, grace start/end, expired_reentry |
-
----
-
-### ФИНАЛЬНЫЙ REBUCKETING: 477 paid orders
-
-| Bucket | Count | Verdict |
-|---|---|---|
-| no_user_id_imported | 278 | NOT BUG |
-| historical_expired | 146 | NOT BUG |
-| subscription_product_no_entitlement_needed | 20 | LEGAL |
-| module_covered_by_parent_cb20 | 17 | LEGAL |
-| covered_by_business_club_rule | 7 | LEGAL |
-| legacy_or_test_noise | 4 | NOT BUG |
-| entitlement_exists_by_code | 1 | NOT BUG |
-| **real_fulfillment_gap** | **4** | **FIXED** (2026-04-06) |
-| **ИТОГО** | **477** | |
-
----
-
-### PATCH-REAL-FULFILLMENT-GAPS — ОТЧЁТ
-
-**Выполнено 2026-04-06.**
-
-Scope: immutable, 4 order_id, 1 user_id.
-- user_id = 8482889a-51f9-4f4b-ac23-6f4b59db51b1
-- profile_id = 3dcf1b28-67a8-4ec2-b7cd-dfff87ebb59f
-- order 8fa2d97d → cb_module_retail → entitlement b109bdae
-- order ab2f4972 → cb_module_catering → entitlement b8042bab
-- order 4d00d924 → cb_module_production → entitlement a29fe042
-- order 01b81165 → cb_module_marketplaces → entitlement aad648ed
-
-Guards:
-- Duplicate guard: PASS (0 existing)
-- Business model guard: PASS (all category=module, standalone, duration_days=NULL)
-- Scope leakage: 0 (total entitlements 6 = 2 before + 4 new)
-- Audit_logs: 4 entries, action=entitlement.backfilled
-
-SoT по полям:
-- user_id ← orders_v2.user_id
-- product_id ← orders_v2.product_id
-- product_code ← products_v2.code
-- order_id ← конкретный заказ
-- profile_id ← order/profile linkage
-- expires_at ← NULL (standalone module, no subscription, perpetual access)
-- meta.source = fulfillment_gap_backfill
-- meta.patch = PATCH-REAL-FULFILLMENT-GAPS
+План: POST-FIX PROOF + FIELD-BINDING FINALIZATION
 
 ---
 
-### PATCH-DEALS-SEARCH-BROWSER-PROOF — ОТЧЁТ
+### Критическая находка перед планом
 
-**Выполнено 2026-04-06.**
+**auto_renew fix имеет gap в webhook-пути.**
 
-Артефакт: `/mnt/documents/deals_search_proof.csv`
+Текущая логика в `grant-access-for-order`:
 
-| Термин | Тип | RPC count | UI count | Match | Field |
-|---|---|---|---|---|---|
-| ценный бухгалтер | product_name | 577 | 577 | ✅ | products_v2.name |
-| маркетплейсы | module_name | 5 | 5 | ✅ | products_v2.name |
-| производство | module_name | 5 | 5 | ✅ | products_v2.name |
-| учет у ип | module_name | 0 | 0 | ✅ | 0 orders for cb_module_ip |
-| общепит | module_name | 2 | 2 | ✅ | products_v2.name |
-| закрой год | product_name | 311 | 311 | ✅ | products_v2.name |
-| премиум | tariff_name | 90 | 90 | ✅ | tariffs.name |
-| business | tariff_name | 1251 | 1251 | ✅ | tariffs.name + products_v2.name |
-| чат | — | 0 | 0 | ✅ | нет продуктов/тарифов |
+```
+paymentFlow = order.meta.payment_flow || ''
+isSubscriptionFlow = paymentFlow.includes('subscription') || paymentFlow === 'provider_managed_checkout'
+shouldAutoRenew = isSubscriptionFlow && hasPaymentMethod
+```
 
-Verdict: поиск работает корректно по products_v2.name, products_v2.code, tariffs.name. Все tabs совпадают.
+Проблема: `bepaid-webhook` НЕ ставит `payment_flow` в `order.meta` при обновлении заказа на `paid` (L1474-1486). Из 1990 paid-заказов 1787 (90%) имеют `payment_flow = NULL`.
 
----
+**Однако**: это НЕ regression прямо сейчас, потому что:
 
-### PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF — ОТЧЁТ
+- Заказы из `bepaid-webhook` (provider-managed) обрабатывают подписки ВНУТРИ webhook, не через `grant-access-for-order`
+- `grant-access-for-order` вызывается из `create-payment-checkout` и admin-paths, которые УЖЕ ставят `payment_flow`
+- Новые заказы с 5 апреля все имеют `payment_flow` заполненный
 
-**Выполнено 2026-04-06.**
-
-Артефакт: `/mnt/documents/field_binding_runtime_matrix.csv`
-
-#### Ключевые находки:
-
-1. **auto_renew** = `used_runtime`, но HARDCODED:
-   - `grant-access-for-order` L525: `auto_renew: true` для ВСЕХ новых подписок
-   - `bepaid-webhook` L3871: НЕ ставит auto_renew → DB default
-   - UI toggle в EditDealDialog / subscription-admin-actions работает для СУЩЕСТВУЮЩИХ подписок
-   - **Вывод: настройки продукта/тарифа НЕ влияют на initial auto_renew. Это SoT mismatch.**
-
-2. **tariffs.is_subscription** = `dead_field`:
-   - UI toggle существует в TariffForm
-   - НИ ОДИН edge function не читает это поле
-   - **Вывод: поле для красоты. Нужно либо подключить к runtime, либо убрать.**
-
-3. **auto_charge_delay_days** = `misleading_ui_field`:
-   - Поле в tariff_offers, редактируется в UI
-   - Charge logic в subscription-charge НЕ читает это поле
-   - **Вывод: misleading.**
-
-4. **requires_card_tokenization** = `used_runtime`:
-   - bepaid-webhook L3600, bepaid-create-token, direct-charge
-   - Корректно определяет подписочность checkout
-
-5. **Grace/retry** = `used_runtime`:
-   - grace_period_started_at, grace_period_ends_at, grace_period_status, charge_attempts
-   - Все работают корректно в subscription-charge
-
-#### Особый кейс: course_close_year
-- 70+ подписок с auto_renew=true
-- Причина: `grant-access-for-order` L525 hardcodes `true` для ВСЕХ
-- Настройки продукта/тарифа не влияют на это
-- **Это системная проблема, не bug конкретного продукта**
-
-#### Требуемые execute-патчи:
-- PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: auto_renew должен браться из tariff_offers.requires_card_tokenization или отдельного DB-flag, а не hardcode
-- tariffs.is_subscription: подключить к runtime или убрать из UI
-- auto_charge_delay_days: подключить к charge logic или убрать
+Но есть edge case: если `grant-access-for-order` когда-нибудь вызовется для старого заказа без `payment_flow` → `auto_renew` будет `false`. Это нужно зафиксировать как known risk.
 
 ---
 
-### PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION-PROOF — ОТЧЁТ
+### Блок 1: POST-FIX PROOF — auto_renew (execute)
 
-**Выполнено 2026-04-06.**
+**Что сделать:**
 
-Артефакты:
-- `/mnt/documents/product_identity_runtime_matrix.csv`
-- `/mnt/documents/id_vs_name_conflict_cases.csv`
+1. SQL-запрос: все подписки, созданные после деплоя (2026-04-06 14:40+), с join на orders_v2 для `payment_flow`
+2. Для каждой: сравнить `auto_renew` с ожидаемым значением по `payment_flow`
+3. Отдельно: все заказы за последние 48ч с NULL `payment_flow` — подтвердить, что они НЕ прошли через `grant-access-for-order`
+4. Проверить extend-ветку: подписки, где `auto_renew` обновился при extend
 
-#### Buckets:
+**Артефакт:** `/mnt/documents/auto_renew_post_fix_proof.csv`
 
-**forbidden_business_identifier** (решение по тексту → нужна замена):
-| Зона | Файл | Проблема |
-|---|---|---|
-| Hardcoded product_code sets | _shared/entitlement-sync.ts L17-29 | SUBSCRIPTION_BASED_CODES, ORDER_BASED_ONLY_CODES |
-| Description-based matching | bepaid-auto-process L80-92 | descLower.includes('клуб'/'club'/'chat'/'business') |
-| Description-based fallback | bepaid-auto-process L543-565 | titleLower.includes(tariffType) |
-| Description mapping | bepaid-raw-transactions L139 | PRODUCT_TARIFF_MAPPINGS key match |
-| Report fuzzy match | bepaid-report-import L299 | desc.includes(bepaid_plan_title) |
+Колонки: order_id, created_at, product_code, payment_flow, has_payment_method, subscription_id, auto_renew, expected_auto_renew, verdict
 
-**legacy_transitional_usage** (временно допустимо, подлежит замене):
-| Зона | Файл | Проблема |
-|---|---|---|
-| Product code compare | course-prereg-notify L67 | product_code === 'cb20_predzapis' |
-| Entitlement by code | grant-access-for-order L233+ | product_code alongside product_id |
-| Entitlement upsert | bepaid-webhook L3907 | productV2.code для entitlement |
-| Staff email exclusion | admin-fix-club-billing-dates L198 | EXCLUDED_STAFF_EMAILS.includes |
-
-**allowed_secondary_identifier** (допустимо для display/search):
-| Зона | Файл | Использование |
-|---|---|---|
-| Static name map | src/lib/product-names.ts | UI display fallback |
-| DB unique key | entitlement-sync.ts L183 | (user_id, product_code) — DB constraint |
-| Payment classification | paymentClassification.ts L81 | 'проверка карты' — не бизнес-логика |
-
-#### Name conflict cases (9 пар):
-- cb20 ↔ prd_0d01a2fdc477: HIGH risk (курс vs курс, похожие названия)
-- cb20 ↔ cb_module_*: MEDIUM risk (курс vs модуль, общий префикс)
+**STOP-check:** если обнаружатся новые подписки (после деплоя), где `payment_flow` NULL → зафиксировать как gap и подготовить hotfix для `bepaid-webhook` (добавить `payment_flow` в meta при обновлении order).
 
 ---
 
-### HIGH-RISK ЗОНЫ (ID-first audit)
+### Блок 2: POST-FIX PROOF — entitlement_mode / ID-first (execute)
 
-| Зона | Файл | Проблема |
-|---|---|---|
-| Hardcoded product_code sets | _shared/entitlement-sync.ts | SUBSCRIPTION_BASED_CODES, ORDER_BASED_ONLY_CODES |
-| Description-based matching | bepaid-auto-process | descLower.includes('клуб') |
-| Description-based fallback | bepaid-auto-process | descLower.includes('club') |
-| Static code→name map | product-names.ts | Hardcoded, не из БД |
-| Entitlement by product_code | bepaid-webhook, grant-access-for-order | resolution по code, не id |
-| Description mapping | bepaid-raw-transactions | PRODUCT_TARIFF_MAPPINGS |
-| Report fuzzy match | bepaid-report-import | desc.includes(plan_title) |
-| Name hack | course-prereg-notify | product_code === "cb20_predzapis" |
+**Что сделать:**
 
----
+1. Полный список products_v2 с `entitlement_mode`: заполненные vs NULL
+2. Для каждого NULL — определить, попадает ли в fallback set, и какой mode должен быть
+3. SQL миграция: backfill `entitlement_mode` для оставшихся 19 продуктов
+4. Проверить, что `resolveEntitlementMode()` больше не падает в fallback
 
-### ПОРЯДОК EXECUTE (следующие шаги)
+**Артефакт:** `/mnt/documents/entitlement_mode_backfill_audit.csv`
 
-1. ✅ **PATCH-REAL-FULFILLMENT-GAPS** — done
-2. ✅ **PATCH-DEALS-SEARCH-BROWSER-PROOF** — done
-3. ✅ **PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF** — done
-4. ✅ **PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION-PROOF** — done
-5. ✅ **PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX** — done
-   - auto_renew: hardcode убран, теперь читается из order.meta.payment_flow
-   - subscription flow → auto_renew=true, one_time flow → auto_renew=false
-   - extend branch: auto_renew привязан к payment_flow, а не к наличию payment_method
-6. ✅ **PATCH-ID-FIRST-HIGH-RISK-EXECUTE** — done
-   - products_v2.entitlement_mode — новая DB-колонка (subscription_based, order_based_only, legacy_skip)
-   - entitlement-sync.ts: hardcoded sets → DB resolver с fallback
-   - bepaid-auto-process: добавлен ID-first resolution через tracking_id→order→product_id
-   - text-matching 'клуб'/'club' понижен до deprecated legacy fallback
-7. **DISCOVERY: GRANULAR-MODULE-BINDING** — next
-8. **FOLLOW-UP: 49 cb_module_ip** — hold
+Колонки: product_id, code, name, current_mode, fallback_mode, should_be, action
+
+**Для bepaid-auto-process:** проверить логи — используется ли новый ID-first path или всё ещё fallback на text matching.
+
+**Артефакт:** `/mnt/documents/bepaid_auto_process_resolution_proof.csv` (из логов edge function)
 
 ---
 
-### ЧТО НЕ ДЕЛАТЬ
+### Блок 3: FIELD-BINDING RUNTIME MATRIX — финальный вердикт (discovery → артефакт)
 
-- execute по auto_renew / field binding **пока не готов field_binding_runtime_matrix.csv** ✅ готов
-- execute по ID-first normalization **пока не готов product_identity_runtime_matrix.csv** ✅ готов
-- массовый cleanup по cb_module_ip
-- revoke по бонусам/модулям
-- считать naming fix архитектурным решением
-- использовать вкладку «Доступы» как SoT до завершения аудита
+Полный inventory всех полей из 3 таблиц с вердиктом:
+
+**tariff_offers (27 колонок):**
+
+- `requires_card_tokenization` — читается в `bepaid-webhook` L3600, `direct-charge` L338 → **used_runtime**
+- `auto_charge_after_trial` — читается в webhook → **used_runtime**
+- `auto_charge_delay_days` — НЕ читается нигде → **dead_field**
+- `auto_charge_amount` — проверить → verdict
+- `reentry_amount` — проверить → verdict
+- `reject_virtual_cards` — проверить → verdict
+- И т.д. по каждому полю
+
+**tariffs (31 колонка):**
+
+- `trial_enabled`, `trial_days`, `trial_price`, `trial_auto_charge` — проверить
+- `is_popular`, `badge`, `subtitle`, `period_label` — скорее всего display_only
+- `discount_enabled`, `discount_percent`, `original_price` — display_only
+- `access_days` — **used_runtime** (в webhook, grant-access)
+
+**products_v2:**
+
+- `category` — display_only (badge)
+- `entitlement_mode` — **used_runtime** (entitlement-sync)
+- Остальные — проверить
+
+**Артефакт:** `/mnt/documents/field_binding_runtime_matrix_final.csv`
+
+Колонки: table, field_name, edited_in_ui, read_by_code (function:line), runtime_effect, status (used_runtime / display_only / dead_field / misleading / duplicated), notes
 
 ---
 
-### КОНТРАКТ ВИДИМОСТИ
+### Блок 4: DISCOVERY — GRANULAR-MODULE-BINDING (параллельно, read-only)
 
-Правила:
-- Club, buh_business → SoT = subscriptions_v2
-- cb20, course_close_year, ЦБ2 → SoT = entitlements
-- Все модули → SoT = entitlements, requires_entitlement = yes
-- consultation → service, entitlement не применим
-- digital_product (вебинары) → entitlement не обязателен
-- Нет binding/rule = deny (кроме админов)
+Только discovery, без execute. Зафиксировать для каждого модульного продукта:
+
+- standalone vs parent-covered
+- текущая привязка в training_modules
+- текущие access_rules
+- есть ли dual-model (и standalone, и часть программы)
 
 ---
 
-### УРОВНИ ДОКАЗАТЕЛЬСТВ
+### Порядок выполнения
 
-- **FACT**: доказано synthetic proof, production data, или code verification
-- **CODE-PROVED**: подтверждено анализом кода, нет production event
-- **HYPOTHESIS**: требует проверки
-- **CONFIG-VIEW**: отображает настройки, не реальное состояние
-- **UNDECIDED**: требуется field-binding audit
+1. **POST-FIX PROOF auto_renew** — SQL + артефакт + STOP-check
+2. **POST-FIX PROOF entitlement_mode** — SQL + backfill migration + артефакт
+3. **FIELD-BINDING MATRIX финальный** — code-read + артефакт
+4. **DISCOVERY GRANULAR-MODULE-BINDING** — параллельно, read-only
+
+### Что НЕ делать
+
+- execute по field binding (удаление dead fields) — только после утверждения матрицы
+- execute по auto_renew gap в webhook — только после proof
+- execute по module visibility — только после discovery
+- массовые revoke / cleanup
