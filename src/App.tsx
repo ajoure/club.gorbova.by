@@ -163,7 +163,6 @@ const App = () => {
             <HelpModeProvider>
               <ScrollToTop />
               <GlobalPaymentHandler />
-              <ImpersonationBar />
               <div className="impersonation-offset">
                 <Routes>
               {/* Public routes */}
