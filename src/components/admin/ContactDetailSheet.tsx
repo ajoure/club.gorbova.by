@@ -399,14 +399,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
   // Deals = successful transactions. Payment attempts go to Payments tab.
   const { data: deals, isLoading: dealsLoading } = useQuery({
-    queryKey: ["contact-deals", contact?.id, contact?.user_id],
+    queryKey: ["contact-deals", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
       
       // Build array of IDs to search (profile.id and optionally user_id)
       const userIds = [contact.id];
-      if (contact.user_id && contact.user_id !== contact.id) {
-        userIds.push(contact.user_id);
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
       }
       
       // Query deals by profile_id OR user_id to catch ghost contact deals
@@ -565,7 +565,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const { data: tgLogs } = await supabase
         .from("telegram_logs")
         .select("id, created_at, action, event_type, status, error_message, meta")
-        .eq("user_id", contact.user_id)
+        .eq("user_id", resolvedUserId)
         .in("action", ["SEND_REMINDER", "SEND_NO_CARD_WARNING", "ADMIN_DISABLED_AUTO_RENEW"])
         .order("created_at", { ascending: false })
         .limit(30);
@@ -574,7 +574,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const { data: emailLogs } = await supabase
         .from("email_logs")
         .select("id, created_at, status, error_message, meta")
-        .eq("user_id", contact.user_id)
+        .eq("user_id", resolvedUserId)
         .eq("direction", "outgoing")
         .order("created_at", { ascending: false })
         .limit(30);
@@ -1070,7 +1070,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Grant new access - performs all the same actions as a regular purchase
   const handleGrantNewAccess = async () => {
-    const isGhostContact = !contact?.user_id;
+    const isGhostContact = !resolvedUserId;
     
     // For ghost contacts, require "deal only" mode
     if (isGhostContact && !createDealOnly) {
