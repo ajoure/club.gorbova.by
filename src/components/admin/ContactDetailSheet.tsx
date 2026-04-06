@@ -476,6 +476,29 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id,
   });
 
+  // Fetch entitlements for order_based_only products (not covered by subscriptions)
+  const { data: entitlements, isLoading: entLoading } = useQuery({
+    queryKey: ["contact-entitlements", contact?.id, resolvedUserId],
+    queryFn: async () => {
+      if (!contact?.id) return [];
+      const userIds = [contact.id];
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
+      }
+      const { data, error } = await supabase
+        .from("entitlements")
+        .select(`
+          id, user_id, product_id, product_code, status, expires_at, meta, order_id, created_at, updated_at,
+          products_v2:product_id(id, name, code, is_active, entitlement_mode)
+        `)
+        .in("user_id", userIds)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!contact?.id,
+  });
+
   // Fetch products for grant access
   const { data: products } = useQuery({
     queryKey: ["products-for-grant"],
@@ -1419,6 +1442,29 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     isHistoricalAccess(s as any, productsWithRules)
   ) || [];
 
+  // Entitlements for products NOT already covered by subscriptions (order_based_only)
+  const subscriptionProductIds = new Set(
+    (subscriptions || []).map(s => s.product_id).filter(Boolean)
+  );
+
+  const activeEntitlements = (entitlements || []).filter(e => {
+    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    if (e.status !== 'active') return false;
+    if (e.expires_at && new Date(e.expires_at) < new Date()) return false;
+    const product = e.products_v2 as any;
+    if (product?.is_active === false) return false;
+    const productId = e.product_id;
+    return productId && productsWithRules.has(productId);
+  });
+
+  const finishedEntitlements = (entitlements || []).filter(e => {
+    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    return !activeEntitlements.some(ae => ae.id === e.id);
+  });
+
+  // Unified effective access count
+  const totalActiveAccess = activeSubscriptions.length + activeEntitlements.length;
+
   if (!contact) return null;
 
   return (
@@ -1535,7 +1581,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 Письма
               </TabsTrigger>
               <TabsTrigger value="access" className="text-xs sm:text-sm px-2.5 sm:px-3">
-                Доступы {activeSubscriptions.length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{activeSubscriptions.length}</Badge>}
+                Доступы {totalActiveAccess > 0 && <Badge variant="secondary" className="ml-1 text-xs">{totalActiveAccess}</Badge>}
               </TabsTrigger>
               <TabsTrigger value="deals" className="text-xs sm:text-sm px-2.5 sm:px-3">
                 Сделки {deals && deals.filter(d => d.status === "paid").length > 0 && <Badge variant="secondary" className="ml-1 text-xs">{deals.filter(d => d.status === "paid").length}</Badge>}
@@ -2599,19 +2645,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                 </CardContent>
               </Card>
 
-              {/* Current active subscriptions */}
-              {subsLoading ? (
+              {/* Current active access (subscriptions + entitlements) */}
+              {(subsLoading || entLoading) ? (
                 <div className="space-y-3">
                   {[1, 2].map(i => <Skeleton key={i} className="h-24 w-full" />)}
                 </div>
-              ) : !activeSubscriptions.length && !finishedSubscriptions.length ? (
+              ) : !totalActiveAccess && !finishedSubscriptions.length && !finishedEntitlements.length ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <Key className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                  <p>Нет подписок</p>
+                  <p>Нет доступов</p>
                 </div>
               ) : (
                 <>
-                  {!activeSubscriptions.length && (
+                  {!totalActiveAccess && (
                     <div className="text-center py-4 text-muted-foreground text-sm">
                       Нет текущих активных доступов
                     </div>
@@ -2927,8 +2973,49 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                     );
                   })}
 
-                  {/* Toggle for finished subscriptions */}
-                  {finishedSubscriptions.length > 0 && (
+                  {/* Active entitlements (order_based_only products not covered by subscriptions) */}
+                  {activeEntitlements.map(ent => {
+                    const product = ent.products_v2 as any;
+                    const meta = ent.meta as Record<string, any> | null;
+                    return (
+                      <Card key={ent.id} className="transition-all border-l-2 border-l-blue-400">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-2">
+                            <div>
+                              <div className="font-medium">{product?.name || ent.product_code || "Продукт"}</div>
+                              <div className="text-xs text-muted-foreground flex items-center gap-1">
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">entitlement</Badge>
+                                {meta?.source_rule_id && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">rule-based</Badge>
+                                )}
+                              </div>
+                            </div>
+                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Активен</Badge>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-muted-foreground">Создан: </span>
+                              <span>{format(new Date(ent.created_at), "dd.MM.yy")}</span>
+                            </div>
+                            {ent.expires_at && (
+                              <div>
+                                <span className="text-muted-foreground">До: </span>
+                                <span>{format(new Date(ent.expires_at), "dd.MM.yy")}</span>
+                              </div>
+                            )}
+                          </div>
+                          {meta?.scope_resolution_mode && (
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              Scope: {meta.scope_resolution_mode}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+
+                  {/* Toggle for finished access */}
+                  {(finishedSubscriptions.length > 0 || finishedEntitlements.length > 0) && (
                     <div className="pt-2">
                       <Button
                         variant="ghost"
@@ -2937,7 +3024,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         className="w-full gap-2 text-muted-foreground text-xs"
                       >
                         <History className="w-3.5 h-3.5" />
-                        {showFinishedSubs ? "Скрыть завершённые" : `Показать завершённые (${finishedSubscriptions.length})`}
+                        {showFinishedSubs ? "Скрыть завершённые" : `Показать завершённые (${finishedSubscriptions.length + finishedEntitlements.length})`}
                         <ChevronDown className={cn("w-3.5 h-3.5 transition-transform", showFinishedSubs && "rotate-180")} />
                       </Button>
                       
@@ -2974,6 +3061,35 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                     {sub.access_end_at && (
                                       <span className={isExpired ? "text-destructive" : ""}>
                                         До: {format(new Date(sub.access_end_at), "dd.MM.yy")}
+                                      </span>
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                          {finishedEntitlements.map(ent => {
+                            const product = ent.products_v2 as any;
+                            const isExpired = ent.expires_at && new Date(ent.expires_at) < new Date();
+                            return (
+                              <Card key={ent.id} className="border-dashed">
+                                <CardContent className="p-3">
+                                  <div className="flex items-start justify-between mb-1">
+                                    <div>
+                                      <div className="font-medium text-sm">{product?.name || ent.product_code || "Продукт"}</div>
+                                      <div className="text-xs text-muted-foreground">
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">entitlement</Badge>
+                                      </div>
+                                    </div>
+                                    <Badge variant={isExpired ? "outline" : "secondary"}>
+                                      {ent.status === 'active' && isExpired ? 'Истёк' : ent.status === 'expired' ? 'Истёк' : ent.status}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex gap-3 text-xs text-muted-foreground">
+                                    <span>Создан: {format(new Date(ent.created_at), "dd.MM.yy")}</span>
+                                    {ent.expires_at && (
+                                      <span className={isExpired ? "text-destructive" : ""}>
+                                        До: {format(new Date(ent.expires_at), "dd.MM.yy")}
                                       </span>
                                     )}
                                   </div>
