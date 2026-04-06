@@ -7762,6 +7762,7 @@ export type Database = {
           created_at: string
           currency: string
           description: string | null
+          entitlement_mode: string | null
           id: string
           is_active: boolean
           landing_config: Json | null
@@ -7783,6 +7784,7 @@ export type Database = {
           created_at?: string
           currency?: string
           description?: string | null
+          entitlement_mode?: string | null
           id?: string
           is_active?: boolean
           landing_config?: Json | null
@@ -7804,6 +7806,7 @@ export type Database = {
           created_at?: string
           currency?: string
           description?: string | null
+          entitlement_mode?: string | null
           id?: string
           is_active?: boolean
           landing_config?: Json | null
