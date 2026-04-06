@@ -1,157 +1,224 @@
-# CONSOLIDATED SPRINT — EXECUTE PHASE
+## да, согласен, с учетом правок:
 
-Основная нить: **purchase → subscription → entitlement → visibility → UI label → fact/config SoT**.
+&nbsp;
 
-Цель текущего спринта — не косметика, а окончательная увязка цепочки покупка → выдача → подписка/entitlement → видимость → UI → runtime SoT, без допущений по названиям и без решений по похожести строк.
+1. В блоке **POST-FIX PROOF webhook payment_flow** явно зафиксируй текущий вывод:
+  &nbsp;
+  - после деплоя все новые **не-webhook** paid orders уже имеют payment_flow;
+  - **bepaid-webhook-originated** paid orders после фикса пока не было;
+  - поэтому текущий статус не просто CONDITIONAL_PASS, а
+    **CONDITIONAL_PASS: deploy confirmed, live webhook event not observed yet**.
+  &nbsp;
+2. В DoD для блока proof добавь точную формулировку:
+  &nbsp;
+  - если за окно наблюдения нет новых webhook-paid orders, это **не FAIL**;
+  - proof считается условно подтвержденным по коду и по отсутствию regression на новых non-webhook путях;
+  - при появлении первой live webhook-транзакции нужно автоматически дозаполнить webhook_payment_flow_post_fix_proof.csv.
+  &nbsp;
+3. В блоке **UI cleanup** не оставляй текст-пояснение вместо поля в основной форме.
+  Нужно:
+  &nbsp;
+  - полностью убрать auto_charge_delay_days из основной формы;
+  - не заменять его новым “полурабочим” текстовым контролом;
+  - максимум — короткая read-only справка в отдельной technical/legacy секции, не в основном UX.
+  &nbsp;
+4. В блоке **GRANULAR-MODULE-BINDING** добавь отдельный forensic-подблок по prd_08a84b2b7223:
+  &nbsp;
+  - проверить все 3 paid orders поштучно;
+  - отдельно указать, какой из них уже закрыт предыдущим patch, а какие ещё нет;
+  - не смешивать уже исправленные и неисправленные кейсы в одном bucket.
+  &nbsp;
+5. В блоке по cb_module_construction и prd_08a84b2b7223 добавь обязательную проверку:
+  &nbsp;
+  - есть ли у пользователя active entitlement по product_code, даже если нет по product_id;
+  - есть ли parent-covered visibility;
+  - есть ли historical expired entitlement.
+    Только после этого кейс можно относить к direct_order_no_entitlement.
+  &nbsp;
+6. По cb_module_ip зафиксируй точнее:
+  &nbsp;
+  - текущая классификация — **legacy_backfill_access**;
+  - secondary bucket — bulk_grant_access, только если это доказано отдельным batch/actor;
+  - не использовать формулировку “аномалия” до завершения source classification.
+  &nbsp;
+7. В артефакт granular_module_binding_matrix.csv добавь обязательные колонки:
+  &nbsp;
+  - has_active_entitlement_by_product_id
+  - has_active_entitlement_by_product_code
+  - has_historical_entitlement
+  - has_parent_cb20_entitlement
+  - has_training_content_rule
+  - has_product_access_rule
+  - final_forensic_bucket
+  &nbsp;
+8. В orphan_or_ambiguous_module_bindings.csv включай только реально спорные случаи:
+  &nbsp;
+  - cb_module_ip
+  - cb_module_construction
+  - prd_08a84b2b7223
+  - и любые другие модули, где есть расхождение между order / entitlement / parent coverage.
+    Не включать туда уже однозначно классифицированные dual-model кейсы.
+  &nbsp;
+9. Добавь отдельный STOP-guard:
+  &nbsp;
+  - discovery по модулям не должен приводить к новым execute-выводам по revoke/backfill в этом же спринте;
+  - сначала полная forensic-классификация, потом отдельный consolidated execute-план.
+  &nbsp;
+10. В финале плана зафиксируй следующий ожидаемый результат спринта:
 
----
+&nbsp;
 
-### ОБЯЗАТЕЛЬНЫЙ ПРИНЦИП
+&nbsp;
 
-**«Названия могут быть похожими. ID — уникален. Все решения принимает только ID.»**
+&nbsp;
 
-Во всех runtime-цепочках source of truth:
-- product_id
-- tariff_id
-- offer_id
-- training_module_id
-- при необходимости order_id / subscription_id
+- proof по webhook payment_flow;
+- удаление декоративного поля из формы;
+- 4 forensic-артефакта по module binding;
+- список **только реально неподтвержденных module gaps**, без legacy/backfill шума.
 
-Названия, коды, slug, short label, snapshot text — только для отображения и текстового поиска.
+&nbsp;
 
-**Зафиксировано:**
-- cb20 = отдельный продукт «Ценный бухгалтер | 1 ступень 2.0» (product_id: 7101ed3c)
-- prd_0d01a2fdc477 = отдельный продукт «Ценный бухгалтер | 2 ступень» (product_id: 87a8870f)
-- Это НЕ parent/child, НЕ версии одного продукта. Любые выводы по похожести названий ошибочны.
+&nbsp;
 
-**Запрещено:**
-- Делать выводы по похожести имён
-- Связывать продукты по тексту
-- Считать code/name/slug surrogate key
-- Принимать execute-решения по доступам без ID и runtime proof
-- Если поле можно менять в UI, но runtime на него не смотрит — это SoT mismatch
-
----
-
-### СТАТУС ПАТЧЕЙ
-
-| Патч | Статус | Примечание |
-|---|---|---|
-| PATCH 1 | **closed** | |
-| PATCH 2 | **closed** | 12 ghost кейсов — не баг |
-| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** | |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** | Manual proof от пользователя |
-| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **closed** | Root cause доказан |
-| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **closed** | Guard A: proven, Guard B: code-proved |
-| PATCH 3 ACCESS-SCOPE-FORENSICS | **closed** | Все фазы завершены |
-| PATCH-DEALS-SEARCH-RESOLVER-FIX | **done** | RPC: поиск по product name, code, tariff name |
-| PATCH-NAMING-NORMALIZATION-UI-FIRST | **done** | Badges, short labels, trim pipes |
-| PATCH-REAL-FULFILLMENT-GAPS | **done** | 4/4 entitlements created |
-| PATCH-DEALS-SEARCH-BROWSER-PROOF | **done** | 9 терминов проверены |
-| PATCH-UI-FIELD-TO-RUNTIME-BINDING-PROOF | **done** | field_binding_runtime_matrix.csv |
-| PATCH-PRODUCT-IDENTITY-ID-FIRST-NORMALIZATION-PROOF | **done** | product_identity_runtime_matrix.csv |
-| PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX | **done** | hardcode убран, payment_flow-driven |
-| PATCH-ID-FIRST-HIGH-RISK-EXECUTE | **done** | entitlement_mode + DB resolver |
-| PATCH-ENTITLEMENT-MODE-BACKFILL-EXECUTE | **done** | 26/26 products, 0 NULL |
-| POST-FIX PROOF auto_renew | **done** | CONDITIONAL_PASS, 0 new subs |
-| POST-FIX PROOF entitlement_mode | **done** | 0 NULL remaining |
-| FIELD-BINDING MATRIX final | **done** | 48 fields, 5 statuses |
-| PATCH-AUTO-RENEW-SOT-GAP | **pending** | Архитектурный разрыв |
-| PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL | **done** | 4 точки в webhook исправлены |
-| PATCH-REMOVE-DECORATIVE-SUBSCRIPTION-FIELDS | **done** | auto_charge_delay_days помечен ⚠️ display only |
-| DISCOVERY: GRANULAR-MODULE-BINDING | **pending** | Read-only |
-| 49 cb_module_ip | **hold** | revoke запрещён |
-
----
-
-### АРХИТЕКТУРНЫЙ РАЗРЫВ: PATCH-AUTO-RENEW-SOT-GAP
-
-**payment_flow не является надёжным SoT для auto_renew:**
-- bepaid-webhook НЕ пишет payment_flow при обновлении order на paid
-- 90% старых заказов (1787/1990) имеют NULL payment_flow
-- Текущий фикс безопасен для новых путей (checkout/admin)
-- Но уязвим, если grant-access-for-order вызовется для legacy order
-
-**Матрица путей создания подписок (subscription_creation_path_matrix.csv):**
-
-| Path | auto_renew source | payment_flow | Gap |
-|---|---|---|---|
-| grant-access-for-order | order.meta.payment_flow | checkout/admin ставят | OK для новых |
-| bepaid-webhook | internal logic | НЕ пишет | GAP: 90% NULL |
-| admin/manual | admin choice | admin_subscription | OK |
-| bulk_grant | always false | N/A | OK |
-| preregistration_auto_charge | hardcoded | НЕ пишет | GAP |
-
-**Требуется:** PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
-
----
-
-### FIELD-BINDING MATRIX — КРИТИЧЕСКИЕ НАХОДКИ
-
-Артефакт: `/mnt/documents/field_binding_runtime_matrix_final.csv` (48 полей)
-
-| Поле | Статус | UI action |
-|---|---|---|
-| tariffs.is_subscription | **dead_field** | must_be_removed_from_ui |
-| tariff_offers.auto_charge_delay_days | **misleading_ui_field** | must_be_removed_from_ui |
-| tariffs.trial_enabled | display_only | не проверяется runtime |
-| tariffs.discount_enabled/percent | display_only | только визуал на лендинге |
-| tariff_offers.requires_card_tokenization | runtime_sot | ✅ |
-| tariff_offers.auto_charge_after_trial | runtime_sot | ✅ |
-| tariffs.access_days | runtime_sot | ✅ |
-| products_v2.entitlement_mode | runtime_sot | ✅ |
-
-**Правило:** отсутствие runtime-read = поле нефункционально. Нельзя оставлять в основном UI без предупреждения.
+План: POST-FIX PROOF + UI CLEANUP + DISCOVERY GRANULAR-MODULE-BINDING
 
 ---
 
-### ENTITLEMENT_MODE — ПОЛНАЯ КАРТА (26/26 заполнены)
+### Данные из БД на момент планирования
 
-| Mode | Count | Products |
-|---|---|---|
-| subscription_based | 7 | club, buh_business, course_close_year, cb_module_ip, prd_0d01a2fdc477, 1769009596189-398a |
-| order_based_only | 16 | cb20, cb_module_*, web_*, pn_s_fl, prd_0e5fda1e, prd_49dc33, prd_08a84b |
-| legacy_skip | 3 | consultation, prd_3318c30f (тест), prd_88985c67 (предзапись) |
+**auto_renew / payment_flow:**
 
-**DoD: NULL entitlement_mode = 0 для всех боевых продуктов.**
+- Все 7 paid orders после деплоя (2026-04-06) имеют заполненный `payment_flow` (admin_subscription, provider_managed_checkout, renewal_one_time)
+- Ни одного нового webhook-originated paid order пока не было (нет записей с `bepaid_*` payment_flow)
+- Общая картина: 1787/1990 paid orders имеют NULL payment_flow (все до фикса)
+- **Вердикт: CONDITIONAL_PASS** — фикс деплоен, новые пути работают, но webhook-path ещё не протестирован live-транзакцией
 
----
+**cb_module_ip:** Все 49 active entitlements — source `historical_backfill`, batch `BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z`, order_id = NULL. Это не аномалия runtime, а результат конкретного backfill-скрипта.
 
-### СЛЕДУЮЩИЕ ШАГИ (по приоритету)
+**orphan-risk модули:**
 
-1. **PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL** — hotfix
-   - webhook должен писать payment_flow при paid
-   - DoD: новые webhook-paid orders → payment_flow != NULL
-
-2. **PATCH-REMOVE-DECORATIVE-SUBSCRIPTION-FIELDS** — execute
-   - Убрать dead_field и misleading_ui_field из admin UI
-   - По матрице field_binding_runtime_matrix_final.csv
-
-3. **DISCOVERY: GRANULAR-MODULE-BINDING** — read-only
-   - Для каждого модуля: product_id, training_module_id, access_rule_id, parent_id
-   - standalone / parent-covered / dual — только по ID
+- `cb_module_construction`: 1 paid order (user f278876e), 0 active entitlements → fulfillment gap
+- `prd_08a84b2b7223`: 3 paid orders (users 2b352bdf, 8482889a, 5c6e6e0f), 0 active entitlements → fulfillment gaps
 
 ---
 
-### ЧТО НЕ ДЕЛАТЬ
+### Блок 1: POST-FIX PROOF — webhook payment_flow
 
-- execute по field binding — только после утверждения матрицы
-- execute по auto_renew SoT gap — только после proof
-- execute по module visibility — только после discovery
-- массовые revoke / cleanup
-- считать naming fix архитектурным решением
-- использовать вкладку «Доступы» как SoT
+**Статус:** Деплой подтверждён, но ни одна bepaid-webhook транзакция ещё не прошла.
+
+**Шаги:**
+
+1. SQL-запрос: все orders с `payment_flow LIKE 'bepaid%'` — подтвердить появление после live-транзакции
+2. SQL-запрос: все subscriptions, созданные после деплоя — сопоставить `auto_renew` с `payment_flow`
+3. Если за 48ч нет ни одного bepaid-webhook paid order → зафиксировать как CONDITIONAL_PASS и перейти дальше
+
+**DoD:**
+
+- 0 новых webhook-paid orders с NULL payment_flow
+- auto_renew у новых подписок соответствует SoT
+- Если нет новых webhook-транзакций, вердикт = CONDITIONAL_PASS (не FAIL)
+
+**Артефакты:**
+
+- `auto_renew_post_fix_proof.csv` (обновление)
+- `webhook_payment_flow_post_fix_proof.csv` (если есть данные)
 
 ---
 
-### АРТЕФАКТЫ (все в /mnt/documents/)
+### Блок 2: UI cleanup — auto_charge_delay_days
 
-1. deals_search_proof.csv
-2. field_binding_runtime_matrix.csv
-3. product_identity_runtime_matrix.csv
-4. id_vs_name_conflict_cases.csv
-5. auto_renew_post_fix_proof.csv
-6. subscription_creation_path_matrix.csv
-7. entitlement_mode_backfill_audit.csv
-8. entitlement_mode_post_backfill_proof.csv
-9. field_binding_runtime_matrix_final.csv
+**Что:** Убрать поле `auto_charge_delay_days` из основной формы оффера полностью. Не warning, не tooltip — убрать.
+
+**Файл:** `src/pages/admin/AdminProductDetailV2.tsx`, строки ~2102-2117.
+
+**Замена:** Вместо Input — короткий текст: «Срок автосписания определяется trial_days тарифа» (если нужно показать, что поле существует в БД, но не функционально).
+
+---
+
+### Блок 3: DISCOVERY — GRANULAR-MODULE-BINDING
+
+**Цель:** По ID доказать бизнес-модель каждого модуля. Без execute, без update, без revoke.
+
+**Для каждого из 8 модульных продуктов собрать:**
+
+
+| Колонка                            | Источник                                     |
+| ---------------------------------- | -------------------------------------------- |
+| product_id                         | products_v2                                  |
+| product_code                       | products_v2                                  |
+| training_module_id                 | access_rules → conditions.allowed_module_ids |
+| access_rule_id                     | access_rules                                 |
+| grant_target_type                  | access_rules.type                            |
+| parent training module             | training_modules parent chain                |
+| has standalone paid orders         | orders_v2 count                              |
+| has standalone active entitlements | entitlements count                           |
+| covered by parent product          | cb20 entitlement check                       |
+
+
+**Классификация каждого модуля:** `standalone_only` / `parent_only` / `dual_model` / `orphan_binding` / `dormant`
+
+**Отдельная forensic-разбивка для 3 аномальных модулей:**
+
+**cb_module_ip:**
+
+- 49 active entitlements, 0 paid orders
+- Все 49 — source `historical_backfill`, batch `BACKFILL-ENT-v23.1.9B-2026-03-31T1117Z`
+- Классификация: `bulk_grant_access` (legacy backfill)
+- Не формулировать как «аномалия order_based_only» — это forensic bucket, не финальный вывод
+
+**cb_module_construction:**
+
+- 1 paid order (user f278876e, GC-3814251-M3), 0 active entitlements
+- Требуется разбивка: `direct_order_no_entitlement` → вероятный fulfillment gap
+
+**prd_08a84b2b7223:**
+
+- 3 paid orders, 0 active entitlements
+- 1 из 3 = user 8482889a (уже закрытый в PATCH-REAL-FULFILLMENT-GAPS? нет, это M4, не покрытый)
+- Разбивка: `direct_order_no_entitlement` → fulfillment gaps
+
+**Bucket-классификация для каждого кейса:**
+
+- `direct_order_no_entitlement` — оплачен, entitlement не создан
+- `subscription_based_access` — доступ через подписку
+- `bulk_grant_access` — массовая выдача / backfill
+- `legacy_import_no_user` — исторический импорт
+- `historical_expired` — истёкший доступ
+- `parent_covered_access` — покрыт parent-продуктом
+
+**Артефакты:**
+
+- `granular_module_binding_matrix.csv`
+- `module_business_model_classification.csv`
+- `module_visibility_resolution_chain.csv`
+- `orphan_or_ambiguous_module_bindings.csv`
+
+---
+
+### Порядок выполнения
+
+1. **POST-FIX PROOF** webhook payment_flow → артефакт + вердикт
+2. **UI cleanup** → убрать `auto_charge_delay_days` из формы
+3. **DISCOVERY** granular-module-binding → 4 артефакта + forensic по 3 модулям
+
+### STOP-guards
+
+- Без execute по модулям
+- Без UPDATE training_modules.product_id
+- Без revoke
+- Без изменения access_rules
+- Только discovery + proof + UI cleanup
+
+### Техническая секция
+
+**Файлы для изменения:**
+
+- `src/pages/admin/AdminProductDetailV2.tsx` — удалить блок L2102-2117 (auto_charge_delay_days input)
+
+**SQL-запросы для discovery (read-only):**
+
+- access_rules по product_id для 8 модулей
+- training_modules parent chain от cb20 root (c9f7e9b8)
+- entitlements group by source/meta для cb_module_ip
+- orders_v2 + entitlements cross-check для construction и prd_08a84b
