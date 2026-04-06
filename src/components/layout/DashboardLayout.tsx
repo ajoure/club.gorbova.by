@@ -34,8 +34,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     );
   }
 
-  // Block all content if consent is required - only show the modal
-  if (needsConsentUpdate) {
+  // Block content if consent is required — only after bootstrap is ready (no flash)
+  if (bootstrapReady && !consentLoading && needsConsentUpdate) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <ConsentUpdateModal />
