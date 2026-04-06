@@ -2984,9 +2984,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                             <div>
                               <div className="font-medium">{product?.name || ent.product_code || "Продукт"}</div>
                               <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">entitlement</Badge>
+                                <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
                                 {meta?.source_rule_id && (
-                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">rule-based</Badge>
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">
+                                    {meta?.business_subscription_id ? "через BUSINESS" : "по правилу"}
+                                  </Badge>
+                                )}
+                                {!meta?.source_rule_id && meta?.historical_purchase_type && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-200">прямая покупка</Badge>
+                                )}
+                                {!meta?.source_rule_id && meta?.scope_resolution_mode === 'module_scope_only' && !meta?.business_subscription_id && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-purple-600 border-purple-200">модульная покупка</Badge>
                                 )}
                               </div>
                             </div>
@@ -3006,7 +3014,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                           </div>
                           {meta?.scope_resolution_mode && (
                             <div className="mt-2 text-xs text-muted-foreground">
-                              Scope: {meta.scope_resolution_mode}
+                              Область доступа: {meta.scope_resolution_mode === 'module_scope_only' ? 'Отдельные модули' : meta.scope_resolution_mode === 'full_access' ? 'Полный доступ' : meta.scope_resolution_mode}
                             </div>
                           )}
                         </CardContent>
@@ -3078,11 +3086,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                     <div>
                                       <div className="font-medium text-sm">{product?.name || ent.product_code || "Продукт"}</div>
                                       <div className="text-xs text-muted-foreground">
-                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">entitlement</Badge>
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
                                       </div>
                                     </div>
                                     <Badge variant={isExpired ? "outline" : "secondary"}>
-                                      {ent.status === 'active' && isExpired ? 'Истёк' : ent.status === 'expired' ? 'Истёк' : ent.status}
+                                      {ent.status === 'active' && isExpired ? 'Истёк' : ent.status === 'expired' ? 'Истёк' : ent.status === 'active' ? 'Активен' : ent.status === 'revoked' ? 'Отозван' : ent.status}
                                     </Badge>
                                   </div>
                                   <div className="flex gap-3 text-xs text-muted-foreground">

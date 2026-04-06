@@ -106,7 +106,7 @@ export function UserSubscriptions() {
     };
     const labels: Record<string, string> = {
       active: "Активна",
-      trial: "Trial",
+      trial: "Пробный",
       canceled: "Отменена",
       expired: "Истекла",
       past_due: "Просрочена",
