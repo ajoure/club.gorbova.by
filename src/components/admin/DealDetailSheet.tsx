@@ -239,7 +239,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
       // 0. Load order snapshot for notifications + telegram revoke + GetCourse cancel
       const { data: order, error: orderError } = await supabase
         .from("orders_v2")
-        .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
+        .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id, public_id)")
         .eq("id", deal.id)
         .single();
 
@@ -562,7 +562,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                         }), (deal?.products_v2 as any)?.category)}</span>
                       </div>
                       {deal?.product_id && (
-                        <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
+                        <CopyableIdChip value={(deal?.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
                       )}
                     {(() => {
                       const snapshot = deal?.purchase_snapshot as Record<string, any> | null;

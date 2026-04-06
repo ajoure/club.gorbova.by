@@ -92,14 +92,14 @@ export default function ContactDealsDialog({
 
       const [productsResult, tariffsResult] = await Promise.all([
         productIds.length > 0 
-          ? supabase.from("products_v2").select("id, name, category").in("id", productIds)
+          ? supabase.from("products_v2").select("id, name, category, public_id").in("id", productIds)
           : { data: [] },
         tariffIds.length > 0
           ? supabase.from("tariffs").select("id, name").in("id", tariffIds)
           : { data: [] },
       ]);
 
-      const productsMap = new Map((productsResult.data || []).map(p => [p.id, { name: p.name, category: p.category }]));
+      const productsMap = new Map((productsResult.data || []).map(p => [p.id, { name: p.name, category: p.category, public_id: p.public_id }]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
 
       return data.map(deal => {
@@ -113,6 +113,7 @@ export default function ContactDealsDialog({
           ...deal,
           product_name: getShortDisplayName(rawName, category),
           product_category: category,
+          public_id: productInfo?.public_id || null,
           tariff_name: tariffsMap.get(deal.tariff_id) || null,
           _is_module_standalone: isModuleStandalone,
           _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
@@ -249,7 +250,7 @@ export default function ContactDealsDialog({
                                 </Badge>
                               )}
                               {deal.product_id && (
-                                <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
+                                <CopyableIdChip value={deal.public_id || deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
                               )}
                               {!deal.product_name && !deal.tariff_name && (
                                 <span className="text-muted-foreground text-sm">—</span>

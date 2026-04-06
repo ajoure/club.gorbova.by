@@ -418,7 +418,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .from("orders_v2")
         .select(`
           *,
-          products_v2(id, name, code, category),
+          products_v2(id, name, code, category, public_id),
           tariffs(id, name, code),
           payments_v2(id, status, provider_response)
         `)
@@ -3037,7 +3037,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               }), (deal.products_v2 as any)?.category)}</span>
                             </div>
                             {deal.product_id && (
-                              <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" className="mt-0.5" />
+                              <CopyableIdChip value={(deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" className="mt-0.5" />
                             )}
                             {deal.tariffs && (
                               <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
