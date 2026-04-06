@@ -238,10 +238,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Realtime subscriptions for orders_v2, subscriptions_v2, payments_v2
   useEffect(() => {
-    if (!open || !contact?.user_id) return;
+    if (!open || !resolvedUserId) return;
 
-    const userId = contact.user_id;
-    const profileId = contact.id;
+    const userId = resolvedUserId;
+    const profileId = contact?.id;
+    if (!profileId) return;
     
     // Build user IDs array for filtering
     const userIds = [profileId];
@@ -259,7 +260,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           const record = (payload.new || payload.old) as { user_id?: string; profile_id?: string };
           if (record?.user_id === userId || record?.profile_id === profileId || userIds.includes(record?.user_id || "")) {
             console.log("[Realtime] orders_v2 change for contact", profileId);
-            queryClient.invalidateQueries({ queryKey: ["contact-deals", contact.id, contact.user_id] });
+            queryClient.invalidateQueries({ queryKey: ["contact-deals", contact?.id, resolvedUserId] });
           }
         }
       )
@@ -270,7 +271,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           const record = (payload.new || payload.old) as { user_id?: string };
           if (record?.user_id === userId || userIds.includes(record?.user_id || "")) {
             console.log("[Realtime] subscriptions_v2 change for contact", profileId);
-            queryClient.invalidateQueries({ queryKey: ["contact-subscriptions", contact.id, contact.user_id] });
+            queryClient.invalidateQueries({ queryKey: ["contact-subscriptions", contact?.id, resolvedUserId] });
           }
         }
       )
@@ -399,14 +400,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   // Fetch deals for this contact - only paid/trial/cancelled (not pending/failed payment attempts)
   // Deals = successful transactions. Payment attempts go to Payments tab.
   const { data: deals, isLoading: dealsLoading } = useQuery({
-    queryKey: ["contact-deals", contact?.id, contact?.user_id],
+    queryKey: ["contact-deals", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
       
       // Build array of IDs to search (profile.id and optionally user_id)
       const userIds = [contact.id];
-      if (contact.user_id && contact.user_id !== contact.id) {
-        userIds.push(contact.user_id);
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
       }
       
       // Query deals by profile_id OR user_id to catch ghost contact deals
@@ -446,15 +447,16 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const { data: productsWithRules = new Set<string>() } = useActiveAccessRuleProducts();
 
   // Fetch subscriptions for this contact - check both profile.id and user_id
+  // Use resolvedUserId (from DB) to ensure support-path also finds subscriptions
   const { data: subscriptions, isLoading: subsLoading, refetch: refetchSubs } = useQuery({
-    queryKey: ["contact-subscriptions", contact?.id, contact?.user_id],
+    queryKey: ["contact-subscriptions", contact?.id, resolvedUserId],
     queryFn: async () => {
       if (!contact?.id) return [];
       
       // Build array of IDs to search
       const userIds = [contact.id];
-      if (contact.user_id && contact.user_id !== contact.id) {
-        userIds.push(contact.user_id);
+      if (resolvedUserId && resolvedUserId !== contact.id) {
+        userIds.push(resolvedUserId);
       }
       
       const { data, error } = await supabase
@@ -521,14 +523,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   });
 
   // Fetch communication history (audit logs for this user) with actor profiles
+  // Use resolvedUserId to ensure support-path also loads communications
   const { data: communications, isLoading: commsLoading } = useQuery({
-    queryKey: ["contact-communications", contact?.user_id],
+    queryKey: ["contact-communications", resolvedUserId],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!resolvedUserId) return [];
       const { data: logs, error } = await supabase
         .from("audit_logs")
         .select("*")
-        .eq("target_user_id", contact.user_id)
+        .eq("target_user_id", resolvedUserId)
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) throw error;
@@ -550,20 +553,20 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       
       return logs.map(log => ({ ...log, actor_profile: null }));
     },
-    enabled: !!contact?.user_id,
+    enabled: !!resolvedUserId,
   });
 
   // Fetch notification events (telegram_logs + email_logs) for this contact
   const { data: notificationEvents } = useQuery({
-    queryKey: ["contact-notification-events", contact?.user_id],
+    queryKey: ["contact-notification-events", resolvedUserId],
     queryFn: async () => {
-      if (!contact?.user_id) return [];
+      if (!resolvedUserId) return [];
       
       // Telegram notification logs - FIX-3: Include ADMIN_DISABLED_AUTO_RENEW for batch disable visibility
       const { data: tgLogs } = await supabase
         .from("telegram_logs")
         .select("id, created_at, action, event_type, status, error_message, meta")
-        .eq("user_id", contact.user_id)
+        .eq("user_id", resolvedUserId)
         .in("action", ["SEND_REMINDER", "SEND_NO_CARD_WARNING", "ADMIN_DISABLED_AUTO_RENEW"])
         .order("created_at", { ascending: false })
         .limit(30);
@@ -572,7 +575,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const { data: emailLogs } = await supabase
         .from("email_logs")
         .select("id, created_at, status, error_message, meta")
-        .eq("user_id", contact.user_id)
+        .eq("user_id", resolvedUserId)
         .eq("direction", "outgoing")
         .order("created_at", { ascending: false })
         .limit(30);
@@ -1068,7 +1071,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
   // Grant new access - performs all the same actions as a regular purchase
   const handleGrantNewAccess = async () => {
-    const isGhostContact = !contact?.user_id;
+    const isGhostContact = !resolvedUserId;
     
     // For ghost contacts, require "deal only" mode
     if (isGhostContact && !createDealOnly) {

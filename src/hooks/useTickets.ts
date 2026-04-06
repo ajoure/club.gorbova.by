@@ -190,6 +190,7 @@ export function useTicket(ticketId: string | undefined) {
         .select(`
           *,
           profiles:profile_id (
+            user_id,
             full_name,
             email,
             phone,
