@@ -150,6 +150,58 @@ Deno.serve(async (req) => {
     const userId = order.user_id;
     const profileId = order.profile_id;
     const productId = order.product_id;
+
+    // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
+    // If this order already fulfilled (both entitlement AND subscription exist),
+    // return strict no-op to prevent subscription extension on repeat calls.
+    const { data: existingEntByOrder } = await supabase
+      .from("entitlements")
+      .select("id, status, expires_at")
+      .eq("order_id", orderId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const { data: existingSubByOrder } = await supabase
+      .from("subscriptions_v2")
+      .select("id, status, access_end_at")
+      .eq("order_id", orderId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (existingEntByOrder && existingSubByOrder) {
+      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled. Entitlement: ${existingEntByOrder.id}, Subscription: ${existingSubByOrder.id}. Strict no-op.`);
+
+      await supabase.from("audit_logs").insert({
+        action: "grant-access-for-order.skip_already_fulfilled",
+        actor_type: "system",
+        actor_user_id: null,
+        actor_label: "grant-access-for-order",
+        target_user_id: userId,
+        meta: {
+          order_id: orderId,
+          existing_entitlement_id: existingEntByOrder.id,
+          existing_subscription_id: existingSubByOrder.id,
+          entitlement_status: existingEntByOrder.status,
+          entitlement_expires_at: existingEntByOrder.expires_at,
+          subscription_status: existingSubByOrder.status,
+          subscription_access_end_at: existingSubByOrder.access_end_at,
+        },
+      });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          already_fulfilled: true,
+          message: "Доступ по этому заказу уже был выдан ранее",
+          existing: {
+            entitlement_id: existingEntByOrder.id,
+            subscription_id: existingSubByOrder.id,
+          },
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    // ── END IDEMPOTENCY GUARD ───────────────────────────────────────────
     const tariffId = order.tariff_id;
     const product = order.product as any;
     const tariff = order.tariff as any;
