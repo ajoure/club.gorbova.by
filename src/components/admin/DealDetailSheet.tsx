@@ -552,12 +552,18 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
               <CardContent className="space-y-3">
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-sm text-muted-foreground shrink-0">Продукт</span>
-                  <div className="text-right">
-                    <span className="font-medium">{getDealDisplayName({
-                      productsV2: deal?.products_v2 as any,
-                      productName: product?.name,
-                      purchaseSnapshot: deal?.purchase_snapshot,
-                    })}</span>
+                    <div className="text-right space-y-1">
+                      <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                        <ProductCategoryBadge category={(deal?.products_v2 as any)?.category} />
+                        <span className="font-medium">{getShortDisplayName(getDealDisplayName({
+                          productsV2: deal?.products_v2 as any,
+                          productName: product?.name,
+                          purchaseSnapshot: deal?.purchase_snapshot,
+                        }), (deal?.products_v2 as any)?.category)}</span>
+                      </div>
+                      {deal?.product_id && (
+                        <CopyableIdChip value={deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
+                      )}
                     {(() => {
                       const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
                       const meta = deal?.meta as Record<string, any> | null;
