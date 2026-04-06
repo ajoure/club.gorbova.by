@@ -8,6 +8,7 @@ import { DashboardBreadcrumbs } from "./DashboardBreadcrumbs";
 import { ConsentUpdateModal } from "@/components/consent/ConsentUpdateModal";
 import { PullToRefresh } from "./PullToRefresh";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { ImpersonationBar } from "./ImpersonationBar";
 import { Loader2, Shield } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -48,6 +49,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   return (
     <SidebarProvider>
+      <ImpersonationBar />
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
