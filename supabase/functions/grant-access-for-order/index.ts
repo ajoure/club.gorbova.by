@@ -279,13 +279,64 @@ Deno.serve(async (req) => {
       getcourse: null,
     };
 
-    // 1. Upsert entitlement
+    // 1. Upsert entitlement — PATCH: lookup by product_id (ID-first), not product_code
     const { data: existingEntitlement } = await supabase
       .from("entitlements")
-      .select("id, expires_at")
+      .select("id, expires_at, product_code, product_id")
       .eq("user_id", userId)
-      .eq("product_code", productCode)
+      .eq("product_id", productId)
       .maybeSingle();
+
+    // Pre-INSERT: check for order_id collision (different product holding this order_id)
+    const { data: orderIdCollision } = await supabase
+      .from("entitlements")
+      .select("id, product_code, product_id, user_id")
+      .eq("order_id", orderId)
+      .maybeSingle();
+
+    if (orderIdCollision && orderIdCollision.product_id !== productId) {
+      // STOP-guard: collision belongs to a different user → hard error
+      if (orderIdCollision.user_id !== userId) {
+        console.error(`[grant-access] HARD STOP: order_id ${orderId} collision on entitlement ${orderIdCollision.id} belongs to DIFFERENT user ${orderIdCollision.user_id}`);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "order_id_collision_foreign_user",
+            details: {
+              order_id: orderId,
+              collision_entitlement_id: orderIdCollision.id,
+              collision_user_id: orderIdCollision.user_id,
+              expected_user_id: userId,
+            },
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Same user, different product → clear the stale order_id
+      console.warn(`[grant-access] Clearing order_id collision: entitlement ${orderIdCollision.id} (product ${orderIdCollision.product_code}) held order_id ${orderId} meant for product ${productCode}`);
+      await supabase
+        .from("entitlements")
+        .update({ order_id: null, updated_at: now.toISOString() })
+        .eq("id", orderIdCollision.id);
+
+      // Audit the collision clearing
+      await supabase.from("audit_logs").insert({
+        action: "entitlement.order_id_collision_cleared",
+        actor_type: "system",
+        actor_label: "grant-access-for-order",
+        target_user_id: userId,
+        meta: {
+          order_id: orderId,
+          previous_entitlement_id: orderIdCollision.id,
+          previous_product_id: orderIdCollision.product_id,
+          previous_product_code: orderIdCollision.product_code,
+          correct_product_id: productId,
+          correct_product_code: productCode,
+          cleared_by_patch: "PATCH-GRANT-ACCESS-PRIMARY-ENTITLEMENT-EXACT-PRODUCT-FIX",
+        },
+      });
+    }
 
     if (existingEntitlement) {
       // Update existing entitlement - extend if current expires_at is later than accessEndAt
@@ -301,14 +352,25 @@ Deno.serve(async (req) => {
           expires_at: newExpiresAt,
           order_id: orderId,
           updated_at: now.toISOString(),
+          meta: {
+            granted_by: "primary_order_fulfillment",
+            granted_at: now.toISOString(),
+          },
         })
         .eq("id", existingEntitlement.id);
 
       if (updateError) {
         console.error("Error updating entitlement:", updateError);
-      } else {
-        results.entitlement = { action: "updated", id: existingEntitlement.id };
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "primary_entitlement_update_failed",
+            details: updateError.message,
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
+      results.entitlement = { action: "updated", id: existingEntitlement.id };
     } else {
       // Create new entitlement
       const { data: newEntitlement, error: insertError } = await supabase
@@ -322,7 +384,7 @@ Deno.serve(async (req) => {
           order_id: orderId,
           expires_at: accessEndAt.toISOString(),
           meta: {
-            granted_by: "grant-access-for-order",
+            granted_by: "primary_order_fulfillment",
             granted_at: now.toISOString(),
           },
         })
@@ -330,11 +392,41 @@ Deno.serve(async (req) => {
         .single();
 
       if (insertError) {
-        console.error("Error creating entitlement:", insertError);
-      } else {
-        results.entitlement = { action: "created", id: newEntitlement?.id };
+        console.error("HARD ERROR creating entitlement:", insertError);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "primary_entitlement_creation_failed",
+            details: insertError.message,
+            context: { order_id: orderId, user_id: userId, product_id: productId },
+          }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
+      results.entitlement = { action: "created", id: newEntitlement?.id };
     }
+
+    // Post-check: verify primary entitlement exists with correct product_id
+    const { data: verifiedEntitlement } = await supabase
+      .from("entitlements")
+      .select("id, product_id")
+      .eq("user_id", userId)
+      .eq("product_id", productId)
+      .eq("status", "active")
+      .single();
+
+    if (!verifiedEntitlement || verifiedEntitlement.product_id !== productId) {
+      console.error(`[grant-access] PRIMARY ENTITLEMENT VERIFICATION FAILED: user=${userId}, product_id=${productId}`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "primary_entitlement_verification_failed",
+          details: { user_id: userId, product_id: productId, found: verifiedEntitlement },
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    results.primary_entitlement_verified = true;
 
     // 2. Find user's active payment method to enable auto-renewal
     const { data: userPaymentMethod } = await supabase
@@ -1015,6 +1107,7 @@ Deno.serve(async (req) => {
                 .maybeSingle();
 
               const enrichedMeta = {
+                granted_by: "rule_engine_product_access",
                 source_rule_id: rule.id,
                 source_order_id: orderId,
                 business_subscription_id: businessSub?.id || null,
