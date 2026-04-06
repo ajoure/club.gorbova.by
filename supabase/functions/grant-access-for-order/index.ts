@@ -864,17 +864,10 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Legacy fallback: product_club_mappings
+        // Legacy fallback to product_club_mappings REMOVED — all club grants must come from access_rules
+        // If no club rule found, no club access is granted (default-deny)
         if (!clubId) {
-          const { data: clubMapping } = await supabase
-            .from("product_club_mappings")
-            .select("club_id")
-            .eq("product_id", productId)
-            .maybeSingle();
-          if (clubMapping?.club_id) {
-            clubId = clubMapping.club_id;
-            console.log(`[grant-access] Club from legacy product_club_mappings: ${clubId}`);
-          }
+          console.log(`[grant-access] No club rule found in access_rules for product ${productId} — no club grant (default-deny)`);
         }
 
         if (clubId) {
@@ -1131,11 +1124,12 @@ Deno.serve(async (req) => {
               };
 
               // Check existing entitlement first (GREATEST logic - never decrease)
+              // PATCH: lookup by product_id (ID-first), not product_code
               const { data: existingPaEnt } = await supabase
                 .from('entitlements')
                 .select('id, expires_at, order_id, meta')
                 .eq('user_id', userId)
-                .eq('product_code', targetProductCode)
+                .eq('product_id', targetProdId)
                 .maybeSingle();
 
               let paEntAction = 'created';
