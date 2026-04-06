@@ -1,150 +1,6 @@
-## Отчет о выполнении: CONSOLIDATED SPRINT
+## Отчет о выполнении: CONSOLIDATED SPRINT — ACCESS-SCOPE-FORENSICS
 
-Это продолжение основной ревизии доступов. Главный вопрос: **почему пользователь реально видит конкретный продукт/модуль, на каком основании доступ существует, и какой слой является source of truth**.
-
----
-
-### Закрытые патчи
-
-| Патч | Статус | Комментарий |
-|---|---|---|
-| PATCH 1 | closed | — |
-| PATCH 2 | partial | 12 ghost кейсов ждут fix |
-| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** | code fixed, manual UI proof confirmed |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** | manual proof confirmed |
-| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **root cause proved** | — |
-
----
-
-### Активные блоки
-
----
-
-### Блок 1 — PATCH-KOROLYOVA-REVOKE-GUARD-FIX
-
-**Root cause доказан.** `grant-access-for-order` создал подписку с `access_end_at` из прошлого (stale bePaid данные). Cron корректно увидел expired и сделал revoke. bePaid sync обновил дату через 3 часа.
-
-#### Dry-run результаты
-
-- **224** подписки за 2 месяца с `access_end_at < created_at`
-- **0 active** среди stale — все expired/superseded
-- **2 provider_managed** (Gorbova Club, expired) — именно паттерн Королёвой
-- **221 mit** (ЗАКРОЙ ГОД) — исторический импорт с датами из прошлого, не опасны (все expired)
-
-**Вывод:** проблема узкая, затрагивает только provider_managed подписки при создании через grant-access-for-order. Активного stale нет, но guard необходим для предотвращения повторения.
-
-#### Два guard-а (оба вместе)
-
-**Guard A — в `grant-access-for-order`:**
-- При создании подписки: если `access_end_at < now()` и `billing_type = provider_managed`, установить `access_end_at = now() + 48h`
-- Логировать: `stale_date_overridden: true`
-
-**Guard B — в `telegram-kick-violators`:**
-- Перед revoke: если подписка создана < 48h назад и `billing_type = provider_managed`, пропустить
-- Логировать: `grace_skip: true`
-
-**Статус: ready for execute. Dry-run завершён.**
-
----
-
-### Блок 2 — PATCH 3 ACCESS-SCOPE-FORENSICS
-
-#### Результаты discovery (Phase 1-4 завершены)
-
-##### Классификация 519 активных entitlements по происхождению
-
-| Bucket | Количество | Продукты |
-|---|---|---|
-| `direct_order_access` | **467** (90%) | cb20, prd_0d01a2fdc477, course_close_year, club, buh_business, cb_2_step, 1769009596189-398a |
-| `subscription_without_order` | **49** (9.4%) | cb_module_ip (ВСЕ) |
-| `manual_admin_access` | **3** (0.6%) | cb_module_marketplaces, cb_module_production, cb_module_retail |
-| `unexplained_active_access` | **0** | — |
-
-**Ключевой вывод:** 0 необъяснимых доступов. Все 519 entitlements имеют прослеживаемое происхождение.
-
-##### 49 cb_module_ip — bulk_grant forensic
-
-Все 49 подписок на Модуль ИП:
-- Созданы **2026-03-27** одним системным batch (`bulk_grant_v6`, batch_id: `a2ff3724`)
-- `meta_source: bulk_grant`, без order_id
-- Tariff: Стандарт, `access_end_at: 2026-06-25`
-- Entitlements созданы backfill-ом (v23.1.9B) из этих подписок
-- **У всех 49 пользователей есть paid order на cb20 (1 ступень), но НЕТ paid order на cb_module_ip**
-
-Это была **админ-операция массовой выдачи модульного доступа** пользователям, купившим 1 ступень.
-
-##### Bonus parent check (170 entitlements на target-продуктах бонусного правила `1b497fba`)
-
-| Parent basis | Количество | Описание |
-|---|---|---|
-| `valid_business_club` | **127** (75%) | Есть active Club BUSINESS — легальный бонус |
-| `no_active_club` | **24** (14%) | Клуб expired или отсутствует |
-| `wrong_tariff_club` | **19** (11%) | Клуб active, но тариф CHAT/FULL (не BUSINESS) |
-
-**43 entitlements (24 + 19) на bonus-target продуктах не имеют валидного BUSINESS-клуба.**
-
-НО: из этих 43 большинство имеют `direct_order_access` (paid order на сам продукт). Бонусное правило — не единственный путь получения entitlement. Нужна проверка: сколько из 43 реально зависят от bonus rule vs имеют прямой ордер.
-
-##### Sample-case: Ирина Протасевич
-
-| Ресурс | Данные | Происхождение | Легальность |
-|---|---|---|---|
-| Gorbova Club | expired 2026-02-25 | paid order, тариф CHAT | ✅ expired корректно |
-| ЦБ 1 ступень (cb20) | entitlement до 2026-12-23 | paid order (Бизнес-леди) → backfill | ✅ direct order |
-| ЦБ 2 ступень (prd_0d01a2fdc477) | entitlement до 2026-08-30 | paid order (Премиум) → csv_import | ✅ direct order |
-| **Модуль ИП (cb_module_ip)** | **entitlement до 2026-06-25** | **bulk_grant subscription → backfill** | **⚠️ нет paid order** |
-| ЗАКРОЙ ГОД | 2 orders paid, subs expired | paid orders | ✅ expired корректно |
-
-**Протасевич: cb_module_ip выдан bulk_grant-ом 2026-03-27 без ордера. У неё тариф CHAT, бонусное правило НЕ применяется к CHAT. Доступ к модулю ИП — результат массовой админ-операции, а не автоматического бонуса.**
-
----
-
-#### SoT hierarchy (зафиксировано)
-
-```
-Уровень 1 (Fact of access):     entitlements — primary SoT
-Уровень 2 (Evidence/window):    subscriptions_v2, orders_v2
-Уровень 3 (Rules):              access_rules (product_access, training_content, club)
-Уровень 4 (UI visibility):      useSidebarModules → userEntitlementProductIds.has(effectiveProductId)
-Уровень 5 (Content filter):     useTrainingContentRules → scope resolver
-```
-
-**Цепочка видимости модуля:**
-1. `entitlements` содержит active запись на product_id модуля
-2. `useSidebarModules.ts:134` проверяет `userEntitlementProductIds.has(effectiveProductId)`
-3. Если entitlement есть → модуль виден в sidebar
-4. `useTrainingContentRules` дополнительно фильтрует scope (partial/full)
-
-**Вывод: пользователь видит модуль ПОТОМУ ЧТО у него есть entitlement. UI resolver не расширяет доступ сверх entitlements. Проблема не в resolver, а в том, КАК и КОМУ были выданы entitlements.**
-
----
-
-#### CSV-артефакты (все сгенерированы)
-
-| Файл | Строк | Описание |
-|---|---|---|
-| `access_origin_matrix.csv` | 519 | Все active entitlements с классификацией origin |
-| `unexplained_active_access.csv` | 0 | Без valid basis (пусто — всё объяснено) |
-| `module_active_without_direct_order.csv` | 52 | Модули без paid order (49 cb_module_ip + 3 manual) |
-| `bonus_parent_check.csv` | 170 | Entitlements на bonus targets + club status |
-| `overvisible_module_scope.csv` | 43 | Entitlements на bonus targets без valid BUSINESS club |
-
----
-
-#### Промежуточные выводы PATCH 3
-
-1. **Система не "течёт"** — 0 unexplained access, все 519 entitlements имеют прослеживаемый origin
-2. **Главный anomaly-bucket:** 49 cb_module_ip выданы bulk_grant без ордеров. Это осознанная админ-операция, но без бизнес-правила
-3. **43 entitlements на bonus targets** без валидного BUSINESS club — нужно проверить, сколько из них зависят от bonus vs имеют direct order
-4. **Resolver не виноват** — видимость строго по entitlements, нет "утечки" через широкие условия
-
----
-
-### STOP-guards
-
-- До завершения PATCH 3 discovery запрещено: массовые revoke, fix visibility "вслепую"
-- Не менять auth, RLS, edge functions (кроме guard-ов Королёвой)
-- Сначала полная карта, потом execute
+Главный вопрос: **почему у пользователя есть конкретный доступ, почему он видит конкретный модуль, как это названо в UI, и совпадает ли с реальной сущностью в БД**.
 
 ---
 
@@ -153,21 +9,146 @@
 | Патч | Статус |
 |---|---|
 | PATCH 1 | closed |
-| PATCH 2 | partial — 12 ghost кейсов ждут fix |
-| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** |
-| PATCH-DERGELEVA-BROWSER-PROOF | **closed** |
-| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | root cause proved |
-| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **active — dry-run done, ready for execute** |
-| PATCH 3 ACCESS-SCOPE-FORENSICS | **active — discovery phases 1-4 done** |
+| PATCH 2 | partial — 12 ghost кейсов |
+| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **closed** — manual proof |
+| PATCH-DERGELEVA-BROWSER-PROOF | **closed** — manual proof |
+| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **root cause proved** |
+| PATCH-KOROLYOVA-REVOKE-GUARD-FIX | **done** — Guard A + Guard B deployed |
 | PATCH-GHOST-PLACEHOLDER-NORMALIZATION | pending |
-| PATCH-GHOST-CLAIM-BRIDGE-PROOF | pending — обязателен |
+| PATCH-GHOST-CLAIM-BRIDGE-PROOF | pending |
+| PATCH 3 ACCESS-SCOPE-FORENSICS | **done — phases 1-9** |
+| — Phase 5: 43 overvisible classification | done |
+| — Phase 6: naming audit | done |
+| — Phase 7: default-deny visibility | done |
+| — Phase 8: purchase→access→visibility matrix | done |
+| — Phase 9: product card access SoT | done |
+| PATCH-PRODUCT-MODULE-TARIFF-NAMING-AUDIT | **done** (Phase 6) |
+| PATCH-DEFAULT-DENY-TRAINING-VISIBILITY | **done** (Phase 7) |
+| PATCH-PRODUCT-CARD-ACCESS-SOT | **done** (Phase 9) |
 | PATCH 4 duration drift | pending |
 
 ---
 
-### Следующие шаги
+### PATCH-KOROLYOVA-REVOKE-GUARD-FIX — DONE
 
-1. **PATCH-KOROLYOVA-REVOKE-GUARD-FIX:** имплементировать оба guard-а (edge functions)
-2. **PATCH 3 Phase 5:** уточнить 43 overvisible — сколько зависят от bonus rule vs direct order
-3. **PATCH 3 Phase 6:** resolver audit (useContainerLessons, useTrainingContentRules) — подтвердить, что scope фильтрация корректна
-4. **Решение по 49 cb_module_ip:** бизнес-решение — оставить или revoke после 2026-06-25
+**Guard A** (`grant-access-for-order`): если `accessEndAt < now()` при создании подписки → override на `now() + 48h`. Логирование: `subscription.stale_date_overridden`.
+
+**Guard B** (`telegram-kick-violators`): перед kick проверяет наличие `provider_managed` подписки, созданной < 48h назад → skip kick с audit `KICK_SKIP_PROVIDER_GRACE`.
+
+Оба guard-а задеплоены.
+
+---
+
+### PATCH 3 ACCESS-SCOPE-FORENSICS — Результаты
+
+#### Phase 5: 43 overvisible → классификация
+
+| Bucket | Кол-во | Описание |
+|---|---|---|
+| HAS_DIRECT_ORDER | 37 | cb20, есть paid order — легально |
+| NO_CLUB_BASIS | 6 | cb_module_ip, нет paid order, нет active club — **аномалия** |
+
+6 аномальных кейсов = entitlement на cb_module_ip, source=historical_backfill от subscription без order. Все 49 cb_module_ip подписок — от admin bulk_grant_v6 (2026-03-27).
+
+#### Phase 6: Naming audit
+
+| Anomaly | Кол-во |
+|---|---|
+| ok | 1949 |
+| module_missing_module_label | 19 |
+| no_name_anywhere | 18 |
+
+Модули cb_module_* в БД именуются: `Ценный бухгалтер | 1 ступень 2.0 | Модуль: X` — содержат слово «Модуль», но начинаются с названия родительского продукта. 18 заказов без product_id → не имеют названия.
+
+#### Phase 7: Default-deny visibility
+
+| Anomaly | Кол-во |
+|---|---|
+| access_controlled | 56 |
+| active_without_access_binding | 3 |
+
+3 тренинговых модуля без product_id и без module_access → видимы всем по умолчанию.
+
+#### Phase 8: Purchase→Access→Visibility matrix
+
+| Anomaly | Кол-во |
+|---|---|
+| ok | 510 |
+| paid_but_no_entitlement | 102 |
+| entitled_without_direct_order | 49 |
+| subscribed_without_order | 10 |
+| entitled_without_purchase_or_sub | 3 |
+
+102 кейса `paid_but_no_entitlement` — заказы, для которых не был создан entitlement (возможно исторические).
+
+#### Phase 9: Product card Access SoT
+
+- `ProductAccessRulesTab` читает из `access_rules` — это **конфигурационный инструмент**, не SoT фактического доступа.
+- Фактический SoT: `entitlements` (кто имеет) + `subscriptions_v2` (кто платит).
+- Вкладка «Доступы» продукта показывает **правила выдачи**, а не реальных получателей.
+- cb_module_ip: 49 active entitlements, 59 active subscriptions, 0 paid orders.
+
+#### Sample-case: Протасевич
+
+| Слой | Продукт | Статус | Срок | Basis |
+|---|---|---|---|---|
+| ORDER | Gorbova Club (CHAT) | paid | 2026-01-26 | club expired |
+| ORDER | ЦБ 1 ступень (Бизнес-леди) | paid | 2026-03-28 | ✅ direct |
+| ORDER | ЦБ 2 ступень (Премиум) | paid | 2026-03-29 | ✅ direct |
+| ORDER | ЗАКРОЙ ГОД (x2) | paid | 2026-03-29 | ✅ direct |
+| SUB | cb_module_ip | active | 2026-06-25 | ⚠️ bulk_grant, no order |
+| SUB | prd_0d01a2fdc477 (2 ступень) | active | 2026-08-30 | ✅ from order |
+| ENT | cb_module_ip | active | 2026-06-25 | ⚠️ historical_backfill from sub |
+| ENT | prd_0d01a2fdc477 | active | 2026-08-30 | ✅ from order |
+| ENT | cb20 | active | 2026-12-23 | ✅ historical_backfill from order |
+
+**Вывод по Протасевич:** cb_module_ip — необоснованный доступ. Нет paid order. Subscription создана admin bulk_grant. Club CHAT не дает бонусов. UI-название `Ценный бухгалтер | 1 ступень 2.0 | Модуль: Учет у ИП` — содержит модуль, но начинается с названия основного продукта.
+
+---
+
+### Source-of-Truth Hierarchy (зафиксировано)
+
+1. **orders_v2** — факт оплаты (purchase basis)
+2. **subscriptions_v2** — период активного доступа (access period)
+3. **entitlements** — факт наличия права (access fact, canonical SoT)
+4. **access_rules** — конфигурационная логика выдачи (config)
+5. **training_modules + useSidebarModules** — UI visibility resolver (1:1 с entitlements)
+
+Вкладка продукта «Доступы» = access_rules (config), НЕ entitlements (fact).
+
+---
+
+### Артефакты (CSV)
+
+| Файл | Строк | Описание |
+|---|---|---|
+| access_origin_matrix.csv | ранее | Классификация 519 entitlements |
+| module_active_without_direct_order.csv | ранее | 49 cb_module_ip без orders |
+| bonus_parent_check.csv | ранее | Бонусные entitlements + клуб |
+| overvisible_module_scope.csv | ранее | 43 overvisible |
+| deal_product_naming_audit.csv | 1987 | Naming audit всех paid orders |
+| mislabelled_ui_entities.csv | 37 | Модули, названные как родитель |
+| default_deny_training_visibility_audit.csv | 59 | Все active training modules + binding |
+| purchase_to_access_to_visibility_matrix.csv | 2048 | Полная матрица |
+| product_access_tab_sot_audit.csv | 26 | Все products + access data |
+
+---
+
+### STOP-guards
+
+- **До утверждения execute-патча запрещено:**
+  - Массовые revoke по cb_module_ip
+  - Массовые revoke bonus access
+  - Изменение UI labels без матрицы
+- Не менять auth, RLS, edge functions (кроме Korolyova guards — done)
+- Сначала полная карта, потом execute
+
+---
+
+### Следующие шаги (pending approval)
+
+1. **Execute-решение по 49 cb_module_ip** — revoke или оставить? Все от admin bulk_grant, без orders.
+2. **3 training modules без access binding** — добавить binding или скрыть?
+3. **102 paid_but_no_entitlement** — создать missing entitlements?
+4. **18 orders без product_id** — привязать к продуктам?
+5. **Naming normalization** — сделать UI-название модулей отличимым от parent product?

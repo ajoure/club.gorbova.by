@@ -359,6 +359,43 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // GUARD B (PATCH-KOROLYOVA): Grace period for fresh provider_managed subscriptions.
+        // Skip kick if a provider_managed subscription was created < 48h ago — bePaid sync may not have updated dates yet.
+        if (userId) {
+          const PROVIDER_GRACE_MS = 48 * 60 * 60 * 1000;
+          const graceThreshold = new Date(Date.now() - PROVIDER_GRACE_MS).toISOString();
+
+          const { data: freshProviderSubs } = await supabase
+            .from('subscriptions_v2')
+            .select('id, created_at, billing_type')
+            .eq('user_id', userId)
+            .eq('billing_type', 'provider_managed')
+            .eq('status', 'active')
+            .gte('created_at', graceThreshold)
+            .limit(1);
+
+          if (freshProviderSubs && freshProviderSubs.length > 0) {
+            console.log(`GUARD B: Skipping kick for user ${member.telegram_user_id} — fresh provider_managed subscription ${freshProviderSubs[0].id} created at ${freshProviderSubs[0].created_at} (within 48h grace)`);
+            skippedWithAccess++;
+
+            await logAudit(supabase, {
+              club_id: club.id,
+              event_type: 'KICK_SKIP_PROVIDER_GRACE',
+              actor_type: 'cron',
+              telegram_user_id: member.telegram_user_id,
+              user_id: userId,
+              reason: 'provider_managed_grace_48h',
+              meta: {
+                subscription_id: freshProviderSubs[0].id,
+                subscription_created_at: freshProviderSubs[0].created_at,
+                guard: 'GUARD_B_KOROLYOVA',
+              },
+            });
+
+            continue; // Skip to next member
+          }
+        }
+
         // No valid access confirmed — proceed to kick even if access_status was 'ok'
         if (member.access_status === 'ok') {
           console.log(`PATCH C: user ${member.telegram_user_id} had access_status='ok' but hasValidAccessBatch returned invalid — proceeding to kick`);
