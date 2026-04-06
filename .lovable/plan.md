@@ -1,197 +1,77 @@
-## да, согласен, с учетом правок:
+## Отчет о выполнении: FORENSIC-IDENTITY-ACCESS-SPRINT
 
-&nbsp;
+### PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX — ВЫПОЛНЕН
 
-1. **Не делай search_deal_rows как SETOF jsonb.**
-  Лучше вернуть **табличную структуру с явными колонками**, чтобы не терять типизацию, сортировку и предсказуемость на клиенте.
-  Иначе получите:
-  &nbsp;
-  - слабую типизацию
-  - лишний парсинг
-  - более хрупкий контракт между SQL и UI
-  &nbsp;
-2. **Нужно зафиксировать стабильную сортировку и в RPC поиска.**
-  Не только в обычном query, но и в search_deal_rows:
-  &nbsp;
-  - ORDER BY deal_date DESC NULLS LAST, id DESC
-  - LIMIT/OFFSET применять после этого
-    Иначе в поиске и при Показать ещё строки могут прыгать.
-  &nbsp;
-3. **Counts RPC и rows RPC должны использовать один и тот же WHERE-блок буквально.**
-  Не “похожую логику”, а один и тот же search/filter contract:
-  &nbsp;
-  - p_search
-  - p_product_id
-  - p_date_from
-  - p_date_to
-  - p_preset
-    Иначе снова будет рассинхрон между counters и rows.
-  &nbsp;
-4. **В get_deal_tab_counts добавь тот же preset/filter contract, что и в rows.**
-  Сейчас ты пишешь про общую семантику, но нужно явно зафиксировать:
-  &nbsp;
-  - counts считаются по той же отфильтрованной базе
-  - tabs не должны показывать значения из другой логики поиска/фильтрации
-  &nbsp;
-5. **Нужен guard по производительности для поиска по ФИО.**
-  Поиск через JOIN с profiles ок, но в плане нужно добавить:
-  &nbsp;
-  - тянуть только минимально нужные поля
-  - не раздувать payload при поиске
-  - payments_v2 не тащить “полным массивом”, если это можно безопасно сократить до минимально нужных полей/последнего платежа
-  &nbsp;
-6. **Показать ещё в режиме поиска нужно описать точнее.**
-  Добавь:
-  &nbsp;
-  - при активном p_search вторая страница продолжает тот же result set
-  - не сбрасывает search context
-  - не смешивает результаты обычного списка и search-режима
-  &nbsp;
-7. **Нужен explicit anti-regression guard: без client-side fallback search.**
-  Прямо запиши:
-  &nbsp;
-  - не возвращать buildSearchIndex
-  - не искать по уже загруженным rows в браузере
-  - поиск только server-side
-  &nbsp;
-8. **Добавь proof по имени и фамилии отдельно.**
-  Не только “по ФИО работает”, а:
-  &nbsp;
-  - поиск по email
-  - поиск по фамилии
-  - поиск по имени
-  - поиск по записи вне первых 100
-    Это важный DoD.
-  &nbsp;
-9. **Добавь proof согласованности counts и rows.**
-  Например:
-  &nbsp;
-  - один и тот же search term
-  - count в табе
-  - фактическая rows-выдача по этому же term
-    Нужно показать, что после hotfix нет рассинхрона.
-  &nbsp;
-10. **Если search RPC вводится, то в AdminDeals.tsx надо явно сохранить два режима без лишнего дублирования логики.**
-  Укажи:
+#### Что сделано
 
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- без поиска — обычный lightweight paginated query
-- с поиском — RPC search query
-- общий UI/pagination contract один и тот же
-  Иначе подрядчик может сделать две расходящиеся реализации.
-
-&nbsp;
-
-&nbsp;
-
-В остальном план правильный и уже достаточно точный для исполнения.
-
-&nbsp;
-
-План: HOTFIX-DEALS-COUNTS-AND-NAME-SEARCH
-
-### Контекст
-
-Два подтвержденных бага:
-
-1. `get_deal_tab_counts` RPC падает с 400 — невалидное значение enum `'cancelled'`
-2. Поиск в Сделках не находит по ФИО — текущий `.or()` ищет только по `order_number`, `customer_email`, `customer_phone`, но не по `profiles.full_name` (PostgREST не поддерживает фильтрацию по related table fields внутри `.or()`)
-
-### Root cause
-
-**Fix 1**: Строка 44 в `get_deal_tab_counts` содержит `'cancelled'` — это не валидное значение enum `order_status` (допустимо только `'canceled'`).
-
-**Fix 2**: PostgREST `.or()` на строке 197-199 в `AdminDeals.tsx` не может фильтровать по `profiles.full_name`, т.к. это поле из связанной таблицы. Supabase PostgREST не поддерживает `relation.column` внутри `.or()`. Поэтому поиск по ФИО полностью отсутствует в rows query. При этом в RPC `get_deal_tab_counts` поиск по `p.full_name` уже есть (строка 34), что создает рассинхрон между counts и rows.
-
-### Решение
-
-#### Fix 1 — SQL миграция
-
-Пересоздать `get_deal_tab_counts` с исправлением строки 44:
-
-```sql
-WHERE status IN ('canceled', 'refunded')
+**Файл: `src/hooks/useTickets.ts`** — добавлен `user_id` в profiles JOIN:
+```typescript
+profiles:profile_id (
+  user_id,        // ← ДОБАВЛЕНО
+  full_name, email, phone, avatar_url
+)
 ```
 
-#### Fix 2 — Поиск по ФИО: server-side RPC для rows
+**Файл: `src/components/admin/ContactDetailSheet.tsx`** — переведены все data-queries на `resolvedUserId`:
+- Subscriptions query (queryKey + userIds)
+- Deals query (queryKey + userIds)
+- Communications / audit_logs query
+- Notification events query (telegram_logs + email_logs)
+- Realtime subscription (useEffect)
+- `isGhostContact` flag в handleGrantNewAccess
 
-Поскольку PostgREST `.or()` не может работать с relation fields, нужно вынести поисковый запрос rows на SQL-сторону. Создать новую RPC `search_deal_rows`:
+**Root cause подтверждён:** `useTicket` не включал `user_id` в JOIN → ContactDetailSheet из Support получал `contact.user_id = undefined` → подписки не находились (ищутся по auth user_id) → контакт помечался как ghost.
 
-```text
-search_deal_rows(
-  p_search text,
-  p_product_id uuid,
-  p_date_from timestamptz,
-  p_date_to timestamptz,
-  p_preset text,        -- 'all' | 'trial' | 'canceled' | 'imported'
-  p_limit int,
-  p_offset int
-) RETURNS SETOF jsonb
-```
+**Build:** TypeScript компиляция проходит без ошибок.
 
-Эта RPC:
+---
 
-- делает JOIN с profiles
-- ищет по `order_number`, `customer_email`, `customer_phone`, `profiles.full_name`, `profiles.email` (ILIKE, case-insensitive)
-- применяет те же фильтры preset/product/date что и клиентский код сейчас
-- возвращает paginated результат с теми же JOIN-данными (products_v2, tariffs, profiles, payments_v2)
-- использует **ту же search/filter семантику**, что и `get_deal_tab_counts`
+### PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS — ROOT CAUSE ДОКАЗАН
 
-В клиентском коде `AdminDeals.tsx`:
+#### Финальный timeline (DB proof)
 
-- когда `debouncedSearch` задан: использовать RPC `search_deal_rows` вместо прямого PostgREST запроса
-- когда поиска нет: оставить текущий прямой PostgREST запрос (он работает корректно без name search)
-- `useInfiniteQuery` адаптировать для обоих режимов: queryFn выбирает между RPC и прямым запросом
+| Время (UTC) | Событие | Proof |
+|---|---|---|
+| 05.04 08:58 | Старая подписка `4462ee5c` expired (`access_end_at`) | subscriptions_v2 |
+| 06.04 03:01:46 | Новая подписка `dea78a37` создана, `access_end_at = 2026-05-05` | subscriptions_v2.created_at |
+| 06.04 03:01:48 | Grant в access_grant_ledger: `reason_code=paid_order`, `status=granted` | access_grant_ledger |
+| **06.04 04:00:17** | **AUTO_REVOKE** в telegram_logs, status=ok | telegram_logs |
+| 06.04 07:06:24 | MANUAL_GRANT (админ восстановил) | telegram_logs |
+| 06.04 07:07:04 | AUTO_GRANT + telegram_access.active_until обновлён до 2026-05-05 | telegram_access.updated_at |
 
-### Синхронизация search semantics
+#### Доказанный root cause
 
-Обе RPC (`get_deal_tab_counts` и `search_deal_rows`) будут использовать одинаковый WHERE-блок:
+**Новая подписка `dea78a37` УЖЕ СУЩЕСТВОВАЛА за 59 минут до revoke.** Grant в `access_grant_ledger` тоже был записан.
 
-```sql
-(p_search IS NULL
- OR o.order_number ILIKE '%' || p_search || '%'
- OR o.customer_email ILIKE '%' || p_search || '%'
- OR o.customer_phone ILIKE '%' || p_search || '%'
- OR p.full_name ILIKE '%' || p_search || '%'
- OR p.email ILIKE '%' || p_search || '%')
-```
+Но `telegram-kick-violators` cron проверяет `telegram_access.active_until`, которое НЕ было обновлено при создании подписки (06.04 03:01). Обновление `telegram_access` произошло только в 07:07:04 — после ручного вмешательства админа.
 
-### Изменяемые файлы
+**Системный gap:** `grant-access-for-order` записывает в `access_grant_ledger`, но НЕ обновляет `telegram_access.active_until`. Cron `telegram-kick-violators` не проверяет `access_grant_ledger` или `subscriptions_v2` — полагается только на стale `telegram_access.active_until`.
 
+#### Safe remediation plan
+- Добавить pre-revoke guard: перед kick проверять `subscriptions_v2.access_end_at > now()` для того же product/club
+- Или: grant-access-for-order должен немедленно обновлять `telegram_access.active_until`
 
-| Файл                             | Что меняется                                                            |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| Новая SQL миграция               | Исправить enum в `get_deal_tab_counts` + создать `search_deal_rows` RPC |
-| `src/pages/admin/AdminDeals.tsx` | В `buildDealsQuery` при наличии search использовать RPC вместо `.or()`  |
+---
 
+### Consolidated вывод
 
-### STOP-guards
+**Три отдельные проблемы, не один identity-баг:**
 
-- Не менять auth, RLS, edge functions
-- Не менять Phase A auth-fix
-- Не ломать пагинацию / "Показать ещё" без search
-- Не создавать client-side search workaround
-- Не менять структуру таблиц
+1. **Support-path resolver bug (Дергелёва):** `useTicket` не включал `user_id` → ContactDetailSheet не видел подписки. **ИСПРАВЛЕНО.**
+2. **Revoke race condition (Королёва):** grant-access-for-order не обновляет `telegram_access.active_until` → cron видит stale данные и revoke-ит. **ROOT CAUSE ДОКАЗАН, remediation plan ready.**
+3. **Ghost placeholder subscriptions (12 кейсов):** `user_id = profile_id` placeholder. **Discovery done, execute not approved.**
 
-### DoD
+---
 
-1. `get_deal_tab_counts` возвращает 200 без ошибки enum
-2. Tab counts отображаются в UI
-3. Поиск по email работает
-4. Поиск по фамилии работает (по всей БД)
-5. Поиск по имени работает
-6. Counts и rows согласованы при активном поиске по ФИО
-7. "Показать ещё" работает в режиме поиска
+### Статус-блок
 
-### Обязательный proof
-
-1. Поиск по email — строка найдена
-2. Поиск по фамилии из первых 100 — найдена
-3. Поиск по фамилии, которой нет в первых 100, но есть в БД — найдена
-4. Network: `get_deal_tab_counts` возвращает 200
-5. Network: counts и rows соответствуют одному search term
+| Патч | Статус |
+|---|---|
+| PATCH 1 | closed |
+| PATCH 2 | partial — 12 ghost кейсов ждут fix |
+| PATCH-SUPPORT-CONTACT-USERID-RESOLVER-FIX | **DONE — code deployed** |
+| PATCH-CASE-KOROLYOVA-REVOKE-FORENSICS | **root cause proved — remediation plan ready** |
+| PATCH-GHOST-PLACEHOLDER-NORMALIZATION | discovery done, execute not approved |
+| PATCH-GHOST-CLAIM-BRIDGE-PROOF | pending — historical proof needed |
+| PATCH 3 illegal_bonus_access | pending (discovery можно начинать) |
+| PATCH 4 duration drift | pending (независим) |
