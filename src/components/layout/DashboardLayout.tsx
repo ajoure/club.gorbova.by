@@ -83,5 +83,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <MobileBottomNav />
       </div>
     </SidebarProvider>
+    </>
   );
 }
