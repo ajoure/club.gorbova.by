@@ -12834,6 +12834,51 @@ export type Database = {
           updated_at: string
         }[]
       }
+      search_deal_rows: {
+        Args: {
+          p_date_from?: string
+          p_date_to?: string
+          p_limit?: number
+          p_offset?: number
+          p_preset?: string
+          p_product_id?: string
+          p_search?: string
+        }
+        Returns: {
+          created_at: string
+          currency: string
+          customer_email: string
+          customer_phone: string
+          deal_date: string
+          discount_percent: number
+          final_price: number
+          id: string
+          is_trial: boolean
+          latest_payment_card_holder: string
+          latest_payment_id: string
+          latest_payment_meta: Json
+          latest_payment_paid_at: string
+          latest_payment_status: string
+          meta: Json
+          order_number: string
+          product_code: string
+          product_id: string
+          product_name: string
+          profile_avatar_url: string
+          profile_email: string
+          profile_full_name: string
+          profile_id: string
+          profile_phone: string
+          profile_user_id: string
+          purchase_snapshot: Json
+          reconcile_source: string
+          status: string
+          tariff_id: string
+          tariff_name: string
+          trial_end_at: string
+          user_id: string
+        }[]
+      }
       search_global: {
         Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: Json
