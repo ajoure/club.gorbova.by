@@ -1481,6 +1481,8 @@ Deno.serve(async (req) => {
                 ...(orderV2.meta || {}),
                 bepaid_subscription_id: subscriptionId,
                 bepaid_uid: transactionUid,
+                // PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL: ensure payment_flow is set
+                ...( !(orderV2.meta as any)?.payment_flow ? { payment_flow: 'bepaid_subscription_renewal' } : {} ),
               },
             })
             .eq('id', orderV2Id);
@@ -2201,7 +2203,10 @@ Deno.serve(async (req) => {
       const orderUpdatePayload: Record<string, any> = {
         status: 'paid',
         paid_amount: paymentAmount,
-        meta: { ...existingMeta, bepaid_subscription_id: subscriptionId },
+        meta: { ...existingMeta, bepaid_subscription_id: subscriptionId,
+          // PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
+          ...( !existingMeta?.payment_flow ? { payment_flow: 'bepaid_subscription_charge' } : {} ),
+        },
         updated_at: new Date().toISOString(),
       };
       // Fill-only: set provider_payment_id only if NULL
@@ -3087,7 +3092,10 @@ Deno.serve(async (req) => {
       await supabase.from('orders_v2').update({
         status: 'paid',
         paid_amount: linkPaymentAmount,
-        meta: { ...linkOrderMeta, bepaid_transaction_uid: transactionUid },
+        meta: { ...linkOrderMeta, bepaid_transaction_uid: transactionUid,
+          // PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
+          ...( !linkOrderMeta?.payment_flow ? { payment_flow: 'bepaid_link_payment' } : {} ),
+        },
         updated_at: new Date().toISOString(),
       }).eq('id', linkOrderV2.id);
       console.log('[WEBHOOK-LINK] Order updated to paid:', linkOrderV2.id);
@@ -3549,6 +3557,8 @@ Deno.serve(async (req) => {
               ...(orderV2.meta || {}),
               bepaid_uid: transactionUid,
               payment_id: paymentV2.id,
+              // PATCH-BEPAID-WEBHOOK-PAYMENT-FLOW-BACKFILL
+              ...( !(orderV2.meta as any)?.payment_flow ? { payment_flow: 'bepaid_one_time_payment' } : {} ),
             },
           };
           // Fill-only: set provider_payment_id only if NULL
