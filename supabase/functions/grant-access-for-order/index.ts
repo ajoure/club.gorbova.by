@@ -296,7 +296,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const hasPaymentMethod = !!userPaymentMethod?.id;
-    console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, auto_renew will be: ${hasPaymentMethod}`);
+
+    // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: Determine auto_renew from order context, NOT hardcoded
+    // payment_flow in order.meta is the SoT for whether this is a subscription checkout
+    const orderMeta = (order.meta || {}) as Record<string, any>;
+    const paymentFlow = orderMeta.payment_flow || '';
+    const isSubscriptionFlow = paymentFlow.includes('subscription') || paymentFlow === 'provider_managed_checkout';
+    // auto_renew = true ONLY if subscription flow AND user has payment method
+    const shouldAutoRenew = isSubscriptionFlow && hasPaymentMethod;
+    console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, payment_flow: ${paymentFlow}, isSubscriptionFlow: ${isSubscriptionFlow}, auto_renew: ${shouldAutoRenew}`);
 
     // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
     // If there's already an active subscription for this user+product, EXTEND it instead of creating new
