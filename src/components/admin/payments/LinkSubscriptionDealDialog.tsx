@@ -64,7 +64,7 @@ export function LinkSubscriptionDealDialog({
           id, order_number, status, final_price, currency, created_at, profile_id, user_id,
           purchase_snapshot,
           tariff:tariffs(name),
-          product:products_v2(name)
+          product:products_v2(name, category)
         `)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -87,7 +87,9 @@ export function LinkSubscriptionDealDialog({
       setResults((data || []).map((o: any) => {
         const snapshot = o.purchase_snapshot;
         const fkName = o.product?.name || o.tariff?.name || null;
+        const category = o.product?.category || null;
         const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
+        const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
         return {
           id: o.id,
           order_number: o.order_number,
@@ -95,7 +97,8 @@ export function LinkSubscriptionDealDialog({
           final_price: Number(o.final_price),
           currency: o.currency,
           created_at: o.created_at,
-          product_name: getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" }),
+          product_name: getShortDisplayName(rawName, category),
+          product_category: category,
           profile_id: o.profile_id,
           user_id: o.user_id,
           _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
@@ -367,7 +370,11 @@ export function LinkSubscriptionDealDialog({
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3">
                       <span>{format(new Date(order.created_at), "dd.MM.yy", { locale: ru })}</span>
-                      {order.product_name && <span>• {order.product_name}</span>}
+                      {order.product_name && (
+                        <span className="flex items-center gap-1">
+                          • <ProductCategoryBadge category={(order as any).product_category} /> {order.product_name}
+                        </span>
+                      )}
                       {(order as any)._missing_display_name && (
                         <Badge variant="outline" className="text-[9px] text-amber-700 border-amber-400 bg-amber-50">⚠ Historical name missing</Badge>
                       )}
