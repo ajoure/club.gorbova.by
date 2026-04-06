@@ -555,17 +555,46 @@ Deno.serve(async (req) => {
           }
         }
 
-        // 2c. If still no mapping but has description with "Клуб", try generic club mapping
+        // 2d. PATCH-ID-FIRST: If still no mapping, try to resolve by tracking_id order → product_id
+        // Instead of text-matching 'клуб'/'club', use ID-based resolution
+        if (!mapping && item.tracking_id) {
+          // Extract order_id from tracking_id formats: "link:order:{uuid}" or "{order_uuid}_{offer_uuid}"
+          let fallbackOrderId: string | null = null;
+          const linkMatch = item.tracking_id.match(/link:order:([0-9a-f-]+)/i);
+          if (linkMatch) {
+            fallbackOrderId = linkMatch[1];
+          } else {
+            const uuidMatch = item.tracking_id.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+            if (uuidMatch) fallbackOrderId = uuidMatch[1];
+          }
+          
+          if (fallbackOrderId) {
+            const { data: orderForMapping } = await supabase
+              .from('orders_v2')
+              .select('product_id, tariff_id')
+              .eq('id', fallbackOrderId)
+              .maybeSingle();
+            
+            if (orderForMapping?.product_id) {
+              // Find mapping by product_id (ID-first, not text)
+              mapping = (allMappings || []).find(m => m.product_id === orderForMapping.product_id);
+              if (mapping) {
+                console.log(`[BEPAID-AUTO-PROCESS] PATCH-ID-FIRST: Matched by order→product_id: ${orderForMapping.product_id}`);
+              }
+            }
+          }
+        }
+
+        // 2e. Legacy fallback: description-based club matching (deprecated, for unlinked historical transactions only)
         if (!mapping && item.description) {
           const descLower = item.description.toLowerCase();
           if (descLower.includes('клуб') || descLower.includes('club')) {
-            // Get first available club mapping
             mapping = (allMappings || []).find(m => {
               const titleLower = (m.bepaid_plan_title || '').toLowerCase();
               return titleLower.includes('club') || titleLower.includes('клуб');
             });
             if (mapping) {
-              console.log(`[BEPAID-AUTO-PROCESS] Found generic club mapping: ${mapping.bepaid_plan_title}`);
+              console.log(`[BEPAID-AUTO-PROCESS] DEPRECATED legacy club text-match: ${mapping.bepaid_plan_title}. Should be resolved by ID.`);
             }
           }
         }

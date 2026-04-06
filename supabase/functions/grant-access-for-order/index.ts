@@ -296,7 +296,15 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const hasPaymentMethod = !!userPaymentMethod?.id;
-    console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, auto_renew will be: ${hasPaymentMethod}`);
+
+    // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: Determine auto_renew from order context, NOT hardcoded
+    // payment_flow in order.meta is the SoT for whether this is a subscription checkout
+    const orderMeta = (order.meta || {}) as Record<string, any>;
+    const paymentFlow = orderMeta.payment_flow || '';
+    const isSubscriptionFlow = paymentFlow.includes('subscription') || paymentFlow === 'provider_managed_checkout';
+    // auto_renew = true ONLY if subscription flow AND user has payment method
+    const shouldAutoRenew = isSubscriptionFlow && hasPaymentMethod;
+    console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, payment_flow: ${paymentFlow}, isSubscriptionFlow: ${isSubscriptionFlow}, auto_renew: ${shouldAutoRenew}`);
 
     // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
     // If there's already an active subscription for this user+product, EXTEND it instead of creating new
@@ -385,10 +393,11 @@ Deno.serve(async (req) => {
         updateData.tariff_id = tariffId;
       }
 
-      // Attach payment method if not present
+      // Attach payment method if not present — auto_renew from SoT, not hardcoded
       if (!fullExistingSub?.payment_method_id && hasPaymentMethod) {
         updateData.payment_method_id = userPaymentMethod.id;
-        updateData.auto_renew = true;
+        // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: only enable auto_renew if subscription flow
+        updateData.auto_renew = shouldAutoRenew;
       }
 
       const { error: updateSubError } = await supabase
@@ -522,7 +531,7 @@ Deno.serve(async (req) => {
           access_end_at: safeAccessEndAt.toISOString(),
           next_charge_at: accessEndAt.toISOString(),
           payment_method_id: hasPaymentMethod ? userPaymentMethod.id : null,
-          auto_renew: true,
+          auto_renew: shouldAutoRenew, // PATCH-PAYMENT-BUTTON-SUBSCRIPTION-SOT-FIX: from payment_flow, not hardcoded
           meta: {
             granted_by: "grant-access-for-order",
             granted_at: now.toISOString(),
@@ -539,7 +548,7 @@ Deno.serve(async (req) => {
         console.error("Error creating subscription:", createSubError);
       } else {
         console.log(`Created new subscription ${newSub?.id} for user ${userId}, product ${productId}`);
-        results.subscription = { action: "created", id: newSub?.id, auto_renew: true };
+        results.subscription = { action: "created", id: newSub?.id, auto_renew: shouldAutoRenew, payment_flow: paymentFlow };
       }
     }
 

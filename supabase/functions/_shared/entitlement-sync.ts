@@ -13,8 +13,9 @@
  * - Skips cb20 when called from subscription paths (mode_filter)
  */
 
-// Product codes that are managed via subscription lifecycle
-const SUBSCRIPTION_BASED_CODES = new Set([
+// PATCH-ID-FIRST-HIGH-RISK-EXECUTE: Hardcoded sets kept ONLY as fallback for products
+// without entitlement_mode in DB. Primary source: products_v2.entitlement_mode column.
+const FALLBACK_SUBSCRIPTION_BASED_CODES = new Set([
   'club',
   'buh_business',
   'cb_module_ip',
@@ -23,15 +24,47 @@ const SUBSCRIPTION_BASED_CODES = new Set([
   '1769009596189-398a',
 ]);
 
-// Product codes that are order-based only — never sync from subscription paths
-const ORDER_BASED_ONLY_CODES = new Set([
+const FALLBACK_ORDER_BASED_ONLY_CODES = new Set([
   'cb20',
 ]);
 
-// Legacy codes that should be skipped entirely
-const LEGACY_SKIP_CODES = new Set([
+const FALLBACK_LEGACY_SKIP_CODES = new Set([
   'cb_2_step',
 ]);
+
+/**
+ * Resolve entitlement mode from DB (products_v2.entitlement_mode).
+ * Falls back to hardcoded sets if product not found or entitlement_mode is NULL.
+ */
+async function resolveEntitlementMode(
+  supabase: any,
+  product_code: string,
+  product_id?: string | null,
+): Promise<'subscription_based' | 'order_based_only' | 'legacy_skip' | 'unknown'> {
+  // Try DB lookup first (by product_id or product_code)
+  if (product_id) {
+    const { data } = await supabase
+      .from('products_v2')
+      .select('entitlement_mode')
+      .eq('id', product_id)
+      .maybeSingle();
+    if (data?.entitlement_mode) return data.entitlement_mode;
+  }
+  if (product_code) {
+    const { data } = await supabase
+      .from('products_v2')
+      .select('entitlement_mode')
+      .eq('code', product_code)
+      .maybeSingle();
+    if (data?.entitlement_mode) return data.entitlement_mode;
+  }
+
+  // Fallback to hardcoded sets (transitional)
+  if (FALLBACK_LEGACY_SKIP_CODES.has(product_code)) return 'legacy_skip';
+  if (FALLBACK_ORDER_BASED_ONLY_CODES.has(product_code)) return 'order_based_only';
+  if (FALLBACK_SUBSCRIPTION_BASED_CODES.has(product_code)) return 'subscription_based';
+  return 'unknown';
+}
 
 export type SyncSource =
   | 'subscription_renewal'
@@ -97,8 +130,10 @@ export async function hasOtherActiveAccessSource(
     sources.push(`subscription:${otherSubs[0].id}`);
   }
 
-  // 2. Check if product is order-based (cb20) — never revoke from subscription path
-  if (ORDER_BASED_ONLY_CODES.has(product_code)) {
+  // 2. Check if product is order-based — never revoke from subscription path
+  // PATCH-ID-FIRST: Use DB-driven mode resolution
+  const mode = await resolveEntitlementMode(supabase, product_code);
+  if (mode === 'order_based_only') {
     sources.push('order_based_product');
   }
 
@@ -149,18 +184,21 @@ export async function syncEntitlement(params: SyncEntitlementParams): Promise<Sy
     return { action: 'skipped', skip_reason: 'empty_product_code' };
   }
 
+  // PATCH-ID-FIRST: DB-driven entitlement mode resolution
+  const entitlementMode = await resolveEntitlementMode(supabase, product_code, product_id);
+
   // Guard: skip legacy codes
-  if (LEGACY_SKIP_CODES.has(product_code)) {
+  if (entitlementMode === 'legacy_skip') {
     return { action: 'skipped', skip_reason: 'legacy_code_mismatch' };
   }
 
   // Guard: mode_filter — subscription paths must not touch order-based products
-  if (mode_filter === 'subscription_based' && ORDER_BASED_ONLY_CODES.has(product_code)) {
+  if (mode_filter === 'subscription_based' && entitlementMode === 'order_based_only') {
     return { action: 'skipped', skip_reason: 'order_based_only_product' };
   }
 
   // Guard: if mode_filter is subscription_based, only allow known subscription codes
-  if (mode_filter === 'subscription_based' && !SUBSCRIPTION_BASED_CODES.has(product_code)) {
+  if (mode_filter === 'subscription_based' && entitlementMode !== 'subscription_based') {
     return { action: 'skipped', skip_reason: 'unknown_product_code_for_subscription_sync' };
   }
 
