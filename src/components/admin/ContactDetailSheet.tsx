@@ -3012,9 +3012,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               </div>
                             )}
                           </div>
-                          {meta?.scope_resolution_mode && (
+                          {meta?.scope_resolution_mode === 'module_scope_only' && (
                             <div className="mt-2 text-xs text-muted-foreground">
-                              Область доступа: {meta.scope_resolution_mode === 'module_scope_only' ? 'Отдельные модули' : meta.scope_resolution_mode === 'full_access' ? 'Полный доступ' : meta.scope_resolution_mode}
+                              Область доступа: Отдельные модули
                             </div>
                           )}
                         </CardContent>
