@@ -13,35 +13,17 @@
  * - Skips cb20 when called from subscription paths (mode_filter)
  */
 
-// PATCH-ID-FIRST-HIGH-RISK-EXECUTE: Hardcoded sets kept ONLY as fallback for products
-// without entitlement_mode in DB. Primary source: products_v2.entitlement_mode column.
-const FALLBACK_SUBSCRIPTION_BASED_CODES = new Set([
-  'club',
-  'buh_business',
-  'cb_module_ip',
-  'prd_0d01a2fdc477',
-  'course_close_year',
-  '1769009596189-398a',
-]);
-
-const FALLBACK_ORDER_BASED_ONLY_CODES = new Set([
-  'cb20',
-]);
-
-const FALLBACK_LEGACY_SKIP_CODES = new Set([
-  'cb_2_step',
-]);
-
 /**
  * Resolve entitlement mode from DB (products_v2.entitlement_mode).
- * Falls back to hardcoded sets if product not found or entitlement_mode is NULL.
+ * HARD FAIL if product exists but entitlement_mode is not set.
+ * No hardcoded fallback sets — all decisions from DB only.
  */
 async function resolveEntitlementMode(
   supabase: any,
   product_code: string,
   product_id?: string | null,
 ): Promise<'subscription_based' | 'order_based_only' | 'legacy_skip' | 'unknown'> {
-  // Try DB lookup first (by product_id or product_code)
+  // Try DB lookup first (by product_id, then by product_code)
   if (product_id) {
     const { data } = await supabase
       .from('products_v2')
@@ -49,6 +31,11 @@ async function resolveEntitlementMode(
       .eq('id', product_id)
       .maybeSingle();
     if (data?.entitlement_mode) return data.entitlement_mode;
+    if (data && !data.entitlement_mode) {
+      // Product exists but entitlement_mode not set — HARD FAIL
+      console.error(`[entitlement-sync] HARD FAIL: product ${product_id} has no entitlement_mode set`);
+      return 'unknown';
+    }
   }
   if (product_code) {
     const { data } = await supabase
@@ -57,12 +44,14 @@ async function resolveEntitlementMode(
       .eq('code', product_code)
       .maybeSingle();
     if (data?.entitlement_mode) return data.entitlement_mode;
+    if (data && !data.entitlement_mode) {
+      console.error(`[entitlement-sync] HARD FAIL: product code=${product_code} has no entitlement_mode set`);
+      return 'unknown';
+    }
   }
 
-  // Fallback to hardcoded sets (transitional)
-  if (FALLBACK_LEGACY_SKIP_CODES.has(product_code)) return 'legacy_skip';
-  if (FALLBACK_ORDER_BASED_ONLY_CODES.has(product_code)) return 'order_based_only';
-  if (FALLBACK_SUBSCRIPTION_BASED_CODES.has(product_code)) return 'subscription_based';
+  // Product not found in DB at all
+  console.warn(`[entitlement-sync] Product not found: id=${product_id}, code=${product_code}`);
   return 'unknown';
 }
 
