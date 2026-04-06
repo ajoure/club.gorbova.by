@@ -184,18 +184,21 @@ export async function syncEntitlement(params: SyncEntitlementParams): Promise<Sy
     return { action: 'skipped', skip_reason: 'empty_product_code' };
   }
 
+  // PATCH-ID-FIRST: DB-driven entitlement mode resolution
+  const entitlementMode = await resolveEntitlementMode(supabase, product_code, product_id);
+
   // Guard: skip legacy codes
-  if (LEGACY_SKIP_CODES.has(product_code)) {
+  if (entitlementMode === 'legacy_skip') {
     return { action: 'skipped', skip_reason: 'legacy_code_mismatch' };
   }
 
   // Guard: mode_filter — subscription paths must not touch order-based products
-  if (mode_filter === 'subscription_based' && ORDER_BASED_ONLY_CODES.has(product_code)) {
+  if (mode_filter === 'subscription_based' && entitlementMode === 'order_based_only') {
     return { action: 'skipped', skip_reason: 'order_based_only_product' };
   }
 
   // Guard: if mode_filter is subscription_based, only allow known subscription codes
-  if (mode_filter === 'subscription_based' && !SUBSCRIPTION_BASED_CODES.has(product_code)) {
+  if (mode_filter === 'subscription_based' && entitlementMode !== 'subscription_based') {
     return { action: 'skipped', skip_reason: 'unknown_product_code_for_subscription_sync' };
   }
 
