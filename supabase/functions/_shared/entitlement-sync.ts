@@ -13,8 +13,9 @@
  * - Skips cb20 when called from subscription paths (mode_filter)
  */
 
-// Product codes that are managed via subscription lifecycle
-const SUBSCRIPTION_BASED_CODES = new Set([
+// PATCH-ID-FIRST-HIGH-RISK-EXECUTE: Hardcoded sets kept ONLY as fallback for products
+// without entitlement_mode in DB. Primary source: products_v2.entitlement_mode column.
+const FALLBACK_SUBSCRIPTION_BASED_CODES = new Set([
   'club',
   'buh_business',
   'cb_module_ip',
@@ -23,15 +24,47 @@ const SUBSCRIPTION_BASED_CODES = new Set([
   '1769009596189-398a',
 ]);
 
-// Product codes that are order-based only — never sync from subscription paths
-const ORDER_BASED_ONLY_CODES = new Set([
+const FALLBACK_ORDER_BASED_ONLY_CODES = new Set([
   'cb20',
 ]);
 
-// Legacy codes that should be skipped entirely
-const LEGACY_SKIP_CODES = new Set([
+const FALLBACK_LEGACY_SKIP_CODES = new Set([
   'cb_2_step',
 ]);
+
+/**
+ * Resolve entitlement mode from DB (products_v2.entitlement_mode).
+ * Falls back to hardcoded sets if product not found or entitlement_mode is NULL.
+ */
+async function resolveEntitlementMode(
+  supabase: any,
+  product_code: string,
+  product_id?: string | null,
+): Promise<'subscription_based' | 'order_based_only' | 'legacy_skip' | 'unknown'> {
+  // Try DB lookup first (by product_id or product_code)
+  if (product_id) {
+    const { data } = await supabase
+      .from('products_v2')
+      .select('entitlement_mode')
+      .eq('id', product_id)
+      .maybeSingle();
+    if (data?.entitlement_mode) return data.entitlement_mode;
+  }
+  if (product_code) {
+    const { data } = await supabase
+      .from('products_v2')
+      .select('entitlement_mode')
+      .eq('code', product_code)
+      .maybeSingle();
+    if (data?.entitlement_mode) return data.entitlement_mode;
+  }
+
+  // Fallback to hardcoded sets (transitional)
+  if (FALLBACK_LEGACY_SKIP_CODES.has(product_code)) return 'legacy_skip';
+  if (FALLBACK_ORDER_BASED_ONLY_CODES.has(product_code)) return 'order_based_only';
+  if (FALLBACK_SUBSCRIPTION_BASED_CODES.has(product_code)) return 'subscription_based';
+  return 'unknown';
+}
 
 export type SyncSource =
   | 'subscription_renewal'
