@@ -3,6 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import {
   Dialog,
   DialogContent,
@@ -14,11 +15,11 @@ import { Button } from "@/components/ui/button";
 import { MessageCircle, CreditCard, CheckCircle2, ExternalLink, HelpCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 
-// PATCH 13: Use database instead of localStorage for persistence
 const REMIND_LATER_DAYS = 7;
 
 export function WelcomeOnboardingModal() {
   const { user } = useAuth();
+  const { profile, bootstrapReady } = useAuthBootstrap();
   const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const { data: telegramStatus, isLoading: telegramLoading } = useTelegramLinkStatus();
@@ -26,95 +27,85 @@ export function WelcomeOnboardingModal() {
 
   const isTelegramLinked = telegramStatus?.status === "active" || !!telegramStatus?.telegram_username;
 
-  // PATCH 13: Fetch onboarding state from DB - use user_id not id!
-  const { data: onboardingState, isLoading: stateLoading } = useQuery({
-    queryKey: ["onboarding-state", user?.id],
-    queryFn: async () => {
-      if (!user?.id) return null;
-      
-      // CRITICAL FIX: profiles.user_id = auth.uid, NOT profiles.id
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("onboarding_dismissed_at, onboarding_completed_at")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      
-      if (error) {
-        console.warn("Failed to fetch onboarding state:", error);
-        return null;
+  // B1: Use bootstrap profile for onboarding state — no separate profiles query
+  const onboardingState = profile
+    ? {
+        onboarding_dismissed_at: profile.onboarding_dismissed_at,
+        onboarding_completed_at: profile.onboarding_completed_at,
       }
-      return data;
-    },
-    enabled: !!user?.id,
-  });
+    : null;
 
-  // PATCH 13: Check for active subscription or payment method
+  // B3: has-active-setup only starts after bootstrapReady AND if not already dismissed/completed
+  const shouldCheckSetup =
+    bootstrapReady &&
+    !!user?.id &&
+    !profile?.onboarding_completed_at &&
+    !(
+      profile?.onboarding_dismissed_at &&
+      (Date.now() - new Date(profile.onboarding_dismissed_at).getTime()) / (1000 * 60 * 60 * 24) < REMIND_LATER_DAYS
+    );
+
   const { data: hasActiveSetup } = useQuery({
     queryKey: ["has-active-setup", user?.id],
     queryFn: async () => {
       if (!user?.id) return false;
-      
-      // Check for active subscription
+
       const { data: subscriptions } = await supabase
         .from("subscriptions_v2")
         .select("id")
         .eq("user_id", user.id)
         .eq("status", "active")
         .limit(1);
-      
+
       if (subscriptions && subscriptions.length > 0) return true;
-      
-      // Check for payment method
+
       const { data: paymentMethods } = await supabase
         .from("payment_methods")
         .select("id")
         .eq("user_id", user.id)
         .eq("status", "active")
         .limit(1);
-      
+
       return paymentMethods && paymentMethods.length > 0;
     },
-    enabled: !!user?.id,
+    enabled: shouldCheckSetup,
+    staleTime: 5 * 60 * 1000,
   });
 
-  // PATCH 13: Mutation to update onboarding state
+  // Mutation to update onboarding state
   const updateOnboardingState = useMutation({
     mutationFn: async (action: 'dismiss' | 'complete') => {
       if (!user?.id) throw new Error("No user");
-      
-      const updates = action === 'complete' 
+
+      const updates = action === 'complete'
         ? { onboarding_completed_at: new Date().toISOString() }
         : { onboarding_dismissed_at: new Date().toISOString() };
-      
-      // CRITICAL FIX: Use user_id (auth.uid), not profiles.id
+
       const { error } = await supabase
         .from("profiles")
         .update(updates)
         .eq("user_id", user.id);
-      
+
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["onboarding-state", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["auth-bootstrap-profile", user?.id] });
     },
   });
 
   useEffect(() => {
-    if (!user || stateLoading || telegramLoading) return;
-    
-    // PATCH 13: Never show if completed
+    if (!user || !bootstrapReady || telegramLoading) return;
+
     if (onboardingState?.onboarding_completed_at) {
       setIsOpen(false);
       return;
     }
-    
-    // PATCH 13: Never show if has active subscription or card
+
     if (hasActiveSetup) {
       setIsOpen(false);
       return;
     }
-    
-    // PATCH 13: Check dismissed_at - don't show for REMIND_LATER_DAYS
+
     if (onboardingState?.onboarding_dismissed_at) {
       const dismissedAt = new Date(onboardingState.onboarding_dismissed_at);
       const daysSinceDismissed = (Date.now() - dismissedAt.getTime()) / (1000 * 60 * 60 * 24);
@@ -123,11 +114,10 @@ export function WelcomeOnboardingModal() {
         return;
       }
     }
-    
-    // Show modal after small delay
+
     const timer = setTimeout(() => setIsOpen(true), 500);
     return () => clearTimeout(timer);
-  }, [user, stateLoading, telegramLoading, onboardingState, hasActiveSetup]);
+  }, [user, bootstrapReady, telegramLoading, onboardingState, hasActiveSetup]);
 
   const handleComplete = () => {
     updateOnboardingState.mutate('complete');
@@ -143,7 +133,7 @@ export function WelcomeOnboardingModal() {
     startLink();
   };
 
-  if (!user || telegramLoading || stateLoading) return null;
+  if (!user || telegramLoading || !bootstrapReady) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleRemindLater()}>
@@ -223,9 +213,9 @@ export function WelcomeOnboardingModal() {
             <HelpCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
             <div className="text-sm">
               <span className="text-blue-900">Нужна помощь? Напишите </span>
-              <a 
-                href="https://t.me/Gorbova_club_bot" 
-                target="_blank" 
+              <a
+                href="https://t.me/Gorbova_club_bot"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 hover:underline font-medium"
               >

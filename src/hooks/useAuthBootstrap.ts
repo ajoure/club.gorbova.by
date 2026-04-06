@@ -13,16 +13,22 @@ import { useAuth } from "@/contexts/AuthContext";
  *   authReady   = !loading (from AuthContext — session restored)
  *   bootstrapReady = authReady && profile loaded
  *
- * Fields fetched (minimal — do NOT add telegram/consent/etc here):
- *   - id, full_name, avatar_url, consent_version, status
+ * Fields fetched (minimal — only fields that eliminate duplicate fetches):
+ *   - id, full_name, avatar_url, status
+ *   - consent_version, consent_given_at, marketing_consent (for useConsent)
+ *   - onboarding_dismissed_at, onboarding_completed_at (for WelcomeOnboardingModal)
  */
 
 interface BootstrapProfile {
   id: string;
   full_name: string | null;
   avatar_url: string | null;
-  consent_version: string | null;
   status: string | null;
+  consent_version: string | null;
+  consent_given_at: string | null;
+  marketing_consent: boolean | null;
+  onboarding_dismissed_at: string | null;
+  onboarding_completed_at: string | null;
 }
 
 export function useAuthBootstrap() {
@@ -39,7 +45,7 @@ export function useAuthBootstrap() {
       if (!user?.id) return null;
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, full_name, avatar_url, consent_version, status")
+        .select("id, full_name, avatar_url, status, consent_version, consent_given_at, marketing_consent, onboarding_dismissed_at, onboarding_completed_at")
         .eq("user_id", user.id)
         .single();
       if (error) {

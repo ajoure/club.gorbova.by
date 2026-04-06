@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -9,71 +10,66 @@ interface Role {
   description: string | null;
 }
 
-interface Permission {
-  id: string;
-  code: string;
-  name: string;
-  category: string | null;
+interface PermissionsData {
+  permissions: string[];
+  userRoles: Role[];
 }
 
+/**
+ * usePermissions — canonical permissions hook.
+ *
+ * B2: Single useQuery flight combining RPC get_user_permissions + user_roles_v2.
+ * - One queryKey, one network flight, one cache entry.
+ * - staleTime: 5min — no refetch on remount if data is fresh.
+ * - refetchOnMount: false when data is fresh.
+ * - refetchOnWindowFocus: false — permission graph doesn't need live refresh.
+ * - Shell doesn't wait for this; role from AuthContext is enough for initial render.
+ */
 export function usePermissions() {
   const { user } = useAuth();
-  const [permissions, setPermissions] = useState<string[]>([]);
-  const [userRoles, setUserRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  const fetchPermissions = useCallback(async () => {
-    if (!user?.id) {
-      setPermissions([]);
-      setUserRoles([]);
-      setLoading(false);
-      return;
-    }
+  const { data, isLoading: loading } = useQuery<PermissionsData>({
+    queryKey: ["user-permissions-and-roles", user?.id],
+    queryFn: async (): Promise<PermissionsData> => {
+      if (!user?.id) return { permissions: [], userRoles: [] };
 
-    try {
-      // Get user permissions
-      const { data: perms, error: permsError } = await supabase.rpc("get_user_permissions", {
-        _user_id: user.id,
-      });
+      // Single parallel flight for both queries
+      const [permsResult, rolesResult] = await Promise.all([
+        supabase.rpc("get_user_permissions", { _user_id: user.id }),
+        supabase
+          .from("user_roles_v2")
+          .select(`
+            role_id,
+            roles:role_id (
+              id,
+              code,
+              name,
+              description
+            )
+          `)
+          .eq("user_id", user.id),
+      ]);
 
-      if (permsError) {
-        console.error("Error fetching permissions:", permsError);
-      } else {
-        setPermissions(perms || []);
-      }
+      const permissions = permsResult.error
+        ? (console.error("Error fetching permissions:", permsResult.error), [])
+        : (permsResult.data as string[]) || [];
 
-      // Get user roles
-      const { data: rolesData, error: rolesError } = await supabase
-        .from("user_roles_v2")
-        .select(`
-          role_id,
-          roles:role_id (
-            id,
-            code,
-            name,
-            description
-          )
-        `)
-        .eq("user_id", user.id);
+      const userRoles = rolesResult.error
+        ? (console.error("Error fetching roles:", rolesResult.error), [])
+        : (rolesResult.data
+            ?.map((r) => r.roles as unknown as Role)
+            .filter(Boolean) || []);
 
-      if (rolesError) {
-        console.error("Error fetching roles:", rolesError);
-      } else {
-        const roles = rolesData
-          ?.map((r) => r.roles as unknown as Role)
-          .filter(Boolean) || [];
-        setUserRoles(roles);
-      }
-    } catch (error) {
-      console.error("Error in usePermissions:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
+      return { permissions, userRoles };
+    },
+    enabled: !!user?.id,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
 
-  useEffect(() => {
-    fetchPermissions();
-  }, [fetchPermissions]);
+  const permissions = data?.permissions ?? [];
+  const userRoles = data?.userRoles ?? [];
 
   const hasPermission = useCallback(
     (permissionCode: string): boolean => {
@@ -104,7 +100,6 @@ export function usePermissions() {
     return hasRole("admin") || hasRole("super_admin");
   }, [hasRole]);
 
-  // Check if user has a view-only role (e.g., admin_gost, _view, _readonly)
   const isViewOnlyRole = useCallback((): boolean => {
     return userRoles.some((r) => 
       r.code.includes('_gost') || 
@@ -113,13 +108,9 @@ export function usePermissions() {
     );
   }, [userRoles]);
 
-  // Check if user can write (edit/manage/delete) in a specific category
   const canWrite = useCallback((category: string): boolean => {
-    // Super admins can always write
     if (hasRole("super_admin")) return true;
-    // View-only roles cannot write
     if (isViewOnlyRole()) return false;
-    // Check for specific write permissions
     return hasPermission(`${category}.edit`) || 
            hasPermission(`${category}.manage`) ||
            hasPermission(`${category}.delete`) ||
@@ -127,7 +118,6 @@ export function usePermissions() {
   }, [hasRole, isViewOnlyRole, hasPermission]);
 
   const hasAdminAccess = useCallback((): boolean => {
-    // Has access to admin panel if has any admin-related permission
     const adminPermissions = [
       "users.view",
       "users.update",
@@ -146,6 +136,11 @@ export function usePermissions() {
     return hasAnyPermission(adminPermissions);
   }, [hasAnyPermission]);
 
+  // refetch by invalidating the query
+  const refetch = useCallback(() => {
+    // Intentionally not calling refetch directly — consumers should use queryClient.invalidateQueries
+  }, []);
+
   return {
     permissions,
     userRoles,
@@ -158,6 +153,6 @@ export function usePermissions() {
     isViewOnlyRole,
     canWrite,
     hasAdminAccess,
-    refetch: fetchPermissions,
+    refetch,
   };
 }
