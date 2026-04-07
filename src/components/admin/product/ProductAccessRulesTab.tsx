@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
+import { RetroApplyPanel } from "./RetroApplyPanel";
 import { TrainingContentTreePicker, normalizeTrainingContentPayload } from "./TrainingContentTreePicker";
 import {
   useAccessRules, useEffectiveGrants,
