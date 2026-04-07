@@ -2,197 +2,255 @@
 
 &nbsp;
 
-1. Зафиксируй в плане главный вывод: это не разные виды доступа, а разный уровень заполненности metadata/lineage.  
-через BUSINESS и по правилу здесь не должны нести разный смысл, если источник один и тот же — BUSINESS rule 1b497fba.
-2. UI-правку делай в двух местах, а не только в ContactDetailSheet.tsx:  
+1. Не формулируй root cause как окончательно закрытый только по code-reading.  
+Пиши так: «подтверждён основной root cause по коду; требуется runtime-proof на hard refresh».  
+Иначе подрядчик потом скажет, что это была только гипотеза.
+2. Добавь отдельный обязательный блок «Почему выживает только базовый продукт»:  
 
-  - src/components/admin/ContactDetailSheet.tsx
-  - src/components/user/UserSubscriptions.tsx
+  - Бухгалтерия как бизнес остаётся, потому что это direct subscription / base product access;
+  - исчезают secondary sources: entitlement-only, rule-based, module-based, mixed;
+  - подрядчик обязан доказать это на конкретных продуктах пользователя.
 3. &nbsp;
-4. Условие для бейджа не завязывай только на business_subscription_id.  
-Нужна более точная проверка:  
+4. В useTrainingModules.tsx не делать gate по tcData === null.  
+Это важно. null может быть валидным итогом.  
+Gate только по tcLoading, иначе можно сломать пользователей без training rules.
+5. В deps для fetchModules лучше требовать не просто tcData, а стабильную зависимость:  
 
-  - source_rule_id = 1b497fba-031a-4318-8d9f-2530f1bac116
-  - и (business_subscription_id IS NOT NULL OR canonical_source = 'BUSINESS_subscription')
-5.   
-То есть логика должна быть такой:  
-
-  - если entitlement реально rule-based от BUSINESS → показывать «через BUSINESS»
-  - иначе → «по правилу»
+  - либо tcData,
+  - либо memoized fingerprint (rules.length, userTariffIds.join(','), version key),  
+  чтобы не получить лишние рефетчи/циклы, если объект пересоздаётся.
 6. &nbsp;
-7. В плане явно напиши, что UI fix сам по себе уже должен немедленно унифицировать отображение для всех затронутых модулей, потому что canonical_source уже заполнен.  
-Значит:  
+7. Добавь ещё один обязательный guard:  
+при refresh нельзя очищать текущий список тренингов до завершения нового расчёта, если уже был последний валидный state.  
+Иначе останется визуальный flicker/flash, даже если stale closure исправлен.
+8. Проверять нужно не только useTrainingModules.tsx, но весь путь:  
 
-  - UI patch — обязательный
-  - data backfill — hygiene/lineage patch, а не единственный способ исправить экран
-8. &nbsp;
-9. Backfill metadata делай add-only и детерминированно:  
+  - useTrainingModules.tsx
+  - useSidebarModules.ts
+  - useContainerLessons.ts
+  - где формируется финальный merge продуктов/уроков в клиентском кабинете  
+  Подрядчик обязан показать, что во всех трёх местах одинаковая логика ожидания tcLoading.
+9. &nbsp;
+10. Добавь обязательный runtime-proof в 3 режимах:  
 
-  - выбрать одну каноническую BUSINESS-подписку на entitlement  
-  (active > past_due, затем max access_end_at, затем newest created_at)
-  - не допускать многозначного JOIN, который может подставить не ту подписку
-10. &nbsp;
-11. В backfill заполняй не только business_subscription_id, но и:  
+  - hard refresh страницы кабинета;
+  - прямой вход по URL в тренинги;
+  - обычная SPA-навигация без refresh.  
+  Во всех трёх случаях список должен совпадать.
+11. &nbsp;
+12. В proof-таблице добавь ещё две колонки:  
 
-  - business_tariff_id
-  - canonical_source = 'BUSINESS_subscription' (если вдруг где-то отсутствует)
-  - lineage_backfill_batch
-  - lineage_backfilled_at
-12.   
-Исторические поля не удалять и не переписывать агрессивно.
-13. Перед UPDATE обязателен dry-run артефакт:  
+  - render_source_before_fix
+  - render_source_after_fix  
+  Чтобы было видно, где продукт теряется: на fetch, на tc-filter, на sidebar filter или на final render.
+13. &nbsp;
+14. Добавь STOP-guard:  
 
-  - entitlement_id
-  - user_id
-  - product_code
-  - source_rule_id
-  - current_business_subscription_id
-  - target_business_subscription_id
-  - chosen_subscription_status
-  - chosen_access_end_at
-14. &nbsp;
-15. После патча нужен after-proof:  
-
-  - 0 active module entitlements с source_rule_id = 1b497fba и canonical_source = BUSINESS_subscription, которые всё ещё показываются как «по правилу»
-  - разбивка до/после по каждому модулю
-  - визуальный proof на Рыштаковой
-16. &nbsp;
-17. В плане отдельно укажи границы патча:  
-
-  - не меняются даты
-  - не меняются статусы
-  - не меняются rules
-  - не создаются новые entitlements/subscriptions
-  - это patch на унификацию отображения и lineage metadata
-18. &nbsp;
-19. Добавь финальную формулировку:
+  - нельзя чинить через хардкод product_id;
+  - нельзя чинить через исключение для Бухгалтерия как бизнес;
+  - нельзя чинить через отключение training_content фильтрации целиком.
+15. &nbsp;
+16. В DoD добавь отдельный критерий:  
+после reload вторичные доступы не только видны в списке тренингов, но и реально открывают дерево модулей/уроков без пустого контейнера.
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+Копируемый блок для вставки в план:
 
-- если после UI fix все модули уже показываются одинаково как «через BUSINESS», значит проблема отображения закрыта
-- backfill metadata остаётся как cleanup/hygiene, а не как обязательный functional fix
-
-&nbsp;
+Дополнительные обязательные правки к плану:
 
 &nbsp;
 
-&nbsp;
-
-11. Для скорости закрытия разбей на 2 мини-этапа:
+1. Не считать root cause полностью закрытым только по code-reading. Формулировка: “подтверждён основной root cause по коду; требуется runtime-proof на hard refresh”.
 
 &nbsp;
 
-&nbsp;
+2. Отдельно проверить и доказать гипотезу:
+
+   “Бухгалтерия как бизнес” остаётся после refresh как базовый direct subscription/direct product access,
+
+   а пропадают именно secondary access sources:
+
+   - entitlement-only
+
+   - rule-based
+
+   - module-based
+
+   - mixed access
 
 &nbsp;
 
-- Phase A: UI fix + visual proof
-- Phase B: metadata backfill + SQL proof
+3. Gate делать только по tcLoading, а НЕ по tcData === null.
+
+   Null может быть легитимным состоянием пользователя без training rules.
 
 &nbsp;
 
-&nbsp;
+4. В зависимостях fetchModules использовать безопасную/stable зависимость от training-content данных
+
+   (tcData или memoized fingerprint), чтобы не получить лишние циклы/рефетчи.
 
 &nbsp;
 
-12. В отчёте подрядчик должен прямо написать:
+5. Добавить защиту от визуального коллапса:
+
+   если уже есть последний валидный modules state, не очищать его до завершения нового корректного расчёта после refresh.
 
 &nbsp;
 
-&nbsp;
+6. Проверить и синхронизировать одинаковую логику ожидания tcLoading в:
+
+   - useTrainingModules.tsx
+
+   - useSidebarModules.ts
+
+   - useContainerLessons.ts
 
 &nbsp;
 
-- почему раньше часть модулей была «по правилу»
-- почему теперь все они «через BUSINESS»
-- что это не изменение прав, а нормализация отображения одного и того же источника доступа.
+7. Обязательный runtime-proof в 3 сценариях:
+
+   - hard refresh
+
+   - прямой вход по URL
+
+   - SPA navigation без refresh
 
 &nbsp;
 
+8. В proof-таблицу добавить колонки:
+
+   - render_source_before_fix
+
+   - render_source_after_fix
+
 &nbsp;
 
-## План: Унификация бейджа «через BUSINESS» для всех модулей ЦБ 1
+9. STOP-guards:
+
+   - без хардкода product_id
+
+   - без special-case только для “Бухгалтерия как бизнес”
+
+   - без отключения training_content фильтрации целиком
+
+&nbsp;
+
+10. DoD:
+
+   после reload вторичные доступы не только видны в списке тренингов, но и реально открывают модули/уроки без пустого контейнера.
+
+&nbsp;
+
+## План: Fix — тренинги исчезают после refresh (stale closure + race condition)
 
 ---
 
-### Проблема
+### Root cause (подтверждён по коду)
 
-53 module entitlements имеют `source_rule_id = 1b497fba` (BUSINESS rule) и `canonical_source = BUSINESS_subscription`, но у них отсутствует `business_subscription_id` в metadata. Из-за этого UI показывает «по правилу» вместо «через BUSINESS».
+**Файл:** `src/hooks/useTrainingModules.tsx`, строки 63-64, 212-213, 318
 
-Только `cb_module_marketplaces` (3 записи) корректно заполнен. Остальные 53 — нет.
+`fetchModules` создаётся через `useCallback` с зависимостями `[user?.id, isAdminUser]`, но **использует `tcData` из замыкания** (строки 212-213) без включения в массив зависимостей (строка 318).
 
+**Механизм:**
 
-| Модуль                 | Всего | С business_subscription_id | Без (показывают «по правилу») |
-| ---------------------- | ----- | -------------------------- | ----------------------------- |
-| cb_module_ip           | 44    | 0                          | 44                            |
-| cb_module_retail       | 4     | 0                          | 4                             |
-| cb_module_production   | 3     | 0                          | 3                             |
-| cb_module_catering     | 1     | 0                          | 1                             |
-| cb_module_construction | 1     | 0                          | 1                             |
-| cb_module_marketplaces | 3     | 3                          | 0                             |
+1. **После refresh:** React Query кэш пуст → `tcData = null` → `fetchModules` запускается с `tcData=null` → модули вычисляются **без training_content правил**
+2. Когда `tcData` загружается позже, `fetchModules` **не пересоздаётся** (нет в deps) → результат застаревший
+3. Synthetic `legacy-safe` правила (из `resolveBonusScopeRules`) для entitlements без `scope_resolution_mode` генерируют partial-фильтр с **пустым** `allowed_module_ids` → при повторном рендере через `useSidebarModules.filteredModules` эти модули скрываются
 
+**Почему «Бухгалтерия как бизнес» выживает:**
+Это прямой базовый продукт/подписка (direct subscription product). Его entitlement либо имеет `scope_resolution_mode` (исключающий его из synthetic-legacy генерации), либо имеет DB-правило `training_content` приоритета 1-2. Все исчезающие тренинги — это secondary access sources: entitlement-only, rule-based, module-based.
+
+**Рассинхрон sidebar vs page:** `useSidebarModules` использует React Query (пересчитывает при загрузке tcData через `useMemo`), а `useTrainingModules` использует ручной `useState` + `useCallback` (не пересчитывает).
 
 ---
 
-### Шаг 1: UI fix — расширить условие бейджа
+### Обязательная гипотеза (discovery)
 
-В `ContactDetailSheet.tsx` строка 2965 сейчас:
+Проверить, что после refresh:
+
+- остаются ТОЛЬКО продукты с direct subscription/direct product access
+- исчезают ВСЕ продукты с entitlement-only / rule-based / module-based / mixed access
+- причина — fetchModules при `tcData=null` применяет synthetic legacy-safe partial filter с пустым allowlist, что убивает доступ к secondary products
+
+Proof-таблица по каждому тренингу: product | visible before refresh | visible after refresh | access source | should survive reload | actual result
+
+---
+
+### Phase 1: Основной fix — `useTrainingModules.tsx`
+
+**Изменение 1:** Добавить `tcData` в зависимости `useCallback` (строка 318):
 
 ```typescript
-{meta?.business_subscription_id ? "через BUSINESS" : "по правилу"}
+}, [user?.id, isAdminUser, tcData]);
 ```
 
-Заменить на:
+**Изменение 2:** Race condition guard через `useRef`:
 
 ```typescript
-{(meta?.business_subscription_id || meta?.canonical_source === 'BUSINESS_subscription') ? "через BUSINESS" : "по правилу"}
+const fetchIdRef = useRef(0);
+// В начале fetchModules:
+const fetchId = ++fetchIdRef.current;
+// Перед setModules/setLoading:
+if (fetchId !== fetchIdRef.current) return;
 ```
 
-Это немедленно унифицирует бейдж для всех 56 записей, т.к. `canonical_source` уже заполнен у всех.
+**Изменение 3:** Не запускать fetch пока tcData не загружен (для non-admin):
 
----
-
-### Шаг 2: Data fix — backfill `business_subscription_id` в metadata
-
-Для 53 entitlements, где `source_rule_id = 1b497fba` и `business_subscription_id IS NULL`, добавить (add-only, без удаления существующих полей):
-
-```sql
-UPDATE entitlements e
-SET meta = e.meta || jsonb_build_object(
-  'business_subscription_id', s.id::text
-)
-FROM subscriptions_v2 s
-JOIN products_v2 p ON p.id = s.product_id AND p.code = 'club'
-WHERE s.user_id = e.user_id
-  AND s.status IN ('active', 'past_due')
-  AND e.product_code LIKE 'cb_module_%'
-  AND e.status = 'active'
-  AND e.meta->>'source_rule_id' = '1b497fba-031a-4318-8d9f-2530f1bac116'
-  AND e.meta->>'business_subscription_id' IS NULL;
+```typescript
+const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
+// В useEffect:
+useEffect(() => {
+  if (!isAdminUser && tcLoading) return;
+  fetchModules();
+}, [fetchModules, isAdminUser, tcLoading]);
 ```
 
-Историческая информация (`historical_purchase_type`, `original_order_id` и т.д.) сохраняется — это add-only операция.
+### Phase 2: Консистентность sidebar — `useSidebarModules.ts`
+
+Добавить `tcLoading` guard в `filteredModules`:
+
+```typescript
+const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
+const filteredModules = useMemo(() => {
+  if (isAdminUser || tcLoading || !tcData || !tcData.rules.length) return modules;
+  // ...existing filtering...
+}, [modules, isAdminUser, tcData, tcLoading]);
+```
+
+### Phase 3: Аналогичная защита — `useContainerLessons.ts`
+
+Добавить `tcLoading` guard в секции PATCH B фильтрации (строка ~155), чтобы не применять tc-filter пока rules загружаются.
 
 ---
 
 ### Что НЕ делается
 
-- Не создаются новые entitlements/subscriptions
-- Не меняются даты, статусы, rules
-- Не удаляются исторические поля из metadata
+- Не меняются данные в БД (0 изменений)
+- Не хардкодятся product_id, user_id, списки тренингов
+- Не меняется логика доступа (entitlements, rules, subscriptions)
+- Только fix stale closure и race condition в UI-хуках
 
 ### Файлы для изменения
 
-- `src/components/admin/ContactDetailSheet.tsx` — расширить условие бейджа (1 строка)
-- БД: migration для backfill `business_subscription_id` в 53 записях
+
+| Файл                               | Изменение                                 |
+| ---------------------------------- | ----------------------------------------- |
+| `src/hooks/useTrainingModules.tsx` | tcData в deps, race guard, tcLoading gate |
+| `src/hooks/useSidebarModules.ts`   | tcLoading guard в filteredModules         |
+| `src/hooks/useContainerLessons.ts` | tcLoading guard в PATCH B секции          |
+
 
 ### DoD
 
-1. Все module entitlements с `source_rule_id = 1b497fba` показывают «через BUSINESS»
-2. Нет смеси «по правилу» / «через BUSINESS» для одинаково настроенных модулей
-3. Историческая metadata сохранена (add-only)
-4. 0 новых entitlements/subscriptions создано
+1. После refresh список тренингов совпадает с реальными доступами
+2. fetchModules пересчитывается при загрузке tcData
+3. Нет race condition между параллельными fetchModules
+4. Sidebar и библиотека показывают консистентную картину
+5. Secondary access sources (entitlement-only, rule-based, module-based) не исчезают после reload
+6. «Бухгалтерия как бизнес» не остаётся единственным продуктом
+7. 0 изменений данных в БД
+8. Proof-таблица: product | before | after | access_source | should_survive | actual
