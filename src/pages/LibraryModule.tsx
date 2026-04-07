@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
 import { useTrainingModules } from "@/hooks/useTrainingModules";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,42 @@ export default function LibraryModule() {
   const hasAccess = moduleWithAccess?.has_access ?? true;
 
   const { lessons, loading: lessonsLoading, markCompleted, markIncomplete } = useTrainingLessons(module?.id);
+
+  // Fetch child modules if this module has no direct lessons
+  const { data: childModules, isLoading: childModulesLoading } = useQuery({
+    queryKey: ["child-modules-with-lessons", module?.id],
+    queryFn: async () => {
+      // Get direct children
+      const { data: children, error: childErr } = await supabase
+        .from("training_modules")
+        .select("id, title, slug, description, sort_order, is_active, is_container, color_gradient, icon")
+        .eq("parent_module_id", module!.id)
+        .eq("is_active", true)
+        .order("sort_order");
+      if (childErr) throw childErr;
+      if (!children || children.length === 0) return [];
+
+      // For each child, get lesson count
+      const childIds = children.map(c => c.id);
+      const { data: lessonCounts, error: lcErr } = await supabase
+        .from("training_lessons")
+        .select("module_id")
+        .in("module_id", childIds)
+        .eq("is_active", true);
+      if (lcErr) throw lcErr;
+
+      const countMap: Record<string, number> = {};
+      (lessonCounts || []).forEach(l => {
+        countMap[l.module_id] = (countMap[l.module_id] || 0) + 1;
+      });
+
+      return children.map(c => ({
+        ...c,
+        lessonCount: countMap[c.id] || 0,
+      }));
+    },
+    enabled: !!module?.id && lessons.length === 0 && !lessonsLoading,
+  });
 
   const handleLessonClick = (lesson: TrainingLesson) => {
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
@@ -167,12 +204,20 @@ export default function LibraryModule() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
-                <span>{lessons.length} уроков</span>
+                <span>
+                  {lessons.length > 0 
+                    ? `${lessons.length} уроков` 
+                    : childModules && childModules.length > 0 
+                      ? `${childModules.length} разделов · ${childModules.reduce((s, c) => s + c.lessonCount, 0)} уроков`
+                      : '0 уроков'}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5" />
-                <span>Пройдено: {completedCount} из {lessons.length} ({progress}%)</span>
-              </div>
+              {lessons.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span>Пройдено: {completedCount} из {lessons.length} ({progress}%)</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -226,6 +271,46 @@ export default function LibraryModule() {
           </div>
         ) : !hasAccess ? (
           null // Don't show lessons if no access
+        ) : lessons.length === 0 && childModules && childModules.length > 0 ? (
+          /* Show child modules hierarchy when root has no direct lessons */
+          <div className="space-y-3">
+            {childModules.map((child, idx) => (
+              <Card
+                key={child.id}
+                className="cursor-pointer hover:shadow-md transition-all group"
+                onClick={() => navigate(`/library/${child.slug}`)}
+              >
+                <CardContent className="flex items-center gap-4 p-4">
+                  <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium bg-muted">
+                    {idx + 1}
+                  </div>
+                  <div className="shrink-0 text-primary">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium group-hover:text-primary transition-colors">
+                      {child.title}
+                    </h3>
+                    {child.description && (
+                      <p className="text-sm text-muted-foreground line-clamp-1">
+                        {child.description}
+                      </p>
+                    )}
+                  </div>
+                  <Badge variant="secondary" className="shrink-0">
+                    {child.lessonCount} {child.lessonCount === 1 ? 'урок' : child.lessonCount < 5 ? 'урока' : 'уроков'}
+                  </Badge>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : lessons.length === 0 && (childModulesLoading) ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map(i => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
         ) : lessons.length === 0 ? (
           <Card className="text-center py-12">
             <CardContent>
