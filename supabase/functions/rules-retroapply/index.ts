@@ -29,32 +29,30 @@ const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 interface RetroApplyRequest {
   mode: "preview" | "execute";
-  // Scope: at least one required
   rule_ids?: string[];
   source_product_id?: string;
   source_tariff_id?: string;
   changed_since?: string;
-  // Options
-  recalculate_existing?: boolean; // default false — only grant missing
-  force_execute?: boolean; // override STOP-guards after preview review
+  recalculate_existing?: boolean;
+  force_execute?: boolean;
 }
 
 interface UserAction {
   user_id: string;
   profile_id: string | null;
   email: string;
+  full_name: string | null;
   rule_id: string;
   rule_target_type: string;
+  rule_target_label: string | null;
+  rule_source_product_name: string | null;
+  rule_source_tariff_name: string | null;
+  rule_duration_mode: string; // "from_source" | "fixed_days"
+  rule_duration_days: number | null;
   target_product_id: string;
   target_product_code: string;
   target_product_name: string;
-  category:
-    | "missing_access"
-    | "aligned_update_needed"
-    | "conflict_existing"
-    | "already_satisfied"
-    | "condition_not_met"
-    | "no_source_window";
+  category: string;
   planned_expires_at: string | null;
   current_expires_at: string | null;
   source_subscription_id: string | null;
@@ -87,11 +85,32 @@ Deno.serve(async (req) => {
       return jsonResp({ mode, rules_found: 0, actions: [], summary: { total: 0 } });
     }
 
+    // Resolve source product/tariff names for UI
+    const sourceProductIds = [...new Set(rules.map((r: any) => r.product_id).filter(Boolean))];
+    const sourceTariffIds = [...new Set(rules.map((r: any) => r.tariff_id).filter(Boolean))];
+
+    const sourceProductNameMap = new Map<string, string>();
+    const sourceTariffNameMap = new Map<string, string>();
+
+    if (sourceProductIds.length > 0) {
+      const { data: prods } = await supabase.from("products_v2").select("id, name").in("id", sourceProductIds);
+      (prods || []).forEach((p: any) => sourceProductNameMap.set(p.id, p.name));
+    }
+    if (sourceTariffIds.length > 0) {
+      const { data: tars } = await supabase.from("tariffs").select("id, name").in("id", sourceTariffIds);
+      (tars || []).forEach((t: any) => sourceTariffNameMap.set(t.id, t.name));
+    }
+
     // 2. For each rule, find eligible users and classify
     const allActions: UserAction[] = [];
 
     for (const rule of rules) {
-      const actions = await processRule(supabase, rule, !!recalculate_existing);
+      const ruleEnriched = {
+        ...rule,
+        _sourceProductName: rule.product_id ? sourceProductNameMap.get(rule.product_id) || null : null,
+        _sourceTariffName: rule.tariff_id ? sourceTariffNameMap.get(rule.tariff_id) || null : null,
+      };
+      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing);
       allActions.push(...actions);
     }
 
@@ -110,17 +129,17 @@ Deno.serve(async (req) => {
     if (mode === "execute") {
       const stopReasons: string[] = [];
       if (summary.missing_access > 200) {
-        stopReasons.push(`Too many missing_access: ${summary.missing_access} (limit 200). Run preview first.`);
+        stopReasons.push(`too_many_missing:${summary.missing_access}`);
       }
       if (summary.conflict_existing > 0) {
-        stopReasons.push(`${summary.conflict_existing} conflict(s) detected. Review before executing.`);
+        stopReasons.push(`conflicts_detected:${summary.conflict_existing}`);
       }
       if (summary.no_source_window > 0) {
-        stopReasons.push(`${summary.no_source_window} user(s) with no source window. Cannot determine expiry.`);
+        stopReasons.push(`no_source_window:${summary.no_source_window}`);
       }
       if (stopReasons.length > 0 && !body.force_execute) {
         return jsonResp({
-          error: "STOP-guard triggered. Add force_execute: true to override after reviewing.",
+          error: "stop_guard_triggered",
           stop_reasons: stopReasons,
           summary,
           mode: "blocked",
@@ -138,7 +157,13 @@ Deno.serve(async (req) => {
     return jsonResp({
       mode,
       rules_found: rules.length,
-      rules: rules.map(r => ({ id: r.id, grant_target_type: r.grant_target_type, target_label: r.target_label })),
+      rules: rules.map((r: any) => ({
+        id: r.id,
+        grant_target_type: r.grant_target_type,
+        target_label: r.target_label,
+        source_product_name: r.product_id ? sourceProductNameMap.get(r.product_id) || null : null,
+        source_tariff_name: r.tariff_id ? sourceTariffNameMap.get(r.tariff_id) || null : null,
+      })),
       summary,
       executed: mode === "execute" ? executed : undefined,
       actions: allActions,
@@ -184,7 +209,6 @@ async function resolveRules(
     filtered = filtered.filter((r: any) => r.updated_at >= since);
   }
 
-  // Only product_access and club rules are retroapply-able (training_content is visibility-only)
   return filtered.filter((r: any) => ["product_access", "club"].includes(r.grant_target_type));
 }
 
@@ -198,13 +222,11 @@ async function processRule(
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
 
-  // Determine source product/tariff for finding eligible users
   const sourceProductId = rule.product_id;
   const sourceTariffId = rule.tariff_id;
 
   if (!sourceProductId) return actions;
 
-  // Determine target product IDs
   const targetProductIds: string[] =
     rule.grant_target_type === "product_access"
       ? (Array.isArray(conditions.target_product_ids)
@@ -216,7 +238,6 @@ async function processRule(
 
   if (targetProductIds.length === 0) return actions;
 
-  // Resolve target product info
   const productInfoMap = new Map<string, { code: string; name: string }>();
   if (rule.grant_target_type === "product_access") {
     const { data: prods } = await supabase
@@ -226,7 +247,6 @@ async function processRule(
     (prods || []).forEach((p: any) => productInfoMap.set(p.id, { code: p.code || "", name: p.name || "" }));
   }
 
-  // Find eligible users: those with active/past_due subscription on source product
   let subsQuery = supabase
     .from("subscriptions_v2")
     .select("id, user_id, product_id, tariff_id, access_end_at, status")
@@ -241,7 +261,6 @@ async function processRule(
   if (subsErr) throw new Error(`Failed to fetch subscriptions: ${subsErr.message}`);
   if (!subscriptions?.length) return actions;
 
-  // Deduplicate by user_id, keep latest access_end_at
   const userSubMap = new Map<string, any>();
   for (const sub of subscriptions) {
     const existing = userSubMap.get(sub.user_id);
@@ -252,21 +271,58 @@ async function processRule(
 
   const userIds = [...userSubMap.keys()];
 
-  // Batch fetch profiles for emails
-  const profileMap = new Map<string, { id: string; email: string }>();
+  // Batch fetch profiles with full_name
+  const profileMap = new Map<string, { id: string; email: string; full_name: string | null }>();
   for (let i = 0; i < userIds.length; i += 50) {
     const batch = userIds.slice(i, i + 50);
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, user_id, email")
+      .select("id, user_id, email, full_name")
       .in("user_id", batch);
-    (profiles || []).forEach((p: any) => profileMap.set(p.user_id, { id: p.id, email: p.email || "" }));
+    (profiles || []).forEach((p: any) => profileMap.set(p.user_id, {
+      id: p.id,
+      email: p.email || "",
+      full_name: p.full_name || null,
+    }));
   }
 
-  // For product_access rules: check existing entitlements
+  const durationMode = rule.duration_days ? "fixed_days" : "from_source";
+
+  const makeAction = (
+    userId: string,
+    targetProdId: string,
+    category: string,
+    plannedExpiry: string | null,
+    currentExpiry: string | null,
+    sub: any,
+    skipReason: string | null,
+  ): UserAction => {
+    const profile = profileMap.get(userId);
+    return {
+      user_id: userId,
+      profile_id: profile?.id || null,
+      email: profile?.email || "",
+      full_name: profile?.full_name || null,
+      rule_id: rule.id,
+      rule_target_type: rule.grant_target_type,
+      rule_target_label: rule.target_label || null,
+      rule_source_product_name: rule._sourceProductName || null,
+      rule_source_tariff_name: rule._sourceTariffName || null,
+      rule_duration_mode: durationMode,
+      rule_duration_days: rule.duration_days || null,
+      target_product_id: targetProdId,
+      target_product_code: productInfoMap.get(targetProdId)?.code || "",
+      target_product_name: productInfoMap.get(targetProdId)?.name || "",
+      category,
+      planned_expires_at: plannedExpiry,
+      current_expires_at: currentExpiry,
+      source_subscription_id: sub.id,
+      skip_reason: skipReason,
+    };
+  };
+
   if (rule.grant_target_type === "product_access") {
     for (const targetProdId of targetProductIds) {
-      // Batch fetch existing entitlements for this target product
       const existingMap = new Map<string, any>();
       for (let i = 0; i < userIds.length; i += 50) {
         const batch = userIds.slice(i, i + 50);
@@ -279,15 +335,12 @@ async function processRule(
         (ents || []).forEach((e: any) => existingMap.set(e.user_id, e));
       }
 
-      // Check prior_purchase condition if needed
       const hasPriorPurchase = conditions.condition_type === "prior_purchase";
 
       for (const userId of userIds) {
         const sub = userSubMap.get(userId)!;
-        const profile = profileMap.get(userId);
         const existing = existingMap.get(userId);
 
-        // Resolve expected expires_at
         let plannedExpiry: string | null = null;
         if (rule.duration_days) {
           plannedExpiry = new Date(Date.now() + rule.duration_days * 86400000).toISOString();
@@ -295,136 +348,44 @@ async function processRule(
           plannedExpiry = sub.access_end_at;
         }
 
-        // Check prior_purchase condition
         if (hasPriorPurchase) {
           const conditionMet = await checkRetroCondition(supabase, conditions, userId, targetProdId);
           if (!conditionMet) {
-            actions.push({
-              user_id: userId,
-              profile_id: profile?.id || null,
-              email: profile?.email || "",
-              rule_id: rule.id,
-              rule_target_type: rule.grant_target_type,
-              target_product_id: targetProdId,
-              target_product_code: productInfoMap.get(targetProdId)?.code || "",
-              target_product_name: productInfoMap.get(targetProdId)?.name || "",
-              category: "condition_not_met",
-              planned_expires_at: plannedExpiry,
-              current_expires_at: null,
-              source_subscription_id: sub.id,
-              skip_reason: "prior_purchase_not_found",
-            });
+            actions.push(makeAction(userId, targetProdId, "condition_not_met", plannedExpiry, null, sub, "prior_purchase_not_found"));
             continue;
           }
         }
 
         if (!plannedExpiry && !rule.duration_days) {
-          // No source window and no duration_days — conflict
-          actions.push({
-            user_id: userId,
-            profile_id: profile?.id || null,
-            email: profile?.email || "",
-            rule_id: rule.id,
-            rule_target_type: rule.grant_target_type,
-            target_product_id: targetProdId,
-            target_product_code: productInfoMap.get(targetProdId)?.code || "",
-            target_product_name: productInfoMap.get(targetProdId)?.name || "",
-            category: "no_source_window",
-            planned_expires_at: null,
-            current_expires_at: null,
-            source_subscription_id: sub.id,
-            skip_reason: "no_access_end_at_and_no_duration_days",
-          });
+          actions.push(makeAction(userId, targetProdId, "no_source_window", null, null, sub, "no_access_end_at_and_no_duration_days"));
           continue;
         }
 
         if (!existing) {
-          // Missing access — will create
-          actions.push({
-            user_id: userId,
-            profile_id: profile?.id || null,
-            email: profile?.email || "",
-            rule_id: rule.id,
-            rule_target_type: rule.grant_target_type,
-            target_product_id: targetProdId,
-            target_product_code: productInfoMap.get(targetProdId)?.code || "",
-            target_product_name: productInfoMap.get(targetProdId)?.name || "",
-            category: "missing_access",
-            planned_expires_at: plannedExpiry,
-            current_expires_at: null,
-            source_subscription_id: sub.id,
-            skip_reason: null,
-          });
+          actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null));
         } else {
-          // Existing entitlement — check alignment
           const currentEnd = existing.expires_at ? new Date(existing.expires_at).getTime() : null;
           const plannedEnd = plannedExpiry ? new Date(plannedExpiry).getTime() : null;
 
           if (currentEnd && plannedEnd && Math.abs(currentEnd - plannedEnd) < 60000) {
-            // Within 1 minute tolerance — aligned
-            actions.push({
-              user_id: userId,
-              profile_id: profile?.id || null,
-              email: profile?.email || "",
-              rule_id: rule.id,
-              rule_target_type: rule.grant_target_type,
-              target_product_id: targetProdId,
-              target_product_code: productInfoMap.get(targetProdId)?.code || "",
-              target_product_name: productInfoMap.get(targetProdId)?.name || "",
-              category: "already_satisfied",
-              planned_expires_at: plannedExpiry,
-              current_expires_at: existing.expires_at,
-              source_subscription_id: sub.id,
-              skip_reason: null,
-            });
+            actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, existing.expires_at, sub, null));
           } else if (recalculateExisting && plannedEnd && currentEnd && plannedEnd > currentEnd) {
-            // Recalculate mode: update if planned > current
-            actions.push({
-              user_id: userId,
-              profile_id: profile?.id || null,
-              email: profile?.email || "",
-              rule_id: rule.id,
-              rule_target_type: rule.grant_target_type,
-              target_product_id: targetProdId,
-              target_product_code: productInfoMap.get(targetProdId)?.code || "",
-              target_product_name: productInfoMap.get(targetProdId)?.name || "",
-              category: "aligned_update_needed",
-              planned_expires_at: plannedExpiry,
-              current_expires_at: existing.expires_at,
-              source_subscription_id: sub.id,
-              skip_reason: null,
-            });
+            actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, existing.expires_at, sub, null));
           } else {
-            // Conflict or already satisfied
-            actions.push({
-              user_id: userId,
-              profile_id: profile?.id || null,
-              email: profile?.email || "",
-              rule_id: rule.id,
-              rule_target_type: rule.grant_target_type,
-              target_product_id: targetProdId,
-              target_product_code: productInfoMap.get(targetProdId)?.code || "",
-              target_product_name: productInfoMap.get(targetProdId)?.name || "",
-              category: currentEnd && plannedEnd && currentEnd >= plannedEnd
-                ? "already_satisfied"
-                : "conflict_existing",
-              planned_expires_at: plannedExpiry,
-              current_expires_at: existing.expires_at,
-              source_subscription_id: sub.id,
-              skip_reason: currentEnd && plannedEnd && currentEnd >= plannedEnd
-                ? null
-                : "existing_entitlement_from_different_source",
-            });
+            const isSatisfied = currentEnd && plannedEnd && currentEnd >= plannedEnd;
+            actions.push(makeAction(
+              userId, targetProdId,
+              isSatisfied ? "already_satisfied" : "conflict_existing",
+              plannedExpiry, existing.expires_at, sub,
+              isSatisfied ? null : "existing_entitlement_from_different_source",
+            ));
           }
         }
       }
     }
   }
 
-  // Club rules are similar but target telegram_clubs — simplified for now
   if (rule.grant_target_type === "club") {
-    // Club retroapply would check telegram_club_members — out of scope for v1
-    // Log as info
     console.log(`Club rule ${rule.id} skipped in retroapply v1 — club grants require telegram integration`);
   }
 
@@ -448,7 +409,6 @@ async function checkRetroCondition(
       ? [conditions.required_product_id]
       : [];
 
-  // per_product mode: check if user has prior purchase of the target product itself
   const productToCheck = matchMode === "per_product" ? targetProductId
     : requiredProductIds.length > 0 ? requiredProductIds[0]
     : null;
@@ -467,7 +427,6 @@ async function checkRetroCondition(
     return !!data;
   }
 
-  // any/all mode
   for (const reqProdId of requiredProductIds) {
     const { data } = await supabase
       .from("orders_v2")
@@ -506,7 +465,6 @@ async function executeActions(
       const rule = ruleMap.get(action.rule_id);
       const sourceWindowRule = rule?.duration_days ? "rule_duration" : "align_with_source";
 
-      // Idempotency check: re-verify no active entitlement exists
       const { data: existing } = await supabase
         .from("entitlements")
         .select("id")
@@ -521,7 +479,6 @@ async function executeActions(
         continue;
       }
 
-      // Resolve product_code
       const { data: prod } = await supabase
         .from("products_v2")
         .select("code")
@@ -553,7 +510,6 @@ async function executeActions(
         created++;
       }
     } else if (action.category === "aligned_update_needed") {
-      // Update expires_at
       const { data: ent } = await supabase
         .from("entitlements")
         .select("id")
@@ -586,14 +542,13 @@ async function executeActions(
     }
   }
 
-  // Audit log
   await supabase.from("audit_logs").insert({
     action: "rules_retroapply.executed",
     actor_type: "system",
     actor_label: "rules-retroapply",
     meta: {
       batch_id: batchId,
-      rule_ids: rules.map(r => r.id),
+      rule_ids: rules.map((r: any) => r.id),
       created,
       updated,
       skipped,
