@@ -230,7 +230,7 @@
 | 7 | Currently harmful victims | **13** (active sub without entitlement, excl. test) |
 | 8 | Historical paid without entitlement | **1501** orders / **311** unique profiles |
 | 9 | Already repaired | **1** (Матук) + **3** (runtime-proof) |
-| 10 | Runtime-proof cases | **3** (1 order_based ✅, 1 sub+bonus ⚠️idempotency, 1 sub pure ✅) |
+| 10 | Runtime-proof cases | **3** (all PASS after idempotency fix, second_call_side_effects=none) |
 
 ---
 
@@ -243,11 +243,11 @@
 - Нельзя считать Матук полностью закрытой до fix published_at на training roots
 - Нельзя считать Абрамович полностью закрытой до UI/runtime proof
 - 0 victims на edge sweep ≠ path безопасен; это значит только: «на текущем active sweep не найдено активных жертв, но bypass в коде существовал и оставался риском» (теперь устранён для active paths)
-- Idempotency bug в grant-access-for-order требует отдельного fix до массового backfill (иначе повторные вызовы могут продлевать подписки)
+- Idempotency bug в grant-access-for-order ✅ ИСПРАВЛЕН — guard расширен на meta.extended_by_orders, post-fix proof 3/3 PASS
 
 ### Нерешённые вопросы (обязательные follow-up)
 
-1. **Idempotency bug** — grant-access-for-order продлевает subscription при повторном вызове для subscription_based products (Case 2). Требует fix перед массовым backfill.
+1. **Idempotency bug** — ✅ ИСПРАВЛЕН. Guard расширен, post-fix proof 3/3 PASS. Массовый backfill разблокирован.
 2. **payments-reconcile legacy path** — требует отдельного discovery по совместимости legacy orders с grant-access-for-order
 3. **39 content_not_published** — training roots с `published_at=NULL`, контентный дефект
 4. **Backfill 13 currently harmful** — план готов, требует исполнения после fix idempotency
@@ -258,10 +258,7 @@
 
 ### Следующий шаг после этого патча
 
-1. **Fix idempotency bug** в grant-access-for-order (subscription_based products)
-2. **Отдельный backfill sprint** по 13 currently harmful victims → before/after proof
-3. **Legacy path discovery** для payments-reconcile
-4. **Historical victims classification** по product type (club/cb20/modules/webinars) перед массовым repair
+Патч закрыт. Массовый backfill и legacy discovery не входили в данный патч.
 
 ---
 
@@ -295,4 +292,4 @@
 
 ### Формулировка для отчёта
 
-По code-level grep-proof active paths переведены на canonical flow. Runtime-proof выполнен 2026-04-07: 3 тест-кейса (order_based, subscription+bonus, subscription pure) подтвердили корректную работу canonical write-path grant-access-for-order. Обнаружен idempotency bug для subscription_based products (Case 2: повторный вызов продлевает подписку). payments-reconcile legacy path остаётся осознанным исключением и не входит в закрытый root-fix. Массовый repair 13 currently harmful + 311 historical victims — отдельный спринт после fix idempotency.
+По code-level grep-proof active paths переведены на canonical flow. Idempotency bug исправлен: guard расширен на `meta.extended_by_orders`. Post-fix runtime-proof 2026-04-07: все 3 кейса (order_based, subscription+bonus, subscription pure) × 2 вызова = `already_fulfilled`, `second_call_side_effects = none`, `access_end_at` не изменилось. Edge root-fix (active paths) = ✅ закрыт. payments-reconcile legacy path остаётся осознанным исключением. Патч закрыт. Массовый backfill и legacy discovery не входили в данный патч.
