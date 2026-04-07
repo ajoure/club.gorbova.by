@@ -175,7 +175,7 @@ const EXECUTE_STATUS_LABELS: Record<string, string> = {
   no_source_window: "Не выполнено (нет срока)",
 };
 
-type FilterKey = "all" | "missing_access" | "aligned_update_needed" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
@@ -190,6 +190,10 @@ function formatDate(iso: string | null): string {
 
 function contactDisplayName(a: UserAction): string {
   return a.full_name || a.email || a.user_id;
+}
+
+function contactHasName(a: UserAction): boolean {
+  return !!a.full_name;
 }
 
 function ruleBasisLabel(a: UserAction): string {
@@ -214,6 +218,10 @@ function changeDescription(a: UserAction, isExecuted: boolean): string {
   return cfg?.description || "—";
 }
 
+function isChangedCategory(cat: string): boolean {
+  return cat === "missing_access" || cat === "aligned_update_needed";
+}
+
 // ═══════ COMPONENT ═══════
 
 export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelProps) {
@@ -235,6 +243,20 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   );
 
   const isExecuted = !!(result?.executed);
+
+  // ── canPreview guard ──
+  const canPreview = useMemo(() => {
+    if (isLoading) return false;
+    if (scopeMode === "rule" && !selectedRuleId) return false;
+    if (scopeMode === "tariff" && !selectedTariffId) return false;
+    return true; // product mode always allowed
+  }, [isLoading, scopeMode, selectedRuleId, selectedTariffId]);
+
+  const previewDisabledHint = useMemo(() => {
+    if (scopeMode === "rule" && !selectedRuleId) return "Выберите правило для запуска предпросмотра";
+    if (scopeMode === "tariff" && !selectedTariffId) return "Выберите тариф для запуска предпросмотра";
+    return null;
+  }, [scopeMode, selectedRuleId, selectedTariffId]);
 
   const buildBody = (mode: "preview" | "execute", force = false) => {
     const body: Record<string, unknown> = {
@@ -270,6 +292,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       setResult(res);
       setVisibleCount(PAGE_SIZE);
       setExpandedRows(new Set());
+      setActiveFilter("all");
 
       if (res.error || res.stop_reasons?.length) {
         // Don't toast — show inline
@@ -308,10 +331,17 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     (result.summary.missing_access > 0 || result.summary.aligned_update_needed > 0) &&
     !isExecuted;
 
+  // Changed count for "changed" filter
+  const changedCount = useMemo(() => {
+    if (!result?.summary) return 0;
+    return result.summary.missing_access + result.summary.aligned_update_needed;
+  }, [result]);
+
   // Filtered actions
   const filteredActions = useMemo(() => {
     if (!result?.actions) return [];
     if (activeFilter === "all") return result.actions;
+    if (activeFilter === "changed") return result.actions.filter(a => isChangedCategory(a.category));
     return result.actions.filter(a => a.category === activeFilter);
   }, [result, activeFilter]);
 
@@ -340,6 +370,9 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   const modeDescription = recalculateExisting
     ? "Будут выданы недостающие доступы и пересчитаны сроки уже выданных."
     : "Будут выданы только недостающие доступы. Уже выданные не изменятся.";
+
+  const hasResults = result && result.summary && result.summary.total > 0;
+  const hasEmptyResults = result && result.summary && result.summary.total === 0 && !result.error && !result.stop_reasons?.length;
 
   return (
     <>
@@ -392,31 +425,41 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               </Select>
 
               {scopeMode === "rule" && (
-                <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Выберите правило" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeRules.map(r => (
-                      <SelectItem key={r.id} value={r.id}>
-                        {r.target_label || r.target_ref}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="space-y-1">
+                  <Select value={selectedRuleId} onValueChange={setSelectedRuleId}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Выберите правило" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeRules.map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.target_label || r.target_ref}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedRuleId && (
+                    <p className="text-[10px] text-amber-600">Выберите правило для запуска предпросмотра</p>
+                  )}
+                </div>
               )}
 
               {scopeMode === "tariff" && (
-                <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Выберите тариф" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {tariffs.map(t => (
-                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="space-y-1">
+                  <Select value={selectedTariffId} onValueChange={setSelectedTariffId}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Выберите тариф" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tariffs.map(t => (
+                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!selectedTariffId && (
+                    <p className="text-[10px] text-amber-600">Выберите тариф для запуска предпросмотра</p>
+                  )}
+                </div>
               )}
             </div>
 
@@ -444,7 +487,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               </div>
             </div>
 
-            {/* ── Context block before preview ── */}
+            {/* ── Context block BEFORE preview ── */}
             {!result && (
               <div className="p-3 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 text-xs text-muted-foreground space-y-1">
                 <p>📋 {scopeDescription}</p>
@@ -453,73 +496,116 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               </div>
             )}
 
-            {/* ── Actions ── */}
-            <div className="flex gap-2">
-              <Button
-                onClick={handlePreview}
-                disabled={isLoading || (scopeMode === "rule" && !selectedRuleId) || (scopeMode === "tariff" && !selectedTariffId)}
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-              >
-                <Eye className="h-3.5 w-3.5" />
-                {isLoading ? "Загрузка…" : "Предпросмотр"}
-              </Button>
-
-              {canExecute && !isBlocked && (
+            {/* ── Preview button ── */}
+            {!result && (
+              <div className="space-y-1">
                 <Button
-                  onClick={() => setConfirmExecute(true)}
-                  disabled={isLoading}
+                  onClick={handlePreview}
+                  disabled={!canPreview}
+                  variant="default"
                   size="sm"
                   className="gap-1.5"
                 >
-                  <Play className="h-3.5 w-3.5" />
-                  Применить
+                  <Eye className="h-3.5 w-3.5" />
+                  {isLoading ? "Загрузка…" : "Предпросмотр"}
                 </Button>
-              )}
-              {canExecute && isBlocked && (
-                <Button
-                  onClick={() => setConfirmExecute(true)}
-                  disabled={isLoading}
-                  size="sm"
-                  variant="destructive"
-                  className="gap-1.5"
-                >
-                  <ShieldAlert className="h-3.5 w-3.5" />
-                  Применить принудительно после проверки
-                </Button>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* ── Results ── */}
-            {result && (
+            {/* ── Empty results state ── */}
+            {hasEmptyResults && (
+              <div className="text-center py-8 space-y-2">
+                <MinusCircle className="h-8 w-8 text-muted-foreground mx-auto" />
+                <p className="text-sm text-muted-foreground">
+                  Не найдено записей, подходящих под выбранные правила
+                </p>
+                <Button
+                  onClick={handlePreview}
+                  disabled={!canPreview}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 mt-2"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Повторить предпросмотр
+                </Button>
+              </div>
+            )}
+
+            {/* ── Results (shown only when total > 0) ── */}
+            {hasResults && (
               <div className="space-y-3">
+                {/* Compact scope summary after preview */}
+                <div className="p-2 rounded-md bg-muted/30 text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+                  <span>📋 {scopeDescription}</span>
+                  <span className="text-muted-foreground/50">·</span>
+                  <span>🔧 {modeDescription}</span>
+                </div>
+
+                {/* Textual outcome summary */}
+                <div className="p-3 rounded-lg border bg-muted/10 text-sm space-y-1">
+                  {result!.summary.missing_access > 0 || result!.summary.aligned_update_needed > 0 ? (
+                    <>
+                      <p>
+                        <span className="font-medium text-green-700">Новых доступов будет создано:</span>{" "}
+                        {result!.summary.missing_access}
+                      </p>
+                      {recalculateExisting && (
+                        <p>
+                          <span className="font-medium text-amber-700">Существующих сроков будет обновлено:</span>{" "}
+                          {result!.summary.aligned_update_needed}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-muted-foreground">Изменений не требуется. Все доступы уже соответствуют правилам.</p>
+                  )}
+                </div>
+
                 {/* Summary cards — clickable filters */}
-                <div className="grid grid-cols-3 sm:grid-cols-7 gap-1.5">
+                <div className="flex gap-1.5 flex-wrap">
                   {/* "All" filter */}
                   <button
                     onClick={() => setActiveFilter("all")}
                     className={cn(
-                      "flex flex-col items-center p-2 rounded-lg border text-center transition-all cursor-pointer",
+                      "flex flex-col items-center px-3 py-2 rounded-lg border text-center transition-all cursor-pointer min-w-[70px]",
                       activeFilter === "all"
                         ? "ring-2 ring-primary border-primary bg-primary/5"
                         : "hover:bg-muted/50"
                     )}
                   >
-                    <span className="text-lg font-bold">{result.summary.total}</span>
+                    <span className="text-lg font-bold">{result!.summary.total}</span>
                     <span className="text-[9px] leading-tight">Все</span>
                   </button>
 
-                  {(Object.entries(CATEGORY_CONFIG) as [FilterKey, typeof CATEGORY_CONFIG[string]][]).map(([key, cfg]) => {
-                    const count = result.summary?.[key as keyof typeof result.summary] ?? 0;
+                  {/* "Changed" virtual filter */}
+                  {changedCount > 0 && (
+                    <button
+                      onClick={() => setActiveFilter("changed")}
+                      className={cn(
+                        "flex flex-col items-center px-3 py-2 rounded-lg border text-center transition-all cursor-pointer min-w-[70px]",
+                        "text-blue-700 bg-blue-50 border-blue-200",
+                        activeFilter === "changed"
+                          ? "ring-2 ring-primary"
+                          : "opacity-80 hover:opacity-100"
+                      )}
+                    >
+                      <Play className="h-3.5 w-3.5 mb-0.5" />
+                      <span className="text-lg font-bold">{changedCount}</span>
+                      <span className="text-[9px] leading-tight">Будут изменены</span>
+                    </button>
+                  )}
+
+                  {(Object.entries(CATEGORY_CONFIG) as [string, typeof CATEGORY_CONFIG[string]][]).map(([key, cfg]) => {
+                    const count = result!.summary?.[key as keyof typeof result.summary] ?? 0;
                     if (count === 0) return null;
                     const Icon = cfg.icon;
                     return (
                       <button
                         key={key}
-                        onClick={() => setActiveFilter(key)}
+                        onClick={() => setActiveFilter(key as FilterKey)}
                         className={cn(
-                          "flex flex-col items-center p-2 rounded-lg border text-center transition-all cursor-pointer",
+                          "flex flex-col items-center px-3 py-2 rounded-lg border text-center transition-all cursor-pointer min-w-[70px]",
                           cfg.color,
                           activeFilter === key
                             ? "ring-2 ring-primary"
@@ -536,31 +622,76 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
                 {/* Stop-guard warnings */}
                 {hasStopGuard && (
-                  <div className="p-3 rounded-lg border border-red-300 bg-red-50 space-y-2">
+                  <div className="p-3 rounded-lg border-2 border-red-400 bg-red-50 space-y-2">
                     <div className="flex items-center gap-2 text-red-700 font-medium text-xs">
                       <AlertTriangle className="h-4 w-4" />
                       Применение заблокировано
                     </div>
-                    {result.stop_reasons!.map((r, i) => (
+                    {result!.stop_reasons!.map((r, i) => (
                       <p key={i} className="text-xs text-red-600">• {translateStopReason(r)}</p>
                     ))}
                   </div>
                 )}
 
-                {/* Conflict warning block */}
+                {/* Conflict warning block — stronger visual */}
                 {isBlocked && !hasStopGuard && (
-                  <div className="p-3 rounded-lg border border-red-300 bg-red-50 space-y-1">
-                    <div className="flex items-center gap-2 text-red-700 font-medium text-xs">
-                      <ShieldAlert className="h-4 w-4" />
-                      Обнаружены конфликты или записи без определяемого срока
+                  <div className="p-4 rounded-lg border-2 border-red-400 bg-red-50 space-y-2">
+                    <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
+                      <ShieldAlert className="h-5 w-5" />
+                      Обнаружены проблемы, блокирующие обычное применение
                     </div>
-                    <p className="text-xs text-red-600">
-                      {hasConflicts && `Конфликтов: ${result.summary.conflict_existing}. `}
-                      {hasNoSourceWindow && `Без определяемого срока: ${result.summary.no_source_window}. `}
-                      Обычное применение заблокировано. Доступно только принудительное применение после проверки.
-                    </p>
+                    <ul className="text-xs text-red-600 space-y-1 ml-7 list-disc">
+                      {hasConflicts && (
+                        <li>Конфликтов: {result!.summary.conflict_existing}</li>
+                      )}
+                      {hasNoSourceWindow && (
+                        <li>Записей без определяемого срока: {result!.summary.no_source_window}</li>
+                      )}
+                    </ul>
+                    <div className="text-xs text-red-700 mt-1 space-y-0.5">
+                      <p>• Проблемные записи автоматически не применяются</p>
+                      <p>• При принудительном запуске конфликтные записи будут пропущены</p>
+                    </div>
                   </div>
                 )}
+
+                {/* Action buttons AFTER preview */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handlePreview}
+                    disabled={!canPreview}
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    {isLoading ? "Загрузка…" : "Обновить предпросмотр"}
+                  </Button>
+
+                  {canExecute && !isBlocked && (
+                    <Button
+                      onClick={() => setConfirmExecute(true)}
+                      disabled={isLoading}
+                      size="sm"
+                      className="gap-1.5"
+                    >
+                      <Play className="h-3.5 w-3.5" />
+                      Применить
+                    </Button>
+                  )}
+                  {canExecute && isBlocked && (
+                    <Button
+                      onClick={() => setConfirmExecute(true)}
+                      disabled={isLoading}
+                      size="sm"
+                      variant="destructive"
+                      className="gap-1.5"
+                    >
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      Применить принудительно после проверки
+                    </Button>
+                  )}
+                </div>
 
                 {/* Post-execute result block */}
                 {isExecuted && (
@@ -571,15 +702,15 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-xs">
                       <div className="text-center">
-                        <div className="text-lg font-bold text-green-700">{result.executed!.created}</div>
+                        <div className="text-lg font-bold text-green-700">{result!.executed!.created}</div>
                         <div className="text-green-600">Создано</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold text-amber-700">{result.executed!.updated}</div>
+                        <div className="text-lg font-bold text-amber-700">{result!.executed!.updated}</div>
                         <div className="text-amber-600">Обновлено</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold text-muted-foreground">{result.executed!.skipped}</div>
+                        <div className="text-lg font-bold text-muted-foreground">{result!.executed!.skipped}</div>
                         <div className="text-muted-foreground">Пропущено</div>
                       </div>
                     </div>
@@ -587,7 +718,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       size="sm"
                       variant="outline"
                       className="text-xs mt-1"
-                      onClick={() => setActiveFilter("missing_access")}
+                      onClick={() => setActiveFilter("changed")}
                     >
                       Показать изменённые записи
                     </Button>
@@ -601,7 +732,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <span className="text-[10px] text-muted-foreground">
                         {activeFilter !== "all" && (
                           <Badge variant="outline" className="text-[9px] mr-2">
-                            {CATEGORY_CONFIG[activeFilter]?.label || activeFilter}
+                            {activeFilter === "changed" ? "Будут изменены" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
                           </Badge>
                         )}
                         Показано {Math.min(visibleCount, filteredActions.length)} из {filteredActions.length}
@@ -613,11 +744,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                           <tr>
                             <th className="w-6 p-2"></th>
                             <th className="text-left p-2 font-medium">Контакт</th>
-                            <th className="text-left p-2 font-medium">Что даём</th>
+                            <th className="text-left p-2 font-medium">Какой доступ</th>
                             <th className="text-left p-2 font-medium">Основание</th>
                             <th className="text-left p-2 font-medium">Что произойдёт</th>
                             <th className="text-left p-2 font-medium">Текущий срок</th>
-                            <th className="text-left p-2 font-medium">Срок после</th>
+                            <th className="text-left p-2 font-medium">Новый срок</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -625,93 +756,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                             const cfg = CATEGORY_CONFIG[a.category] || CATEGORY_CONFIG.already_satisfied;
                             const isExpanded = expandedRows.has(i);
                             return (
-                              <>
-                                <tr
-                                  key={`row-${i}`}
-                                  className={cn("border-t cursor-pointer hover:bg-muted/30", isExpanded && "bg-muted/20")}
-                                  onClick={() => toggleRow(i)}
-                                >
-                                  <td className="p-2 text-muted-foreground">
-                                    {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                                  </td>
-                                  <td className="p-2 max-w-[160px]">
-                                    <div className="font-medium truncate">{contactDisplayName(a)}</div>
-                                    {a.full_name && a.email && (
-                                      <div className="text-[10px] text-muted-foreground truncate">{a.email}</div>
-                                    )}
-                                  </td>
-                                  <td className="p-2 truncate max-w-[130px]">{a.target_product_name || a.target_product_code || "—"}</td>
-                                  <td className="p-2 truncate max-w-[160px] text-muted-foreground">{ruleBasisLabel(a)}</td>
-                                  <td className="p-2">
-                                    <Badge variant="outline" className={cn("text-[9px] whitespace-nowrap", cfg.color)}>
-                                      {changeDescription(a, isExecuted)}
-                                    </Badge>
-                                  </td>
-                                  <td className="p-2 text-muted-foreground">{formatDate(a.current_expires_at)}</td>
-                                  <td className="p-2">{formatDate(a.planned_expires_at)}</td>
-                                </tr>
-                                {isExpanded && (
-                                  <tr key={`detail-${i}`} className="bg-muted/10 border-t border-dashed">
-                                    <td colSpan={7} className="p-3">
-                                      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-                                        <div>
-                                          <span className="text-muted-foreground">Правило: </span>
-                                          <span className="font-medium">{a.rule_target_label || "—"}</span>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">Целевой продукт: </span>
-                                          <span className="font-medium">{a.target_product_name || a.target_product_code || "—"}</span>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">Источник: </span>
-                                          <span className="font-medium">
-                                            {a.rule_source_tariff_name
-                                              ? `Тариф «${a.rule_source_tariff_name}»`
-                                              : a.rule_source_product_name
-                                                ? `Продукт «${a.rule_source_product_name}»`
-                                                : "—"
-                                            }
-                                          </span>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">Логика срока: </span>
-                                          <span className="font-medium">
-                                            {a.rule_duration_mode === "fixed_days"
-                                              ? `Фиксированный: ${a.rule_duration_days} дн.`
-                                              : "По сроку подписки-источника"
-                                            }
-                                          </span>
-                                        </div>
-                                        {/* Before / After comparison */}
-                                        <div className="col-span-2 mt-1 p-2 rounded border bg-background">
-                                          <div className="grid grid-cols-3 gap-2 text-center">
-                                            <div>
-                                              <div className="text-[10px] text-muted-foreground mb-0.5">Сейчас</div>
-                                              <div className="font-medium">{formatDate(a.current_expires_at)}</div>
-                                            </div>
-                                            <div>
-                                              <div className="text-[10px] text-muted-foreground mb-0.5">После применения</div>
-                                              <div className="font-medium">{formatDate(a.planned_expires_at)}</div>
-                                            </div>
-                                            <div>
-                                              <div className="text-[10px] text-muted-foreground mb-0.5">Изменение</div>
-                                              <Badge variant="outline" className={cn("text-[9px]", cfg.color)}>
-                                                {changeDescription(a, isExecuted)}
-                                              </Badge>
-                                            </div>
-                                          </div>
-                                        </div>
-                                        {a.skip_reason && (
-                                          <div className="col-span-2">
-                                            <span className="text-muted-foreground">Причина: </span>
-                                            <span className="font-medium">{translateReason(a.skip_reason)}</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </>
+                              <TableRow key={i} action={a} cfg={cfg} isExpanded={isExpanded} isExecuted={isExecuted} onToggle={() => toggleRow(i)} />
                             );
                           })}
                         </tbody>
@@ -732,11 +777,18 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 )}
 
-                {filteredActions.length === 0 && result.actions.length > 0 && (
+                {filteredActions.length === 0 && result!.actions.length > 0 && (
                   <div className="text-center text-xs text-muted-foreground py-4">
-                    Нет записей в категории «{CATEGORY_CONFIG[activeFilter]?.label || activeFilter}»
+                    Нет записей в категории «{activeFilter === "changed" ? "Будут изменены" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Error from engine */}
+            {result?.error && (
+              <div className="p-3 rounded-lg border-2 border-red-400 bg-red-50 text-xs text-red-700">
+                <p className="font-medium">Ошибка: {result.error}</p>
               </div>
             )}
           </div>
@@ -765,12 +817,13 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <p className="text-red-600">• Конфликтов: {result?.summary?.conflict_existing}</p>
                     )}
                     {hasNoSourceWindow && (
-                      <p className="text-red-600">• Без определяемого срока: {result?.summary?.no_source_window}</p>
+                      <p className="text-red-600">• Записей без определяемого срока: {result?.summary?.no_source_window}</p>
                     )}
-                    <p className="text-sm mt-2">
-                      Конфликтные и проблемные записи будут пропущены. Применятся только записи без конфликтов.
-                      Это действие нельзя отменить автоматически.
-                    </p>
+                    <div className="text-sm mt-2 space-y-1">
+                      <p>Проблемные записи автоматически не применяются.</p>
+                      <p>При принудительном запуске конфликтные записи будут пропущены.</p>
+                      <p className="font-medium">Это действие нельзя отменить автоматически.</p>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -795,6 +848,117 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </>
+  );
+}
+
+// ═══════ TABLE ROW (extracted for readability) ═══════
+
+function TableRow({
+  action: a,
+  cfg,
+  isExpanded,
+  isExecuted,
+  onToggle,
+}: {
+  action: UserAction;
+  cfg: typeof CATEGORY_CONFIG[string];
+  isExpanded: boolean;
+  isExecuted: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr
+        className={cn("border-t cursor-pointer hover:bg-muted/30", isExpanded && "bg-muted/20")}
+        onClick={onToggle}
+      >
+        <td className="p-2 text-muted-foreground">
+          {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </td>
+        <td className="p-2 max-w-[160px]">
+          <div className="font-medium truncate">{contactDisplayName(a)}</div>
+          {contactHasName(a) && a.email && (
+            <div className="text-[10px] text-muted-foreground truncate">{a.email}</div>
+          )}
+        </td>
+        <td className="p-2 truncate max-w-[130px]">{a.target_product_name || "—"}</td>
+        <td className="p-2 truncate max-w-[160px] text-muted-foreground">{ruleBasisLabel(a)}</td>
+        <td className="p-2">
+          <Badge variant="outline" className={cn("text-[9px] whitespace-nowrap", cfg.color)}>
+            {changeDescription(a, isExecuted)}
+          </Badge>
+        </td>
+        <td className="p-2 text-muted-foreground">{formatDate(a.current_expires_at)}</td>
+        <td className="p-2">{formatDate(a.planned_expires_at)}</td>
+      </tr>
+      {isExpanded && (
+        <tr className="bg-muted/10 border-t border-dashed">
+          <td colSpan={7} className="p-3">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+              <div>
+                <span className="text-muted-foreground">Какое правило: </span>
+                <span className="font-medium">{a.rule_target_label || "—"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Целевой продукт: </span>
+                <span className="font-medium">{a.target_product_name || "—"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Источник: </span>
+                <span className="font-medium">
+                  {a.rule_source_tariff_name
+                    ? `Тариф «${a.rule_source_tariff_name}»`
+                    : a.rule_source_product_name
+                      ? `Продукт «${a.rule_source_product_name}»`
+                      : "—"
+                  }
+                </span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Как рассчитывается срок: </span>
+                <span className="font-medium">
+                  {a.rule_duration_mode === "fixed_days"
+                    ? `Фиксированный: ${a.rule_duration_days} дн.`
+                    : "По сроку подписки-источника"
+                  }
+                </span>
+              </div>
+              {a.source_subscription_id && (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground">Идентификатор подписки-источника: </span>
+                  <span className="text-[10px] text-muted-foreground/70 font-mono">{a.source_subscription_id}</span>
+                </div>
+              )}
+              {/* Before / After comparison */}
+              <div className="col-span-2 mt-1 p-2 rounded border bg-background">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Сейчас</div>
+                    <div className="font-medium">{formatDate(a.current_expires_at)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">После применения</div>
+                    <div className="font-medium">{formatDate(a.planned_expires_at)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Изменение</div>
+                    <Badge variant="outline" className={cn("text-[9px]", cfg.color)}>
+                      {changeDescription(a, isExecuted)}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+              {a.skip_reason && (
+                <div className="col-span-2">
+                  <span className="text-muted-foreground">Причина: </span>
+                  <span className="font-medium">{translateReason(a.skip_reason)}</span>
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
     </>
   );
 }
