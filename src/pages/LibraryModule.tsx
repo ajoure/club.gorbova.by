@@ -204,12 +204,20 @@ export default function LibraryModule() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-5 w-5" />
-                <span>{lessons.length} уроков</span>
+                <span>
+                  {lessons.length > 0 
+                    ? `${lessons.length} уроков` 
+                    : childModules && childModules.length > 0 
+                      ? `${childModules.length} разделов · ${childModules.reduce((s, c) => s + c.lessonCount, 0)} уроков`
+                      : '0 уроков'}
+                </span>
               </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5" />
-                <span>Пройдено: {completedCount} из {lessons.length} ({progress}%)</span>
-              </div>
+              {lessons.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span>Пройдено: {completedCount} из {lessons.length} ({progress}%)</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
