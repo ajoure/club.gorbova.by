@@ -154,6 +154,7 @@ Deno.serve(async (req) => {
     // ── IDEMPOTENCY HARD GUARD ──────────────────────────────────────────
     // If this order already fulfilled (both entitlement AND subscription exist
     // for the CORRECT product_id), return strict no-op.
+    // Covers both "created by" (order_id column) and "extended by" (meta.extended_by_orders).
     const { data: existingEntByOrder } = await supabase
       .from("entitlements")
       .select("id, status, expires_at, product_id")
@@ -168,12 +169,37 @@ Deno.serve(async (req) => {
       .eq("user_id", userId)
       .maybeSingle();
 
+    // Also check if any subscription for this user+product was EXTENDED by this orderId
+    let existingSubExtendedByOrder: { id: string; status: string; access_end_at: string | null; product_id: string } | null = null;
+    if (!existingSubByOrder && productId) {
+      const { data: extendedSubs } = await supabase
+        .from("subscriptions_v2")
+        .select("id, status, access_end_at, product_id, meta")
+        .eq("user_id", userId)
+        .eq("product_id", productId);
+
+      if (extendedSubs) {
+        for (const sub of extendedSubs) {
+          const meta = sub.meta as any;
+          const extendedBy: string[] = meta?.extended_by_orders || [];
+          if (extendedBy.includes(orderId)) {
+            existingSubExtendedByOrder = sub;
+            break;
+          }
+        }
+      }
+    }
+
     // Only consider fulfilled if entitlement matches the order's product_id
     const entitlementMatchesProduct = existingEntByOrder && existingEntByOrder.product_id === productId;
-    const subscriptionMatchesProduct = existingSubByOrder && existingSubByOrder.product_id === productId;
+    const subscriptionMatchesOrder = existingSubByOrder && existingSubByOrder.product_id === productId;
+    const subscriptionExtendedByOrder = !!existingSubExtendedByOrder;
 
-    if (entitlementMatchesProduct && subscriptionMatchesProduct) {
-      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled with correct product ${productId}. Entitlement: ${existingEntByOrder.id}, Subscription: ${existingSubByOrder.id}. Strict no-op.`);
+    const resolvedSubscription = existingSubByOrder || existingSubExtendedByOrder;
+
+    if (entitlementMatchesProduct && (subscriptionMatchesOrder || subscriptionExtendedByOrder)) {
+      const guardSource = subscriptionMatchesOrder ? "order_id" : "extended_by_orders";
+      console.log(`[grant-access] IDEMPOTENCY GUARD: order ${orderId} already fulfilled (product ${productId}, match via ${guardSource}). Entitlement: ${existingEntByOrder.id}, Subscription: ${resolvedSubscription!.id}. Strict no-op.`);
 
       await supabase.from("audit_logs").insert({
         action: "grant-access-for-order.skip_already_fulfilled",
@@ -185,11 +211,12 @@ Deno.serve(async (req) => {
           order_id: orderId,
           product_id: productId,
           existing_entitlement_id: existingEntByOrder.id,
-          existing_subscription_id: existingSubByOrder.id,
+          existing_subscription_id: resolvedSubscription!.id,
           entitlement_status: existingEntByOrder.status,
           entitlement_expires_at: existingEntByOrder.expires_at,
-          subscription_status: existingSubByOrder.status,
-          subscription_access_end_at: existingSubByOrder.access_end_at,
+          subscription_status: resolvedSubscription!.status,
+          subscription_access_end_at: resolvedSubscription!.access_end_at,
+          guard_match_source: guardSource,
         },
       });
 
@@ -200,7 +227,8 @@ Deno.serve(async (req) => {
           message: "Доступ по этому заказу уже был выдан ранее",
           existing: {
             entitlement_id: existingEntByOrder.id,
-            subscription_id: existingSubByOrder.id,
+            subscription_id: resolvedSubscription!.id,
+            guard_match_source: guardSource,
           },
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
