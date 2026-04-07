@@ -36,6 +36,7 @@ interface RetroApplyRequest {
   changed_since?: string;
   // Options
   recalculate_existing?: boolean; // default false — only grant missing
+  force_execute?: boolean; // override STOP-guards after preview review
 }
 
 interface UserAction {
@@ -105,13 +106,27 @@ Deno.serve(async (req) => {
       no_source_window: allActions.filter(a => a.category === "no_source_window").length,
     };
 
-    // 4. STOP-guard: if execute and too many creates without preview
-    if (mode === "execute" && summary.missing_access > 200) {
-      return jsonResp({
-        error: "STOP-guard: more than 200 missing_access entries. Run preview first and confirm.",
-        summary,
-        mode: "blocked",
-      }, 400);
+    // 4. STOP-guards for execute mode
+    if (mode === "execute") {
+      const stopReasons: string[] = [];
+      if (summary.missing_access > 200) {
+        stopReasons.push(`Too many missing_access: ${summary.missing_access} (limit 200). Run preview first.`);
+      }
+      if (summary.conflict_existing > 0) {
+        stopReasons.push(`${summary.conflict_existing} conflict(s) detected. Review before executing.`);
+      }
+      if (summary.no_source_window > 0) {
+        stopReasons.push(`${summary.no_source_window} user(s) with no source window. Cannot determine expiry.`);
+      }
+      if (stopReasons.length > 0 && !body.force_execute) {
+        return jsonResp({
+          error: "STOP-guard triggered. Add force_execute: true to override after reviewing.",
+          stop_reasons: stopReasons,
+          summary,
+          mode: "blocked",
+          actions: allActions,
+        }, 400);
+      }
     }
 
     // 5. Execute if requested
