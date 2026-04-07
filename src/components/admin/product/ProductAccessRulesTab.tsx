@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { ProductLinkedTrainingsBlock } from "./ProductLinkedTrainingsBlock";
+import { RetroApplyPanel } from "./RetroApplyPanel";
 import { TrainingContentTreePicker, normalizeTrainingContentPayload } from "./TrainingContentTreePicker";
 import {
   useAccessRules, useEffectiveGrants,
@@ -1138,6 +1139,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
           </CardContent>
         </Card>
       )}
+
+      {/* === RetroApply Panel === */}
+      <RetroApplyPanel productId={productId} rules={rules} tariffs={tariffs} />
 
       {/* === Create/Edit Dialog === */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
