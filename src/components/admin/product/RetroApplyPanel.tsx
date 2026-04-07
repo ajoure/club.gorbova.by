@@ -1,10 +1,12 @@
 /**
- * RetroApplyPanel — Universal engine for retroactively applying access_rules
- * to historical subscriptions/orders.
- * 
- * NOT tied to any specific product/tariff/club.
- * Rule is selected by launch parameters.
- * Two modes: grant missing access (default) / recalculate existing access.
+ * Панель применения правил к историческим данным.
+ * Полностью на русском языке, без сырых UUID/техкодов.
+ *
+ * НЕ привязан к конкретному продукту/тарифу/клубу.
+ * Правило выбирается параметрами запуска.
+ * Два режима: выдать недостающие доступы / пересчитать сроки.
+ *
+ * НЕ меняет бизнес-логику engine — только UI/локализация/фильтры/post-result.
  */
 
 import { useState, useMemo } from "react";
@@ -23,10 +25,18 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle, MinusCircle, HelpCircle } from "lucide-react";
+import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
+  MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { AccessRule } from "@/hooks/useAccessRules";
+
+// ═══════ TYPES ═══════
 
 interface RetroApplyPanelProps {
   productId: string;
@@ -38,8 +48,14 @@ interface UserAction {
   user_id: string;
   profile_id: string | null;
   email: string;
+  full_name: string | null;
   rule_id: string;
   rule_target_type: string;
+  rule_target_label: string | null;
+  rule_source_product_name: string | null;
+  rule_source_tariff_name: string | null;
+  rule_duration_mode: string;
+  rule_duration_days: number | null;
   target_product_id: string;
   target_product_code: string;
   target_product_name: string;
@@ -53,6 +69,13 @@ interface UserAction {
 interface RetroApplyResult {
   mode: string;
   rules_found: number;
+  rules?: Array<{
+    id: string;
+    grant_target_type: string;
+    target_label: string | null;
+    source_product_name: string | null;
+    source_tariff_name: string | null;
+  }>;
   summary: {
     total: number;
     missing_access: number;
@@ -68,16 +91,130 @@ interface RetroApplyResult {
   stop_reasons?: string[];
 }
 
-const CATEGORY_CONFIG: Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> = {
-  missing_access: { label: "Будет создано", color: "text-green-600 bg-green-50 border-green-200", icon: CheckCircle2 },
-  aligned_update_needed: { label: "Будет обновлено", color: "text-amber-600 bg-amber-50 border-amber-200", icon: RefreshCw },
-  already_satisfied: { label: "Уже есть", color: "text-muted-foreground bg-muted/30 border-muted", icon: MinusCircle },
-  conflict_existing: { label: "Конфликт", color: "text-red-600 bg-red-50 border-red-200", icon: XCircle },
-  condition_not_met: { label: "Условие не выполнено", color: "text-muted-foreground bg-muted/30 border-muted", icon: HelpCircle },
-  no_source_window: { label: "Нет source window", color: "text-red-600 bg-red-50 border-red-200", icon: AlertTriangle },
+// ═══════ LOCALIZATION ═══════
+
+const CATEGORY_CONFIG: Record<string, {
+  label: string;
+  description: string;
+  color: string;
+  icon: typeof CheckCircle2;
+}> = {
+  missing_access: {
+    label: "Будет выдан доступ",
+    description: "Будет выдан новый доступ",
+    color: "text-green-700 bg-green-50 border-green-200",
+    icon: CheckCircle2,
+  },
+  aligned_update_needed: {
+    label: "Будет обновлён срок",
+    description: "Будет продлён или выровнен срок",
+    color: "text-amber-700 bg-amber-50 border-amber-200",
+    icon: RefreshCw,
+  },
+  already_satisfied: {
+    label: "Уже соответствует",
+    description: "Доступ уже выдан, менять не нужно",
+    color: "text-muted-foreground bg-muted/30 border-muted",
+    icon: MinusCircle,
+  },
+  conflict_existing: {
+    label: "Конфликт",
+    description: "Есть конфликт, требуется проверка",
+    color: "text-red-700 bg-red-50 border-red-200",
+    icon: XCircle,
+  },
+  condition_not_met: {
+    label: "Условие не выполнено",
+    description: "Правило к этим людям не подходит",
+    color: "text-muted-foreground bg-muted/30 border-muted",
+    icon: HelpCircle,
+  },
+  no_source_window: {
+    label: "Нельзя определить срок",
+    description: "Нельзя рассчитать срок автоматически",
+    color: "text-red-700 bg-red-50 border-red-200",
+    icon: AlertTriangle,
+  },
 };
 
+/** Russian translations for skip_reason / stop_reason codes */
+const REASON_LABELS: Record<string, string> = {
+  prior_purchase_not_found: "Предыдущая покупка не найдена",
+  no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
+  existing_entitlement_from_different_source: "Существующий доступ от другого источника",
+};
+
+function translateReason(code: string | null): string {
+  if (!code) return "";
+  return REASON_LABELS[code] || code;
+}
+
+function translateStopReason(raw: string): string {
+  if (raw.startsWith("too_many_missing:")) {
+    const n = raw.split(":")[1];
+    return `Слишком много записей для создания: ${n} (лимит 200). Сначала выполните предпросмотр.`;
+  }
+  if (raw.startsWith("conflicts_detected:")) {
+    const n = raw.split(":")[1];
+    return `Обнаружено конфликтов: ${n}. Проверьте перед применением.`;
+  }
+  if (raw.startsWith("no_source_window:")) {
+    const n = raw.split(":")[1];
+    return `У ${n} контактов невозможно определить срок. Требуется ручная проверка.`;
+  }
+  return raw;
+}
+
+// Post-execute status labels
+const EXECUTE_STATUS_LABELS: Record<string, string> = {
+  missing_access: "Создано",
+  aligned_update_needed: "Обновлено",
+  already_satisfied: "Пропущено",
+  conflict_existing: "Не выполнено (конфликт)",
+  condition_not_met: "Пропущено (условие)",
+  no_source_window: "Не выполнено (нет срока)",
+};
+
+type FilterKey = "all" | "missing_access" | "aligned_update_needed" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
+
 type ScopeMode = "rule" | "product" | "tariff";
+
+const PAGE_SIZE = 50;
+
+// ═══════ HELPERS ═══════
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function contactDisplayName(a: UserAction): string {
+  return a.full_name || a.email || a.user_id;
+}
+
+function ruleBasisLabel(a: UserAction): string {
+  const parts: string[] = [];
+  if (a.rule_target_label) parts.push(a.rule_target_label);
+  if (a.rule_source_tariff_name) {
+    parts.push(`тариф: ${a.rule_source_tariff_name}`);
+  } else if (a.rule_source_product_name) {
+    parts.push(`продукт: ${a.rule_source_product_name}`);
+  }
+  if (a.rule_duration_mode === "fixed_days" && a.rule_duration_days) {
+    parts.push(`фикс. ${a.rule_duration_days} дн.`);
+  } else {
+    parts.push("по источнику");
+  }
+  return parts.join(" · ") || "—";
+}
+
+function changeDescription(a: UserAction, isExecuted: boolean): string {
+  if (isExecuted) return EXECUTE_STATUS_LABELS[a.category] || "—";
+  const cfg = CATEGORY_CONFIG[a.category];
+  return cfg?.description || "—";
+}
+
+// ═══════ COMPONENT ═══════
 
 export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -88,14 +225,18 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<RetroApplyResult | null>(null);
   const [confirmExecute, setConfirmExecute] = useState(false);
-  const [forceExecute, setForceExecute] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
   const activeRules = useMemo(() =>
     rules.filter(r => r.is_active && ["product_access", "club"].includes(r.grant_target_type)),
     [rules]
   );
 
-  const buildBody = (mode: "preview" | "execute") => {
+  const isExecuted = !!(result?.executed);
+
+  const buildBody = (mode: "preview" | "execute", force = false) => {
     const body: Record<string, unknown> = {
       mode,
       recalculate_existing: recalculateExisting,
@@ -107,17 +248,17 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     } else {
       body.source_product_id = productId;
     }
-    if (mode === "execute" && forceExecute) {
+    if (force) {
       body.force_execute = true;
     }
     return body;
   };
 
-  const runRetroApply = async (mode: "preview" | "execute") => {
+  const runRetroApply = async (mode: "preview" | "execute", force = false) => {
     setIsLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("rules-retroapply", {
-        body: buildBody(mode),
+        body: buildBody(mode, force),
       });
 
       if (error) {
@@ -127,63 +268,78 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
       const res = data as RetroApplyResult;
       setResult(res);
+      setVisibleCount(PAGE_SIZE);
+      setExpandedRows(new Set());
 
       if (res.error || res.stop_reasons?.length) {
-        toast.error(res.error || res.stop_reasons?.join("; ") || "Заблокировано stop-guard");
+        // Don't toast — show inline
       } else if (mode === "execute") {
-        toast.success(`Выполнено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}, пропущено ${res.executed?.skipped || 0}`);
+        toast.success(`Применено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}`);
       }
     } catch (err) {
-      toast.error("Ошибка вызова RetroApply");
+      toast.error("Ошибка вызова");
       console.error(err);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handlePreview = () => runRetroApply("preview");
+  const handlePreview = () => {
+    setActiveFilter("all");
+    runRetroApply("preview");
+  };
+
   const handleExecute = () => {
     setConfirmExecute(false);
-    setForceExecute(false);
     runRetroApply("execute");
   };
+
   const handleForceExecute = () => {
     setConfirmExecute(false);
-    setForceExecute(true);
-    // Re-run with force
-    setIsLoading(true);
-    supabase.functions.invoke("rules-retroapply", {
-      body: { ...buildBody("execute"), force_execute: true },
-    }).then(({ data, error }) => {
-      if (error) {
-        toast.error("Ошибка: " + error.message);
-      } else {
-        const res = data as RetroApplyResult;
-        setResult(res);
-        if (res.executed) {
-          toast.success(`Выполнено: создано ${res.executed.created}, обновлено ${res.executed.updated}`);
-        }
-      }
-    }).catch(err => {
-      toast.error("Ошибка");
-      console.error(err);
-    }).finally(() => setIsLoading(false));
+    runRetroApply("execute", true);
   };
 
+  // Determine if execute is blocked
+  const hasConflicts = (result?.summary?.conflict_existing ?? 0) > 0;
+  const hasNoSourceWindow = (result?.summary?.no_source_window ?? 0) > 0;
+  const hasStopGuard = !!(result?.stop_reasons?.length);
+  const isBlocked = hasConflicts || hasNoSourceWindow;
   const canExecute = result && !result.error && result.summary &&
-    (result.summary.missing_access > 0 || result.summary.aligned_update_needed > 0);
+    (result.summary.missing_access > 0 || result.summary.aligned_update_needed > 0) &&
+    !isExecuted;
 
-  const hasStopGuard = result?.stop_reasons && result.stop_reasons.length > 0;
+  // Filtered actions
+  const filteredActions = useMemo(() => {
+    if (!result?.actions) return [];
+    if (activeFilter === "all") return result.actions;
+    return result.actions.filter(a => a.category === activeFilter);
+  }, [result, activeFilter]);
 
-  const groupedActions = useMemo(() => {
-    if (!result?.actions) return {};
-    const groups: Record<string, UserAction[]> = {};
-    for (const a of result.actions) {
-      if (!groups[a.category]) groups[a.category] = [];
-      groups[a.category].push(a);
+  const toggleRow = (idx: number) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  // Scope description text
+  const scopeDescription = useMemo(() => {
+    if (scopeMode === "rule" && selectedRuleId) {
+      const r = activeRules.find(x => x.id === selectedRuleId);
+      return `Проверяется одно правило: ${r?.target_label || "выбранное правило"}`;
     }
-    return groups;
-  }, [result]);
+    if (scopeMode === "tariff" && selectedTariffId) {
+      const t = tariffs.find(x => x.id === selectedTariffId);
+      return `Проверяются все правила тарифа «${t?.name || "выбранный тариф"}»`;
+    }
+    return "Проверяются все правила текущего продукта";
+  }, [scopeMode, selectedRuleId, selectedTariffId, activeRules, tariffs]);
+
+  const modeDescription = recalculateExisting
+    ? "Будут выданы недостающие доступы и пересчитаны сроки уже выданных."
+    : "Будут выданы только недостающие доступы. Уже выданные не изменятся.";
 
   return (
     <>
@@ -192,36 +348,36 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-primary" />
-              <CardTitle className="text-sm">RetroApply правил</CardTitle>
+              <CardTitle className="text-sm">Применение правил к историческим данным</CardTitle>
             </div>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => { setDialogOpen(true); setResult(null); }}
+              onClick={() => { setDialogOpen(true); setResult(null); setActiveFilter("all"); setExpandedRows(new Set()); }}
               className="h-7 text-xs gap-1.5"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Применить правила к историческим подписчикам
+              Запустить проверку
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground mt-1">
-            Новые оплаты обрабатываются автоматически. Для старых подписок нужен ручной запуск.
+            Новые оплаты обрабатываются автоматически. Для старых подписок — ручной запуск через предпросмотр и применение.
           </p>
         </CardHeader>
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col">
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
           <DialogHeader className="flex-shrink-0">
-            <DialogTitle>RetroApply — применение правил к историческим данным</DialogTitle>
+            <DialogTitle>Применение правил к историческим данным</DialogTitle>
             <DialogDescription>
-              Универсальный механизм. Не привязан к конкретному тарифу или продукту.
-              Правило выбирается параметрами запуска.
+              Инструмент ручного применения изменённых правил к уже существующим подписчикам.
+              Новые правила на старую когорту автоматически не распространяются.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2 overflow-y-auto flex-1 min-h-0 pr-1">
-            {/* Scope selection */}
+            {/* ── Scope selection ── */}
             <div className="space-y-3">
               <Label className="text-xs font-semibold">Область применения</Label>
               <Select value={scopeMode} onValueChange={(v) => setScopeMode(v as ScopeMode)}>
@@ -243,7 +399,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   <SelectContent>
                     {activeRules.map(r => (
                       <SelectItem key={r.id} value={r.id}>
-                        {r.target_label || r.target_ref} ({r.grant_target_type})
+                        {r.target_label || r.target_ref}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -264,25 +420,40 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
               )}
             </div>
 
-            {/* Mode selection */}
-            <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20">
-              <Checkbox
-                id="recalculate"
-                checked={recalculateExisting}
-                onCheckedChange={(v) => setRecalculateExisting(!!v)}
-              />
-              <div>
-                <Label htmlFor="recalculate" className="text-xs font-medium cursor-pointer">
-                  Пересчитать сроки существующих доступов
-                </Label>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Без этого флага — только довыдача отсутствующих (grant missing access).
-                  С флагом — ещё и обновление сроков уже выданных доступов (recalculate existing).
-                </p>
+            {/* ── Mode selection ── */}
+            <div className="space-y-2 p-3 rounded-lg border bg-muted/20">
+              <div className="flex items-center gap-2 text-xs font-medium text-foreground">
+                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+                Выдать недостающие доступы
+                <Badge variant="outline" className="text-[9px] ml-1">по умолчанию</Badge>
+              </div>
+              <div className="flex items-start gap-3 mt-2">
+                <Checkbox
+                  id="recalculate"
+                  checked={recalculateExisting}
+                  onCheckedChange={(v) => setRecalculateExisting(!!v)}
+                />
+                <div>
+                  <Label htmlFor="recalculate" className="text-xs font-medium cursor-pointer">
+                    Также пересчитать сроки уже выданных доступов
+                  </Label>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Если включено, у контактов с уже выданными доступами будут обновлены сроки в соответствии с текущими правилами.
+                  </p>
+                </div>
               </div>
             </div>
 
-            {/* Actions */}
+            {/* ── Context block before preview ── */}
+            {!result && (
+              <div className="p-3 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 text-xs text-muted-foreground space-y-1">
+                <p>📋 {scopeDescription}</p>
+                <p>🔧 {modeDescription}</p>
+                <p>👥 Когорта: активные и past_due подписчики выбранного продукта/тарифа.</p>
+              </div>
+            )}
+
+            {/* ── Actions ── */}
             <div className="flex gap-2">
               <Button
                 onClick={handlePreview}
@@ -292,10 +463,10 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                 className="gap-1.5"
               >
                 <Eye className="h-3.5 w-3.5" />
-                {isLoading ? "Загрузка…" : "Preview"}
+                {isLoading ? "Загрузка…" : "Предпросмотр"}
               </Button>
 
-              {canExecute && !hasStopGuard && (
+              {canExecute && !isBlocked && (
                 <Button
                   onClick={() => setConfirmExecute(true)}
                   disabled={isLoading}
@@ -306,23 +477,59 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   Применить
                 </Button>
               )}
+              {canExecute && isBlocked && (
+                <Button
+                  onClick={() => setConfirmExecute(true)}
+                  disabled={isLoading}
+                  size="sm"
+                  variant="destructive"
+                  className="gap-1.5"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Применить принудительно после проверки
+                </Button>
+              )}
             </div>
 
-            {/* Results */}
+            {/* ── Results ── */}
             {result && (
               <div className="space-y-3">
-                {/* Summary */}
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                  {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => {
+                {/* Summary cards — clickable filters */}
+                <div className="grid grid-cols-3 sm:grid-cols-7 gap-1.5">
+                  {/* "All" filter */}
+                  <button
+                    onClick={() => setActiveFilter("all")}
+                    className={cn(
+                      "flex flex-col items-center p-2 rounded-lg border text-center transition-all cursor-pointer",
+                      activeFilter === "all"
+                        ? "ring-2 ring-primary border-primary bg-primary/5"
+                        : "hover:bg-muted/50"
+                    )}
+                  >
+                    <span className="text-lg font-bold">{result.summary.total}</span>
+                    <span className="text-[9px] leading-tight">Все</span>
+                  </button>
+
+                  {(Object.entries(CATEGORY_CONFIG) as [FilterKey, typeof CATEGORY_CONFIG[string]][]).map(([key, cfg]) => {
                     const count = result.summary?.[key as keyof typeof result.summary] ?? 0;
-                    if (count === 0 && key !== "missing_access") return null;
+                    if (count === 0) return null;
                     const Icon = cfg.icon;
                     return (
-                      <div key={key} className={cn("flex flex-col items-center p-2 rounded-lg border text-center", cfg.color)}>
-                        <Icon className="h-4 w-4 mb-1" />
+                      <button
+                        key={key}
+                        onClick={() => setActiveFilter(key)}
+                        className={cn(
+                          "flex flex-col items-center p-2 rounded-lg border text-center transition-all cursor-pointer",
+                          cfg.color,
+                          activeFilter === key
+                            ? "ring-2 ring-primary"
+                            : "opacity-80 hover:opacity-100"
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5 mb-0.5" />
                         <span className="text-lg font-bold">{count as number}</span>
                         <span className="text-[9px] leading-tight">{cfg.label}</span>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -332,74 +539,202 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   <div className="p-3 rounded-lg border border-red-300 bg-red-50 space-y-2">
                     <div className="flex items-center gap-2 text-red-700 font-medium text-xs">
                       <AlertTriangle className="h-4 w-4" />
-                      STOP-guard сработал
+                      Применение заблокировано
                     </div>
                     {result.stop_reasons!.map((r, i) => (
-                      <p key={i} className="text-xs text-red-600">• {r}</p>
+                      <p key={i} className="text-xs text-red-600">• {translateStopReason(r)}</p>
                     ))}
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => setConfirmExecute(true)}
-                      className="mt-2 text-xs"
-                    >
-                      Подтвердить и применить принудительно
-                    </Button>
                   </div>
                 )}
 
-                {/* Executed results */}
-                {result.executed && (
-                  <div className="p-3 rounded-lg border border-green-300 bg-green-50">
-                    <div className="flex items-center gap-2 text-green-700 font-medium text-xs mb-1">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Выполнено
+                {/* Conflict warning block */}
+                {isBlocked && !hasStopGuard && (
+                  <div className="p-3 rounded-lg border border-red-300 bg-red-50 space-y-1">
+                    <div className="flex items-center gap-2 text-red-700 font-medium text-xs">
+                      <ShieldAlert className="h-4 w-4" />
+                      Обнаружены конфликты или записи без определяемого срока
                     </div>
-                    <p className="text-xs text-green-600">
-                      Создано: {result.executed.created} · Обновлено: {result.executed.updated} · Пропущено: {result.executed.skipped}
+                    <p className="text-xs text-red-600">
+                      {hasConflicts && `Конфликтов: ${result.summary.conflict_existing}. `}
+                      {hasNoSourceWindow && `Без определяемого срока: ${result.summary.no_source_window}. `}
+                      Обычное применение заблокировано. Доступно только принудительное применение после проверки.
                     </p>
                   </div>
                 )}
 
+                {/* Post-execute result block */}
+                {isExecuted && (
+                  <div className="p-3 rounded-lg border border-green-300 bg-green-50 space-y-2">
+                    <div className="flex items-center gap-2 text-green-700 font-medium text-xs">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Правила применены
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-center">
+                        <div className="text-lg font-bold text-green-700">{result.executed!.created}</div>
+                        <div className="text-green-600">Создано</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-bold text-amber-700">{result.executed!.updated}</div>
+                        <div className="text-amber-600">Обновлено</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-bold text-muted-foreground">{result.executed!.skipped}</div>
+                        <div className="text-muted-foreground">Пропущено</div>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs mt-1"
+                      onClick={() => setActiveFilter("missing_access")}
+                    >
+                      Показать изменённые записи
+                    </Button>
+                  </div>
+                )}
+
                 {/* Actions table */}
-                {result.actions && result.actions.length > 0 && (
+                {filteredActions.length > 0 && (
                   <div className="border rounded-lg overflow-hidden">
-                    <div className="max-h-[300px] overflow-y-auto">
+                    <div className="bg-muted/30 px-3 py-1.5 flex items-center justify-between">
+                      <span className="text-[10px] text-muted-foreground">
+                        {activeFilter !== "all" && (
+                          <Badge variant="outline" className="text-[9px] mr-2">
+                            {CATEGORY_CONFIG[activeFilter]?.label || activeFilter}
+                          </Badge>
+                        )}
+                        Показано {Math.min(visibleCount, filteredActions.length)} из {filteredActions.length}
+                      </span>
+                    </div>
+                    <div className="max-h-[350px] overflow-y-auto">
                       <table className="w-full text-xs">
-                        <thead className="bg-muted/50 sticky top-0">
+                        <thead className="bg-muted/50 sticky top-0 z-10">
                           <tr>
-                            <th className="text-left p-2 font-medium">Email</th>
-                            <th className="text-left p-2 font-medium">Продукт</th>
-                            <th className="text-left p-2 font-medium">Категория</th>
-                            <th className="text-left p-2 font-medium">Срок</th>
+                            <th className="w-6 p-2"></th>
+                            <th className="text-left p-2 font-medium">Контакт</th>
+                            <th className="text-left p-2 font-medium">Что даём</th>
+                            <th className="text-left p-2 font-medium">Основание</th>
+                            <th className="text-left p-2 font-medium">Что произойдёт</th>
+                            <th className="text-left p-2 font-medium">Текущий срок</th>
+                            <th className="text-left p-2 font-medium">Срок после</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {result.actions.slice(0, 100).map((a, i) => {
+                          {filteredActions.slice(0, visibleCount).map((a, i) => {
                             const cfg = CATEGORY_CONFIG[a.category] || CATEGORY_CONFIG.already_satisfied;
+                            const isExpanded = expandedRows.has(i);
                             return (
-                              <tr key={i} className="border-t">
-                                <td className="p-2 truncate max-w-[180px]">{a.email}</td>
-                                <td className="p-2 truncate max-w-[150px]">{a.target_product_name || a.target_product_code}</td>
-                                <td className="p-2">
-                                  <Badge variant="outline" className={cn("text-[9px]", cfg.color)}>
-                                    {cfg.label}
-                                  </Badge>
-                                </td>
-                                <td className="p-2 text-muted-foreground">
-                                  {a.planned_expires_at ? new Date(a.planned_expires_at).toLocaleDateString("ru-RU") : "—"}
-                                </td>
-                              </tr>
+                              <>
+                                <tr
+                                  key={`row-${i}`}
+                                  className={cn("border-t cursor-pointer hover:bg-muted/30", isExpanded && "bg-muted/20")}
+                                  onClick={() => toggleRow(i)}
+                                >
+                                  <td className="p-2 text-muted-foreground">
+                                    {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                  </td>
+                                  <td className="p-2 max-w-[160px]">
+                                    <div className="font-medium truncate">{contactDisplayName(a)}</div>
+                                    {a.full_name && a.email && (
+                                      <div className="text-[10px] text-muted-foreground truncate">{a.email}</div>
+                                    )}
+                                  </td>
+                                  <td className="p-2 truncate max-w-[130px]">{a.target_product_name || a.target_product_code || "—"}</td>
+                                  <td className="p-2 truncate max-w-[160px] text-muted-foreground">{ruleBasisLabel(a)}</td>
+                                  <td className="p-2">
+                                    <Badge variant="outline" className={cn("text-[9px] whitespace-nowrap", cfg.color)}>
+                                      {changeDescription(a, isExecuted)}
+                                    </Badge>
+                                  </td>
+                                  <td className="p-2 text-muted-foreground">{formatDate(a.current_expires_at)}</td>
+                                  <td className="p-2">{formatDate(a.planned_expires_at)}</td>
+                                </tr>
+                                {isExpanded && (
+                                  <tr key={`detail-${i}`} className="bg-muted/10 border-t border-dashed">
+                                    <td colSpan={7} className="p-3">
+                                      <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                                        <div>
+                                          <span className="text-muted-foreground">Правило: </span>
+                                          <span className="font-medium">{a.rule_target_label || "—"}</span>
+                                        </div>
+                                        <div>
+                                          <span className="text-muted-foreground">Целевой продукт: </span>
+                                          <span className="font-medium">{a.target_product_name || a.target_product_code || "—"}</span>
+                                        </div>
+                                        <div>
+                                          <span className="text-muted-foreground">Источник: </span>
+                                          <span className="font-medium">
+                                            {a.rule_source_tariff_name
+                                              ? `Тариф «${a.rule_source_tariff_name}»`
+                                              : a.rule_source_product_name
+                                                ? `Продукт «${a.rule_source_product_name}»`
+                                                : "—"
+                                            }
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-muted-foreground">Логика срока: </span>
+                                          <span className="font-medium">
+                                            {a.rule_duration_mode === "fixed_days"
+                                              ? `Фиксированный: ${a.rule_duration_days} дн.`
+                                              : "По сроку подписки-источника"
+                                            }
+                                          </span>
+                                        </div>
+                                        {/* Before / After comparison */}
+                                        <div className="col-span-2 mt-1 p-2 rounded border bg-background">
+                                          <div className="grid grid-cols-3 gap-2 text-center">
+                                            <div>
+                                              <div className="text-[10px] text-muted-foreground mb-0.5">Сейчас</div>
+                                              <div className="font-medium">{formatDate(a.current_expires_at)}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-[10px] text-muted-foreground mb-0.5">После применения</div>
+                                              <div className="font-medium">{formatDate(a.planned_expires_at)}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-[10px] text-muted-foreground mb-0.5">Изменение</div>
+                                              <Badge variant="outline" className={cn("text-[9px]", cfg.color)}>
+                                                {changeDescription(a, isExecuted)}
+                                              </Badge>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        {a.skip_reason && (
+                                          <div className="col-span-2">
+                                            <span className="text-muted-foreground">Причина: </span>
+                                            <span className="font-medium">{translateReason(a.skip_reason)}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </>
                             );
                           })}
                         </tbody>
                       </table>
-                      {result.actions.length > 100 && (
-                        <p className="text-center text-[10px] text-muted-foreground py-2">
-                          Показано 100 из {result.actions.length}
-                        </p>
-                      )}
                     </div>
+                    {filteredActions.length > visibleCount && (
+                      <div className="p-2 text-center border-t">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
+                        >
+                          Показать ещё {Math.min(PAGE_SIZE, filteredActions.length - visibleCount)} из {filteredActions.length - visibleCount}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {filteredActions.length === 0 && result.actions.length > 0 && (
+                  <div className="text-center text-xs text-muted-foreground py-4">
+                    Нет записей в категории «{CATEGORY_CONFIG[activeFilter]?.label || activeFilter}»
                   </div>
                 )}
               </div>
@@ -416,27 +751,46 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       <AlertDialog open={confirmExecute} onOpenChange={setConfirmExecute}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Подтвердите применение</AlertDialogTitle>
-            <AlertDialogDescription>
-              {hasStopGuard ? (
-                <>
-                  STOP-guard сработал. Вы уверены, что хотите продолжить?
-                  <br />
-                  {result?.stop_reasons?.map((r, i) => <span key={i} className="block text-red-600 mt-1">• {r}</span>)}
-                </>
-              ) : (
-                <>
-                  Будет создано: {result?.summary?.missing_access || 0} доступов.
-                  {recalculateExisting && <> Обновлено сроков: {result?.summary?.aligned_update_needed || 0}.</>}
-                  <br />Это действие нельзя отменить автоматически.
-                </>
-              )}
+            <AlertDialogTitle>
+              {isBlocked ? "Применить принудительно?" : "Подтвердите применение"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                {isBlocked ? (
+                  <div className="space-y-2">
+                    <p className="text-red-600 font-medium">
+                      Обнаружены проблемы, требующие внимания:
+                    </p>
+                    {hasConflicts && (
+                      <p className="text-red-600">• Конфликтов: {result?.summary?.conflict_existing}</p>
+                    )}
+                    {hasNoSourceWindow && (
+                      <p className="text-red-600">• Без определяемого срока: {result?.summary?.no_source_window}</p>
+                    )}
+                    <p className="text-sm mt-2">
+                      Конфликтные и проблемные записи будут пропущены. Применятся только записи без конфликтов.
+                      Это действие нельзя отменить автоматически.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <p>Будет создано доступов: {result?.summary?.missing_access || 0}</p>
+                    {recalculateExisting && (
+                      <p>Будет обновлено сроков: {result?.summary?.aligned_update_needed || 0}</p>
+                    )}
+                    <p className="text-sm mt-2">Это действие нельзя отменить автоматически.</p>
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
-            <AlertDialogAction onClick={hasStopGuard ? handleForceExecute : handleExecute}>
-              {hasStopGuard ? "Применить принудительно" : "Применить"}
+            <AlertDialogAction
+              onClick={isBlocked ? handleForceExecute : handleExecute}
+              className={isBlocked ? "bg-destructive hover:bg-destructive/90" : ""}
+            >
+              {isBlocked ? "Применить принудительно" : "Применить"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
