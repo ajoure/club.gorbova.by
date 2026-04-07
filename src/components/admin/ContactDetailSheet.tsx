@@ -2962,7 +2962,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 <Badge variant="outline" className="text-[10px] px-1.5 py-0">доступ по продукту</Badge>
                                 {meta?.source_rule_id && (
                                   <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-200">
-                                    {meta?.business_subscription_id ? "через BUSINESS" : "по правилу"}
+                                    {(meta?.business_subscription_id || (meta?.source_rule_id === '1b497fba-031a-4318-8d9f-2530f1bac116' && (meta?.canonical_source === 'BUSINESS_subscription'))) ? "через BUSINESS" : "по правилу"}
                                   </Badge>
                                 )}
                                 {!meta?.source_rule_id && meta?.historical_purchase_type && (
