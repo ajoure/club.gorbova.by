@@ -1,197 +1,191 @@
-Да, согласен, с учетом правок:
+## да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Не писать в плане, что нужны «2 правки». По факту кодовая правка одна:  
-src/hooks/useTrainingModules.tsx — заменить  
-const tariffIds = (tcData.userTariffIds || []).sort().join(",");  
-на  
-const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
-2. Отдельно зафиксировать, что stale guard уже проверен и дополнительных кодовых правок не требует. Это не task на изменение, а task на proof. В отчете явно указать:  
-
-  - guard перед setModules — есть;
-  - guard перед error/toast branch — есть;
-  - guard перед setLoading(false) — есть;
-  - setError в этом хуке не используется.
-3. &nbsp;
-4. Не закрывать патч формулировкой «по коду всё ок». Нужен обязательный runtime-proof в 3 сценариях:  
-
-  - hard refresh;
-  - прямой вход по URL;
-  - SPA navigation без refresh.
-5. &nbsp;
-6. Добавить обязательную proof-таблицу по продуктам пользователя, чтобы подтвердить гипотезу, что выживает именно base/direct access, а раньше исчезали secondary sources:  
-product | access_source | before refresh | after refresh | should survive | actual
-7. В proof отдельно проверить и отразить гипотезу:  
-
-  - Бухгалтерия как бизнес остается как base/direct product access;
-  - исчезали продукты с источником:  
-
-    - entitlement-only
-    - rule-based
-    - module-based
-    - mixed
-  - &nbsp;
-8. &nbsp;
-9. DoD переформулировать жёстко:  
-
-  - после hard refresh список тренингов совпадает с реальными доступами;
-  - sidebar и страница тренингов показывают одинаковую картину;
-  - secondary access sources не исчезают;
-  - нет пустого контейнера/пустого дерева уроков после reload;
-  - proof приложен по 3 сценариям.
-10. &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-Копируемый блок для отправки:
-
-Финализируй план с учетом правок:
-
-&nbsp;
-
-1. Кодовая правка по факту одна:
-
-   Файл: src/hooks/useTrainingModules.tsx
-
-   Было:
-
-   const tariffIds = (tcData.userTariffIds || []).sort().join(",");
-
-   Нужно:
-
-   const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
-
-&nbsp;
-
-2. Stale guard не выносить как отдельную кодовую правку — он уже проверен и дополнительных изменений не требует.
-
-   В отчете отдельно зафиксируй proof:
-
-   - guard перед setModules — есть
-
-   - guard перед error/toast branch — есть
-
-   - guard перед setLoading(false) — есть
-
-   - setError в хуке не используется
-
-&nbsp;
-
-3. Патч не закрывать без runtime-proof в 3 сценариях:
-
-   - hard refresh
-
-   - прямой вход по URL
-
-   - SPA navigation без refresh
-
-&nbsp;
-
-4. Добавь обязательную proof-таблицу:
-
-   product | access_source | before refresh | after refresh | should survive | actual
-
-&nbsp;
-
-5. Отдельно проверь и докажи гипотезу:
-
-   - “Бухгалтерия как бизнес” остается как base/direct product access
-
-   - раньше исчезали secondary access sources:
-
-     - entitlement-only
-
-     - rule-based
-
-     - module-based
-
-     - mixed
-
-&nbsp;
-
-6. Финальный DoD:
-
-   - после hard refresh список тренингов совпадает с реальными доступами
-
-   - sidebar и страница тренингов показывают одинаковую картину
-
-   - secondary access sources не исчезают
-
-   - нет пустого контейнера/пустого дерева уроков после reload
-
-   - приложен proof по всем 3 сценариям
+1. **Разделить на 3 отдельных PATCH, а не смешивать в один.**
+  Сейчас у тебя в одном плане смешаны:
+  &nbsp;
+  - data-repair по cb20;
+  - backfill по новому правилу «Деньги BY»;
+  - UI/UX-баг страницы LibraryModule.
+    Это разные контуры с разным риском. Разбей:
+  - PATCH-A: CB20 expiry realignment
+  - PATCH-B: Money BY rule backfill
+  - PATCH-C: LibraryModule empty-root fix
+  &nbsp;
+2. **По cb20 не писать как установленный root cause без proof по текущему write-path.**
+  Формулировка “при продлении подписки не выполняется каскадный пересчёт” пока звучит как вывод, а не как доказанный факт.
+  Нужно сначала доказать:
+  &nbsp;
+  - какой именно процесс продлил BUSINESS;
+  - какой именно процесс должен был обновить зависимый cb20;
+  - есть ли у cb20 в meta явная связка с business_subscription_id / source_rule_id;
+  - почему у 92 кейсов синхронизировалось, а у 4 нет.
+    Иначе неясно, это системный дефект потока продления, ручной bypass, legacy-след или частичный backfill-gap.
+  &nbsp;
+3. **Для cb20 сначала сделать read-only discovery-артефакт, потом repair, потом отдельно system fix.**
+  В PATCH-A добавь 3 шага:
+  &nbsp;
+  - dry-run список всех misaligned пользователей;
+  - repair только misaligned;
+  - отдельный discovery на root cause авто-ресинха.
+    Не объединяй “разовый repair” и “системный fix” в один execute без доказательства.
+  &nbsp;
+4. **Не предлагать для “Деньги BY” прямой INSERT entitlement как основной путь.**
+  Если правило 6ba9727e уже создано и оно должно работать канонически через rules, основной backfill должен идти через тот же канонический fulfillment flow, а не через отдельный ручной INSERT.
+  Правильная логика:
+  &nbsp;
+  - найти когорту активных BUSINESS-подписчиков без entitlement на c153c811;
+  - dry-run;
+  - применить канонический batch repair;
+  - отдельный proof, что meta/rule lineage соответствует правилу 6ba9727e.
+    Прямой INSERT допустим только как аварийный fallback, если будет доказано, что canonical flow не умеет ретроактивный apply.
+  &nbsp;
+5. **По “Деньги BY” обязательно различить “новое правило добавили постфактум” и “сломанный runtime”.**
+  Нужно явно доказать:
+  &nbsp;
+  - новый заказ после создания правила получает entitlement;
+  - старые подписчики не получают только потому, что retro-apply отсутствует;
+  - это не баг активного runtime path.
+    Иначе repair может скрыть баг.
+  &nbsp;
+6. **Для “Закрой год” сначала проверить конфигурацию модуля, а не сразу выбирать вариант A.**
+  Сейчас ты рекомендуешь UI-вариант, но сначала надо доказать, что по бизнес-модели root-модуль должен открывать дочерние модули как раздел, а не как обычный учебный модуль.
+  Добавь discovery:
+  &nbsp;
+  - как аналогичные root-модули устроены в других курсах;
+  - должен ли 682d241e быть is_container=true;
+  - не сломает ли это sidebar, breadcrumbs, library tree, lesson counters.
+    Только после этого выбирать:
+  - либо config fix (is_container=true);
+  - либо UI fallback в LibraryModule.tsx.
+  &nbsp;
+7. **Не использовать формулировку “Уроки пока не добавлены” как единственный критерий бага.**
+  Нужно явно описать bug:
+  &nbsp;
+  - у root-модуля есть дочерние модули с уроками;
+  - пользователь имеет к ним доступ;
+  - но page-level renderer показывает пустое состояние, потому что читает только direct lessons текущего node.
+    Это важно, чтобы подрядчик не “починил” текст заглушки вместо логики.
+  &nbsp;
+8. **Добавить STOP-guards по каждому PATCH.**
+  Минимум:
+  &nbsp;
+  - PATCH-A: не трогать aligned пользователей; stop если repair затрагивает больше dry-run;
+  - PATCH-B: не выдавать “Деньги BY” пользователям без active BUSINESS;
+  - PATCH-C: не ломать другие root/container-модули и не менять lesson visibility rules.
+  &nbsp;
+9. **Добавить обязательные after-proof артефакты.**
+  Сейчас DoD есть, но не хватает явных артефактов:
+  &nbsp;
+  - cb20_expiry_misaligned_before.csv
+  - cb20_expiry_after.csv
+  - money_by_business_backfill_plan.csv
+  - money_by_business_after.csv
+  - library_module_root_children_proof.csv
+  - library_module_fix_before_after.csv
+  &nbsp;
+10. **По cb20 формулировать срок как BUSINESS access_end_at, а не просто MAX без пояснения.**
+  Если у пользователя несколько записей, надо явно закрепить, какая из них каноническая:
+  &nbsp;
+  - active/past_due;
+  - latest valid window;
+  - приоритет active над past_due;
+  - потом max access_end_at.
+    Это нужно записать прямо в план.
+  &nbsp;
+11. **По PATCH-B добавить проверку на дубли и идемпотентность.**
+  После недавнего бага с grant-access-for-order нельзя запускать batch backfill без явного условия:
+  &nbsp;
+  - повторный прогон не должен удваивать выдачи;
+  - повторный прогон не должен продлевать не тот продукт;
+  - entitlement по c153c811 должен быть максимум один active на пользователя.
+  &nbsp;
+12. **Финальная структура плана должна быть короткой и операционной.**
+  Не надо в одном блоке сразу “fix + backfill + cascade fix”.
+  Сделай так:
+  &nbsp;
+  - PATCH-A — только cb20 misalignment;
+  - PATCH-B — только Money BY retro-backfill;
+  - PATCH-C — только Закрой год root-page behavior;
+  - PATCH-D backlog — system cascade sync for future renewals, только после доказательства root cause.
+  &nbsp;
 
 &nbsp;
 
-## План: Финализация патча — 2 правки + runtime-proof
+&nbsp;
+
+Если хочешь, следующим сообщением я соберу тебе уже полностью переписанный готовый копируемый блок плана в правильной финальной структуре.
+
+&nbsp;
+
+План: Три бага — несинхрон дат cb20, невыдача «Деньги BY», пустой контейнер «Закрой год»
 
 ---
 
-### Правка 1: Мутация массива в tcFingerprint
+### Баг 1: cb20 «Ценный бухгалтер» — expires_at не соответствует BUSINESS-подписке
 
-**Файл:** `src/hooks/useTrainingModules.tsx`, строка 71
+**Root cause (данные):**
+Осипчик Екатерина: BUSINESS-подписка до `2026-05-07`, но cb20 entitlement `expires_at = 2026-04-08 12:00:00`. Дата не обновилась после последнего продления подписки. Всего 4 пользователя из 96 с cb20 entitlement имеют рассинхрон (cb20 < BUSINESS).
 
-Сейчас:
+**Причина:** При продлении подписки (bePaid webhook → payments-reconcile) обновляется `access_end_at` подписки, но каскадный пересчёт `expires_at` бонусных entitlements по правилу `align_with_source` не выполняется автоматически для всех зависимых продуктов.
 
-```typescript
-const tariffIds = (tcData.userTariffIds || []).sort().join(",");
-```
+**Fix:**
 
-`.sort()` мутирует оригинальный массив `tcData.userTariffIds`. Нужно:
-
-```typescript
-const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
-```
+1. **Разовый repair** (edge function call или SQL): для 4 рассинхронизированных пользователей обновить `entitlements.expires_at` до `MAX(access_end_at)` из их активных BUSINESS-подписок.
+2. **Системный fix**: в потоке продления подписки (payments-reconcile или grant-access-for-order при extend) добавить каскадный пересчёт `expires_at` для всех бонусных entitlements, привязанных к продлеваемому тарифу через `align_with_source`. Это нужно сделать в edge function.
 
 ---
 
-### Правка 2: Проверка stale guard — УЖЕ ОК
+### Баг 2: «Деньги BY 1 тариф» — не выдаётся 121 из 122 BUSINESS-подписчикам
 
-Проверено по коду: `fetchId !== fetchIdRef.current` стоит перед **каждым** setState:
+**Root cause (данные):**
 
-- Строка 320: перед `setModules(finalModules)` ✓
-- Строка 323: перед `console.error` + `toast.error` ✓  
-- Строка 327: перед `setLoading(false)` ✓
+- Правило `6ba9727e` создано сегодня (`2026-04-07 09:15`). Оно **безусловное** (нет `condition_type`).
+- Из 122 активных BUSINESS-подписчиков entitlement получил только 1 (rabchevskaya, у которой был новый заказ ПОСЛЕ создания правила).
+- Правило работает корректно для НОВЫХ заказов, но ретроактивно не применяется к существующим подписчикам.
 
-`setError` не используется — нет `useState` для error. Ошибки обрабатываются через `toast.error`.
+**Fix:**
 
-**Вывод:** stale guard полный, правок не требует.
+1. **Ретроактивная выдача**: написать repair-скрипт, который для каждого активного BUSINESS-подписчика без entitlement на `c153c811` вызовет `grant-access-for-order` с их последним paid order_id, или напрямую создаст entitlement с правильными meta и `expires_at = access_end_at` подписки.
+2. Это стандартная ситуация — правило добавлено постфактум и требует batch backfill.
 
 ---
 
-### Правка 3: Runtime-proof (3 сценария)
+### Баг 3: «Закрой год» — при клике на корневой модуль показывается «Уроки пока не добавлены»
 
-После применения правки 1, требуется runtime-proof на реальном пользователе с несколькими источниками доступа:
+**Root cause (код + данные):**
 
-1. **Hard refresh** страницы кабинета
-2. **Прямой вход по URL** в тренинги
-3. **SPA navigation** без refresh
+- Модуль `682d241e` «Закрой год 2025-2026» имеет `is_container = false`, но при этом у него 6 дочерних подмодулей (Годовая инвентаризация, Баланс и т.д.) с 10 уроками суммарно.
+- У самого корневого модуля `0 уроков` (уроки привязаны к дочерним модулям).
+- Страница `LibraryModule.tsx` загружает уроки ТОЛЬКО для текущего `module.id` (`useTrainingLessons(module?.id)`), не показывая дочерние модули.
 
-Во всех трёх случаях список тренингов должен совпадать.
+**Два варианта fix:**
 
-Дополнительно — proof-таблица по гипотезе:
+**Вариант A (рекомендуемый)**: В `LibraryModule.tsx` — если у модуля есть дочерние модули (children), показывать иерархию модулей с их уроками, а не пустой список уроков. Аналогично тому, как работает разворачивание в таблице «Обучение» (Learning page).
 
-
-| product | access_source | before refresh | after refresh | should survive | actual |
-| ------- | ------------- | -------------- | ------------- | -------------- | ------ |
-
+**Вариант B**: Пометить корневой модуль как `is_container = true`. Но это может изменить его поведение в других местах (sidebar, контейнерные уроки).
 
 ---
 
 ### Файлы для изменения
 
 
-| Файл                               | Изменение                      |
-| ---------------------------------- | ------------------------------ |
-| `src/hooks/useTrainingModules.tsx` | Строка 71: spread перед sort() |
+| Файл                                                                             | Изменение                                                                                             |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `supabase/functions/grant-access-for-order/index.ts` или отдельный repair-скрипт | Каскадный пересчёт expires_at при продлении; batch repair для 4 cb20 и 121 Деньги BY                  |
+| `src/pages/LibraryModule.tsx`                                                    | Показывать дочерние модули с уроками, если у текущего модуля нет собственных уроков, но есть children |
 
+
+### Порядок исполнения
+
+1. **Phase 1 — Data repair**: Repair 4 cb20 expires_at + batch grant «Деньги BY» для 121 BUSINESS-подписчика
+2. **Phase 2 — UI fix**: LibraryModule.tsx — отображение иерархии дочерних модулей
+3. **Phase 3 — Cascade fix**: Добавить автоматический пересчёт expires_at бонусных entitlements при продлении подписки
 
 ### DoD
 
-1. `sort()` не мутирует исходный массив
-2. Stale guard подтверждён перед каждым setState
-3. Runtime-proof в 3 сценариях пройден
-4. Proof-таблица по access sources предоставлена
+1. cb20 expires_at = MAX(BUSINESS access_end_at) для всех 4 рассинхронизированных пользователей
+2. 122 BUSINESS-подписчика имеют entitlement на «Деньги BY»
+3. При клике на «Закрой год» видны дочерние модули с уроками
+4. При следующем продлении BUSINESS-подписки все бонусные entitlements автоматически обновляют expires_at
