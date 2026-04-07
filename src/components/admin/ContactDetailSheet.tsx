@@ -1413,13 +1413,13 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     isHistoricalAccess(s as any, productsWithRules)
   ) || [];
 
-  // Entitlements for products NOT already covered by subscriptions (order_based_only)
-  const subscriptionProductIds = new Set(
-    (subscriptions || []).map(s => s.product_id).filter(Boolean)
+  // Dedup entitlements against ONLY currently valid subscriptions (not canceled/archived/superseded)
+  const activeSubscriptionProductIds = new Set(
+    (activeSubscriptions || []).map(s => s.product_id).filter(Boolean)
   );
 
   const activeEntitlements = (entitlements || []).filter(e => {
-    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    if (!e.product_id || activeSubscriptionProductIds.has(e.product_id)) return false;
     if (e.status !== 'active') return false;
     if (e.expires_at && new Date(e.expires_at) < new Date()) return false;
     const product = e.products_v2 as any;
@@ -1428,8 +1428,12 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     return productId && productsWithRules.has(productId);
   });
 
+  const finishedSubscriptionProductIds = new Set(
+    (finishedSubscriptions || []).map(s => s.product_id).filter(Boolean)
+  );
+
   const finishedEntitlements = (entitlements || []).filter(e => {
-    if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false;
+    if (!e.product_id || activeSubscriptionProductIds.has(e.product_id) || finishedSubscriptionProductIds.has(e.product_id)) return false;
     return !activeEntitlements.some(ae => ae.id === e.id);
   });
 
