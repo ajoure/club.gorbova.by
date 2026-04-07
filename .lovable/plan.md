@@ -191,20 +191,20 @@
 | 3 | Global sweep | ✅ завершён как диагностика |
 | 4 | Backfill victims (14→13 real access defect) | ❌ не выполнен (0 из 13) |
 | 5 | UI root-fix (3 canonical + 1 guard) | ✅ завершён |
-| 6 | Edge-function root-fix (active paths) | ✅ завершён — code patched + runtime-proof confirmed |
+| 6 | Edge-function root-fix (active paths) | ✅ завершён — code patched + runtime-proof + idempotency fix confirmed |
 | 7 | Edge-function legacy path | ⚠️ сохранён с audit warning, требует отдельного discovery |
-| 8 | Runtime-proof | ✅ выполнен (3 кейса, idempotency bug найден) |
-| 9 | Полное закрытие дефекта | ❌ не достигнуто |
+| 8 | Runtime-proof | ✅ выполнен (3 кейса, все PASS после idempotency fix) |
+| 9 | Idempotency fix | ✅ завершён — guard расширен, post-fix proof 3/3 PASS |
+| 10 | Полное закрытие дефекта | ❌ не достигнуто (legacy path + backfill) |
 
 ### DoD (жёсткий)
 
 - **UI root-fix = ✅ completed**
-- **Edge root-fix (active paths) = ✅ completed** — обе функции запатчены, задеплоены, grep-proof + runtime-proof подтверждены
-- **Edge root-fix (legacy path) = ⚠️ pending** — payments-reconcile legacy path сохранён с audit warnings, не входит в закрытый root-fix
-- **Idempotency bug = ⚠️ found** — grant-access-for-order не полностью идемпотентен для subscription_based products (Case 2). Требует отдельного fix.
+- **Edge root-fix (active paths) = ✅ completed** — code patched + grep-proof + runtime-proof + idempotency fix
+- **Edge root-fix (legacy path) = ⚠️ pending** — payments-reconcile legacy path сохранён с audit warnings
+- **Idempotency bug = ✅ fixed** — guard расширен на `meta.extended_by_orders`, post-fix proof 3/3 PASS, `second_call_side_effects = none` для всех кейсов
 - **Full root closure forbidden** until:
   - legacy path discovery завершён
-  - idempotency bug исправлен
   - backfill historical victims выполнен и доказан
   - новые victim-кейсы из UI = 0 (доказано code review ✅)
   - новые victim-кейсы из edge active paths = 0 (доказано grep-proof + runtime-proof ✅)
