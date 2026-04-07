@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -60,10 +60,20 @@ export function useTrainingModules() {
   const [loading, setLoading] = useState(true);
   const isAdminUser = isAdmin();
   const hasLoadedOnceRef = useRef(false);
-  const { data: tcRawData } = useActiveTrainingContentRules();
+  const fetchIdRef = useRef(0);
+  const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
   const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
+  // Stable fingerprint for tcData to avoid unnecessary refetches when object reference changes
+  const tcFingerprint = useMemo(() => {
+    if (!tcData) return "null";
+    const ruleIds = tcData.rules.map(r => r.id).sort().join(",");
+    const tariffIds = (tcData.userTariffIds || []).sort().join(",");
+    return `${ruleIds}|${tariffIds}`;
+  }, [tcData]);
+
   const fetchModules = useCallback(async () => {
+    const fetchId = ++fetchIdRef.current;
     try {
       // Only show loading on initial fetch — background refetch must NOT collapse DOM
       if (!hasLoadedOnceRef.current) {
@@ -306,20 +316,28 @@ export function useTrainingModules() {
         }
       });
 
+      // Race guard: discard stale fetch results
+      if (fetchId !== fetchIdRef.current) return;
       setModules(finalModules);
     } catch (error) {
+      if (fetchId !== fetchIdRef.current) return;
       console.error("Error fetching modules:", error);
       toast.error("Ошибка загрузки модулей");
     } finally {
+      if (fetchId !== fetchIdRef.current) return;
       hasLoadedOnceRef.current = true;
       setLoading(false);
     }
+  // tcFingerprint ensures refetch when training content rules load (fixes stale closure on refresh)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, isAdminUser]);
+  }, [user?.id, isAdminUser, tcFingerprint]);
 
   useEffect(() => {
+    // Gate: don't fetch until tcData is resolved (not still loading) for non-admins
+    // tcData === null is valid (user without rules), but tcLoading === true means still fetching
+    if (!isAdminUser && tcLoading) return;
     fetchModules();
-  }, [fetchModules]);
+  }, [fetchModules, isAdminUser, tcLoading]);
 
   const createModule = async (data: TrainingModuleFormData): Promise<boolean> => {
     try {
