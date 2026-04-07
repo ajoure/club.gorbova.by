@@ -293,3 +293,100 @@
 ### Формулировка для отчёта
 
 По code-level grep-proof active paths переведены на canonical flow. Idempotency bug исправлен: guard расширен на `meta.extended_by_orders`. Post-fix runtime-proof 2026-04-07: все 3 кейса (order_based, subscription+bonus, subscription pure) × 2 вызова = `already_fulfilled`, `second_call_side_effects = none`, `access_end_at` не изменилось. Edge root-fix (active paths) = ✅ закрыт. payments-reconcile legacy path остаётся осознанным исключением. Патч закрыт. Массовый backfill и legacy discovery не входили в данный патч.
+
+---
+
+## Отчёт о выполнении: Discovery и repair модулей ЦБ 1 — правила → данные → UI
+
+Дата: 2026-04-07
+
+### Базовое бизнес-правило
+
+Модули ЦБ 1 — самостоятельные продаваемые продукты, срок которых синхронизируется с BUSINESS-подпиской через rule `1b497fba-031a-4318-8d9f-2530f1bac116` (`align_with_source`, `prior_purchase`, `per_product`).
+
+### БЛОК 0: Discovery правил ✅
+
+**BUSINESS rule 1b497fba:**
+- `grant_target_type: product_access`, `duration_days: NULL` (= align_with_source)
+- `condition_type: prior_purchase`, `match_mode: per_product`
+- `target_product_ids`: cb20 + 7 модулей + 2 доп. продукта
+- `is_active: true`
+
+**Product config:**
+| Продукт | entitlement_mode (было) | entitlement_mode (стало) |
+|---|---|---|
+| cb20 | order_based_only | order_based_only |
+| cb_module_ip | **subscription_based** | **order_based_only** ✅ |
+| остальные модули | order_based_only | order_based_only |
+
+**Discovery-ответ:**
+- Модульный entitlement жил от standalone order (30d) или backfill (фиксированная дата)
+- Канонический source по правилам = BUSINESS subscription (`align_with_source`)
+- Runtime НЕ смотрел на BUSINESS для модулей — это root cause
+
+### БЛОК 1: Eligibility vs Expiry alignment ✅
+
+**Proof:**
+- cb20: 100% aligned с BUSINESS (все совпадают)
+- Модули: 0% aligned ДО repair, 100% aligned ПОСЛЕ
+- 56 misaligned entitlements (44 IP + 12 других)
+- IP: 0 paid orders (все из backfill BACKFILL-ENT-v23.1.9B), но включены в rule matrix
+
+### БЛОК 2: Configuration mismatch ✅
+
+| Дефект | Причина | Действие |
+|---|---|---|
+| cb_module_ip.entitlement_mode = subscription_based | Config mismatch | UPDATE → order_based_only ✅ |
+| grant-access-for-order создаёт subscriptions для order_based_only | Write-path bug (нет guard по entitlement_mode) | Патч: SKIP subscription block для order_based_only ✅ |
+| 75 phantom subscriptions (59 true phantom + 16 with order) | Оба фактора (config + write-path) | Canceled ✅ |
+
+### БЛОК 3: Repair ✅
+
+**Этап 1: Config fix** ✅
+- `cb_module_ip.entitlement_mode` → `order_based_only`
+- `grant-access-for-order`: добавлен guard — если `entitlement_mode = order_based_only`, subscription block пропускается, audit log пишется
+
+**Этап 2: Expiry alignment** ✅
+- 56 entitlements выровнены: `expires_at = business.access_end_at`
+- Optimistic guard в WHERE: `e.expires_at = t.old_expires`
+- Metadata add-only: `aligned_by`, `previous_expires_at`, `source_rule_id`, `source_window_rule`, `canonical_source`
+
+**Этап 3: Metadata lineage** ✅
+- Исходные признаки standalone purchase сохранены (meta не перезаписана)
+- Добавлены: `source_rule_id=1b497fba`, `source_window_rule=align_with_source`, `canonical_source=BUSINESS_subscription`
+- Бейдж "через BUSINESS" теперь выводится по `source_rule_id` (rule-based, не cosmetic)
+
+**Этап 4: Phantom sub cleanup** ✅
+- Классификация: 59 true_phantom (no order_id) + 16 order_based_with_order
+- Все 75 → status=canceled, auto_renew=false, meta += archive_reason
+
+### DoD
+
+| # | Критерий | Статус |
+|---|---|---|
+| 1 | Канонический source срока доказан для каждого модуля | ✅ BUSINESS rule 1b497fba |
+| 2 | module.expires_at = business.access_end_at | ✅ 0 misaligned |
+| 3 | cb20.expires_at = business.access_end_at | ✅ было aligned |
+| 4 | Нет ложных billing/subscription сигналов | ✅ 0 active subs |
+| 5 | Курс и модули заканчиваются одновременно | ✅ доказано proof |
+| 6 | Следует из настроек, не из хардкода | ✅ rule-based |
+| 7 | cb_module_ip.entitlement_mode = order_based_only | ✅ |
+| 8 | 0 active subs для order_based modules | ✅ |
+
+### Артефакты
+
+| # | Файл | Строк |
+|---|---|---|
+| 1 | cb20_and_modules_access_rules_snapshot.csv | 19 |
+| 2 | business_to_cb20_modules_rule_matrix.csv | 3 |
+| 3 | module_expiry_source_proof.csv | 60 |
+| 4 | module_rule_config_mismatch_report.csv | 8 |
+| 5 | module_order_to_rule_lineage.csv | 20 |
+| 6 | module_expiry_source_after_repair.csv | 60 |
+| 7 | phantom_module_subscriptions_after_cleanup.csv | 75 |
+
+### Масштаб
+
+- Config fix: 1 UPDATE products_v2 + 1 патч grant-access-for-order
+- Data repair: 56 module entitlements aligned + 75 phantom subscriptions canceled
+- Scope: только модули cb20
