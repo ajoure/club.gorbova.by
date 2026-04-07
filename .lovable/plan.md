@@ -1,158 +1,184 @@
-да, согласен, с учетом правок:
+## Отчёт о выполнении: SYSTEM-WIDE WRITE PATH DISCOVERY + Ремонт Матук/Ярошевич/Абрамович + Глобальные sweep-ы
 
-&nbsp;
+### Что НЕ меняется в данном обновлении
 
-1. В write_paths_root_fix_status.csv добавь ещё 2 колонки:  
+- Код приложения не меняется
+- Данные не меняются
+- Выполняется только корректировка документации, статусов и CSV-артефакта
 
-  - victims_count_known
-  - notes  
-  Чтобы было видно не только статус пути, но и подтверждённый масштаб последствий по каждому path.
-2. &nbsp;
-3. В таблице по AdminEntitlements явно укажи в notes:  
+---
 
-  - manual/non-canonical by design
-  - не считается system root-fix
-  - только warning + audit trail  
-  Чтобы этот путь не выглядел как полноценно исправленный.
-4. &nbsp;
-5. В блоке про 14 real access defect добавь обязательную разбивку не только по типу ремонта, но и по источнику:  
+### PHASE 0: SYSTEM-WIDE WRITE PATH DISCOVERY ✅
 
-  - manual/admin flow
-  - paid flow
-  - unknown / requires deeper trace  
-  Это нужно, чтобы не смешивать жертв broken manual path с остальными кейсами.
-6. &nbsp;
-7. Для Матук в обновлённом [plan.md](http://plan.md) явно раздели два статуса:  
+**Найдено 16 write-paths:**
+- 6 canonical (bepaid-webhook, admin-manual-charge, admin-reconcile-processing, GrantAccessFromDealDialog, BulkExtendAccessDialog, useBepaidMappings, public-checkout)
+- 4 non-canonical (**ContactDetailSheet**, **CreateDealFromPaymentDialog**, **BulkCreateDealsDialog**, **payments-reconcile**)
+- 6 partial/special (bepaid-auto-process, AdminEntitlements, sync-payments, admin-bepaid-full-reconcile, split-multi-module-orders)
 
-  - access repair = done
-  - content visibility = pending  
-  Не одной фразой, а двумя отдельными строками.
-8. &nbsp;
-9. Для Абрамович добавь в план явный follow-up пункт:  
+**Критические non-canonical дефекты (создавали subscription без entitlement):**
+1. `ContactDetailSheet.tsx` — handleGrantNewAccess — **root cause кейса Матук**
+2. `CreateDealFromPaymentDialog.tsx` — admin_from_payment
+3. `BulkCreateDealsDialog.tsx` — admin_bulk_from_payments
+4. `AdminEntitlements.tsx` — manual entitlement без source order/rule
 
-  - нужен UI/runtime proof после data repair  
-  Иначе кейс так и останется “условно закрыт” без понятного следующего действия.
-10. &nbsp;
-11. В финальной таблице этапов добавь отдельную строку:  
+**Масштаб:** 644 admin-created orders (19 admin_grant + 194 admin_from_payment + 431 admin_bulk). Из них 156 missing entitlement (10+56+90).
 
-  - Edge-function root-fix → ❌ pending  
-  Потому что сейчас она скрыта внутри общего System root-fix, а это один из главных незакрытых блокеров.
-12. &nbsp;
-13. В STOP-guard добавь ещё одно правило:  
+---
 
-  - нельзя считать backfill victims закрытым, пока не получены before/after counts по 14 real access defect  
-  То есть не только сам факт backfill, но и доказуемое уменьшение 14 → 0.
-14. &nbsp;
-15. В финальной формулировке вывода лучше написать чуть жёстче:  
+### PHASE 1: POINT REPAIRS
 
-  - discovery завершён
-  - UI root-fix завершён
-  - edge root-fix не завершён
-  - historical backfill не выполнен
-  - полное закрытие дефекта не достигнуто  
-  Чтобы убрать двусмысленность из фразы “выполнен частично”.
-16. &nbsp;
-17. В [plan.md](http://plan.md) в разделе “Что НЕ меняется” явно допиши:  
+**Блок 0: Матук** ⚠️ УСЛОВНО ЗАКРЫТ
+- Entitlement `14f0d26c` создан для product `73c29914` (ЗАКРОЙ ГОД), expires 2026-07-05
+- Root cause: `handleGrantNewAccess` не вызывает `grant-access-for-order`
+- Classification: `multiple_blockers` (subscription_without_entitlement + training_root_unpublished)
+- **access repair = done** — entitlement создан, access-chain восстановлена
+- **content visibility = pending** — training roots `682d241e` и `62d09668` имеют `published_at = NULL`, контентный дефект требует отдельного исправления
 
-  - код приложения не меняется
-  - данные не меняются
-  - выполняется только корректировка документации, статусов и CSV-артефакта  
-  Чтобы подрядчик не начал делать лишние правки.
-18. &nbsp;
-19. В артефакте write_paths_root_fix_status.csv для payments-reconcile и bepaid-auto-process в needs_backfill не оставляй расплывчатое определить. Напиши:
+**Блок 1: Ярошевич** ✅
+- Entitlement `09641160` meta нормализована: `scope_resolution_mode = full_tariff_scope`
+- Code fix `useTrainingContentRules.ts` line 330 применён (full_tariff_scope + full_access в branch)
+- Full purchase GC-3811003 приоритетен, модульная GC-3818463 — secondary
+- Модульная покупка сохранена как исторический факт, не влияет на понижение итогового доступа
 
-&nbsp;
+**Блок 2: Абрамович** ⚠️ УСЛОВНО ЗАКРЫТ
+- Subscription `d2710b58` repaired: `expired → active` (batch REPAIR-CLUB-STATUS-2026-04-06)
+- Abramovich-pattern sweep: 2 аналогичных кейса найдены (Королёва, Лялина)
+- **Data repair = done** — subscription status восстановлен
+- **UI/runtime proof = pending** — требуется отдельная проверка: admin card active, cabinet/runtime visibility, entitlement/subscription dates согласованы
 
-&nbsp;
+---
 
-&nbsp;
+### PHASE 2: GLOBAL SWEEP RESULTS ✅ (как диагностика)
 
-- yes_needs_separate_discovery  
-Это точнее и не даёт закрыть вопрос формально пустым значением.
+**Sweep 1: Active subscriptions without entitlements (53 кейса):**
 
-&nbsp;
+**Жёсткое разделение:**
 
-&nbsp;
+**14 real access defect** (broken fulfillment):
+| Источник | Кол-во | Тип ремонта |
+|---|---|---|
+| manual/admin flow (admin_grant) | 10 | create_missing_entitlement |
+| manual/admin flow (admin_from_payment) | 3 | create_missing_entitlement |
+| unknown / requires deeper trace | 1 | rebuild_full_chain_from_order |
 
-## План: Обновление отчёта с точными статусами и подготовка backfill-патча
+**39 content_not_published** (НЕ access bug):
+| Продукт | Кол-во | Причина |
+|---|---|---|
+| Gorbova Club | 23 | training root published_at = NULL |
+| ЦБ 2 ступень | 8 | training root published_at = NULL |
+| Бухгалтерия как бизнес | 6 | training root published_at = NULL |
+| ЗАКРОЙ ГОД | 2 | training root published_at = NULL |
 
-### Суть правок
+**Вердикт:** 39 из 53 — контентный дефект. 14 — реальный access-дефект, требующий backfill.
 
-Текущий `plan.md` содержит завышенные статусы: PHASE 3 помечен ✅, хотя 2 edge-function пути не исправлены; Матук помечена ✅ без оговорки о content-блокере; 53 кейса sweep смешаны без жёсткого разделения; backfill не выполнен.
+**Backfill victims: ❌ не выполнен (0 из 14)**
 
-### Что нужно сделать
+---
 
-**1. Переписать plan.md с корректными статусами**
+### PHASE 3: SYSTEM ROOT-FIX ⚠️ ЧАСТИЧНО
 
-- PHASE 3: `⚠️ ЧАСТИЧНО` — UI root-fix выполнен (4 файла), edge-function root-fix не выполнен (payments-reconcile, bepaid-auto-process)
-- Матук: `⚠️ УСЛОВНО` — access-chain repaired, content visibility requires separate fix (published_at=NULL)
-- Ярошевич: ✅ — source order корректен, runtime full, meta нормализована, модульная покупка сохранена как исторический факт без влияния на scope
-- Абрамович: `⚠️ УСЛОВНО` — subscription repaired на уровне данных, UI/runtime пост-проверка не выполнена
-- Global sweep: ✅ как диагностика, жёсткое разделение: **14 real access defect** / **39 content_not_published**
-- Backfill: ❌ не выполнен
+**UI root-fix — выполнен (4 файла):**
 
-**2. Добавить детализацию 14 real access defect**
+| # | Файл | До | После |
+|---|---|---|---|
+| 1 | `ContactDetailSheet.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
+| 2 | `CreateDealFromPaymentDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
+| 3 | `BulkCreateDealsDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
+| 4 | `AdminEntitlements.tsx` | Голый INSERT без meta/source | INSERT с meta warning + audit `manual_grant`. **НЕ является system root-fix**: manual/non-canonical by design, добавлен только warning + audit trail |
 
-SQL-запрос для классификации:
+**Edge-function root-fix — ❌ НЕ выполнен:**
 
-- сколько из manual/admin flow
-- сколько требуют create_missing_entitlement
-- сколько restore_wrong_status
-- сколько rebuild_full_chain_from_order
+| # | Edge function | Статус | Причина |
+|---|---|---|---|
+| 1 | `payments-reconcile/index.ts` | ❌ pending | Прямые INSERT sub + UPSERT entitlement, bypasses grant-access. Требует отдельного патча с dry-run |
+| 2 | `bepaid-auto-process/index.ts` | ❌ pending | Direct entitlement upsert by product_code. Требует отдельного патча с dry-run |
 
-**3. Уточнить статус AdminEntitlements.tsx**
+**Архитектурное правило:** manual path = same fulfillment as paid path.
 
-Не root-fix, а guard: warning + audit trail добавлены, но путь остаётся manual/non-canonical by design.
+---
 
-**4. Добавить таблицу write_paths_root_fix_status**
+### Финальный статус проекта
 
+| # | Этап | Статус |
+|---|---|---|
+| 1 | Discovery write-paths | ✅ завершён |
+| 2 | Point repairs (Матук/Ярошевич/Абрамович) | ⚠️ условно закрыто (content у Матук, UI-proof у Абрамович) |
+| 3 | Global sweep | ✅ завершён как диагностика |
+| 4 | Backfill victims (14 real access defect) | ❌ не выполнен |
+| 5 | UI root-fix (3 canonical + 1 guard) | ✅ завершён |
+| 6 | Edge-function root-fix | ❌ pending (payments-reconcile, bepaid-auto-process) |
+| 7 | Полное закрытие дефекта | ❌ не достигнуто |
 
-| path_name                   | category | fixed_in_code | still_bypasses | needs_backfill |
-| --------------------------- | -------- | ------------- | -------------- | -------------- |
-| ContactDetailSheet          | UI       | ✅             | ❌              | да (10 жертв)  |
-| CreateDealFromPaymentDialog | UI       | ✅             | ❌              | да (56 жертв)  |
-| BulkCreateDealsDialog       | UI       | ✅             | ❌              | да (90 жертв)  |
-| AdminEntitlements           | UI       | ⚠️ guard only | да (by design) | нет            |
-| payments-reconcile          | Edge     | ❌             | да             | определить     |
-| bepaid-auto-process         | Edge     | ❌             | да (partial)   | определить     |
+### Финальные цифры
 
+| # | Метрика | Значение |
+|---|---|---|
+| 1 | Write-paths найдено | **16** |
+| 2 | Canonical | **6** |
+| 3 | Non-canonical | **4** |
+| 4 | Partial/special | **6** |
+| 5 | Путей исправлено системно | **4** (3 canonical + 1 guard) |
+| 6 | Путей остаётся исправить | **2** (payments-reconcile, bepaid-auto-process) |
+| 7 | Sweep total | **53** |
+| 8 | Real access defect | **14** |
+| 9 | Content defect (не access bug) | **39** |
+| 10 | Backfill выполнен | **0 из 14** |
+| 11 | Кейсов исправлено точечно | **3** (Матук, Ярошевич, Абрамович) |
+| 12 | Mismatch paid-flow | **2** (Королёва, Лялина — expired status) |
+| 13 | Mismatch manual/admin-created flow | **89** (sub without ent) |
+| 14 | Mismatch reconcile/import flow | **0** активных |
 
-**5. Обновить финальные цифры**
+---
 
-Добавить строки:
+### STOP-guards на следующий спринт
 
-- Путей исправлено системно: **4** (3 canonical + 1 guard)
-- Путей остаётся исправить: **2** (payments-reconcile, bepaid-auto-process)
-- Real access defect из 53: **14**
-- Content defect из 53: **39**
-- Backfill выполнен: **0 из 14**
+- Нельзя объявлять «исправлено во всей системе» до перевода payments-reconcile и bepaid-auto-process на canonical fulfillment
+- Нельзя считать backfill victims закрытым, пока не получены before/after counts по 14 real access defect (доказуемое уменьшение 14 → 0)
+- Нельзя делать массовый backfill до завершения edge-function root-fix
+- Нельзя смешивать 14 access-дефектов и 39 content-дефектов в одну метрику
+- Нельзя считать Матук полностью закрытой до fix published_at на training roots
+- Нельзя считать Абрамович полностью закрытой до UI/runtime proof
 
-**6. Обновить финальный статус проекта**
+### Нерешённые вопросы (обязательные follow-up)
 
+1. **payments-reconcile/index.ts** — перевод на grant-access-for-order с обязательным dry-run
+2. **bepaid-auto-process/index.ts** — перевод на grant-access-for-order с обязательным dry-run
+3. **39 content_not_published** — training roots с `published_at=NULL`, контентный дефект
+4. **Backfill 14 real access defect** — план готов, требует исполнения после edge-function root-fix
+5. **Матук content visibility** — training roots `682d241e`, `62d09668` published_at = NULL
+6. **Абрамович UI/runtime proof** — admin card, cabinet visibility, dates verification
 
-| Этап                                     | Статус                                                     |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| Discovery write-paths                    | ✅ закрыто                                                  |
-| Point repairs (Матук/Ярошевич/Абрамович) | ⚠️ условно закрыто (content у Матук, UI-proof у Абрамович) |
-| Global sweep                             | ✅ закрыт как диагностика                                   |
-| Backfill victims                         | ❌ не выполнен                                              |
-| System root-fix                          | ⚠️ частично (UI done, edge functions pending)              |
+---
 
+### Артефакты ✅
 
-**7. STOP-guard на следующий спринт**
+1. `fulfillment_write_paths_matrix.csv`
+2. `non_canonical_fulfillment_writes.csv`
+3. `missing_grant_access_call_sites.csv`
+4. `manual_vs_normal_fulfillment_diff.csv`
+5. `backfill_manual_path_missing_entitlements_plan.csv`
+6. `veronika_matyuk_full_access_trace.csv`
+7. `matyuk_manual_vs_normal_fulfillment_diff.csv`
+8. `manual_created_access_runtime_mismatch.csv`
+9. `yaroshevich_cb20_purchase_precedence_trace.csv`
+10. `yaroshevich_runtime_visibility_trace.csv`
+11. `yaroshevich_module_reconciliation.csv`
+12. `yaroshevich_deal_to_access_mapping.csv`
+13. `abramovich_payment_to_access_trace.csv`
+14. `access_tab_vs_cabinet_runtime_mismatch.csv`
+15. `active_paid_window_but_no_access.csv`
+16. `active_paid_window_but_no_access_repair_plan.csv`
+17. `repair_actions_by_defect_type.csv`
+18. `write_paths_root_fix_status.csv` ← НОВЫЙ
 
-- Нельзя объявлять "исправлено во всей системе" до: перевода payments-reconcile и bepaid-auto-process; выполнения backfill 14 access-жертв; разделения access/content в статистике
+---
 
-**8. Генерация артефакта write_paths_root_fix_status.csv**
+### Финальный вывод
 
-**9. Финальная формулировка вывода:**
-"System-wide discovery выполнен, root-fix выполнен частично (UI-пути канонизированы, 2 edge-function пути pending), исторический backfill 14 access-жертв и патч edge-functions остаются обязательными для полного закрытия дефекта."
+- Discovery — завершён
+- UI root-fix — завершён
+- Edge root-fix — не завершён
+- Historical backfill — не выполнен
+- **Полное закрытие дефекта не достигнуто**
 
-### Файлы для изменения
-
-- `.lovable/plan.md` — полная перезапись с корректными статусами
-- `/mnt/documents/write_paths_root_fix_status.csv` — новый артефакт
-
-### Объём
-
-Только документация и артефакты, никаких изменений в коде.
+System-wide discovery завершён. UI-пути канонизированы (3 файла) + guard добавлен (AdminEntitlements). 2 edge-function пути (payments-reconcile, bepaid-auto-process) остаются non-canonical. Исторический backfill 14 access-жертв не выполнен. Патч edge-functions и backfill остаются обязательными для полного закрытия дефекта.
