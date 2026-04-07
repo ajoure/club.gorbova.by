@@ -94,8 +94,18 @@ export default function LibraryModule() {
       if (childErr) throw childErr;
       if (!children || children.length === 0) return [];
 
-      // For each child, get lesson count
-      const childIds = children.map(c => c.id);
+      // Filter children through allModules access list (access leak fix)
+      const accessibleChildren = children.filter(child => {
+        const moduleInfo = allModules.find(m => m.id === child.id);
+        // If module not found in allModules (access-controlled list), hide it
+        if (!moduleInfo) return false;
+        return moduleInfo.has_access !== false;
+      });
+
+      if (accessibleChildren.length === 0) return [];
+
+      // For each accessible child, get lesson count
+      const childIds = accessibleChildren.map(c => c.id);
       const { data: lessonCounts, error: lcErr } = await supabase
         .from("training_lessons")
         .select("module_id")
@@ -108,12 +118,12 @@ export default function LibraryModule() {
         countMap[l.module_id] = (countMap[l.module_id] || 0) + 1;
       });
 
-      return children.map(c => ({
+      return accessibleChildren.map(c => ({
         ...c,
         lessonCount: countMap[c.id] || 0,
       }));
     },
-    enabled: !!module?.id && lessons.length === 0 && !lessonsLoading,
+    enabled: !!module?.id && lessons.length === 0 && !lessonsLoading && !modulesLoading,
   });
 
   const handleLessonClick = (lesson: TrainingLesson) => {
