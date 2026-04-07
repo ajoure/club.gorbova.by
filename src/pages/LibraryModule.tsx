@@ -80,6 +80,42 @@ export default function LibraryModule() {
 
   const { lessons, loading: lessonsLoading, markCompleted, markIncomplete } = useTrainingLessons(module?.id);
 
+  // Fetch child modules if this module has no direct lessons
+  const { data: childModules, isLoading: childModulesLoading } = useQuery({
+    queryKey: ["child-modules-with-lessons", module?.id],
+    queryFn: async () => {
+      // Get direct children
+      const { data: children, error: childErr } = await supabase
+        .from("training_modules")
+        .select("id, title, slug, description, sort_order, is_active, is_container, color_gradient, icon")
+        .eq("parent_module_id", module!.id)
+        .eq("is_active", true)
+        .order("sort_order");
+      if (childErr) throw childErr;
+      if (!children || children.length === 0) return [];
+
+      // For each child, get lesson count
+      const childIds = children.map(c => c.id);
+      const { data: lessonCounts, error: lcErr } = await supabase
+        .from("training_lessons")
+        .select("module_id")
+        .in("module_id", childIds)
+        .eq("is_active", true);
+      if (lcErr) throw lcErr;
+
+      const countMap: Record<string, number> = {};
+      (lessonCounts || []).forEach(l => {
+        countMap[l.module_id] = (countMap[l.module_id] || 0) + 1;
+      });
+
+      return children.map(c => ({
+        ...c,
+        lessonCount: countMap[c.id] || 0,
+      }));
+    },
+    enabled: !!module?.id && lessons.length === 0 && !lessonsLoading,
+  });
+
   const handleLessonClick = (lesson: TrainingLesson) => {
     navigate(`/library/${moduleSlug}/${lesson.slug}`);
   };
