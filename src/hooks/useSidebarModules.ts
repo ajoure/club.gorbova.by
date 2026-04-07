@@ -37,7 +37,7 @@ export function useSidebarModules() {
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
-  const { data: tcRawData } = useActiveTrainingContentRules();
+  const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
   const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
@@ -157,7 +157,8 @@ export function useSidebarModules() {
 
   // PATCH B: Apply training_content filter for non-admins
   const filteredModules = useMemo(() => {
-    if (isAdminUser || !tcData || !tcData.rules.length) return modules;
+    // Guard: don't apply tc-filter while rules are still loading (prevents stale filter on refresh)
+    if (isAdminUser || tcLoading || !tcData || !tcData.rules.length) return modules;
 
     const parentProductMap = new Map<string, string>();
     modules.forEach(m => {
@@ -193,7 +194,7 @@ export function useSidebarModules() {
       // Child module: check allowlist
       return isModAllowed(filter, m.id);
     });
-  }, [modules, isAdminUser, tcData]);
+  }, [modules, isAdminUser, tcData, tcLoading]);
 
   // Group modules by exact section key
   const modulesBySection = useMemo<ModulesBySection>(() => {

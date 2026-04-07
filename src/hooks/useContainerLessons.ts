@@ -27,7 +27,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
   const { user } = useAuth();
   const { isAdmin } = usePermissions();
   const isAdminUser = isAdmin();
-  const { data: tcRawData } = useActiveTrainingContentRules();
+  const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
   const tcData = tcRawData && !Array.isArray(tcRawData) ? tcRawData : null;
 
   const { data, isLoading } = useQuery({
@@ -206,8 +206,9 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         (container.productId != null && entitlementProductIds.has(container.productId));
 
       // PATCH B: training_content filter (only for users with confirmed access, non-admin)
+      // Guard: skip tc-filter while rules are still loading (prevents stale filter on refresh)
       let filteredOut = false;
-      if (hasAccess && !isAdminUser && container.productId && tcData) {
+      if (hasAccess && !isAdminUser && !tcLoading && container.productId && tcData) {
         // Find root training for this container
         const rootContainer = data.containers.find(c => c.id === lesson.module_id) || 
           (() => {
