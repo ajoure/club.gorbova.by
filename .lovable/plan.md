@@ -2,186 +2,197 @@
 
 &nbsp;
 
-1. Исправлять не через хардкод списка статусов, а через канонический набор текущих валидных подписок.  
-В ContactDetailSheet.tsx не нужно строить subscriptionProductIds из всех subscriptions.  
-Нужно строить отдельные наборы:  
+1. Зафиксируй в плане главный вывод: это не разные виды доступа, а разный уровень заполненности metadata/lineage.  
+через BUSINESS и по правилу здесь не должны нести разный смысл, если источник один и тот же — BUSINESS rule 1b497fba.
+2. UI-правку делай в двух местах, а не только в ContactDetailSheet.tsx:  
 
-  - activeSubscriptionProductIds — только из activeSubscriptions
-  - finishedSubscriptionProductIds — только из finishedSubscriptions  
-  И дедупликацию entitlement делать относительно соответствующего набора.  
-  Причина: past_due с валидным окном, canceled, expired, archived, superseded и прочие состояния не должны решаться списком строк — у вас уже есть каноническая логика isCurrentValidAccess.
-2. &nbsp;
-3. Этот же фикс нужно сделать не только в карточке контакта, но и в пользовательском отображении, если там продублирована та же схема (UserSubscriptions.tsx).  
-Иначе снова получится две разные реальности: в карточке модуль есть, в кабинете нет, или наоборот.
-4. В этом патче запрещены любые data changes:  
+  - src/components/admin/ContactDetailSheet.tsx
+  - src/components/user/UserSubscriptions.tsx
+3. &nbsp;
+4. Условие для бейджа не завязывай только на business_subscription_id.  
+Нужна более точная проверка:  
 
-  - не создавать entitlements,
-  - не возвращать phantom subscriptions,
-  - не менять rules,
-  - не чинить даты,
-  - не делать repair в БД.  
-  Это чистый UI/render fix.
-5. &nbsp;
-6. Формулировку root cause зафиксировать точнее:  
-модули исчезли не потому, что их “удалили”, а потому что после cleanup canceled module subscriptions перестали рендериться как access-карточки, но продолжили участвовать в дедупликации и скрыли корректные active entitlements.
-7. Для Рыштаковой нужен before/after proof:  
+  - source_rule_id = 1b497fba-031a-4318-8d9f-2530f1bac116
+  - и (business_subscription_id IS NOT NULL OR canonical_source = 'BUSINESS_subscription')
+5.   
+То есть логика должна быть такой:  
 
-  - SQL: 4 active module entitlements с датой 18.04.26
-  - SQL: 4 canceled module subscriptions по тем же product_id
-  - скрин до: модулей нет во вкладке «Доступы»
-  - скрин после: модули появились именно из entitlements
-  - отдельный proof, что у модулей не показываются billing/autorenew сигналы после фикса
+  - если entitlement реально rule-based от BUSINESS → показывать «через BUSINESS»
+  - иначе → «по правилу»
+6. &nbsp;
+7. В плане явно напиши, что UI fix сам по себе уже должен немедленно унифицировать отображение для всех затронутых модулей, потому что canonical_source уже заполнен.  
+Значит:  
+
+  - UI patch — обязательный
+  - data backfill — hygiene/lineage patch, а не единственный способ исправить экран
 8. &nbsp;
-9. Финальный verdict по кейсу Рыштаковой:  
+9. Backfill metadata делай add-only и детерминированно:  
 
-  - не NO_CANONICAL_ACCESS_CONFIGURED
-  - не PHANTOM_SUB_WAS_SHOWN_BEFORE
-  - а именно UI_RENDER_GAP, потому что канонические active entitlements есть, но UI их скрывал.
+  - выбрать одну каноническую BUSINESS-подписку на entitlement  
+  (active > past_due, затем max access_end_at, затем newest created_at)
+  - не допускать многозначного JOIN, который может подставить не ту подписку
 10. &nbsp;
-11. В сам план добавь явный кодовый ориентир:
+11. В backfill заполняй не только business_subscription_id, но и:  
+
+  - business_tariff_id
+  - canonical_source = 'BUSINESS_subscription' (если вдруг где-то отсутствует)
+  - lineage_backfill_batch
+  - lineage_backfilled_at
+12.   
+Исторические поля не удалять и не переписывать агрессивно.
+13. Перед UPDATE обязателен dry-run артефакт:  
+
+  - entitlement_id
+  - user_id
+  - product_code
+  - source_rule_id
+  - current_business_subscription_id
+  - target_business_subscription_id
+  - chosen_subscription_status
+  - chosen_access_end_at
+14. &nbsp;
+15. После патча нужен after-proof:  
+
+  - 0 active module entitlements с source_rule_id = 1b497fba и canonical_source = BUSINESS_subscription, которые всё ещё показываются как «по правилу»
+  - разбивка до/после по каждому модулю
+  - визуальный proof на Рыштаковой
+16. &nbsp;
+17. В плане отдельно укажи границы патча:  
+
+  - не меняются даты
+  - не меняются статусы
+  - не меняются rules
+  - не создаются новые entitlements/subscriptions
+  - это patch на унификацию отображения и lineage metadata
+18. &nbsp;
+19. Добавь финальную формулировку:
 
 &nbsp;
 
-const activeSubscriptionProductIds = new Set(
-
-  (activeSubscriptions || []).map(s => s.product_id).filter(Boolean)
-
-);
+&nbsp;
 
 &nbsp;
 
-const activeEntitlements = (entitlements || []).filter(e => {
-
-  if (!e.product_id || activeSubscriptionProductIds.has(e.product_id)) return false;
-
-  ...
-
-});
-
-И аналогично отдельно для finished-блока, без смешивания всех subscriptions в один set.
-
-&nbsp;
-
-8. DoD уточнить:  
-
-  - у Рыштаковой все 4 модуля снова видны во вкладке «Доступы»;
-  - источник отображения — active entitlements;
-  - canceled module subscriptions не рендерятся и не скрывают entitlements;
-  - в БД нет ни одного изменения данных;
-  - карточка контакта и кабинет показывают одинаковую картину.
-9. &nbsp;
+- если после UI fix все модули уже показываются одинаково как «через BUSINESS», значит проблема отображения закрыта
+- backfill metadata остаётся как cleanup/hygiene, а не как обязательный functional fix
 
 &nbsp;
 
 &nbsp;
 
-## План: MODULE-VISIBILITY-DISCOVERY — почему модули исчезли из карточки Рыштаковой
+&nbsp;
+
+11. Для скорости закрытия разбей на 2 мини-этапа:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- Phase A: UI fix + visual proof
+- Phase B: metadata backfill + SQL proof
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. В отчёте подрядчик должен прямо написать:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- почему раньше часть модулей была «по правилу»
+- почему теперь все они «через BUSINESS»
+- что это не изменение прав, а нормализация отображения одного и того же источника доступа.
+
+&nbsp;
+
+&nbsp;
+
+## План: Унификация бейджа «через BUSINESS» для всех модулей ЦБ 1
 
 ---
 
-### Диагноз (доказан по данным БД и коду)
+### Проблема
 
-**Verdict по всем 4 модулям: Verdict 1 — UI_RENDER_GAP**
+53 module entitlements имеют `source_rule_id = 1b497fba` (BUSINESS rule) и `canonical_source = BUSINESS_subscription`, но у них отсутствует `business_subscription_id` в metadata. Из-за этого UI показывает «по правилу» вместо «через BUSINESS».
 
-В БД у Рыштаковой (user_id `7c53b6af`) **есть** корректные active module entitlements с правильными датами:
-
-
-| Модуль                 | entitlement status | expires_at       | Aligned с BUSINESS? |
-| ---------------------- | ------------------ | ---------------- | ------------------- |
-| cb_module_catering     | active             | 2026-04-18 12:00 | ✅                   |
-| cb_module_marketplaces | active             | 2026-04-18 12:00 | ✅                   |
-| cb_module_production   | active             | 2026-04-18 12:00 | ✅                   |
-| cb_module_retail       | active             | 2026-04-18 12:00 | ✅                   |
+Только `cb_module_marketplaces` (3 записи) корректно заполнен. Остальные 53 — нет.
 
 
-Также есть **canceled** module subscriptions (результат cleanup phantom subscriptions):
+| Модуль                 | Всего | С business_subscription_id | Без (показывают «по правилу») |
+| ---------------------- | ----- | -------------------------- | ----------------------------- |
+| cb_module_ip           | 44    | 0                          | 44                            |
+| cb_module_retail       | 4     | 0                          | 4                             |
+| cb_module_production   | 3     | 0                          | 3                             |
+| cb_module_catering     | 1     | 0                          | 1                             |
+| cb_module_construction | 1     | 0                          | 1                             |
+| cb_module_marketplaces | 3     | 3                          | 0                             |
 
 
-| Модуль                 | subscription status |
-| ---------------------- | ------------------- |
-| cb_module_catering     | canceled            |
-| cb_module_marketplaces | canceled            |
-| cb_module_production   | canceled            |
-| cb_module_retail       | canceled            |
+---
 
+### Шаг 1: UI fix — расширить условие бейджа
 
-**Root cause — строки 1416-1422 в `ContactDetailSheet.tsx`:**
+В `ContactDetailSheet.tsx` строка 2965 сейчас:
 
 ```typescript
-// Entitlements for products NOT already covered by subscriptions (order_based_only)
-const subscriptionProductIds = new Set(
-  (subscriptions || []).map(s => s.product_id).filter(Boolean) // ← ВСЕ subscriptions, включая canceled
-);
-
-const activeEntitlements = (entitlements || []).filter(e => {
-  if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false; // ← entitlement скрыт, т.к. canceled sub занимает product_id
-  ...
-});
+{meta?.business_subscription_id ? "через BUSINESS" : "по правилу"}
 ```
 
-Логика дедупликации строит `subscriptionProductIds` из **всех** subscriptions (запрос на строке 464-472 не фильтрует по статусу). Canceled module subscriptions попадают в set → module entitlements исключаются → модули не рендерятся.
-
-**До cleanup:** phantom subscriptions имели status=active → проходили `isCurrentValidAccess` → рендерились как subscriptions. После cleanup status=canceled → не проходят `isCurrentValidAccess` → но всё ещё блокируют entitlements через `subscriptionProductIds`.
-
----
-
-### Что нужно исправить
-
-**Один UI patch в `ContactDetailSheet.tsx`, строка 1417-1419:**
-
-Заменить:
+Заменить на:
 
 ```typescript
-const subscriptionProductIds = new Set(
-  (subscriptions || []).map(s => s.product_id).filter(Boolean)
-);
+{(meta?.business_subscription_id || meta?.canonical_source === 'BUSINESS_subscription') ? "через BUSINESS" : "по правилу"}
 ```
 
-На:
+Это немедленно унифицирует бейдж для всех 56 записей, т.к. `canonical_source` уже заполнен у всех.
 
-```typescript
-const subscriptionProductIds = new Set(
-  (subscriptions || [])
-    .filter(s => !['canceled', 'archived', 'superseded'].includes(s.status))
-    .map(s => s.product_id)
-    .filter(Boolean)
-);
+---
+
+### Шаг 2: Data fix — backfill `business_subscription_id` в metadata
+
+Для 53 entitlements, где `source_rule_id = 1b497fba` и `business_subscription_id IS NULL`, добавить (add-only, без удаления существующих полей):
+
+```sql
+UPDATE entitlements e
+SET meta = e.meta || jsonb_build_object(
+  'business_subscription_id', s.id::text
+)
+FROM subscriptions_v2 s
+JOIN products_v2 p ON p.id = s.product_id AND p.code = 'club'
+WHERE s.user_id = e.user_id
+  AND s.status IN ('active', 'past_due')
+  AND e.product_code LIKE 'cb_module_%'
+  AND e.status = 'active'
+  AND e.meta->>'source_rule_id' = '1b497fba-031a-4318-8d9f-2530f1bac116'
+  AND e.meta->>'business_subscription_id' IS NULL;
 ```
 
-Это исключит canceled/archived/superseded subscriptions из set дедупликации, позволяя entitlements для order_based_only модулей корректно рендериться.
+Историческая информация (`historical_purchase_type`, `original_order_id` и т.д.) сохраняется — это add-only операция.
 
 ---
 
-### Что НЕ делается в этом патче
+### Что НЕ делается
 
-- Никаких новых entitlements, subscriptions, rules
-- Никакого восстановления phantom subscriptions
-- Никаких изменений в данных БД
-- Только один UI fix в фильтрации
-
----
-
-### Артефакты
-
-
-| Файл                                   | Содержание                                                                      |
-| -------------------------------------- | ------------------------------------------------------------------------------- |
-| ryshtakova_module_visibility_trace.csv | module → order → entitlement → subscription → should_render → actually_rendered |
-| ryshtakova_module_final_verdict.csv    | По каждому модулю: verdict = UI_RENDER_GAP                                      |
-| module_access_card_render_source.csv   | Источник рендеринга карточки: entitlement vs subscription vs merged             |
-
-
----
-
-### DoD
-
-1. Доказано: модули исчезли из-за UI dedup bug (canceled subs блокируют active entitlements)
-2. Verdict по всем 4 модулям: **UI_RENDER_GAP**
-3. Fix: 1 строка в `ContactDetailSheet.tsx` (фильтр subscriptionProductIds по статусу)
-4. 0 автоматических выдач доступа, 0 изменений данных
-5. После fix модули Рыштаковой рендерятся из корректных entitlements с датой 2026-04-18
+- Не создаются новые entitlements/subscriptions
+- Не меняются даты, статусы, rules
+- Не удаляются исторические поля из metadata
 
 ### Файлы для изменения
 
-- `src/components/admin/ContactDetailSheet.tsx` — fix dedup filter (строка 1417-1419)
-- `/mnt/documents/` — 3 артефакта
+- `src/components/admin/ContactDetailSheet.tsx` — расширить условие бейджа (1 строка)
+- БД: migration для backfill `business_subscription_id` в 53 записях
+
+### DoD
+
+1. Все module entitlements с `source_rule_id = 1b497fba` показывают «через BUSINESS»
+2. Нет смеси «по правилу» / «через BUSINESS» для одинаково настроенных модулей
+3. Историческая metadata сохранена (add-only)
+4. 0 новых entitlements/subscriptions создано
