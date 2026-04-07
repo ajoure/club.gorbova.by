@@ -263,6 +263,46 @@ export default function LibraryModule() {
           </div>
         ) : !hasAccess ? (
           null // Don't show lessons if no access
+        ) : lessons.length === 0 && childModules && childModules.length > 0 ? (
+          /* Show child modules hierarchy when root has no direct lessons */
+          <div className="space-y-3">
+            {childModules.map((child, idx) => (
+              <Card
+                key={child.id}
+                className="cursor-pointer hover:shadow-md transition-all group"
+                onClick={() => navigate(`/library/${child.slug}`)}
+              >
+                <CardContent className="flex items-center gap-4 p-4">
+                  <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium bg-muted">
+                    {idx + 1}
+                  </div>
+                  <div className="shrink-0 text-primary">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium group-hover:text-primary transition-colors">
+                      {child.title}
+                    </h3>
+                    {child.description && (
+                      <p className="text-sm text-muted-foreground line-clamp-1">
+                        {child.description}
+                      </p>
+                    )}
+                  </div>
+                  <Badge variant="secondary" className="shrink-0">
+                    {child.lessonCount} {child.lessonCount === 1 ? 'урок' : child.lessonCount < 5 ? 'урока' : 'уроков'}
+                  </Badge>
+                  <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : lessons.length === 0 && (childModulesLoading) ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map(i => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
         ) : lessons.length === 0 ? (
           <Card className="text-center py-12">
             <CardContent>
