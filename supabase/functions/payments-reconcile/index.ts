@@ -503,83 +503,36 @@ async function fixOrderAndCreateSubscription(
     })
     .eq("id", order.id);
 
-  // Check if subscription already exists
-  const { data: existingSub } = await supabase
-    .from("subscriptions_v2")
-    .select("id")
-    .eq("order_id", order.id)
-    .single();
+  // CANONICAL FULFILLMENT: delegate ALL access grants to grant-access-for-order
+  // This replaces direct INSERT subscriptions_v2 + UPSERT entitlements + telegram-grant-access
+  // which previously bypassed access_rules resolution and created partial access chains
+  if (order.user_id && order.product_id) {
+    try {
+      const { data: grantResult, error: grantError } = await supabase.functions.invoke('grant-access-for-order', {
+        body: {
+          orderId: order.id,
+          grantTelegram: true,
+          grantGetcourse: false,
+        },
+      });
 
-  if (!existingSub && order.user_id && order.product_id) {
-    // Get tariff details for access period
-    let accessEndAt = new Date();
-    accessEndAt.setMonth(accessEndAt.getMonth() + 1); // Default 1 month
+      if (grantError) {
+        console.error(`[payments-reconcile] grant-access-for-order error for order ${order.id}:`, grantError);
+      } else {
+        console.log(`[payments-reconcile] grant-access-for-order success for order ${order.id}:`, grantResult);
+      }
+    } catch (grantErr) {
+      console.error(`[payments-reconcile] grant-access-for-order exception for order ${order.id}:`, grantErr);
+    }
 
-    if (order.tariff_id) {
-      const { data: tariff } = await supabase
-        .from("tariffs")
-        .select("access_duration_days")
-        .eq("id", order.tariff_id)
+    // Notify admins about reconciled payment (preserved side-effect)
+    try {
+      const { data: product } = await supabase
+        .from("products_v2")
+        .select("code, name")
+        .eq("id", order.product_id)
         .single();
 
-      if (tariff?.access_duration_days) {
-        accessEndAt = new Date();
-        accessEndAt.setDate(accessEndAt.getDate() + tariff.access_duration_days);
-      }
-    }
-
-    // Create subscription
-    await supabase.from("subscriptions_v2").insert({
-      order_id: order.id,
-      user_id: order.user_id,
-      product_id: order.product_id,
-      tariff_id: order.tariff_id,
-      status: "active",
-      access_start_at: new Date().toISOString(),
-      access_end_at: accessEndAt.toISOString(),
-      is_trial: false,
-      meta: {
-        source: "reconciliation",
-        bepaid_uid: payment.provider_payment_id,
-        reconciled_at: new Date().toISOString(),
-      },
-    });
-
-    // Create entitlement
-    const { data: product } = await supabase
-      .from("products_v2")
-      .select("code, name")
-      .eq("id", order.product_id)
-      .single();
-
-    if (product?.code) {
-      // Dual-write: user_id + profile_id + order_id
-      const profileId = order.profile_id || null;
-      await supabase.from("entitlements").upsert(
-        {
-          user_id: order.user_id,
-          profile_id: profileId,
-          order_id: order.id,
-          product_code: product.code,
-          status: "active",
-          expires_at: accessEndAt.toISOString(),
-          meta: { source: "reconciliation", order_id: order.id },
-        },
-        { onConflict: "user_id,product_code" }
-      );
-    }
-
-    // Grant Telegram access
-    try {
-      await supabase.functions.invoke("telegram-grant-access", {
-        body: { userId: order.user_id, productId: order.product_id },
-      });
-    } catch (e) {
-      console.error("Error granting Telegram access:", e);
-    }
-
-    // Notify admins about reconciled payment
-    try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("full_name, email, telegram_username")
@@ -601,7 +554,6 @@ async function fixOrderAndCreateSubscription(
         tariff_name: tariffData?.name,
         amount: order.final_price,
         currency: order.currency || 'BYN',
-        
         source_label: 'Платёж восстановлен',
       });
 
@@ -684,7 +636,9 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
     }
   }
 
-  // Create subscription in subscriptions_v2 if user found
+  // LEGACY PATH: Direct writes preserved intentionally — legacy orders lack FK compatibility
+  // with grant-access-for-order. Adding audit warning for traceability.
+  // TODO: Separate discovery needed to determine if legacy orders can be migrated.
   if (userId && productId) {
     // Check if subscription already exists
     const { data: existingSub } = await supabase
@@ -713,10 +667,11 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
           bepaid_uid: bepaidUid,
           legacy_order_id: order.id,
           reconciled_at: now.toISOString(),
+          _warning: "LEGACY_PATH: direct write, bypasses grant-access-for-order. Not compatible with canonical fulfillment.",
         },
       });
 
-      // Create entitlement
+      // Create entitlement (legacy — direct write with audit warning)
       const { data: product } = await supabase
         .from("products_v2")
         .select("code")
@@ -724,8 +679,6 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
         .maybeSingle();
 
       if (product?.code) {
-        // Dual-write: user_id + profile_id + order_id (legacy order - no order_id FK)
-        // Resolve profile_id from userId
         const { data: profileData } = await supabase
           .from("profiles")
           .select("id")
@@ -740,13 +693,17 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
             product_code: product.code,
             status: "active",
             expires_at: accessEndAt.toISOString(),
-            meta: { source: "reconciliation_legacy", legacy_order_id: order.id },
+            meta: {
+              source: "reconciliation_legacy",
+              legacy_order_id: order.id,
+              _warning: "LEGACY_PATH: direct write, bypasses canonical fulfillment and access_rules resolution",
+            },
           },
           { onConflict: "user_id,product_code" }
         );
       }
 
-      // Grant Telegram access
+      // Grant Telegram access (legacy path — direct call)
       try {
         await supabase.functions.invoke("telegram-grant-access", {
           body: { userId, productId },
@@ -755,7 +712,20 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
         console.error("Error granting Telegram access:", e);
       }
 
-      console.info(`Created subscription for legacy order ${order.id}, user ${userId}`);
+      // Audit trail for legacy path usage
+      await supabase.from("audit_logs").insert({
+        actor_type: 'system',
+        actor_label: 'payments-reconcile:legacy_path',
+        action: 'legacy_direct_write_warning',
+        meta: {
+          legacy_order_id: order.id,
+          user_id: userId,
+          product_id: productId,
+          _warning: "Legacy path used direct INSERT into subscriptions_v2/entitlements. Not compatible with grant-access-for-order.",
+        },
+      });
+
+      console.info(`Created subscription for legacy order ${order.id}, user ${userId} (LEGACY PATH — audit warning logged)`);
     }
   }
 

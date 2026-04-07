@@ -817,109 +817,33 @@ Deno.serve(async (req) => {
           const startDate = new Date(paidAt);
           const endDate = new Date(startDate.getTime() + accessDays * 24 * 60 * 60 * 1000);
 
-          // Delegate to centralized grant-access-for-order to avoid subscription duplicates
-          if (mapping.is_subscription && profileUserId) {
+          // CANONICAL FULFILLMENT: delegate ALL access grants to grant-access-for-order
+          // This replaces:
+          // 1. Conditional grant-access (was only for is_subscription)
+          // 2. Direct entitlement INSERT/UPDATE by product_code (was for ALL cases)
+          // 3. Direct entitlement_orders INSERT (now handled by canonical flow)
+          // Post-grant direct writes are PROHIBITED — they overwrite canonical access_rule_id
+          if (profileUserId) {
             try {
-              await supabase.functions.invoke('grant-access-for-order', {
+              const { data: grantResult, error: grantError } = await supabase.functions.invoke('grant-access-for-order', {
                 body: {
                   orderId: newOrder.id,
                   customAccessDays: accessDays,
                   grantTelegram: true,
-                  grantGetcourse: true,
+                  grantGetcourse: false, // GC sync handled separately below
                 },
               });
-              console.log(`[BEPAID-AUTO-PROCESS] Delegated subscription to grant-access-for-order for order ${newOrder.id}`);
-            } catch (grantErr) {
-              console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order error:`, grantErr);
-            }
-          }
 
-          // Create/Update entitlement with GREATEST(expires_at) + entitlement_orders link
-          const { data: product } = await supabase
-            .from('products_v2')
-            .select('code')
-            .eq('id', mapping.product_id)
-            .maybeSingle();
-
-          if (product?.code && profileUserId) {
-            const productCode = product.code;
-            
-            // Check if entitlement_orders already has this order
-            const { data: existingEO } = await supabase
-              .from('entitlement_orders')
-              .select('id')
-              .eq('order_id', newOrder.id)
-              .maybeSingle();
-
-            if (!existingEO) {
-              // Check for existing entitlement for this user+product
-              const { data: existingEntitlement } = await supabase
-                .from('entitlements')
-                .select('id, expires_at')
-                .eq('user_id', profileUserId)
-                .eq('product_code', productCode)
-                .maybeSingle();
-
-              let entitlementId: string;
-              const newExpiresAt = endDate.toISOString();
-
-              if (existingEntitlement) {
-                // Update with GREATEST(expires_at)
-                const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
-                const newExpires = new Date(newExpiresAt);
-                const finalExpires = currentExpires > newExpires ? currentExpires : newExpires;
-
-                await supabase
-                  .from('entitlements')
-                  .update({
-                    expires_at: finalExpires.toISOString(),
-                    status: 'active',
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq('id', existingEntitlement.id);
-
-                entitlementId = existingEntitlement.id;
-                console.log(`[BEPAID-AUTO-PROCESS] Updated entitlement ${entitlementId} expires_at: ${finalExpires.toISOString()}`);
+              if (grantError) {
+                console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order error for order ${newOrder.id}:`, grantError);
               } else {
-                // Insert new entitlement
-                const { data: newEntitlement, error: entError } = await supabase
-                  .from('entitlements')
-                  .insert({
-                    user_id: profileUserId,
-                    profile_id: profileId,
-                    order_id: newOrder.id,
-                    product_code: productCode,
-                    status: 'active',
-                    expires_at: newExpiresAt,
-                    meta: { source: 'bepaid_auto_process', match_type: matchedBy },
-                  })
-                  .select('id')
-                  .single();
-
-                if (entError) {
-                  console.error(`[BEPAID-AUTO-PROCESS] Entitlement insert failed:`, entError);
-                  throw new Error(`Entitlement failed: ${entError.message}`);
-                }
-                entitlementId = newEntitlement.id;
-                console.log(`[BEPAID-AUTO-PROCESS] Created entitlement ${entitlementId}`);
+                console.log(`[BEPAID-AUTO-PROCESS] grant-access-for-order success for order ${newOrder.id}:`, grantResult);
               }
-
-              // Link order → entitlement in entitlement_orders
-              await supabase
-                .from('entitlement_orders')
-                .insert({
-                  order_id: newOrder.id,
-                  entitlement_id: entitlementId,
-                  user_id: profileUserId,
-                  product_code: productCode,
-                  meta: {
-                    source: 'bepaid_auto_process',
-                    match_type: matchedBy,
-                    access_end_at: newExpiresAt,
-                  },
-                });
-              console.log(`[BEPAID-AUTO-PROCESS] Linked order ${newOrder.id} → entitlement ${entitlementId}`);
+            } catch (grantErr) {
+              console.error(`[BEPAID-AUTO-PROCESS] grant-access-for-order exception for order ${newOrder.id}:`, grantErr);
             }
+          } else {
+            console.warn(`[BEPAID-AUTO-PROCESS] No user_id for profile ${profileId}, skipping grant-access-for-order (ghost profile)`);
           }
 
           // === NOTIFY ADMINS ABOUT NEW ORDER ===
