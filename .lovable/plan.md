@@ -2,116 +2,85 @@
 
 &nbsp;
 
-1. Не формулируй root cause как окончательно закрытый только по code-reading.  
-Пиши так: «подтверждён основной root cause по коду; требуется runtime-proof на hard refresh».  
-Иначе подрядчик потом скажет, что это была только гипотеза.
-2. Добавь отдельный обязательный блок «Почему выживает только базовый продукт»:  
+1. Не писать в плане, что нужны «2 правки». По факту кодовая правка одна:  
+src/hooks/useTrainingModules.tsx — заменить  
+const tariffIds = (tcData.userTariffIds || []).sort().join(",");  
+на  
+const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
+2. Отдельно зафиксировать, что stale guard уже проверен и дополнительных кодовых правок не требует. Это не task на изменение, а task на proof. В отчете явно указать:  
 
-  - Бухгалтерия как бизнес остаётся, потому что это direct subscription / base product access;
-  - исчезают secondary sources: entitlement-only, rule-based, module-based, mixed;
-  - подрядчик обязан доказать это на конкретных продуктах пользователя.
+  - guard перед setModules — есть;
+  - guard перед error/toast branch — есть;
+  - guard перед setLoading(false) — есть;
+  - setError в этом хуке не используется.
 3. &nbsp;
-4. В useTrainingModules.tsx не делать gate по tcData === null.  
-Это важно. null может быть валидным итогом.  
-Gate только по tcLoading, иначе можно сломать пользователей без training rules.
-5. В deps для fetchModules лучше требовать не просто tcData, а стабильную зависимость:  
+4. Не закрывать патч формулировкой «по коду всё ок». Нужен обязательный runtime-proof в 3 сценариях:  
 
-  - либо tcData,
-  - либо memoized fingerprint (rules.length, userTariffIds.join(','), version key),  
-  чтобы не получить лишние рефетчи/циклы, если объект пересоздаётся.
-6. &nbsp;
-7. Добавь ещё один обязательный guard:  
-при refresh нельзя очищать текущий список тренингов до завершения нового расчёта, если уже был последний валидный state.  
-Иначе останется визуальный flicker/flash, даже если stale closure исправлен.
-8. Проверять нужно не только useTrainingModules.tsx, но весь путь:  
+  - hard refresh;
+  - прямой вход по URL;
+  - SPA navigation без refresh.
+5. &nbsp;
+6. Добавить обязательную proof-таблицу по продуктам пользователя, чтобы подтвердить гипотезу, что выживает именно base/direct access, а раньше исчезали secondary sources:  
+product | access_source | before refresh | after refresh | should survive | actual
+7. В proof отдельно проверить и отразить гипотезу:  
 
-  - useTrainingModules.tsx
-  - useSidebarModules.ts
-  - useContainerLessons.ts
-  - где формируется финальный merge продуктов/уроков в клиентском кабинете  
-  Подрядчик обязан показать, что во всех трёх местах одинаковая логика ожидания tcLoading.
-9. &nbsp;
-10. Добавь обязательный runtime-proof в 3 режимах:  
+  - Бухгалтерия как бизнес остается как base/direct product access;
+  - исчезали продукты с источником:  
 
-  - hard refresh страницы кабинета;
-  - прямой вход по URL в тренинги;
-  - обычная SPA-навигация без refresh.  
-  Во всех трёх случаях список должен совпадать.
-11. &nbsp;
-12. В proof-таблице добавь ещё две колонки:  
+    - entitlement-only
+    - rule-based
+    - module-based
+    - mixed
+  - &nbsp;
+8. &nbsp;
+9. DoD переформулировать жёстко:  
 
-  - render_source_before_fix
-  - render_source_after_fix  
-  Чтобы было видно, где продукт теряется: на fetch, на tc-filter, на sidebar filter или на final render.
-13. &nbsp;
-14. Добавь STOP-guard:  
-
-  - нельзя чинить через хардкод product_id;
-  - нельзя чинить через исключение для Бухгалтерия как бизнес;
-  - нельзя чинить через отключение training_content фильтрации целиком.
-15. &nbsp;
-16. В DoD добавь отдельный критерий:  
-после reload вторичные доступы не только видны в списке тренингов, но и реально открывают дерево модулей/уроков без пустого контейнера.
+  - после hard refresh список тренингов совпадает с реальными доступами;
+  - sidebar и страница тренингов показывают одинаковую картину;
+  - secondary access sources не исчезают;
+  - нет пустого контейнера/пустого дерева уроков после reload;
+  - proof приложен по 3 сценариям.
+10. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Копируемый блок для вставки в план:
+Копируемый блок для отправки:
 
-Дополнительные обязательные правки к плану:
-
-&nbsp;
-
-1. Не считать root cause полностью закрытым только по code-reading. Формулировка: “подтверждён основной root cause по коду; требуется runtime-proof на hard refresh”.
+Финализируй план с учетом правок:
 
 &nbsp;
 
-2. Отдельно проверить и доказать гипотезу:
+1. Кодовая правка по факту одна:
 
-   “Бухгалтерия как бизнес” остаётся после refresh как базовый direct subscription/direct product access,
+   Файл: src/hooks/useTrainingModules.tsx
 
-   а пропадают именно secondary access sources:
+   Было:
 
-   - entitlement-only
+   const tariffIds = (tcData.userTariffIds || []).sort().join(",");
 
-   - rule-based
+   Нужно:
 
-   - module-based
-
-   - mixed access
+   const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
 
 &nbsp;
 
-3. Gate делать только по tcLoading, а НЕ по tcData === null.
+2. Stale guard не выносить как отдельную кодовую правку — он уже проверен и дополнительных изменений не требует.
 
-   Null может быть легитимным состоянием пользователя без training rules.
+   В отчете отдельно зафиксируй proof:
 
-&nbsp;
+   - guard перед setModules — есть
 
-4. В зависимостях fetchModules использовать безопасную/stable зависимость от training-content данных
+   - guard перед error/toast branch — есть
 
-   (tcData или memoized fingerprint), чтобы не получить лишние циклы/рефетчи.
+   - guard перед setLoading(false) — есть
 
-&nbsp;
-
-5. Добавить защиту от визуального коллапса:
-
-   если уже есть последний валидный modules state, не очищать его до завершения нового корректного расчёта после refresh.
+   - setError в хуке не используется
 
 &nbsp;
 
-6. Проверить и синхронизировать одинаковую логику ожидания tcLoading в:
-
-   - useTrainingModules.tsx
-
-   - useSidebarModules.ts
-
-   - useContainerLessons.ts
-
-&nbsp;
-
-7. Обязательный runtime-proof в 3 сценариях:
+3. Патч не закрывать без runtime-proof в 3 сценариях:
 
    - hard refresh
 
@@ -121,136 +90,108 @@ Gate только по tcLoading, иначе можно сломать поль�
 
 &nbsp;
 
-8. В proof-таблицу добавить колонки:
+4. Добавь обязательную proof-таблицу:
 
-   - render_source_before_fix
-
-   - render_source_after_fix
+   product | access_source | before refresh | after refresh | should survive | actual
 
 &nbsp;
 
-9. STOP-guards:
+5. Отдельно проверь и докажи гипотезу:
 
-   - без хардкода product_id
+   - “Бухгалтерия как бизнес” остается как base/direct product access
 
-   - без special-case только для “Бухгалтерия как бизнес”
+   - раньше исчезали secondary access sources:
 
-   - без отключения training_content фильтрации целиком
+     - entitlement-only
+
+     - rule-based
+
+     - module-based
+
+     - mixed
 
 &nbsp;
 
-10. DoD:
+6. Финальный DoD:
 
-   после reload вторичные доступы не только видны в списке тренингов, но и реально открывают модули/уроки без пустого контейнера.
+   - после hard refresh список тренингов совпадает с реальными доступами
+
+   - sidebar и страница тренингов показывают одинаковую картину
+
+   - secondary access sources не исчезают
+
+   - нет пустого контейнера/пустого дерева уроков после reload
+
+   - приложен proof по всем 3 сценариям
 
 &nbsp;
 
-## План: Fix — тренинги исчезают после refresh (stale closure + race condition)
+## План: Финализация патча — 2 правки + runtime-proof
 
 ---
 
-### Root cause (подтверждён по коду)
+### Правка 1: Мутация массива в tcFingerprint
 
-**Файл:** `src/hooks/useTrainingModules.tsx`, строки 63-64, 212-213, 318
+**Файл:** `src/hooks/useTrainingModules.tsx`, строка 71
 
-`fetchModules` создаётся через `useCallback` с зависимостями `[user?.id, isAdminUser]`, но **использует `tcData` из замыкания** (строки 212-213) без включения в массив зависимостей (строка 318).
+Сейчас:
 
-**Механизм:**
+```typescript
+const tariffIds = (tcData.userTariffIds || []).sort().join(",");
+```
 
-1. **После refresh:** React Query кэш пуст → `tcData = null` → `fetchModules` запускается с `tcData=null` → модули вычисляются **без training_content правил**
-2. Когда `tcData` загружается позже, `fetchModules` **не пересоздаётся** (нет в deps) → результат застаревший
-3. Synthetic `legacy-safe` правила (из `resolveBonusScopeRules`) для entitlements без `scope_resolution_mode` генерируют partial-фильтр с **пустым** `allowed_module_ids` → при повторном рендере через `useSidebarModules.filteredModules` эти модули скрываются
+`.sort()` мутирует оригинальный массив `tcData.userTariffIds`. Нужно:
 
-**Почему «Бухгалтерия как бизнес» выживает:**
-Это прямой базовый продукт/подписка (direct subscription product). Его entitlement либо имеет `scope_resolution_mode` (исключающий его из synthetic-legacy генерации), либо имеет DB-правило `training_content` приоритета 1-2. Все исчезающие тренинги — это secondary access sources: entitlement-only, rule-based, module-based.
-
-**Рассинхрон sidebar vs page:** `useSidebarModules` использует React Query (пересчитывает при загрузке tcData через `useMemo`), а `useTrainingModules` использует ручной `useState` + `useCallback` (не пересчитывает).
+```typescript
+const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
+```
 
 ---
 
-### Обязательная гипотеза (discovery)
+### Правка 2: Проверка stale guard — УЖЕ ОК
 
-Проверить, что после refresh:
+Проверено по коду: `fetchId !== fetchIdRef.current` стоит перед **каждым** setState:
 
-- остаются ТОЛЬКО продукты с direct subscription/direct product access
-- исчезают ВСЕ продукты с entitlement-only / rule-based / module-based / mixed access
-- причина — fetchModules при `tcData=null` применяет synthetic legacy-safe partial filter с пустым allowlist, что убивает доступ к secondary products
+- Строка 320: перед `setModules(finalModules)` ✓
+- Строка 323: перед `console.error` + `toast.error` ✓  
+- Строка 327: перед `setLoading(false)` ✓
 
-Proof-таблица по каждому тренингу: product | visible before refresh | visible after refresh | access source | should survive reload | actual result
+`setError` не используется — нет `useState` для error. Ошибки обрабатываются через `toast.error`.
 
----
-
-### Phase 1: Основной fix — `useTrainingModules.tsx`
-
-**Изменение 1:** Добавить `tcData` в зависимости `useCallback` (строка 318):
-
-```typescript
-}, [user?.id, isAdminUser, tcData]);
-```
-
-**Изменение 2:** Race condition guard через `useRef`:
-
-```typescript
-const fetchIdRef = useRef(0);
-// В начале fetchModules:
-const fetchId = ++fetchIdRef.current;
-// Перед setModules/setLoading:
-if (fetchId !== fetchIdRef.current) return;
-```
-
-**Изменение 3:** Не запускать fetch пока tcData не загружен (для non-admin):
-
-```typescript
-const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
-// В useEffect:
-useEffect(() => {
-  if (!isAdminUser && tcLoading) return;
-  fetchModules();
-}, [fetchModules, isAdminUser, tcLoading]);
-```
-
-### Phase 2: Консистентность sidebar — `useSidebarModules.ts`
-
-Добавить `tcLoading` guard в `filteredModules`:
-
-```typescript
-const { data: tcRawData, isLoading: tcLoading } = useActiveTrainingContentRules();
-const filteredModules = useMemo(() => {
-  if (isAdminUser || tcLoading || !tcData || !tcData.rules.length) return modules;
-  // ...existing filtering...
-}, [modules, isAdminUser, tcData, tcLoading]);
-```
-
-### Phase 3: Аналогичная защита — `useContainerLessons.ts`
-
-Добавить `tcLoading` guard в секции PATCH B фильтрации (строка ~155), чтобы не применять tc-filter пока rules загружаются.
+**Вывод:** stale guard полный, правок не требует.
 
 ---
 
-### Что НЕ делается
+### Правка 3: Runtime-proof (3 сценария)
 
-- Не меняются данные в БД (0 изменений)
-- Не хардкодятся product_id, user_id, списки тренингов
-- Не меняется логика доступа (entitlements, rules, subscriptions)
-- Только fix stale closure и race condition в UI-хуках
+После применения правки 1, требуется runtime-proof на реальном пользователе с несколькими источниками доступа:
+
+1. **Hard refresh** страницы кабинета
+2. **Прямой вход по URL** в тренинги
+3. **SPA navigation** без refresh
+
+Во всех трёх случаях список тренингов должен совпадать.
+
+Дополнительно — proof-таблица по гипотезе:
+
+
+| product | access_source | before refresh | after refresh | should survive | actual |
+| ------- | ------------- | -------------- | ------------- | -------------- | ------ |
+
+
+---
 
 ### Файлы для изменения
 
 
-| Файл                               | Изменение                                 |
-| ---------------------------------- | ----------------------------------------- |
-| `src/hooks/useTrainingModules.tsx` | tcData в deps, race guard, tcLoading gate |
-| `src/hooks/useSidebarModules.ts`   | tcLoading guard в filteredModules         |
-| `src/hooks/useContainerLessons.ts` | tcLoading guard в PATCH B секции          |
+| Файл                               | Изменение                      |
+| ---------------------------------- | ------------------------------ |
+| `src/hooks/useTrainingModules.tsx` | Строка 71: spread перед sort() |
 
 
 ### DoD
 
-1. После refresh список тренингов совпадает с реальными доступами
-2. fetchModules пересчитывается при загрузке tcData
-3. Нет race condition между параллельными fetchModules
-4. Sidebar и библиотека показывают консистентную картину
-5. Secondary access sources (entitlement-only, rule-based, module-based) не исчезают после reload
-6. «Бухгалтерия как бизнес» не остаётся единственным продуктом
-7. 0 изменений данных в БД
-8. Proof-таблица: product | before | after | access_source | should_survive | actual
+1. `sort()` не мутирует исходный массив
+2. Stale guard подтверждён перед каждым setState
+3. Runtime-proof в 3 сценариях пройден
+4. Proof-таблица по access sources предоставлена
