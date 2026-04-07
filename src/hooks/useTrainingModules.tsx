@@ -68,7 +68,7 @@ export function useTrainingModules() {
   const tcFingerprint = useMemo(() => {
     if (!tcData) return "null";
     const ruleIds = tcData.rules.map(r => r.id).sort().join(",");
-    const tariffIds = (tcData.userTariffIds || []).sort().join(",");
+    const tariffIds = [...(tcData.userTariffIds || [])].sort().join(",");
     return `${ruleIds}|${tariffIds}`;
   }, [tcData]);
 
