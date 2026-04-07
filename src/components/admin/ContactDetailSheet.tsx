@@ -1180,56 +1180,36 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
       const syncResults: Record<string, { success: boolean; error?: string }> = {};
 
       if (!createDealOnly && !isGhostContact) {
-        // 3. Check for existing active subscription and extend or create new
-        const { data: existingSub } = await supabase
-          .from("subscriptions_v2")
-          .select("id, access_end_at")
-          .eq("user_id", contact.user_id!)
-          .eq("product_id", grantProductId)
-          .eq("tariff_id", grantTariffId)
-          .in("status", ["active", "trial"])
-          .is("canceled_at", null)
-          .gte("access_end_at", now.toISOString())
-          .order("access_end_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        // 3. CANONICAL FULFILLMENT: Call grant-access-for-order instead of direct INSERT
+        // This ensures entitlements, access_rules resolution, and all side-effects are created
+        try {
+          const { data: grantResult, error: grantError } = await supabase.functions.invoke(
+            "grant-access-for-order",
+            {
+              body: {
+                order_id: orderV2.id,
+                source: "admin_grant",
+              },
+            }
+          );
 
-        if (existingSub) {
-          // Extend existing subscription to use the later date
-          const currentEnd = new Date(existingSub.access_end_at);
-          const newEnd = accessEnd > currentEnd ? accessEnd : new Date(currentEnd.getTime() + grantDays * 24 * 60 * 60 * 1000);
-          await supabase.from("subscriptions_v2").update({
-            access_end_at: newEnd.toISOString(),
-            order_id: orderV2.id,
-          }).eq("id", existingSub.id);
-          subscriptionId = existingSub.id;
-        } else {
-          // Create new subscription with custom dates
-          // PATCH: Always enable auto_renew for Club/Installment products per policy
-          const activePaymentMethod = paymentMethods?.find(pm => pm.status === 'active');
-          const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
-            user_id: contact.user_id!,
-            order_id: orderV2.id,
-            product_id: grantProductId,
-            tariff_id: grantTariffId,
-            status: "active",
-            is_trial: false,
-            access_start_at: accessStart.toISOString(),
-            access_end_at: accessEnd.toISOString(),
-            next_charge_at: accessEnd.toISOString(),
-            auto_renew: true,
-            payment_method_id: activePaymentMethod?.id || null,
-          }).select().single();
-          if (subError) throw subError;
-          subscriptionId = newSub.id;
+          if (grantError) {
+            console.error("grant-access-for-order error:", grantError);
+            // Don't throw - order is already created, log the issue
+            toast.warning("Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке.");
+          } else {
+            subscriptionId = grantResult?.subscription_id || null;
+          }
+        } catch (grantErr) {
+          console.error("grant-access-for-order call failed:", grantErr);
+          toast.warning("Сделка создана, но выдача доступа требует ручного действия.");
         }
 
-        // 4. Grant Telegram access if product has club
+        // 4. Grant Telegram access if product has club (separate from canonical fulfillment)
         // NOTE: telegram-grant-access function already creates telegram_access_grants record
         // Do NOT insert manually to avoid duplicates!
         if (product?.telegram_club_id) {
           try {
-            // Grant Telegram access via edge function (it handles telegram_access_grants insert)
             const { error: tgError } = await supabase.functions.invoke("telegram-grant-access", {
               body: {
                 user_id: contact.user_id,
@@ -1249,16 +1229,14 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           }
         }
 
-        // 5. Sync to GetCourse using the created order (so gc_deal_number is saved for future revoke/cancel)
+        // 5. Sync to GetCourse using the created order
         const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
         if (gcOfferId) {
           try {
             const { data: gcResult, error: gcError } = await supabase.functions.invoke("test-getcourse-sync", {
               body: {
                 orderId: orderV2.id,
-                // Fallbacks (function will prefer order/tariff data when orderId is provided)
                 email: contact.email,
-                // Guard: if gcOfferId is a non-numeric string, pass as-is (some offer codes are alphanumeric)
                 offerId: (() => {
                   if (typeof gcOfferId === 'number') return gcOfferId;
                   if (typeof gcOfferId === 'string') {
@@ -1281,13 +1259,6 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           } catch (err) {
             syncResults.getcourse = { success: false, error: (err as Error).message };
           }
-        }
-
-        // Update subscription meta with sync results
-        if (subscriptionId && Object.keys(syncResults).length > 0) {
-          await supabase.from("subscriptions_v2").update({
-            meta: { sync_results: syncResults, synced_at: now.toISOString() },
-          }).eq("id", subscriptionId);
         }
       }
 

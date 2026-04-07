@@ -339,42 +339,29 @@ export function BulkCreateDealsDialog({
               .eq('id', payment.id);
           }
 
-          // 3. Grant access if applicable
+          // 3. Grant access via canonical fulfillment (grant-access-for-order)
           if (shouldGrantAccess && profile.user_id) {
+            try {
+              const { data: grantResult, error: grantError } = await supabase.functions.invoke(
+                "grant-access-for-order",
+                {
+                  body: {
+                    order_id: newOrder.id,
+                    source: "admin_bulk_from_payments",
+                  },
+                }
+              );
+
+              if (grantError) {
+                console.error("grant-access-for-order error for order", newOrder.id, grantError);
+                // Don't fail the whole batch, log and continue
+              }
+            } catch (grantErr) {
+              console.error("grant-access-for-order call failed:", grantErr);
+            }
+
+            // Telegram access (separate side-effect)
             const days = differenceInDays(accessEnd, accessStart) + 1;
-            
-            // Create subscription
-            const { data: activeCard } = await supabase
-              .from('payment_methods')
-              .select('id')
-              .eq('user_id', profile.user_id)
-              .eq('status', 'active')
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            await supabase.from('subscriptions_v2').insert({
-              user_id: profile.user_id,
-              order_id: newOrder.id,
-              product_id: productId,
-              tariff_id: tariffId,
-              status: 'active',
-              is_trial: false,
-              access_start_at: accessStart.toISOString(),
-              access_end_at: accessEnd.toISOString(),
-              next_charge_at: accessEnd.toISOString(),
-              auto_renew: true,
-              payment_method_id: activeCard?.id || null,
-              meta: {
-                recurring_amount: payment.amount,
-                recurring_currency: payment.currency,
-                created_from: 'admin_bulk_from_payments',
-              },
-            });
-
-            // Grant Telegram access if product has club
-            // NOTE: telegram-grant-access function already creates telegram_access_grants record
-            // Do NOT insert manually to avoid duplicates!
             if (selectedProduct?.telegram_club_id) {
               await supabase.functions.invoke('telegram-grant-access', {
                 body: {
@@ -390,14 +377,13 @@ export function BulkCreateDealsDialog({
               });
             }
 
-            // Sync to GetCourse
+            // GetCourse sync
             const gcOfferId = selectedTariff?.getcourse_offer_id || selectedTariff?.getcourse_offer_code;
             if (gcOfferId) {
               await supabase.functions.invoke('test-getcourse-sync', {
                 body: {
                   orderId: newOrder.id,
                   email: profile.email,
-                  // Guard: if gcOfferId is a non-numeric string, pass as-is
                   offerId: (() => {
                     if (typeof gcOfferId === 'number') return gcOfferId;
                     if (typeof gcOfferId === 'string') {
