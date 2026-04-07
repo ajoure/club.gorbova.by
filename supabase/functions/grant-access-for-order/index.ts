@@ -488,6 +488,35 @@ Deno.serve(async (req) => {
     const shouldAutoRenew = isSubscriptionFlow && hasPaymentMethod;
     console.log(`User ${userId} payment method: ${userPaymentMethod?.id || 'none'}, payment_flow: ${paymentFlow}, isSubscriptionFlow: ${isSubscriptionFlow}, auto_renew: ${shouldAutoRenew}`);
 
+    // PATCH-ORDER-BASED-SKIP-SUB: Check entitlement_mode from products_v2.
+    // If product is order_based_only, skip subscription creation/extension entirely.
+    const { data: productEntMode } = await supabase
+      .from('products_v2')
+      .select('entitlement_mode')
+      .eq('id', productId)
+      .maybeSingle();
+
+    const isOrderBasedOnly = productEntMode?.entitlement_mode === 'order_based_only';
+
+    if (isOrderBasedOnly) {
+      console.log(`[grant-access-for-order] SKIP subscription: product ${productId} is order_based_only`);
+      results.subscription = { action: 'skipped', reason: 'order_based_only' };
+
+      await supabase.from('audit_logs').insert({
+        action: 'grant-access-for-order.subscription_skipped',
+        actor_type: 'system',
+        actor_user_id: null,
+        actor_label: 'grant-access-for-order',
+        target_user_id: userId,
+        meta: {
+          order_id: orderId,
+          product_id: productId,
+          entitlement_mode: 'order_based_only',
+          reason: 'order_based_only products do not create subscriptions',
+        },
+      });
+    } else
+
     // 3. Create or UPDATE subscription - use existingProductSub to avoid duplicates!
     // If there's already an active subscription for this user+product, EXTEND it instead of creating new
     if (existingProductSub) {
