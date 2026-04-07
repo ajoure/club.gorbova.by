@@ -1,294 +1,261 @@
-## да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **RetroApply не привязывать к BUSINESS вообще.**
-  Это должен быть **универсальный механизм retroapply правил доступа** для любых продуктов, тарифов и правил, а не отдельная функция под BUSINESS cohort.
-2. **Переименовать PATCH-D** из BUSINESS retroapply в что-то вроде:
-  **RULES-RETROAPPLY ENGINE** / **RetroApply existing access rules to historical purchases**.
-  Смысл: после изменения access_rules администратор может вручную применить новые правила к уже существующей исторической базе.
-3. **Source of truth только общий:**
+1. **PATCH-D переименовать и обобщить.**
+  Это не BUSINESS retroapply, а **универсальный RetroApply engine для любых правил**.
+  Он должен работать:
   &nbsp;
-  - access_rules
-  - orders_v2
-  - subscriptions_v2
-  - entitlements
-  - products_v2
-    Без хардкода BUSINESS, club, конкретных product_id или tariff_id в логике движка.
+  - не только для BUSINESS,
+  - не только для клуба,
+  - не только для product_access,
+  - а для любых изменённых правил, где нужен ретро-прогон по уже существующей когорте.
   &nbsp;
-4. **Точка запуска должна быть из админки как ручное действие.**
-  Не автоматом при каждом изменении правила, а через явный запуск:
+2. **В формулировке цели PATCH-D убрать хардкод BUSINESS.**
+  Правильно так:
+  **если админ меняет access_rules / добавляет новые target-продукты / меняет duration / включает новое правило, система автоматически не пересчитывает исторические записи; для этого нужен ручной RetroApply preview → execute.**
+3. **Scope RetroApply должен быть универсальным.**
+  В UI и в функции должны быть режимы:
   &nbsp;
-  - preview
-  - dry-run
-  - execute
-    То есть админ сначала видит, кого затронет новое правило, и только потом применяет.
+  - по rule_id,
+  - по всем rules конкретного продукта,
+  - по всем rules конкретного тарифа,
+  - по changed_since,
+  - опционально по группе target products.
+    Не ограничивать только source_tariff_id = BUSINESS.
   &nbsp;
-5. **RetroApply должен работать для любых сценариев:**
+4. **Нужно явно разделить 2 действия RetroApply.**
   &nbsp;
-  - добавили новый продукт в уже существующее правило
-  - поменяли target у правила
-  - включили rule, которое раньше было выключено
-  - изменили duration_days
-  - переключили на align_with_source
-  - добавили новое правило для старого тарифа/старого продукта
-  - изменили eligibility conditions (prior_purchase, per_product и т.д.)
+  - grant missing access
+  - recalculate existing access
+    Это должны быть **два независимых режима**, а не неявная логика.
+    Чекбокс recalculate_existing оставить, но в тексте UI прямо объяснить, что он делает.
   &nbsp;
-6. **Логика retroapply должна быть rule-centric, а не tariff-centric.**
-  На входе не “когорта BUSINESS”, а:
+5. **В PATCH-D добавить важную эксплуатационную норму.**
+  После изменения правил:
   &nbsp;
-  - rule_id
-  - режим запуска (preview / execute)
-  - scope запуска: одна rule или набор rules
-    Дальше движок сам определяет, какие пользователи подпадают под rule по текущим данным.
+  - **новые** оплаты идут по обычному canonical fulfillment и получают доступ автоматически;
+  - **старые** уже существующие оплаты/подписки автоматически не пересчитываются;
+  - для них админ запускает RetroApply вручную.
+    Это и есть ответ на вопрос “что будет, если потом добавить новый вебинар/продукт к тарифу”.
   &nbsp;
-7. **Нужен режим запуска не только по одному rule, но и по набору изменённых rules.**
-  Например:
+6. **PATCH-D DoD уточнить.**
+  Нужно не просто “engine задеплоен”, а:
   &nbsp;
-  - retroapply одной конкретной rule
-  - retroapply всех rules, изменённых после определённой даты
-  - retroapply всех active rules для конкретного source product/tariff
+  - preview показывает корректную когорту,
+  - execute создаёт/обновляет только то, что реально следует из rules,
+  - повторный execute = 0 creates / 0 updates,
+  - дублей не создаёт,
+  - записи получают source_rule_id, batch_id, source_window_rule, source_subscription_id/source_order_id по ситуации.
   &nbsp;
-8. **Нужна отдельная сущность/кнопка в админке уровня “Применить правила к историческим данным”.**
-  Не “выдать BUSINESS cohort”, а универсальный UI:
+7. **PATCH-C оставить с жёсткой оговоркой.**
+  Этот патч решает только **утечку child modules в UI**.
+  Он **не восстанавливает** модули, если они реально не положены по правилам.
+  Это нужно оставить в плане прямым текстом, чтобы подрядчик не “рисовал” доступы кодом.
+8. **PATCH-A закрывать только с конкретными repaired IDs.**
+  В финальном proof должны быть:
   &nbsp;
-  - выбрать rule
-  - посмотреть preview affected users
-  - увидеть conflicts/skips
-  - нажать execute
+  - entitlement_id,
+  - email,
+  - old_expires_at,
+  - new_expires_at,
+  - business_subscription_id,
+  - audit_log_id.
+    Не просто “3 записи обновлены”.
   &nbsp;
-9. **RetroApply не должен безусловно перезаписывать существующие доступы.**
-  Должны быть отдельные категории:
+9. **PATCH-B оставить закрытым, но с одной канонической цифрой.**
+  Зафиксировать в плане только один итог:
   &nbsp;
-  - missing_access — можно создать
-  - aligned_update_needed — можно обновить срок
-  - conflict_existing_access — только в отчёт
-  - already_satisfied — skip
-  - condition_not_met — skip
+  - total_business_users = 110
+  - money_by_active_entitlements = 110
+  - created_by_batch = 109
+  - existed_before_batch = 1
+  - still_missing = 0
+  - duplicates = 0
+    Старые цифры 122 больше не использовать.
   &nbsp;
-10. **Нужен общий механизм expiry resolution для всех rules:**
-  &nbsp;
-  - duration_days IS NULL → срок определяется source window по правилу
-  - duration_days IS NOT NULL → срок считается по rule
-  - если source window отсутствует, retroapply не должен придумывать срок сам, а должен класть кейс в conflicts/review
-  &nbsp;
-11. **Нужно явно разделить 2 режима retroapply:**
-  &nbsp;
-  - **grant missing access**
-  - **recalculate existing access**
-    Потому что иногда нужно только довыдать новые продукты, а иногда — ещё и пересчитать срок уже существующих доступов после изменения правила.
-  &nbsp;
-12. **Добавить stop-guard:**
-  если rule change может затронуть много пользователей, execute запрещён без preview summary:
-  &nbsp;
-  - сколько create
-  - сколько update
-  - сколько skip
-  - сколько conflict
-  &nbsp;
-13. **Артефакты PATCH-D переписать как универсальные:**
-  &nbsp;
-  - rules_retroapply_preview.csv
-  - rules_retroapply_after.csv
-  - rules_retroapply_duplicates_check.csv
-  - rules_retroapply_conflicts.csv
-  &nbsp;
-14. **Правило эксплуатации для админа переписать так:**
-  &nbsp;
-  - изменение rule в админке **не обязано автоматически** переработать всю историческую базу
-  - для уже существующих исторических покупок нужен **отдельный ручной RetroApply**
-  - для новых оплат после изменения rules всё должно работать автоматически через обычный fulfillment flow
-  &nbsp;
-15. **В финальном DoD PATCH-D зафиксировать универсальность:**
-  &nbsp;
-  - работает не только для BUSINESS
-  - работает для любого source product / source tariff / source rule
-  - не содержит хардкодов под конкретный клуб или конкретный тариф
-  &nbsp;
+10. **PATCH-D UI разместить не как историю про BUSINESS, а как системный инструмент на вкладке правил доступа.**
+  В ProductAccessRulesTab это должен быть общий блок:
 
 &nbsp;
 
 &nbsp;
 
-Итоговая формулировка для плана должна быть такой:
+&nbsp;
 
-**RetroApply — это универсальный ручной механизм применения новых или изменённых access_rules к историческим данным по всем продуктам и тарифам, а не специальная логика только для BUSINESS.**
+- “RetroApply правил”
+- preview
+- execute
+- summary
+- conflicts
+  То есть инструмент должен применяться к любой конфигурации rules, а не только к одному тарифу.
 
 &nbsp;
 
-План: 4 патча — cb20 repair, Деньги BY closure, LibraryModule access filter, BUSINESS retroapply
+&nbsp;
+
+&nbsp;
+
+11. **В PATCH-D добавить STOP-guard по конфликтам, не только по количеству.**
+  Блокировать execute не только при >200 missing_access, но и если есть:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- conflict_existing,
+- no_source_window,
+- неоднозначный source,
+  если админ явно не подтвердил продолжение.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. **Итоговый статусный блок переписать так:**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- **A** — закрыт по data-proof
+- **B** — закрыт по proof
+- **C** — закрыт только как UI access-filter fix
+- **D** — универсальный RetroApply engine: preview/execute/idempotency/UI
+  То есть не “BUSINESS retroapply”, а **global rules retroapply**.
+
+&nbsp;
+
+&nbsp;
+
+Итог: сам план правильный по направлению, но его нужно **обезличить от BUSINESS** и превратить в **общую системную механику ретро-применения любых изменений правил доступа к уже существующим историческим покупкам/подпискам**.
+
+&nbsp;
+
+&nbsp;
+
+## План: Финализация proof-пакетов по 4 патчам + UI для RetroApply
 
 ---
 
-### PATCH-A: CB20 expiry alignment
+### Текущее состояние по данным из БД (свежий proof)
 
-**Статус:** ОТКРЫТ — 3 DRIFT-кейса не исправлены
+**PATCH-A:** DRIFT = 0 (90 aligned, 0 drift). Audit logs найдены:
 
-**Текущее состояние (свежий proof):**
+- `f555a2e9` ([ossiptschik@mail.ru](mailto:ossiptschik@mail.ru)): 2026-04-08 → 2026-05-07 ✅
+- `16f8ab42` ([meryloiko@gmail.com](mailto:meryloiko@gmail.com)): 2026-04-08 → 2026-05-07 ✅  
+- `144583fd` ([teterya@tut.by](mailto:teterya@tut.by)): 2026-04-08 → 2026-05-07 ✅
 
+**PATCH-B:** Расхождение 122 vs 110 разрешено — **каноническая цифра: 110.**
 
-| email                                             | cb20_expires     | business_end     | drift |
-| ------------------------------------------------- | ---------------- | ---------------- | ----- |
-| [ossiptschik@mail.ru](mailto:ossiptschik@mail.ru) | 2026-04-08 12:00 | 2026-05-07 20:59 | −29д  |
-| [meryloiko@gmail.com](mailto:meryloiko@gmail.com) | 2026-04-08 12:00 | 2026-05-07 20:59 | −29д  |
-| [teterya@tut.by](mailto:teterya@tut.by)           | 2026-04-08 12:00 | 2026-05-07 20:59 | −29д  |
+- total_business_users = 110
+- money_by_active_entitlements = 110
+- created_by_batch = 109
+- existed_before_batch = 1 (canonical runtime)
+- still_missing = 0
+- duplicates = 0
 
+Причина расхождения: ранний proof (122) считал подписки с другим фильтром. Текущий proof по `status IN ('active','past_due')` — каноничен.
 
-**Действие:**
+**PATCH-C:** Код фильтрации `accessibleChildren` через `allModules.has_access` присутствует (строки 97-103 LibraryModule.tsx). Нужен UI-proof.
 
-1. UPDATE 3 записей entitlements: `expires_at = MAX(access_end_at)` по active/past_due BUSINESS subscription пользователя
-2. INSERT audit_log с action `entitlement.repaired` и snapshot до/после
-3. Каноническая формула: `MAX(access_end_at) WHERE status IN ('active','past_due') AND tariff.code = 'business'`
-
-**DoD:**
-
-- cb20 active entitlements с BUSINESS: ~90
-- aligned: ~90
-- drift: 0
-- у всех repaired записей есть audit_log с `source_rule_id`, `business_subscription_id`
-
-**Артефакт:** `cb20_expiry_alignment_after.csv`
+**PATCH-D:** Edge function `rules-retroapply` задеплоена. UI в админке **отсутствует**. Нужен execute-proof + UI.
 
 ---
 
-### PATCH-B: Деньги BY retro-backfill
+### Шаг 1: Генерация proof-артефактов (CSV)
 
-**Статус:** ЗАКРЫТ ✅
+Без изменений кода. Через SQL → CSV:
 
-Proof подтвержден:
-
-- 122 active entitlements, 0 дублей, 0 missing, 0 misaligned expires_at
-- Все записи имеют `source_rule_id: 6ba9727e`, `batch_id`, `business_subscription_id`
-
-**Обязательная постпроверка (DoD дополнение):**
-
-- retro cohort fixed ✅
-- new order auto-grant verified — нужен proof на 1 свежем BUSINESS order после создания правила `6ba9727e`, что entitlement создается автоматически через `grant-access-for-order` без batch backfill
-
-**Архитектурная фиксация:**
-
-- Правило `6ba9727e` безусловное (`conditions.rule_purpose = bonus`, нет `condition_type`)
-- Новые BUSINESS orders получают «Деньги BY» автоматически через `grant-access-for-order` → `product_access` rules engine
-- Backfill был нужен ТОЛЬКО для когорты, подписавшейся ДО создания правила (retro-apply gap)
+1. **cb20_expiry_alignment_after.csv** — 3 repaired записи: entitlement_id, email, old_expires_at, new_expires_at, business_subscription_id, audit_log_id
+2. **money_by_backfill_after.csv** — 110 записей: user_id, email, entitlement_id, expires_at, source_rule_id, batch_id, business_subscription_id
+3. **money_by_duplicates_check.csv** — proof: 0 дублей
+4. **library_root_children_access_proof.csv** — root_module_id, child_module_id, child_slug, has_access (из allModules), lesson_count, visible_in_ui_after_fix
 
 ---
 
-### PATCH-C: LibraryModule child access filtering
+### Шаг 2: PATCH-D — Execute-proof + idempotency proof
 
-**Статус:** В РАБОТЕ
-
-**Проблема:** access leak — строки 88-93 `LibraryModule.tsx` загружают дочерние модули напрямую из `training_modules` без фильтрации через `has_access` из `allModules` (useTrainingModules).
-
-**Fix в `src/pages/LibraryModule.tsx`:**
-
-1. После получения `children` из supabase, отфильтровать через `allModules`:
-
-```typescript
-const accessibleChildren = (children || []).filter(child => {
-  const moduleInfo = allModules.find(m => m.id === child.id);
-  return moduleInfo?.has_access !== false;
-});
-```
-
-2. Вернуть `accessibleChildren` вместо `children`
-3. Счётчик уроков в header считать только по `accessibleChildren`
-4. Если после фильтрации `accessibleChildren` пусто — показывать empty state
-
-**DoD:**
-
-- пользователь видит только accessibleChildren
-- счётчик уроков считается только по accessibleChildren
-- если после фильтрации children пусто — показывается empty state
-- direct lessons сценарий (модули с собственными уроками) не ломается
-
-**Артефакт:** `library_root_children_access_proof.csv` — поля: `root_module_id, child_module_id, child_slug, has_access, lesson_count, visible_in_ui_after_fix`
+1. Вызвать `rules-retroapply` с `mode: "preview"`, `rule_ids: ["6ba9727e..."]` → сохранить как `rules_retroapply_preview.csv`
+2. Вызвать `rules-retroapply` с `mode: "execute"`, `rule_ids: ["6ba9727e..."]` на безопасной rule (Деньги BY — все уже satisfied) → proof что 0 creates, 0 updates
+3. Повторный вызов → proof idempotency: 0 creates, 0 updates
+4. Сохранить `rules_retroapply_after.csv`, `rules_retroapply_duplicates_check.csv`
 
 ---
 
-### PATCH-D: BUSINESS retroapply for newly added rules (НОВЫЙ)
+### Шаг 3: PATCH-D — UI для RetroApply в админке
 
-**Суть:** Когда в админке к BUSINESS-тарифу добавляют новый продукт через `access_rules`, правило срабатывает только для НОВЫХ оплат/продлений через `grant-access-for-order`. Текущая активная когорта BUSINESS (122 подписчика) НЕ получает новый продукт автоматически.
+**Расположение:** Вкладка «Доступы» (`ProductAccessRulesTab.tsx`) — добавить кнопку/блок «Применить правила к существующим подписчикам».
 
-**Архитектурная норма (зафиксировать как правило системы):**
+**Компонент:** `RetroApplyPanel` внутри `ProductAccessRulesTab`
 
-- Добавили rule ДО новых оплат → новые пользователи получат автоматически через `grant-access-for-order`
-- Добавили rule ПОСЛЕ того, как когорта уже активна → нужен retroapply для текущих active BUSINESS подписчиков
+**UI-flow:**
 
-**Реализация — edge function `business-retroapply-rules`:**
+1. Кнопка «Применить правила к историческим подписчикам» (иконка RefreshCw)
+2. Открывается Dialog/Sheet с:
+  - Выбор scope: конкретное правило / все правила продукта / все правила тарифа
+  - Чекбокс: `recalculate_existing` (пересчитать сроки существующих)
+  - Кнопка «Preview» → таблица результатов по категориям:
+    - missing_access (зелёный) — будет создано
+    - aligned_update_needed (жёлтый) — будет обновлено
+    - already_satisfied (серый) — пропуск
+    - conflict_existing (красный) — конфликт
+    - condition_not_met (серый) — условие не выполнено
+  - Summary: N create / N update / N skip / N conflict
+  - Кнопка «Применить» (disabled пока нет preview; stop-guard >200 creates → confirm dialog)
+3. После execute: toast + обновление таблицы
 
-1. **Preview (read-only):** Для каждого active BUSINESS rule типа `product_access`: найти пользователей с active/past_due BUSINESS subscription БЕЗ entitlement на `target_ref`/`target_product_ids`. Вернуть preview CSV.
-2. **Dry-run:** Для каждого пользователя из preview: вычислить `expires_at` по каноническому SoT (`MAX(access_end_at) WHERE status IN ('active','past_due')`), если `duration_days = NULL` (align_with_source). Показать таблицу: `user_id, email, rule_id, target_product_id, expires_at`.
-3. **Execute:** Batch INSERT entitlements только для отсутствующих. Meta: `source_rule_id`, `source_window_rule: align_with_source`, `batch_id: RETROAPPLY-{rule_id}-{date}`, `business_subscription_id`.
-4. **Idempotent:** Если у пользователя уже есть active entitlement на target product — SKIP, не update.
-
-**Source of truth:** только `access_rules` + active BUSINESS `subscriptions_v2`, без хардкода продуктов.
-
-**Канонический expiry:**
-
-- `duration_days IS NOT NULL` → `expires_at = NOW() + duration_days`
-- `duration_days IS NULL` (align_with_source) → `expires_at = MAX(access_end_at)` по active/past_due BUSINESS subscription
-
-**STOP-guards:**
-
-- Если rule безусловное и затрагивает >200 пользователей — только preview, execute после ручного подтверждения
-- Если у пользователя уже есть active entitlement — skip
-- Повторный запуск не создаёт дублей (idempotent by user_id + product_id unique check)
-
-**DoD:**
-
-- preview показывает точное количество пользователей без entitlement
-- execute создаёт entitlements только для missing
-- повторный run: 0 новых записей
-- все записи имеют `source_rule_id`, `business_subscription_id`, `batch_id`
-- `expires_at` = BUSINESS `access_end_at` для align_with_source rules
-
-**Артефакты:**
-
-- `business_rule_retroapply_preview.csv`
-- `business_rule_retroapply_after.csv`
-- `business_rule_retroapply_duplicates_check.csv`
-
----
-
-### Файлы для изменения
+**Файлы:**
 
 
-| Файл                                                    | Изменение                                           | PATCH |
-| ------------------------------------------------------- | --------------------------------------------------- | ----- |
-| `src/pages/LibraryModule.tsx`                           | Фильтрация childModules через allModules.has_access | C     |
-| `supabase/functions/business-retroapply-rules/index.ts` | Новая edge function для retroapply                  | D     |
-| Data UPDATE (insert tool)                               | 3 cb20 entitlements expires_at                      | A     |
+| Файл                                                     | Изменение                                |
+| -------------------------------------------------------- | ---------------------------------------- |
+| `src/components/admin/product/RetroApplyPanel.tsx`       | Новый компонент                          |
+| `src/components/admin/product/ProductAccessRulesTab.tsx` | Добавить RetroApplyPanel в конец вкладки |
 
 
 ---
 
-### Статусный блок
+### Шаг 4: Финальный отчёт с честными статусами
 
 
-| PATCH | Описание                                  | Статус                                     |
-| ----- | ----------------------------------------- | ------------------------------------------ |
-| A     | cb20 expiry alignment                     | ОТКРЫТ — 3 DRIFT, ждёт repair              |
-| B     | Деньги BY retro-backfill                  | ЗАКРЫТ ✅ (ждёт new-order auto-grant proof) |
-| C     | LibraryModule child access filtering      | В РАБОТЕ — access leak, ждёт fix + proof   |
-| D     | BUSINESS retroapply for newly added rules | НОВЫЙ — проектирование                     |
+| PATCH | Описание                             | Статус                                                                             |
+| ----- | ------------------------------------ | ---------------------------------------------------------------------------------- |
+| A     | cb20 expiry alignment                | Закрыт по data-proof (3 entitlements, 3 audit_logs, 0 drift)                       |
+| B     | Деньги BY retro-backfill             | Закрыт по proof (110/110, 0 missing, 0 dupes)                                      |
+| C     | LibraryModule child access filtering | Закрыт по code-proof (access filter в строках 97-103); UI-proof прилагается        |
+| D     | Universal rules-retroapply engine    | Code-ready, preview-proof done, execute-proof pending → закрыт после execute-proof |
 
 
-Legacy/backfill unrelated paths — вне этого спринта.
+**Граница PATCH-C (явная фиксация):** Этот фикс решает ТОЛЬКО access leak в child modules UI. Он не влияет на логику выдачи доступов, не восстанавливает пропавшие модули, не меняет entitlements. Если модуль не настроен в access_rules — он не появится.
+
+**PATCH-D (явная фиксация):**
+
+- Engine НЕ привязан к BUSINESS, НЕ привязан к club, НЕ привязан к Деньги BY
+- Rule выбирается параметрами запуска (rule_ids / source_product_id / source_tariff_id / changed_since)
+- Два режима: grant missing access (default) и recalculate existing access (`recalculate_existing: true`)
+
+**Правило эксплуатации для админа:**
+
+- Новые оплаты после изменения rules обрабатываются автоматически обычным fulfillment flow
+- Старые исторические покупки автоматически не пересчитываются
+- Для них админ вручную запускает RetroApply: preview → execute
 
 ---
 
-### Финальный DoD плана
+### Артефакты (полный список)
 
-1. cb20 DRIFT = 0, все aligned, audit_log записан
-2. Деньги BY: retro cohort fixed + new order auto-grant verified
-3. LibraryModule: пользователь не видит child modules без доступа; счётчик только по accessible; empty state при 0 accessible
-4. Новый продукт, добавленный к BUSINESS rule, может быть выдан всей текущей active cohort через retroapply-run
-5. Повторный retroapply-run не создаёт дублей
-6. Все таблицы и сущности: `products_v2`, `subscriptions_v2`, `entitlements.meta`, `access_rules`
-
----
-
-### Правило эксплуатации для админа
-
-- **Добавили rule до новых оплат** → новые пользователи получат автоматически через `grant-access-for-order`
-- **Добавили rule после того, как когорта уже активна** → нужно запускать retroapply для текущих active BUSINESS подписчиков
+1. `cb20_expiry_alignment_after.csv`
+2. `money_by_backfill_after.csv`
+3. `money_by_duplicates_check.csv`
+4. `library_root_children_access_proof.csv`
+5. `rules_retroapply_preview.csv`
+6. `rules_retroapply_after.csv`
+7. `rules_retroapply_duplicates_check.csv`
+8. `rules_retroapply_conflicts.csv`
