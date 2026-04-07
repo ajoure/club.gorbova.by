@@ -1139,6 +1139,9 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
         </Card>
       )}
 
+      {/* === RetroApply Panel === */}
+      <RetroApplyPanel productId={productId} rules={rules} tariffs={tariffs} />
+
       {/* === Create/Edit Dialog === */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
