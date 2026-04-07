@@ -1,392 +1,187 @@
-## Отчёт о выполнении: SYSTEM-WIDE WRITE PATH DISCOVERY + Edge-function canonical migration + Runtime proof
+Да, согласен, с учетом правок:
 
-### Что НЕ меняется в данном обновлении
+&nbsp;
 
-- Backfill не выполняется в этом патче — идёт отдельным следующим шагом
-- Legacy path в payments-reconcile сохранён без изменений (с audit warning)
-- Точечные runtime-proof вызовы grant-access-for-order для 3 тест-кейсов — это НЕ массовый backfill
+1. Исправлять не через хардкод списка статусов, а через канонический набор текущих валидных подписок.  
+В ContactDetailSheet.tsx не нужно строить subscriptionProductIds из всех subscriptions.  
+Нужно строить отдельные наборы:  
 
-### Что изменилось
+  - activeSubscriptionProductIds — только из activeSubscriptions
+  - finishedSubscriptionProductIds — только из finishedSubscriptions  
+  И дедупликацию entitlement делать относительно соответствующего набора.  
+  Причина: past_due с валидным окном, canceled, expired, archived, superseded и прочие состояния не должны решаться списком строк — у вас уже есть каноническая логика isCurrentValidAccess.
+2. &nbsp;
+3. Этот же фикс нужно сделать не только в карточке контакта, но и в пользовательском отображении, если там продублирована та же схема (UserSubscriptions.tsx).  
+Иначе снова получится две разные реальности: в карточке модуль есть, в кабинете нет, или наоборот.
+4. В этом патче запрещены любые data changes:  
 
-- **payments-reconcile (active path)**: direct INSERT subscriptions_v2 + UPSERT entitlements + invoke telegram-grant-access → заменены на единый вызов `grant-access-for-order`
-- **bepaid-auto-process**: conditional grant-access (только is_subscription) + post-grant direct entitlement writes → заменены на безусловный `grant-access-for-order` для ВСЕХ типов продуктов; post-grant direct writes УДАЛЕНЫ полностью
-- **Runtime-proof**: выполнен 2026-04-07 для 3 тест-кейсов с before/after SQL snapshots и idempotency проверкой
+  - не создавать entitlements,
+  - не возвращать phantom subscriptions,
+  - не менять rules,
+  - не чинить даты,
+  - не делать repair в БД.  
+  Это чистый UI/render fix.
+5. &nbsp;
+6. Формулировку root cause зафиксировать точнее:  
+модули исчезли не потому, что их “удалили”, а потому что после cleanup canceled module subscriptions перестали рендериться как access-карточки, но продолжили участвовать в дедупликации и скрыли корректные active entitlements.
+7. Для Рыштаковой нужен before/after proof:  
 
----
+  - SQL: 4 active module entitlements с датой 18.04.26
+  - SQL: 4 canceled module subscriptions по тем же product_id
+  - скрин до: модулей нет во вкладке «Доступы»
+  - скрин после: модули появились именно из entitlements
+  - отдельный proof, что у модулей не показываются billing/autorenew сигналы после фикса
+8. &nbsp;
+9. Финальный verdict по кейсу Рыштаковой:  
 
-### PHASE 0: SYSTEM-WIDE WRITE PATH DISCOVERY ✅
+  - не NO_CANONICAL_ACCESS_CONFIGURED
+  - не PHANTOM_SUB_WAS_SHOWN_BEFORE
+  - а именно UI_RENDER_GAP, потому что канонические active entitlements есть, но UI их скрывал.
+10. &nbsp;
+11. В сам план добавь явный кодовый ориентир:
 
-**Найдено 16 write-paths:**
-- 6 canonical (bepaid-webhook, admin-manual-charge, admin-reconcile-processing, GrantAccessFromDealDialog, BulkExtendAccessDialog, useBepaidMappings, public-checkout)
-- 4 non-canonical (**ContactDetailSheet**, **CreateDealFromPaymentDialog**, **BulkCreateDealsDialog**, **payments-reconcile**)
-- 6 partial/special (bepaid-auto-process, AdminEntitlements, sync-payments, admin-bepaid-full-reconcile, split-multi-module-orders)
+&nbsp;
 
----
+const activeSubscriptionProductIds = new Set(
 
-### PHASE 1: POINT REPAIRS
+  (activeSubscriptions || []).map(s => s.product_id).filter(Boolean)
 
-**Блок 0: Матук** ⚠️ УСЛОВНО ЗАКРЫТ
-- Entitlement `14f0d26c` создан для product `73c29914` (ЗАКРОЙ ГОД), expires 2026-07-05
-- Root cause: `handleGrantNewAccess` не вызывает `grant-access-for-order`
-- Classification: `multiple_blockers` (subscription_without_entitlement + training_root_unpublished)
-- **access repair = done** — entitlement создан, access-chain восстановлена
-- **content visibility = pending** — training roots `682d241e` и `62d09668` имеют `published_at = NULL`, контентный дефект требует отдельного исправления
+);
 
-**Блок 1: Ярошевич** ✅
-- Entitlement `09641160` meta нормализована: `scope_resolution_mode = full_tariff_scope`
-- Code fix `useTrainingContentRules.ts` line 330 применён (full_tariff_scope + full_access в branch)
-- Full purchase GC-3811003 приоритетен, модульная GC-3818463 — secondary
-- Модульная покупка сохранена как исторический факт, не влияет на понижение итогового доступа
+&nbsp;
 
-**Блок 2: Абрамович** ⚠️ УСЛОВНО ЗАКРЫТ
-- Subscription `d2710b58` repaired: `expired → active` (batch REPAIR-CLUB-STATUS-2026-04-06)
-- Abramovich-pattern sweep: 2 аналогичных кейса найдены (Королёва, Лялина)
-- **Data repair = done** — subscription status восстановлен
-- **UI/runtime proof = pending** — требуется отдельная проверка
+const activeEntitlements = (entitlements || []).filter(e => {
 
----
+  if (!e.product_id || activeSubscriptionProductIds.has(e.product_id)) return false;
 
-### PHASE 2: GLOBAL SWEEP RESULTS ✅ (как диагностика)
+  ...
 
-**Sweep 1: Active subscriptions without entitlements**
+});
 
-**Жёсткое разделение:**
+И аналогично отдельно для finished-блока, без смешивания всех subscriptions в один set.
 
-**14 real access defect** (broken fulfillment):
-| Источник | Кол-во | Тип ремонта |
-|---|---|---|
-| manual/admin flow (admin_grant) | 10 | create_missing_entitlement |
-| manual/admin flow (admin_from_payment) | 3 | create_missing_entitlement |
-| unknown / requires deeper trace | 1 | rebuild_full_chain_from_order |
+&nbsp;
 
-**39 content_not_published** (НЕ access bug):
-| Продукт | Кол-во | Причина |
-|---|---|---|
-| Gorbova Club | 23 | training root published_at = NULL |
-| ЦБ 2 ступень | 8 | training root published_at = NULL |
-| Бухгалтерия как бизнес | 6 | training root published_at = NULL |
-| ЗАКРОЙ ГОД | 2 | training root published_at = NULL |
+8. DoD уточнить:  
 
-**Вердикт:** 39 из 53 — контентный дефект. 14 — реальный access-дефект, требующий backfill.
+  - у Рыштаковой все 4 модуля снова видны во вкладке «Доступы»;
+  - источник отображения — active entitlements;
+  - canceled module subscriptions не рендерятся и не скрывают entitlements;
+  - в БД нет ни одного изменения данных;
+  - карточка контакта и кабинет показывают одинаковую картину.
+9. &nbsp;
 
-**Backfill victims: ❌ не выполнен (0 из 14)**
+&nbsp;
 
----
+&nbsp;
 
-### PHASE 3: SYSTEM ROOT-FIX — RUNTIME-PROOF COMPLETED
-
-**UI root-fix — ✅ выполнен (4 файла):**
-
-| # | Файл | До | После |
-|---|---|---|---|
-| 1 | `ContactDetailSheet.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 2 | `CreateDealFromPaymentDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 3 | `BulkCreateDealsDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 4 | `AdminEntitlements.tsx` | Голый INSERT без meta/source | INSERT с meta warning + audit. **НЕ является system root-fix**: manual/non-canonical by design |
-
-**Edge-function root-fix — ✅ active paths / ⚠️ legacy path:**
-
-| # | Edge function | Active path | Legacy path | Grep-proof | Runtime-proof |
-|---|---|---|---|---|---|
-| 1 | `payments-reconcile` | ✅ Переведён на `grant-access-for-order` | ⚠️ Сохранён с audit warning | ZERO direct writes в active path | ✅ 2026-04-07 |
-| 2 | `bepaid-auto-process` | ✅ Переведён на `grant-access-for-order` (unconditional) | N/A | ZERO direct writes | ✅ 2026-04-07 |
+## План: MODULE-VISIBILITY-DISCOVERY — почему модули исчезли из карточки Рыштаковой
 
 ---
 
-### PHASE 4: RUNTIME-PROOF (2026-04-07)
+### Диагноз (доказан по данным БД и коду)
 
-**Методология:**
-- Выбраны 3 order_id из актуального SQL-среза с STOP-guards:
-  - Не брать order, если есть active entitlement на тот же product_id
-  - Не брать order, если есть active subscription на тот же product_id+user
-  - Не брать legacy/manual path кейсы
-- По каждому кейсу: before-proof SQL → 1-й вызов → after-proof SQL → 2-й вызов (idempotency) → after-proof SQL
+**Verdict по всем 4 модулям: Verdict 1 — UI_RENDER_GAP**
 
-**Тест-кейс 1: order_based_only (content product)**
-- Order: `df29304d` | Product: `cb_module_catering` (PRD-000011) | User: `7c53b6af`
-- Before: entitlements=0, subscriptions=0
-- After call 1: entitlements=1 (created `12e1fdda`), subscription extended `3a34089e`
-- After call 2: `already_fulfilled: true` — **✅ IDEMPOTENT**
-- Verdict: **PASS**
+В БД у Рыштаковой (user_id `7c53b6af`) **есть** корректные active module entitlements с правильными датами:
 
-**Тест-кейс 2: subscription_based + bonus/product_access (Club)**
-- Order: `85a99b74` | Product: `club` (PRD-000001) | Tariff: `7c748940` | User: `7261e727`
-- Before: entitlements=1 (expired), subscriptions=2 (expired+superseded), bonus_ent_other=0
-- After call 1: entitlement updated `934499af`, subscription created `7c2ee454`, bonus `c153c811` granted (1 of 11 product_access rules met)
-- After call 2: **❌ NOT IDEMPOTENT** — subscription extended from `2026-03-27` to `2026-05-09` (+30 days)
-- Verdict: **PASS_WITH_IDEMPOTENCY_BUG** — canonical flow works correctly, but repeated calls extend subscription
 
-**Тест-кейс 3: subscription_based pure (Club, different user)**
-- Order: `bbeb3ea6` | Product: `club` (PRD-000001) | Tariff: `31f75673` | User: `a33beb82`
-- Before: entitlements=1 (expired `061be89e`), subscriptions=1 (expired)
-- After call 1: entitlement updated, subscription created `e68e4330`, bonus all skipped (condition_not_met)
-- After call 2: `already_fulfilled: true` — **✅ IDEMPOTENT**
-- Verdict: **PASS**
+| Модуль                 | entitlement status | expires_at       | Aligned с BUSINESS? |
+| ---------------------- | ------------------ | ---------------- | ------------------- |
+| cb_module_catering     | active             | 2026-04-18 12:00 | ✅                   |
+| cb_module_marketplaces | active             | 2026-04-18 12:00 | ✅                   |
+| cb_module_production   | active             | 2026-04-18 12:00 | ✅                   |
+| cb_module_retail       | active             | 2026-04-18 12:00 | ✅                   |
 
-**Idempotency bug finding → ✅ FIXED (2026-04-07):**
-- Case 2 (85a99b74): первоначально 2-й вызов ошибочно продлевал подписку на +30 дней.
-- Root cause: guard проверял только `subscription.order_id`, но при extend orderId записывается в `meta.extended_by_orders[]`, а не в `order_id`.
-- Fix: guard теперь проверяет `subscription.order_id` ИЛИ `meta.extended_by_orders` содержит orderId.
-- Post-fix proof: все 3 кейса × 2 вызова = `already_fulfilled`, 0 side effects, `access_end_at` не изменилось.
 
-**Telegram/access side-effects:**
-- telegram side-effect не проверялся в этом патче (все 3 кейса вернули `telegram: null`)
-- Это ожидаемо для тестовых заказов без связки с Telegram-ботом
+Также есть **canceled** module subscriptions (результат cleanup phantom subscriptions):
 
----
 
-### Victim counts (обновлено 2026-04-07)
+| Модуль                 | subscription status |
+| ---------------------- | ------------------- |
+| cb_module_catering     | canceled            |
+| cb_module_marketplaces | canceled            |
+| cb_module_production   | canceled            |
+| cb_module_retail       | canceled            |
 
-**⚠️ ЭТО РАЗНЫЕ МЕТРИКИ — нельзя складывать и сравнивать напрямую:**
 
-**1. currently_harmful_active_subscriptions_without_entitlement:**
-| product_code | product_name | count | unique_profiles |
-|---|---|---|---|
-| cb_module_ip | Модуль: Учет у ИП | 10 | 10 |
-| club | Gorbova Club | 1 | 1 |
-| course_close_year | ЗАКРОЙ ГОД | 1 | 1 |
-| prd_0d01a2fdc477 | ЦБ 2 ступень | 1 | 1 |
-| prd_3318c30fdf2c | Тестовый продукт (legacy_skip) | 3 | 0 |
-| **ИТОГО** | | **16** (13 real + 3 test) | **13** |
+**Root cause — строки 1416-1422 в `ContactDetailSheet.tsx`:**
 
-**2. historical_paid_orders_without_entitlement (by product type):**
-| product_code | product_name | entitlement_mode | orders | unique_profiles |
-|---|---|---|---|---|
-| club | Gorbova Club | subscription_based | 832 | 194 |
-| cb20 | ЦБ 1 ступень 2.0 | order_based_only | 319 | 129 |
-| course_close_year | ЗАКРОЙ ГОД | subscription_based | 239 | 152 |
-| buh_business | Бухгалтерия как бизнес | subscription_based | 48 | 33 |
-| prd_0d01a2fdc477 | ЦБ 2 ступень | subscription_based | 47 | 47 |
-| 1769009596189-398a | Подоходный налог ИП | subscription_based | 10 | 10 |
+```typescript
+// Entitlements for products NOT already covered by subscriptions (order_based_only)
+const subscriptionProductIds = new Set(
+  (subscriptions || []).map(s => s.product_id).filter(Boolean) // ← ВСЕ subscriptions, включая canceled
+);
 
-**3. Cross-path dedup (all paths):** 311 unique profiles с хотя бы 1 paid order без entitlement
+const activeEntitlements = (entitlements || []).filter(e => {
+  if (!e.product_id || subscriptionProductIds.has(e.product_id)) return false; // ← entitlement скрыт, т.к. canceled sub занимает product_id
+  ...
+});
+```
 
-**4. already_repaired:** 1 (Матук — manual entitlement) + 3 runtime-proof (точечные, не backfill)
+Логика дедупликации строит `subscriptionProductIds` из **всех** subscriptions (запрос на строке 464-472 не фильтрует по статусу). Canceled module subscriptions попадают в set → module entitlements исключаются → модули не рендерятся.
 
-**Важно:** для subscription_based продуктов (club, course_close_year) SoT — subscriptions_v2. Наличие paid order без entitlement не обязательно означает реальный дефект доступа.
+**До cleanup:** phantom subscriptions имели status=active → проходили `isCurrentValidAccess` → рендерились как subscriptions. После cleanup status=canceled → не проходят `isCurrentValidAccess` → но всё ещё блокируют entitlements через `subscriptionProductIds`.
 
 ---
 
-### Grep-proof (before/after)
+### Что нужно исправить
 
-**payments-reconcile:**
-- `from("subscriptions_v2").insert` — active path: ❌→✅ REMOVED; legacy path: remains (by design)
-- `from("entitlements").upsert` — active path: ❌→✅ REMOVED; legacy path: remains (by design)
-- `product_code` in write-side — active path: ❌→✅ REMOVED; legacy path: remains (by design)
+**Один UI patch в `ContactDetailSheet.tsx`, строка 1417-1419:**
 
-**bepaid-auto-process:**
-- `from("subscriptions_v2").insert` — ❌→✅ ZERO matches
-- `from("entitlements").insert/upsert` — ❌→✅ ZERO matches
-- `product_code` in write-side — ❌→✅ ZERO matches (only in comments)
-- `entitlement_orders` — ❌→✅ ZERO matches (only in comments)
+Заменить:
 
----
+```typescript
+const subscriptionProductIds = new Set(
+  (subscriptions || []).map(s => s.product_id).filter(Boolean)
+);
+```
 
-### Финальный статус проекта
+На:
 
-| # | Этап | Статус |
-|---|---|---|
-| 1 | Discovery write-paths | ✅ завершён |
-| 2 | Point repairs (Матук/Ярошевич/Абрамович) | ⚠️ условно закрыто (content у Матук, UI-proof у Абрамович) |
-| 3 | Global sweep | ✅ завершён как диагностика |
-| 4 | Backfill victims (14→13 real access defect) | ❌ не выполнен (0 из 13) |
-| 5 | UI root-fix (3 canonical + 1 guard) | ✅ завершён |
-| 6 | Edge-function root-fix (active paths) | ✅ завершён — code patched + runtime-proof + idempotency fix confirmed |
-| 7 | Edge-function legacy path | ⚠️ сохранён с audit warning, требует отдельного discovery |
-| 8 | Runtime-proof | ✅ выполнен (3 кейса, все PASS после idempotency fix) |
-| 9 | Idempotency fix | ✅ завершён — guard расширен, post-fix proof 3/3 PASS |
-| 10 | Полное закрытие дефекта | ❌ не достигнуто (legacy path + backfill) |
+```typescript
+const subscriptionProductIds = new Set(
+  (subscriptions || [])
+    .filter(s => !['canceled', 'archived', 'superseded'].includes(s.status))
+    .map(s => s.product_id)
+    .filter(Boolean)
+);
+```
 
-### DoD (жёсткий)
-
-- **UI root-fix = ✅ completed**
-- **Edge root-fix (active paths) = ✅ completed** — code patched + grep-proof + runtime-proof + idempotency fix
-- **Edge root-fix (legacy path) = ⚠️ pending** — payments-reconcile legacy path сохранён с audit warnings
-- **Idempotency bug = ✅ fixed** — guard расширен на `meta.extended_by_orders`, post-fix proof 3/3 PASS, `second_call_side_effects = none` для всех кейсов
-- **Full root closure forbidden** until:
-  - legacy path discovery завершён
-  - backfill historical victims выполнен и доказан
-  - новые victim-кейсы из UI = 0 (доказано code review ✅)
-  - новые victim-кейсы из edge active paths = 0 (доказано grep-proof + runtime-proof ✅)
-- **Backfill не входит в этот патч** и идёт отдельным следующим шагом
-
-### Границы этого патча
-
-- Этот патч допускает точечное создание entitlements как часть runtime-proof (3 кейса)
-- Это **не считается** полноценным backfill
-- Массовый repair 13 currently_harmful + 311 historical victims — только отдельным спринтом
-- payments-reconcile legacy path остаётся осознанным исключением и НЕ входит в закрытый root-fix
-
-### Финальные цифры
-
-| # | Метрика | Значение |
-|---|---|---|
-| 1 | Write-paths найдено | **16** |
-| 2 | Canonical | **6** |
-| 3 | Non-canonical | **4** |
-| 4 | Partial/special | **6** |
-| 5 | Путей исправлено системно | **6** (3 UI canonical + 1 UI guard + 2 Edge active paths) |
-| 6 | Путей остаётся исправить | **1** (payments-reconcile legacy path) |
-| 7 | Currently harmful victims | **13** (active sub without entitlement, excl. test) |
-| 8 | Historical paid without entitlement | **1501** orders / **311** unique profiles |
-| 9 | Already repaired | **1** (Матук) + **3** (runtime-proof) |
-| 10 | Runtime-proof cases | **3** (all PASS after idempotency fix, second_call_side_effects=none) |
+Это исключит canceled/archived/superseded subscriptions из set дедупликации, позволяя entitlements для order_based_only модулей корректно рендериться.
 
 ---
 
-### STOP-guards на следующий спринт
+### Что НЕ делается в этом патче
 
-- Нельзя объявлять «исправлено во всей системе» до завершения legacy path discovery в payments-reconcile
-- Нельзя считать backfill victims закрытым, пока не получены before/after counts (13→0 для harmful, 311→N для historical)
-- Нельзя делать массовый backfill до подтверждения, что новые жертвы больше не создаются из active paths (✅ подтверждено grep-proof + runtime-proof)
-- Нельзя смешивать 3 типа victim-метрик: currently_harmful, historical_paid, already_repaired
-- Нельзя считать Матук полностью закрытой до fix published_at на training roots
-- Нельзя считать Абрамович полностью закрытой до UI/runtime proof
-- 0 victims на edge sweep ≠ path безопасен; это значит только: «на текущем active sweep не найдено активных жертв, но bypass в коде существовал и оставался риском» (теперь устранён для active paths)
-- Idempotency bug в grant-access-for-order ✅ ИСПРАВЛЕН — guard расширен на meta.extended_by_orders, post-fix proof 3/3 PASS
-
-### Нерешённые вопросы (обязательные follow-up)
-
-1. **Idempotency bug** — ✅ ИСПРАВЛЕН. Guard расширен, post-fix proof 3/3 PASS. Массовый backfill разблокирован.
-2. **payments-reconcile legacy path** — требует отдельного discovery по совместимости legacy orders с grant-access-for-order
-3. **39 content_not_published** — training roots с `published_at=NULL`, контентный дефект
-4. **Backfill 13 currently harmful** — план готов, требует исполнения после fix idempotency
-5. **Backfill 311 historical** — cross-path dedup выполнен (311 unique profiles), требует классификацию по product type перед repair
-6. **Матук content visibility** — training roots `682d241e`, `62d09668` published_at = NULL
-7. **Абрамович UI/runtime proof** — admin card, cabinet visibility, dates verification
-8. **Telegram side-effect** — не проверялся в runtime-proof (telegram: null для всех кейсов)
-
-### Следующий шаг после этого патча
-
-Патч закрыт. Массовый backfill и legacy discovery не входили в данный патч.
+- Никаких новых entitlements, subscriptions, rules
+- Никакого восстановления phantom subscriptions
+- Никаких изменений в данных БД
+- Только один UI fix в фильтрации
 
 ---
 
 ### Артефакты
 
-1. `fulfillment_write_paths_matrix.csv`
-2. `non_canonical_fulfillment_writes.csv`
-3. `missing_grant_access_call_sites.csv`
-4. `manual_vs_normal_fulfillment_diff.csv`
-5. `backfill_manual_path_missing_entitlements_plan.csv`
-6. `veronika_matyuk_full_access_trace.csv`
-7. `matyuk_manual_vs_normal_fulfillment_diff.csv`
-8. `manual_created_access_runtime_mismatch.csv`
-9. `yaroshevich_cb20_purchase_precedence_trace.csv`
-10. `yaroshevich_runtime_visibility_trace.csv`
-11. `yaroshevich_module_reconciliation.csv`
-12. `yaroshevich_deal_to_access_mapping.csv`
-13. `abramovich_payment_to_access_trace.csv`
-14. `access_tab_vs_cabinet_runtime_mismatch.csv`
-15. `active_paid_window_but_no_access.csv`
-16. `active_paid_window_but_no_access_repair_plan.csv`
-17. `repair_actions_by_defect_type.csv`
-18. `write_paths_root_fix_status.csv` ← ОБНОВЛЁН (+ runtime_proof_completed, runtime_proof_cases_count, active_path_closed)
-19. `edge_write_bypass_inventory.csv`
-20. `edge_canonical_migration_proof.csv`
-21. `runtime_proof_results.csv` ← НОВЫЙ
-22. `runtime_proof_sql_snapshots.csv` ← НОВЫЙ
-23. `victim_count_by_product_type.csv` ← НОВЫЙ
+
+| Файл                                   | Содержание                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| ryshtakova_module_visibility_trace.csv | module → order → entitlement → subscription → should_render → actually_rendered |
+| ryshtakova_module_final_verdict.csv    | По каждому модулю: verdict = UI_RENDER_GAP                                      |
+| module_access_card_render_source.csv   | Источник рендеринга карточки: entitlement vs subscription vs merged             |
+
 
 ---
-
-### Формулировка для отчёта
-
-По code-level grep-proof active paths переведены на canonical flow. Idempotency bug исправлен: guard расширен на `meta.extended_by_orders`. Post-fix runtime-proof 2026-04-07: все 3 кейса (order_based, subscription+bonus, subscription pure) × 2 вызова = `already_fulfilled`, `second_call_side_effects = none`, `access_end_at` не изменилось. Edge root-fix (active paths) = ✅ закрыт. payments-reconcile legacy path остаётся осознанным исключением. Патч закрыт. Массовый backfill и legacy discovery не входили в данный патч.
-
----
-
-## Отчёт о выполнении: Discovery и repair модулей ЦБ 1 — правила → данные → UI
-
-Дата: 2026-04-07
-
-### Базовое бизнес-правило
-
-Модули ЦБ 1 — самостоятельные продаваемые продукты, срок которых синхронизируется с BUSINESS-подпиской через rule `1b497fba-031a-4318-8d9f-2530f1bac116` (`align_with_source`, `prior_purchase`, `per_product`).
-
-### БЛОК 0: Discovery правил ✅
-
-**BUSINESS rule 1b497fba:**
-- `grant_target_type: product_access`, `duration_days: NULL` (= align_with_source)
-- `condition_type: prior_purchase`, `match_mode: per_product`
-- `target_product_ids`: cb20 + 7 модулей + 2 доп. продукта
-- `is_active: true`
-
-**Product config:**
-| Продукт | entitlement_mode (было) | entitlement_mode (стало) |
-|---|---|---|
-| cb20 | order_based_only | order_based_only |
-| cb_module_ip | **subscription_based** | **order_based_only** ✅ |
-| остальные модули | order_based_only | order_based_only |
-
-**Discovery-ответ:**
-- Модульный entitlement жил от standalone order (30d) или backfill (фиксированная дата)
-- Канонический source по правилам = BUSINESS subscription (`align_with_source`)
-- Runtime НЕ смотрел на BUSINESS для модулей — это root cause
-
-### БЛОК 1: Eligibility vs Expiry alignment ✅
-
-**Proof:**
-- cb20: 100% aligned с BUSINESS (все совпадают)
-- Модули: 0% aligned ДО repair, 100% aligned ПОСЛЕ
-- 56 misaligned entitlements (44 IP + 12 других)
-- IP: 0 paid orders (все из backfill BACKFILL-ENT-v23.1.9B), но включены в rule matrix
-
-### БЛОК 2: Configuration mismatch ✅
-
-| Дефект | Причина | Действие |
-|---|---|---|
-| cb_module_ip.entitlement_mode = subscription_based | Config mismatch | UPDATE → order_based_only ✅ |
-| grant-access-for-order создаёт subscriptions для order_based_only | Write-path bug (нет guard по entitlement_mode) | Патч: SKIP subscription block для order_based_only ✅ |
-| 75 phantom subscriptions (59 true phantom + 16 with order) | Оба фактора (config + write-path) | Canceled ✅ |
-
-### БЛОК 3: Repair ✅
-
-**Этап 1: Config fix** ✅
-- `cb_module_ip.entitlement_mode` → `order_based_only`
-- `grant-access-for-order`: добавлен guard — если `entitlement_mode = order_based_only`, subscription block пропускается, audit log пишется
-
-**Этап 2: Expiry alignment** ✅
-- 56 entitlements выровнены: `expires_at = business.access_end_at`
-- Optimistic guard в WHERE: `e.expires_at = t.old_expires`
-- Metadata add-only: `aligned_by`, `previous_expires_at`, `source_rule_id`, `source_window_rule`, `canonical_source`
-
-**Этап 3: Metadata lineage** ✅
-- Исходные признаки standalone purchase сохранены (meta не перезаписана)
-- Добавлены: `source_rule_id=1b497fba`, `source_window_rule=align_with_source`, `canonical_source=BUSINESS_subscription`
-- Бейдж "через BUSINESS" теперь выводится по `source_rule_id` (rule-based, не cosmetic)
-
-**Этап 4: Phantom sub cleanup** ✅
-- Классификация: 59 true_phantom (no order_id) + 16 order_based_with_order
-- Все 75 → status=canceled, auto_renew=false, meta += archive_reason
 
 ### DoD
 
-| # | Критерий | Статус |
-|---|---|---|
-| 1 | Канонический source срока доказан для каждого модуля | ✅ BUSINESS rule 1b497fba |
-| 2 | module.expires_at = business.access_end_at | ✅ 0 misaligned |
-| 3 | cb20.expires_at = business.access_end_at | ✅ было aligned |
-| 4 | Нет ложных billing/subscription сигналов | ✅ 0 active subs |
-| 5 | Курс и модули заканчиваются одновременно | ✅ доказано proof |
-| 6 | Следует из настроек, не из хардкода | ✅ rule-based |
-| 7 | cb_module_ip.entitlement_mode = order_based_only | ✅ |
-| 8 | 0 active subs для order_based modules | ✅ |
+1. Доказано: модули исчезли из-за UI dedup bug (canceled subs блокируют active entitlements)
+2. Verdict по всем 4 модулям: **UI_RENDER_GAP**
+3. Fix: 1 строка в `ContactDetailSheet.tsx` (фильтр subscriptionProductIds по статусу)
+4. 0 автоматических выдач доступа, 0 изменений данных
+5. После fix модули Рыштаковой рендерятся из корректных entitlements с датой 2026-04-18
 
-### Артефакты
+### Файлы для изменения
 
-| # | Файл | Строк |
-|---|---|---|
-| 1 | cb20_and_modules_access_rules_snapshot.csv | 19 |
-| 2 | business_to_cb20_modules_rule_matrix.csv | 3 |
-| 3 | module_expiry_source_proof.csv | 60 |
-| 4 | module_rule_config_mismatch_report.csv | 8 |
-| 5 | module_order_to_rule_lineage.csv | 20 |
-| 6 | module_expiry_source_after_repair.csv | 60 |
-| 7 | phantom_module_subscriptions_after_cleanup.csv | 75 |
-
-### Масштаб
-
-- Config fix: 1 UPDATE products_v2 + 1 патч grant-access-for-order
-- Data repair: 56 module entitlements aligned + 75 phantom subscriptions canceled
-- Scope: только модули cb20
+- `src/components/admin/ContactDetailSheet.tsx` — fix dedup filter (строка 1417-1419)
+- `/mnt/documents/` — 3 артефакта
