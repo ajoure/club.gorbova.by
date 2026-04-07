@@ -1,184 +1,235 @@
-## Отчёт о выполнении: SYSTEM-WIDE WRITE PATH DISCOVERY + Ремонт Матук/Ярошевич/Абрамович + Глобальные sweep-ы
+## да, согласен, с учетом правок:
 
-### Что НЕ меняется в данном обновлении
+&nbsp;
 
-- Код приложения не меняется
-- Данные не меняются
-- Выполняется только корректировка документации, статусов и CSV-артефакта
+1. Не пиши в плане дедуплицированные victim-counts как финальные, пока не сделан **cross-path dedup** по profile_id/user_id/order_id. Сейчас у тебя есть дедуп внутри каждого path, но нет финального дедупа между admin_grant, admin_from_payment, admin_bulk. Поэтому вместо ~250 / ~235 зафиксируй формулировку:
+  **«меж-path дедуп ещё не завершён, итоговое число уникальных жертв будет подтверждено отдельным after-proof»**.
+2. По payments-reconcile раздели **active path** и **legacy path**.
+  Сейчас у тебя они смешаны в одном блоке. Нужно явно написать:
+  &nbsp;
+  - **active reconcile path** — подлежит переводу на grant-access-for-order;
+  - **legacy reconcile path** — не переводить автоматически без отдельного discovery по совместимости старых order/payment/link сущностей.
+    Иначе подрядчик может “починить всё сразу” и сломать legacy-контур.
+  &nbsp;
+3. По bepaid-auto-process добавь жёсткое требование:
+  после перевода на canonical flow **запрещено оставлять любой post-grant direct upsert в entitlements**, даже “на всякий случай”.
+  Это ключевой риск: сейчас именно post-grant write перетирает canonical result.
+4. Добавь отдельный **before/after grep-proof** по коду:
+  &nbsp;
+  - direct .from("subscriptions_v2").insert( / .upsert( в этих двух функциях;
+  - direct .from("entitlements").insert( / .upsert( в этих двух функциях;
+  - прямые решения по product_code в write-side.
+    DoD без grep-proof не закрывать.
+  &nbsp;
+5. Добавь обязательный **runtime-proof dry-run** для обеих edge functions:
+  &nbsp;
+  - один кейс subscription product;
+  - один кейс order_based_only product;
+  - один кейс с bonus/product_access rule;
+  - один кейс club side-effect.
+    Недостаточно только code review.
+  &nbsp;
+6. В payments-reconcile зафиксируй отдельно, что должно сохраниться **без потерь**:
+  &nbsp;
+  - payment creation/update,
+  - queue completion / retry semantics,
+  - admin notifications,
+  - audit trail,
+  - telegram side-effects через canonical path, а не вторым вызовом.
+    Это нужно вынести в отдельный mini-DoD блока, чтобы подрядчик не убрал нужные эффекты вместе с bypass.
+  &nbsp;
+7. По bepaid-auto-process добавь явную проверку, что после патча:
+  &nbsp;
+  - для is_subscription = true не создаются дубли entitlement;
+  - для is_subscription = false доступ тоже проходит через grant-access-for-order;
+  - entitlement_orders не становится вторым источником истины по доступу.
+    Сейчас это не дожато.
+  &nbsp;
+8. В блоке victim-counts раздели:
+  &nbsp;
+  - **historical victims total**,
+  - **currently active victims**,
+  - **currently harmful victims**.
+    Потому что отсутствие entitlement у уже истёкшего доступа и отсутствие entitlement у активного доступа — это разные по приоритету дефекты.
+  &nbsp;
+9. В DoD добавь жёстко:
+  &nbsp;
+  - **UI root-fix = completed**
+  - **Edge root-fix = completed only when both functions patched, deployed, dry-run proved**
+  - **Full root closure forbidden until edge paths no longer bypass canonical flow**
+  - **Backfill не входит в этот патч и идёт отдельным следующим шагом**
+    Это важно, чтобы не было ложной формулировки “root cause fixed”.
+  &nbsp;
+10. В артефакты добавь ещё 2 файла:
 
----
+&nbsp;
 
-### PHASE 0: SYSTEM-WIDE WRITE PATH DISCOVERY ✅
+&nbsp;
 
-**Найдено 16 write-paths:**
-- 6 canonical (bepaid-webhook, admin-manual-charge, admin-reconcile-processing, GrantAccessFromDealDialog, BulkExtendAccessDialog, useBepaidMappings, public-checkout)
-- 4 non-canonical (**ContactDetailSheet**, **CreateDealFromPaymentDialog**, **BulkCreateDealsDialog**, **payments-reconcile**)
-- 6 partial/special (bepaid-auto-process, AdminEntitlements, sync-payments, admin-bepaid-full-reconcile, split-multi-module-orders)
+&nbsp;
 
-**Критические non-canonical дефекты (создавали subscription без entitlement):**
-1. `ContactDetailSheet.tsx` — handleGrantNewAccess — **root cause кейса Матук**
-2. `CreateDealFromPaymentDialog.tsx` — admin_from_payment
-3. `BulkCreateDealsDialog.tsx` — admin_bulk_from_payments
-4. `AdminEntitlements.tsx` — manual entitlement без source order/rule
+- edge_write_bypass_inventory.csv — полный список bypass-точек по строкам/операциям/таблицам;
+- edge_canonical_migration_proof.csv — до/после по каждой функции: что писалось напрямую раньше и что теперь идёт через grant-access-for-order.
 
-**Масштаб:** 644 admin-created orders (19 admin_grant + 194 admin_from_payment + 431 admin_bulk). Из них 156 missing entitlement (10+56+90).
+&nbsp;
 
----
+&nbsp;
 
-### PHASE 1: POINT REPAIRS
+&nbsp;
 
-**Блок 0: Матук** ⚠️ УСЛОВНО ЗАКРЫТ
-- Entitlement `14f0d26c` создан для product `73c29914` (ЗАКРОЙ ГОД), expires 2026-07-05
-- Root cause: `handleGrantNewAccess` не вызывает `grant-access-for-order`
-- Classification: `multiple_blockers` (subscription_without_entitlement + training_root_unpublished)
-- **access repair = done** — entitlement создан, access-chain восстановлена
-- **content visibility = pending** — training roots `682d241e` и `62d09668` имеют `published_at = NULL`, контентный дефект требует отдельного исправления
+11. Формулировку про 0 reconciliation path / 0 bepaid_auto path уточни. Это не значит, что path безопасен; это значит только:
+  **«на текущем active sweep не найдено активных жертв, но bypass в коде существует и остаётся риском»**.
+  Иначе звучит как будто проблем там нет.
+12. В конце плана явно добавь следующий шаг после этого патча:
+  **отдельный backfill/discovery sprint по historical victims**, уже после deploy и подтверждения, что новые жертвы больше не создаются.
 
-**Блок 1: Ярошевич** ✅
-- Entitlement `09641160` meta нормализована: `scope_resolution_mode = full_tariff_scope`
-- Code fix `useTrainingContentRules.ts` line 330 применён (full_tariff_scope + full_access в branch)
-- Full purchase GC-3811003 приоритетен, модульная GC-3818463 — secondary
-- Модульная покупка сохранена как исторический факт, не влияет на понижение итогового доступа
+&nbsp;
 
-**Блок 2: Абрамович** ⚠️ УСЛОВНО ЗАКРЫТ
-- Subscription `d2710b58` repaired: `expired → active` (batch REPAIR-CLUB-STATUS-2026-04-06)
-- Abramovich-pattern sweep: 2 аналогичных кейса найдены (Королёва, Лялина)
-- **Data repair = done** — subscription status восстановлен
-- **UI/runtime proof = pending** — требуется отдельная проверка: admin card active, cabinet/runtime visibility, entitlement/subscription dates согласованы
+&nbsp;
 
----
-
-### PHASE 2: GLOBAL SWEEP RESULTS ✅ (как диагностика)
-
-**Sweep 1: Active subscriptions without entitlements (53 кейса):**
-
-**Жёсткое разделение:**
-
-**14 real access defect** (broken fulfillment):
-| Источник | Кол-во | Тип ремонта |
-|---|---|---|
-| manual/admin flow (admin_grant) | 10 | create_missing_entitlement |
-| manual/admin flow (admin_from_payment) | 3 | create_missing_entitlement |
-| unknown / requires deeper trace | 1 | rebuild_full_chain_from_order |
-
-**39 content_not_published** (НЕ access bug):
-| Продукт | Кол-во | Причина |
-|---|---|---|
-| Gorbova Club | 23 | training root published_at = NULL |
-| ЦБ 2 ступень | 8 | training root published_at = NULL |
-| Бухгалтерия как бизнес | 6 | training root published_at = NULL |
-| ЗАКРОЙ ГОД | 2 | training root published_at = NULL |
-
-**Вердикт:** 39 из 53 — контентный дефект. 14 — реальный access-дефект, требующий backfill.
-
-**Backfill victims: ❌ не выполнен (0 из 14)**
-
----
-
-### PHASE 3: SYSTEM ROOT-FIX ⚠️ ЧАСТИЧНО
-
-**UI root-fix — выполнен (4 файла):**
-
-| # | Файл | До | После |
-|---|---|---|---|
-| 1 | `ContactDetailSheet.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 2 | `CreateDealFromPaymentDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 3 | `BulkCreateDealsDialog.tsx` | Direct INSERT subscriptions_v2 | Вызов `grant-access-for-order` |
-| 4 | `AdminEntitlements.tsx` | Голый INSERT без meta/source | INSERT с meta warning + audit `manual_grant`. **НЕ является system root-fix**: manual/non-canonical by design, добавлен только warning + audit trail |
-
-**Edge-function root-fix — ❌ НЕ выполнен:**
-
-| # | Edge function | Статус | Причина |
-|---|---|---|---|
-| 1 | `payments-reconcile/index.ts` | ❌ pending | Прямые INSERT sub + UPSERT entitlement, bypasses grant-access. Требует отдельного патча с dry-run |
-| 2 | `bepaid-auto-process/index.ts` | ❌ pending | Direct entitlement upsert by product_code. Требует отдельного патча с dry-run |
-
-**Архитектурное правило:** manual path = same fulfillment as paid path.
+План: Discovery-патч edge-function write-paths + обновление отчёта с дедуплицированными victim-counts
 
 ---
 
-### Финальный статус проекта
+### Суть
 
-| # | Этап | Статус |
-|---|---|---|
-| 1 | Discovery write-paths | ✅ завершён |
-| 2 | Point repairs (Матук/Ярошевич/Абрамович) | ⚠️ условно закрыто (content у Матук, UI-proof у Абрамович) |
-| 3 | Global sweep | ✅ завершён как диагностика |
-| 4 | Backfill victims (14 real access defect) | ❌ не выполнен |
-| 5 | UI root-fix (3 canonical + 1 guard) | ✅ завершён |
-| 6 | Edge-function root-fix | ❌ pending (payments-reconcile, bepaid-auto-process) |
-| 7 | Полное закрытие дефекта | ❌ не достигнуто |
-
-### Финальные цифры
-
-| # | Метрика | Значение |
-|---|---|---|
-| 1 | Write-paths найдено | **16** |
-| 2 | Canonical | **6** |
-| 3 | Non-canonical | **4** |
-| 4 | Partial/special | **6** |
-| 5 | Путей исправлено системно | **4** (3 canonical + 1 guard) |
-| 6 | Путей остаётся исправить | **2** (payments-reconcile, bepaid-auto-process) |
-| 7 | Sweep total | **53** |
-| 8 | Real access defect | **14** |
-| 9 | Content defect (не access bug) | **39** |
-| 10 | Backfill выполнен | **0 из 14** |
-| 11 | Кейсов исправлено точечно | **3** (Матук, Ярошевич, Абрамович) |
-| 12 | Mismatch paid-flow | **2** (Королёва, Лялина — expired status) |
-| 13 | Mismatch manual/admin-created flow | **89** (sub without ent) |
-| 14 | Mismatch reconcile/import flow | **0** активных |
+Два edge-function пути (`payments-reconcile`, `bepaid-auto-process`) продолжают писать subscriptions/entitlements в обход canonical fulfillment. Нужен детальный discovery каждого, dry-run миграционный план и обновление отчёта с честными дедуплицированными цифрами.
 
 ---
 
-### STOP-guards на следующий спринт
+### БЛОК 1: payments-reconcile — discovery bypass-точек
 
-- Нельзя объявлять «исправлено во всей системе» до перевода payments-reconcile и bepaid-auto-process на canonical fulfillment
-- Нельзя считать backfill victims закрытым, пока не получены before/after counts по 14 real access defect (доказуемое уменьшение 14 → 0)
-- Нельзя делать массовый backfill до завершения edge-function root-fix
-- Нельзя смешивать 14 access-дефектов и 39 content-дефектов в одну метрику
-- Нельзя считать Матук полностью закрытой до fix published_at на training roots
-- Нельзя считать Абрамович полностью закрытой до UI/runtime proof
+**Найденные direct writes (из кода):**
 
-### Нерешённые вопросы (обязательные follow-up)
 
-1. **payments-reconcile/index.ts** — перевод на grant-access-for-order с обязательным dry-run
-2. **bepaid-auto-process/index.ts** — перевод на grant-access-for-order с обязательным dry-run
-3. **39 content_not_published** — training roots с `published_at=NULL`, контентный дефект
-4. **Backfill 14 real access defect** — план готов, требует исполнения после edge-function root-fix
-5. **Матук content visibility** — training roots `682d241e`, `62d09668` published_at = NULL
-6. **Абрамович UI/runtime proof** — admin card, cabinet visibility, dates verification
+| Строка  | Операция      | Таблица                          | Что теряется vs canonical                                                                                         |
+| ------- | ------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 532-546 | Direct INSERT | `subscriptions_v2`               | Нет `access_rules` resolution, нет `access_rule_id` в meta                                                        |
+| 558-569 | Direct UPSERT | `entitlements`                   | По `product_code` (не product_id), нет `access_rule_id`, UPSERT by `user_id,product_code` может перетереть данные |
+| 574-578 | Direct invoke | `telegram-grant-access`          | Дублирует side-effect, который canonical flow уже делает                                                          |
+| 702-717 | Direct INSERT | `subscriptions_v2` (legacy path) | Та же проблема + legacy order без FK                                                                              |
+| 736-746 | Direct UPSERT | `entitlements` (legacy path)     | По `product_code`, без order_id FK                                                                                |
 
----
 
-### Артефакты ✅
+**Ключевые дефекты:**
 
-1. `fulfillment_write_paths_matrix.csv`
-2. `non_canonical_fulfillment_writes.csv`
-3. `missing_grant_access_call_sites.csv`
-4. `manual_vs_normal_fulfillment_diff.csv`
-5. `backfill_manual_path_missing_entitlements_plan.csv`
-6. `veronika_matyuk_full_access_trace.csv`
-7. `matyuk_manual_vs_normal_fulfillment_diff.csv`
-8. `manual_created_access_runtime_mismatch.csv`
-9. `yaroshevich_cb20_purchase_precedence_trace.csv`
-10. `yaroshevich_runtime_visibility_trace.csv`
-11. `yaroshevich_module_reconciliation.csv`
-12. `yaroshevich_deal_to_access_mapping.csv`
-13. `abramovich_payment_to_access_trace.csv`
-14. `access_tab_vs_cabinet_runtime_mismatch.csv`
-15. `active_paid_window_but_no_access.csv`
-16. `active_paid_window_but_no_access_repair_plan.csv`
-17. `repair_actions_by_defect_type.csv`
-18. `write_paths_root_fix_status.csv` ← НОВЫЙ
+- Entitlement создаётся по `product_code` (text matching), а не по `product_id` (UUID) — нарушение id-first contract
+- Нет вызова `grant-access-for-order` → нет resolution access_rules → нет бонусных/условных доступов
+- UPSERT by `user_id,product_code` может перезаписать entitlement от другого order
+
+**Исторические жертвы:** 3 subscription с source `reconciliation_legacy`. Активных жертв 0 (по текущим данным reconcile path не создавал массовых записей).
+
+**Safe migration plan:**
+
+1. В `fixOrderAndCreateSubscription`: после `UPDATE orders_v2 SET status='paid'` — вызвать `grant-access-for-order` с `orderId`
+2. Удалить весь блок прямого INSERT subscription (строки 507-546) и прямого UPSERT entitlement (строки 548-569)
+3. Удалить дублирующий telegram-grant-access (строки 572-579) — canonical flow сам вызывает
+4. Legacy path (`processLegacyQueueItem`): оставить как есть (исторический, legacy orders не совместимы с grant-access-for-order), но добавить audit warning
+5. Dry-run: вызвать функцию с `execute: false` и проверить, что все pending orders корректно матчатся
+
+**Side-effects, которые нельзя потерять:**
+
+- Telegram notification admins (строки 595-626) — сохранить
+- Queue item completion (строки 477-484) — сохранить
+- Payment record creation (строки 458-469) — сохранить (это до fulfillment)
 
 ---
 
-### Финальный вывод
+### БЛОК 2: bepaid-auto-process — discovery bypass-точек
 
-- Discovery — завершён
-- UI root-fix — завершён
-- Edge root-fix — не завершён
-- Historical backfill — не выполнен
-- **Полное закрытие дефекта не достигнуто**
+**Найденные direct writes:**
 
-System-wide discovery завершён. UI-пути канонизированы (3 файла) + guard добавлен (AdminEntitlements). 2 edge-function пути (payments-reconcile, bepaid-auto-process) остаются non-canonical. Исторический backfill 14 access-жертв не выполнен. Патч edge-functions и backfill остаются обязательными для полного закрытия дефекта.
+
+| Строка   | Операция                         | Таблица              | Проблема                                                                                    |
+| -------- | -------------------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
+| 821-835  | `grant-access-for-order`         | —                    | ✅ Canonical, НО только если `mapping.is_subscription && profileUserId`                      |
+| 838-900+ | Direct INSERT/UPDATE             | `entitlements`       | ❌ Выполняется ВСЕГДА после grant-access, дублирует/перетирает entitlement по `product_code` |
+| —        | Direct entitlement_orders INSERT | `entitlement_orders` | Параллельно с canonical flow — потенциальный конфликт                                       |
+
+
+**Ключевой дефект:**
+
+- Строки 821-835: grant-access-for-order вызывается **только для подписок** (`is_subscription`)
+- Строки 838-900: **после** grant-access всё равно идёт direct entitlement upsert по `product_code` — дублирует то, что canonical flow уже сделал, и может перетереть `access_rule_id`
+- Для не-подписочных продуктов (`!is_subscription`): grant-access НЕ вызывается вообще, entitlement создаётся напрямую
+
+**Исторические жертвы:** `reconcile_source = 'bepaid_auto'` — 0 orders в текущей БД (функция не запускалась массово или пока не создала записей через этот путь).
+
+**Safe migration plan:**
+
+1. Убрать весь блок direct entitlement write (строки 838-950+)
+2. Расширить вызов `grant-access-for-order` на ВСЕ случаи (не только `is_subscription`): после создания order+payment → всегда вызывать canonical fulfillment
+3. Сохранить entitlement_orders link как post-step (или перенести в grant-access-for-order)
+4. Dry-run: запустить с `dryRun: true` и проверить маппинг
+
+---
+
+### БЛОК 3: Обновление victim-counts с дедупликацией
+
+**Дедуплицированные данные из БД:**
+
+
+| Write path                                       | Total orders | Unique profiles | Missing entitlement (by order) | Unique profiles missing |
+| ------------------------------------------------ | ------------ | --------------- | ------------------------------ | ----------------------- |
+| ContactDetailSheet (admin_grant)                 | 19           | 17              | 15                             | 14                      |
+| CreateDealFromPaymentDialog (admin_from_payment) | 211          | 137             | 190                            | 126                     |
+| BulkCreateDealsDialog (admin_bulk)               | 431          | 131             | 422                            | 129                     |
+| **ИТОГО UI paths**                               | **661**      | **~250***       | **627**                        | **~235***               |
+
+
+*дедуп cross-path не выполнен, реальное число уникальных profiles может быть меньше*
+
+**Active subscriptions без entitlement (текущий sweep):**
+
+- 10 bulk_grant (модуль ИП) — content product, need separate check
+- 7 unknown source — mixed (3 тестовых, 1 club, 1 ЗАКРОЙ ГОД, 1 модуль, 1 ЦБ2)
+- 0 reconciliation path
+- 0 bepaid_auto path
+
+**Repaired:** Матук (1 entitlement created). Остальные — 0.
+
+---
+
+### БЛОК 4: Обновление plan.md и артефактов
+
+**Изменения в plan.md:**
+
+- Добавить БЛОК: Edge-function discovery для payments-reconcile и bepaid-auto-process
+- Обновить victim-counts с дедупликацией
+- Добавить explicit status: `UI root-fix = completed`, `Edge root-fix = pending`
+- Уточнить: payments-reconcile имеет 5 bypass-точек, bepaid-auto-process имеет 2 bypass-точки (1 partial canonical + 1 full bypass)
+
+**Новые артефакты:**
+
+- Обновить `write_paths_root_fix_status.csv` с victims_count deduped
+- Обновить `repair_actions_by_defect_type.csv`
+
+**DoD (жёсткий):**
+
+- `grant-access-for-order` = единственный canonical write-path
+- Новые victim-кейсы из UI = 0 (доказано code review)
+- Новые victim-кейсы из edge paths = 0 только после system patch
+- Historical backfill выполнен и доказан (before/after counts)
+
+### Объём изменений
+
+**Код (edge functions):**
+
+- `supabase/functions/payments-reconcile/index.ts` — удалить direct INSERT sub + UPSERT entitlement из `fixOrderAndCreateSubscription`, заменить на вызов `grant-access-for-order`
+- `supabase/functions/bepaid-auto-process/index.ts` — удалить direct entitlement block (строки 838-950+), расширить grant-access-for-order на все случаи (не только is_subscription)
+
+**Документация:**
+
+- `.lovable/plan.md` — обновить статусы и victim-counts
+- `/mnt/documents/write_paths_root_fix_status.csv` — обновить
+
+**Данные:** никаких INSERT/UPDATE в этом патче — только code fix. Backfill выполняется отдельным следующим шагом после deploy + dry-run.
+
+### Порядок исполнения
+
+1. Code fix payments-reconcile
+2. Code fix bepaid-auto-process
+3. Deploy обеих функций
+4. Dry-run test каждой
+5. Обновить plan.md и артефакты
+6. Backfill — отдельный следующий шаг
