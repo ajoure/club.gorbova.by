@@ -123,10 +123,11 @@
 - After call 2: `already_fulfilled: true` — **✅ IDEMPOTENT**
 - Verdict: **PASS**
 
-**Idempotency bug finding:**
-- Case 2 (85a99b74): 2-й вызов grant-access-for-order не распознал уже выполненный грант и продлил подписку на 30 дней. Это специфично для случая, когда первый вызов создаёт новую подписку (не расширяет существующую). Проблема: idempotency guard проверяет subscription с `order_id = X`, но subscription `7c2ee454` была создана с `order_id = 85a99b74`, и при 2-м вызове guard всё равно прошёл через extend logic.
-- Case 1 и Case 3: idempotent, `already_fulfilled: true`.
-- **Требует отдельного fix** в grant-access-for-order для корректной идемпотентности при subscription_based products. Не блокирует закрытие текущего патча, т.к. повторные вызовы из production paths маловероятны.
+**Idempotency bug finding → ✅ FIXED (2026-04-07):**
+- Case 2 (85a99b74): первоначально 2-й вызов ошибочно продлевал подписку на +30 дней.
+- Root cause: guard проверял только `subscription.order_id`, но при extend orderId записывается в `meta.extended_by_orders[]`, а не в `order_id`.
+- Fix: guard теперь проверяет `subscription.order_id` ИЛИ `meta.extended_by_orders` содержит orderId.
+- Post-fix proof: все 3 кейса × 2 вызова = `already_fulfilled`, 0 side effects, `access_end_at` не изменилось.
 
 **Telegram/access side-effects:**
 - telegram side-effect не проверялся в этом патче (все 3 кейса вернули `telegram: null`)
