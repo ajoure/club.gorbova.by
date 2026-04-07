@@ -317,47 +317,32 @@ export function CreateDealFromPaymentDialog({
         });
       }
 
-      // 4. Grant access if requested and not ghost
+      // 4. Grant access via canonical fulfillment (grant-access-for-order)
       let subscriptionId: string | null = null;
       if (grantAccess && !isGhostContact && selectedContact.user_id) {
-        // Find active payment method for auto-linking to subscription
-        const { data: activeCard } = await supabase
-          .from("payment_methods")
-          .select("id")
-          .eq("user_id", selectedContact.user_id)
-          .eq("status", "active")
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        try {
+          const { data: grantResult, error: grantError } = await supabase.functions.invoke(
+            "grant-access-for-order",
+            {
+              body: {
+                order_id: newOrder.id,
+                source: "admin_from_payment",
+              },
+            }
+          );
 
-        // Create subscription with auto_renew = true by default (PATCH 13.4)
-        // PATCH 13.6: Auto-link payment_method_id if card exists
-        // PATCH 14: Save recurring_amount for consistent auto-renewals
-        const { data: newSub, error: subError } = await supabase.from("subscriptions_v2").insert({
-          user_id: selectedContact.user_id,
-          order_id: newOrder.id,
-          product_id: productId,
-          tariff_id: tariffId,
-          status: "active",
-          is_trial: false,
-          access_start_at: accessStart.toISOString(),
-          access_end_at: accessEnd.toISOString(),
-          next_charge_at: accessEnd.toISOString(), // PATCH 13.1: Списание = дата окончания доступа
-          auto_renew: true, // PATCH 13.4: Автопродление включено по умолчанию
-          payment_method_id: activeCard?.id || null, // PATCH 13.6: Auto-link card
-          meta: {
-            recurring_amount: finalAmount,
-            recurring_currency: finalCurrency,
-            created_from: "admin_from_payment",
-          },
-        }).select().single();
+          if (grantError) {
+            console.error("grant-access-for-order error:", grantError);
+            toast.warning("Сделка создана, но автоматическая выдача доступа не сработала. Используйте кнопку 'Выдать доступ' на сделке.");
+          } else {
+            subscriptionId = grantResult?.subscription_id || null;
+          }
+        } catch (grantErr) {
+          console.error("grant-access-for-order call failed:", grantErr);
+          toast.warning("Сделка создана, но выдача доступа требует ручного действия.");
+        }
 
-        if (subError) throw subError;
-        subscriptionId = newSub.id;
-
-        // Grant Telegram access if product has club
-        // NOTE: telegram-grant-access function already creates telegram_access_grants record
-        // Do NOT insert manually to avoid duplicates!
+        // Telegram access (separate side-effect)
         if (product?.telegram_club_id) {
           await supabase.functions.invoke("telegram-grant-access", {
             body: {
@@ -373,14 +358,13 @@ export function CreateDealFromPaymentDialog({
           });
         }
 
-        // Sync to GetCourse
+        // GetCourse sync
         const gcOfferId = tariff?.getcourse_offer_id || tariff?.getcourse_offer_code;
         if (gcOfferId) {
           await supabase.functions.invoke("test-getcourse-sync", {
             body: {
               orderId: newOrder.id,
               email: selectedContact.email,
-              // Guard: if gcOfferId is a non-numeric string, pass as-is
               offerId: (() => {
                 if (typeof gcOfferId === 'number') return gcOfferId;
                 if (typeof gcOfferId === 'string') {

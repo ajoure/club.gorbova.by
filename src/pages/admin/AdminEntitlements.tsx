@@ -287,6 +287,9 @@ export default function AdminEntitlements() {
         .single();
       const profileId = profileData?.id || null;
 
+      const currentUser = (await supabase.auth.getUser()).data.user;
+
+      // GUARD: Manual entitlement requires explicit source documentation
       const { error } = await supabase.from("entitlements").insert({
         user_id: selectedUserId,
         profile_id: profileId,
@@ -294,6 +297,12 @@ export default function AdminEntitlements() {
         product_id: selectedProduct.id,
         status: "active",
         expires_at: expiresAt?.toISOString() || null,
+        meta: {
+          source: "manual_admin_entitlement",
+          created_by: currentUser?.id,
+          created_by_email: currentUser?.email,
+          warning: "Created via AdminEntitlements without source order or access rule. Non-canonical path.",
+        },
       });
 
       if (error) {
@@ -303,17 +312,18 @@ export default function AdminEntitlements() {
       }
 
       await supabase.from("audit_logs").insert({
-        actor_user_id: (await supabase.auth.getUser()).data.user?.id,
-        action: "entitlements.grant",
+        actor_user_id: currentUser?.id,
+        action: "entitlements.manual_grant",
         target_user_id: selectedUserId,
         meta: { 
           product_id: selectedProduct.id,
           product_code: selectedProduct.code,
           expires_at: expiresAt?.toISOString(),
+          warning: "Manual entitlement without source order or access rule",
         },
       });
 
-      toast.success("Доступ выдан");
+      toast.success("Доступ выдан (ручная выдача без сделки)");
       setGrantDialog(false);
       setSelectedUserId("");
       setSelectedProductId("");
