@@ -1,141 +1,354 @@
-да, согласен, с учетом правок:
-
-&nbsp;
-
-1. В PATCH A добавь one-shot repair для уже существующих live_event_comments и live_event_questions, где author_display_name IS NULL, иначе старые записи так и останутся с fallback “Пользователь”. Делать только для пустых snapshot-полей, без перезаписи уже заполненных значений.
-2. В PATCH B зафиксируй явно, что emit_webinar_domain_event() пишет в domain_events поля в формате, совместимом с уже существующим consumer:  
-
-  - source = 'webinar'
-  - event_type строго из согласованного списка
-  - entity_id = UUID исходной записи
-  - payload содержит live_event_id, user_id/created_by, author_display_name, content_preview/reply_preview, visibility_scope, action_type
-3. &nbsp;
-4. В PATCH B добавь idempotent scheduling:  
-
-  - если cron job для webinar-activity-consumer уже существует, не создавать дубль;
-  - если не существует — создать один job;
-  - в proof показать jobid, schedule, active.
-5. &nbsp;
-6. В PATCH B добавь machine-proof по pipeline целиком, а не только domain_events и crm_activity_log:  
-
-  - есть запись в domain_events
-  - есть запись в domain_executions
-  - есть запись в crm_activity_log
-  - idempotency_key не даёт дубль при повторном запуске consumer
-7. &nbsp;
-8. В PATCH C правильно пометь как hardening, а не как критический дефект. Функционально moderation уже работает через user_has_live_event_access, здесь цель — сделать защиту явной и не зависящей только от внутренней логики RPC.
-9. В PATCH D добавь две проверки имени автора:  
-
-  - новый комментарий создаётся сразу с заполненным author_display_name
-  - repaired старая запись тоже получает имя после one-shot repair
-10. &nbsp;
-11. В финальном отчёте раздели результат на 3 части:  
-
-  - что исправлено критически;
-  - что усилено как hardening;
-  - какие runtime-proof получены.
-12. &nbsp;
+Да. Это снова отчёт-аудит текущего состояния, и в этот раз он по сути выглядит корректно.
 
 &nbsp;
 
 &nbsp;
 
-В остальном патч правильный:
-
-сначала repair trigger + event pipeline, затем hardening policy, затем proof по всей цепочке.
+**Что он означает по факту**
 
 &nbsp;
 
-# План: Fix-to-Patch — исправление 2 критических дефектов + hardening + runtime proof
+&nbsp;
+
+Сейчас картина такая:
+
+&nbsp;
+
+&nbsp;
+
+**Уже сделано и выглядит закрытым**
+
+&nbsp;
+
+&nbsp;
+
+- video resolver и новый рендер источника;
+- snapshot имени автора;
+- moderation overlay в access logic;
+- scenario RPC;
+- room blocks;
+- consumer + cron для CRM pipeline;
+- hardening INSERT policies.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**Реально осталось исправить**
+
+&nbsp;
+
+&nbsp;
+
+Остались 3 конкретных бага, из них:
+
+&nbsp;
+
+&nbsp;
+
+**1. Критический**
+
+&nbsp;
+
+Trigger emit_webinar_domain_event для replies
+
+Если там действительно используются несуществующие поля [NEW.author](http://NEW.author)_display_name, NEW.comment_id, NEW.question_id, то это надо исправить обязательно.
+
+&nbsp;
+
+Правильно:
+
+&nbsp;
+
+- NEW.source_comment_id
+- NEW.source_question_id
+- author_display_name для replies либо не писать, либо резолвить отдельно
+
+&nbsp;
+
+&nbsp;
+
+Это не “замечание к стилю”, а нормальный баг.
+
+&nbsp;
+
+&nbsp;
+
+**2. Средний**
+
+&nbsp;
+
+Legacy fallback в LiveEventComments.tsx
+
+&nbsp;
+
+- .in("id", userIds) → должно быть .in("user_id", userIds)
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**3. Средний**
+
+&nbsp;
+
+Legacy fallback в LiveEventQuestions.tsx
+
+&nbsp;
+
+- .in("id", userIds) → .in("user_id", userIds)
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**4. Средний**
+
+&nbsp;
+
+Lookup в LiveEventModeration.tsx
+
+&nbsp;
+
+- .in("id", userIds) → .in("user_id", userIds)
+
+&nbsp;
+
+&nbsp;
+
+Это по сути один класс ошибки, повторённый в трёх местах.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**Вывод по спринту**
+
+&nbsp;
+
+&nbsp;
+
+Если этот аудит верный, то:
+
+&nbsp;
+
+- архитектурно спринт почти закрыт;
+- функционально не принят, пока не исправлен reply-trigger;
+- после этих фиксов останется в основном runtime proof на реальном live-stream и UI-проверки.
+
+&nbsp;
+
+&nbsp;
+
+То есть вы были правы: сейчас это уже не “большая доработка спринта”, а добивка хвостов + проверка.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**Как бы я сформулировал итог подрядчику**
+
+&nbsp;
+
+&nbsp;
+
+Можно дать так:
+
+&nbsp;
+
+&nbsp;
+
+**Fix-to-patch**
+
+&nbsp;
+
+&nbsp;
+
+1. Исправить emit_webinar_domain_event для live_event_replies:  
+
+  - убрать ссылку на [NEW.author](http://NEW.author)_display_name;
+  - заменить NEW.comment_id → NEW.source_comment_id;
+  - заменить NEW.question_id → NEW.source_question_id.
+2. &nbsp;
+3. Исправить profile lookup:  
+
+  - LiveEventComments.tsx
+  - LiveEventQuestions.tsx
+  - LiveEventModeration.tsx  
+  Во всех местах:
+  - .in("id", userIds) → .in("user_id", userIds)
+4. &nbsp;
+5. После этого дать proof:  
+
+  - успешный insert reply;
+  - domain_events для reply;
+  - domain_executions для reply;
+  - crm_activity_log для reply;
+  - корректное имя в moderation;
+  - корректный legacy fallback в comments/questions.
+6. &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+**Короткий итог**
+
+&nbsp;
+
+&nbsp;
+
+Да, этот отчёт надо воспринимать как нормальный proof-аудит.
+
+И из него следует, что не всё провалено — осталось не “полпереписать”, а закрыть 1 критический и 3 небольших бага, после чего переходить к runtime-тестам.
+
+&nbsp;
+
+# Отчёт: Аудит оставшихся функциональных блоков вебинарной комнаты
 
 ---
 
-## Подтверждённые дефекты (SQL proof выполнен)
+## Статус по каждому блоку
 
-### 🔴 Критический 1: Trigger `snapshot_author_display_name` — неверный lookup
+### ✅ Видео (PATCH 1) — реализовано корректно
 
-- **Proof:** `WHERE id = NEW.user_id` → всегда 0 строк, потому что `profiles.id` ≠ `profiles.user_id`
-- **Результат:** `author_display_name` = NULL для всех новых записей → fallback "Пользователь"
+- `live-resolve` возвращает `resolved_source` с полным контрактом
+- `resolveVideoSource()` правильно приоритизирует: `kinescope_video_id` → `kinescope_live_event_id` → `none`
+- `LiveEvent.tsx` рендерит по `resolved_source`, не по прямому `kinescope_video_id`
+- Controlled state для `none` — есть
+- Moderation overlay (`removed_from_room`) — проверяется серверно в live-resolve
+- **Runtime proof нужен**: реальный live_stream с `kinescope_live_event_id` для проверки iframe
 
-### 🔴 Критический 2: CRM sync pipeline не работает
+### ✅ Имена (PATCH 2) — trigger исправлен, repair выполнен
 
-- **Proof:** 0 triggers на webinar-таблицах для emit в `domain_events`; 0 записей в `domain_events WHERE source='webinar'`
-- **Результат:** вся цепочка `comment → domain_events → consumer → crm_activity_log` мёртвая
-- Consumer edge function написана корректно, но нечего обрабатывать и никто его не вызывает
+- `snapshot_author_display_name` ищет по `WHERE user_id = NEW.user_id` — **корректно**
+- Приоритет: `full_name → first+last → masked email → Пользователь` — **корректно**
+- One-shot repair выполнен: оба комментария в БД имеют заполненный `author_display_name`
+- UI fallback цепочка в `resolveDisplayName()` — **корректна**
 
-### 🟡 Hardening: INSERT policies comments/questions
+### 🔴 Имена — баг в legacy fallback (comments + questions)
 
-- **Proof:** `user_has_live_event_access` уже содержит `AND NOT is_user_removed_from_room(...)` → функционально работает
-- **Действие:** добавить explicit check для архитектурной ясности (не blocker)
+- `LiveEventComments.tsx:62` и `LiveEventQuestions.tsx:61`: legacy-запрос профилей идёт `.in("id", userIds)`
+- `userIds` содержит `user_id` из auth, а `profiles.id` — это собственный PK профиля
+- **Та же самая ошибка**, что была в trigger до fix-to-patch
+- **Fix**: заменить `.in("id", userIds)` на `.in("user_id", userIds)` в обоих файлах
+- **Severity**: средняя — влияет только на legacy-записи без snapshot, которых после repair осталось 0. Но при следующем edge case (snapshot trigger fail) баг вернётся
+
+### 🔴 Имена — баг в модерации
+
+- `LiveEventModeration.tsx:46`: `.in("id", userIds)` — та же ошибка
+- Модератор не увидит имена пользователей в списке модерации
+- **Fix**: `.in("user_id", userIds)`
+
+### ✅ Replies (PATCH 3) — реализовано
+
+- Таблица `live_event_replies` с `source_comment_id`/`source_question_id` + CHECK — есть
+- UI: `LiveEventReplyForm` + `LiveEventRepliesList` — есть
+- Visibility scope: public/private — есть
+- RLS: admin full + user (public + private where target) — есть
+
+### 🔴 Domain event trigger для replies — баг
+
+- `emit_webinar_domain_event` для `live_event_replies` ссылается на `NEW.author_display_name` — **такой колонки нет** в таблице
+- Также ссылается на `NEW.comment_id` и `NEW.question_id` — **колонки называются** `source_comment_id` и `source_question_id`
+- **Результат**: INSERT в `live_event_replies` вызовет ошибку trigger'а, что может заблокировать создание reply или записать NULL-поля
+- **Fix**: в trigger заменить `NEW.author_display_name` на `NULL` (или resolve из profiles), `NEW.comment_id` → `NEW.source_comment_id`, `NEW.question_id` → `NEW.source_question_id`
+
+### ✅ Moderation (PATCH 4) — реализовано корректно
+
+- `is_user_removed_from_room` RPC — есть, логика корректна
+- `user_has_live_event_access` содержит overlay — подтверждено
+- `live-resolve` вызывает `is_user_removed_from_room` и возвращает `removed_from_room` — **подтверждено** (строки 256-271)
+- INSERT policies comments/questions содержат explicit moderation check — **подтверждено**
+- `LiveEvent.tsx` рендерит state `removed_from_room` — есть
+- Server-enforced в 3/3 точках: RPC, live-resolve, RLS
+
+### ✅ Scenario (PATCH 5) — реализовано
+
+- RPC `get_live_event_scenario` с фильтрами — есть
+- `LiveEventScenario.tsx` — есть, фильтры по типу работают
+- Admin UI: вкладка "Сценарий" — есть
+
+### ✅ CRM sync (PATCH 6) — pipeline работает
+
+- Triggers на 4 таблицах — есть
+- Consumer edge function — есть
+- Cron job `invoke-webinar-activity-consumer` — active, каждую минуту
+- Idempotency key — есть
+- **Но**: trigger для replies сломан (баг выше), поэтому reply events не попадут в pipeline
+
+### ✅ Room blocks (PATCH 7) — реализовано
+
+- Таблица `live_event_room_blocks` — есть
+- `LiveEventRoomBlocks.tsx` — рендерит button/banner по display_scope и position
+- `LiveEventRoomBlocksEditor.tsx` — admin editor
+- Встроено в `LiveEvent.tsx` в under_video и sidebar
+
+### ✅ INSERT policies — hardening выполнен
+
+- Обе INSERT policy для comments и questions содержат `AND NOT is_user_removed_from_room(...)` — **подтверждено SQL proof**
 
 ---
 
-## PATCH A — Исправить trigger snapshot автора
+## Итого: 3 бага требуют исправления
 
-**Миграция:** заменить функцию `snapshot_author_display_name`:
 
-```sql
-WHERE id = NEW.user_id  →  WHERE user_id = NEW.user_id
-```
+| #   | Баг                                                                                                                              | Severity                                 | Fix                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------- |
+| 1   | `emit_webinar_domain_event` для replies: `NEW.author_display_name`, `NEW.comment_id`, `NEW.question_id` — неверные имена колонок | 🔴 Критический (блокирует replies → CRM) | SQL migration: исправить trigger function |
+| 2   | `LiveEventComments.tsx:62` + `LiveEventQuestions.tsx:61`: `.in("id", userIds)` → `.in("user_id", userIds)`                       | 🟡 Средний (legacy fallback)             | 2 строки в 2 файлах                       |
+| 3   | `LiveEventModeration.tsx:46`: `.in("id", userIds)` → `.in("user_id", userIds)`                                                   | 🟡 Средний (admin UX)                    | 1 строка                                  |
 
-Одна строка в `CREATE OR REPLACE FUNCTION`.
 
 ---
 
-## PATCH B — Создать domain event triggers + scheduling consumer
+## План исправления
 
-**Миграция:** создать функцию `emit_webinar_domain_event()` и привязать AFTER INSERT triggers к:
+### FIX A — SQL migration: исправить emit trigger для replies
 
-- `live_event_comments` → `live_comment_created`
-- `live_event_questions` → `live_question_created`
-- `live_event_replies` → `live_reply_created`
-- `live_event_room_moderation` → event_type по `action_type` (removed/banned/restored)
+Заменить в функции `emit_webinar_domain_event`:
 
-Payload включает: `live_event_id`, `user_id`/`created_by`, `content_preview` (первые 200 символов), `visibility_scope`, `author_display_name`, `action_type`.
+- `NEW.author_display_name` → `NULL` (replies не имеют этой колонки; можно resolve из profiles, но NULL допустим т.к. consumer заполняет `author_snapshot` отдельно)
+- `NEW.comment_id` → `NEW.source_comment_id`
+- `NEW.question_id` → `NEW.source_question_id`
 
-**Scheduling:** pg_cron job каждые 60 секунд вызывает `webinar-activity-consumer` через `pg_net.http_post`. Использовать существующий паттерн из проекта.
+### FIX B — UI: исправить profile lookup в 3 файлах
 
----
+- `LiveEventComments.tsx:62`: `.in("id", userIds)` → `.in("user_id", userIds)`
+- `LiveEventQuestions.tsx:61`: `.in("id", userIds)` → `.in("user_id", userIds)`
+- `LiveEventModeration.tsx:46`: `.in("id", userIds)` → `.in("user_id", userIds)`
 
-## PATCH C — Explicit moderation в INSERT policies
+### Что не затрагивается
 
-**Миграция:** DROP + CREATE policies для comments и questions INSERT:
-
-```sql
-WITH CHECK (
-  auth.uid() = user_id
-  AND user_has_live_event_access(auth.uid(), live_event_id)
-  AND NOT is_user_removed_from_room(auth.uid(), live_event_id)
-)
-```
-
-Функционально дублирует overlay из `user_has_live_event_access`, но делает intent явным.
+- live-resolve — корректен
+- LiveEvent.tsx — корректен
+- RLS policies — корректны
+- snapshot trigger — корректен
+- consumer edge function — корректен
+- cron job — активен и корректен
 
 ---
 
-## PATCH D — Runtime proof
+## Блоки, закрытые полностью после этих 3 фиксов
 
-После применения PATCH A–C:
-
-1. Вызвать `webinar-activity-consumer` через curl и показать response
-2. SQL proof: `domain_events WHERE source='webinar'` (после тестового комментария)
-3. SQL proof: `crm_activity_log` записи
-4. SQL proof: `author_display_name` в новых comments
-
----
-
-## Файлы и объекты изменений
-
-
-| Что                              | Тип                                   |
-| -------------------------------- | ------------------------------------- |
-| 1 SQL миграция (PATCH A + B + C) | DB migration                          |
-| 1 SQL insert (pg_cron schedule)  | Data insert                           |
-| 0 файлов кода                    | Без изменений frontend/edge functions |
-
-
-## Что не затрагивается
-
-- `live-resolve`, `LiveEvent.tsx`, replay, recorded_webinar, notification guardrails — без изменений
-- `webinar-activity-consumer` edge function — уже корректна, не трогаем
-- `user_has_live_event_access` — уже содержит overlay, не трогаем
+Все 9 PATCH-ей спринта будут функционально закрыты. Остаётся только runtime proof на реальном live_stream.
