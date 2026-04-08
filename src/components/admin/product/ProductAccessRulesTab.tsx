@@ -1241,6 +1241,12 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   Частичная поддержка: справочник доменов ещё не создан. Можно выбрать только из существующих записей.
                 </div>
               )}
+              {form.grant_target_type === "section_access" && (
+                <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50/50 dark:bg-amber-950/30 rounded-md px-2.5 py-1.5">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  Частичная поддержка: sidebar lock и page guard ещё не активированы. Правила сохраняются, но пока не применяются в UI.
+                </div>
+              )}
             </div>
 
             <Separator />
