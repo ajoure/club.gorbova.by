@@ -1320,6 +1320,40 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   </p>
                 </div>
               )}
+              {form.grant_target_type === "section_access" && (
+                <div className="space-y-2">
+                  <Select
+                    value={form.target_ref}
+                    onValueChange={(v) => {
+                      const section = availableSections.find(s => s.id === v);
+                      setForm({
+                        ...form,
+                        target_ref: v,
+                        target_label: section?.label || v,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Выберите раздел платформы" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableSections.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <span className="flex items-center gap-2">
+                            {s.label}
+                            <Badge variant="outline" className="text-[9px] px-1 py-0">
+                              {s.is_public ? "публичный" : "закрытый"}
+                            </Badge>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Раздел платформы, к которому будет выдан доступ. Gating активируется только после ручного перевода секции в закрытый режим.
+                  </p>
+                </div>
+              )}
 
               {/* training_content: root training selector + access mode + tree picker */}
               {form.grant_target_type === "training_content" && (
