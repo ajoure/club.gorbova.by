@@ -41,15 +41,14 @@ interface RetroApplyRequest {
   source_tariff_id?: string;
   changed_since?: string;
   recalculate_existing?: boolean;
-  force_execute?: boolean; // legacy compat, treated as apply all safe categories
-  // New execute controls
+  force_execute?: boolean;
   allow_reduce_access?: boolean;
   selected_action_ids?: string[];
   apply_categories?: string[];
 }
 
 interface UserAction {
-  action_id: string; // stable: ${user_id}:${target_product_id}:${rule_id}:${category}
+  action_id: string;
   user_id: string;
   profile_id: string | null;
   email: string;
@@ -143,7 +142,6 @@ Deno.serve(async (req) => {
     };
 
     // 4. STOP-guards for execute mode
-    // conflict_existing and no_source_window block standard execute (not force/selected)
     if (mode === "execute") {
       const hasSelection = (selected_action_ids && selected_action_ids.length > 0);
       const hasCategories = (apply_categories && apply_categories.length > 0);
@@ -401,7 +399,6 @@ async function processRule(
         if (existingList.length === 0) {
           actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null));
         } else if (existingList.length > 1) {
-          // Multiple active entitlements = real conflict
           actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry,
             existingList[0].expires_at, sub, "conflict_multiple_entitlements"));
         } else {
@@ -410,19 +407,16 @@ async function processRule(
           const currentEnd = ent.expires_at ? new Date(ent.expires_at).getTime() : null;
           const plannedEnd = plannedExpiry ? new Date(plannedExpiry).getTime() : null;
 
-          // Already satisfied (within 60s tolerance)
           if (currentEnd && plannedEnd && Math.abs(currentEnd - plannedEnd) < 60000) {
             actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
             continue;
           }
 
-          // No planned expiry = conflict
           if (!plannedEnd) {
             actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_no_planned_expiry"));
             continue;
           }
 
-          // Determine if source is safe — use meta fields since entitlements has no "source" column
           const entMeta = ent.meta || {};
           const metaBatchId = entMeta.batch_id || "";
           const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
@@ -431,30 +425,24 @@ async function processRule(
             || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
             || (entMeta.source_rule_id && !metaSourceType);
 
-          // Check meta.source_rule_id lineage
           const entSourceRuleId = entMeta.source_rule_id || null;
           const isRuleLineageSafe = !entSourceRuleId || entSourceRuleId === rule.id;
 
-          // Manual/admin sources = real conflict
           if (!isSourceSafe) {
             actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_manual_source"));
             continue;
           }
 
-          // Different rule source = real conflict
           if (!isRuleLineageSafe) {
             actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_different_rule_source"));
             continue;
           }
 
-          // Would reduce access — NOT a blocking conflict if source is canonical
-          // Instead: reducible_by_rule (admin can choose to apply)
           if (currentEnd && plannedEnd < currentEnd) {
             actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub, "reducible_by_canonical_rule"));
             continue;
           }
 
-          // current_expires_at IS NULL and safe lineage → safe recalculate
           if (!currentEnd) {
             if (recalculateExisting) {
               actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_expires_missing"));
@@ -464,7 +452,6 @@ async function processRule(
             continue;
           }
 
-          // planned > current and safe → safe recalculate
           if (plannedEnd > currentEnd) {
             if (recalculateExisting) {
               actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_expires_extended"));
@@ -474,7 +461,6 @@ async function processRule(
             continue;
           }
 
-          // Fallback: already satisfied (current >= planned)
           actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
         }
       }
@@ -544,9 +530,9 @@ async function checkRetroCondition(
 
 // Non-executable categories — NEVER updated even if selected
 const NEVER_EXECUTE_CATEGORIES = new Set([
+  "already_satisfied",
   "conflict_existing",
   "no_source_window",
-  "already_satisfied",
   "condition_not_met",
 ]);
 
@@ -611,15 +597,12 @@ async function executeActions(
   }
 
   function shouldExecute(action: UserAction): boolean {
-    // Never execute blocking categories
     if (NEVER_EXECUTE_CATEGORIES.has(action.category)) return false;
 
-    // requires_manual_review: only via explicit selection, never via apply_categories
     if (action.category === "requires_manual_review") {
       return hasSelection && selectedSet.has(action.action_id);
     }
 
-    // reducible_by_rule: requires allow_reduce_access + (selected OR in apply_categories)
     if (action.category === "reducible_by_rule") {
       if (!opts.allowReduceAccess) return false;
       if (hasSelection && selectedSet.has(action.action_id)) return true;
@@ -627,21 +610,18 @@ async function executeActions(
       return false;
     }
 
-    // aligned_update_needed: skip if recalculate disabled
     if (action.category === "aligned_update_needed") {
       const skipReason = action.skip_reason || "";
       if (skipReason === "safe_recalculate_available_but_disabled") return false;
-      // If targeted execute, check membership
       if (hasSelection) return selectedSet.has(action.action_id);
       if (hasCategories) return categorySet.has("aligned_update_needed");
-      return true; // default execute
+      return true;
     }
 
-    // missing_access
     if (action.category === "missing_access") {
       if (hasSelection) return selectedSet.has(action.action_id);
       if (hasCategories) return categorySet.has("missing_access");
-      return true; // default execute
+      return true;
     }
 
     return false;
@@ -656,22 +636,112 @@ async function executeActions(
     targeted++;
 
     if (action.category === "missing_access") {
-      // Idempotent guard: check if entitlement appeared between preview and execute
+      // Idempotent guard: check if entitlement exists with ANY status
+      // (unique constraint is on user_id + product_code, not status-specific)
       const { data: existing } = await supabase
         .from("entitlements")
-        .select("id")
+        .select("id, status, expires_at, meta, profile_id")
         .eq("user_id", action.user_id)
         .eq("product_id", action.target_product_id)
-        .eq("status", "active")
         .limit(1)
         .maybeSingle();
 
       if (existing) {
-        skipped_idempotent++;
-        skipped_action_ids.push(action.action_id);
+        if (existing.status === "active") {
+          // Already active — idempotent skip
+          skipped_idempotent++;
+          skipped_action_ids.push(action.action_id);
+          continue;
+        }
+
+        if (existing.status === "expired") {
+          // Reactivation path: UPDATE expired → active
+          reactivation_candidates_found++;
+
+          const rule = ruleMap.get(action.rule_id);
+          const sourceWindowRule = rule?.duration_days ? "rule_duration" : "align_with_source";
+
+          // Meta merge: strictly add-only, preserve all existing keys
+          const oldMeta = (existing.meta && typeof existing.meta === "object" && !Array.isArray(existing.meta))
+            ? existing.meta as Record<string, unknown>
+            : {};
+
+          // source_rule_id conflict check: if exists and differs from current rule, skip
+          if (oldMeta.source_rule_id && oldMeta.source_rule_id !== action.rule_id) {
+            skipped_error++;
+            errors.push({
+              action_id: action.action_id,
+              error: `source_rule_id_conflict: existing=${oldMeta.source_rule_id}, current=${action.rule_id}`,
+            });
+            continue;
+          }
+
+          // Build strictly add-only patch — never overwrite existing keys
+          const retroapplyPatch: Record<string, unknown> = {
+            source_type: "retroapply",
+            retroapply_reactivated: true,
+            retroapply_reactivated_at: new Date().toISOString(),
+            previous_status: "expired",
+            previous_expires_at: existing.expires_at,
+            batch_id: batchId,
+          };
+          if (!oldMeta.source_rule_id) retroapplyPatch.source_rule_id = action.rule_id;
+          if (!oldMeta.source_window_rule) retroapplyPatch.source_window_rule = sourceWindowRule;
+          if (!oldMeta.business_subscription_id && action.source_subscription_id) {
+            retroapplyPatch.business_subscription_id = action.source_subscription_id;
+          }
+
+          const mergedMeta = { ...oldMeta, ...retroapplyPatch };
+
+          // Build update payload
+          const updatePayload: Record<string, unknown> = {
+            status: "active",
+            expires_at: action.planned_expires_at,
+            updated_at: new Date().toISOString(),
+            meta: mergedMeta,
+          };
+
+          // Set profile_id only if currently empty
+          if (!existing.profile_id) {
+            let profileId = action.profile_id;
+            if (!profileId) {
+              const { data: prof } = await supabase
+                .from("profiles")
+                .select("id")
+                .eq("user_id", action.user_id)
+                .limit(1)
+                .maybeSingle();
+              profileId = prof?.id || null;
+            }
+            if (profileId) updatePayload.profile_id = profileId;
+          }
+
+          const { error: reactivateErr } = await supabase
+            .from("entitlements")
+            .update(updatePayload)
+            .eq("id", existing.id);
+
+          if (reactivateErr) {
+            console.error(`Failed to reactivate entitlement ${existing.id}: ${reactivateErr.message}`);
+            skipped_error++;
+            errors.push({ action_id: action.action_id, error: reactivateErr.message });
+          } else {
+            reactivated++;
+            reactivated_action_ids.push(action.action_id);
+          }
+          continue;
+        }
+
+        // Any other status (revoked, cancelled, manual_blocked, etc.) — unsafe, do not reactivate
+        skipped_error++;
+        errors.push({
+          action_id: action.action_id,
+          error: `unsafe_status_for_reactivation: ${existing.status}`,
+        });
         continue;
       }
 
+      // No existing entitlement — standard INSERT path
       const rule = ruleMap.get(action.rule_id);
       const sourceWindowRule = rule?.duration_days ? "rule_duration" : "align_with_source";
 
@@ -681,7 +751,6 @@ async function executeActions(
         .eq("id", action.target_product_id)
         .maybeSingle();
 
-      // Find profile_id for this user
       let profileId = action.profile_id;
       if (!profileId) {
         const { data: prof } = await supabase
@@ -734,7 +803,6 @@ async function executeActions(
         .maybeSingle();
 
       if (ent && action.planned_expires_at) {
-        // Merge meta: preserve existing, add retroapply markers
         const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
           ? ent.meta as Record<string, unknown>
           : {};
@@ -781,6 +849,8 @@ async function executeActions(
       rule_ids: rules.map((r: any) => r.id),
       targeted,
       created,
+      reactivated,
+      reactivation_candidates_found,
       updated,
       skipped_idempotent,
       skipped_conflict,
@@ -799,12 +869,15 @@ async function executeActions(
   return {
     targeted,
     created,
+    reactivated,
+    reactivation_candidates_found,
     updated,
     skipped_idempotent,
     skipped_conflict,
     skipped_error,
     not_selected,
     created_action_ids,
+    reactivated_action_ids,
     updated_action_ids,
     skipped_action_ids,
     errors,
