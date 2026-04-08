@@ -56,6 +56,8 @@ import { slugify } from "@/utils/slugify";
 import { LiveEventAccessRulesEditor, type AccessRuleRow } from "@/components/admin/live/LiveEventAccessRulesEditor";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
+import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
+import { LiveEventScenario } from "@/components/live/LiveEventScenario";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 
@@ -2207,7 +2209,7 @@ function LiveStreamControlPanel({
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Comments & Questions tabs */}
+      {/* Comments, Questions, Moderation, Scenario tabs */}
       {editingId && (
         <>
           <Separator />
@@ -2219,12 +2221,24 @@ function LiveStreamControlPanel({
               <TabsTrigger value="questions" className="gap-1.5 text-xs">
                 <HelpCircle className="h-3 w-3" /> Вопросы
               </TabsTrigger>
+              <TabsTrigger value="moderation" className="gap-1.5 text-xs">
+                <Shield className="h-3 w-3" /> Модерация
+              </TabsTrigger>
+              <TabsTrigger value="scenario" className="gap-1.5 text-xs">
+                <Video className="h-3 w-3" /> Сценарий
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="comments" className="border rounded-lg mt-2">
               <LiveEventComments liveEventId={editingId} />
             </TabsContent>
             <TabsContent value="questions" className="border rounded-lg mt-2">
               <LiveEventQuestions liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="moderation" className="border rounded-lg mt-2">
+              <LiveEventModerationPanel liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="scenario" className="border rounded-lg mt-2">
+              <LiveEventScenario liveEventId={editingId} />
             </TabsContent>
           </Tabs>
         </>

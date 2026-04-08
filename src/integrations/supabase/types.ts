@@ -2209,6 +2209,68 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_activity_log: {
+        Row: {
+          activity_type: string
+          author_snapshot: string | null
+          contact_id: string | null
+          created_at: string
+          id: string
+          idempotency_key: string | null
+          live_event_id: string | null
+          metadata: Json | null
+          public_id: string
+          source_entity_id: string
+          source_entity_type: string
+          text_snapshot: string | null
+          title_snapshot: string | null
+          user_id: string
+          visibility_scope: string | null
+        }
+        Insert: {
+          activity_type: string
+          author_snapshot?: string | null
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          live_event_id?: string | null
+          metadata?: Json | null
+          public_id?: string
+          source_entity_id: string
+          source_entity_type: string
+          text_snapshot?: string | null
+          title_snapshot?: string | null
+          user_id: string
+          visibility_scope?: string | null
+        }
+        Update: {
+          activity_type?: string
+          author_snapshot?: string | null
+          contact_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          live_event_id?: string | null
+          metadata?: Json | null
+          public_id?: string
+          source_entity_id?: string
+          source_entity_type?: string
+          text_snapshot?: string | null
+          title_snapshot?: string | null
+          user_id?: string
+          visibility_scope?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_activity_log_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       deploy_logs: {
         Row: {
           commit_sha: string
@@ -5194,26 +5256,35 @@ export type Database = {
       }
       live_event_comments: {
         Row: {
+          author_avatar_url: string | null
+          author_display_name: string | null
           content: string
           created_at: string
           id: string
           live_event_id: string
+          metadata: Json | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          author_avatar_url?: string | null
+          author_display_name?: string | null
           content: string
           created_at?: string
           id?: string
           live_event_id: string
+          metadata?: Json | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          author_avatar_url?: string | null
+          author_display_name?: string | null
           content?: string
           created_at?: string
           id?: string
           live_event_id?: string
+          metadata?: Json | null
           updated_at?: string
           user_id?: string
         }
@@ -5320,35 +5391,223 @@ export type Database = {
       }
       live_event_questions: {
         Row: {
+          author_avatar_url: string | null
+          author_display_name: string | null
           content: string
           created_at: string
           id: string
           is_answered: boolean
           live_event_id: string
+          metadata: Json | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          author_avatar_url?: string | null
+          author_display_name?: string | null
           content: string
           created_at?: string
           id?: string
           is_answered?: boolean
           live_event_id: string
+          metadata?: Json | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          author_avatar_url?: string | null
+          author_display_name?: string | null
           content?: string
           created_at?: string
           id?: string
           is_answered?: boolean
           live_event_id?: string
+          metadata?: Json | null
           updated_at?: string
           user_id?: string
         }
         Relationships: [
           {
             foreignKeyName: "live_event_questions_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_replies: {
+        Row: {
+          created_at: string
+          created_by: string
+          id: string
+          live_event_id: string
+          metadata: Json | null
+          public_id: string
+          reply_text: string
+          source_comment_id: string | null
+          source_question_id: string | null
+          target_display_name: string | null
+          target_user_id: string | null
+          updated_at: string | null
+          visibility_scope: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          id?: string
+          live_event_id: string
+          metadata?: Json | null
+          public_id?: string
+          reply_text: string
+          source_comment_id?: string | null
+          source_question_id?: string | null
+          target_display_name?: string | null
+          target_user_id?: string | null
+          updated_at?: string | null
+          visibility_scope: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          id?: string
+          live_event_id?: string
+          metadata?: Json | null
+          public_id?: string
+          reply_text?: string
+          source_comment_id?: string | null
+          source_question_id?: string | null
+          target_display_name?: string | null
+          target_user_id?: string | null
+          updated_at?: string | null
+          visibility_scope?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_replies_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_replies_source_comment_id_fkey"
+            columns: ["source_comment_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_replies_source_question_id_fkey"
+            columns: ["source_question_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_room_blocks: {
+        Row: {
+          block_type: string
+          config: Json
+          created_at: string
+          created_by: string
+          display_scope: string
+          id: string
+          is_active: boolean
+          live_event_id: string
+          metadata: Json | null
+          position: string
+          public_id: string
+          sort_order: number
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          block_type: string
+          config?: Json
+          created_at?: string
+          created_by: string
+          display_scope: string
+          id?: string
+          is_active?: boolean
+          live_event_id: string
+          metadata?: Json | null
+          position: string
+          public_id?: string
+          sort_order?: number
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          block_type?: string
+          config?: Json
+          created_at?: string
+          created_by?: string
+          display_scope?: string
+          id?: string
+          is_active?: boolean
+          live_event_id?: string
+          metadata?: Json | null
+          position?: string
+          public_id?: string
+          sort_order?: number
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_room_blocks_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_room_moderation: {
+        Row: {
+          action_type: string
+          created_at: string
+          created_by: string
+          expires_at: string | null
+          id: string
+          live_event_id: string
+          metadata: Json | null
+          public_id: string
+          reason: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          created_by: string
+          expires_at?: string | null
+          id?: string
+          live_event_id: string
+          metadata?: Json | null
+          public_id?: string
+          reason?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          created_by?: string
+          expires_at?: string | null
+          id?: string
+          live_event_id?: string
+          metadata?: Json | null
+          public_id?: string
+          reason?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_room_moderation_live_event_id_fkey"
             columns: ["live_event_id"]
             isOneToOne: false
             referencedRelation: "live_events"
@@ -12516,6 +12775,24 @@ export type Database = {
         Args: { p_account_id: string }
         Returns: Json
       }
+      get_live_event_scenario: {
+        Args: {
+          _entry_type?: string
+          _filter_user_id?: string
+          _filter_visibility?: string
+          _live_event_id: string
+        }
+        Returns: {
+          created_at: string
+          display_name: string
+          entry_id: string
+          entry_text: string
+          entry_type: string
+          metadata: Json
+          user_id: string
+          visibility_scope: string
+        }[]
+      }
       get_next_document_number: {
         Args: { p_document_type: string; p_prefix?: string }
         Returns: string
@@ -12730,6 +13007,10 @@ export type Database = {
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
+      is_user_removed_from_room: {
+        Args: { _live_event_id: string; _user_id: string }
+        Returns: boolean
+      }
       manage_news_cron: {
         Args: {
           p_afternoon_utc_hour: number
