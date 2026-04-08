@@ -4,6 +4,7 @@ import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
+import { useSectionAccess } from "@/hooks/useSectionAccess";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -21,7 +22,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, Radio } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, Radio, Lock } from "lucide-react";
 import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
