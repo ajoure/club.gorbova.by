@@ -856,7 +856,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <CheckCircle2 className="h-4 w-4" />
                       Правила применены
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                       <div className="text-center">
                         <div className="text-lg font-bold text-green-700">{result!.executed!.created}</div>
                         <div className="text-green-600">Создано</div>
@@ -866,12 +866,30 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                         <div className="text-amber-600">Обновлено</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold text-muted-foreground">{result!.executed!.skipped}</div>
+                        <div className="text-lg font-bold text-muted-foreground">
+                          {(result!.executed!.skipped_idempotent || 0) + (result!.executed!.skipped_error || 0)}
+                        </div>
                         <div className="text-muted-foreground">Пропущено</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-lg font-bold text-muted-foreground/50">{result!.executed!.not_selected || 0}</div>
+                        <div className="text-muted-foreground/50">Не входило в запуск</div>
                       </div>
                     </div>
                     <p className="text-[10px] text-muted-foreground">
+                      Запущено к обработке: {result!.executed!.targeted || 0}.
                       Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.updated || 0)}.
+                      {(result!.executed!.skipped_idempotent || 0) > 0 && ` Уже существовало: ${result!.executed!.skipped_idempotent}.`}
+                      {(result!.executed!.skipped_error || 0) > 0 && ` Ошибок: ${result!.executed!.skipped_error}.`}
+                    </p>
+                    {result!.executed!.errors && result!.executed!.errors.length > 0 && (
+                      <div className="text-[10px] text-red-600 mt-1">
+                        {result!.executed!.errors.map((e, i) => (
+                          <p key={i}>❌ {e.action_id}: {e.error}</p>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground italic">
                       Таблица ниже обновлена по текущему состоянию базы данных.
                     </p>
                     <div className="flex gap-2">
