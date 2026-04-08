@@ -329,7 +329,7 @@ async function processRule(
         const batch = userIds.slice(i, i + 50);
         const { data: ents } = await supabase
           .from("entitlements")
-          .select("id, user_id, expires_at, status, meta, product_id, source")
+          .select("id, user_id, expires_at, status, meta, product_id")
           .eq("product_id", targetProdId)
           .eq("status", "active")
           .in("user_id", batch);
