@@ -152,3 +152,32 @@ Post-result блок показывал недостоверные данные 
 - deal_date: 2026-02-06 → старое отображение
 - latest succeeded payment: 2026-04-07 05:30 → новое отображение
 - Совпадает во всех 4 экранах после фикса
+
+## PATCH-I: Fix RetroApply create-path — реактивация expired entitlements по unique (user_id, product_code)
+
+**Статус:** ✅ Code deployed, UI updated, awaiting live execute proof
+
+### Корневая причина (подтверждена)
+Create-path idempotent guard искал только `status = "active"`. Для expired entitlements — не находил → пропускал guard → INSERT → `UNIQUE (user_id, product_code)` уже занят expired записью → duplicate key error.
+
+### Что исправлено
+
+**Engine (`supabase/functions/rules-retroapply/index.ts`):**
+- Guard расширен: ищет entitlement **любого статуса** (убран `.eq("status", "active")`)
+- Ветвление: `active` → skipped_idempotent, `expired` → reactivation (UPDATE), `revoked/cancelled/other` → skipped_error с кодом `unsafe_status_for_reactivation`
+- Meta merge: strictly add-only, не перетирает `business_subscription_id`, `source_window_rule`, `source_rule_id`
+- source_rule_id conflict check: если уже есть и отличается → skipped_error
+- Новые счётчики: `reactivated`, `reactivation_candidates_found`, `reactivated_action_ids[]`
+
+**UI (`src/components/admin/product/RetroApplyPanel.tsx`):**
+- Post-result: 7 отдельных показателей (Создано / Реактивировано / Обновлено / Не входило / Пропущено идемпотентно / Не применено по статусу / Ошибки)
+- Текстовая строка: «Реактивировано expired → active: N»
+
+### Correction note по Семашкевич
+Предыдущий вывод об отсутствии active BUSINESS subscription был **ошибочным**. У Семашкевич есть активная подписка `c055cf9d` (access_end_at=2026-05-07). Все 3 пользователя (Кузьменок, Шевченко, Семашкевич) имеют одинаковую проблему B (execute/reactivation defect).
+
+### Pending runtime proofs
+- [ ] Execute по cb20 для 3 пользователей: reactivated = 3, errors = 0
+- [ ] Preview_after: missing_access = 0
+- [ ] Repeat execute: reactivated = 0, skipped_idempotent > 0
+- [ ] Meta before/after proof по одному entitlement
