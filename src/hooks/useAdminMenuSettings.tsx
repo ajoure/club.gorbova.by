@@ -124,6 +124,7 @@ export const DEFAULT_MENU: MenuSettings = [
       { id: "ilex", label: "iLex", path: "/admin/ilex", icon: "Library", order: 9, permission: "news.view" },
       { id: "ai", label: "Нейросеть", path: "/admin/ai", icon: "Bot", order: 10, permission: "roles.view" },
       { id: "live-events", label: "Эфиры", path: "/admin/live-events", icon: "Video", order: 11, permission: "content.edit" },
+      { id: "sections", label: "Разделы платформы", path: "/admin/sections", icon: "Shield", order: 12, permission: "roles.view" },
       // telegram-diagnostics removed - scope creep, consolidated into AutoRenewals
     ],
   },
