@@ -31,7 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen, Layout
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -51,6 +51,7 @@ const TARGET_TYPE_LABELS: Record<GrantTargetType, string> = {
   entitlement: "Системное право доступа",
   email: "Доступ к домену / разделу",
   training_content: "Доступ к контенту тренинга",
+  section_access: "Доступ к разделу платформы",
 };
 
 const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
@@ -59,6 +60,7 @@ const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
   entitlement: Shield,
   email: Zap,
   training_content: BookOpen,
+  section_access: Layout,
 };
 
 const PURPOSE_LABELS: Record<RulePurpose, string> = {
