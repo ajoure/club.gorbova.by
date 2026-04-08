@@ -129,6 +129,8 @@ export function AppSidebar() {
   } = useRbac();
   const collapsed = state === "collapsed";
   const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
+  const { checkAccess, gatingEnabled } = useSectionAccess();
+  const isAdminUser = role === "admin" || role === "superadmin";
 
   // Use canonical bootstrap profile instead of separate query
   const { profile } = useAuthBootstrap();
