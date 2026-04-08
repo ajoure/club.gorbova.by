@@ -11,7 +11,7 @@ import {
 } from "@/hooks/useAccessRules";
 import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
-  useTariffDurations, getClubAccessLabel,
+  useTariffDurations, getClubAccessLabel, useAvailableSections,
 } from "@/hooks/useAccessRuleSelectors";
 import { useTrainingContentTree, type TreeModule, type TreeLesson } from "@/hooks/useTrainingContentRules";
 import { useQuery } from "@tanstack/react-query";
@@ -31,7 +31,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Separator } from "@/components/ui/separator";
 import {
   Plus, Trash2, Pencil, ChevronDown, Shield, AlertTriangle, Eye,
-  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen
+  Users, Package, Zap, Clock, Star, Gift, Settings2, Info, X, Search, BookOpen, Layout
 } from "lucide-react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -51,6 +51,7 @@ const TARGET_TYPE_LABELS: Record<GrantTargetType, string> = {
   entitlement: "Системное право доступа",
   email: "Доступ к домену / разделу",
   training_content: "Доступ к контенту тренинга",
+  section_access: "Доступ к разделу платформы",
 };
 
 const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
@@ -59,6 +60,7 @@ const TARGET_TYPE_ICONS: Record<GrantTargetType, typeof Shield> = {
   entitlement: Shield,
   email: Zap,
   training_content: BookOpen,
+  section_access: Layout,
 };
 
 const PURPOSE_LABELS: Record<RulePurpose, string> = {
@@ -262,6 +264,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   const { data: availableProducts = [] } = useAvailableProducts();
   const { data: availableEntitlements = [] } = useAvailableEntitlements();
   const { data: tariffDurations = [] } = useTariffDurations(productId);
+  const { data: availableSections = [] } = useAvailableSections();
 
   // Root trainings for this product (for training_content selector)
   const { data: rootTrainings = [] } = useQuery({
@@ -1238,6 +1241,12 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   Частичная поддержка: справочник доменов ещё не создан. Можно выбрать только из существующих записей.
                 </div>
               )}
+              {form.grant_target_type === "section_access" && (
+                <div className="flex items-center gap-1.5 text-[11px] text-amber-600 bg-amber-50/50 dark:bg-amber-950/30 rounded-md px-2.5 py-1.5">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  Частичная поддержка: sidebar lock и page guard ещё не активированы. Правила сохраняются, но пока не применяются в UI.
+                </div>
+              )}
             </div>
 
             <Separator />
@@ -1314,6 +1323,40 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
                   />
                   <p className="text-[11px] text-muted-foreground">
                     Справочник доменов/разделов ещё не создан. Введите идентификатор вручную.
+                  </p>
+                </div>
+              )}
+              {form.grant_target_type === "section_access" && (
+                <div className="space-y-2">
+                  <Select
+                    value={form.target_ref}
+                    onValueChange={(v) => {
+                      const section = availableSections.find(s => s.id === v);
+                      setForm({
+                        ...form,
+                        target_ref: v,
+                        target_label: section?.label || v,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Выберите раздел платформы" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableSections.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          <span className="flex items-center gap-2">
+                            {s.label}
+                            <Badge variant="outline" className="text-[9px] px-1 py-0">
+                              {s.is_public ? "публичный" : "закрытый"}
+                            </Badge>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Раздел платформы, к которому будет выдан доступ. Gating активируется только после ручного перевода секции в закрытый режим.
                   </p>
                 </div>
               )}

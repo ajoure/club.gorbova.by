@@ -914,6 +914,45 @@ export type Database = {
         }
         Relationships: []
       }
+      app_sections: {
+        Row: {
+          code: string
+          created_at: string
+          icon: string | null
+          id: string
+          is_active: boolean
+          is_public: boolean
+          label: string
+          route: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          is_public?: boolean
+          label: string
+          route: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_active?: boolean
+          is_public?: boolean
+          label?: string
+          route?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       app_settings: {
         Row: {
           created_at: string
@@ -12937,6 +12976,21 @@ export type Database = {
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
+      }
+      get_user_section_access: {
+        Args: { p_user_id?: string }
+        Returns: {
+          granted_via_product_id: string
+          granted_via_product_name: string
+          granted_via_tariff_id: string
+          granted_via_tariff_name: string
+          has_access: boolean
+          is_public: boolean
+          section_code: string
+          section_id: string
+          section_label: string
+          section_route: string
+        }[]
       }
       has_any_role: {
         Args: {
