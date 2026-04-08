@@ -418,6 +418,8 @@ export default function AdminDeals() {
         return (deal.products_v2 as any)?.name || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
+      case "deal_date":
+        return getEffectiveDealDate(deal);
       default:
         return deal[fieldKey];
     }
