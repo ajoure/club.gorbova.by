@@ -31,7 +31,9 @@ export function LiveEventScenario({ liveEventId }: { liveEventId: string }) {
   const { data: entries, isLoading } = useQuery({
     queryKey: ["live-event-scenario", liveEventId, filterType],
     queryFn: async () => {
-      const params: Record<string, any> = { _live_event_id: liveEventId };
+      const params: { _live_event_id: string; _entry_type?: string; _filter_user_id?: string; _filter_visibility?: string } = {
+        _live_event_id: liveEventId,
+      };
       if (filterType !== "all") params._entry_type = filterType;
 
       const { data, error } = await supabase.rpc("get_live_event_scenario", params);
