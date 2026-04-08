@@ -563,10 +563,30 @@ async function executeActions(
   actions: UserAction[],
   rules: any[],
   opts: ExecuteOptions,
-): Promise<{ created: number; updated: number; skipped: number }> {
+): Promise<{
+  targeted: number;
+  created: number;
+  updated: number;
+  skipped_idempotent: number;
+  skipped_conflict: number;
+  skipped_error: number;
+  not_selected: number;
+  created_action_ids: string[];
+  updated_action_ids: string[];
+  skipped_action_ids: string[];
+  errors: Array<{ action_id: string; error: string }>;
+}> {
+  let targeted = 0;
   let created = 0;
   let updated = 0;
-  let skipped = 0;
+  let skipped_idempotent = 0;
+  let skipped_conflict = 0;
+  let skipped_error = 0;
+  let not_selected = 0;
+  const created_action_ids: string[] = [];
+  const updated_action_ids: string[] = [];
+  const skipped_action_ids: string[] = [];
+  const errors: Array<{ action_id: string; error: string }> = [];
 
   const batchId = `RETROAPPLY-${new Date().toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -623,9 +643,11 @@ async function executeActions(
 
   for (const action of actions) {
     if (!shouldExecute(action)) {
-      skipped++;
+      not_selected++;
       continue;
     }
+
+    targeted++;
 
     if (action.category === "missing_access") {
       // Idempotent guard: check if entitlement appeared between preview and execute
@@ -639,7 +661,8 @@ async function executeActions(
         .maybeSingle();
 
       if (existing) {
-        skipped++;
+        skipped_idempotent++;
+        skipped_action_ids.push(action.action_id);
         continue;
       }
 
@@ -652,35 +675,52 @@ async function executeActions(
         .eq("id", action.target_product_id)
         .maybeSingle();
 
+      // Find profile_id for this user
+      let profileId = action.profile_id;
+      if (!profileId) {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("user_id", action.user_id)
+          .limit(1)
+          .maybeSingle();
+        profileId = prof?.id || null;
+      }
+
+      const insertPayload: Record<string, unknown> = {
+        user_id: action.user_id,
+        product_id: action.target_product_id,
+        product_code: prod?.code || action.target_product_code,
+        status: "active",
+        expires_at: action.planned_expires_at,
+        meta: {
+          source_type: "retroapply",
+          source_rule_id: action.rule_id,
+          source_window_rule: sourceWindowRule,
+          batch_id: batchId,
+          business_subscription_id: action.source_subscription_id,
+          retroapply: true,
+        },
+      };
+      if (profileId) insertPayload.profile_id = profileId;
+
       const { error: insertErr } = await supabase
         .from("entitlements")
-        .insert({
-          user_id: action.user_id,
-          product_id: action.target_product_id,
-          product_code: prod?.code || action.target_product_code,
-          status: "active",
-          source: "retroapply",
-          expires_at: action.planned_expires_at,
-          meta: {
-            source_rule_id: action.rule_id,
-            source_window_rule: sourceWindowRule,
-            batch_id: batchId,
-            business_subscription_id: action.source_subscription_id,
-            retroapply: true,
-          },
-        });
+        .insert(insertPayload);
 
       if (insertErr) {
         console.error(`Failed to insert entitlement for user ${action.user_id}: ${insertErr.message}`);
-        skipped++;
+        skipped_error++;
+        errors.push({ action_id: action.action_id, error: insertErr.message });
       } else {
         created++;
+        created_action_ids.push(action.action_id);
       }
     } else if (action.category === "aligned_update_needed" || action.category === "reducible_by_rule") {
-      // Update existing entitlement
+      // Update existing entitlement — with meta MERGE
       const { data: ent } = await supabase
         .from("entitlements")
-        .select("id")
+        .select("id, meta")
         .eq("user_id", action.user_id)
         .eq("product_id", action.target_product_id)
         .eq("status", "active")
@@ -688,30 +728,41 @@ async function executeActions(
         .maybeSingle();
 
       if (ent && action.planned_expires_at) {
+        // Merge meta: preserve existing, add retroapply markers
+        const oldMeta = (ent.meta && typeof ent.meta === "object" && !Array.isArray(ent.meta))
+          ? ent.meta as Record<string, unknown>
+          : {};
+        const mergedMeta = {
+          ...oldMeta,
+          source_rule_id: action.rule_id,
+          retroapply_updated: true,
+          batch_id: batchId,
+        };
+
         const { error: updateErr } = await supabase
           .from("entitlements")
           .update({
             expires_at: action.planned_expires_at,
             updated_at: new Date().toISOString(),
-            meta: {
-              source_rule_id: action.rule_id,
-              retroapply_updated: true,
-              batch_id: batchId,
-            },
+            meta: mergedMeta,
           })
           .eq("id", ent.id);
 
         if (updateErr) {
           console.error(`Failed to update entitlement ${ent.id}: ${updateErr.message}`);
-          skipped++;
+          skipped_error++;
+          errors.push({ action_id: action.action_id, error: updateErr.message });
         } else {
           updated++;
+          updated_action_ids.push(action.action_id);
         }
       } else {
-        skipped++;
+        skipped_conflict++;
+        skipped_action_ids.push(action.action_id);
       }
     } else {
-      skipped++;
+      skipped_conflict++;
+      skipped_action_ids.push(action.action_id);
     }
   }
 
@@ -722,9 +773,13 @@ async function executeActions(
     meta: {
       batch_id: batchId,
       rule_ids: rules.map((r: any) => r.id),
+      targeted,
       created,
       updated,
-      skipped,
+      skipped_idempotent,
+      skipped_conflict,
+      skipped_error,
+      not_selected,
       total_actions: actions.length,
       execute_options: {
         recalculate_existing: opts.recalculateExisting,
@@ -735,5 +790,17 @@ async function executeActions(
     },
   });
 
-  return { created, updated, skipped };
+  return {
+    targeted,
+    created,
+    updated,
+    skipped_idempotent,
+    skipped_conflict,
+    skipped_error,
+    not_selected,
+    created_action_ids,
+    updated_action_ids,
+    skipped_action_ids,
+    errors,
+  };
 }
