@@ -254,18 +254,18 @@ export default function AdminSections() {
                   {section.is_public ? (
                     <Badge variant="outline" className="text-[10px] gap-1">
                       <Globe className="h-3 w-3" />
-                      public
+                      публичный
                     </Badge>
                   ) : (
                     <Badge variant="destructive" className="text-[10px] gap-1">
                       <Lock className="h-3 w-3" />
-                      gated
+                      закрытый
                     </Badge>
                   )}
                   {!section.is_active && (
                     <Badge variant="secondary" className="text-[10px] gap-1">
                       <EyeOff className="h-3 w-3" />
-                      inactive
+                      неактивный
                     </Badge>
                   )}
                 </div>

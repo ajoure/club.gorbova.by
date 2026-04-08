@@ -4,6 +4,7 @@ import logoImage from "@/assets/logo.png";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
+import { useSectionAccess } from "@/hooks/useSectionAccess";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -21,7 +22,7 @@ import {
   CollapsibleContent, 
   CollapsibleTrigger 
 } from "@/components/ui/collapsible";
-import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, Radio } from "lucide-react";
+import { Calculator, Briefcase, ClipboardCheck, Sparkles, Target, LogOut, LayoutGrid, ChevronRight, Settings, ShoppingBag, BookOpen, User, Shield, ChevronUp, LifeBuoy, Activity, Wallet, Cpu, GraduationCap, Archive, FileText, Radio, Lock } from "lucide-react";
 import { useUnreadTicketsCount } from "@/hooks/useTickets";
 
 // Static menu structure - modules are shown inside page tabs, not in sidebar dropdown
@@ -94,6 +95,7 @@ const legacyMenuItems: MainMenuItem[] = [{
 }];
 
 const leaderToolsItems = [{
+  key: "eisenhower",
   title: "Матрица продуктивности",
   url: "/tools/eisenhower",
   icon: LayoutGrid
@@ -127,6 +129,8 @@ export function AppSidebar() {
   } = useRbac();
   const collapsed = state === "collapsed";
   const { data: unreadTicketsCount = 0 } = useUnreadTicketsCount();
+  const { checkAccess, gatingEnabled } = useSectionAccess();
+  const isAdminUser = role === "admin" || role === "superadmin";
 
   // Use canonical bootstrap profile instead of separate query
   const { profile } = useAuthBootstrap();
@@ -181,14 +185,16 @@ export function AppSidebar() {
   // Render menu item - NO dynamic modules in dropdown, just static links
   const renderMenuItem = (item: MainMenuItem) => {
     const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
+    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+    const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
 
-    // Regular menu item - no submenu with dynamic modules
     return (
       <SidebarMenuItem key={item.key}>
         <SidebarMenuButton asChild isActive={isActive} tooltip={collapsed ? item.title : undefined}>
           <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
             <item.icon className="h-5 w-5 shrink-0" />
-            {!collapsed && <span>{item.title}</span>}
+            {!collapsed && <span className="flex-1">{item.title}</span>}
+            {!collapsed && showLock && <Lock className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />}
           </NavLink>
         </SidebarMenuButton>
       </SidebarMenuItem>
@@ -232,14 +238,21 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {leaderToolsItems.map(item => <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
-                    <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {!collapsed && <span className="text-sm leading-tight flex-1">{item.title}</span>}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>)}
+              {leaderToolsItems.map(item => {
+                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+                const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
+                return (
+                  <SidebarMenuItem key={item.key}>
+                    <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>
+                      <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
+                        <item.icon className="h-5 w-5 shrink-0" />
+                        {!collapsed && <span className="text-sm leading-tight flex-1">{item.title}</span>}
+                        {!collapsed && showLock && <Lock className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />}
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
