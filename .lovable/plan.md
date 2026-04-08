@@ -1,120 +1,188 @@
-1: # План: 4 патча — cb20 repair, Деньги BY closure, LibraryModule access filter, Universal RetroApply Engine
+## да, согласен, с учетом правок:
 
----
+&nbsp;
 
-## Архитектурная норма
+1. Не ограничивай фикс только Gorbova Club. Формулировка должна быть шире: для всех подписочных/рекуррентных сделок дата в списках и карточках должна браться из канонического источника «последний успешный платеж», а не из одноразово записанного deal_date. Gorbova Club — только proof-case №1.
+2. В discovery отдельно зафиксируй и докажи правило приоритета дат, а не только сразу хелпер:
+  &nbsp;
+  - если есть успешные платежи по сделке/заказу — брать MAX(paid_at) или fallback MAX(created_at) по успешным платежам;
+  - если успешных платежей нет — fallback на [deal.deal](http://deal.deal)_date || deal.created_at;
+  - если deal_date была вручную изменена админом и это отдельный осознанный сценарий, подрядчик обязан доказать, должна ли она иметь приоритет над payment-date. Без этого нельзя зашивать правило «ручная дата важнее» автоматически.
+  &nbsp;
+3. Пункт Если deal_date ≠ created_at (ручная дата) → deal_date сейчас слишком рискованный. Это предположение, а не доказанный факт. Нужно заменить на discovery-вопрос:
+  &nbsp;
+  - существует ли в системе легитимный сценарий ручного редактирования deal_date;
+  - где именно это используется;
+  - должна ли такая дата перебивать дату последнего успешного платежа в UI списка.
+    До доказательства не хардкодить этот приоритет.
+  &nbsp;
+4. Нужен единый helper и единый контракт для всех экранов, но не только getEffectiveDealDate(deal). Добавь требование:
+  &nbsp;
+  - вынести также isSubscriptionLikeDeal(deal) или эквивалентную нормализацию, если без этого код начнет расползаться по условиям;
+  - использовать один и тот же helper во всех list/card местах, чтобы больше не было расхождений между AdminDeals / ContactDetailSheet / ContactDealsDialog / DealDetailSheet.
+  &nbsp;
+5. В AdminDeals надо явно проверить не только рендер даты, но и сортировку/фильтрацию:
+  &nbsp;
+  - если колонка даты сортируется клиентом, сортировать по getEffectiveDealDate;
+  - если сервером по deal_date, зафиксировать, что это временно неверно для подписок, и либо сделать клиентскую пересортировку после загрузки, либо отдельный proof, что текущее серверное поведение не ломает UX.
+    Просто “оставить серверную сортировку как есть” — слабое место.
+  &nbsp;
+6. Добавь обязательный proof-пакет по расхождениям:
+  &nbsp;
+  - deal_id
+  - product / tariff
+  - old_list_date
+  - detail_effective_date
+  - latest_success_payment_at
+  - decision_source_used
+  - mismatch_fixed yes/no
+    Нужен минимум по 10 подписочным сделкам, не только по Елизавете.
+  &nbsp;
+7. Нужен отдельный кейс для разового продукта и отдельный кейс для подписочного продукта без успешного последнего платежа:
+  &nbsp;
+  - разовый товар — дата не должна измениться;
+  - подписка без successful payment fallback — дата должна корректно уйти в deal_date || created_at.
+    Иначе фикс будет доказан только на одном счастливом сценарии.
+  &nbsp;
+8. В ContactDetailSheet и ContactDealsDialog подрядчик должен явно показать, какие поля payments_v2 уже есть и какие добавляются. Нельзя просто “добавить paid_at, created_at если не хватает”. Нужно требовать точный diff select-списков и proof, что это не ломает производительность/типизацию.
+9. Для DealDetailSheet не писать просто “уже правильная логика”. Нужно потребовать сверку 1:1:
+  &nbsp;
+  - либо новый helper повторяет текущую логику DealDetailSheet;
+  - либо сам DealDetailSheet переводится на тот же helper.
+    Идеально — тоже перевести DealDetailSheet на helper, чтобы не было двух параллельных реализаций одной и той же логики.
+  &nbsp;
+10. В DoD добавь два жестких пункта:
 
-**RetroApply — это универсальный ручной механизм применения новых или изменённых access_rules к историческим данным по всем продуктам и тарифам, а не специальная логика только для BUSINESS.**
+&nbsp;
 
-- Engine НЕ привязан к BUSINESS, НЕ привязан к club, НЕ привязан к Деньги BY
-- Rule выбирается параметрами запуска (rule_ids / source_product_id / source_tariff_id / changed_since)
-- Два режима: **grant missing access** (default) и **recalculate existing access** (`recalculate_existing: true`)
+&nbsp;
 
-**Правило эксплуатации для админа:**
-- Новые оплаты после изменения rules обрабатываются автоматически обычным fulfillment flow
-- Старые исторические покупки автоматически НЕ пересчитываются
-- Для них админ вручную запускает RetroApply: preview → execute
+&nbsp;
 
----
+- дата одной и той же сделки совпадает во всех местах UI;
+- после фикса нет мест в коде, где для deal cards/list по-прежнему используется голый [deal.deal](http://deal.deal)_date || deal.created_at для подписочных сделок.
 
-## PATCH-A: CB20 expiry alignment
+&nbsp;
 
-**Статус:** ✅ Закрыт по data-proof
+&nbsp;
 
----
+&nbsp;
 
-## PATCH-B: Деньги BY retro-backfill
+11. Добавь STOP-guard:
 
-**Статус:** ✅ Закрыт по proof
+&nbsp;
 
----
+&nbsp;
 
-## PATCH-C: LibraryModule child access filtering
+&nbsp;
 
-**Статус:** ✅ Закрыт как UI access-filter fix
+- не менять сами данные deal_date в БД;
+- фикс только read-model/UI/helper;
+- без миграций и без массового апдейта сделок;
+- если для реализации потребуется менять persistence, остановиться и сначала выдать discovery.
 
----
+&nbsp;
 
-## PATCH-D: Universal RetroApply Engine
+&nbsp;
 
-**Статус:** ✅ Code-ready, preview/execute/idempotency verified, UI создан
+&nbsp;
 
----
+12. Добавь финальный after-proof именно по кейсу Елизаветы:
 
-## PATCH-E: RetroApply Conflict Reclassification
+&nbsp;
 
-**Статус:** ✅ Закрыт по proof
+&nbsp;
 
----
+&nbsp;
 
-## PATCH-F: Admin-Controlled Conflict Resolution
+- список сделок контакта;
+- карточка сделки;
+- detail sheet сделки;
+- платеж 07.04.2026;
+- везде одна и та же дата после фикса.
 
-**Статус:** ✅ done
+&nbsp;
 
----
+&nbsp;
 
-## PATCH-G: RetroApply Engine/UI Truth Repair
+&nbsp;
 
-**Статус:** ✅ done
+13. Формулировку проблемы уточни: не “список врёт”, а “в разных экранах используются разные источники даты сделки”. Это точнее и поможет не зашить частный костыль под один продукт.
+
+&nbsp;
+
+&nbsp;
+
+Итог: направление верное, но план нужно усилить в части канонического правила приоритета дат, сортировки, единообразного helper-а и доказательств по нескольким сценариям, а не только по Елизавете.
+
+&nbsp;
+
+План: FIX CLUB DEAL LIST DATE SOURCE
 
 ### Проблема
-RetroApply safe execute визуально «срабатывал», но фактически не создавал записей.
-Post-result блок показывал недостоверные данные (skipped = весь preview).
 
-### Что исправлено
+Для подписочных сделок (Gorbova Club) список сделок и карточка контакта показывают `deal_date` (дату создания заказа), а детальный экран сделки (`DealDetailSheet`) показывает дату последнего успешного платежа. Расхождение:
 
-**Engine (`supabase/functions/rules-retroapply/index.ts`):**
-- **Create-path:** убрана запись в несуществующий столбец `source`. Все маркеры происхождения пишутся в `meta` (`source_type`, `source_rule_id`, `batch_id`, etc.)
-- **Profile_id:** при create передаётся `profile_id` если известен
-- **Update-path:** реализован merge meta: `{ ...oldMeta, ...retroapplyPatch }`. Существующие ключи не затираются
-- **Execute-статистика разделена:**
-  - `targeted` — строки реально вошедшие в execute
-  - `created` / `updated` — фактические изменения
-  - `skipped_idempotent` — уже существовало между preview и execute
-  - `skipped_conflict` — entitlement не найден / нет planned_expires
-  - `skipped_error` — ошибка insert/update
-  - `not_selected` — строки preview, которые не входили в scope execute
-- Добавлены `created_action_ids`, `updated_action_ids`, `skipped_action_ids`, `errors[]`
+- Список: `deal.deal_date || deal.created_at` → **06.02.2026**
+- Деталь: `latestSucceededPayment.paid_at || payment.created_at` → **07.04.2026**
 
-**UI (`src/components/admin/product/RetroApplyPanel.tsx`):**
-- Post-result блок показывает 4 столбца: Создано / Обновлено / Пропущено / Не входило в запуск
-- Текстовая строка: «Запущено к обработке: N. Фактически изменено: M.»
-- Отдельно отображаются ошибки execute (если есть)
-- Auto-refresh preview после execute сохранён
+У Елизаветы заказ `413d1847` создан 06.02, но рекуррентные платежи продолжают приходить на него (последний: 07.04). Список врёт.
 
-### Диагностика Елизаветы Семашкевич
+### Корневая причина
 
-Разбор показал:
-- Активная подписка: product `11c9f1b8` (Gorbova Club), tariff `7c748940` (BUSINESS)
-- Правило `1b497fba` (9 продуктов) использует `condition_type: prior_purchase, match_mode: per_product`
-- У Елизаветы оплачен только 1 из 9 target-продуктов (cb20 = `7101ed3c`)
-- Entitlement для cb20 существует, но `status: expired` (срок 2026-04-07, уже истёк)
-- Для остальных 8 продуктов она правомерно классифицирована как `condition_not_met`
-- **Вывод:** проблема Елизаветы — не ошибка create-path и не ошибка классификации, а expired entitlement по cb20
+**3 места** используют `deal.deal_date || deal.created_at` без учёта платежей:
+
+1. `src/components/admin/ContactDetailSheet.tsx`, строка 3185 — карточка сделки в табе «Сделки»
+2. `src/pages/admin/AdminDeals.tsx`, строка 916 — список всех сделок
+3. `src/components/admin/bepaid/ContactDealsDialog.tsx`, строка 227 — диалог сделок
+
+**Детальный экран** (`DealDetailSheet.tsx`, строки 482-505) уже имеет правильную логику — берёт `latestSucceededPayment`.
+
+### Решение
+
+Создать хелпер `getEffectiveDealDate(deal)`, который повторяет логику из `DealDetailSheet`:
+
+```text
+1. Если deal_date ≠ created_at (ручная дата) → deal_date
+2. Иначе: последний succeeded payment → paid_at || created_at
+3. Fallback: deal_date || created_at
+```
+
+Применить его в 3 местах вместо `deal.deal_date || deal.created_at`.
+
+### Файлы
+
+**1. Новый хелпер** `src/utils/getEffectiveDealDate.ts`
+
+- Функция принимает deal с вложенными `payments_v2`
+- Возвращает ISO-строку даты
+
+**2. `src/components/admin/ContactDetailSheet.tsx**`
+
+- Строка 3185: заменить `deal.deal_date || deal.created_at` на `getEffectiveDealDate(deal)`
+- Данные `payments_v2` уже загружаются в запросе (строка 423), но только `id, status, provider_response`. Нужно добавить `paid_at, created_at` в select.
+
+**3. `src/pages/admin/AdminDeals.tsx**`
+
+- Строка 916: заменить на `getEffectiveDealDate(deal)`
+- Проверить, загружаются ли `payments_v2` в запросе. Если нет — добавить join.
+- Строка 331: сортировка `order("deal_date", ...)` — оставить серверную сортировку как есть (нельзя сортировать по computed field на уровне PostgREST). Клиентская сортировка (`useTableSort`) должна использовать `getEffectiveDealDate`.
+
+**4. `src/components/admin/bepaid/ContactDealsDialog.tsx**`
+
+- Строка 227: заменить на `getEffectiveDealDate(deal)`
+- Добавить `paid_at, created_at` в select payments_v2 если не хватает
+
+### Что НЕ меняется
+
+- `DealDetailSheet.tsx` — уже правильная логика
+- Структура таблиц, RLS, edge functions
+- Логика доступов, entitlements, подписок
 
 ### DoD
-- [x] Create-path: убран `source`, все маркеры в `meta`
-- [x] Update-path: meta merge, не overwrite
-- [x] Execute-статистика: 6 раздельных метрик + action_ids + errors
-- [x] UI: честный post-result с разделением scope
-- [x] Елизавета: разобрана, проблема = expired cb20, не ошибка engine
-- [x] Engine deployed и отвечает 200
 
----
-
-## Статусный блок
-
-| PATCH | Описание | Статус |
-|---|---|---|
-| A | cb20 expiry alignment | Закрыт по data-proof |
-| B | Деньги BY retro-backfill | Закрыт по proof |
-| C | LibraryModule child access filtering | Закрыт как UI access-filter fix |
-| D | Universal rules-retroapply engine | done |
-| E | RetroApply conflict reclassification | done |
-| F | Admin-controlled conflict resolution | done |
-| G | Engine/UI truth repair | done |
-
-### Pending runtime proofs (не блокируют, но не подтверждены)
-- `reducible_by_rule` execute — нет живого кейса в текущем датасете
-- `requires_manual_review` — нет живого кейса в текущем датасете
-- Create-path execute proof — engine fix deployed, ожидает первого реального safe execute через UI
+1. Список сделок для клуба показывает дату последнего платежа, а не дату создания заказа
+2. Карточка контакта → таб «Сделки» — та же дата что и в детальном экране
+3. Для разовых продуктов (без рекуррентных платежей) поведение не меняется
+4. SQL-proof по 10 клубным сделкам: old_date vs new_date
+5. Конкретно по Елизавете: список показывает 07.04.2026, а не 06.02.2026
