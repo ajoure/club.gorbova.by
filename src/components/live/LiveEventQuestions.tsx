@@ -57,10 +57,10 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
         const userIds = [...new Set(legacy.map(q => q.user_id))];
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("id, full_name, first_name, last_name")
+          .select("user_id, full_name, first_name, last_name")
           .in("user_id", userIds);
         for (const p of profileData || []) {
-          profiles[p.id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
+          profiles[p.user_id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
         }
       }
 
