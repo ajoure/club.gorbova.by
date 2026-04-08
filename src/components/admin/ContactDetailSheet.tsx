@@ -766,7 +766,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .from("provider_subscriptions")
         .select(`
           id, provider, state, provider_subscription_id,
-          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at,
+          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at,
           subscription_v2_id, meta,
           subscriptions_v2 (
             id, status, billing_type, tariff_id, access_end_at, next_charge_at,
@@ -1961,9 +1961,15 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 )}
                               </div>
                               <p className="text-xs text-muted-foreground mt-1">
+                                Создана: {formatPaymentTimeIANA(sub.created_at, 'Europe/Warsaw')}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Последнее списание: {sub.last_charge_at ? formatPaymentTimeIANA(sub.last_charge_at, 'Europe/Warsaw') : '—'}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
                                 {nextCharge 
-                                  ? `Следующее: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
-                                  : 'Следующее списание: неизвестно (не синхронизировано)'
+                                  ? `Следующее списание: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
+                                  : 'Следующее списание: —'
                                 }
                               </p>
                               {accessEnd && (
