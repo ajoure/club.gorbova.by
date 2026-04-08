@@ -264,6 +264,7 @@ export function ProductAccessRulesTab({ productId, tariffs, initialAction }: Pro
   const { data: availableProducts = [] } = useAvailableProducts();
   const { data: availableEntitlements = [] } = useAvailableEntitlements();
   const { data: tariffDurations = [] } = useTariffDurations(productId);
+  const { data: availableSections = [] } = useAvailableSections();
 
   // Root trainings for this product (for training_content selector)
   const { data: rootTrainings = [] } = useQuery({
