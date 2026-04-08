@@ -391,10 +391,15 @@ async function processRule(
             continue;
           }
 
-          // Determine if source is safe (retroapply/fulfillment/batch)
-          const entSource = (ent.source || "").toLowerCase();
-          const safeSources = ["retroapply", "fulfillment", "batch"];
-          const isSourceSafe = safeSources.includes(entSource);
+          // Determine if source is safe — use meta fields since entitlements has no "source" column
+          const entMeta = ent.meta || {};
+          const metaBatchId = entMeta.batch_id || "";
+          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
+          const metaSourceType = (entMeta.source_type || "").toLowerCase();
+          // Safe sources: created by retroapply, fulfillment batch, or known batch process
+          const isSourceSafe = !!metaRetro || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
+            || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
+            || (entMeta.source_rule_id && !metaSourceType); // has rule_id linkage = came from automated process
 
           // Check meta.source_rule_id lineage
           const entMeta = ent.meta || {};
