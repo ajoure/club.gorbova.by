@@ -11,6 +11,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
+import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
@@ -382,11 +383,25 @@ export default function LiveEvent() {
                 </div>
               </div>
             )}
+            {/* Room blocks — under_video */}
+            {eventId && (
+              <LiveEventRoomBlocks
+                liveEventId={eventId}
+                displayContext={isReplay ? "replay" : "live"}
+                position="under_video"
+              />
+            )}
           </div>
 
           {/* Comments / Questions sidebar */}
           {eventId && (
-            <div className="lg:col-span-1">
+            <div className="lg:col-span-1 space-y-4">
+              {/* Sidebar room blocks */}
+              <LiveEventRoomBlocks
+                liveEventId={eventId}
+                displayContext={isReplay ? "replay" : "live"}
+                position="sidebar"
+              />
               <Card className="h-[500px] flex flex-col overflow-hidden">
                 <Tabs defaultValue="comments" className="flex flex-col h-full">
                   <TabsList className="w-full grid grid-cols-2 rounded-none border-b">

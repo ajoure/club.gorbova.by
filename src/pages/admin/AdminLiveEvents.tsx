@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -58,6 +58,7 @@ import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
 import { LiveEventScenario } from "@/components/live/LiveEventScenario";
+import { LiveEventRoomBlocksEditor } from "@/components/admin/live/LiveEventRoomBlocksEditor";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 
@@ -2227,6 +2228,9 @@ function LiveStreamControlPanel({
               <TabsTrigger value="scenario" className="gap-1.5 text-xs">
                 <Video className="h-3 w-3" /> Сценарий
               </TabsTrigger>
+              <TabsTrigger value="blocks" className="gap-1.5 text-xs">
+                <LayoutGrid className="h-3 w-3" /> Блоки
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="comments" className="border rounded-lg mt-2">
               <LiveEventComments liveEventId={editingId} />
@@ -2239,6 +2243,9 @@ function LiveStreamControlPanel({
             </TabsContent>
             <TabsContent value="scenario" className="border rounded-lg mt-2">
               <LiveEventScenario liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="blocks" className="border rounded-lg mt-2">
+              <LiveEventRoomBlocksEditor liveEventId={editingId} />
             </TabsContent>
           </Tabs>
         </>
