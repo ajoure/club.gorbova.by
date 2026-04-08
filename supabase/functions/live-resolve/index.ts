@@ -252,7 +252,28 @@ Deno.serve(async (req) => {
       }, 403);
     }
 
-    // 6. Access granted
+    // 5b. Moderation overlay — check if user is removed/banned from room
+    const { data: isRemoved } = await supabase.rpc('is_user_removed_from_room', {
+      _user_id: userId,
+      _live_event_id: event.id,
+    });
+
+    if (isRemoved === true) {
+      await logAudit(supabase, 'live_access_denied', userId, slug, event.id, {
+        reason: 'removed_from_room',
+      });
+      return jsonRes({
+        status: 'removed_from_room',
+        title: event.title,
+        description: event.description,
+        event_status: event.status,
+      }, 403);
+    }
+
+    // 6. Resolve video source — unified server-side resolver
+    const resolvedSource = resolveVideoSource(event);
+
+    // 7. Access granted
     await logAudit(supabase, 'live_access_granted', userId, slug, event.id, {
       product_id: event.product_id,
     });
@@ -271,6 +292,7 @@ Deno.serve(async (req) => {
       event_timezone: event.event_timezone,
       platform_status: event.platform_status,
       kinescope_live_event_id: event.kinescope_live_event_id,
+      resolved_source: resolvedSource,
     });
   } catch (err) {
     console.error('[live-resolve] Unexpected error:', err);
@@ -279,6 +301,55 @@ Deno.serve(async (req) => {
 });
 
 // autoCreateSession removed — sessions are created ONLY in live-token-validate
+
+interface ResolvedSource {
+  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
+  resolved_embed_url: string | null;
+  resolved_play_url: string | null;
+  provider_source_status: string | null;
+  source_reason: string | null;
+  last_synced_at: string | null;
+}
+
+function resolveVideoSource(event: any): ResolvedSource {
+  const meta = event.metadata as Record<string, any> | null;
+  const providerStatus = meta?.provider_source_status || null;
+  const lastSynced = meta?.last_synced_at || null;
+
+  // Priority 1: kinescope_video_id (works for recorded_webinar, replay, and live with recording)
+  if (event.kinescope_video_id) {
+    return {
+      resolved_source_kind: 'kinescope_video',
+      resolved_embed_url: `https://kinescope.io/embed/${event.kinescope_video_id}`,
+      resolved_play_url: `https://kinescope.io/${event.kinescope_video_id}`,
+      provider_source_status: providerStatus,
+      source_reason: null,
+      last_synced_at: lastSynced,
+    };
+  }
+
+  // Priority 2: kinescope_live_event_id (live stream embed)
+  if (event.kinescope_live_event_id) {
+    return {
+      resolved_source_kind: 'kinescope_live_embed',
+      resolved_embed_url: `https://kinescope.io/embed/live/${event.kinescope_live_event_id}`,
+      resolved_play_url: null,
+      provider_source_status: providerStatus,
+      source_reason: null,
+      last_synced_at: lastSynced,
+    };
+  }
+
+  // No source available
+  return {
+    resolved_source_kind: 'none',
+    resolved_embed_url: null,
+    resolved_play_url: null,
+    provider_source_status: providerStatus,
+    source_reason: 'no_kinescope_id',
+    last_synced_at: lastSynced,
+  };
+}
 
 function jsonRes(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
