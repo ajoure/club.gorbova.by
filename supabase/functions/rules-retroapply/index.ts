@@ -323,7 +323,8 @@ async function processRule(
 
   if (rule.grant_target_type === "product_access") {
     for (const targetProdId of targetProductIds) {
-      const existingMap = new Map<string, any>();
+      // Fetch ALL active entitlements per user for this target (not just first)
+      const existingListMap = new Map<string, any[]>();
       for (let i = 0; i < userIds.length; i += 50) {
         const batch = userIds.slice(i, i + 50);
         const { data: ents } = await supabase
@@ -332,14 +333,19 @@ async function processRule(
           .eq("product_id", targetProdId)
           .eq("status", "active")
           .in("user_id", batch);
-        (ents || []).forEach((e: any) => existingMap.set(e.user_id, e));
+        (ents || []).forEach((e: any) => {
+          const list = existingListMap.get(e.user_id) || [];
+          list.push(e);
+          existingListMap.set(e.user_id, list);
+        });
       }
 
       const hasPriorPurchase = conditions.condition_type === "prior_purchase";
 
       for (const userId of userIds) {
         const sub = userSubMap.get(userId)!;
-        const existing = existingMap.get(userId);
+        const existingList = existingListMap.get(userId) || [];
+        const existing = existingList.length === 1 ? existingList[0] : null;
 
         let plannedExpiry: string | null = null;
         if (rule.duration_days) {
@@ -361,25 +367,84 @@ async function processRule(
           continue;
         }
 
-        if (!existing) {
+        if (existingList.length === 0) {
           actions.push(makeAction(userId, targetProdId, "missing_access", plannedExpiry, null, sub, null));
+        } else if (existingList.length > 1) {
+          // Multiple active entitlements = real conflict
+          actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry,
+            existingList[0].expires_at, sub, "conflict_multiple_entitlements"));
         } else {
-          const currentEnd = existing.expires_at ? new Date(existing.expires_at).getTime() : null;
+          // Exactly 1 active entitlement — classify
+          const ent = existing!;
+          const currentEnd = ent.expires_at ? new Date(ent.expires_at).getTime() : null;
           const plannedEnd = plannedExpiry ? new Date(plannedExpiry).getTime() : null;
 
+          // Already satisfied (within 60s tolerance)
           if (currentEnd && plannedEnd && Math.abs(currentEnd - plannedEnd) < 60000) {
-            actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, existing.expires_at, sub, null));
-          } else if (recalculateExisting && plannedEnd && currentEnd && plannedEnd > currentEnd) {
-            actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, existing.expires_at, sub, null));
-          } else {
-            const isSatisfied = currentEnd && plannedEnd && currentEnd >= plannedEnd;
-            actions.push(makeAction(
-              userId, targetProdId,
-              isSatisfied ? "already_satisfied" : "conflict_existing",
-              plannedExpiry, existing.expires_at, sub,
-              isSatisfied ? null : "existing_entitlement_from_different_source",
-            ));
+            actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
+            continue;
           }
+
+          // No planned expiry = conflict
+          if (!plannedEnd) {
+            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_no_planned_expiry"));
+            continue;
+          }
+
+          // Determine if source is safe — use meta fields since entitlements has no "source" column
+          const entMeta = ent.meta || {};
+          const metaBatchId = entMeta.batch_id || "";
+          const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
+          const metaSourceType = (entMeta.source_type || "").toLowerCase();
+          // Safe sources: created by retroapply, fulfillment batch, or known batch process
+          const isSourceSafe = !!metaRetro || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
+            || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
+            || (entMeta.source_rule_id && !metaSourceType); // has rule_id linkage = came from automated process
+
+          // Check meta.source_rule_id lineage
+          const entSourceRuleId = entMeta.source_rule_id || null;
+          const isRuleLineageSafe = !entSourceRuleId || entSourceRuleId === rule.id;
+
+          // Manual/admin sources = real conflict
+          if (!isSourceSafe) {
+            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_manual_source"));
+            continue;
+          }
+
+          // Different rule source = real conflict
+          if (!isRuleLineageSafe) {
+            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_different_rule_source"));
+            continue;
+          }
+
+          // Would reduce access = real conflict
+          if (currentEnd && plannedEnd < currentEnd) {
+            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_would_reduce_access"));
+            continue;
+          }
+
+          // current_expires_at IS NULL and safe lineage → safe recalculate
+          if (!currentEnd) {
+            if (recalculateExisting) {
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_expires_missing"));
+            } else {
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, null, sub, "safe_recalculate_available_but_disabled"));
+            }
+            continue;
+          }
+
+          // planned > current and safe → safe recalculate
+          if (plannedEnd > currentEnd) {
+            if (recalculateExisting) {
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_expires_extended"));
+            } else {
+              actions.push(makeAction(userId, targetProdId, "aligned_update_needed", plannedExpiry, ent.expires_at, sub, "safe_recalculate_available_but_disabled"));
+            }
+            continue;
+          }
+
+          // Fallback: already satisfied (current >= planned)
+          actions.push(makeAction(userId, targetProdId, "already_satisfied", plannedExpiry, ent.expires_at, sub, null));
         }
       }
     }
@@ -510,6 +575,13 @@ async function executeActions(
         created++;
       }
     } else if (action.category === "aligned_update_needed") {
+      // Only update if recalculate_existing is enabled; otherwise skip
+      const skipReason = action.skip_reason || "";
+      if (skipReason === "safe_recalculate_available_but_disabled") {
+        skipped++;
+        continue;
+      }
+
       const { data: ent } = await supabase
         .from("entitlements")
         .select("id")
@@ -525,6 +597,11 @@ async function executeActions(
           .update({
             expires_at: action.planned_expires_at,
             updated_at: new Date().toISOString(),
+            meta: {
+              source_rule_id: action.rule_id,
+              retroapply_updated: true,
+              batch_id: batchId,
+            },
           })
           .eq("id", ent.id);
 
