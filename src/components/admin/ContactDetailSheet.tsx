@@ -1978,17 +1978,17 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
                                 </p>
                               )}
-                              <div className="space-y-0.5 mt-1 text-xs text-muted-foreground leading-tight">
-                                <p>Создана: {formatPaymentTimeIANA(sub.created_at, 'Europe/Warsaw')}</p>
-                                <p>Последнее списание: {sub.last_charge_at ? formatPaymentTimeIANA(sub.last_charge_at, 'Europe/Warsaw') : '—'}</p>
-                                <p>
+                              <div className="mt-1 text-xs text-muted-foreground leading-tight space-y-px">
+                                <p className="whitespace-nowrap">Создана: {formatPaymentTimeIANA(sub.created_at, 'Europe/Warsaw')}</p>
+                                <p className="whitespace-nowrap">Последнее списание: {sub.last_charge_at ? formatPaymentTimeIANA(sub.last_charge_at, 'Europe/Warsaw') : '—'}</p>
+                                <p className="whitespace-nowrap">
                                   {nextCharge 
                                     ? `Следующее списание: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
                                     : 'Следующее списание: —'
                                   }
                                 </p>
                                 {accessEnd && (
-                                  <p>
+                                  <p className="whitespace-nowrap">
                                     Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}
                                     {accessEndSource === 'provider' && (
                                       <Badge variant="outline" className="ml-1 text-[9px]">provider</Badge>
