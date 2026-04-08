@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
@@ -766,7 +767,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         .from("provider_subscriptions")
         .select(`
           id, provider, state, provider_subscription_id,
-          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at,
+          next_charge_at, amount_cents, currency, card_brand, card_last4, created_at, last_charge_at, interval_days,
           subscription_v2_id, meta,
           subscriptions_v2 (
             id, status, billing_type, tariff_id, access_end_at, next_charge_at,
@@ -1954,6 +1955,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 <Badge variant="outline" className="text-[10px]">
                                   {providerLabel}
                                 </Badge>
+                                {(() => {
+                                  const { count, isExact } = getSubscriptionChargeCount(sub);
+                                  if (count === null) return null;
+                                  return (
+                                    <span
+                                      className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-[10px] font-medium bg-muted/60 border border-border/40 text-muted-foreground shadow-sm"
+                                      title={`${isExact ? 'Точное' : 'Расчётное'} кол-во списаний: ${count}`}
+                                    >
+                                      {count}
+                                      <span className="ml-0.5 text-[8px] opacity-70">спис.</span>
+                                    </span>
+                                  );
+                                })()}
                                 {sub.card_last4 && (
                                   <span className="text-xs text-muted-foreground">
                                     {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
