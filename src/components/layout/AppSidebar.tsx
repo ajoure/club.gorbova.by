@@ -185,14 +185,16 @@ export function AppSidebar() {
   // Render menu item - NO dynamic modules in dropdown, just static links
   const renderMenuItem = (item: MainMenuItem) => {
     const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
+    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+    const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
 
-    // Regular menu item - no submenu with dynamic modules
     return (
       <SidebarMenuItem key={item.key}>
         <SidebarMenuButton asChild isActive={isActive} tooltip={collapsed ? item.title : undefined}>
           <NavLink to={item.url} end className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all hover:bg-sidebar-accent" activeClassName="bg-sidebar-accent text-sidebar-primary">
             <item.icon className="h-5 w-5 shrink-0" />
-            {!collapsed && <span>{item.title}</span>}
+            {!collapsed && <span className="flex-1">{item.title}</span>}
+            {!collapsed && showLock && <Lock className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />}
           </NavLink>
         </SidebarMenuButton>
       </SidebarMenuItem>
