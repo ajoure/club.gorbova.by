@@ -91,7 +91,19 @@ interface RetroApplyResult {
     condition_not_met: number;
     no_source_window: number;
   };
-  executed?: { created: number; updated: number; skipped: number };
+  executed?: {
+    targeted: number;
+    created: number;
+    updated: number;
+    skipped_idempotent: number;
+    skipped_conflict: number;
+    skipped_error: number;
+    not_selected: number;
+    created_action_ids?: string[];
+    updated_action_ids?: string[];
+    skipped_action_ids?: string[];
+    errors?: Array<{ action_id: string; error: string }>;
+  };
   actions: UserAction[];
   error?: string;
   stop_reasons?: string[];
