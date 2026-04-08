@@ -94,12 +94,15 @@ interface RetroApplyResult {
   executed?: {
     targeted: number;
     created: number;
+    reactivated: number;
+    reactivation_candidates_found: number;
     updated: number;
     skipped_idempotent: number;
     skipped_conflict: number;
     skipped_error: number;
     not_selected: number;
     created_action_ids?: string[];
+    reactivated_action_ids?: string[];
     updated_action_ids?: string[];
     skipped_action_ids?: string[];
     errors?: Array<{ action_id: string; error: string }>;
