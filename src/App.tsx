@@ -117,6 +117,7 @@ const AdminAI = lazy(() => import("./pages/admin/AdminAI"));
 const AdminMarketingInsights = lazy(() => import("./pages/admin/AdminMarketingInsights"));
 const AdminPaymentDiagnostics = lazy(() => import("./pages/admin/AdminPaymentDiagnostics"));
 const AdminTelegramDiagnostics = lazy(() => import("./pages/admin/AdminTelegramDiagnostics"));
+const AdminSections = lazy(() => import("./pages/admin/AdminSections"));
 const AdminKbImport = lazy(() => import("./pages/admin/AdminKbImport"));
 const AdminSiteBuilder = lazy(() => import("./pages/admin/AdminSiteBuilder"));
 const AdminSiteEditor = lazy(() => import("./pages/admin/AdminSiteEditor"));
@@ -241,6 +242,7 @@ const App = () => {
               <Route path="/admin/roles" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminRoles /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/audit" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminAudit /></AdminLayout></LazyRoute></ProtectedRoute>} />
               <Route path="/admin/content" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminContent /></AdminLayout></LazyRoute></ProtectedRoute>} />
+              <Route path="/admin/sections" element={<ProtectedRoute><LazyRoute><AdminLayout><AdminSections /></AdminLayout></LazyRoute></ProtectedRoute>} />
               
               {/* Integrations routes */}
               <Route path="/admin/integrations" element={<Navigate to="/admin/integrations/crm" replace />} />
