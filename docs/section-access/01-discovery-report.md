@@ -4,12 +4,12 @@
 
 ---
 
-## Раздел A: PROOF / ФАКТЫ
+## Раздел A: PROOF / ФАКТЫ (доказано SQL/code)
 
 ### A1. Текущее состояние access_rules
 
 **Proof (SQL):**
-```
+```sql
 SELECT grant_target_type, count(*) FROM access_rules GROUP BY 1;
 ```
 
@@ -22,7 +22,7 @@ SELECT grant_target_type, count(*) FROM access_rules GROUP BY 1;
 | email              | 0     |
 | **Итого**          | **34** |
 
-**CHECK constraint (факт):**
+**CHECK constraint (факт из pg_constraint):**
 ```
 CHECK (grant_target_type = ANY (ARRAY[
   'entitlement','club','email','product_access','training_content'
@@ -36,20 +36,26 @@ CHECK (product_id IS NOT NULL OR tariff_id IS NOT NULL)
 
 ### A2. Legacy типы — status
 
-**email:**
-- Записей: 0
-- product_email_mappings: 0 записей
-- Runtime consumers: НЕТ (grant-access-for-order игнорирует, access-resolver не обрабатывает)
-- UI: лейбл в `TARGET_TYPE_LABELS`, но скрыт фильтром `.filter(([k]) => k !== "entitlement" && k !== "email")` в ProductAccessRulesTab
-- getRuntimeSupport: "partial"
-- **Статус: мёртвый тип, сохраняется в CHECK и union, не мигрируется**
+#### email (SQL + code proof)
+- Записей в access_rules: **0**
+- Записей в product_email_mappings: **0**
+- Runtime consumers: **НЕТ** (grant-access-for-order игнорирует, access-resolver не обрабатывает)
+- UI: лейбл в `TARGET_TYPE_LABELS`, но скрыт фильтром `.filter(([k]) => k !== "entitlement" && k !== "email")` в ProductAccessRulesTab (строка ~1221)
+- getRuntimeSupport('email'): **"partial"** (файл `src/hooks/useAccessRules.ts`, строка 544)
+- **Статус: мёртвый тип, сохраняется в CHECK и union, не мигрируется, авто-миграция email → section_access запрещена**
 
-**entitlement:**
-- Записей: 0
-- Runtime consumers: НЕТ
-- UI: скрыт тем же фильтром
-- getRuntimeSupport: "full" (ошибочно, т.к. нет runtime consumer)
-- **Статус: мёртвый тип, сохраняется в CHECK и union**
+#### entitlement (SQL + code proof)
+- Записей в access_rules: **0**
+- Runtime consumers: **НЕТ** — ни grant-access-for-order, ни access-resolver, ни rules-retroapply не содержат ветки для `grant_target_type='entitlement'`
+- UI: скрыт тем же фильтром `.filter(([k]) => k !== "entitlement" && k !== "email")`
+- **getRuntimeSupport('entitlement'): "full"** (файл `src/hooks/useAccessRules.ts`, строка 542)
+
+**⚠ PROOF: getRuntimeSupport('entitlement') = "full" — ошибочная метка.**
+- Расположение: `src/hooks/useAccessRules.ts`, строка 542: `case "entitlement": return "full";`
+- Это **legacy UI-метка**, а НЕ доказательство реального runtime consumer
+- Фактически ни один edge function, resolver или fulfillment pipeline не обрабатывает тип `entitlement`
+- Метка существует только для отображения badge в ProductAccessRulesTab
+- **Вывод:** значение "full" не означает поддержку. Это legacy-артефакт, который не трогается в текущем спринте, но НЕ должен использоваться как обоснование для создания правил типа `entitlement`
 
 ### A3. Runtime flow — как сейчас работают access_rules
 
@@ -72,6 +78,8 @@ CHECK (product_id IS NOT NULL OR tariff_id IS NOT NULL)
   НЕ трогает access_rules
 ```
 
+**STOP-guard:** rules-retroapply и fulfillment pipeline (grant-access-for-order, access-resolver) **НЕ затрагиваются** в текущем спринте. section_access — read-side concern.
+
 ### A4. Карта секций сайдбара — текущее состояние
 
 | section_key | route | page component | access logic сейчас | page-internal gating |
@@ -87,19 +95,22 @@ CHECK (product_id IS NOT NULL OR tariff_id IS NOT NULL)
 
 **Факт:** Ни одна секция сейчас не закрыта целиком (section-level gating отсутствует).
 
-### A5. Код — где упоминается GrantTargetType
+### A5. Код — где упоминается GrantTargetType (code proof)
 
 | Файл | Использование |
 |------|--------------|
-| `src/hooks/useAccessRules.ts` | Тип union, getRuntimeSupport, CRUD мутации |
-| `src/components/admin/product/ProductAccessRulesTab.tsx` | UI форма, лейблы, иконки, фильтры |
-| `src/hooks/useTrainingContentRules.ts` | Фильтр `.eq("grant_target_type", "training_content")` |
-| `src/hooks/useProductTrainings.ts` | Фильтр `.eq("grant_target_type", "training_content")` |
-| `src/components/admin/product/RetroApplyPanel.tsx` | Фильтр `["product_access", "club"].includes()` |
+| `src/hooks/useAccessRules.ts:5` | Тип union: `"entitlement" \| "club" \| "email" \| "product_access" \| "training_content"` |
+| `src/hooks/useAccessRules.ts:538` | getRuntimeSupport — switch по типам |
+| `src/components/admin/product/ProductAccessRulesTab.tsx:48` | TARGET_TYPE_LABELS — лейблы UI |
+| `src/components/admin/product/ProductAccessRulesTab.tsx:56` | TARGET_TYPE_ICONS — иконки |
+| `src/components/admin/product/ProductAccessRulesTab.tsx:1221` | Фильтр: скрывает email и entitlement в селекторе |
+| `src/hooks/useTrainingContentRules.ts` | `.eq("grant_target_type", "training_content")` |
+| `src/hooks/useProductTrainings.ts` | `.eq("grant_target_type", "training_content")` |
+| `src/components/admin/product/RetroApplyPanel.tsx:279` | `.includes(r.grant_target_type)` для club/product_access |
 
 **Факт:** section_access нигде в коде не упоминается. Это чисто новый тип.
 
-### A6. Существующие page-internal проверки
+### A6. Существующие page-internal проверки (code proof)
 
 **Money.tsx:** Имеет inline-проверку entitlement с `product_code='buh_business'` для tab-контента. Это **не** section-level gating, а tab-level.
 
@@ -107,21 +118,22 @@ CHECK (product_id IS NOT NULL OR tariff_id IS NOT NULL)
 
 **Knowledge/Products:** Доступ управляется через useSidebarModules (module_access + entitlements + training_content rules).
 
-### A7. Таблица app_sections — НЕ существует
+### A7. Таблица app_sections — НЕ существует (SQL proof)
 
-```
+```sql
 SELECT 1 FROM information_schema.tables WHERE table_name='app_sections';
 -- 0 rows
 ```
 
 ---
 
-## Раздел B: ASSUMPTIONS / DECISIONS
+## Раздел B: АРХИТЕКТУРНЫЕ РЕШЕНИЯ
 
 ### B1. section_access — новый тип (add-only)
 
 - Добавляется как 6-й тип в CHECK constraint
 - email и entitlement НЕ удаляются, НЕ переименовываются
+- Авто-миграция email → section_access запрещена
 - Это осознанное решение: add-only, без destructive changes
 
 ### B2. Source of Truth для section_access
@@ -141,11 +153,12 @@ SELECT 1 FROM information_schema.tables WHERE table_name='app_sections';
 ### B4. safe_uuid helper
 
 - target_ref::uuid прямой cast опасен для невалидных строк
-- Решение: RPC использует LANGUAGE plpgsql с safe-cast через regex или TRY-CATCH
+- Решение: RPC использует LANGUAGE plpgsql с safe-cast через regex
 - Невалидные target_ref → правило игнорируется
 
 ### B5. RPC auth model
 
+- Неаутентифицированный вызов (auth.uid() IS NULL) → пустой массив, early return
 - Обычный пользователь: RPC всегда проверяет по `auth.uid()`, параметр `p_user_id` игнорируется
 - Admin: может передать `p_user_id` для диагностики чужого пользователя
 - Guard: `IF NOT has_role_v2(auth.uid(), 'admin') THEN effective_uid = auth.uid()`
@@ -172,7 +185,17 @@ live section_access может закрывать вход в /live целико
 
 - Hidden rollout (все is_public=true): default allow
 - Visible rollout, is_public=false: default DENY + error UI
-- Kill-switch (SECTION_GATING_ENABLED=false): все проверки → allow
+- Kill-switch: app_settings key `section_gating_enabled` (таблица app_settings, JSON value `{"enabled": false}`)
+- При kill-switch = false: все проверки → allow
+
+### B9. Scope ограничения текущего спринта
+
+**НЕ затрагиваются:**
+- rules-retroapply — без изменений
+- grant-access-for-order — без изменений
+- access-resolver.ts — без изменений
+- fulfillment pipeline — без изменений
+- subscriptions_v2, entitlements — структура не меняется
 
 ---
 
@@ -180,11 +203,12 @@ live section_access может закрывать вход в /live целико
 
 | # | Риск | Вероятность | Митигация |
 |---|------|-------------|-----------|
-| 1 | ALTER CHECK ломает insert существующих типов | Низкий | add-only, тест после ALTER |
+| 1 | ALTER CHECK ломает insert существующих типов | Низкий | add-only, тестовые INSERT после ALTER |
 | 2 | Money.tsx inline-проверка конфликтует | Низкий | section_access — уровень выше, inline остаётся |
 | 3 | Пользователи теряют доступ к ранее открытым разделам | Высокий → 0 | is_public=true по умолчанию, gating только вручную |
-| 4 | target_ref невалидный UUID → RPC падает | Средний | safe_uuid helper, plpgsql guard |
+| 4 | target_ref невалидный UUID → RPC падает | Средний | safe_uuid regex, plpgsql guard |
 | 5 | Sidebar и SectionGuard рассинхрон | Средний | единый hook, один queryKey, один TTL |
 | 6 | RPC ошибка открывает закрытый контент | Высокий | default DENY для gated sections в visible rollout |
 | 7 | Orphan rules после удаления секции | Низкий | soft-FK, resolver игнорирует, badge в админке |
 | 8 | Overgrant при product_id+tariff_id | Средний → 0 | tariff_id единственный критерий при обоих |
+| 9 | auth.uid() IS NULL → неявное поведение | Средний | early return пустого массива |
