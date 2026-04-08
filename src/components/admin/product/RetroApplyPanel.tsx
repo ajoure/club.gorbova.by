@@ -4,12 +4,14 @@
  *
  * НЕ привязан к конкретному продукту/тарифу/клубу.
  * Правило выбирается параметрами запуска.
- * Два режима: выдать недостающие доступы / пересчитать сроки.
  *
- * НЕ меняет бизнес-логику engine — только UI/локализация/фильтры/post-result.
+ * Режимы execute:
+ *   - Применить безопасные изменения (missing_access + aligned_update_needed)
+ *   - Применить с сокращением сроков (+ reducible_by_rule, allow_reduce_access)
+ *   - Применить выбранные записи (selected_action_ids)
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +33,7 @@ import {
 import {
   RefreshCw, Eye, Play, AlertTriangle, CheckCircle2, XCircle,
   MinusCircle, HelpCircle, ChevronDown, ChevronRight, ShieldAlert,
+  ArrowDownCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -45,6 +48,7 @@ interface RetroApplyPanelProps {
 }
 
 interface UserAction {
+  action_id: string;
   user_id: string;
   profile_id: string | null;
   email: string;
@@ -80,6 +84,8 @@ interface RetroApplyResult {
     total: number;
     missing_access: number;
     aligned_update_needed: number;
+    reducible_by_rule: number;
+    requires_manual_review: number;
     conflict_existing: number;
     already_satisfied: number;
     condition_not_met: number;
@@ -111,6 +117,18 @@ const CATEGORY_CONFIG: Record<string, {
     color: "text-amber-700 bg-amber-50 border-amber-200",
     icon: RefreshCw,
   },
+  reducible_by_rule: {
+    label: "Будет сокращён срок",
+    description: "Срок будет сокращён до канонического по правилу",
+    color: "text-orange-700 bg-orange-50 border-orange-200",
+    icon: ArrowDownCircle,
+  },
+  requires_manual_review: {
+    label: "Требует ручного решения",
+    description: "Неоднозначный случай, требует решения администратора",
+    color: "text-yellow-700 bg-yellow-50 border-yellow-200",
+    icon: HelpCircle,
+  },
   already_satisfied: {
     label: "Уже соответствует",
     description: "Доступ уже выдан, менять не нужно",
@@ -119,7 +137,7 @@ const CATEGORY_CONFIG: Record<string, {
   },
   conflict_existing: {
     label: "Конфликт",
-    description: "Есть конфликт, требуется проверка",
+    description: "Реальный конфликт, автоматическое применение невозможно",
     color: "text-red-700 bg-red-50 border-red-200",
     icon: XCircle,
   },
@@ -145,6 +163,8 @@ const REASON_LABELS: Record<string, string> = {
   safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
   safe_recalculate_expires_missing: "Текущий срок отсутствует, будет рассчитан заново",
   safe_recalculate_available_but_disabled: "Срок можно безопасно обновить, но пересчёт сроков сейчас выключен",
+  reducible_by_canonical_rule: "Срок будет сокращён до канонического по правилу",
+  requires_manual_decision: "Требует решения администратора",
   conflict_manual_source: "Конфликт: доступ выдан вручную",
   conflict_multiple_entitlements: "Конфликт: несколько активных доступов",
   conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
@@ -173,17 +193,12 @@ function translateStopReason(raw: string): string {
   return raw;
 }
 
-// Post-execute status labels
-const EXECUTE_STATUS_LABELS: Record<string, string> = {
-  missing_access: "Создано",
-  aligned_update_needed: "Обновлено",
-  already_satisfied: "Пропущено",
-  conflict_existing: "Не выполнено (конфликт)",
-  condition_not_met: "Пропущено (условие)",
-  no_source_window: "Не выполнено (нет срока)",
-};
+// Categories that support row selection for execute
+const SELECTABLE_CATEGORIES = new Set([
+  "missing_access", "aligned_update_needed", "reducible_by_rule", "requires_manual_review",
+]);
 
-type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
+type FilterKey = "all" | "changed" | "missing_access" | "aligned_update_needed" | "reducible_by_rule" | "requires_manual_review" | "conflict_existing" | "already_satisfied" | "condition_not_met" | "no_source_window";
 
 type ScopeMode = "rule" | "product" | "tariff";
 
@@ -220,14 +235,12 @@ function ruleBasisLabel(a: UserAction): string {
   return parts.join(" · ") || "—";
 }
 
-function changeDescription(a: UserAction, isExecuted: boolean): string {
-  if (isExecuted) return EXECUTE_STATUS_LABELS[a.category] || "—";
-  const cfg = CATEGORY_CONFIG[a.category];
-  return cfg?.description || "—";
-}
-
 function isChangedCategory(cat: string): boolean {
   return cat === "missing_access" || cat === "aligned_update_needed";
+}
+
+function isActionableCategory(cat: string): boolean {
+  return cat === "missing_access" || cat === "aligned_update_needed" || cat === "reducible_by_rule";
 }
 
 // ═══════ COMPONENT ═══════
@@ -241,9 +254,11 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<RetroApplyResult | null>(null);
   const [confirmExecute, setConfirmExecute] = useState(false);
+  const [executeMode, setExecuteMode] = useState<"safe" | "with_reductions" | "selected">("safe");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const activeRules = useMemo(() =>
     rules.filter(r => r.is_active && ["product_access", "club"].includes(r.grant_target_type)),
@@ -257,16 +272,14 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     if (isLoading) return false;
     if (scopeMode === "rule" && !selectedRuleId) return false;
     if (scopeMode === "tariff" && !selectedTariffId) return false;
-    return true; // product mode always allowed
+    return true;
   }, [isLoading, scopeMode, selectedRuleId, selectedTariffId]);
 
-  const previewDisabledHint = useMemo(() => {
-    if (scopeMode === "rule" && !selectedRuleId) return "Выберите правило для запуска предпросмотра";
-    if (scopeMode === "tariff" && !selectedTariffId) return "Выберите тариф для запуска предпросмотра";
-    return null;
-  }, [scopeMode, selectedRuleId, selectedTariffId]);
-
-  const buildBody = (mode: "preview" | "execute", force = false) => {
+  const buildBody = (mode: "preview" | "execute", opts?: {
+    allowReduceAccess?: boolean;
+    selectedActionIds?: string[];
+    applyCategories?: string[];
+  }) => {
     const body: Record<string, unknown> = {
       mode,
       recalculate_existing: recalculateExisting,
@@ -278,17 +291,21 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     } else {
       body.source_product_id = productId;
     }
-    if (force) {
-      body.force_execute = true;
-    }
+    if (opts?.allowReduceAccess) body.allow_reduce_access = true;
+    if (opts?.selectedActionIds?.length) body.selected_action_ids = opts.selectedActionIds;
+    if (opts?.applyCategories?.length) body.apply_categories = opts.applyCategories;
     return body;
   };
 
-  const runRetroApply = async (mode: "preview" | "execute", force = false) => {
+  const runRetroApply = async (mode: "preview" | "execute", opts?: {
+    allowReduceAccess?: boolean;
+    selectedActionIds?: string[];
+    applyCategories?: string[];
+  }) => {
     setIsLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("rules-retroapply", {
-        body: buildBody(mode, force),
+        body: buildBody(mode, opts),
       });
 
       if (error) {
@@ -300,12 +317,18 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
       setResult(res);
       setVisibleCount(PAGE_SIZE);
       setExpandedRows(new Set());
-      setActiveFilter("all");
+
+      if (mode === "preview") {
+        setActiveFilter("all");
+        setSelectedIds(new Set());
+      }
 
       if (res.error || res.stop_reasons?.length) {
         // Don't toast — show inline
       } else if (mode === "execute") {
-        toast.success(`Применено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}`);
+        toast.success(`Фактически изменено: создано ${res.executed?.created || 0}, обновлено ${res.executed?.updated || 0}`);
+        // Auto-refresh preview after execute to show actual state
+        autoRefreshPreview();
       }
     } catch (err) {
       toast.error("Ошибка вызова");
@@ -315,29 +338,81 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     }
   };
 
+  const autoRefreshPreview = useCallback(async () => {
+    // Small delay to let DB settle, then re-preview
+    setTimeout(async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("rules-retroapply", {
+          body: buildBody("preview"),
+        });
+        if (!error && data) {
+          setResult(prev => {
+            const newRes = data as RetroApplyResult;
+            // Preserve executed from previous result
+            return {
+              ...newRes,
+              executed: prev?.executed,
+            };
+          });
+          setExpandedRows(new Set());
+          setSelectedIds(new Set());
+        }
+      } catch {
+        // silent — execute already succeeded
+      }
+    }, 1500);
+  }, [scopeMode, selectedRuleId, selectedTariffId, productId, recalculateExisting]);
+
   const handlePreview = () => {
     setActiveFilter("all");
+    setSelectedIds(new Set());
     runRetroApply("preview");
   };
 
-  const handleExecute = () => {
+  const handleExecuteSafe = () => {
     setConfirmExecute(false);
-    runRetroApply("execute");
+    runRetroApply("execute", {
+      applyCategories: ["missing_access", "aligned_update_needed"],
+    });
   };
 
-  const handleForceExecute = () => {
+  const handleExecuteWithReductions = () => {
     setConfirmExecute(false);
-    runRetroApply("execute", true);
+    runRetroApply("execute", {
+      allowReduceAccess: true,
+      applyCategories: ["missing_access", "aligned_update_needed", "reducible_by_rule"],
+    });
   };
 
-  // Determine if execute is blocked
+  const handleExecuteSelected = () => {
+    setConfirmExecute(false);
+    const ids = [...selectedIds];
+    // Check if any selected are reducible
+    const hasReducible = result?.actions?.some(
+      a => selectedIds.has(a.action_id) && a.category === "reducible_by_rule"
+    );
+    runRetroApply("execute", {
+      selectedActionIds: ids,
+      allowReduceAccess: !!hasReducible,
+    });
+  };
+
+  // Determine blocking state
   const hasConflicts = (result?.summary?.conflict_existing ?? 0) > 0;
   const hasNoSourceWindow = (result?.summary?.no_source_window ?? 0) > 0;
   const hasStopGuard = !!(result?.stop_reasons?.length);
-  const isBlocked = hasConflicts || hasNoSourceWindow;
-  const canExecute = result && !result.error && result.summary &&
-    (result.summary.missing_access > 0 || result.summary.aligned_update_needed > 0) &&
-    !isExecuted;
+
+  const safeCount = useMemo(() => {
+    if (!result?.summary) return 0;
+    return result.summary.missing_access + result.summary.aligned_update_needed;
+  }, [result]);
+
+  const reducibleCount = result?.summary?.reducible_by_rule ?? 0;
+  const manualReviewCount = result?.summary?.requires_manual_review ?? 0;
+
+  const canExecuteSafe = result && !result.error && safeCount > 0 && !isExecuted;
+  const canExecuteWithReductions = result && !result.error && reducibleCount > 0 && !isExecuted;
+  const canExecuteSelected = selectedIds.size > 0 && !isExecuted;
 
   // Changed count for "changed" filter
   const changedCount = useMemo(() => {
@@ -352,6 +427,41 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
     if (activeFilter === "changed") return result.actions.filter(a => isChangedCategory(a.category));
     return result.actions.filter(a => a.category === activeFilter);
   }, [result, activeFilter]);
+
+  // Selection helpers
+  const selectableInFilter = useMemo(() =>
+    filteredActions.filter(a => SELECTABLE_CATEGORIES.has(a.category)),
+    [filteredActions]
+  );
+
+  const allFilteredSelected = selectableInFilter.length > 0 &&
+    selectableInFilter.every(a => selectedIds.has(a.action_id));
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      // Deselect all in current filter
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        selectableInFilter.forEach(a => next.delete(a.action_id));
+        return next;
+      });
+    } else {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        selectableInFilter.forEach(a => next.add(a.action_id));
+        return next;
+      });
+    }
+  };
+
+  const toggleSelect = (actionId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(actionId)) next.delete(actionId);
+      else next.add(actionId);
+      return next;
+    });
+  };
 
   const toggleRow = (idx: number) => {
     setExpandedRows(prev => {
@@ -394,7 +504,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
             <Button
               size="sm"
               variant="outline"
-              onClick={() => { setDialogOpen(true); setResult(null); setActiveFilter("all"); setExpandedRows(new Set()); }}
+              onClick={() => { setDialogOpen(true); setResult(null); setActiveFilter("all"); setExpandedRows(new Set()); setSelectedIds(new Set()); }}
               className="h-7 text-xs gap-1.5"
             >
               <RefreshCw className="h-3.5 w-3.5" />
@@ -552,16 +662,30 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
                 {/* Textual outcome summary */}
                 <div className="p-3 rounded-lg border bg-muted/10 text-sm space-y-1">
-                  {result!.summary.missing_access > 0 || result!.summary.aligned_update_needed > 0 ? (
+                  {safeCount > 0 || reducibleCount > 0 ? (
                     <>
-                      <p>
-                        <span className="font-medium text-green-700">Новых доступов будет создано:</span>{" "}
-                        {result!.summary.missing_access}
-                      </p>
-                      {recalculateExisting && (
+                      {result!.summary.missing_access > 0 && (
+                        <p>
+                          <span className="font-medium text-green-700">Новых доступов будет создано:</span>{" "}
+                          {result!.summary.missing_access}
+                        </p>
+                      )}
+                      {result!.summary.aligned_update_needed > 0 && (
                         <p>
                           <span className="font-medium text-amber-700">Существующих сроков будет обновлено:</span>{" "}
                           {result!.summary.aligned_update_needed}
+                        </p>
+                      )}
+                      {reducibleCount > 0 && (
+                        <p>
+                          <span className="font-medium text-orange-700">Сроков будет сокращено по правилу:</span>{" "}
+                          {reducibleCount}
+                        </p>
+                      )}
+                      {manualReviewCount > 0 && (
+                        <p>
+                          <span className="font-medium text-yellow-700">Требует ручного решения:</span>{" "}
+                          {manualReviewCount}
                         </p>
                       )}
                     </>
@@ -600,7 +724,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     >
                       <Play className="h-3.5 w-3.5 mb-0.5" />
                       <span className="text-lg font-bold">{changedCount}</span>
-                      <span className="text-[9px] leading-tight">Будут изменены</span>
+                      <span className="text-[9px] leading-tight">Безопасные</span>
                     </button>
                   )}
 
@@ -641,65 +765,77 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                   </div>
                 )}
 
-                {/* Conflict warning block — stronger visual */}
-                {isBlocked && !hasStopGuard && (
-                  <div className="p-4 rounded-lg border-2 border-red-400 bg-red-50 space-y-2">
-                    <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
-                      <ShieldAlert className="h-5 w-5" />
-                      Обнаружены проблемы, блокирующие обычное применение
+                {/* Conflict/no_source warning — informational, not blocking targeted execute */}
+                {(hasConflicts || hasNoSourceWindow) && !hasStopGuard && (
+                  <div className="p-3 rounded-lg border border-red-200 bg-red-50/50 space-y-1">
+                    <div className="flex items-center gap-2 text-red-700 font-medium text-xs">
+                      <ShieldAlert className="h-4 w-4" />
+                      Обнаружены неразрешимые записи
                     </div>
-                    <ul className="text-xs text-red-600 space-y-1 ml-7 list-disc">
+                    <ul className="text-xs text-red-600 space-y-0.5 ml-6 list-disc">
                       {hasConflicts && (
-                        <li>Конфликтов: {result!.summary.conflict_existing}</li>
+                        <li>Конфликтов: {result!.summary.conflict_existing} (автоматическое применение невозможно)</li>
                       )}
                       {hasNoSourceWindow && (
                         <li>Записей без определяемого срока: {result!.summary.no_source_window}</li>
                       )}
                     </ul>
-                    <div className="text-xs text-red-700 mt-1 space-y-0.5">
-                      <p>• Проблемные записи автоматически не применяются</p>
-                      <p>• При принудительном запуске конфликтные записи будут пропущены</p>
-                    </div>
                   </div>
                 )}
 
-                {/* Action buttons AFTER preview */}
-                <div className="flex gap-2">
-                  <Button
-                    onClick={handlePreview}
-                    disabled={!canPreview}
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    {isLoading ? "Загрузка…" : "Обновить предпросмотр"}
-                  </Button>
+                {/* ── Execute action buttons ── */}
+                {!isExecuted && (
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      onClick={handlePreview}
+                      disabled={!canPreview}
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      {isLoading ? "Загрузка…" : "Обновить предпросмотр"}
+                    </Button>
 
-                  {canExecute && !isBlocked && (
-                    <Button
-                      onClick={() => setConfirmExecute(true)}
-                      disabled={isLoading}
-                      size="sm"
-                      className="gap-1.5"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                      Применить
-                    </Button>
-                  )}
-                  {canExecute && isBlocked && (
-                    <Button
-                      onClick={() => setConfirmExecute(true)}
-                      disabled={isLoading}
-                      size="sm"
-                      variant="destructive"
-                      className="gap-1.5"
-                    >
-                      <ShieldAlert className="h-3.5 w-3.5" />
-                      Применить принудительно после проверки
-                    </Button>
-                  )}
-                </div>
+                    {canExecuteSafe && (
+                      <Button
+                        onClick={() => { setExecuteMode("safe"); setConfirmExecute(true); }}
+                        disabled={isLoading}
+                        size="sm"
+                        className="gap-1.5"
+                      >
+                        <Play className="h-3.5 w-3.5" />
+                        Применить безопасные изменения ({safeCount})
+                      </Button>
+                    )}
+
+                    {canExecuteWithReductions && (
+                      <Button
+                        onClick={() => { setExecuteMode("with_reductions"); setConfirmExecute(true); }}
+                        disabled={isLoading}
+                        size="sm"
+                        variant="secondary"
+                        className="gap-1.5 text-orange-700"
+                      >
+                        <ArrowDownCircle className="h-3.5 w-3.5" />
+                        Применить с сокращением сроков ({reducibleCount})
+                      </Button>
+                    )}
+
+                    {canExecuteSelected && (
+                      <Button
+                        onClick={() => { setExecuteMode("selected"); setConfirmExecute(true); }}
+                        disabled={isLoading}
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Применить выбранные ({selectedIds.size})
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 {/* Post-execute result block */}
                 {isExecuted && (
@@ -722,14 +858,40 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                         <div className="text-muted-foreground">Пропущено</div>
                       </div>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-xs mt-1"
-                      onClick={() => setActiveFilter("changed")}
-                    >
-                      Показать изменённые записи
-                    </Button>
+                    <p className="text-[10px] text-muted-foreground">
+                      Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.updated || 0)}.
+                      Таблица ниже обновлена по текущему состоянию базы данных.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs"
+                        onClick={handlePreview}
+                      >
+                        <Eye className="h-3 w-3 mr-1" />
+                        Новый предпросмотр
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Selection bar */}
+                {selectableInFilter.length > 0 && !isExecuted && (
+                  <div className="flex items-center gap-3 px-3 py-1.5 rounded-md bg-muted/30 text-xs">
+                    <Checkbox
+                      checked={allFilteredSelected}
+                      onCheckedChange={toggleSelectAll}
+                      id="select-all"
+                    />
+                    <Label htmlFor="select-all" className="text-xs cursor-pointer">
+                      {allFilteredSelected ? "Снять все" : `Выбрать все в фильтре (${selectableInFilter.length})`}
+                    </Label>
+                    {selectedIds.size > 0 && (
+                      <span className="text-muted-foreground ml-auto">
+                        Выбрано: {selectedIds.size}
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -740,7 +902,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <span className="text-[10px] text-muted-foreground">
                         {activeFilter !== "all" && (
                           <Badge variant="outline" className="text-[9px] mr-2">
-                            {activeFilter === "changed" ? "Будут изменены" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
+                            {activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}
                           </Badge>
                         )}
                         Показано {Math.min(visibleCount, filteredActions.length)} из {filteredActions.length}
@@ -750,6 +912,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                       <table className="w-full text-xs">
                         <thead className="bg-muted/50 sticky top-0 z-10">
                           <tr>
+                            {!isExecuted && <th className="w-8 p-2"></th>}
                             <th className="w-6 p-2"></th>
                             <th className="text-left p-2 font-medium">Контакт</th>
                             <th className="text-left p-2 font-medium">Какой доступ</th>
@@ -763,8 +926,20 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                           {filteredActions.slice(0, visibleCount).map((a, i) => {
                             const cfg = CATEGORY_CONFIG[a.category] || CATEGORY_CONFIG.already_satisfied;
                             const isExpanded = expandedRows.has(i);
+                            const isSelectable = SELECTABLE_CATEGORIES.has(a.category);
+                            const isSelected = selectedIds.has(a.action_id);
                             return (
-                              <TableRow key={i} action={a} cfg={cfg} isExpanded={isExpanded} isExecuted={isExecuted} onToggle={() => toggleRow(i)} />
+                              <TableRow
+                                key={`${a.action_id}-${i}`}
+                                action={a}
+                                cfg={cfg}
+                                isExpanded={isExpanded}
+                                isExecuted={isExecuted}
+                                isSelectable={isSelectable && !isExecuted}
+                                isSelected={isSelected}
+                                onToggle={() => toggleRow(i)}
+                                onSelect={() => toggleSelect(a.action_id)}
+                              />
                             );
                           })}
                         </tbody>
@@ -787,7 +962,7 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
 
                 {filteredActions.length === 0 && result!.actions.length > 0 && (
                   <div className="text-center text-xs text-muted-foreground py-4">
-                    Нет записей в категории «{activeFilter === "changed" ? "Будут изменены" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
+                    Нет записей в категории «{activeFilter === "changed" ? "Безопасные" : (CATEGORY_CONFIG[activeFilter]?.label || activeFilter)}»
                   </div>
                 )}
               </div>
@@ -812,46 +987,49 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {isBlocked ? "Применить принудительно?" : "Подтвердите применение"}
+              {executeMode === "safe" && "Применить безопасные изменения?"}
+              {executeMode === "with_reductions" && "Применить с сокращением сроков?"}
+              {executeMode === "selected" && "Применить выбранные записи?"}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
-              <div>
-                {isBlocked ? (
-                  <div className="space-y-2">
-                    <p className="text-red-600 font-medium">
-                      Обнаружены проблемы, требующие внимания:
-                    </p>
-                    {hasConflicts && (
-                      <p className="text-red-600">• Конфликтов: {result?.summary?.conflict_existing}</p>
-                    )}
-                    {hasNoSourceWindow && (
-                      <p className="text-red-600">• Записей без определяемого срока: {result?.summary?.no_source_window}</p>
-                    )}
-                    <div className="text-sm mt-2 space-y-1">
-                      <p>Проблемные записи автоматически не применяются.</p>
-                      <p>При принудительном запуске конфликтные записи будут пропущены.</p>
-                      <p className="font-medium">Это действие нельзя отменить автоматически.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
+              <div className="space-y-2">
+                {executeMode === "safe" && (
+                  <>
                     <p>Будет создано доступов: {result?.summary?.missing_access || 0}</p>
                     {recalculateExisting && (
                       <p>Будет обновлено сроков: {result?.summary?.aligned_update_needed || 0}</p>
                     )}
-                    <p className="text-sm mt-2">Это действие нельзя отменить автоматически.</p>
-                  </div>
+                  </>
                 )}
+                {executeMode === "with_reductions" && (
+                  <>
+                    <p>Будет создано доступов: {result?.summary?.missing_access || 0}</p>
+                    <p>Будет обновлено сроков: {result?.summary?.aligned_update_needed || 0}</p>
+                    <p className="text-orange-700 font-medium">
+                      Будет сокращено сроков по правилу: {reducibleCount}
+                    </p>
+                  </>
+                )}
+                {executeMode === "selected" && (
+                  <p>Будет обработано выбранных записей: {selectedIds.size}</p>
+                )}
+                <p className="text-sm mt-2">Это действие нельзя отменить автоматически.</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Отмена</AlertDialogCancel>
             <AlertDialogAction
-              onClick={isBlocked ? handleForceExecute : handleExecute}
-              className={isBlocked ? "bg-destructive hover:bg-destructive/90" : ""}
+              onClick={() => {
+                if (executeMode === "safe") handleExecuteSafe();
+                else if (executeMode === "with_reductions") handleExecuteWithReductions();
+                else handleExecuteSelected();
+              }}
+              className={executeMode === "with_reductions" ? "bg-orange-600 hover:bg-orange-700" : ""}
             >
-              {isBlocked ? "Применить принудительно" : "Применить"}
+              {executeMode === "safe" && "Применить безопасные"}
+              {executeMode === "with_reductions" && "Применить с сокращением"}
+              {executeMode === "selected" && "Применить выбранные"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -867,20 +1045,46 @@ function TableRow({
   cfg,
   isExpanded,
   isExecuted,
+  isSelectable,
+  isSelected,
   onToggle,
+  onSelect,
 }: {
   action: UserAction;
   cfg: typeof CATEGORY_CONFIG[string];
   isExpanded: boolean;
   isExecuted: boolean;
+  isSelectable: boolean;
+  isSelected: boolean;
   onToggle: () => void;
+  onSelect: () => void;
 }) {
+  const actionLabel = useMemo(() => {
+    if (a.category === "reducible_by_rule") {
+      return "Сократить срок по правилу";
+    }
+    if (a.category === "requires_manual_review") {
+      return "Требует решения";
+    }
+    return cfg.description;
+  }, [a.category, cfg.description]);
+
   return (
     <>
       <tr
         className={cn("border-t cursor-pointer hover:bg-muted/30", isExpanded && "bg-muted/20")}
         onClick={onToggle}
       >
+        {!isExecuted && (
+          <td className="p-2" onClick={(e) => e.stopPropagation()}>
+            {isSelectable && (
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={() => onSelect()}
+              />
+            )}
+          </td>
+        )}
         <td className="p-2 text-muted-foreground">
           {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </td>
@@ -894,7 +1098,7 @@ function TableRow({
         <td className="p-2 truncate max-w-[160px] text-muted-foreground">{ruleBasisLabel(a)}</td>
         <td className="p-2">
           <Badge variant="outline" className={cn("text-[9px] whitespace-nowrap", cfg.color)}>
-            {changeDescription(a, isExecuted)}
+            {actionLabel}
           </Badge>
         </td>
         <td className="p-2 text-muted-foreground">{formatDate(a.current_expires_at)}</td>
@@ -902,7 +1106,7 @@ function TableRow({
       </tr>
       {isExpanded && (
         <tr className="bg-muted/10 border-t border-dashed">
-          <td colSpan={7} className="p-3">
+          <td colSpan={isExecuted ? 7 : 8} className="p-3">
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
               <div>
                 <span className="text-muted-foreground">Какое правило: </span>
@@ -946,16 +1150,21 @@ function TableRow({
                     <div className="font-medium">{formatDate(a.current_expires_at)}</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-0.5">После применения</div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">По правилу</div>
                     <div className="font-medium">{formatDate(a.planned_expires_at)}</div>
                   </div>
                   <div>
-                    <div className="text-[10px] text-muted-foreground mb-0.5">Изменение</div>
+                    <div className="text-[10px] text-muted-foreground mb-0.5">Действие</div>
                     <Badge variant="outline" className={cn("text-[9px]", cfg.color)}>
-                      {changeDescription(a, isExecuted)}
+                      {actionLabel}
                     </Badge>
                   </div>
                 </div>
+                {a.category === "reducible_by_rule" && (
+                  <p className="text-[10px] text-orange-600 mt-1.5 text-center">
+                    Может быть применено по решению администратора
+                  </p>
+                )}
               </div>
               {a.skip_reason && (
                 <div className="col-span-2">
