@@ -130,7 +130,7 @@ export default function ContactDealsDialog({
       if (!deals || deals.length === 0) return [];
       const { data, error } = await supabase
         .from("payments_v2")
-        .select("id, order_id, amount, status, created_at")
+        .select("id, order_id, amount, status, paid_at, created_at")
         .in("order_id", deals.map(d => d.id))
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -224,7 +224,7 @@ export default function ContactDealsDialog({
                             {deal.order_number}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yyyy", { locale: ru })}
+                            {format(new Date(getEffectiveDealDate(deal, dealPayments)), "dd.MM.yyyy", { locale: ru })}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">
