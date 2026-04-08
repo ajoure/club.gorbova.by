@@ -59,7 +59,7 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
         const { data: profileData } = await supabase
           .from("profiles")
           .select("id, full_name, first_name, last_name")
-          .in("id", userIds);
+          .in("user_id", userIds);
         for (const p of profileData || []) {
           profiles[p.id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
         }
