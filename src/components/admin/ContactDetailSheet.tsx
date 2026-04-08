@@ -115,6 +115,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";
@@ -420,7 +421,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
           *,
           products_v2(id, name, code, category, public_id),
           tariffs(id, name, code),
-          payments_v2(id, status, provider_response)
+          payments_v2(id, status, paid_at, created_at, provider_response)
         `)
         .or(`profile_id.eq.${contact.id},user_id.in.(${userIds.join(',')})`)
         .in("status", ['paid', 'canceled', 'refunded'] as const)
@@ -3182,7 +3183,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                         <div className="flex items-center justify-between text-sm">
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <CalendarIcon className="w-3 h-3" />
-                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yy HH:mm")}
+                            {format(new Date(getEffectiveDealDate(deal)), "dd.MM.yy HH:mm")}
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="font-medium flex items-center gap-1">

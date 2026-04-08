@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
@@ -130,7 +131,7 @@ export default function ContactDealsDialog({
       if (!deals || deals.length === 0) return [];
       const { data, error } = await supabase
         .from("payments_v2")
-        .select("id, order_id, amount, status, created_at")
+        .select("id, order_id, amount, status, paid_at, created_at")
         .in("order_id", deals.map(d => d.id))
         .order("created_at", { ascending: false });
       if (error) throw error;
@@ -224,7 +225,7 @@ export default function ContactDealsDialog({
                             {deal.order_number}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">
-                            {format(new Date(deal.deal_date || deal.created_at), "dd.MM.yyyy", { locale: ru })}
+                            {format(new Date(getEffectiveDealDate(deal, dealPayments)), "dd.MM.yyyy", { locale: ru })}
                           </TableCell>
                           <TableCell>
                             <div className="flex flex-col gap-0.5">

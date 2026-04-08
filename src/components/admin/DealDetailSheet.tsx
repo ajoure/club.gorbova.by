@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import {
   Sheet,
   SheetContent,
@@ -480,23 +481,7 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                   </button>
                 </SheetTitle>
                 {(() => {
-                  // Priority: manual deal_date → latest succeeded payment paid_at → payment created_at → created_at
-                  const hasManualDealDate = deal.deal_date && deal.deal_date !== deal.created_at;
-                  if (hasManualDealDate) {
-                    return (
-                      <p className="text-xs sm:text-sm text-muted-foreground">
-                        {format(new Date(deal.deal_date), "dd MMMM yyyy, HH:mm", { locale: ru })}
-                      </p>
-                    );
-                  }
-                  const latestSucceededPayment = [...(payments || [])]
-                    .filter(p => p.status === 'succeeded')
-                    .sort((a, b) => {
-                      const dateA = new Date(a.paid_at || a.created_at || 0).getTime();
-                      const dateB = new Date(b.paid_at || b.created_at || 0).getTime();
-                      return dateB - dateA;
-                    })[0];
-                  const effectiveDate = latestSucceededPayment?.paid_at || latestSucceededPayment?.created_at || deal.deal_date || deal.created_at;
+                  const effectiveDate = getEffectiveDealDate(deal, payments);
                   return (
                     <p className="text-xs sm:text-sm text-muted-foreground">
                       {format(new Date(effectiveDate), "dd MMMM yyyy, HH:mm", { locale: ru })}
