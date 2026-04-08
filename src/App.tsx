@@ -8,6 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { HelpModeProvider } from "@/contexts/HelpModeContext";
 // ImpersonationBar moved inside DashboardLayout (authenticated shell only)
 import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
+import { SectionGuard } from "@/components/layout/SectionGuard";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { GlobalPaymentHandler } from "@/components/payment/GlobalPaymentHandler";
 import { initExternalLinkKillSwitch, BUILD_MARKER } from "@/lib/externalLinkKillSwitch";
@@ -211,7 +212,7 @@ const App = () => {
               <Route path="/self-development/habits" element={<ProtectedRoute><LazyRoute><HabitTracker /></LazyRoute></ProtectedRoute>} />
               <Route path="/self-development/balance-wheel" element={<ProtectedRoute><LazyRoute><BalanceWheel /></LazyRoute></ProtectedRoute>} />
               <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
-              <Route path="/tools/eisenhower" element={<ProtectedRoute><LazyRoute><EisenhowerMatrix /></LazyRoute></ProtectedRoute>} />
+              <Route path="/tools/eisenhower" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="eisenhower"><EisenhowerMatrix /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<Navigate to="/self-development/balance-wheel" replace />} />
               <Route path="/support" element={<ProtectedRoute><LazyRoute><Support /></LazyRoute></ProtectedRoute>} />
               <Route path="/support/:ticketId" element={<ProtectedRoute><LazyRoute><SupportTicket /></LazyRoute></ProtectedRoute>} />
