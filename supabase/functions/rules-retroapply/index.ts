@@ -402,7 +402,6 @@ async function processRule(
             || (entMeta.source_rule_id && !metaSourceType); // has rule_id linkage = came from automated process
 
           // Check meta.source_rule_id lineage
-          const entMeta = ent.meta || {};
           const entSourceRuleId = entMeta.source_rule_id || null;
           const isRuleLineageSafe = !entSourceRuleId || entSourceRuleId === rule.id;
 
