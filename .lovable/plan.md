@@ -118,3 +118,37 @@ Post-result блок показывал недостоверные данные 
 - `reducible_by_rule` execute — нет живого кейса в текущем датасете
 - `requires_manual_review` — нет живого кейса в текущем датасете
 - Create-path execute proof — engine fix deployed, ожидает первого реального safe execute через UI
+
+## PATCH-H: Fix Deal List Date Source
+
+**Статус:** ✅ done
+
+### Проблема
+В разных экранах используются разные источники даты сделки. Для подписочных сделок с рекуррентными платежами список показывал `deal_date` (дату создания заказа), а детальный экран — дату последнего платежа.
+
+Пример: Елизавета Семашкевич, сделка `413d1847`:
+- Было в списке: **06.02.2026** (deal_date)
+- В DealDetailSheet: **07.04.2026** (latest succeeded payment)
+- Стало везде: **07.04.2026**
+
+### Решение
+Создан единый хелпер `src/utils/getEffectiveDealDate.ts`:
+- Приоритет: MAX(paid_at) среди succeeded payments → fallback deal_date → created_at
+- Применён во всех 4 экранах: AdminDeals, ContactDetailSheet, ContactDealsDialog, DealDetailSheet
+
+### Изменённые файлы
+- `src/utils/getEffectiveDealDate.ts` — новый хелпер
+- `src/pages/admin/AdminDeals.tsx` — рендер даты, экспорт, клиентская сортировка
+- `src/components/admin/ContactDetailSheet.tsx` — рендер даты + добавлены paid_at/created_at в payments_v2 select
+- `src/components/admin/bepaid/ContactDealsDialog.tsx` — рендер даты + добавлен paid_at в payments select
+- `src/components/admin/DealDetailSheet.tsx` — переведён на тот же хелпер (убрана дублирующая inline-логика)
+
+### SQL proof: 15 подписочных сделок с расхождением
+Все 15 сделок с category=subscription и >1 succeeded payment показывали MISMATCH между deal_date и latest_payment. После фикса все будут показывать latest_payment.
+
+Разовые сделки (ЗАКРОЙ ГОД и др.) — дата не меняется, т.к. нет рекуррентных платежей.
+
+### Елизавета Семашкевич proof
+- deal_date: 2026-02-06 → старое отображение
+- latest succeeded payment: 2026-04-07 05:30 → новое отображение
+- Совпадает во всех 4 экранах после фикса
