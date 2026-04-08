@@ -1,112 +1,62 @@
-# По отчёту о выполненной работе:
-
-&nbsp;
-
-1. Этап 1 как инфраструктурный слой выглядит логично и в целом сделан правильно:
-  &nbsp;
-  - app_sections создана;
-  - seed есть;
-  - CHECK расширен add-only;
-  - RPC создан;
-  - во фронте добавлен новый тип и селектор.
-  &nbsp;
-2. Но отчёт нельзя считать закрытием фичи доступа к разделам.
-  По факту сделан только foundation, а пользоваться этим из UI сейчас нельзя:
-  &nbsp;
-  - нет страницы управления секциями;
-  - нельзя нормально переключать is_public;
-  - нет sidebar lock;
-  - нет SectionGuard;
-  - нет видимого пользовательского эффекта.
-  &nbsp;
-3. В отчёте правильно указано, что поведение пользователей не изменилось. Это плюс.
-  Но тогда и формулировка должна быть жёстче:
-  &nbsp;
-  - не “функция реализована”;
-  - а “реализован только этап инфраструктуры, без рабочего UI-управления и без enforcement”.
-  &nbsp;
-4. Отдельно правильно, что не полезли в fulfillment и retroapply.
-  Это соответствует safe rollout.
-5. По отчёту не хватает двух proof:
-  &nbsp;
-  - фактический пример создания section_access rule через UI со скрином/данными;
-  - пример ответа RPC не только “существует”, а с реальным JSON для user/admin.
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-Итог по отчёту:
-
-&nbsp;
-
-- как **инфраструктурный этап** — нормально;
-- как **готовая функция** — не закрыто.
-
-&nbsp;
-
-&nbsp;
-
-По новому плану:
-
-&nbsp;
-
 да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В новом плане надо прямо записать, что AppSectionsAdmin — это обязательный следующий шаг, без которого этап 1 практически неоперабелен для администратора.
-2. В админ-странице кроме is_public и is_active сразу добавь колонку:
-  &nbsp;
-  - target_ref usages / количество активных section_access rules,
-    чтобы было видно, какие секции уже задействованы правилами.
-  &nbsp;
-3. Для toggle is_public=false нужен не просто confirm, а пред-проверка:
-  &nbsp;
-  - есть ли вообще хоть одно активное section_access правило на эту секцию.
-    Если правил 0, показать более жёсткое предупреждение:
-  - “После закрытия секция станет недоступна всем, кроме admin”.
-  &nbsp;
-4. В плане зафиксируй дефолтное поведение SectionGuard:
-  &nbsp;
-  - is_public=true → всегда пускать;
-  - is_public=false и правил нет → deny для всех, кроме admin.
-    Это нужно явно написать, чтобы потом не появилось “магического allow”.
-  &nbsp;
-5. В AppSectionsAdmin нужен фильтр:
-  &nbsp;
-  - все;
-  - публичные;
-  - закрытые;
-  - с активными правилами;
-  - без правил.
-    Иначе управлять секциями будет неудобно.
-  &nbsp;
-6. В UI списка секций сразу добавь бейдж статуса:
-  &nbsp;
-  - public / gated,
-  - active / inactive,
-    чтобы не приходилось читать toggle глазами.
-  &nbsp;
-7. В плане правильно, что code и route immutable.
-  Зафиксируй это не только в форме, но и в update-обработчике:
-  &nbsp;
-  - даже если фронт сломан, апдейт этих полей не должен проходить.
-  &nbsp;
-8. В rollout отдельно закрепи:
-  &nbsp;
-  - первая тестовая секция только eisenhower;
-  - money и live запрещены не только для первого включения, но и для любых “быстрых тестов” до отдельного proof.
-  &nbsp;
-9. Для финального proof по AppSectionsAdmin добавь:
-  &nbsp;
-  - admin меняет is_public;
-  - RPC сразу отражает новое состояние;
-  - sidebar/guard после инвалидации кэша показывают тот же результат.
-    Это должен быть один связанный end-to-end proof.
-  &nbsp;
-10. В итоговом статусе нового плана раздели:
+1. Убери противоречие из плана:  
+
+  - в этом спринте реальный enforcement только для eisenhower;
+  - ai, money, live, self_development пока не подключать к SectionGuard;
+  - для них оставить только подготовленную инфраструктуру без включения gating.
+2. &nbsp;
+3. Пункт «Подключение SectionGuard к страницам» перепиши так:  
+
+  - подключить SectionGuard только к /tools/eisenhower;
+  - остальные секции переводить по одной отдельным этапом после proof.
+4. &nbsp;
+5. money и live зафиксируй жёстче:  
+
+  - не просто «запрещено закрывать»,
+  - а не трогать их роуты и существующую внутреннюю логику вообще в этом спринте.
+6. &nbsp;
+7. В useSectionAccess не опирайся на логику «если RPC error, а секция public — allow», если у тебя нет отдельного источника is_public.  
+Добавь явно:  
+
+  - либо хук получает app_sections отдельным запросом,
+  - либо SectionGuard сам дополнительно читает app_sections по sectionCode,
+  - иначе корректный fallback невозможен.
+8. &nbsp;
+9. Не дублируй admin bypass одновременно в трёх местах без нужды.  
+Зафиксируй один контракт:  
+
+  - главный источник истины — RPC;
+  - на фронте bypass только как безопасный early shortcut, если роль admin уже точно известна.
+10. &nbsp;
+11. Kill-switch не хардкодить в коде true/false.  
+Вернись к уже согласованной модели:  
+
+  - app_settings.section_gating_enabled,
+  - либо другой реальный конфиг проекта,  
+  но не ручная правка исходников как основной механизм rollback.
+12. &nbsp;
+13. Для sidebar уточни поведение:  
+
+  - lock-иконка только для секции, которая реально is_public=false и has_access=false;
+  - для admin lock не показывать;
+  - sidebar ничего не блокирует, только показывает состояние.
+14. &nbsp;
+15. Для SectionGuard добавь обязательный UI-контракт:  
+
+  - показывать название секции;
+  - если RPC вернул granted_via_tariff_name или granted_via_product_name, выводить это в paywall;
+  - при deny не делать redirect.
+16. &nbsp;
+17. Русификацию бейджей оставь, но не смешивай с enforcement как равнозначные задачи.  
+В статусе этапа раздели:  
+
+  - косметика /admin/sections;
+  - первый guarded rollout eisenhower.
+18. &nbsp;
+19. В DoD добавь обязательные proof-пункты:
 
 &nbsp;
 
@@ -114,71 +64,131 @@
 
 &nbsp;
 
-- что относится к **управлению секциями**;
-- что относится к **реальному ограничению доступа**.
-  Это два разных этапа, и их нельзя смешивать в одном “сделано”.
+- eisenhower при is_public=true открывается как раньше;
+- eisenhower при is_public=false и без rule даёт deny;
+- eisenhower при is_public=false и с rule даёт allow;
+- admin открывает eisenhower всегда;
+- sidebar показывает lock для обычного пользователя без доступа;
+- sidebar не показывает lock для admin.
 
 &nbsp;
 
 &nbsp;
 
-Итог:
-
 &nbsp;
 
-- направление плана правильное;
-- как следующий шаг план хороший;
-- но обязательно сделай упор на AppSectionsAdmin как на первый реально полезный UI-слой, а enforcement уже после этого.
+11. Добавь compatibility-пункт:
 
 &nbsp;
 
 &nbsp;
 
-План: Админ-страница управления секциями (AppSectionsAdmin)
+&nbsp;
 
-Это следующий логический шаг — дать возможность управлять секциями через UI.
+- Money.tsx, LiveEvents.tsx, Knowledge.tsx, Learning.tsx в этом спринте не меняют текущее поведение вообще.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. Для безопасности добавь правило rollout:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- сначала merge инфраструктуры хука и guard,
+- потом включение только eisenhower,
+- только после фактического proof можно готовить следующий план на ai и другие секции.
+
+&nbsp;
+
+&nbsp;
+
+# План: русификация бейджей + enforcement доступа к секциям
+
+## Проблема
+
+1. Бейджи статуса в `/admin/sections` на английском ("public", "gated", "inactive") — нужно на русском.
+2. Переключение `is_public=false` для секции "Нейросеть" не закрывает раздел для учеников — нет enforcement. Sidebar показывает все пункты безусловно, SectionGuard не существует.
 
 ## Что будет сделано
 
-### 1. Новая страница `/admin/sections`
+### 1. Русификация бейджей в AdminSections
 
-Таблица всех секций из `app_sections` с колонками:
+В `src/pages/admin/AdminSections.tsx`:
 
-- Код (code) — read-only
-- Название (label) — read-only
-- Маршрут (route) — read-only
-- Публичный (is_public) — toggle-переключатель
-- Активный (is_active) — toggle-переключатель
-- Кол-во привязанных правил — badge со счётчиком
+- "public" → "публичный"
+- "gated" → "закрытый"
+- "inactive" → "неактивный"
 
-При переключении `is_public` с true на false — confirmation dialog:
-"Раздел станет доступен только пользователям с соответствующим правилом доступа. Продолжить?"
+### 2. Хук `useSectionAccess`
 
-При деактивации секции, если есть активные `section_access` rules — warning dialog.
+Новый файл `src/hooks/useSectionAccess.ts`:
 
-### 2. Роут и навигация
+- Вызывает RPC `get_user_section_access` для текущего `auth.uid()`
+- queryKey: `['section-access', userId]`, staleTime: 60s
+- Возвращает массив секций с `has_access` для каждой
+- Admin bypass: если роль admin — все секции `has_access=true`
+- При ошибке RPC: для `is_public=true` → allow, для `is_public=false` → deny
 
-- Добавить роут `/admin/sections` в App.tsx
-- Добавить пункт в админ-навигацию (рядом с "Контент" или "Система")
+### 3. Lock-иконка в пользовательском sidebar
 
-### 3. RLS — уже настроена
+В `src/components/layout/AppSidebar.tsx`:
 
-Текущие RLS-политики уже позволяют админам управлять записями.
+- Подключить `useSectionAccess`
+- Маппинг `mainMenuItems[].key` → `app_sections.code`
+- Для gated секций без доступа: показать иконку замка рядом с названием
+- Для admin: никаких замков, обычный вид
+- Пункт НЕ скрывается, клик по-прежнему ведёт на страницу
 
-### 4. Ограничения (по плану)
+### 4. Компонент `SectionGuard`
 
-- `code` и `route` — не редактируются через UI (immutable after creation)
-- Удаление секций запрещено — только деактивация
-- `is_public` toggle — основной рабочий инструмент
+Новый файл `src/components/layout/SectionGuard.tsx`:
 
-## Технические детали
+- Обёртка-wrapper, принимает `sectionCode: string`
+- Использует тот же `useSectionAccess()` (общий кэш)
+- `is_public=true` → пропускает
+- `is_public=false` + `has_access=true` → пропускает
+- `is_public=false` + `has_access=false` → overlay/paywall ("Доступ ограничен")
+- Admin → всегда пропускает
+- RPC error + gated → deny + "Не удалось проверить доступ. Обновите страницу."
+- Kill-switch (feature flag `SECTION_GATING_ENABLED`): при `false` — всегда пропускает
+
+### 5. Подключение SectionGuard к страницам
+
+Обернуть компоненты страниц для секций, у которых есть запись в `app_sections`:
+
+- `/ai` → SectionGuard code="ai"
+- `/money` → SectionGuard code="money"
+- `/live` → SectionGuard code="live"
+- `/self-development` → SectionGuard code="self_development"
+- `/tools/eisenhower` → SectionGuard code="eisenhower"
+- `/dashboard`, `/knowledge`, `/products` — тоже обернуть (но они public, guard пропустит)
+
+### 6. Инвалидация кэша
+
+При изменении секции в AdminSections уже инвалидируются `section-access`, `admin-sections`, `access-rule-sections`. После logout/login — React Query сбрасывается автоматически.
+
+## Ограничения
+
+- Первый реальный тест gating — только `eisenhower`
+- `money` и `live` запрещено закрывать до отдельного proof
+- Создание новых секций через UI не добавляется
+- Fulfillment и retroapply не затрагиваются
+- Feature flag `SECTION_GATING_ENABLED` — hardcoded `true` в коде, для kill-switch меняется на `false`
+
+## Файлы
 
 
-| Файл                                                 | Действие                                                 |
-| ---------------------------------------------------- | -------------------------------------------------------- |
-| `src/pages/admin/AdminSections.tsx`                  | Новая страница — таблица секций с toggle-переключателями |
-| `src/App.tsx`                                        | Добавить роут `/admin/sections`                          |
-| `src/components/admin/AdminSidebar.tsx` (или аналог) | Пункт навигации "Разделы платформы"                      |
-
-
-Никакие существующие файлы, правила доступа или поведение пользователей не затрагиваются.
+| Файл                                     | Действие                        |
+| ---------------------------------------- | ------------------------------- |
+| `src/pages/admin/AdminSections.tsx`      | Русификация бейджей             |
+| `src/hooks/useSectionAccess.ts`          | Новый хук — вызов RPC + кэш     |
+| `src/components/layout/SectionGuard.tsx` | Новый компонент — guard/paywall |
+| `src/components/layout/AppSidebar.tsx`   | Lock-иконка для gated секций    |
+| Страницы секций (AI, Money, Live и т.д.) | Обёртка SectionGuard            |
