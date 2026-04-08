@@ -1,111 +1,120 @@
 1: # План: 4 патча — cb20 repair, Деньги BY closure, LibraryModule access filter, Universal RetroApply Engine
-2: 
-3: ---
-4: 
-5: ## Архитектурная норма
-6: 
-7: **RetroApply — это универсальный ручной механизм применения новых или изменённых access_rules к историческим данным по всем продуктам и тарифам, а не специальная логика только для BUSINESS.**
-8: 
-9: - Engine НЕ привязан к BUSINESS, НЕ привязан к club, НЕ привязан к Деньги BY
-10: - Rule выбирается параметрами запуска (rule_ids / source_product_id / source_tariff_id / changed_since)
-11: - Два режима: **grant missing access** (default) и **recalculate existing access** (`recalculate_existing: true`)
-12: 
-13: **Правило эксплуатации для админа:**
-14: - Новые оплаты после изменения rules обрабатываются автоматически обычным fulfillment flow
-15: - Старые исторические покупки автоматически НЕ пересчитываются
-16: - Для них админ вручную запускает RetroApply: preview → execute
-17: 
-18: ---
-19: 
-20: ## PATCH-A: CB20 expiry alignment
-21: 
-22: **Статус:** ✅ Закрыт по data-proof
-23: 
-24: ---
-25: 
-26: ## PATCH-B: Деньги BY retro-backfill
-27: 
-28: **Статус:** ✅ Закрыт по proof
-29: 
-30: ---
-31: 
-32: ## PATCH-C: LibraryModule child access filtering
-33: 
-34: **Статус:** ✅ Закрыт как UI access-filter fix
-35: 
-36: ---
-37: 
-38: ## PATCH-D: Universal RetroApply Engine
-39: 
-40: **Статус:** ✅ Code-ready, preview/execute/idempotency verified, UI создан
-41: 
-42: ---
-43: 
-44: ## PATCH-E: RetroApply Conflict Reclassification
-45: 
-46: **Статус:** ✅ Закрыт по proof
-47: 
-48: ---
-49: 
-50: ## PATCH-F: Admin-Controlled Conflict Resolution
-51: 
-52: **Статус:** ✅ done
-53: 
-54: ### Проблема
-55: RetroApply не умел сокращать сроки по каноническому правилу и не давал админу управляемого выбора.
-56: 
-57: ### Что изменено
-58: 
-59: **Engine (`supabase/functions/rules-retroapply/index.ts`):**
-60: - Новая категория `reducible_by_rule` — срок будет сокращён до канонического (safe source + lineage)
-61: - Новая категория `requires_manual_review` — неоднозначные кейсы
-62: - `action_id` для каждой записи: `${user_id}:${target_product_id}:${rule_id}:${category}`
-63: - Новые параметры execute: `allow_reduce_access`, `selected_action_ids`, `apply_categories`
-64: - `conflict_existing` и `no_source_window` — NEVER executable даже при selected
-65: - `requires_manual_review` — только через selected_action_ids, не через apply_categories
-66: - `reducible_by_rule` — только при `allow_reduce_access = true`
-67: - Legacy `force_execute` сохранён для совместимости
-68: 
-69: **UI (`src/components/admin/product/RetroApplyPanel.tsx`):**
-70: - Чекбоксы выбора строк (select all in filter / deselect)
-71: - Три кнопки execute: «Применить безопасные», «Применить с сокращением сроков», «Применить выбранные»
-72: - Убрана логика «принудительно»
-73: - Auto-refresh preview после execute (1.5с задержка)
-74: - Post-execute блок показывает фактические created/updated/skipped
-75: - Новые категории в фильтрах: reducible_by_rule, requires_manual_review
-76: - Все reason-коды переведены на русский
-77: 
-78: ### Proof (правило 6ba9727e, Деньги BY)
-79: 
-80: | Метрика | Значение |
-81: |---|---|
-82: | conflict_existing | 0 |
-83: | already_satisfied | 110 |
-84: | reducible_by_rule | 0 |
-85: | requires_manual_review | 0 |
-86: | missing_access | 0 |
-87: 
-88: В текущем датасете нет кейсов с current > planned, все 110 записей `already_satisfied`.
-89: 
-90: ### DoD
-91: - [x] `reducible_by_rule` как отдельная исполнимая категория
-92: - [x] `requires_manual_review` только через selected, не через categories
-93: - [x] `conflict_existing` неисполняем даже в selected mode
-94: - [x] Чекбоксы выбора строк
-95: - [x] Три режима execute
-96: - [x] Auto-refresh preview после execute
-97: - [x] Баг счётчика исправлен (фактические данные, не preview-категории)
-98: - [x] UI без «принудительно»
-99: 
-100: ---
-101: 
-102: ## Статусный блок
-103: 
-104: | PATCH | Описание | Статус |
-105: |---|---|---|
-106: | A | cb20 expiry alignment | Закрыт по data-proof |
-107: | B | Деньги BY retro-backfill | Закрыт по proof |
-108: | C | LibraryModule child access filtering | Закрыт как UI access-filter fix |
-109: | D | Universal rules-retroapply engine | done |
-110: | E | RetroApply conflict reclassification | done |
-111: | F | Admin-controlled conflict resolution | done |
+
+---
+
+## Архитектурная норма
+
+**RetroApply — это универсальный ручной механизм применения новых или изменённых access_rules к историческим данным по всем продуктам и тарифам, а не специальная логика только для BUSINESS.**
+
+- Engine НЕ привязан к BUSINESS, НЕ привязан к club, НЕ привязан к Деньги BY
+- Rule выбирается параметрами запуска (rule_ids / source_product_id / source_tariff_id / changed_since)
+- Два режима: **grant missing access** (default) и **recalculate existing access** (`recalculate_existing: true`)
+
+**Правило эксплуатации для админа:**
+- Новые оплаты после изменения rules обрабатываются автоматически обычным fulfillment flow
+- Старые исторические покупки автоматически НЕ пересчитываются
+- Для них админ вручную запускает RetroApply: preview → execute
+
+---
+
+## PATCH-A: CB20 expiry alignment
+
+**Статус:** ✅ Закрыт по data-proof
+
+---
+
+## PATCH-B: Деньги BY retro-backfill
+
+**Статус:** ✅ Закрыт по proof
+
+---
+
+## PATCH-C: LibraryModule child access filtering
+
+**Статус:** ✅ Закрыт как UI access-filter fix
+
+---
+
+## PATCH-D: Universal RetroApply Engine
+
+**Статус:** ✅ Code-ready, preview/execute/idempotency verified, UI создан
+
+---
+
+## PATCH-E: RetroApply Conflict Reclassification
+
+**Статус:** ✅ Закрыт по proof
+
+---
+
+## PATCH-F: Admin-Controlled Conflict Resolution
+
+**Статус:** ✅ done
+
+---
+
+## PATCH-G: RetroApply Engine/UI Truth Repair
+
+**Статус:** ✅ done
+
+### Проблема
+RetroApply safe execute визуально «срабатывал», но фактически не создавал записей.
+Post-result блок показывал недостоверные данные (skipped = весь preview).
+
+### Что исправлено
+
+**Engine (`supabase/functions/rules-retroapply/index.ts`):**
+- **Create-path:** убрана запись в несуществующий столбец `source`. Все маркеры происхождения пишутся в `meta` (`source_type`, `source_rule_id`, `batch_id`, etc.)
+- **Profile_id:** при create передаётся `profile_id` если известен
+- **Update-path:** реализован merge meta: `{ ...oldMeta, ...retroapplyPatch }`. Существующие ключи не затираются
+- **Execute-статистика разделена:**
+  - `targeted` — строки реально вошедшие в execute
+  - `created` / `updated` — фактические изменения
+  - `skipped_idempotent` — уже существовало между preview и execute
+  - `skipped_conflict` — entitlement не найден / нет planned_expires
+  - `skipped_error` — ошибка insert/update
+  - `not_selected` — строки preview, которые не входили в scope execute
+- Добавлены `created_action_ids`, `updated_action_ids`, `skipped_action_ids`, `errors[]`
+
+**UI (`src/components/admin/product/RetroApplyPanel.tsx`):**
+- Post-result блок показывает 4 столбца: Создано / Обновлено / Пропущено / Не входило в запуск
+- Текстовая строка: «Запущено к обработке: N. Фактически изменено: M.»
+- Отдельно отображаются ошибки execute (если есть)
+- Auto-refresh preview после execute сохранён
+
+### Диагностика Елизаветы Семашкевич
+
+Разбор показал:
+- Активная подписка: product `11c9f1b8` (Gorbova Club), tariff `7c748940` (BUSINESS)
+- Правило `1b497fba` (9 продуктов) использует `condition_type: prior_purchase, match_mode: per_product`
+- У Елизаветы оплачен только 1 из 9 target-продуктов (cb20 = `7101ed3c`)
+- Entitlement для cb20 существует, но `status: expired` (срок 2026-04-07, уже истёк)
+- Для остальных 8 продуктов она правомерно классифицирована как `condition_not_met`
+- **Вывод:** проблема Елизаветы — не ошибка create-path и не ошибка классификации, а expired entitlement по cb20
+
+### DoD
+- [x] Create-path: убран `source`, все маркеры в `meta`
+- [x] Update-path: meta merge, не overwrite
+- [x] Execute-статистика: 6 раздельных метрик + action_ids + errors
+- [x] UI: честный post-result с разделением scope
+- [x] Елизавета: разобрана, проблема = expired cb20, не ошибка engine
+- [x] Engine deployed и отвечает 200
+
+---
+
+## Статусный блок
+
+| PATCH | Описание | Статус |
+|---|---|---|
+| A | cb20 expiry alignment | Закрыт по data-proof |
+| B | Деньги BY retro-backfill | Закрыт по proof |
+| C | LibraryModule child access filtering | Закрыт как UI access-filter fix |
+| D | Universal rules-retroapply engine | done |
+| E | RetroApply conflict reclassification | done |
+| F | Admin-controlled conflict resolution | done |
+| G | Engine/UI truth repair | done |
+
+### Pending runtime proofs (не блокируют, но не подтверждены)
+- `reducible_by_rule` execute — нет живого кейса в текущем датасете
+- `requires_manual_review` — нет живого кейса в текущем датасете
+- Create-path execute proof — engine fix deployed, ожидает первого реального safe execute через UI
