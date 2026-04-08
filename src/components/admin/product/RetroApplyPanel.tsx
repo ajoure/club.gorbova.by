@@ -107,7 +107,7 @@ const CATEGORY_CONFIG: Record<string, {
   },
   aligned_update_needed: {
     label: "Будет обновлён срок",
-    description: "Будет продлён или выровнен срок",
+    description: "Доступ уже есть, будет обновлён только срок",
     color: "text-amber-700 bg-amber-50 border-amber-200",
     icon: RefreshCw,
   },
@@ -142,6 +142,14 @@ const REASON_LABELS: Record<string, string> = {
   prior_purchase_not_found: "Предыдущая покупка не найдена",
   no_access_end_at_and_no_duration_days: "Нет даты окончания и не задан фиксированный срок",
   existing_entitlement_from_different_source: "Существующий доступ от другого источника",
+  safe_recalculate_expires_extended: "Срок будет выровнен по правилу",
+  safe_recalculate_expires_missing: "Текущий срок отсутствует, будет рассчитан заново",
+  safe_recalculate_available_but_disabled: "Срок можно безопасно обновить, но пересчёт сроков сейчас выключен",
+  conflict_manual_source: "Конфликт: доступ выдан вручную",
+  conflict_multiple_entitlements: "Конфликт: несколько активных доступов",
+  conflict_would_reduce_access: "Конфликт: обновление сократит срок доступа",
+  conflict_no_planned_expiry: "Конфликт: невозможно вычислить новый срок",
+  conflict_different_rule_source: "Конфликт: доступ выдан по другому правилу",
 };
 
 function translateReason(code: string | null): string {
