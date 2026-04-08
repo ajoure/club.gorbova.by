@@ -566,24 +566,30 @@ async function executeActions(
 ): Promise<{
   targeted: number;
   created: number;
+  reactivated: number;
+  reactivation_candidates_found: number;
   updated: number;
   skipped_idempotent: number;
   skipped_conflict: number;
   skipped_error: number;
   not_selected: number;
   created_action_ids: string[];
+  reactivated_action_ids: string[];
   updated_action_ids: string[];
   skipped_action_ids: string[];
   errors: Array<{ action_id: string; error: string }>;
 }> {
   let targeted = 0;
   let created = 0;
+  let reactivated = 0;
+  let reactivation_candidates_found = 0;
   let updated = 0;
   let skipped_idempotent = 0;
   let skipped_conflict = 0;
   let skipped_error = 0;
   let not_selected = 0;
   const created_action_ids: string[] = [];
+  const reactivated_action_ids: string[] = [];
   const updated_action_ids: string[] = [];
   const skipped_action_ids: string[] = [];
   const errors: Array<{ action_id: string; error: string }> = [];
