@@ -14,7 +14,23 @@ interface Comment {
   user_id: string;
   content: string;
   created_at: string;
-  profile?: { first_name: string | null; last_name: string | null } | null;
+  author_display_name: string | null;
+  profile?: { full_name: string | null; first_name: string | null; last_name: string | null } | null;
+}
+
+function resolveDisplayName(comment: Comment): string {
+  // Priority: author_display_name (snapshot) → full_name → first+last → Пользователь
+  if (comment.author_display_name) return comment.author_display_name;
+  const p = comment.profile;
+  if (p?.full_name) return p.full_name;
+  const parts = [p?.first_name, p?.last_name].filter(Boolean);
+  if (parts.length > 0) return parts.join(" ");
+  return "Пользователь";
+}
+
+function getInitials(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+  return (parts[0]?.[0] || "") + (parts[1]?.[0] || "") || "?";
 }
 
 export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
@@ -29,22 +45,23 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("live_event_comments")
-        .select("id, user_id, content, created_at")
+        .select("id, user_id, content, created_at, author_display_name")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: true })
         .limit(200);
       if (error) throw error;
 
-      // Fetch profiles for comments
-      const userIds = [...new Set((data || []).map(c => c.user_id))];
-      let profiles: Record<string, { first_name: string | null; last_name: string | null }> = {};
-      if (userIds.length > 0) {
+      // Fetch profiles for legacy fallback (comments without author_display_name)
+      const legacyComments = (data || []).filter(c => !c.author_display_name);
+      let profiles: Record<string, { full_name: string | null; first_name: string | null; last_name: string | null }> = {};
+      if (legacyComments.length > 0) {
+        const userIds = [...new Set(legacyComments.map(c => c.user_id))];
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("id, first_name, last_name")
+          .select("id, full_name, first_name, last_name")
           .in("id", userIds);
         for (const p of profileData || []) {
-          profiles[p.id] = { first_name: p.first_name, last_name: p.last_name };
+          profiles[p.id] = { full_name: p.full_name, first_name: p.first_name, last_name: p.last_name };
         }
       }
 
@@ -115,17 +132,6 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
     sendMutation.mutate(newComment.trim());
   };
 
-  const getInitials = (comment: Comment) => {
-    const fn = comment.profile?.first_name || "";
-    const ln = comment.profile?.last_name || "";
-    return (fn[0] || "") + (ln[0] || "") || "?";
-  };
-
-  const getName = (comment: Comment) => {
-    const parts = [comment.profile?.first_name, comment.profile?.last_name].filter(Boolean);
-    return parts.join(" ") || "Пользователь";
-  };
-
   return (
     <div className="flex flex-col h-full">
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 p-3 max-h-[400px]">
@@ -136,28 +142,32 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
         ) : !comments?.length ? (
           <p className="text-sm text-muted-foreground text-center py-4">Пока нет комментариев</p>
         ) : (
-          comments.map((comment) => (
-            <div key={comment.id} className="flex gap-2 group">
-              <Avatar className="h-7 w-7 shrink-0">
-                <AvatarFallback className="text-[10px]">{getInitials(comment)}</AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span className="text-xs font-medium text-foreground">{getName(comment)}</span>
-                  <span className="text-[10px] text-muted-foreground">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
-                  {isAdmin && (
-                    <button
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => deleteMutation.mutate(comment.id)}
-                    >
-                      <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                    </button>
-                  )}
+          comments.map((comment) => {
+            const displayName = resolveDisplayName(comment);
+            const initials = getInitials(displayName);
+            return (
+              <div key={comment.id} className="flex gap-2 group">
+                <Avatar className="h-7 w-7 shrink-0">
+                  <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xs font-medium text-foreground">{displayName}</span>
+                    <span className="text-[10px] text-muted-foreground">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
+                    {isAdmin && (
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => deleteMutation.mutate(comment.id)}
+                      >
+                        <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm text-foreground break-words">{comment.content}</p>
                 </div>
-                <p className="text-sm text-foreground break-words">{comment.content}</p>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useKinescopePlayer } from "@/hooks/useKinescopePlayer";
-import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle } from "lucide-react";
+import { Loader2, Lock, CalendarClock, AlertTriangle, Video, MonitorX, TimerOff, MessageCircle, HelpCircle, ShieldX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
@@ -12,8 +12,17 @@ import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 
+interface ResolvedSource {
+  resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
+  resolved_embed_url: string | null;
+  resolved_play_url: string | null;
+  provider_source_status: string | null;
+  source_reason: string | null;
+  last_synced_at: string | null;
+}
+
 interface LiveResolveResult {
-  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "error";
+  status: "ok" | "not_found" | "unpublished" | "auth_required" | "access_denied" | "invite_required" | "session_missing" | "source_unavailable" | "removed_from_room" | "error";
   title?: string;
   description?: string;
   kinescope_video_id?: string;
@@ -27,9 +36,10 @@ interface LiveResolveResult {
   platform_status?: string;
   kinescope_live_event_id?: string;
   event_id?: string;
+  resolved_source?: ResolvedSource;
 }
 
-type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
+type PageState = "loading" | "not_found" | "unpublished" | "access_denied" | "invite_required" | "source_unavailable" | "removed_from_room" | "scheduled" | "live" | "ended_no_replay" | "session_revoked" | "session_expired" | "error";
 
 const HEARTBEAT_INTERVAL_MS = 45_000;
 
@@ -130,6 +140,9 @@ export default function LiveEvent() {
           case "source_unavailable":
             setState("source_unavailable");
             break;
+          case "removed_from_room":
+            setState("removed_from_room");
+            break;
           case "ok":
             if (json.event_status === "scheduled" || json.platform_status === "scheduled") {
               setState("scheduled");
@@ -229,6 +242,21 @@ export default function LiveEvent() {
     );
   }
 
+  if (state === "removed_from_room") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
+        <ShieldX className="h-16 w-16 text-destructive" />
+        <h1 className="text-2xl font-bold text-foreground">Доступ к комнате закрыт</h1>
+        {data?.title && (
+          <h2 className="text-lg text-muted-foreground">{data.title}</h2>
+        )}
+        <p className="text-muted-foreground text-center max-w-md">
+          Вы были удалены из комнаты этого эфира модератором. Если вы считаете это ошибкой, обратитесь в поддержку.
+        </p>
+      </div>
+    );
+  }
+
   if (state === "access_denied") {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-4 px-4">
@@ -317,6 +345,7 @@ export default function LiveEvent() {
   const eventId = data?.event_id;
   const isReplay = data?.platform_status === "replay_available" || 
     (data?.event_status === "ended" && data?.replay_enabled);
+  const resolvedSource = data?.resolved_source;
 
   return (
     <div className="min-h-screen bg-background">
@@ -339,10 +368,19 @@ export default function LiveEvent() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Player */}
+          {/* Player — uses resolved_source from server */}
           <div className="lg:col-span-2">
-            {data?.kinescope_video_id && (
-              <KinescopePlayerWrapper videoId={data.kinescope_video_id} />
+            {resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
+              <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
+            ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
+              <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
+            ) : (
+              <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+                <div className="text-center p-4">
+                  <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
+                </div>
+              </div>
             )}
           </div>
 
@@ -377,6 +415,7 @@ export default function LiveEvent() {
   );
 }
 
+/** Player for recorded/replay videos via Kinescope SDK */
 function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
   const containerId = "live-player-container";
 
@@ -388,6 +427,20 @@ function KinescopePlayerWrapper({ videoId }: { videoId: string }) {
   return (
     <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
       <div id={containerId} className="w-full h-full" />
+    </div>
+  );
+}
+
+/** Player for live stream embed via iframe */
+function LiveEmbedPlayer({ embedUrl }: { embedUrl: string }) {
+  return (
+    <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+      <iframe
+        src={embedUrl}
+        className="w-full h-full border-0"
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+        allowFullScreen
+      />
     </div>
   );
 }
