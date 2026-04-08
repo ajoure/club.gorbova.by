@@ -115,6 +115,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ContactInstallments } from "@/components/installments/ContactInstallments";
 import { toast } from "sonner";
 import { DealDetailSheet } from "./DealDetailSheet";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { RefundDialog } from "./RefundDialog";
 import { AccessHistorySheet } from "./AccessHistorySheet";
 import { EditContactDialog } from "./EditContactDialog";

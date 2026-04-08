@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";

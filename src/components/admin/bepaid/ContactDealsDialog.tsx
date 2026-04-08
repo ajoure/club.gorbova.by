@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
 import { DealDetailSheet } from "@/components/admin/DealDetailSheet";
+import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   draft: { label: "Черновик", color: "bg-muted text-muted-foreground", icon: Clock },
