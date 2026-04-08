@@ -858,33 +858,46 @@ export function RetroApplyPanel({ productId, rules, tariffs }: RetroApplyPanelPr
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                       <div className="text-center">
-                        <div className="text-lg font-bold text-green-700">{result!.executed!.created}</div>
+                        <div className="text-lg font-bold text-green-700">{result!.executed!.created || 0}</div>
                         <div className="text-green-600">Создано</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold text-amber-700">{result!.executed!.updated}</div>
-                        <div className="text-amber-600">Обновлено</div>
+                        <div className="text-lg font-bold text-emerald-700">{result!.executed!.reactivated || 0}</div>
+                        <div className="text-emerald-600">Реактивировано</div>
                       </div>
                       <div className="text-center">
-                        <div className="text-lg font-bold text-muted-foreground">
-                          {(result!.executed!.skipped_idempotent || 0) + (result!.executed!.skipped_error || 0)}
-                        </div>
-                        <div className="text-muted-foreground">Пропущено</div>
+                        <div className="text-lg font-bold text-amber-700">{result!.executed!.updated || 0}</div>
+                        <div className="text-amber-600">Обновлено</div>
                       </div>
                       <div className="text-center">
                         <div className="text-lg font-bold text-muted-foreground/50">{result!.executed!.not_selected || 0}</div>
                         <div className="text-muted-foreground/50">Не входило в запуск</div>
                       </div>
                     </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs mt-1">
+                      <div className="text-center">
+                        <div className="text-sm font-semibold text-muted-foreground">{result!.executed!.skipped_idempotent || 0}</div>
+                        <div className="text-muted-foreground text-[10px]">Пропущено (идемпотентно)</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-sm font-semibold text-orange-600">{result!.executed!.skipped_conflict || 0}</div>
+                        <div className="text-orange-500 text-[10px]">Не применено по статусу</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-sm font-semibold text-red-600">{result!.executed!.skipped_error || 0}</div>
+                        <div className="text-red-500 text-[10px]">Ошибки</div>
+                      </div>
+                    </div>
                     <p className="text-[10px] text-muted-foreground">
                       Запущено к обработке: {result!.executed!.targeted || 0}.
-                      Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.updated || 0)}.
+                      Фактически изменено: {(result!.executed!.created || 0) + (result!.executed!.reactivated || 0) + (result!.executed!.updated || 0)}.
+                      {(result!.executed!.reactivated || 0) > 0 && ` Реактивировано expired → active: ${result!.executed!.reactivated}.`}
+                      {(result!.executed!.reactivation_candidates_found || 0) > 0 && ` Найдено expired записей: ${result!.executed!.reactivation_candidates_found}.`}
                       {(result!.executed!.skipped_idempotent || 0) > 0 && ` Уже существовало: ${result!.executed!.skipped_idempotent}.`}
-                      {(result!.executed!.skipped_error || 0) > 0 && ` Ошибок: ${result!.executed!.skipped_error}.`}
                     </p>
                     {result!.executed!.errors && result!.executed!.errors.length > 0 && (
                       <div className="text-[10px] text-red-600 mt-1">
-                        {result!.executed!.errors.map((e, i) => (
+                        {result!.executed!.errors.map((e: any, i: number) => (
                           <p key={i}>❌ {e.action_id}: {e.error}</p>
                         ))}
                       </div>
