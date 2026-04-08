@@ -129,3 +129,28 @@ export function useTariffDurations(productId?: string) {
     enabled: !!productId,
   });
 }
+
+// === App Sections (for section_access rules) ===
+export interface SectionOption {
+  id: string;
+  code: string;
+  label: string;
+  route: string;
+  is_public: boolean;
+  is_active: boolean;
+}
+
+export function useAvailableSections() {
+  return useQuery({
+    queryKey: ["access-rule-sections"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("app_sections")
+        .select("id, code, label, route, is_public, is_active")
+        .eq("is_active", true)
+        .order("sort_order");
+      if (error) throw error;
+      return (data || []) as SectionOption[];
+    },
+  });
+}
