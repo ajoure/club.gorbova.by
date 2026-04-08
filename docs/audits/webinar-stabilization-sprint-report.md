@@ -150,30 +150,55 @@ active: true
 
 > **Примечание**: pg_cron job #42 (`live-event-notifications-cron`) **не найден** в active jobs — подтверждает деактивацию после инцидента.
 
-### crm_activity_log
-На момент аудита `crm_activity_log` содержит 0 записей с `source_entity_type` из webinar-домена. Consumer pipeline функционален (domain_executions = success), но записи могли быть созданы с другими типами или consumer ещё не был вызван для текущих событий. Требуется runtime verification.
+### crm_activity_log — end-to-end pipeline подтверждён
+
+`crm_activity_log` содержит **3 записи** webinar-домена, созданные через полную цепочку:
+`domain_events` → `webinar-activity-consumer` → `domain_executions (status=success)` → `crm_activity_log`
+
+| idempotency_key | activity_type | source_entity_type | author_snapshot | text_snapshot | visibility_scope |
+|---|---|---|---|---|---|
+| `live_comment_created:1aabe0c9-40e9-4e52-bdd8-5d5132e809e4` | webinar_comment | live_comment_created | Сергей Федорчук | 1234555 | public |
+| `live_comment_created:2e3d83e8-1223-4d30-ba74-20529727c888` | webinar_comment | live_comment_created | Ирина Гаринова | Привет | public |
+| `live_question_created:ac1ab18c-7c84-4cf4-9a34-692f99c2aa16` | webinar_question | live_question_created | Ирина Гаринова | Вопрсо 1 | public |
+
+Пример строки:
+```json
+{
+  "idempotency_key": "live_comment_created:1aabe0c9-40e9-4e52-bdd8-5d5132e809e4",
+  "activity_type": "webinar_comment",
+  "source_entity_type": "live_comment_created",
+  "source_entity_id": "1aabe0c9-40e9-4e52-bdd8-5d5132e809e4",
+  "author_snapshot": "Сергей Федорчук",
+  "text_snapshot": "1234555",
+  "visibility_scope": "public",
+  "created_at": "2026-04-08T20:11:29.365137+00"
+}
+```
+
+**Идемпотентность подтверждена**: повторный запуск consumer обработал 0 новых записей (все 3 уже существовали по idempotency_key), дублей не создано.
 
 ---
 
 ## 6. Итоговый статус
 
-### ✅ Функционально закрыто
+### ✅ Подтверждено SQL/consumer proof
 - Video resolver + source rendering
 - Snapshot автора (trigger + repair)
 - Replies (таблица + UI + RLS + domain events)
 - Moderation (таблица + RPC + overlay в 3 точках + UI)
 - Scenario (RPC + UI)
-- CRM sync (triggers + consumer + cron)
+- CRM sync end-to-end: triggers → domain_events → consumer → domain_executions → crm_activity_log (3 записи, идемпотентность подтверждена)
 - Room blocks (таблица + editor + rendering)
 - INSERT policies hardening
 
-### ⏳ Требует runtime proof
+### ⏳ Подтверждено кодом, ожидает runtime UI/live proof
 - Реальный live stream с `kinescope_live_event_id` для проверки iframe
 - Full room experience: видео + комментарии + вопросы + replies + moderation + blocks
-- CRM activity_log population на реальном потоке событий
+- UI-проверка private/public reply visibility
+- UI-проверка модерации: remove → deny access → restore → regain access
 
-### Не затрагивалось стабилизацией
-- `live-event-notifications-cron` — guardrails и kill-switch без изменений
+### 🔲 Не входит в текущий scope / deferred
+- `live-event-notifications-cron` (job #42) — деактивирован, guardrails и kill-switch без изменений
 - Incident guardrails / kill-switch (`live_notification_config`)
 - `recorded_webinar` и replay flow
 - `broadcast_templates`
@@ -184,6 +209,6 @@ active: true
 ## 7. Рекомендации
 
 1. Провести runtime proof на реальном live stream (Шаги 1–9 из testing guide)
-2. Убедиться в CRM pipeline end-to-end: комментарий → domain_event → execution → crm_activity_log
-3. Проверить негативные сценарии модерации (удаление → блокировка → восстановление)
+2. Проверить негативные сценарии модерации (удаление → блокировка → восстановление → повторный доступ)
+3. Проверить видимость private/public reply в UI комнаты
 4. После успешного runtime proof — зафиксировать статус «sprint closed»
