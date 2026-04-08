@@ -13,12 +13,19 @@
  *   changed_since      — all active rules updated after this date
  *
  * Categories per user×rule:
- *   missing_access        — no entitlement, will create
- *   aligned_update_needed — entitlement exists but expires_at misaligned
- *   conflict_existing     — entitlement exists, different rule, skip
- *   already_satisfied     — entitlement correct, skip
- *   condition_not_met     — prior_purchase condition failed, skip
- *   no_source_window      — align_with_source but no subscription found, conflict
+ *   missing_access          — no entitlement, will create
+ *   aligned_update_needed   — entitlement exists but expires_at misaligned (safe extend or missing)
+ *   reducible_by_rule       — entitlement exists, planned < current, safe canonical source
+ *   requires_manual_review  — ambiguous, admin must decide
+ *   conflict_existing       — real conflict, never auto-executed
+ *   already_satisfied       — entitlement correct, skip
+ *   condition_not_met       — prior_purchase condition failed, skip
+ *   no_source_window        — align_with_source but no subscription found, conflict
+ *
+ * Execute modes (via apply_categories / selected_action_ids / allow_reduce_access):
+ *   safe_only     — missing_access + aligned_update_needed
+ *   with_reduce   — + reducible_by_rule (requires allow_reduce_access=true)
+ *   selected      — only selected_action_ids (allow_reduce_access implied)
  */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -34,10 +41,15 @@ interface RetroApplyRequest {
   source_tariff_id?: string;
   changed_since?: string;
   recalculate_existing?: boolean;
-  force_execute?: boolean;
+  force_execute?: boolean; // legacy compat, treated as apply all safe categories
+  // New execute controls
+  allow_reduce_access?: boolean;
+  selected_action_ids?: string[];
+  apply_categories?: string[];
 }
 
 interface UserAction {
+  action_id: string; // stable: ${user_id}:${target_product_id}:${rule_id}:${category}
   user_id: string;
   profile_id: string | null;
   email: string;
@@ -47,7 +59,7 @@ interface UserAction {
   rule_target_label: string | null;
   rule_source_product_name: string | null;
   rule_source_tariff_name: string | null;
-  rule_duration_mode: string; // "from_source" | "fixed_days"
+  rule_duration_mode: string;
   rule_duration_days: number | null;
   target_product_id: string;
   target_product_code: string;
@@ -66,7 +78,10 @@ Deno.serve(async (req) => {
 
   try {
     const body: RetroApplyRequest = await req.json();
-    const { mode, rule_ids, source_product_id, source_tariff_id, changed_since, recalculate_existing } = body;
+    const {
+      mode, rule_ids, source_product_id, source_tariff_id, changed_since,
+      recalculate_existing, allow_reduce_access, selected_action_ids, apply_categories,
+    } = body;
 
     if (!mode || !["preview", "execute"].includes(mode)) {
       return jsonResp({ error: "mode must be 'preview' or 'execute'" }, 400);
@@ -119,6 +134,8 @@ Deno.serve(async (req) => {
       total: allActions.length,
       missing_access: allActions.filter(a => a.category === "missing_access").length,
       aligned_update_needed: allActions.filter(a => a.category === "aligned_update_needed").length,
+      reducible_by_rule: allActions.filter(a => a.category === "reducible_by_rule").length,
+      requires_manual_review: allActions.filter(a => a.category === "requires_manual_review").length,
       conflict_existing: allActions.filter(a => a.category === "conflict_existing").length,
       already_satisfied: allActions.filter(a => a.category === "already_satisfied").length,
       condition_not_met: allActions.filter(a => a.category === "condition_not_met").length,
@@ -126,32 +143,45 @@ Deno.serve(async (req) => {
     };
 
     // 4. STOP-guards for execute mode
+    // conflict_existing and no_source_window block standard execute (not force/selected)
     if (mode === "execute") {
-      const stopReasons: string[] = [];
-      if (summary.missing_access > 200) {
-        stopReasons.push(`too_many_missing:${summary.missing_access}`);
-      }
-      if (summary.conflict_existing > 0) {
-        stopReasons.push(`conflicts_detected:${summary.conflict_existing}`);
-      }
-      if (summary.no_source_window > 0) {
-        stopReasons.push(`no_source_window:${summary.no_source_window}`);
-      }
-      if (stopReasons.length > 0 && !body.force_execute) {
-        return jsonResp({
-          error: "stop_guard_triggered",
-          stop_reasons: stopReasons,
-          summary,
-          mode: "blocked",
-          actions: allActions,
-        }, 400);
+      const hasSelection = (selected_action_ids && selected_action_ids.length > 0);
+      const hasCategories = (apply_categories && apply_categories.length > 0);
+      const isTargetedExecute = hasSelection || hasCategories || body.force_execute;
+
+      if (!isTargetedExecute) {
+        const stopReasons: string[] = [];
+        if (summary.missing_access > 200) {
+          stopReasons.push(`too_many_missing:${summary.missing_access}`);
+        }
+        if (summary.conflict_existing > 0) {
+          stopReasons.push(`conflicts_detected:${summary.conflict_existing}`);
+        }
+        if (summary.no_source_window > 0) {
+          stopReasons.push(`no_source_window:${summary.no_source_window}`);
+        }
+        if (stopReasons.length > 0) {
+          return jsonResp({
+            error: "stop_guard_triggered",
+            stop_reasons: stopReasons,
+            summary,
+            mode: "blocked",
+            actions: allActions,
+          }, 400);
+        }
       }
     }
 
     // 5. Execute if requested
     let executed = { created: 0, updated: 0, skipped: 0 };
     if (mode === "execute") {
-      executed = await executeActions(supabase, allActions, rules);
+      executed = await executeActions(supabase, allActions, rules, {
+        recalculateExisting: !!recalculate_existing,
+        allowReduceAccess: !!allow_reduce_access,
+        selectedActionIds: selected_action_ids || [],
+        applyCategories: apply_categories || [],
+        forceExecute: !!body.force_execute,
+      });
     }
 
     return jsonResp({
@@ -299,6 +329,7 @@ async function processRule(
   ): UserAction => {
     const profile = profileMap.get(userId);
     return {
+      action_id: `${userId}:${targetProdId}:${rule.id}:${category}`,
       user_id: userId,
       profile_id: profile?.id || null,
       email: profile?.email || "",
@@ -323,7 +354,7 @@ async function processRule(
 
   if (rule.grant_target_type === "product_access") {
     for (const targetProdId of targetProductIds) {
-      // Fetch ALL active entitlements per user for this target (not just first)
+      // Fetch ALL active entitlements per user for this target
       const existingListMap = new Map<string, any[]>();
       for (let i = 0; i < userIds.length; i += 50) {
         const batch = userIds.slice(i, i + 50);
@@ -396,10 +427,9 @@ async function processRule(
           const metaBatchId = entMeta.batch_id || "";
           const metaRetro = entMeta.retroapply || entMeta.retroapply_updated;
           const metaSourceType = (entMeta.source_type || "").toLowerCase();
-          // Safe sources: created by retroapply, fulfillment batch, or known batch process
           const isSourceSafe = !!metaRetro || metaBatchId.startsWith("BACKFILL") || metaBatchId.startsWith("RETROAPPLY")
             || metaSourceType === "fulfillment" || metaSourceType === "retroapply" || metaSourceType === "batch"
-            || (entMeta.source_rule_id && !metaSourceType); // has rule_id linkage = came from automated process
+            || (entMeta.source_rule_id && !metaSourceType);
 
           // Check meta.source_rule_id lineage
           const entSourceRuleId = entMeta.source_rule_id || null;
@@ -417,9 +447,10 @@ async function processRule(
             continue;
           }
 
-          // Would reduce access = real conflict
+          // Would reduce access — NOT a blocking conflict if source is canonical
+          // Instead: reducible_by_rule (admin can choose to apply)
           if (currentEnd && plannedEnd < currentEnd) {
-            actions.push(makeAction(userId, targetProdId, "conflict_existing", plannedExpiry, ent.expires_at, sub, "conflict_would_reduce_access"));
+            actions.push(makeAction(userId, targetProdId, "reducible_by_rule", plannedExpiry, ent.expires_at, sub, "reducible_by_canonical_rule"));
             continue;
           }
 
@@ -511,10 +542,27 @@ async function checkRetroCondition(
 
 // ═══════ EXECUTE ACTIONS ═══════
 
+// Non-executable categories — NEVER updated even if selected
+const NEVER_EXECUTE_CATEGORIES = new Set([
+  "conflict_existing",
+  "no_source_window",
+  "already_satisfied",
+  "condition_not_met",
+]);
+
+interface ExecuteOptions {
+  recalculateExisting: boolean;
+  allowReduceAccess: boolean;
+  selectedActionIds: string[];
+  applyCategories: string[];
+  forceExecute: boolean;
+}
+
 async function executeActions(
   supabase: any,
   actions: UserAction[],
   rules: any[],
+  opts: ExecuteOptions,
 ): Promise<{ created: number; updated: number; skipped: number }> {
   let created = 0;
   let updated = 0;
@@ -525,11 +573,62 @@ async function executeActions(
   const ruleMap = new Map<string, any>();
   rules.forEach(r => ruleMap.set(r.id, r));
 
-  for (const action of actions) {
-    if (action.category === "missing_access") {
-      const rule = ruleMap.get(action.rule_id);
-      const sourceWindowRule = rule?.duration_days ? "rule_duration" : "align_with_source";
+  const selectedSet = new Set(opts.selectedActionIds);
+  const hasSelection = selectedSet.size > 0;
+  const categorySet = new Set(opts.applyCategories);
+  const hasCategories = categorySet.size > 0;
 
+  // Legacy force_execute: treat as safe categories
+  if (opts.forceExecute && !hasSelection && !hasCategories) {
+    categorySet.add("missing_access");
+    categorySet.add("aligned_update_needed");
+  }
+
+  function shouldExecute(action: UserAction): boolean {
+    // Never execute blocking categories
+    if (NEVER_EXECUTE_CATEGORIES.has(action.category)) return false;
+
+    // requires_manual_review: only via explicit selection, never via apply_categories
+    if (action.category === "requires_manual_review") {
+      return hasSelection && selectedSet.has(action.action_id);
+    }
+
+    // reducible_by_rule: requires allow_reduce_access + (selected OR in apply_categories)
+    if (action.category === "reducible_by_rule") {
+      if (!opts.allowReduceAccess) return false;
+      if (hasSelection && selectedSet.has(action.action_id)) return true;
+      if (hasCategories && categorySet.has("reducible_by_rule")) return true;
+      return false;
+    }
+
+    // aligned_update_needed: skip if recalculate disabled
+    if (action.category === "aligned_update_needed") {
+      const skipReason = action.skip_reason || "";
+      if (skipReason === "safe_recalculate_available_but_disabled") return false;
+      // If targeted execute, check membership
+      if (hasSelection) return selectedSet.has(action.action_id);
+      if (hasCategories) return categorySet.has("aligned_update_needed");
+      return true; // default execute
+    }
+
+    // missing_access
+    if (action.category === "missing_access") {
+      if (hasSelection) return selectedSet.has(action.action_id);
+      if (hasCategories) return categorySet.has("missing_access");
+      return true; // default execute
+    }
+
+    return false;
+  }
+
+  for (const action of actions) {
+    if (!shouldExecute(action)) {
+      skipped++;
+      continue;
+    }
+
+    if (action.category === "missing_access") {
+      // Idempotent guard: check if entitlement appeared between preview and execute
       const { data: existing } = await supabase
         .from("entitlements")
         .select("id")
@@ -543,6 +642,9 @@ async function executeActions(
         skipped++;
         continue;
       }
+
+      const rule = ruleMap.get(action.rule_id);
+      const sourceWindowRule = rule?.duration_days ? "rule_duration" : "align_with_source";
 
       const { data: prod } = await supabase
         .from("products_v2")
@@ -574,14 +676,8 @@ async function executeActions(
       } else {
         created++;
       }
-    } else if (action.category === "aligned_update_needed") {
-      // Only update if recalculate_existing is enabled; otherwise skip
-      const skipReason = action.skip_reason || "";
-      if (skipReason === "safe_recalculate_available_but_disabled") {
-        skipped++;
-        continue;
-      }
-
+    } else if (action.category === "aligned_update_needed" || action.category === "reducible_by_rule") {
+      // Update existing entitlement
       const { data: ent } = await supabase
         .from("entitlements")
         .select("id")
@@ -630,6 +726,12 @@ async function executeActions(
       updated,
       skipped,
       total_actions: actions.length,
+      execute_options: {
+        recalculate_existing: opts.recalculateExisting,
+        allow_reduce_access: opts.allowReduceAccess,
+        selected_count: opts.selectedActionIds.length,
+        apply_categories: opts.applyCategories,
+      },
     },
   });
 
