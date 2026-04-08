@@ -82,3 +82,4 @@ gorbova-ai-chat
 split-multi-module-orders
 live-event-notifications-cron
 rules-retroapply
+webinar-activity-consumer
