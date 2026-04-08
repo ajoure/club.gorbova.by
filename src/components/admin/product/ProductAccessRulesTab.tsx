@@ -11,7 +11,7 @@ import {
 } from "@/hooks/useAccessRules";
 import {
   useAvailableClubs, useAvailableProducts, useAvailableEntitlements,
-  useTariffDurations, getClubAccessLabel,
+  useTariffDurations, getClubAccessLabel, useAvailableSections,
 } from "@/hooks/useAccessRuleSelectors";
 import { useTrainingContentTree, type TreeModule, type TreeLesson } from "@/hooks/useTrainingContentRules";
 import { useQuery } from "@tanstack/react-query";
