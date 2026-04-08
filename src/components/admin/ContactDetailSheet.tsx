@@ -1945,7 +1945,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   <TooltipContent>Переход доступен только для bePaid</TooltipContent>
                                 </Tooltip>
                               )}
-                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <div className="flex items-center gap-1.5 mt-1 whitespace-nowrap">
                                 <Badge 
                                   variant={isActive ? 'default' : 'secondary'}
                                   className={isActive ? 'bg-blue-600' : ''}
@@ -1956,44 +1956,46 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   {providerLabel}
                                 </Badge>
                                 {(() => {
-                                  const { count, isExact } = getSubscriptionChargeCount(sub);
-                                  if (count === null) return null;
+                                  const chargeCount = getSubscriptionChargeCount(sub);
+                                  if (chargeCount === null) return null;
                                   return (
-                                    <span
-                                      className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1.5 rounded-full text-[10px] font-medium bg-muted/60 border border-border/40 text-muted-foreground shadow-sm"
-                                      title={`${isExact ? 'Точное' : 'Расчётное'} кол-во списаний: ${count}`}
-                                    >
-                                      {count}
-                                      <span className="ml-0.5 text-[8px] opacity-70">спис.</span>
-                                    </span>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className="inline-flex items-center justify-center min-w-[20px] h-[20px] rounded-full text-[10px] font-semibold bg-amber-100/70 border border-amber-200/50 text-amber-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] cursor-default"
+                                        >
+                                          {chargeCount}
+                                        </button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="top">Количество успешных списаний по подписке</TooltipContent>
+                                    </Tooltip>
                                   );
                                 })()}
-                                {sub.card_last4 && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
-                                  </span>
-                                )}
                               </div>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Создана: {formatPaymentTimeIANA(sub.created_at, 'Europe/Warsaw')}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                Последнее списание: {sub.last_charge_at ? formatPaymentTimeIANA(sub.last_charge_at, 'Europe/Warsaw') : '—'}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {nextCharge 
-                                  ? `Следующее списание: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
-                                  : 'Следующее списание: —'
-                                }
-                              </p>
-                              {accessEnd && (
-                                <p className="text-xs text-muted-foreground">
-                                  Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}
-                                  {accessEndSource === 'provider' && (
-                                    <Badge variant="outline" className="ml-1 text-[9px]">provider</Badge>
-                                  )}
+                              {sub.card_last4 && (
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {sub.card_brand?.toUpperCase()} •••• {sub.card_last4}
                                 </p>
                               )}
+                              <div className="space-y-0.5 mt-1 text-xs text-muted-foreground leading-tight">
+                                <p>Создана: {formatPaymentTimeIANA(sub.created_at, 'Europe/Warsaw')}</p>
+                                <p>Последнее списание: {sub.last_charge_at ? formatPaymentTimeIANA(sub.last_charge_at, 'Europe/Warsaw') : '—'}</p>
+                                <p>
+                                  {nextCharge 
+                                    ? `Следующее списание: ${formatPaymentTimeIANA(nextCharge, 'Europe/Warsaw')}${amountStr ? ` — ${amountStr}` : ''}`
+                                    : 'Следующее списание: —'
+                                  }
+                                </p>
+                                {accessEnd && (
+                                  <p>
+                                    Доступ до: {formatPaymentTimeIANA(accessEnd, 'Europe/Warsaw')}
+                                    {accessEndSource === 'provider' && (
+                                      <Badge variant="outline" className="ml-1 text-[9px]">provider</Badge>
+                                    )}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                             <div className="flex gap-1 items-center">
                               {/* PATCH 7: Sync button */}
