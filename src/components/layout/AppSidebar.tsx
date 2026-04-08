@@ -95,6 +95,7 @@ const legacyMenuItems: MainMenuItem[] = [{
 }];
 
 const leaderToolsItems = [{
+  key: "eisenhower",
   title: "Матрица продуктивности",
   url: "/tools/eisenhower",
   icon: LayoutGrid
