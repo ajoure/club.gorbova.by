@@ -122,7 +122,10 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [linkPaymentDialogOpen, setLinkPaymentDialogOpen] = useState(false);
   const [grantAccessDialogOpen, setGrantAccessDialogOpen] = useState(false);
-  
+
+  const dealArr = useMemo(() => deal ? [{ id: deal.id, purchase_snapshot: deal.purchase_snapshot }] : [], [deal]);
+  const { data: moduleMetaMap } = useModuleDisplayMeta(dealArr);
+
   // Check if current user is super_admin
   const { data: isSuperAdmin } = useQuery({
     queryKey: ['is-super-admin'],
