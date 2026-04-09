@@ -415,7 +415,7 @@ export default function AdminDeals() {
         const payerName = getLatestPayerName(deal);
         return profile?.full_name || payerName || deal.customer_email || "";
       case "product_name":
-        return (deal.products_v2 as any)?.name || "";
+        return getDealDisplayName({ productsV2: deal.products_v2 as any, purchaseSnapshot: deal.purchase_snapshot }) || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
       case "deal_date":
