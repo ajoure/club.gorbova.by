@@ -1,859 +1,243 @@
-# Да, согласен, с учетом правок:
+Да, согласен, с учетом правок:
 
 &nbsp;
 
-&nbsp;
-
-# **План: исправление отображения модульных сделок по** 
-
-# **Демко Людмиле**
-
-#  **и унификация display-layer**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-## **Важное уточнение по кейсам**
-
-&nbsp;
-
-&nbsp;
-
-Не путать клиентов:
-
-&nbsp;
-
-- **Демко Людмила** — это один конкретный клиент, по которому уже подтверждены:
+1. В dry-run добавь **обязательную проверку блока completed/finished** для Демко Людмилы.
+  На скрине видно Показать завершённые (3), значит сначала нужно доказать не только “нет в active”, но и:
   &nbsp;
-  - модуль **Розничная торговля**
-  - модуль **Производство**
+  - запись ушла в completed,
+  - запись отсутствует совсем,
+  - запись есть в raw data, но режется predicate’ом.
   &nbsp;
-- **Зимко** — это **другой** клиент и отдельный кейс, его в этот план не смешивать.
-- В этом плане основной proof-case №1 — **Демко Людмила**.
-- Proof-case №2 можно оставить отдельным клиентом позже, но **не называть его Демко / Земко** и не смешивать данные.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Проблема**
-
-&nbsp;
-
-&nbsp;
-
-Для исторических сделок типа module_only_standalone система до сих пор показывает:
-
-&nbsp;
-
-- название **родительского курса** вместо названия купленного модуля;
-- PRD **родительского продукта** вместо PRD самого модуля;
-- в ряде мест display зависит от legacy snapshot/parent FK, а не от фактического UUID модуля.
-
-&nbsp;
-
-&nbsp;
-
-Из-за этого по **Демко Людмиле** модульные сделки отображаются некорректно, хотя доступы на модули уже выданы правильно.
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Подтвержденный scope этого плана**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Клиент:** 
-
-### **Демко Людмила**
-
-&nbsp;
-
-&nbsp;
-
-Нужно доказуемо привести в порядок:
-
-&nbsp;
-
-1. сделки по **Розничной торговле**;
-2. сделки по **Производству**;
-3. отображение этих сделок во всех user-facing местах;
-4. корректный PRD именно модулей;
-5. отсутствие показа PRD родительского курса там, где куплен модуль.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Корневая причина**
-
-&nbsp;
-
-&nbsp;
-
-У исторических module_only_standalone сделок:
-
-&nbsp;
-
-- orders_v2.product_id часто указывает на **родительский курс**;
-- фактический купленный модуль лежит в:
+2. В backend-proof по родительскому курсу проверь **обе сущности отдельно**:
   &nbsp;
-  - purchase_snapshot.module_list_mapped
+  - subscriptions_v2 по родительскому product_id
+  - entitlements по родительскому product_id
+    И для каждой явно вывести verdict:
+  - проходит active-predicate,
+  - проходит completed-predicate,
+  - режется productsWithRules,
+  - отсутствует.
   &nbsp;
-- display-name часто берётся:
+3. В PATCH B зафиксируй жёстко:
+  **если root cause = productsWithRules / отсутствует active rule для parent product, сначала исправляется SoT/config или read-model, а не делается маскирующий UI-патч.**
+  Нельзя просто “показать курс”, если predicate считает его нелегальным.
+4. В execute-ветке добавь **строгое разделение**:
   &nbsp;
-  - либо из purchase_snapshot.display_purchase_name,
-  - либо из FK на родителя,
-  - но не из реального продукта-модуля по UUID.
+  - missing_access / expired_access → только canonical access path
+  - active_but_hidden_by_ui
+  - active_but_filtered_by_productsWithRules
+  - present_in_completed_only
+    Это должен быть явный финальный verdict перед любыми изменениями.
+  &nbsp;
+5. Для canonical repair укажи, **какой именно путь считается каноническим** для родительского курса:
+  &nbsp;
+  - grant-access-for-order
+  - или rules-retroapply
+    Нужен один выбранный write-path, без расплывчатого “rule engine / canonical repair path”.
+  &nbsp;
+6. Добавь в DoD отдельный proof:
+  &nbsp;
+  - у Демко Людмилы родительский курс виден **именно в active**, а не в completed,
+  - после фикса Показать завершённые (3) не содержит этот курс как скрытый ложный completed-case.
+  &nbsp;
+7. Пункт про src/components/user/UserSubscriptions.tsx перенеси в **follow-up / parity proof**, а не в основной scope текущего патча, если пока не доказано расхождение.
+  Сейчас основная задача — закрыть кейс Демко Людмилы в admin-proof, не раздувая scope.
+8. В DoD добавь **SQL-proof block по parent-course access**:
+  &nbsp;
+  - product_id родителя
+  - тип записи: subscription / entitlement
+  - status
+  - expires_at
+  - source_rule_id
+  - source_type
+  - included_in_active_list = true
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
----
+В остальном план стал нормальным: он уже не уходит в display-layer и правильно отделяет факт доступа от рендера.
 
 &nbsp;
 
-&nbsp;
-
-## **Целевое правило display-layer**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Для single-module сделки:**
-
-&nbsp;
-
-&nbsp;
-
-Если:
-
-&nbsp;
-
-- historical_purchase_type = module_only_standalone
-- module_list_mapped.length === 1
-- UUID валиден
-- продукт найден в products_v2
-
-&nbsp;
-
-&nbsp;
-
-то отображать нужно:
-
-&nbsp;
-
-- **display name** = products_[v2.name](http://v2.name) модуля
-- **public id** = products_v2.public_id модуля
-- **resolved module product id** = UUID модуля из module_list_mapped
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Для multi-module сделки:**
-
-&nbsp;
-
-&nbsp;
-
-Если:
-
-&nbsp;
-
-- module_list_mapped.length > 1
-
-&nbsp;
-
-&nbsp;
-
-то:
-
-&nbsp;
-
-- не выбирать “первый модуль”;
-- не показывать ложный PRD родителя;
-- использовать:
-  &nbsp;
-  - snapshot name как fallback,
-  - либо маркер несколько модулей,
-  - либо manual review.
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Жесткое правило по идентификаторам**
-
-&nbsp;
-
-&nbsp;
-
-Новая логика должна работать только так:
-
-&nbsp;
-
-- **runtime-логика** → только через product_id
-- **UI-идентификатор** → через public_id
-- **человекочитаемое имя** → через products_[v2.name](http://v2.name)
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Запрещено**
-
-&nbsp;
-
-&nbsp;
-
-- строить новую логику на cb20, ЦБ 2.0, cb_module_*, slug, буквенных кодах;
-- использовать product_code как основу display/runtime;
-- использовать родительский PRD, если реально куплен модуль.
-
-&nbsp;
-
-&nbsp;
-
-product_code и legacy-коды остаются только как legacy read-only reference, не как SoT.
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Решение**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 1 — единый helper для display meta**
-
-&nbsp;
-
-&nbsp;
-
-Создать единый resolver, а не размазывать логику по компонентам.
-
-&nbsp;
-
-&nbsp;
-
-### **Новый helper**
-
-&nbsp;
-
-&nbsp;
-
-Например:
-
-&nbsp;
-
-- buildDealDisplayMeta(...)
-  или
-- resolveModuleDealDisplayMeta(...)
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Он должен возвращать:**
-
-&nbsp;
-
-&nbsp;
-
-- resolvedDisplayName
-- resolvedPublicId
-- resolvedModuleProductId
-- resolutionType
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Возможные** 
-
-### **resolutionType**
-
-### **:**
-
-&nbsp;
-
-&nbsp;
-
-- direct_module
-- multi_module
-- snapshot_fallback
-- parent_fallback
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 2 — исправить приоритет display name**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Для** 
-
-### **module_only_standalone**
-
-###  **+ single-module:**
-
-&nbsp;
-
-&nbsp;
-
-Приоритет должен быть таким:
-
-&nbsp;
-
-1. [moduleProduct.name](http://moduleProduct.name)
-2. purchase_snapshot.display_purchase_name
-3. [productsV2.name](http://productsV2.name)
-4. fallback
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Почему именно так**
-
-&nbsp;
-
-&nbsp;
-
-- [moduleProduct.name](http://moduleProduct.name) — актуальное каноническое имя модуля;
-- snapshot — приемлемый fallback;
-- [productsV2.name](http://productsV2.name) у сделки часто имя родительского курса;
-- parent name нельзя ставить выше snapshot.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 3 — исправить** 
-
-## **public_id**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Для single-module:**
-
-&nbsp;
-
-&nbsp;
-
-Показывать:
-
-&nbsp;
-
-- moduleProduct.public_id
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Для multi-module:**
-
-&nbsp;
-
-&nbsp;
-
-Не показывать PRD родителя как будто это PRD модуля.
+План:
 
-&nbsp;
-
-Разрешённые варианты:
-
-&nbsp;
-
-- скрыть PRD;
-- показать несколько модулей;
-- отправить кейс в manual review.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 4 — batch-resolve модульных продуктов**
-
-&nbsp;
-
-&nbsp;
-
-Во всех user-facing местах нужен единый паттерн:
-
-&nbsp;
-
-1. собрать UUID модулей из module_list_mapped;
-2. сделать один batch-query в products_v2;
-3. собрать map;
-4. передать map в единый helper display/meta.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Не делать**
-
-&nbsp;
-
-&nbsp;
-
-- по одному локальному резолву в каждом файле своей логикой;
-- 5 разных реализаций одного и того же.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 5 — покрыть все user-facing потребители**
-
-&nbsp;
-
-&nbsp;
-
-Проверить и привести к единому helper все места, где показываются сделки.
-
-&nbsp;
-
-&nbsp;
-
-### **Обязательные файлы**
-
-&nbsp;
-
-&nbsp;
-
-- src/components/admin/ContactDetailSheet.tsx
-- src/pages/admin/AdminDeals.tsx
-- src/components/admin/DealDetailSheet.tsx
-- src/components/admin/ContactPaymentsTab.tsx
-- src/components/admin/bepaid/ContactDealsDialog.tsx
-
-&nbsp;
-
-&nbsp;
-
-При необходимости также:
-
-&nbsp;
-
-- src/components/admin/payments/LinkDealDialog.tsx
-- src/components/admin/payments/LinkSubscriptionDealDialog.tsx
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 6 — grep-proof по обходным display-путям**
-
-&nbsp;
-
-&nbsp;
-
-Нужно проверить и устранить user-facing места, где модульные сделки показываются напрямую через:
-
-&nbsp;
-
-- deal.products_[v2.name](http://v2.name)
-- deal.product_name
-- deal.products_v2.public_id
-
-&nbsp;
-
-&nbsp;
-
-Если это user-facing display для сделок — должно идти только через unified helper.
-
-&nbsp;
-
-&nbsp;
-
-### **Допустимые исключения**
-
-&nbsp;
-
-&nbsp;
-
-Только если это:
-
-&nbsp;
-
-- сортировка;
-- техническая диагностика;
-- внутренний не-user-facing текст.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **PATCH 7 — data cleanup по snapshot только как follow-up**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Не делать это основным фиксом**
-
-&nbsp;
-
-&nbsp;
-
-Массовое переписывание purchase_snapshot.display_purchase_name — не основной путь.
-
-&nbsp;
-
-&nbsp;
-
-### **Допускается только как отдельный follow-up cleanup:**
-
-&nbsp;
-
-&nbsp;
-
-- только для single-module сделок;
-- только если UUID валиден;
-- только если продукт найден в products_v2;
-- только после dry-run отчёта;
-- без влияния на runtime-логику.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Proof-case №1 —** 
-
-## **Демко Людмила**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Обязательно проверить:**
-
-&nbsp;
-
-&nbsp;
-
-1. сделка по **Розничной торговле** показывает имя модуля;
-2. сделки по **Производству** показывают имя модуля;
-3. везде показывается PRD модуля, а не PRD родителя;
-4. в “Доступах” одновременно видны:
-  &nbsp;
-  - курс,
-  - Розничная торговля,
-  - Производство;
-  &nbsp;
-5. суммы и даты остаются правильными;
-6. ничего не ломается в уже выданных доступах.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Proof-case №2**
-
-&nbsp;
-
-&nbsp;
-
-Второй клиент проверяется отдельно, но:
-
-&nbsp;
-
-- не называть его Демко;
-- не смешивать с Людмилой;
-- не подменять данные Людмилы его кейсом.
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Что не меняется**
-
-&nbsp;
-
-&nbsp;
-
-- доступы, уже корректно выданные по rule engine;
-- orders_v2.product_id у исторических сделок массово не переписывается;
-- логика rules / entitlements в этом плане не является основным объектом правки;
-- legacy product_code не используется для новой display-логики.
+1. Проблема
 
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **STOP-guards**
-
-&nbsp;
-
-&nbsp;
-
-1. Не путать **Демко Людмилу** с другими клиентами.
-2. Не показывать PRD родителя для single-module сделки.
-3. Не выбирать “первый модуль” для multi-module сделки.
-4. Не строить новую логику на cb20, ЦБ 2.0, product_code, slug.
-5. Не считать задачу закрытой, пока по **Демко Людмиле** не будет browser-proof.
+По скрину Демко Людмилы подтверждён дефект: во вкладке «Доступы» среди активных карточек отсутствует родительский курс «Ценный бухгалтер | 1 ступень 2.0», хотя одновременно видны BUSINESS, два модуля и «Деньги BY 1 тариф». Это уже не проблема display-layer сделок, а проблема факта доступа или его рендера.
 
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
+2. Диагностика
 
-## **DoD**
-
-&nbsp;
+Что уже подтверждено по коду:
 
-&nbsp;
+- Вкладка «Доступы» в `src/components/admin/ContactDetailSheet.tsx` строится из двух списков:
+  - `activeSubscriptions`
+  - `activeEntitlements`
+- И subscriptions, и entitlements проходят жёсткий фильтр через `productsWithRules` из `useActiveAccessRuleProducts()` (`src/hooks/useAccessValidation.ts`).
+- Активный entitlement скрывается, если:
+  - `status !== active`
+  - `expires_at < now()`
+  - продукт деактивирован
+  - для `product_id` нет активного `access_rule`
+- Активная subscription скрывается, если:
+  - статус не `active|trial`
+  - срок истёк
+  - для `product_id` нет активного `access_rule`
+- UI не содержит явной логики “схлопнуть курс, если есть модули”; значит более вероятны два корня:
+  1. entitlement/subscription на родительский курс реально не проходит predicate;
+  2. запись уходит в completed из-за `productsWithRules` / status / expires_at.
 
-1. По **Демко Людмиле**:
-  &nbsp;
-  - Розничная торговля отображается как модуль;
-  - Производство отображается как модуль.
-  &nbsp;
-2. Для этих сделок показывается public_id именно модуля.
-3. Ни один экран больше не показывает PRD родительского курса для single-module standalone сделки.
-4. Все user-facing display-path используют unified helper/meta-resolver.
-5. Multi-module сделки не показывают ложный PRD.
-6. Browser-proof по **Демко Людмиле** приложен.
-7. В новом патче нет новой логики на cb20 / legacy codes.
+Важно:
 
-&nbsp;
+- Сейчас план нельзя закрывать blind fix’ом.
+- Нужен backend-proof по родительскому `product_id` курса, а затем уже repair или UI-патч.
 
-&nbsp;
+3. Предлагаемое решение
 
-Если пришлёшь следующий план/отчёт подрядчика, я уже проверю его именно на предмет того, чтобы он снова не смешал Демко Людмилу с другими клиентами и не полез обратно в legacy-коды.
+PATCH A — backend-proof по родительскому курсу Демко Людмилы
 
-&nbsp;
+- Проверить в БД все записи по родительскому продукту курса `7101ed3c-7839-4a74-ad95-aa0660369b22`:
+  - `subscriptions_v2`
+  - `entitlements`
+  - связанные `access_rules`
+- Зафиксировать:
+  - есть ли active entitlement;
+  - есть ли active subscription;
+  - какой `expires_at`;
+  - `source_rule_id`, `source_type`, `business_subscription_id`;
+  - проходит ли запись текущий predicate UI.
 
-План: Исправление отображения модульных сделок + ответы на вопросы
+PATCH B — root cause по вкладке «Доступы»
+Если родительский доступ есть в БД, но не показывается:
 
-## Ответы на вопросы
+- чинить только read-path вкладки «Доступы»;
+- проверить, не режется ли курс из-за условия `productsWithRules.has(product_id)`;
+- проверить, не считается ли курс historical только потому, что для него нет активного product-level rule, хотя основание легально;
+- при необходимости вынести фильтрацию вкладки «Доступы» на единый effective-access/fact-view, а не на локальный predicate “только продукты с активным rule product_id”.
 
-### Откуда берутся названия "ЦБ 2.0: Производство"?
+Если родительского доступа нет или он expired:
 
-Это **закэшированные названия из `purchase_snapshot.display_purchase_name**` — поле в JSONB, записанное при импорте из GetCourse. На момент импорта модули назывались "ЦБ 2.0: Производство", "ЦБ 2.0: Розничная торговля" и т.д. Сейчас в `products_v2` они уже переименованы в "Ценный бухгалтер | 1 ступень 2.0 | Модуль: Производство", но **snapshot не обновляется при переименовании продукта** — это замороженный снимок.
+- восстановить его только канонически через BUSINESS/access_rules path;
+- без ручной вставки в `entitlements`;
+- через существующий write-path (rule engine / canonical repair path), с audit/ledger proof.
 
-Хелпер `getDealDisplayName` для модульных сделок (`module_only_standalone`) **приоритизирует snapshot name над текущим именем продукта**. Это сделано потому, что `product_id` у этих сделок указывает на родительский курс (`7101ed3c`, PRD-000003), а не на сам модуль. Если бы мы взяли имя из FK join, показалось бы "Ценный бухгалтер | 1 ступень 2.0" (родитель) — ещё хуже.
+PATCH C — browser-proof после фикса
+Проверить карточку Демко Людмилы повторно:
+в активных должны одновременно отображаться:
 
-### Почему public_id у модулей = PRD-000003 (родительский)?
+- Gorbova Club / BUSINESS
+- Ценный бухгалтер | 1 ступень 2.0
+- Модуль: Розничная торговля
+- Модуль: Производство
+- Деньги BY 1 тариф
 
-Потому что `orders_v2.product_id` у всех 126 модульных сделок = `7101ed3c` (родительский курс). FK join на `products_v2` возвращает данные родителя, включая его `public_id = PRD-000003`. Реальные модули (`064dd768` = PRD-000005, `abee24cd` = PRD-000015) хранятся только в `purchase_snapshot.module_list_mapped`.
+4. Изменяемые компоненты
 
-### Как был выдан доступ?
+Обязательная проверка:
 
-Доступ выдан через **rule engine** (`rules-retroapply`), правило `1b497fba`. Shared resolver `check-prior-purchase.ts` нашёл модульные покупки через fallback: `purchase_snapshot.module_list_mapped` содержит UUID модуля → match. Entitlements созданы с правильным `product_id` = UUID модуля (не родителя), `product_code` = `cb_module_production` / `cb_module_retail`.
+- `src/components/admin/ContactDetailSheet.tsx`
+- `src/hooks/useAccessValidation.ts`
+- активные `access_rules` для родительского продукта курса
+- записи в `subscriptions_v2`
+- записи в `entitlements`
+- при необходимости canonical backend path:
+  - `grant-access-for-order`
+  - `rules-retroapply`
 
----
+Если root cause окажется в UI:
 
-## Корневая проблема
+- `src/components/user/UserSubscriptions.tsx` тоже нужно привести к той же логике, чтобы не было расхождения admin/user.
 
-Для `module_only_standalone` сделок UI показывает:
+5. Что не будет изменено
 
-- **Имя**: стale snapshot name ("ЦБ 2.0: ...") вместо текущего имени модуля из `products_v2`
-- **Public ID**: PRD-000003 (родитель) вместо PRD-000005/PRD-000015 (модуль)
+- Логика отображения модульных сделок по названиям в этом PATCH не является основной целью.
+- `orders_v2.product_id` исторических сделок массово не переписывается.
+- Legacy-коды (`cb20`, `product_code`) не используются как новая основа логики.
+- Не смешивать Демко Людмилу с другими клиентами.
+- Не запускать cohort-операции.
 
-Всего затронуто **126 сделок** (120 single-module + 6 multi-module).
+6. Dry-run
 
-## Исправление
+Сначала только безопасная проверка без мутаций:
 
-### 1. Изменить `getDealDisplayName` — убрать приоритет snapshot name
+- SQL-read по Демко Людмиле:
+  - entitlement на родительский курс
+  - subscription на родительский курс
+  - активные access_rules для родительского курса
+- Сопоставление с predicate вкладки «Доступы»:
+  - почему запись попадает или не попадает в active list
+  - уходит ли она в finished list
+  - отсутствует ли полностью
 
-Для `module_only_standalone` с одним модулем в `module_list_mapped`: использовать **текущее имя модуля из `products_v2**`, переданное через новый параметр `moduleProduct`. Snapshot name использовать только как последний fallback.
+Отдельно dry-run verdict:
 
-Файл: `src/lib/deals/getDealDisplayName.ts`
+- Case 1: `missing_access`
+- Case 2: `expired_access`
+- Case 3: `active_but_hidden_by_ui`
+- Case 4: `active_but_filtered_by_productsWithRules`
 
-Добавить в `DealDisplayNameInput`:
+7. Execute
 
-```typescript
-/** Resolved module product (from module_list_mapped UUID) */
-moduleProduct?: { name?: string | null; publicId?: string | null } | null;
-```
+Выполнять только после dry-run verdict:
 
-Изменить приоритет для `module_only_standalone`:
+Ветка 1 — если доступ отсутствует / expired:
 
-1. `moduleProduct.name` (текущее имя модуля из БД)
-2. `productsV2.name` (FK join — это родитель, но хотя бы актуальное)
-3. `snapshotName` (fallback — стale)
-4. `fallback`
+- восстановить родительский курс канонически через BUSINESS/access_rules path;
+- сразу после execute сделать SQL-proof;
+- затем browser-proof.
 
-### 2. Резолвить модульный продукт на уровне потребителей
+Ветка 2 — если доступ активен, но не рендерится:
 
-В каждом месте, где рендерятся сделки, для `module_only_standalone` сделок с `module_list_mapped` = 1 UUID — подгружать продукт модуля из `products_v2` по этому UUID.
+- править только UI/read-path:
+  - не прятать родительский курс при наличии модулей;
+  - курс и модули должны отображаться одновременно.
+- затем browser-proof.
 
-Подход: собрать все уникальные module UUIDs из snapshot'ов, сделать один batch-запрос к `products_v2`, создать map, передать в `getDealDisplayName`.
+8. STOP-guards
 
-Затронутые файлы:
+- Не делать ручной INSERT entitlement.
+- Не изменять данные других пользователей.
+- Не трогать модульные entitlements Людмилы, если они уже корректны.
+- Не строить решение на `product_code`, `cb20`, названиях или slug.
+- Если dry-run покажет, что root cause в отсутствии active rule для product_id родителя, сначала отдельно зафиксировать это как конфигурационный дефект SoT, а не маскировать UI-патчем.
+- Не считать задачу закрытой без backend-proof и browser-proof.
 
-- `src/components/admin/ContactDetailSheet.tsx` — deals tab (строки 3131-3230)
-- `src/pages/admin/AdminDeals.tsx` — список сделок
-- `src/components/admin/DealDetailSheet.tsx`
-- `src/components/admin/ContactPaymentsTab.tsx`
-- `src/components/admin/bepaid/ContactDealsDialog.tsx`
+9. DoD
 
-### 3. Показывать public_id модуля, а не родителя
+Задача считается выполненной только если:
 
-В `ContactDetailSheet.tsx` (строка 3162) и аналогичных местах: для `module_only_standalone` показывать `moduleProduct.publicId` вместо `(deal.products_v2 as any)?.public_id`.
+- для Демко Людмилы backend-proof показывает корректное основание доступа к родительскому курсу;
+- во вкладке «Доступы» одновременно видны:
+  - BUSINESS
+  - Ценный бухгалтер | 1 ступень 2.0
+  - Модуль: Розничная торговля
+  - Модуль: Производство
+  - Деньги BY 1 тариф
+- курс не исчезает из активных карточек из-за наличия модулей;
+- нет ручной вставки доступа;
+- решение основано на ID-first логике и каноническом access path.
 
-### 4. Обновить snapshot names в БД (data migration)
+10. Риски и зависимости
 
-Обновить `purchase_snapshot.display_purchase_name` у всех 126 сделок, заменив "ЦБ 2.0: X" на актуальное имя модуля из `products_v2`. Это не критично для логики (после фикса п.1-3 snapshot name станет fallback), но убирает стale data.
+Риски:
 
-## Изменяемые компоненты
+- Фильтр `productsWithRules` может скрывать легальный доступ, если parent-course entitlement существует, но для его `product_id` нет текущего активного rule.
+- Возможен разрыв между admin-вкладкой и пользовательским кабинетом, потому что в `src/components/user/UserSubscriptions.tsx` используется тот же predicate.
+- Если у родительского курса должен быть entitlement, но rule/config отсутствует, понадобится не только repair, но и фиксация конфигурации как части root cause.
 
+Зависимости:
 
-| Файл                                                 | Действие                                              |
-| ---------------------------------------------------- | ----------------------------------------------------- |
-| `src/lib/deals/getDealDisplayName.ts`                | Добавить `moduleProduct` параметр, изменить приоритет |
-| `src/components/admin/ContactDetailSheet.tsx`        | Резолвить module products, передать в helper          |
-| `src/pages/admin/AdminDeals.tsx`                     | Аналогично                                            |
-| `src/components/admin/DealDetailSheet.tsx`           | Аналогично                                            |
-| `src/components/admin/ContactPaymentsTab.tsx`        | Аналогично                                            |
-| `src/components/admin/bepaid/ContactDealsDialog.tsx` | Аналогично                                            |
-| DB migration                                         | UPDATE snapshot names на актуальные                   |
+- доступ к read-данным БД;
+- возможность проверить текущие `access_rules`, `entitlements`, `subscriptions_v2`;
+- после approval — выполнение SQL-read, browser verification и при необходимости канонического repair path.
 
+11. Требуется дополнительная информация
 
-## DoD
+Сейчас в read-only режиме я уже подтвердил UI-путь и логику фильтрации, но не могу выполнить SQL-read и repair.
+После approval следующего шага нужно:
 
-1. Модульные сделки показывают текущее имя модуля из `products_v2`, а не стale snapshot
-2. Public ID модульных сделок = PRD модуля, а не PRD родителя
-3. При переименовании продукта в админке — имя автоматически обновляется в сделках (т.к. FK join)
-4. Multi-module сделки (6 шт.) показывают snapshot name как fallback (т.к. нельзя однозначно выбрать один модуль)
-5. Grep-proof: все потребители передают `moduleProduct`
+- прочитать БД по Демко Людмиле;
+- определить точный root cause;
+- только потом делать execute-патч по одной из двух веток.
