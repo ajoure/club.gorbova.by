@@ -1617,6 +1617,50 @@ Deno.serve(async (req) => {
           }
         }
         
+        // 5b. Invoke grant-access-for-order for secondary grants (access_rules)
+        // The inline entitlement upsert above handles the primary product only.
+        // grant-access-for-order processes access_rules (bonuses, prior_purchase, etc.)
+        // and is idempotent — it checks already_fulfilled before acting.
+        if (orderV2Id) {
+          try {
+            const grantResp = await fetch(
+              `${Deno.env.get('SUPABASE_URL')}/functions/v1/grant-access-for-order`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({
+                  orderId: orderV2Id,
+                  context: 'subscription_renewal',
+                }),
+              }
+            );
+            const grantResult = await grantResp.json();
+            console.log('[WEBHOOK-SUBSCRIPTION] grant-access-for-order result:', grantResp.status, grantResult);
+            
+            if (!grantResp.ok) {
+              console.error('[WEBHOOK-SUBSCRIPTION] grant-access-for-order FAILED:', grantResp.status, grantResult);
+              await supabase.from('audit_logs').insert({
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                action: 'bepaid.webhook.subscription_renewal_grant_failed',
+                target_user_id: subV2.user_id,
+                meta: {
+                  order_id: orderV2Id,
+                  subscription_id: subscriptionId,
+                  http_status: grantResp.status,
+                  error: grantResult?.error || grantResult?.message || grantResult,
+                  severity: 'CRITICAL',
+                },
+              });
+            }
+          } catch (grantErr) {
+            console.error('[WEBHOOK-SUBSCRIPTION] grant-access-for-order error (non-fatal):', grantErr);
+          }
+        }
+        
         // 6. Send notifications
         try {
           // Full admin notification (same detail level as regular checkout)
