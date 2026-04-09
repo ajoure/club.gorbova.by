@@ -918,36 +918,45 @@ export type Database = {
         Row: {
           code: string
           created_at: string
+          cta_label: string | null
+          features_json: Json | null
           icon: string | null
           id: string
           is_active: boolean
           is_public: boolean
           label: string
           route: string
+          short_description: string | null
           sort_order: number
           updated_at: string
         }
         Insert: {
           code: string
           created_at?: string
+          cta_label?: string | null
+          features_json?: Json | null
           icon?: string | null
           id?: string
           is_active?: boolean
           is_public?: boolean
           label: string
           route: string
+          short_description?: string | null
           sort_order?: number
           updated_at?: string
         }
         Update: {
           code?: string
           created_at?: string
+          cta_label?: string | null
+          features_json?: Json | null
           icon?: string | null
           id?: string
           is_active?: boolean
           is_public?: boolean
           label?: string
           route?: string
+          short_description?: string | null
           sort_order?: number
           updated_at?: string
         }
@@ -12971,6 +12980,10 @@ export type Database = {
           constraint_name: string
           table_name: string
         }[]
+      }
+      get_section_access_catalog: {
+        Args: { p_section_code: string }
+        Returns: Json
       }
       get_user_permissions: { Args: { _user_id: string }; Returns: string[] }
       get_user_role: {

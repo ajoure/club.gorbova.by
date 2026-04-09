@@ -541,7 +541,7 @@ function getRuntimeSupport(type: GrantTargetType): "full" | "partial" | "preview
     case "product_access": return "full";
     case "entitlement": return "full";
     case "training_content": return "full";
-    case "section_access": return "partial";
+    case "section_access": return "full";
     case "email": return "partial";
     default: return "preview_only";
   }
