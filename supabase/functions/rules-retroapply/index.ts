@@ -85,6 +85,7 @@ Deno.serve(async (req) => {
     const {
       mode, rule_ids, source_product_id, source_tariff_id, changed_since,
       recalculate_existing, allow_reduce_access, selected_action_ids, apply_categories,
+      user_ids, target_product_ids,
     } = body;
 
     if (!mode || !["preview", "execute"].includes(mode)) {
@@ -129,7 +130,7 @@ Deno.serve(async (req) => {
         _sourceProductName: rule.product_id ? sourceProductNameMap.get(rule.product_id) || null : null,
         _sourceTariffName: rule.tariff_id ? sourceTariffNameMap.get(rule.tariff_id) || null : null,
       };
-      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing);
+      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids);
       allActions.push(...actions);
     }
 
