@@ -350,6 +350,8 @@ export default function AdminDeals() {
     [dealsData]
   );
 
+  const { data: moduleMetaMap } = useModuleDisplayMeta(allDeals);
+
   // Fetch products for filter pills
   const { data: products } = useQuery({
     queryKey: ["products-filter"],
