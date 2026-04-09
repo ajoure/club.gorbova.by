@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { resolveSectionCode } from "@/constants/sectionCodes";
 
 export interface SectionAccessEntry {
   section_code: string;
@@ -20,7 +19,7 @@ interface UseSectionAccessResult {
   sections: SectionAccessEntry[];
   isLoading: boolean;
   isError: boolean;
-  /** Check access for a specific section code (auto-resolves sidebar keys) */
+  /** Check access for a specific section code */
   checkAccess: (sectionCode: string) => {
     found: boolean;
     is_public: boolean;
@@ -34,29 +33,6 @@ interface UseSectionAccessResult {
 }
 
 /**
- * Парсит значение kill-switch из app_settings.
- * Поддерживает форматы: {enabled: bool}, boolean, string "true"/"false".
- * При неизвестном формате или отсутствии — safe mode (gating включён).
- */
-function parseGatingValue(val: unknown): boolean {
-  // JSON-объект: { enabled: true/false }
-  if (val && typeof val === "object" && !Array.isArray(val) && "enabled" in (val as Record<string, unknown>)) {
-    const enabled = (val as Record<string, unknown>).enabled;
-    return enabled === true || enabled === "true";
-  }
-  // Прямой boolean
-  if (typeof val === "boolean") return val;
-  // Строка "true"/"false"
-  if (val === "true") return true;
-  if (val === "false") return false;
-  // Неизвестный формат → safe mode (gating включён)
-  if (val !== null && val !== undefined) {
-    console.warn("section_gating_enabled: unexpected format", val);
-  }
-  return true;
-}
-
-/**
  * Hook to check section access via get_user_section_access RPC.
  * Admin bypass: admins always get has_access=true (handled by RPC itself).
  * Kill-switch: reads app_settings.section_gating_enabled; if false, all sections treated as public.
@@ -65,7 +41,7 @@ export function useSectionAccess(): UseSectionAccessResult {
   const { user, role } = useAuth();
   const isAdmin = role === "admin" || role === "superadmin";
 
-  // Kill-switch — аварийный флаг, короткий staleTime для быстрого отката
+  // Kill-switch from app_settings
   const { data: gatingEnabled = true } = useQuery({
     queryKey: ["app-settings", "section_gating_enabled"],
     queryFn: async () => {
@@ -74,11 +50,10 @@ export function useSectionAccess(): UseSectionAccessResult {
         .select("value")
         .eq("key", "section_gating_enabled")
         .maybeSingle();
-      // Отсутствует или ошибка → safe mode (gating включён)
-      if (error || !data) return true;
-      return parseGatingValue(data.value);
+      if (error || !data) return true; // default: enabled
+      return data.value === true || data.value === "true";
     },
-    staleTime: 10 * 1000, // 10 секунд — аварийный флаг должен обновляться быстро
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: sections = [], isLoading, isError } = useQuery({
@@ -94,8 +69,7 @@ export function useSectionAccess(): UseSectionAccessResult {
     staleTime: 60 * 1000,
   });
 
-  const checkAccess = (rawCode: string) => {
-    const sectionCode = resolveSectionCode(rawCode);
+  const checkAccess = (sectionCode: string) => {
     const entry = sections.find((s) => s.section_code === sectionCode);
     if (!entry) {
       return {

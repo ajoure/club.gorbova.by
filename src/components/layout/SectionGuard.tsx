@@ -1,6 +1,5 @@
 import { ReactNode } from "react";
 import { useSectionAccess } from "@/hooks/useSectionAccess";
-import { resolveSectionCode } from "@/constants/sectionCodes";
 import { Loader2, Lock, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -13,26 +12,23 @@ interface SectionGuardProps {
  * SectionGuard — обёртка для защиты контента секции.
  *
  * Контракт:
- * - Kill-switch off → всегда пропускает
- * - Loading → spinner
- * - RPC error → deny + error UI (данных нет, нельзя определить public/gated)
  * - is_public=true → всегда пропускает
  * - is_public=false + has_access=true → пропускает
  * - is_public=false + has_access=false → overlay/paywall
  * - Admin → всегда пропускает (через RPC + early shortcut)
- * - Section not found in app_sections → пропускает (unmapped route)
+ * - RPC error + gated → deny + error UI
+ * - Kill-switch off → всегда пропускает
  * - НЕ делает redirect
  */
-export function SectionGuard({ sectionCode: rawCode, children }: SectionGuardProps) {
+export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
   const { checkAccess, isLoading, isError, gatingEnabled } = useSectionAccess();
-  const sectionCode = resolveSectionCode(rawCode);
 
-  // 1. Kill-switch disabled → pass through
+  // Kill-switch disabled → pass through
   if (!gatingEnabled) {
     return <>{children}</>;
   }
 
-  // 2. Loading state
+  // Loading state
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -41,24 +37,6 @@ export function SectionGuard({ sectionCode: rawCode, children }: SectionGuardPro
     );
   }
 
-  // 3. RPC error → deny (данных нет, невозможно определить public/gated)
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
-        <AlertTriangle className="h-12 w-12 text-destructive" />
-        <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Произошла ошибка при проверке прав доступа к разделу.
-          Попробуйте обновить страницу.
-        </p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
-          Обновить страницу
-        </Button>
-      </div>
-    );
-  }
-
-  // 4. Теперь данные загружены успешно — проверяем доступ
   const access = checkAccess(sectionCode);
 
   // Section not found in app_sections → pass through (safe default for unmapped routes)
@@ -69,6 +47,23 @@ export function SectionGuard({ sectionCode: rawCode, children }: SectionGuardPro
   // Public section → always allow
   if (access.is_public) {
     return <>{children}</>;
+  }
+
+  // RPC error on gated section → deny with error message
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
+        <AlertTriangle className="h-12 w-12 text-destructive" />
+        <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Произошла ошибка при проверке прав доступа к разделу «{access.section_label}».
+          Попробуйте обновить страницу.
+        </p>
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          Обновить страницу
+        </Button>
+      </div>
+    );
   }
 
   // Gated + has access → allow
