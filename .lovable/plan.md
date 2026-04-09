@@ -1,63 +1,72 @@
-# да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **PATCH 3 сделать единым shared-resolver и подключить в оба runtime-path сразу.**
-  Не оставлять две независимые реализации. Один helper для prior_purchase, дальше только его вызовы в:
+1. План в целом правильный по структуре:
+  **A — Людмила canonical proof**,
+  **B — display layer**,
+  **C — Наталья / renewal flow**.
+  Так и оставляем.
+2. По **PATCH A (Людмила / Production)** добавь жёсткое правило исполнения:
   &nbsp;
-  - access-resolver.ts
-  - grant-access-for-order/index.ts
+  - сначала preview,
+  - потом сразу execute,
+  - потом сразу SQL-proof,
+  - потом сразу повторный preview = already_satisfied.
   &nbsp;
-2. **Для fallback по snapshot жёстко зафиксировать match только по одному UUID.**
-  Условие:
+  Не оставлять entitlement в expired дольше, чем на один короткий proof-run.
+3. По Людмиле в SQL-proof добавь еще два обязательных пункта:
   &nbsp;
-  - historical_purchase_type = 'module_only_standalone'
-  - module_list_mapped.length = 1
-  - UUID совпадает с target module product_id
-    Всё остальное — manual_review.
+  - запись в audit_logs или access_grant_ledger, что реактивация произошла именно через rules-retroapply;
+  - meta.source_type = retroapply, без ручных промежуточных маркеров, которые могут замаскировать повторную ручную правку.
   &nbsp;
-3. **Phase 3 по Людмиле оформить как отдельный PATCH “restore canonical historical order”.**
-  Не просто “создать заказ”, а:
+4. По **PATCH B (display layer)** план пока слишком мягкий. По скринам видно, что проблема еще не закрыта:
+  в сделках у Людмилы по-прежнему показывается **родительский курс**, а не модуль.
+  Значит, в план надо добавить не просто “browser-proof”, а:
   &nbsp;
-  - создать историческую запись с audit,
-  - явно пометить источник как manual historical restore from owner proof,
-  - не смешивать это с repair доступа.
-    Это два разных действия: восстановление факта покупки и выдача доступа по правилу.
+  - найти **конкретный consumer**, который в этом экране все еще не берет canonical display name;
+  - исправить именно его;
+  - затем дать повторный browser-proof по двум экранам:
+    &nbsp;
+    - Людмила,
+    - Зимко.
+    &nbsp;
   &nbsp;
-4. **Не править created_at у исторических заказов.**
-  Если нужно восстановить дату покупки — использовать каноническое поле бизнес-даты (deal_date / paid_at / отдельное source date поле), но не системный created_at.
-  Иначе сломаете техническую хронологию импорта.
-5. **Для Людмилы сначала восстановить отсутствующую Розницу в orders_v2, потом только dry-run rules.**
-  Иначе dry-run снова будет неполный и даст ложный вывод.
-6. **Repair-entitlement не удалять до полного browser-proof replacement-path.**
-  Порядок должен быть такой:
+5. Отдельно добавь в PATCH B явный DoD по Зимко:
   &nbsp;
-  - fix resolver,
-  - restore missing Retail order,
-  - dry-run,
-  - canonical entitlements появились,
-  - UI proof,
-  - только потом выключать historical_module_repair.
+  - модульные сделки отображаются как **два модуля** с правильными именами,
+  - не создаются новые “левые” сделки на родительский курс,
+  - суммы и даты совпадают с подтвержденными данными.
   &nbsp;
-7. **Canonical entitlements должны иметь явный trace, что они выданы rule-engine, а не repair-path.**
-  В DoD добавить обязательные поля:
+6. По **PATCH C (Казачок Наталья)** это уже настоящий root cause, и здесь план хороший. Но нужно жестко разделить:
   &nbsp;
-  - access_rule_id
-  - source_subscription_id / источник BUSINESS
-  - source_window_rule = align_with_source
-  - срок = дата BUSINESS
-    Без этого план не закрывать.
+  - **исправление кода для будущих renewals** — через bepaid-webhook -> grant-access-for-order;
+  - **ремонт текущего состояния Натальи** — отдельно, через RetroApply / canonical repair.
+    Иначе подрядчик “починит будущее”, а текущая клиентка так и останется без доступов.
   &nbsp;
-8. **Display fix распространить не только на админские сделки, но и на все contact/payment dialogs.**
-  И в DoD добавить grep-proof, что все места используют один helper getDealDisplayName.
-9. **Жёстко запретить в новом патче любые новые runtime-сравнения по cb20 / legacy code.**
-  Добавить отдельный DoD:
+7. По Наталье добавь отдельный блок:
+  **“Current-state repair for Kazachok”**
   &nbsp;
-  - grep-proof по изменённым файлам,
-  - новая логика только на UUID/PRD/T/public IDs и snapshot UUID.
+  - восстановить положенные entitlements сейчас;
+  - дать SQL-proof;
+  - только потом считать issue закрытым.
+    Потому что webhook fix сам по себе **не переиграет** уже прошедшее продление.
   &nbsp;
-10. **Отдельно зафиксировать, что product_code и cb20 сейчас legacy-only.**
-  Не удалять их в этом PATCH, но:
+8. По Наталье формулировку про ea98d043 оставить, но сделать жёстче:
+  &nbsp;
+  - если нет доказанного standalone purchase на этот модуль, entitlement **не выдавать**;
+  - текущий expired entitlement зафиксировать как legacy/backfill anomaly;
+  - не продлевать его автоматически.
+  &nbsp;
+9. В PATCH C добавь обязательный proof после фикса webhook:
+  &nbsp;
+  - по **новому тестовому renewal** или по безопасному replay/canonical simulation,
+  - должен появиться access_grant_ledger,
+  - должен быть trace вызова grant-access-for-order,
+  - secondary grants должны реально построиться.
+    Иначе будет только “мы добавили вызов в код”, без доказательства, что путь живой.
+  &nbsp;
+10. В плане не хватает отдельного запрета на legacy-логику в renewal flow. Добавь:
 
 &nbsp;
 
@@ -65,10 +74,9 @@
 
 &nbsp;
 
-- не использовать как основание для поиска,
-- не использовать в rule resolution,
-- не использовать в новых отчётах как первичный идентификатор.
-  В отчёте первым всегда писать product_id и PRD-..., а legacy code только в скобках при необходимости.
+- новый патч **не должен** усиливать inline legacy обработку по product_code;
+- grant-access-for-order должен стать **единственным** каноническим путём secondary grants;
+- inline legacy branch можно временно оставить только для primary-safe compatibility, но без дальнейшего расширения.
 
 &nbsp;
 
@@ -76,8 +84,7 @@
 
 &nbsp;
 
-11. **Cohort execute не запускать в этом же патче.**
-  Сначала:
+11. Добавь еще один STOP-guard:
 
 &nbsp;
 
@@ -85,10 +92,12 @@
 
 &nbsp;
 
-- Людмила proof-case,
-- consolidated dry-run по всей когорте,
-- отдельный final plan на mass execute.
-  Это важно, чтобы снова не получить неверный массовый repair.
+- не закрывать задачу, пока по Наталье не будет доказано одновременно:
+  &nbsp;
+  - grant-access-for-order реально вызывается из renewal flow,
+  - текущие missing grants восстановлены,
+  - следующий renewal не требует ручного RetroApply.
+  &nbsp;
 
 &nbsp;
 
@@ -96,7 +105,7 @@
 
 &nbsp;
 
-12. **Финальный DoD по Людмиле дополнить:**
+12. Финальный порядок я бы зафиксировал так:
 
 &nbsp;
 
@@ -104,253 +113,208 @@
 
 &nbsp;
 
-- в админке сделки названы модулем,
-- в доступах одновременно видны курс + Производство + Розница,
-- сроки у модулей равны BUSINESS,
-- repair-entitlement отключён,
-- повторный прогон ничего не меняет.
+- **A1** Людмила Production canonical proof
+- **A2** Людмила display fix
+- **B1** Зимко display/data correction
+- **C1** webhook renewal fix
+- **C2** current-state repair Натальи
+- **C3** proof future renewal path
+- только потом consolidated cohort dry-run.
 
 &nbsp;
 
 &nbsp;
 
-Если подрядчик внесёт эти правки, можно продолжать именно по этому плану.
+&nbsp;
+
+13. И еще одна важная правка по формулировкам:
+  в отчете и плане не писать больше как логические идентификаторы cb20, cb2 и подобное.
+  Разрешить только такой формат:
 
 &nbsp;
 
-План: Исправление prior_purchase resolver + display layer + данные Людмилы
+&nbsp;
+
+&nbsp;
+
+- product_id
+- public_id
+- display_name
+- при необходимости отдельно: legacy product_code (read-only reference)
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+14. Итог: план годный, но **без этих правок его рано исполнять**, потому что иначе можно закрыть Людмилу формально, а Зимко и Наталья останутся недочиненными.
+
+&nbsp;
+
+&nbsp;
+
+План: Canonical proof + Казачок fix + display layer
 
 ## Диагностика
 
-### Корневая проблема prior_purchase
+### A. Людмила — Production entitlement `2687b521`
 
-Два места в коде проверяют prior_purchase:
+**Текущее состояние**: `status=active`, `expires_at=2026-05-05`, meta содержит `source_type: retroapply`, `source_rule_id: 1b497fba`, `business_subscription_id: e867f292`. Однако это результат ручной перезаписи meta (`CANONICAL-REPLACE-2026-04-09`), а не прохождения через rule engine. Retail entitlement `176e08a9` — полностью канонический (создан RetroApply), его не трогаем.
 
-1. `supabase/functions/_shared/access-resolver.ts` (строки 301-309) — `.eq('product_id', productToCheck)`
-2. `supabase/functions/grant-access-for-order/index.ts` (строки 1030-1038) — `.eq('product_id', productToCheck)`
+### B. Людмила — Display names
 
-Оба ищут **только прямой match** `orders_v2.product_id = module_uuid`. Но у 120 из 127 исторических модульных заказов `product_id` указывает на родительский продукт (`7101ed3c`), а UUID модуля лежит только в `purchase_snapshot.module_list_mapped`.
+4 модульных заказа в `orders_v2`:
 
-**Результат**: правило `1b497fba` (BUSINESS → prior_purchase → модули) никогда не находит модульную покупку → доступ не выдаётся.
+- 1× Розница (`MANUAL-RESTORE-001`, `display_purchase_name = ЦБ 2.0: Розничная торговля`)
+- 3× Производство (GC-3822722, GC-3823669, GC-3824629, `display_purchase_name = ЦБ 2.0: Производство`)
 
-### По данным Людмилы Демко
+Все имеют `historical_purchase_type = module_only_standalone` + корректный `module_list_mapped`. Display layer (`getDealDisplayName`) уже приоритизирует `display_purchase_name` для таких сделок. Нужен browser-proof.
 
-Пользователь подтверждает 2 покупки:
+### C. Казачок Наталья — корневая причина
 
-- **2025-03-14**: Розничная торговля, 550 BYN → модуль `abee24cd` (Retail)
-- **2025-05-19**: Производство, 350 BYN → модуль `064dd768` (Production)
+**Критический баг**: subscription renewal webhook (`bepaid-webhook/index.ts`, строки 1574-1618) обрабатывает entitlements **inline** по `product_code` (legacy!) и **НЕ вызывает `grant-access-for-order**`. Значит secondary grants (access_rules) при продлении подписки не срабатывают.
 
-В БД:
+Факты:
 
-- Производство: 3 заказа (GC-3822722, GC-3823669, GC-3824629) — все с `module_list_mapped = [064dd768]`. Все три имеют одинаковый `created_at` (импорт).
-- **Розница: 0 заказов** — нет ни одной записи с `module_list_mapped` содержащим `abee24cd`. Данные потеряны при импорте.
+- Сегодня 09.04 в 13:45 оплачен заказ `fac49672` (BUSINESS renewal)
+- Создана подписка `c30f04c3` (active, до 2026-05-09)
+- `access_grant_ledger` по этому `order_id`: **0 записей**
+- `audit_logs`: только `bepaid.subscription.processed`, нет `grant-access`
+- Entitlement `45d5f391` (Учет у ИП, `ea98d043`) → `expired` в 12:00 (привязан к старой BUSINESS `eba308ca`)
+- Entitlement `664332ed` (parent course `7101ed3c`) → `expired` в 12:00
+- Entitlement `9a7c303c` (Деньги BY, `c153c811`) → `expired` в 12:00
 
-Текущие entitlements Людмилы:
+Все три должны были быть reactivated/re-aligned при продлении BUSINESS. Не произошло, потому что `grant-access-for-order` не был вызван.
 
-- `club` (BUSINESS) → active до 05.05
-- `cb20` (родительский курс) → active до 05.05
-- `course_close_year` → active до 01.05
-- `cb_module_production` (`064dd768`) → active до 30.08 (**repair-path, source_type = historical_module_repair** — некорректный срок)
-- ещё 2 других продукта
-
-### Терминология (жёсткое разделение)
-
-- `product_id` = UUID (`064dd768-de8b-40db-89bc-f8d4a7e442ba`)
-- `public_id` = PRD-000XXX (для отображения в UI)
-- `display_name` = человекочитаемое имя из `products_v2.name` или `purchase_snapshot.display_purchase_name`
-- `product_code` = legacy read-only field, **не используется в логике**
+**Важное уточнение по prior_purchase**: Казачок имеет `base_tariff_purchase` для `7101ed3c` (а не module_only_standalone). Rule `1b497fba` работает в режиме `per_product`: каждый target требует отдельного paid order. У Казачок есть paid order только на `7101ed3c` — значит rule должен выдать доступ к `7101ed3c`, но НЕ к `ea98d043` (модуль Учет у ИП), на который у неё нет отдельного заказа. Entitlement на `ea98d043` был создан ранее через `historical_backfill` — это аномалия, которую нужно зафиксировать.
 
 ---
 
-## Phase 1: Единый canonical prior_purchase resolver
+## PATCH A: Canonical proof для Production у Людмилы
 
-### Задача
+### Шаги
 
-Вынести проверку prior_purchase в shared utility, который используют **все** runtime paths.
-
-### Файл
-
-`supabase/functions/_shared/check-prior-purchase.ts` — новый shared helper.
-
-### Логика
-
-```text
-checkPriorPurchase(supabase, userId, targetProductId, excludeOrderId):
-  1. Прямой match: orders_v2 WHERE user_id AND product_id = targetProductId AND status = 'paid'
-  2. Если не найден — fallback:
-     orders_v2 WHERE user_id AND status = 'paid'
-       AND purchase_snapshot->>'historical_purchase_type' = 'module_only_standalone'
-       AND (purchase_snapshot->'module_list_mapped')::jsonb @> '"targetProductId"'
-  3. Возвращает: { found: boolean, order_id, match_type: 'direct' | 'module_list_mapped' | null }
-```
-
-### Потребители (заменить inline-код на вызов helper):
-
-1. `access-resolver.ts` (строки 301-309)
-2. `grant-access-for-order/index.ts` (строки 1030-1038)
-
-### STOP-guards:
-
-- Fallback только для `historical_purchase_type = module_only_standalone`
-- Только UUID из `module_list_mapped`, никаких текстовых эвристик
-- Если найден и прямой match, и module_list_mapped match — приоритет прямому
-- `orders_v2.product_id` в исторических заказах **не менять**
-
----
-
-## Phase 2: Display layer — полное покрытие
-
-### Задача
-
-Убедиться, что `getDealDisplayName` (уже исправлен для `module_only_standalone`) реально используется **во всех** экранах.
-
-### Потребители (проверить/исправить каждый):
-
-
-| Файл                                                           | Статус                                  |
-| -------------------------------------------------------------- | --------------------------------------- |
-| `src/pages/admin/AdminDeals.tsx`                               | передаёт `purchaseSnapshot` — OK        |
-| `src/components/admin/ContactDetailSheet.tsx`                  | передаёт `purchaseSnapshot` — OK        |
-| `src/components/admin/DealDetailSheet.tsx`                     | передаёт `purchaseSnapshot` — проверить |
-| `src/components/admin/ContactPaymentsTab.tsx`                  | проверить                               |
-| `src/components/admin/bepaid/ContactDealsDialog.tsx`           | проверить                               |
-| `src/components/admin/payments/LinkDealDialog.tsx`             | использует helper — OK                  |
-| `src/components/admin/payments/LinkSubscriptionDealDialog.tsx` | использует helper — OK                  |
-
-
-### DoD: grep-proof — ни одного прямого обращения к `products_v2.name` для отображения имени сделки, минуя `getDealDisplayName`.
-
----
-
-## Phase 3: Данные Людмилы — восстановление заказа на Розницу
-
-### Проблема
-
-Покупка Розницы (2025-03-14, 550 BYN) отсутствует в `orders_v2`. Потеряна при импорте.
-
-### Действие
-
-Создать 1 заказ в `orders_v2` для Людмилы:
-
-- `user_id` = `eb39c79d-2588-4ab6-b831-7cd2d5a1641d`
-- `profile_id` = `2ab73923-5923-4e6a-8077-d699fc0381f4`
-- `product_id` = `7101ed3c` (родительский, как у остальных модульных)
-- `status` = `paid`
-- `deal_date` = `2025-03-14 10:51:40`
-- `purchase_snapshot`:
-  - `historical_purchase_type` = `module_only_standalone`
-  - `display_purchase_name` = `ЦБ 2.0: Розничная торговля`
-  - `module_list_mapped` = `["abee24cd-5c8b-4111-a6cb-7dee7acf168c"]`
-  - `price` = 550, `currency` = `BYN`
-- `order_number` = формат `MANUAL-RESTORE-{seq}`
+1. **Expire** entitlement `2687b521` → `status = expired`, добавить в meta `deactivated_for_canonical_proof: true`, `deactivated_at: <timestamp>`
+2. **НЕ трогать** Retail entitlement `176e08a9` (уже каноничен)
+3. **RetroApply preview** для Людмилы:
+  - `user_ids: ["eb39c79d-2588-4ab6-b831-7cd2d5a1641d"]`
+  - `target_product_ids: ["064dd768-de8b-40db-89bc-f8d4a7e442ba"]`
+  - `rule_ids: ["1b497fba-031a-4318-8d9f-2530f1bac116"]`
+4. **Ожидаемый результат preview**: category = `missing_access` (expired entitlement found → reactivation path)
+5. **Execute** → entitlement reactivated через rule engine
+6. **SQL-proof block** (обязательный):
+  ```
+   status = 'active'
+   expires_at = '2026-05-05 20:59:59+00'
+   meta.source_rule_id = '1b497fba-031a-4318-8d9f-2530f1bac116'
+   meta.retroapply_reactivated = true
+   meta.previous_status = 'expired'
+   meta.business_subscription_id IS NOT NULL
+  ```
+7. **Повторный preview** → `already_satisfied`
 
 ### STOP-guard
 
-- Только 1 заказ на Розницу, по подтверждённым данным от владельца
-- Не менять существующие 3 заказа на Производство
-- Audit log обязателен
-
-### Также: исправить даты у 3 существующих заказов Производства
-
-Сейчас все имеют `created_at = 2026-03-28` (дата импорта). Оригинальная дата: `2025-05-19 15:17:58`. Записать в `deal_date`.
+- Только entitlement `2687b521` (Production)
+- Retail `176e08a9` не трогать
+- Никаких других пользователей
 
 ---
 
-## Phase 4: Dry-run canonical rule path
+## PATCH B: Display layer browser-proof
 
-### Задача
+### Действия
 
-После Phase 1 (resolver fix) прогнать dry-run и доказать, что rule engine **сам** выдаёт доступ к модулям при активном BUSINESS.
-
-### Для Людмилы
-
-- Правило `1b497fba` (BUSINESS/tariff `7c748940` → prior_purchase → модули)
-- `target_product_ids` включает `064dd768` (Производство) и `abee24cd` (Розница)
-- После Phase 1+3: resolver находит модульные покупки через `module_list_mapped`
-- Ожидаемый результат: 2 entitlements (Производство + Розница), оба с `expires_at` = дата BUSINESS (`2026-05-05`)
-
-### Для когорты
-
-Consolidated dry-run отчёт:
-
-- total `module_only_standalone` orders: 127 (120 single + 7 multi)
-- по прямому `product_id` match: ~22
-- через `module_list_mapped` fallback: ~98
-- ambiguous/multi-module: 7 → `manual_review`
-- malformed UUID: проверить
-- already have active entitlement via rule: count
-- будет реально выдано: count
+1. Открыть карточку Людмилы в админке
+2. Проверить, что сделки показываются как:
+  - «ЦБ 2.0: Розничная торговля» (не «Ценный бухгалтер | 1 ступень 2.0»)
+  - «ЦБ 2.0: Производство» (не «Ценный бухгалтер | 1 ступень 2.0»)
+3. Проверить, что в Доступах одновременно видны курс + Производство + Розница
+4. Grep-proof по display layer (список файлов, использующих `getDealDisplayName`)
 
 ---
 
-## Phase 5: Перевод Людмилы с repair-path на canonical
+## PATCH C: Казачок Наталья — исправление subscription renewal flow
 
-### Порядок (безопасный)
+### Корневой баг
 
-1. НЕ удалять repair-entitlement (`2687b521`) до proof
-2. Прогнать RetroApply / grant-access через rule engine → ожидать создание 2 canonical entitlements (Производство + Розница) с `access_rule_id = 1b497fba`, `expires_at = 2026-05-05`
-3. Убедиться, что canonical entitlements active
-4. Только после proof → деактивировать repair-entitlement `2687b521`
+`bepaid-webhook/index.ts`, строки 1574-1618: subscription renewal обрабатывает entitlements inline по `product_code` и **не вызывает `grant-access-for-order**`. Это означает, что при каждом продлении BUSINESS:
 
-### DoD по Людмиле (по шагам)
+- Primary entitlement обновляется inline (legacy path)
+- Secondary grants (rules, prior_purchase, bonus) — **не выполняются**
+- Expired rule-based entitlements не реактивируются
 
-1. Исторические сделки названы как модуль (display_purchase_name из snapshot)
-2. Repair-entitlement больше не единственный источник доступа
-3. Entitlement на Производство выдан через rule engine с `access_rule_id`
-4. Entitlement на Розницу выдан через rule engine (после Phase 3)
-5. `expires_at` обоих = дата BUSINESS (05.05.2026)
-6. Курс и модули одновременно видны в кабинете
-7. Повторный прогон идемпотентен
-8. Repeat = 0 изменений
+### Исправление
+
+После inline entitlement upsert (строка ~1618), добавить вызов `grant-access-for-order` с `orderId = orderV2Id`. Это обеспечит:
+
+- Прохождение через access-resolver
+- Обработку всех access_rules для тарифа
+- Реактивацию expired secondary entitlements
+- Запись в `access_grant_ledger`
+
+### Безопасность
+
+- `grant-access-for-order` уже идемпотентен (проверяет `already_fulfilled`)
+- Inline primary entitlement upsert не конфликтует — grant-access тоже проверяет existing entitlement
+- Нужно убедиться, что subscription уже создана/обновлена ДО вызова grant-access (порядок уже соблюдается)
+
+### Proof по Казачок
+
+После деплоя фикса:
+
+1. Прогнать RetroApply для Казачок по rule `1b497fba`:
+  - `user_ids: ["6b0e0451-c01b-4cd9-8fc4-dd7e83fd5c65"]`
+  - Ожидание: entitlement на `7101ed3c` (parent course) → reactivated/extended до 2026-05-09
+  - Entitlement на `c153c811` (Деньги BY, rule `6ba9727e`) → reactivated до 2026-05-09
+2. **Для `ea98d043` (Учет у ИП)**: у Казачок НЕТ paid order на этот модуль отдельно, rule `per_product` НЕ должен его выдать. Текущий expired entitlement — аномалия от `historical_backfill`. Зафиксировать как `anomaly_from_backfill`.
+3. SQL-proof:
+  ```
+   Entitlement 664332ed (7101ed3c): status=active, expires_at=2026-05-09
+   Entitlement 9a7c303c (c153c811): status=active, expires_at=2026-05-09
+   Entitlement 45d5f391 (ea98d043): status=expired (корректно — нет prior_purchase)
+  ```
+
+### DoD по Казачок
+
+- Доступ к parent course восстановлен через rule engine
+- Доступ к Деньги BY восстановлен через rule engine
+- Учет у ИП остаётся expired (нет основания)
+- Trace в `access_grant_ledger` по order_id / RetroApply batch
+- При следующем продлении BUSINESS → `grant-access-for-order` вызывается автоматически
 
 ---
 
-## Phase 6: Browser-proof видимости
+## Порядок исполнения
 
-Обязательный UI-proof (не data chain):
 
-- Кабинет: одновременно виден родительский продукт и модули Производство / Розница
-- Админка: сделки показывают имена модулей, не родительского курса
-- Доступ к курсу не сломан
+| Шаг | Действие                                                                            | Блокирует |
+| --- | ----------------------------------------------------------------------------------- | --------- |
+| A1  | Expire `2687b521`, RetroApply preview+execute                                       | —         |
+| A2  | SQL-proof по Людмиле                                                                | A1        |
+| B1  | Browser-proof display (Людмила)                                                     | A2        |
+| C1  | Fix `bepaid-webhook` subscription renewal → добавить вызов `grant-access-for-order` | —         |
+| C2  | Deploy `bepaid-webhook`                                                             | C1        |
+| C3  | RetroApply для Казачок                                                              | C2        |
+| C4  | SQL-proof по Казачок                                                                | C3        |
+| D   | Consolidated dry-run по когорте (отдельный следующий шаг)                           | A+B+C     |
 
----
 
-## STOP-guards (общие)
+## STOP-guards
 
-1. Не менять `orders_v2.product_id` в исторических заказах
-2. Не строить логику на `product_code` / slug — только UUID
-3. Не удалять repair-entitlement до доказанного replacement
-4. Не обрабатывать multi-module orders (7 шт.) автоматически
-5. Не создавать entitlement без `access_rule_id`
-6. Если `module_list_mapped` содержит >1 UUID или конфликтует с `display_purchase_name` → `manual_review`
-7. RetroApply использует тот же canonical resolver, что и новые покупки — один path
-
-## Follow-up backlog (не блокирует текущую задачу)
-
-1. **ID-first cleanup**: inventory всех мест, где `product_code`/`tariff_code`/slug используется в runtime-логике, поэтапный отказ
-2. **Multi-module orders** (7 шт.): обработка через `split-multi-module-orders` + повторный прогон
-3. **Inherited visibility**: показывать модульные карточки покупателям полного курса (отдельный спринт)
+1. Не запускать cohort execute
+2. Не трогать Retail entitlement Людмилы
+3. Не создавать entitlement на `ea98d043` для Казачок (нет основания)
+4. Не строить логику на `product_code` / legacy codes
+5. `orders_v2.product_id` в исторических заказах не менять
+6. Задачу не считать закрытой, пока не доказаны все три кейса
 
 ## Изменяемые компоненты
 
 
-| Фаза | Файл                                                 | Действие                                                  |
-| ---- | ---------------------------------------------------- | --------------------------------------------------------- |
-| 1    | `supabase/functions/_shared/check-prior-purchase.ts` | Создать                                                   |
-| 1    | `supabase/functions/_shared/access-resolver.ts`      | Заменить inline prior_purchase на helper                  |
-| 1    | `supabase/functions/grant-access-for-order/index.ts` | Заменить inline prior_purchase на helper                  |
-| 2    | UI-компоненты (6 файлов)                             | Проверить / исправить usage `getDealDisplayName`          |
-| 3    | `orders_v2` (данные)                                 | INSERT 1 заказ Розница, UPDATE deal_date для Производства |
-| 4    | Dry-run отчёт                                        | Вызов resolver через RetroApply preview                   |
-| 5    | `entitlements` (данные)                              | Деактивация repair-entitlement после proof                |
-
-
-## DoD (финальный, по когорте)
-
-1. Для всех подтверждённых `module_only_standalone` prior_purchase определяется корректно через canonical resolver
-2. Новые продления BUSINESS автоматически работают без repair
-3. Исторические модульные покупки отображаются именем модуля, не родительского продукта
-4. Ни один клиент не теряет текущий доступ
-5. Consolidated dry-run отчёт по всей когорте предоставлен до execute
-6. Розница для Людмилы: восстановлена по подтверждённым данным от владельца
-7. Grep-proof: в новом патче нет сравнений по product_code в runtime-логике
+| Файл                                         | Действие                                                                                            |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `supabase/functions/bepaid-webhook/index.ts` | Добавить вызов `grant-access-for-order` после inline entitlement upsert в subscription renewal flow |
+| `entitlements` (данные)                      | Expire `2687b521` → canonical reactivation через RetroApply                                         |
+| Edge function deploy                         | `bepaid-webhook`, `rules-retroapply`                                                                |
