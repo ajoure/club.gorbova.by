@@ -46,6 +46,10 @@ interface RetroApplyRequest {
   allow_reduce_access?: boolean;
   selected_action_ids?: string[];
   apply_categories?: string[];
+  /** Optional: limit processing to specific user UUIDs (prevents full-scan timeouts) */
+  user_ids?: string[];
+  /** Optional: limit processing to specific target product UUIDs */
+  target_product_ids?: string[];
 }
 
 interface UserAction {
@@ -81,6 +85,7 @@ Deno.serve(async (req) => {
     const {
       mode, rule_ids, source_product_id, source_tariff_id, changed_since,
       recalculate_existing, allow_reduce_access, selected_action_ids, apply_categories,
+      user_ids, target_product_ids,
     } = body;
 
     if (!mode || !["preview", "execute"].includes(mode)) {
@@ -125,7 +130,7 @@ Deno.serve(async (req) => {
         _sourceProductName: rule.product_id ? sourceProductNameMap.get(rule.product_id) || null : null,
         _sourceTariffName: rule.tariff_id ? sourceTariffNameMap.get(rule.tariff_id) || null : null,
       };
-      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing);
+      const actions = await processRule(supabase, ruleEnriched, !!recalculate_existing, user_ids, target_product_ids);
       allActions.push(...actions);
     }
 
@@ -247,6 +252,8 @@ async function processRule(
   supabase: any,
   rule: any,
   recalculateExisting: boolean,
+  filterUserIds?: string[],
+  filterTargetProductIds?: string[],
 ): Promise<UserAction[]> {
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
@@ -256,7 +263,7 @@ async function processRule(
 
   if (!sourceProductId) return actions;
 
-  const targetProductIds: string[] =
+  let targetProductIds: string[] =
     rule.grant_target_type === "product_access"
       ? (Array.isArray(conditions.target_product_ids)
           ? conditions.target_product_ids
@@ -266,6 +273,13 @@ async function processRule(
         : [];
 
   if (targetProductIds.length === 0) return actions;
+
+  // Apply target_product_ids filter if provided
+  if (filterTargetProductIds?.length) {
+    const filterSet = new Set(filterTargetProductIds);
+    targetProductIds = targetProductIds.filter(id => filterSet.has(id));
+    if (targetProductIds.length === 0) return actions;
+  }
 
   const productInfoMap = new Map<string, { code: string; name: string }>();
   if (rule.grant_target_type === "product_access") {
@@ -298,7 +312,13 @@ async function processRule(
     }
   }
 
-  const userIds = [...userSubMap.keys()];
+  // Apply user_ids filter if provided (prevents full-scan timeouts)
+  let userIds = [...userSubMap.keys()];
+  if (filterUserIds?.length) {
+    const filterSet = new Set(filterUserIds);
+    userIds = userIds.filter(id => filterSet.has(id));
+    if (userIds.length === 0) return actions;
+  }
 
   // Batch fetch profiles with full_name
   const profileMap = new Map<string, { id: string; email: string; full_name: string | null }>();
