@@ -2,193 +2,157 @@
 
 &nbsp;
 
-1. Убери противоречие из плана:  
+1. Kill-switch нельзя кэшировать 5 минут.  
+Это аварийный флаг. Для него нужен отдельный режим:  
 
-  - в этом спринте реальный enforcement только для eisenhower;
-  - ai, money, live, self_development пока не подключать к SectionGuard;
-  - для них оставить только подготовленную инфраструктуру без включения gating.
+  - staleTime: 0 или максимум 5–10 секунд,
+  - либо явная инвалидация query после изменения значения.  
+  Иначе kill-switch не будет “мгновенным”.
 2. &nbsp;
-3. Пункт «Подключение SectionGuard к страницам» перепиши так:  
+3. isError -> deny формулируй как правило только для уже обёрнутой gated-секции.  
+Не как универсальное правило “для любого sectionCode”.  
+Сейчас это допустимо только для eisenhower, потому что guard подключён только там. Иначе потом это начнёт противоречить ранее согласованному поведению public routes.
+4. Маппинг key → section_code вынести в один shared-файл и использовать везде одинаково.  
+Не дублировать отдельно в sidebar и отдельно в guard.  
+Нужен один SoT, например:  
 
-  - подключить SectionGuard только к /tools/eisenhower;
-  - остальные секции переводить по одной отдельным этапом после proof.
-4. &nbsp;
-5. money и live зафиксируй жёстче:  
+  - src/constants/sectionCodes.ts
+  - экспорт map + helper resolveSectionCode().
+5. &nbsp;
+6. Добавь жёсткий STOP-guard по админке секций.  
+Пока SectionGuard подключён только к eisenhower, запрещено переводить в is_public=false любые другие секции, у которых guard ещё не внедрён.  
+Иначе получится опасная рассинхронизация:  
 
-  - не просто «запрещено закрывать»,
-  - а не трогать их роуты и существующую внутреннюю логику вообще в этом спринте.
-6. &nbsp;
-7. В useSectionAccess не опирайся на логику «если RPC error, а секция public — allow», если у тебя нет отдельного источника is_public.  
-Добавь явно:  
+  - в /admin/sections секция закрыта,
+  - в sidebar может появиться lock,
+  - но сама страница всё ещё откроется.  
+  Это надо либо блокировать в UI, либо хотя бы подтверждать жёстким warning с запретом save.
+7. &nbsp;
+8. DoD дополни proof-кейсом по kill-switch latency.  
+Нужно отдельно доказать:  
 
-  - либо хук получает app_sections отдельным запросом,
-  - либо SectionGuard сам дополнительно читает app_sections по sectionCode,
-  - иначе корректный fallback невозможен.
-8. &nbsp;
-9. Не дублируй admin bypass одновременно в трёх местах без нужды.  
-Зафиксируй один контракт:  
-
-  - главный источник истины — RPC;
-  - на фронте bypass только как безопасный early shortcut, если роль admin уже точно известна.
-10. &nbsp;
-11. Kill-switch не хардкодить в коде true/false.  
-Вернись к уже согласованной модели:  
-
-  - app_settings.section_gating_enabled,
-  - либо другой реальный конфиг проекта,  
-  но не ручная правка исходников как основной механизм rollback.
-12. &nbsp;
-13. Для sidebar уточни поведение:  
-
-  - lock-иконка только для секции, которая реально is_public=false и has_access=false;
-  - для admin lock не показывать;
-  - sidebar ничего не блокирует, только показывает состояние.
-14. &nbsp;
-15. Для SectionGuard добавь обязательный UI-контракт:  
-
-  - показывать название секции;
-  - если RPC вернул granted_via_tariff_name или granted_via_product_name, выводить это в paywall;
-  - при deny не делать redirect.
-16. &nbsp;
-17. Русификацию бейджей оставь, но не смешивай с enforcement как равнозначные задачи.  
-В статусе этапа раздели:  
-
-  - косметика /admin/sections;
-  - первый guarded rollout eisenhower.
-18. &nbsp;
-19. В DoD добавь обязательные proof-пункты:
+  - section_gating_enabled=false реально снимает deny без ожидания долгого TTL,
+  - после возврата в true gating снова включается.
+9. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+После этих правок план корректный.
 
-- eisenhower при is_public=true открывается как раньше;
-- eisenhower при is_public=false и без rule даёт deny;
-- eisenhower при is_public=false и с rule даёт allow;
-- admin открывает eisenhower всегда;
-- sidebar показывает lock для обычного пользователя без доступа;
-- sidebar не показывает lock для admin.
+# План: исправление критических багов section_access enforcement
 
-&nbsp;
+## Диагностика — 3 подтверждённых бага
 
-&nbsp;
+### Баг 1: Kill-switch парсинг (useSectionAccess.ts:53-54)
 
-&nbsp;
+**Факт:** В БД `app_settings.value = true` (boolean). Код читает `data.value === true || data.value === "true"`.
+**Проблема:** Если значение будет записано как JSON `{"enabled": false}`, текущий код прочитает его как truthy-объект и вернёт `true` (gating включён). Нет поддержки формата `{enabled: boolean}`.
+**Фикс:** Парсить value с приоритетом: объект с `.enabled` → boolean → string → fallback `true`.
+**STOP-guard:** Если значение отсутствует или имеет неизвестный формат → gating **включён** (safe mode, deny по умолчанию для gated секций).
 
-11. Добавь compatibility-пункт:
+### Баг 2: Порядок проверок в SectionGuard (SectionGuard.tsx:40-45)
 
-&nbsp;
+**Факт:** `checkAccess()` при `isError=true` возвращает `found: false` (пустой массив sections), guard пропускает → gated секция открывается при ошибке RPC.
+**Проблема:** Проверка `!access.found` (строка 43) стоит **до** проверки `isError` (строка 53). При ошибке RPC секции пустые → found=false → allow.
+**Фикс:** Переставить: сначала `isError` → deny для любого sectionCode (нельзя определить public/gated без данных), потом `!found` → allow.
 
-&nbsp;
+### Баг 3: Маппинг key → section_code (AppSidebar.tsx:188)
 
-&nbsp;
+**Факт:** sidebar key `self-development`, а в app_sections code `self_development`. Также `eisenhower` в sidebar — в отдельном массиве `leaderToolsItems`, а не в `mainMenuItems`.
+**Проблема:** `checkAccess(item.key)` с дефисом не найдёт запись с подчёркиванием → `found: false` → lock не покажется.
+**Фикс:** Явный маппинг `Record<string, string>` для всех расхождений.
 
-- Money.tsx, LiveEvents.tsx, Knowledge.tsx, Learning.tsx в этом спринте не меняют текущее поведение вообще.
+---
 
-&nbsp;
+## Файлы и изменения
 
-&nbsp;
+### 1. `src/hooks/useSectionAccess.ts` — kill-switch парсинг
 
-&nbsp;
+Строки 47-54: заменить queryFn на безопасный парсер:
 
-12. Для безопасности добавь правило rollout:
+```typescript
+queryFn: async () => {
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("key", "section_gating_enabled")
+    .maybeSingle();
+  
+  // Отсутствует или ошибка → safe mode (gating включён)
+  if (error || !data) return true;
+  
+  const val = data.value;
+  
+  // JSON-объект: { enabled: true/false }
+  if (val && typeof val === 'object' && 'enabled' in val) {
+    return val.enabled === true || val.enabled === 'true';
+  }
+  
+  // Прямой boolean
+  if (typeof val === 'boolean') return val;
+  
+  // Строка "true"/"false"
+  if (val === 'true') return true;
+  if (val === 'false') return false;
+  
+  // Неизвестный формат → safe mode
+  console.warn('section_gating_enabled: unexpected format', val);
+  return true;
+},
+```
 
-&nbsp;
+### 2. `src/components/layout/SectionGuard.tsx` — порядок проверок
 
-&nbsp;
+Переставить блоки после loading:
 
-&nbsp;
+```
+1. Kill-switch → allow
+2. Loading → spinner
+3. isError → deny + error UI (для ЛЮБОГО sectionCode, т.к. данных нет)
+4. checkAccess() → found/public/access логика
+```
 
-- сначала merge инфраструктуры хука и guard,
-- потом включение только eisenhower,
-- только после фактического proof можно готовить следующий план на ai и другие секции.
+Конкретно: блок `isError` перенести **до** вызова `checkAccess()`, с текстом "Не удалось проверить доступ. Обновите страницу."
 
-&nbsp;
+### 3. `src/components/layout/AppSidebar.tsx` — маппинг key → code
 
-&nbsp;
+Добавить константу:
 
-# План: русификация бейджей + enforcement доступа к секциям
+```typescript
+const SIDEBAR_KEY_TO_SECTION_CODE: Record<string, string> = {
+  "self-development": "self_development",
+};
+```
 
-## Проблема
+В `renderMenuItem` (строка 188): использовать маппинг:
 
-1. Бейджи статуса в `/admin/sections` на английском ("public", "gated", "inactive") — нужно на русском.
-2. Переключение `is_public=false` для секции "Нейросеть" не закрывает раздел для учеников — нет enforcement. Sidebar показывает все пункты безусловно, SectionGuard не существует.
+```typescript
+const sectionCode = SIDEBAR_KEY_TO_SECTION_CODE[item.key] || item.key;
+const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
+```
 
-## Что будет сделано
+Применить тот же маппинг для `leaderToolsItems` (eisenhower), чтобы lock работал и там.
 
-### 1. Русификация бейджей в AdminSections
+### 4. `src/components/layout/SectionGuard.tsx` — маппинг в guard
 
-В `src/pages/admin/AdminSections.tsx`:
+Добавить тот же маппинг (или вынести в shared константу), чтобы guard тоже резолвил code корректно. Экспортировать маппинг из общего файла, например `src/constants/sectionCodes.ts`.
 
-- "public" → "публичный"
-- "gated" → "закрытый"
-- "inactive" → "неактивный"
+---
 
-### 2. Хук `useSectionAccess`
+## Что НЕ меняется
 
-Новый файл `src/hooks/useSectionAccess.ts`:
+- Никакие другие страницы и роуты
+- RPC `get_user_section_access`
+- Таблицы `app_sections`, `access_rules`
+- Enforcement только на `eisenhower`
+- money, live, ai, self_development — не подключаются к SectionGuard
 
-- Вызывает RPC `get_user_section_access` для текущего `auth.uid()`
-- queryKey: `['section-access', userId]`, staleTime: 60s
-- Возвращает массив секций с `has_access` для каждой
-- Admin bypass: если роль admin — все секции `has_access=true`
-- При ошибке RPC: для `is_public=true` → allow, для `is_public=false` → deny
+## DoD
 
-### 3. Lock-иконка в пользовательском sidebar
-
-В `src/components/layout/AppSidebar.tsx`:
-
-- Подключить `useSectionAccess`
-- Маппинг `mainMenuItems[].key` → `app_sections.code`
-- Для gated секций без доступа: показать иконку замка рядом с названием
-- Для admin: никаких замков, обычный вид
-- Пункт НЕ скрывается, клик по-прежнему ведёт на страницу
-
-### 4. Компонент `SectionGuard`
-
-Новый файл `src/components/layout/SectionGuard.tsx`:
-
-- Обёртка-wrapper, принимает `sectionCode: string`
-- Использует тот же `useSectionAccess()` (общий кэш)
-- `is_public=true` → пропускает
-- `is_public=false` + `has_access=true` → пропускает
-- `is_public=false` + `has_access=false` → overlay/paywall ("Доступ ограничен")
-- Admin → всегда пропускает
-- RPC error + gated → deny + "Не удалось проверить доступ. Обновите страницу."
-- Kill-switch (feature flag `SECTION_GATING_ENABLED`): при `false` — всегда пропускает
-
-### 5. Подключение SectionGuard к страницам
-
-Обернуть компоненты страниц для секций, у которых есть запись в `app_sections`:
-
-- `/ai` → SectionGuard code="ai"
-- `/money` → SectionGuard code="money"
-- `/live` → SectionGuard code="live"
-- `/self-development` → SectionGuard code="self_development"
-- `/tools/eisenhower` → SectionGuard code="eisenhower"
-- `/dashboard`, `/knowledge`, `/products` — тоже обернуть (но они public, guard пропустит)
-
-### 6. Инвалидация кэша
-
-При изменении секции в AdminSections уже инвалидируются `section-access`, `admin-sections`, `access-rule-sections`. После logout/login — React Query сбрасывается автоматически.
-
-## Ограничения
-
-- Первый реальный тест gating — только `eisenhower`
-- `money` и `live` запрещено закрывать до отдельного proof
-- Создание новых секций через UI не добавляется
-- Fulfillment и retroapply не затрагиваются
-- Feature flag `SECTION_GATING_ENABLED` — hardcoded `true` в коде, для kill-switch меняется на `false`
-
-## Файлы
-
-
-| Файл                                     | Действие                        |
-| ---------------------------------------- | ------------------------------- |
-| `src/pages/admin/AdminSections.tsx`      | Русификация бейджей             |
-| `src/hooks/useSectionAccess.ts`          | Новый хук — вызов RPC + кэш     |
-| `src/components/layout/SectionGuard.tsx` | Новый компонент — guard/paywall |
-| `src/components/layout/AppSidebar.tsx`   | Lock-иконка для gated секций    |
-| Страницы секций (AI, Money, Live и т.д.) | Обёртка SectionGuard            |
+1. Kill-switch: value=`true` → gating вкл; value=`{"enabled": false}` → gating выкл; value отсутствует → gating вкл (safe mode)
+2. RPC error → deny + error UI для eisenhower
+3. sidebar key `self-development` корректно маппится на `self_development`
+4. lock-иконка видна для обычного пользователя на gated секции
+5. lock-иконка не видна для admin
