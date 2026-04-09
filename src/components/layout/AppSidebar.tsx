@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { useSectionAccess } from "@/hooks/useSectionAccess";
+import { resolveSectionCode } from "@/constants/sectionCodes";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";
@@ -185,7 +186,8 @@ export function AppSidebar() {
   // Render menu item - NO dynamic modules in dropdown, just static links
   const renderMenuItem = (item: MainMenuItem) => {
     const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
-    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+    const sectionCode = resolveSectionCode(item.key);
+    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
     const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
 
     return (
@@ -239,7 +241,8 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {leaderToolsItems.map(item => {
-                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+                const sectionCode = resolveSectionCode(item.key);
+                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
                 const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
                 return (
                   <SidebarMenuItem key={item.key}>
