@@ -971,6 +971,7 @@ export default function AdminDeals() {
                             <span>{getShortDisplayName(getDealDisplayName({
                               productsV2: deal.products_v2 as any,
                               purchaseSnapshot: deal.purchase_snapshot,
+                              moduleProduct: moduleMetaMap?.get(deal.id)?.moduleProduct,
                             }), (deal.products_v2 as any)?.category)}</span>
                           </div>
                           {deal.tariffs && (
