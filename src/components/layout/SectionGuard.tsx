@@ -1,7 +1,9 @@
 import { ReactNode } from "react";
 import { useSectionAccess } from "@/hooks/useSectionAccess";
-import { Loader2, Lock, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DashboardLayout } from "./DashboardLayout";
+import { SectionLockedState } from "@/components/sections/SectionLockedState";
 
 interface SectionGuardProps {
   sectionCode: string;
@@ -14,15 +16,17 @@ interface SectionGuardProps {
  * Контракт:
  * - Kill-switch off → всегда пропускает
  * - Loading → spinner
- * - isError → deny + error UI (данных нет, невозможно определить доступ)
+ * - isError → deny + error UI внутри DashboardLayout
  * - is_public=true → всегда пропускает
  * - is_public=false + has_access=true → пропускает
- * - is_public=false + has_access=false → overlay/paywall
+ * - is_public=false + has_access=false → paywall (SectionLockedState) внутри DashboardLayout
+ * - is_active=false → inactive screen внутри DashboardLayout
  * - Admin → всегда пропускает (через RPC + early shortcut)
  * - Section not found in app_sections → пропускает (unmapped route)
  * - НЕ делает redirect
  *
- * sectionCode передаётся напрямую (уже snake_case), маппинг не нужен.
+ * Все deny/error/inactive экраны рендерятся внутри DashboardLayout,
+ * чтобы сохранить sidebar, breadcrumbs и header платформы.
  */
 export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
   const { checkAccess, isLoading, isError, gatingEnabled } = useSectionAccess();
@@ -41,21 +45,22 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
     );
   }
 
-  // RPC error → deny with error UI (невозможно определить доступ)
-  // Это ДОЛЖНО быть ДО checkAccess(), т.к. при ошибке sections=[] и checkAccess вернёт found=false → allow
+  // RPC error → deny with error UI inside DashboardLayout
   if (isError) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
-        <AlertTriangle className="h-12 w-12 text-destructive" />
-        <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Произошла ошибка при проверке прав доступа к разделу.
-          Попробуйте обновить страницу.
-        </p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
-          Обновить страницу
-        </Button>
-      </div>
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
+          <AlertTriangle className="h-12 w-12 text-destructive" />
+          <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
+          <p className="text-sm text-muted-foreground max-w-md">
+            Произошла ошибка при проверке прав доступа к разделу.
+            Попробуйте обновить страницу.
+          </p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Обновить страницу
+          </Button>
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -66,18 +71,16 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
     return <>{children}</>;
   }
 
-  // Inactive section → deny for regular users (admin bypassed above via checkAccess)
+  // Inactive section → deny inside DashboardLayout (admin bypassed via checkAccess)
   if (!access.is_active) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-          <Lock className="h-8 w-8 text-muted-foreground" />
-        </div>
-        <h2 className="text-lg font-semibold">Раздел недоступен</h2>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Раздел «{access.section_label}» временно деактивирован.
-        </p>
-      </div>
+      <DashboardLayout>
+        <SectionLockedState
+          sectionCode={sectionCode}
+          sectionLabel={access.section_label}
+          isInactive
+        />
+      </DashboardLayout>
     );
   }
 
@@ -91,24 +94,13 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
     return <>{children}</>;
   }
 
-  // Gated + no access → paywall overlay
+  // Gated + no access → paywall inside DashboardLayout
   return (
-    <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
-      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-        <Lock className="h-8 w-8 text-muted-foreground" />
-      </div>
-      <h2 className="text-lg font-semibold">Доступ ограничен</h2>
-      <p className="text-sm text-muted-foreground max-w-md">
-        Раздел «{access.section_label}» доступен только по подписке.
-      </p>
-      {(access.granted_via_tariff_name || access.granted_via_product_name) && (
-        <p className="text-xs text-muted-foreground">
-          Доступ предоставляется через:{" "}
-          <span className="font-medium text-foreground">
-            {access.granted_via_tariff_name || access.granted_via_product_name}
-          </span>
-        </p>
-      )}
-    </div>
+    <DashboardLayout>
+      <SectionLockedState
+        sectionCode={sectionCode}
+        sectionLabel={access.section_label}
+      />
+    </DashboardLayout>
   );
 }
