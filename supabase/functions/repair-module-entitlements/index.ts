@@ -72,8 +72,20 @@ Deno.serve(async (req) => {
       query = query.eq('user_id', filterUserId);
     }
 
-    const { data: orders, error: ordersErr } = await query.limit(2000);
+    const QUERY_LIMIT = 2000;
+    const { data: orders, error: ordersErr } = await query.limit(QUERY_LIMIT);
     if (ordersErr) throw new Error(`Failed to fetch orders: ${ordersErr.message}`);
+
+    // STOP-guard: hard-fail if limit reached (possible silent truncation)
+    if ((orders || []).length >= QUERY_LIMIT) {
+      return new Response(JSON.stringify({
+        error: `HARD FAIL: query returned ${QUERY_LIMIT} rows — possible truncation. Implement pagination before proceeding.`,
+        rows_returned: (orders || []).length,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 422,
+      });
+    }
 
     // Filter to module_only_standalone with valid module_list_mapped
     const moduleOrders = (orders || []).filter((o: any) => {
