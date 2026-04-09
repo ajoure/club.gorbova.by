@@ -104,21 +104,30 @@ export default function ContactDealsDialog({
       const productsMap = new Map((productsResult.data || []).map(p => [p.id, { name: p.name, category: p.category, public_id: p.public_id }]));
       const tariffsMap = new Map((tariffsResult.data || []).map(t => [t.id, t.name]));
 
+      // Resolve module display meta for module_only_standalone deals
+      const moduleMeta = await resolveModuleDisplayMetaBatch(
+        data.map(d => ({ id: d.id, purchase_snapshot: d.purchase_snapshot as unknown }))
+      );
+
       return data.map(deal => {
         const snapshot = deal.purchase_snapshot as any;
         const productInfo = productsMap.get(deal.product_id);
         const fkName = productInfo?.name || null;
         const category = productInfo?.category || null;
+        const meta = moduleMeta.get(deal.id);
         const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
-        const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
+        const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, moduleProduct: meta?.moduleProduct, fallback: "" });
+        const resolvedPublicId = (meta?.resolutionType === "direct_module" && meta.resolvedPublicId)
+          ? meta.resolvedPublicId
+          : productInfo?.public_id || null;
         return {
           ...deal,
           product_name: getShortDisplayName(rawName, category),
           product_category: category,
-          public_id: productInfo?.public_id || null,
+          public_id: resolvedPublicId,
           tariff_name: tariffsMap.get(deal.tariff_id) || null,
           _is_module_standalone: isModuleStandalone,
-          _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name,
+          _missing_display_name: isModuleStandalone && !snapshot?.display_purchase_name && !meta?.moduleProduct,
         };
       });
     },

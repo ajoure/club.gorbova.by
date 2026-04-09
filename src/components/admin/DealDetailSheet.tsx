@@ -548,11 +548,17 @@ export function DealDetailSheet({ deal, profile, open, onOpenChange, onDeleted }
                           productsV2: deal?.products_v2 as any,
                           productName: product?.name,
                           purchaseSnapshot: deal?.purchase_snapshot,
+                          moduleProduct: moduleMetaMap?.get(deal?.id)?.moduleProduct,
                         }), (deal?.products_v2 as any)?.category)}</span>
                       </div>
-                      {deal?.product_id && (
-                        <CopyableIdChip value={(deal?.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" />
-                      )}
+                      {deal?.product_id && (() => {
+                        const meta = moduleMetaMap?.get(deal.id);
+                        const displayPublicId = (meta?.resolutionType === "direct_module" && meta.resolvedPublicId)
+                          ? meta.resolvedPublicId
+                          : (deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8);
+                        const copyValue = meta?.resolvedModuleProductId || deal.product_id;
+                        return <CopyableIdChip value={displayPublicId} copyValue={copyValue} successMessage="Product ID скопирован" />;
+                      })()}
                     {(() => {
                       const snapshot = deal?.purchase_snapshot as Record<string, any> | null;
                       const meta = deal?.meta as Record<string, any> | null;
