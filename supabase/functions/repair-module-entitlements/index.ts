@@ -72,8 +72,20 @@ Deno.serve(async (req) => {
       query = query.eq('user_id', filterUserId);
     }
 
-    const { data: orders, error: ordersErr } = await query.limit(2000);
+    const QUERY_LIMIT = 2000;
+    const { data: orders, error: ordersErr } = await query.limit(QUERY_LIMIT);
     if (ordersErr) throw new Error(`Failed to fetch orders: ${ordersErr.message}`);
+
+    // STOP-guard: hard-fail if limit reached (possible silent truncation)
+    if ((orders || []).length >= QUERY_LIMIT) {
+      return new Response(JSON.stringify({
+        error: `HARD FAIL: query returned ${QUERY_LIMIT} rows — possible truncation. Implement pagination before proceeding.`,
+        rows_returned: (orders || []).length,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 422,
+      });
+    }
 
     // Filter to module_only_standalone with valid module_list_mapped
     const moduleOrders = (orders || []).filter((o: any) => {
@@ -219,7 +231,7 @@ Deno.serve(async (req) => {
               product_id: group.module_product_id,
               product_code: prodInfo.code,
               status: 'active',
-              expires_at: null, // historical standalone = no expiry
+              expires_at: null, // Policy: historical standalone modules have no tariff/access_days — NULL confirmed by data audit (all 127 orders have tariff_id=NULL)
               order_id: item.first_order_id,
               meta,
             })
@@ -304,6 +316,29 @@ Deno.serve(async (req) => {
       results.push(item);
     }
 
+    // ── Product-level summary (human-readable) ──
+    const productSummary = new Map<string, {
+      module_product_id: string;
+      product_code: string | null;
+      product_name: string | null;
+      create: number; reactivate: number; skip_active: number;
+      manual_review: number; skip_multi_module: number;
+    }>();
+
+    for (const r of results) {
+      let ps = productSummary.get(r.module_product_id);
+      if (!ps) {
+        ps = {
+          module_product_id: r.module_product_id,
+          product_code: r.product_code,
+          product_name: r.product_name,
+          create: 0, reactivate: 0, skip_active: 0, manual_review: 0, skip_multi_module: 0,
+        };
+        productSummary.set(r.module_product_id, ps);
+      }
+      ps[r.action]++;
+    }
+
     // ── Summary ──
     const summary = {
       mode,
@@ -318,6 +353,8 @@ Deno.serve(async (req) => {
         manual_review: results.filter(r => r.action === 'manual_review').length,
         skip_multi_module: results.filter(r => r.action === 'skip_multi_module').length,
       },
+      expires_at_policy: 'NULL — historical standalone modules have no tariff (tariff_id=NULL for all 127 orders). No canonical source to derive expiry. Requires explicit business decision before cohort execute.',
+      product_summary: [...productSummary.values()],
       executed_changes: mode === 'execute' ? executeCount : 'N/A (dry_run)',
       items: results,
     };
