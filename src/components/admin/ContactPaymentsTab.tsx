@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { resolveModuleDisplayMetaBatch } from "@/lib/deals/resolveModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";

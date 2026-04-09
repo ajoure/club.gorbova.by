@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { resolveModuleDisplayMetaBatch } from "@/lib/deals/resolveModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
