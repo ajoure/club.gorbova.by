@@ -434,6 +434,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     enabled: !!contact?.id,
   });
 
+  const { data: moduleMetaMap } = useModuleDisplayMeta(deals);
+
   const selectedDeal = useMemo(
     () => deals?.find(d => d.id === selectedDealId) ?? null,
     [deals, selectedDealId]
