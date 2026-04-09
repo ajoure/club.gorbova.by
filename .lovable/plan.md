@@ -1,95 +1,77 @@
-# да, согласен, с учетом правок:
+да, согласен, с учетом правок:
 
 &nbsp;
 
-1. **Убрать режим partial только после фактического полного runtime**
-  Недостаточно просто убрать плашку в UI. Нужно:
+1. В план нужно явно добавить **единый canonical helper** для названия сделки и запрет на локальные расхождения.
+  Не перечислять много экранов как отдельные независимые фиксы, а зафиксировать:
   &nbsp;
-  - завершить SectionLockedState;
-  - вывести список всех продуктов/тарифов, открывающих секцию;
-  - подключить это к реальным section_access rules;
-  - после этого перевести getRuntimeSupport('section_access') из "partial" в "full";
-  - убрать warning-плашку из формы создания правила.
+  - один источник правды для display name historical module deals;
+  - все экраны только переиспользуют этот helper;
+  - DoD: один и тот же order на всех экранах показывает одинаковое имя.
+    Иначе снова будет рассинхрон между карточкой контакта, списком сделок и диалогами.
   &nbsp;
-2. **Не делать отдельный новый RPC, если можно расширить текущий read-model**
-  Лучше не плодить два почти одинаковых источника (get_user_section_access и get_section_access_catalog), а расширить текущий read-side так, чтобы UI получал:
+2. В блоке **A. Исправить отображение** нужно жёстко уточнить приоритет имени:
   &nbsp;
-  - has_access
-  - is_public
-  - is_active
-  - section_label
-  - short_description
-  - features_json
-  - массив available_via_rules[] с product/tariff данными
-    Это снизит риск рассинхрона между guard, sidebar и locked-screen.
+  - для historical_purchase_type = module_only_standalone и валидного purchase_snapshot.display_purchase_name использовать именно его;
+  - только если snapshot пустой/невалидный — fallback на обычный product display name;
+  - не подменять имя по module_list_mapped, если snapshot display name отсутствует.
+    То есть UUID из snapshot нужен для прав, а не для “угадывания” текста.
   &nbsp;
-3. **Locked-screen должен показывать все правила доступа, не только первое**
-  Для секции нужно вернуть **все** активные section_access rules:
+3. В блоке **B. Repair-path** нужно зафиксировать, что repair создаёт entitlement **идемпотентно**:
   &nbsp;
-  - product-level
-  - tariff-level
-  - без потери дублей/вариантов
-    UI должен группировать:
-  - “Доступно по тарифам”
-  - “Доступно по продуктам”
+  - если активный entitlement на модуль уже есть — skip;
+  - если есть expired entitlement на тот же модуль — reactivate/update по каноническому path;
+  - если нет записи — create;
+  - обязательно с audit trace: source_type=historical_module_repair, source_order_id, source_order_number, module_product_id, repair_batch_id.
+    Без этого потом невозможно будет доказать происхождение восстановленного доступа.
   &nbsp;
-4. **SectionGuard рендерить внутри shell платформы**
-  Исправление нужно делать именно архитектурно:
+4. Нужно отдельно добавить **proof на cohort-level dedup**.
+  У Людмилы 3 сделки, но фактически это может быть один и тот же модуль.
+  Значит, в dry-run и execute нужно считать:
   &nbsp;
-  - deny/error/inactive state должны рендериться внутри DashboardLayout;
-  - sidebar, breadcrumbs, header сохраняются;
-  - никаких голых пустых экранов без оболочки.
+  - orders_count
+  - distinct_module_product_ids
+  - existing_entitlements_count
+    Repair должен создавать entitlement по **distinct module_product_id**, а не по числу заказов.
+    Иначе можно случайно создать дубли или сделать лишние апдейты.
   &nbsp;
-5. **Добавить маркетинговые данные секции в app_sections**
-  Поддерживаю add-only расширение таблицы:
+5. В блоке runtime visibility нужно уточнить минимальный scope текущего спринта:
   &nbsp;
-  - short_description text
-  - features_json jsonb
-  - cta_label text
-  - опционально purchase_route text
-    Это лучше, чем хардкодить описание секции в компоненте.
+  - для этого спринта цель — доказать standalone module entitlement → отдельная видимость модуля;
+  - inherited visibility от полного курса **не включать** в реализацию сейчас;
+  - если после восстановления entitlement модуль не появляется, чинить именно runtime чтение модульного entitlement, а не вводить новую модель inherited access.
+    Это защитит от расползания scope.
   &nbsp;
-6. **Ссылки CTA должны быть детерминированными**
-  В plan нужно явно зафиксировать порядок:
+6. В backend-части нужно явно запретить “ручной SQL bypass” и закрепить **конкретный write path**:
   &nbsp;
-  - если у тарифа есть публичная страница → ссылка на тариф;
-  - иначе если у продукта есть публичная страница → ссылка на продукт;
-  - иначе fallback на /products.
-    Нельзя оставлять “как-нибудь потом подберём”.
+  - либо существующий repair path / edge function / RPC;
+  - либо новый PATCH, но тоже через audit + idempotency;
+  - plain insert/update в таблицу entitlements без канонического следа запрещён.
+    Сейчас это в рисках сказано общо, но надо сделать отдельным hard rule.
   &nbsp;
-7. **Для inactive и gated сделать два разных сценария**
+7. В DoD добавь обязательный proof по Людмиле в трёх плоскостях:
   &nbsp;
-  - is_active=false → “Раздел временно недоступен”
-  - is_public=false && !has_access → paywall/locked-state
-    Тексты и CTA должны различаться.
+  - **данные:** entitlement на 064dd768-de8b-40db-89bc-f8d4a7e442ba создан/реактивирован;
+  - **админка:** исторические сделки показываются как “ЦБ 2.0: Производство”;
+  - **кабинет:** одновременно видны курс и модуль.
+    И отдельно:
+  - repeat repair = 0 изменений;
+  - audit log / meta proof присутствует;
+  - для “Розницы” в финальном отчёте явно статус: доказано / не доказано.
   &nbsp;
-8. **Убрать warning “частичная поддержка” в админке правил**
-  После полного внедрения:
+8. Добавь отдельный STOP-guard:
   &nbsp;
-  - удалить warning-блок под селектором section_access;
-  - заменить его на обычный нейтральный helper-text;
-  - в карточке rules section_access должен отображаться как обычный fully-supported тип.
+  - если module_list_mapped содержит несколько UUID или конфликтует со snapshot display name, не выполнять auto-repair, а помечать кейс как manual review.
+    Это редкий, но опасный сценарий для исторических данных.
   &nbsp;
-9. **DoD расширить**
-  Добавить обязательные proof:
+9. В разделе “Изменяемые компоненты” лучше разделить:
   &nbsp;
-  - /ai deny внутри shell;
-  - sidebar остаётся;
-  - breadcrumbs остаются;
-  - locked-screen показывает описание;
-  - locked-screen показывает все доступные тарифы/продукты;
-  - CTA реально ведут на покупку;
-  - warning “частичная поддержка” исчез из формы;
-  - getRuntimeSupport('section_access') === "full".
+  - **Phase 1:** helper display name + все UI consumers;
+  - **Phase 2:** repair entitlements;
+  - **Phase 3:** runtime visibility proof.
+    Так будет легче принять поэтапно и не смешивать UI-fix с восстановлением прав.
   &nbsp;
-10. **Отдельный STOP-guard**
-  Не закрывать патч, пока не выполнены одновременно:
-  &nbsp;
-  - UI deny внутри layout;
-  - read-model возвращает все access rules для секции;
-  - warning про partial support убран;
-  - хотя бы по ai есть живой browser-proof для non-admin.
-  &nbsp;
+10. В план стоит добавить явную формулировку по product_id / product_code / display name:
 
 &nbsp;
 
@@ -97,197 +79,156 @@
 
 &nbsp;
 
-### **Копируемый блок для Lovable**
+- product_id — UUID сущности продукта;
+- product_code — стабильный код продукта;
+- display_purchase_name — snapshot исторического отображаемого имени сделки.
+  И использовать эти термины строго раздельно по всему отчёту и коду.
 
 &nbsp;
 
-```
-Дополни план правками:
+&nbsp;
 
-1. Не просто убрать warning “частичная поддержка”, а сначала завершить полный runtime для section_access:
-- locked-screen внутри shell платформы
-- список всех продуктов/тарифов, открывающих секцию
-- CTA на покупку
-- только после этого перевести getRuntimeSupport('section_access') в "full" и убрать warning из UI
+В остальном логика плана правильная: сначала чинится truth в UI, потом точечный repair по доказанным UUID, без трогания cb20, без угадываний по тексту и без массовой миграции старых заказов.
 
-2. Не плодить второй почти дублирующий RPC без необходимости.
-Предпочтительно расширить существующий read-model section access так, чтобы он возвращал:
-- has_access
-- is_public
-- is_active
-- section_label
-- short_description
-- features_json
-- available_via_rules[] со всеми product/tariff access rules
+&nbsp;
 
-3. Locked-screen должен показывать не одно лучшее правило, а все активные правила доступа к секции.
-Сгруппировать в UI:
-- доступно по тарифам
-- доступно по продуктам
-
-4. Исправление SectionGuard сделать архитектурно:
-deny/error/inactive state рендерятся внутри DashboardLayout, а не как голый экран.
-Sidebar, breadcrumbs, page shell должны сохраняться.
-
-5. Добавить в app_sections add-only поля:
-- short_description text
-- features_json jsonb default '[]'
-- cta_label text
-- optional purchase_route text
-
-6. Явно зафиксировать порядок CTA:
-- сначала ссылка на тариф, если есть
-- затем ссылка на продукт, если есть
-- fallback на /products
-
-7. Разделить сценарии:
-- is_active=false → “Раздел временно недоступен”
-- is_public=false && !has_access → paywall/locked-state
-
-8. После полного внедрения убрать warning-блок “Частичная поддержка...” из формы section_access и заменить его обычным helper-text.
-section_access должен отображаться как fully-supported тип.
-
-9. Расширить DoD:
-- /ai deny внутри layout
-- sidebar и breadcrumbs видны
-- есть описание секции
-- есть список всех продуктов/тарифов доступа
-- есть CTA на покупку
-- getRuntimeSupport('section_access') = "full"
-- warning “частичная поддержка” исчез из UI
-- browser-proof для non-admin
-
-10. STOP-guard:
-патч не считается завершённым, пока одновременно не выполнены:
-- deny inside shell
-- полный access catalog для секции
-- warning про partial support убран
-- живой proof на /ai
-
-План: Section Locked Experience V2
-```
+План:
 
 ## Проблема
 
-SectionGuard рендерит deny-экран **вместо** страницы. Но каждая страница сама оборачивается в `<DashboardLayout>` (sidebar, breadcrumbs, header). Когда SectionGuard блокирует — `DashboardLayout` не вызывается, пользователь видит голый экран без shell платформы.
+Нужно исправить два связанных дефекта:
 
-Дополнительно: deny-экран показывает только общий текст «доступен по подписке», без описания раздела, без списка продуктов/тарифов, без CTA на покупку.
+1. исторические модульные покупки отображаются как покупка родительского курса;
+2. отдельный модуль не появляется как самостоятельный доступ, даже когда правило доступа на модуль уже настроено.
 
-## Архитектурное решение
+## Диагностика
 
-SectionGuard при deny должен рендерить `<DashboardLayout>` + новый компонент `<SectionLockedState>` внутри, вместо голого div.
+- Предыдущий вывод был некорректен: он опирался не на полную хронологию `orders_v2 + purchase_snapshot`, а на неполную текущую проекцию доступов.
+- По Людмиле Демко в базе подтверждено:
+  - есть активный BUSINESS до 05.05;
+  - есть активный entitlement на `cb20` до 05.05;
+  - есть активный entitlement на «Деньги BY» до 05.05;
+  - отдельного entitlement на модуль `Производство` (`product_id = 064dd768-de8b-40db-89bc-f8d4a7e442ba`) сейчас нет.
+- В `orders_v2` у Людмилы есть 3 оплаченные исторические сделки типа `module_only_standalone`, и в `purchase_snapshot` уже лежит конкретный модуль:
+  - `display_purchase_name = "ЦБ 2.0: Производство"`
+  - `module_list_mapped = [064dd768-de8b-40db-89bc-f8d4a7e442ba]`
+- Значит, факт покупки модуля «Производство» подтверждён.
+- Почему в UI показывается «Ценный бухгалтер | 1 ступень 2.0»:
+  - helper `getDealDisplayName()` сейчас берёт имя по приоритету `products_v2.name` раньше, чем `purchase_snapshot.display_purchase_name`;
+  - у исторических модульных сделок `order.product_id` всё ещё указывает на родительский продукт `cb20`, поэтому UI рисует курс, а не модуль.
+- Почему модуль не появляется как отдельная сущность в кабинете:
+  - `useSidebarModules()` для product-linked модулей проверяет только точный entitlement на `effectiveProductId`;
+  - rule на модуль `Производство` есть и активен, но без entitlement именно на модульный `product_id` root-модуль не становится видимым как отдельный продукт;
+  - entitlement на `cb20` c `full_tariff_scope` даёт доступ к содержимому курса, но не материализует отдельный модульный продукт.
 
-```text
-Сейчас (deny):
-  Route → ProtectedRoute → SectionGuard → <div>Доступ ограничен</div>
-  (DashboardLayout не вызывается, sidebar/breadcrumbs пропадают)
+## Предлагаемое решение
 
-После (deny):
-  Route → ProtectedRoute → SectionGuard → <DashboardLayout><SectionLockedState /></DashboardLayout>
-  (sidebar, breadcrumbs, header сохраняются)
-```
+### A. Исправить отображение исторических модульных сделок
 
-## Что будет сделано
+Для сделок `module_only_standalone` использовать модульное отображаемое имя из snapshot как приоритетное, а не имя родительского FK-продукта.
 
-### 1. Миграция: добавить поля описания в `app_sections`
+### B. Восстановить точные модульные права
 
-Add-only, 3 новых колонки:
+Сделать контролируемый repair-path, который:
 
-- `short_description text` — краткое описание раздела
-- `features_json jsonb DEFAULT '[]'` — массив возможностей раздела
-- `cta_label text` — текст CTA-кнопки (опционально)
+- берёт только подтверждённые исторические сделки с `module_list_mapped` (UUID);
+- создаёт/восстанавливает entitlement на конкретный модульный `product_id`;
+- не трогает текущий entitlement на курс `cb20`;
+- оставляет курс и модуль существовать одновременно.
 
-Заполнить данные для секции `ai` (единственная `is_public=false`):
+### C. Проверить и, если требуется, расширить runtime-видимость модулей
 
-- short_description: «AI-помощник для бизнеса и бухгалтерии»
-- features_json: `["Общение с AI-помощником", "Помощь по бухгалтерским и юридическим вопросам", "Подготовка и анализ документов", "Ускорение рутинных задач"]`
+Разделить два сценария:
 
-### 2. Новый RPC: `get_section_access_catalog`
+1. отдельная модульная покупка → отдельный модульный entitlement → отдельная карточка/видимость модуля;
+2. доступ к модулю как части полного курса → отдельная бизнес-логика inherited visibility, если действительно нужно показывать всем покупателям курса ещё и модульные карточки, а не только курс.
 
-Возвращает ВСЕ правила доступа для конкретной секции (не одно лучшее, как сейчас):
+Для Людмилы это не блокер: её кейс уже решается пунктом B, потому что у неё есть доказанный standalone purchase на «Производство».
 
-- section_code, section_label, short_description, features_json
-- Массив правил: product_id, product_name, tariff_id, tariff_name
+## Изменяемые компоненты
 
-Это read-side каталог для locked-screen. Отдельный от `get_user_section_access` (который отвечает за факт доступа).
+### UI
 
-### 3. Новый хук: `useSectionCatalog(sectionCode)`
+- `src/lib/deals/getDealDisplayName.ts`
+- `src/pages/admin/AdminDeals.tsx`
+- `src/components/admin/ContactDetailSheet.tsx`
+- `src/components/admin/DealDetailSheet.tsx`
+- `src/components/admin/ContactPaymentsTab.tsx`
+- `src/components/admin/bepaid/ContactDealsDialog.tsx`
+- `src/components/admin/payments/LinkDealDialog.tsx`
+- `src/components/admin/payments/LinkSubscriptionDealDialog.tsx`
 
-- Вызывает `get_section_access_catalog` 
-- Возвращает описание секции + список продуктов/тарифов для покупки
-- staleTime: 5 минут (редко меняется)
+### Runtime visibility
 
-### 4. Новый компонент: `SectionLockedState`
+- `src/hooks/useSidebarModules.ts`
+- при необходимости: связанный runtime-резолвер модульной видимости, но без создания второго source of truth
 
-```text
-Props:
-  - sectionCode: string
-  - sectionLabel: string
-  - isInactive?: boolean  (для is_active=false — другой текст)
+### Backend / данные
 
-Внутри:
-  - Иконка замка
-  - Название раздела (h1)
-  - Описание раздела (из catalog)
-  - Список возможностей (features) — маркированный список
-  - Блок «Доступно по продуктам/тарифам» — карточки/бейджи
-  - CTA-кнопки: «Перейти к покупке» → /products (fallback)
-  - Для inactive: упрощённый текст «Раздел временно недоступен»
-```
+- `orders_v2`
+- `entitlements`
+- `access_rules`
+- `training_modules`
+- `products_v2`
+- существующий канонический write/repair path для выдачи прав
 
-### 5. Изменение `SectionGuard`
+## Что не будет изменено
 
-При deny (gated + no access) и при inactive:
+- текущий доступ Людмилы к BUSINESS, `cb20`, «Деньги BY»
+- существующие `training_content` rules для курса и модуля
+- исторические сделки как финансовый факт оплаты
+- `product_id` в старых сделках не будет “переименовываться текстом” или угадываться по названию
 
-- Вместо голого `<div>` → `<DashboardLayout><SectionLockedState ... /></DashboardLayout>`
-- При isError → тоже оборачивать в `<DashboardLayout>`
+## Dry-run
 
-Порядок проверок не меняется. Admin bypass не меняется.
+1. Построить dry-run выборку:
+  - все `orders_v2` с `historical_purchase_type = module_only_standalone`
+  - только те, где есть UUID в `module_list_mapped`
+  - сравнить с существующими entitlements на эти module `product_id`
+2. Отдельно проверить Людмилу:
+  - 3 сделки → 1 модуль `Производство` → 0 модульных entitlements
+3. Проверить UI-preview:
+  - какие экраны сейчас берут FK-имя вместо snapshot display name
 
-### 6. CTA-ссылки
+## Execute
 
-- Если у продукта есть страница `/pricing/:slug` — ссылка на неё
-- Если у тарифа есть `public_id` → `/pricing/tariff/:publicId`
-- Fallback: `/products`
+1. Исправить приоритет отображаемого названия для historical module deals.
+2. Добавить точечный repair PATCH для восстановления модульных entitlements по UUID из snapshot.
+3. Прогнать repair сначала на Людмиле как proof-case.
+4. Затем расширить на остальную когорту confirmed module_only_standalone.
+5. Отдельно решить, нужен ли глобальный inherited visibility для всех покупателей полного курса.
 
-Для определения ссылки: RPC возвращает product_id, можно проверить наличие slug/pricing. На первом этапе — безопасный fallback на `/products`.
+## STOP-guards
 
-## Файлы
-
-
-| Файл                                             | Действие                                   |
-| ------------------------------------------------ | ------------------------------------------ |
-| Миграция                                         | ADD колонки в app_sections + данные        |
-| Миграция                                         | CREATE FUNCTION get_section_access_catalog |
-| `src/hooks/useSectionCatalog.ts`                 | Новый хук                                  |
-| `src/components/sections/SectionLockedState.tsx` | Новый компонент                            |
-| `src/components/layout/SectionGuard.tsx`         | Обернуть deny в DashboardLayout            |
-
-
-## Что НЕ меняется
-
-- `useSectionAccess` — без изменений
-- `get_user_section_access` RPC — без изменений
-- AppSidebar — без изменений
-- Admin bypass — без изменений
-- Money.tsx / LiveEvents.tsx внутренний gating — без изменений
-- Роуты в App.tsx — без изменений
-- money и live остаются `is_public=true`
-
-## Ограничения
-
-- money и live: перевод в `is_public=false` запрещён без отдельного proof
-- SectionGuard — внешний фильтр, не заменяет внутренние проверки страниц
-- На первом этапе CTA = fallback на `/products`, точные product landing — follow-up
+- Не создавать модульный entitlement по текстовому совпадению названия; только по UUID из `module_list_mapped`.
+- Не создавать entitlement на «Розницу» для Людмилы без подтверждённого UUID/заказа.
+- Не перезаписывать и не удалять entitlement на `cb20`.
+- Не менять `orders_v2.product_id` у исторических сделок массово.
+- Не закрывать задачу, пока у Людмилы не появится одновременно:
+  - курс `cb20`
+  - отдельный модуль `Производство`
+  - корректное название модульных сделок в админке
 
 ## DoD
 
-1. `/ai` при deny → locked-screen внутри DashboardLayout (sidebar виден, breadcrumbs видны)
-2. Locked-screen показывает название и описание раздела
-3. Locked-screen показывает список возможностей (features)
-4. Locked-screen показывает продукты/тарифы, через которые открывается доступ
-5. Locked-screen содержит CTA-кнопку перехода на покупку
-6. `is_active=false` → упрощённый locked-screen внутри layout
-7. isError → error UI внутри layout
-8. Admin bypass работает — locked-screen не показывается
-9. Existing money/live/knowledge внутренний gating не сломан
+- В карточке контакта и списках сделок исторические покупки Людмилы отображаются как модуль «Производство», а не как общий `cb20`.
+- У Людмилы есть активный entitlement на `064dd768-de8b-40db-89bc-f8d4a7e442ba` с trace до исторической сделки/repair.
+- Текущий доступ к BUSINESS, `cb20` и «Деньги BY» не ломается.
+- В кабинете курс и модуль отображаются одновременно, а не вместо друг друга.
+- Отчёт явно разделяет:
+  - `product_id` = UUID
+  - `product_code` = `cb20` / `cb_module_production`
+  - display name = человекочитаемое имя
+- Для `Производства` доказано: правило доступа есть, entitlement восстановлен, UI видимость работает.
+- Для `Розницы` отдельно зафиксировано: либо есть доказательство покупки и тогда выполняется такой же repair, либо доказательства нет и entitlement не создаётся.
+
+## Риски и зависимости
+
+- Главный риск — смешать “доступ к содержимому курса” и “видимость отдельного модульного продукта”. Это надо чинить раздельно.
+- Если требуется показывать модульные карточки вообще всем покупателям полного курса, это уже отдельное расширение runtime-модели, а не только repair исторических standalone-модулей.
+- Repair должен идти через контролируемый канонический path с audit, а не ручной разовой вставкой без следа.
+
+## Требуется дополнительная информация
+
+- Для Людмилы по «Производству» дополнительная информация не нужна: доказательство уже есть.
+- Для «Розницы» нужна только верификация источника покупки, если вы хотите восстанавливать и её.
