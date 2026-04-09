@@ -187,8 +187,14 @@ export function AppSidebar() {
   const renderMenuItem = (item: MainMenuItem) => {
     const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
     const sectionCode = resolveSectionCode(item.key);
-    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
-    const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
+    const sectionAccess = checkAccess(sectionCode);
+
+    // Hide inactive sections for non-admin users
+    if (!isAdminUser && sectionAccess.found && !sectionAccess.is_active) {
+      return null;
+    }
+
+    const showLock = gatingEnabled && !isAdminUser && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
 
     return (
       <SidebarMenuItem key={item.key}>
@@ -242,8 +248,14 @@ export function AppSidebar() {
             <SidebarMenu>
               {leaderToolsItems.map(item => {
                 const sectionCode = resolveSectionCode(item.key);
-                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
-                const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
+                const sectionAccess = checkAccess(sectionCode);
+
+                // Hide inactive sections for non-admin users
+                if (!isAdminUser && sectionAccess.found && !sectionAccess.is_active) {
+                  return null;
+                }
+
+                const showLock = gatingEnabled && !isAdminUser && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
                 return (
                   <SidebarMenuItem key={item.key}>
                     <SidebarMenuButton asChild isActive={location.pathname === item.url} tooltip={collapsed ? item.title : undefined}>

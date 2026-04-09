@@ -12985,6 +12985,7 @@ export type Database = {
           granted_via_tariff_id: string
           granted_via_tariff_name: string
           has_access: boolean
+          is_active: boolean
           is_public: boolean
           section_code: string
           section_id: string

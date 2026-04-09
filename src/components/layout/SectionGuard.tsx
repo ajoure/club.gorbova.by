@@ -66,6 +66,21 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
     return <>{children}</>;
   }
 
+  // Inactive section → deny for regular users (admin bypassed above via checkAccess)
+  if (!access.is_active) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
+        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+          <Lock className="h-8 w-8 text-muted-foreground" />
+        </div>
+        <h2 className="text-lg font-semibold">Раздел недоступен</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Раздел «{access.section_label}» временно деактивирован.
+        </p>
+      </div>
+    );
+  }
+
   // Public section → always allow
   if (access.is_public) {
     return <>{children}</>;
