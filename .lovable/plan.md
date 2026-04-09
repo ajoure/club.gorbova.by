@@ -1,234 +1,173 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В план нужно явно добавить **единый canonical helper** для названия сделки и запрет на локальные расхождения.
-  Не перечислять много экранов как отдельные независимые фиксы, а зафиксировать:
+1. **expires_at: NULL для всех исторических модульных покупок — не утверждать без proof.**
+  Это самое рискованное место плана. Историческая модульная покупка может быть бессрочной, но это нужно подтвердить по источнику/паттерну этих заказов. Для Людмилы сейчас уже существует entitlement до 2026-08-30, и новый канонический repair не должен молча превратить такую запись в бессрочную.
+  Нужно правило:
   &nbsp;
-  - один источник правды для display name historical module deals;
-  - все экраны только переиспользуют этот helper;
-  - DoD: один и тот же order на всех экранах показывает одинаковое имя.
-    Иначе снова будет рассинхрон между карточкой контакта, списком сделок и диалогами.
+  - если entitlement уже есть → **не менять окно доступа** в repeat-proof;
+  - для новых create сначала зафиксировать policy: NULL или derived expiry;
+  - если policy не доказана, для cohort execute не идти.
   &nbsp;
-2. В блоке **A. Исправить отображение** нужно жёстко уточнить приоритет имени:
+2. **Нужен явный upsert-policy для случая existing inactive.**
+  В dry-run сейчас reactivate = 0, но в функции это всё равно должно быть формализовано:
   &nbsp;
-  - для historical_purchase_type = module_only_standalone и валидного purchase_snapshot.display_purchase_name использовать именно его;
-  - только если snapshot пустой/невалидный — fallback на обычный product display name;
-  - не подменять имя по module_list_mapped, если snapshot display name отсутствует.
-    То есть UUID из snapshot нужен для прав, а не для “угадывания” текста.
+  - active → skip_active
+  - expired/inactive → reactivate только с merge meta
+  - revoked/cancelled/manual_blocked → manual_review, не auto-reactivate
+    Иначе позже функция начнёт “чинить” опасные статусы.
   &nbsp;
-3. В блоке **B. Repair-path** нужно зафиксировать, что repair создаёт entitlement **идемпотентно**:
+3. **Для Людмилы proof должен быть не только skip_active, но и source trace preserved.**
+  Так как запись уже создана неканонически, следующий шаг должен доказать:
   &nbsp;
-  - если активный entitlement на модуль уже есть — skip;
-  - если есть expired entitlement на тот же модуль — reactivate/update по каноническому path;
-  - если нет записи — create;
-  - обязательно с audit trace: source_type=historical_module_repair, source_order_id, source_order_number, module_product_id, repair_batch_id.
-    Без этого потом невозможно будет доказать происхождение восстановленного доступа.
+  - repeat не создаёт дубль;
+  - repeat не переписывает существующий meta.source_order_id/source_order_number;
+  - repeat не меняет product_code, status, expires_at без необходимости.
   &nbsp;
-4. Нужно отдельно добавить **proof на cohort-level dedup**.
-  У Людмилы 3 сделки, но фактически это может быть один и тот же модуль.
-  Значит, в dry-run и execute нужно считать:
+4. **Нужен отдельный STOP-guard по дублям entitlements.**
+  Перед execute функция должна проверять не только наличие записи, но и конфликт:
   &nbsp;
+  - если на (user_id, module_product_id) уже **>1 entitlement** → manual_review;
+  - никакого auto-merge/auto-delete.
+    Это особенно важно для старых исторических данных.
+  &nbsp;
+5. **Phase 3 лучше формализовать как обязательный UI-proof, не “или data chain”.**
+  Для этой задачи ключевой результат именно пользовательский: модуль должен появиться в кабинете вместе с курсом.
+  Поэтому DoD лучше переформулировать так:
+  &nbsp;
+  - для Людмилы нужен **browser-proof**: одновременно виден cb20 и отдельный Производство;
+  - data chain допустим только как промежуточный тех-proof, но не как финальное закрытие задачи.
+  &nbsp;
+6. **Нужно добавить в dry-run явный отчёт по module product names/codes.**
+  Сейчас в плане есть UUID, но для проверки подрядчиком и человеком нужен нормальный вывод:
+  &nbsp;
+  - module_product_id
+  - product_code
+  - product_name
   - orders_count
-  - distinct_module_product_ids
-  - existing_entitlements_count
-    Repair должен создавать entitlement по **distinct module_product_id**, а не по числу заказов.
-    Иначе можно случайно создать дубли или сделать лишние апдейты.
+  - first_order_number
+  - action
+    Иначе на cohort execute легко потерять контроль над тем, какой именно модуль чинится.
   &nbsp;
-5. В блоке runtime visibility нужно уточнить минимальный scope текущего спринта:
+7. **7 multi-module orders нужно явно исключить из общего batch execute.**
+  Не просто “вне scope”, а именно:
   &nbsp;
-  - для этого спринта цель — доказать standalone module entitlement → отдельная видимость модуля;
-  - inherited visibility от полного курса **не включать** в реализацию сейчас;
-  - если после восстановления entitlement модуль не появляется, чинить именно runtime чтение модульного entitlement, а не вводить новую модель inherited access.
-    Это защитит от расползания scope.
+  - cohort execute работает только по module_list_mapped.length = 1;
+  - multi-module cohort должна быть отдельным follow-up patch.
+    Это надо прямо зафиксировать в execute-scope.
   &nbsp;
-6. В backend-части нужно явно запретить “ручной SQL bypass” и закрепить **конкретный write path**:
+8. **По “Рознице” нужен финальный статус в отчёте, не только в плане.**
+  Формулировка должна быть жёсткой:
   &nbsp;
-  - либо существующий repair path / edge function / RPC;
-  - либо новый PATCH, но тоже через audit + idempotency;
-  - plain insert/update в таблицу entitlements без канонического следа запрещён.
-    Сейчас это в рисках сказано общо, но надо сделать отдельным hard rule.
+  - not_restored
+  - причина: no confirmed UUID purchase proof
+    Чтобы потом это не было “забыто” при массовом прогоне.
   &nbsp;
-7. В DoD добавь обязательный proof по Людмиле в трёх плоскостях:
-  &nbsp;
-  - **данные:** entitlement на 064dd768-de8b-40db-89bc-f8d4a7e442ba создан/реактивирован;
-  - **админка:** исторические сделки показываются как “ЦБ 2.0: Производство”;
-  - **кабинет:** одновременно видны курс и модуль.
-    И отдельно:
-  - repeat repair = 0 изменений;
-  - audit log / meta proof присутствует;
-  - для “Розницы” в финальном отчёте явно статус: доказано / не доказано.
-  &nbsp;
-8. Добавь отдельный STOP-guard:
-  &nbsp;
-  - если module_list_mapped содержит несколько UUID или конфликтует со snapshot display name, не выполнять auto-repair, а помечать кейс как manual review.
-    Это редкий, но опасный сценарий для исторических данных.
-  &nbsp;
-9. В разделе “Изменяемые компоненты” лучше разделить:
-  &nbsp;
-  - **Phase 1:** helper display name + все UI consumers;
-  - **Phase 2:** repair entitlements;
-  - **Phase 3:** runtime visibility proof.
-    Так будет легче принять поэтапно и не смешивать UI-fix с восстановлением прав.
-  &nbsp;
-10. В план стоит добавить явную формулировку по product_id / product_code / display name:
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
-
-- product_id — UUID сущности продукта;
-- product_code — стабильный код продукта;
-- display_purchase_name — snapshot исторического отображаемого имени сделки.
-  И использовать эти термины строго раздельно по всему отчёту и коду.
+В остальном план идёт в правильную сторону: сначала канонический repair path, потом repeat-proof на Людмиле, потом UI-proof, и только после этого cohort execute.
 
 &nbsp;
 
-&nbsp;
+План: Канонический repair-path для модульных entitlements
 
-В остальном логика плана правильная: сначала чинится truth в UI, потом точечный repair по доказанным UUID, без трогания cb20, без угадываний по тексту и без массовой миграции старых заказов.
+## Диагностика (текущее состояние)
 
-&nbsp;
+### По Людмиле Демко
 
-План:
+- **profile_id**: `2ab73923`, **user_id**: `eb39c79d` (это разные ID — profile_id != user_id)
+- Entitlement на `cb_module_production` (`064dd768...`) уже создан прямой вставкой: `id = 2687b521`, status = active, expires_at = 2026-08-30, meta.source_type = `historical_module_repair`
+- Entitlement создан корректно, но не через канонический path — нужен idempotent canonical repair для proof
 
-## Проблема
+### По когорте
 
-Нужно исправить два связанных дефекта:
+- **49 уникальных пользователей**, **120 заказов**, **7 модульных продуктов**
+- Dry-run классификация: **74 create**, **23 skip_active**, **0 reactivate**
+- 7 multi-module заказов ещё не разбиты (уже есть edge function `split-multi-module-orders`)
+- Неизвестный модуль: `99f1f156` = ПВТ (2 пользователя)
 
-1. исторические модульные покупки отображаются как покупка родительского курса;
-2. отдельный модуль не появляется как самостоятельный доступ, даже когда правило доступа на модуль уже настроено.
+### По видимости
 
-## Диагностика
+- Training module `a4a5102d` (Производство) имеет `product_id = 064dd768`, `is_active = true`, без parent
+- `useSidebarModules` проверяет entitlement.product_id == training_module.product_id — цепочка замкнута
+- Людмила должна видеть модуль в кабинете уже сейчас
 
-- Предыдущий вывод был некорректен: он опирался не на полную хронологию `orders_v2 + purchase_snapshot`, а на неполную текущую проекцию доступов.
-- По Людмиле Демко в базе подтверждено:
-  - есть активный BUSINESS до 05.05;
-  - есть активный entitlement на `cb20` до 05.05;
-  - есть активный entitlement на «Деньги BY» до 05.05;
-  - отдельного entitlement на модуль `Производство` (`product_id = 064dd768-de8b-40db-89bc-f8d4a7e442ba`) сейчас нет.
-- В `orders_v2` у Людмилы есть 3 оплаченные исторические сделки типа `module_only_standalone`, и в `purchase_snapshot` уже лежит конкретный модуль:
-  - `display_purchase_name = "ЦБ 2.0: Производство"`
-  - `module_list_mapped = [064dd768-de8b-40db-89bc-f8d4a7e442ba]`
-- Значит, факт покупки модуля «Производство» подтверждён.
-- Почему в UI показывается «Ценный бухгалтер | 1 ступень 2.0»:
-  - helper `getDealDisplayName()` сейчас берёт имя по приоритету `products_v2.name` раньше, чем `purchase_snapshot.display_purchase_name`;
-  - у исторических модульных сделок `order.product_id` всё ещё указывает на родительский продукт `cb20`, поэтому UI рисует курс, а не модуль.
-- Почему модуль не появляется как отдельная сущность в кабинете:
-  - `useSidebarModules()` для product-linked модулей проверяет только точный entitlement на `effectiveProductId`;
-  - rule на модуль `Производство` есть и активен, но без entitlement именно на модульный `product_id` root-модуль не становится видимым как отдельный продукт;
-  - entitlement на `cb20` c `full_tariff_scope` даёт доступ к содержимому курса, но не материализует отдельный модульный продукт.
+## Решение: 3 фазы
 
-## Предлагаемое решение
+### Phase 1: Канонический edge function `repair-module-entitlements`
 
-### A. Исправить отображение исторических модульных сделок
+Новая edge function, не переиспользующая существующие repair-функции (они заточены под другую логику).
 
-Для сделок `module_only_standalone` использовать модульное отображаемое имя из snapshot как приоритетное, а не имя родительского FK-продукта.
+**Контракт:**
 
-### B. Восстановить точные модульные права
+- Вход: `{ mode: "dry_run" | "execute", filter_user_id?: string }`
+- Источник данных: `orders_v2` WHERE `purchase_snapshot.historical_purchase_type = 'module_only_standalone'` AND `module_list_mapped` содержит ровно 1 UUID
+- Дедупликация: по `DISTINCT (user_id, module_product_id)` — один entitlement на пару
+- Классификация действий:
+  - `skip_active` — entitlement уже active
+  - `reactivate` — entitlement существует, но не active → UPDATE status='active'
+  - `create` — нет записи → INSERT
+  - `manual_review` — конфликт данных (несколько разных UUID или malformed UUID)
+- Idempotency: повторный вызов = 0 изменений (все попадают в skip_active)
+- Audit: каждая запись → `audit_logs` с `actor_type='system'`, `actor_label='repair-module-entitlements'`, meta содержит `source_type`, `source_order_id`, `source_order_number`, `module_product_id`, `batch_id`
+- Entitlement meta: `source_type = 'historical_module_repair'`, `source_order_id`, `source_order_number`, `repair_batch_id`
+- product_code берётся из `products_v2.code` по `product_id`
+- expires_at: NULL (бессрочный — исторические покупки без срока)
+- Hard rules:
+  - multi-module orders (module_list_mapped.length > 1) → skip с пометкой `manual_review`
+  - malformed UUID → skip
+  - Никаких текстовых эвристик
 
-Сделать контролируемый repair-path, который:
+**Файл:** `supabase/functions/repair-module-entitlements/index.ts`
 
-- берёт только подтверждённые исторические сделки с `module_list_mapped` (UUID);
-- создаёт/восстанавливает entitlement на конкретный модульный `product_id`;
-- не трогает текущий entitlement на курс `cb20`;
-- оставляет курс и модуль существовать одновременно.
+### Phase 2: Repeat-proof на Людмиле
 
-### C. Проверить и, если требуется, расширить runtime-видимость модулей
+1. Вызвать `repair-module-entitlements` с `{ mode: "dry_run", filter_user_id: "eb39c79d-2588-4ab6-b831-7cd2d5a1641d" }`
+2. Ожидаемый результат: 1 запись, action = `skip_active` (entitlement уже есть)
+3. Вызвать с `{ mode: "execute", filter_user_id: "eb39c79d-..." }`
+4. Ожидаемый результат: 0 изменений, repeat = 0
 
-Разделить два сценария:
+### Phase 3: Browser proof видимости модуля
 
-1. отдельная модульная покупка → отдельный модульный entitlement → отдельная карточка/видимость модуля;
-2. доступ к модулю как части полного курса → отдельная бизнес-логика inherited visibility, если действительно нужно показывать всем покупателям курса ещё и модульные карточки, а не только курс.
+Зайти в preview под Людмилой (если возможно) или проверить логически:
 
-Для Людмилы это не блокер: её кейс уже решается пунктом B, потому что у неё есть доказанный standalone purchase на «Производство».
+- `useSidebarModules` → entitlement на `064dd768` active → модуль `a4a5102d` (Производство) виден
+- Курс cb20 одновременно виден (entitlement `73b9ae0f` на `7101ed3c` active)
+- Если browser недоступен для non-admin, зафиксировать как `proven_by_data_chain` и запросить production screenshot
+
+### Не входит в scope
+
+- Массовый execute на 74 create — только после proof Phases 2-3
+- inherited visibility (модули для покупателей полного курса) — отдельный спринт
+- split multi-module orders (7 штук) — отдельно через существующую `split-multi-module-orders`
+- Розница для Людмилы — нет доказательства покупки, не восстанавливается
 
 ## Изменяемые компоненты
 
-### UI
 
-- `src/lib/deals/getDealDisplayName.ts`
-- `src/pages/admin/AdminDeals.tsx`
-- `src/components/admin/ContactDetailSheet.tsx`
-- `src/components/admin/DealDetailSheet.tsx`
-- `src/components/admin/ContactPaymentsTab.tsx`
-- `src/components/admin/bepaid/ContactDealsDialog.tsx`
-- `src/components/admin/payments/LinkDealDialog.tsx`
-- `src/components/admin/payments/LinkSubscriptionDealDialog.tsx`
+| Компонент                                                | Действие                          |
+| -------------------------------------------------------- | --------------------------------- |
+| `supabase/functions/repair-module-entitlements/index.ts` | Создать новый                     |
+| `entitlements`                                           | INSERT/UPDATE через edge function |
+| `audit_logs`                                             | INSERT через edge function        |
 
-### Runtime visibility
-
-- `src/hooks/useSidebarModules.ts`
-- при необходимости: связанный runtime-резолвер модульной видимости, но без создания второго source of truth
-
-### Backend / данные
-
-- `orders_v2`
-- `entitlements`
-- `access_rules`
-- `training_modules`
-- `products_v2`
-- существующий канонический write/repair path для выдачи прав
-
-## Что не будет изменено
-
-- текущий доступ Людмилы к BUSINESS, `cb20`, «Деньги BY»
-- существующие `training_content` rules для курса и модуля
-- исторические сделки как финансовый факт оплаты
-- `product_id` в старых сделках не будет “переименовываться текстом” или угадываться по названию
-
-## Dry-run
-
-1. Построить dry-run выборку:
-  - все `orders_v2` с `historical_purchase_type = module_only_standalone`
-  - только те, где есть UUID в `module_list_mapped`
-  - сравнить с существующими entitlements на эти module `product_id`
-2. Отдельно проверить Людмилу:
-  - 3 сделки → 1 модуль `Производство` → 0 модульных entitlements
-3. Проверить UI-preview:
-  - какие экраны сейчас берут FK-имя вместо snapshot display name
-
-## Execute
-
-1. Исправить приоритет отображаемого названия для historical module deals.
-2. Добавить точечный repair PATCH для восстановления модульных entitlements по UUID из snapshot.
-3. Прогнать repair сначала на Людмиле как proof-case.
-4. Затем расширить на остальную когорту confirmed module_only_standalone.
-5. Отдельно решить, нужен ли глобальный inherited visibility для всех покупателей полного курса.
 
 ## STOP-guards
 
-- Не создавать модульный entitlement по текстовому совпадению названия; только по UUID из `module_list_mapped`.
-- Не создавать entitlement на «Розницу» для Людмилы без подтверждённого UUID/заказа.
-- Не перезаписывать и не удалять entitlement на `cb20`.
-- Не менять `orders_v2.product_id` у исторических сделок массово.
-- Не закрывать задачу, пока у Людмилы не появится одновременно:
-  - курс `cb20`
-  - отдельный модуль `Производство`
-  - корректное название модульных сделок в админке
+- Не создавать entitlement без UUID из `module_list_mapped`
+- Не обрабатывать multi-module orders (length > 1) автоматически
+- Не использовать прямой SQL INSERT — только через edge function
+- Repeat = 0 для Людмилы обязателен перед cohort execute
 
 ## DoD
 
-- В карточке контакта и списках сделок исторические покупки Людмилы отображаются как модуль «Производство», а не как общий `cb20`.
-- У Людмилы есть активный entitlement на `064dd768-de8b-40db-89bc-f8d4a7e442ba` с trace до исторической сделки/repair.
-- Текущий доступ к BUSINESS, `cb20` и «Деньги BY» не ломается.
-- В кабинете курс и модуль отображаются одновременно, а не вместо друг друга.
-- Отчёт явно разделяет:
-  - `product_id` = UUID
-  - `product_code` = `cb20` / `cb_module_production`
-  - display name = человекочитаемое имя
-- Для `Производства` доказано: правило доступа есть, entitlement восстановлен, UI видимость работает.
-- Для `Розницы` отдельно зафиксировано: либо есть доказательство покупки и тогда выполняется такой же repair, либо доказательства нет и entitlement не создаётся.
-
-## Риски и зависимости
-
-- Главный риск — смешать “доступ к содержимому курса” и “видимость отдельного модульного продукта”. Это надо чинить раздельно.
-- Если требуется показывать модульные карточки вообще всем покупателям полного курса, это уже отдельное расширение runtime-модели, а не только repair исторических standalone-модулей.
-- Repair должен идти через контролируемый канонический path с audit, а не ручной разовой вставкой без следа.
-
-## Требуется дополнительная информация
-
-- Для Людмилы по «Производству» дополнительная информация не нужна: доказательство уже есть.
-- Для «Розницы» нужна только верификация источника покупки, если вы хотите восстанавливать и её.
+1. Edge function `repair-module-entitlements` развёрнута и работает
+2. Dry-run на Людмиле: `skip_active`, 0 изменений
+3. Execute на Людмиле: repeat = 0
+4. Видимость модуля Производство подтверждена (data chain или browser)
+5. Курс cb20 не сломан
+6. Розница: статус `not_restored — no purchase proof`
