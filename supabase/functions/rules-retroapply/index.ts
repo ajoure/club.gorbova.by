@@ -252,6 +252,8 @@ async function processRule(
   supabase: any,
   rule: any,
   recalculateExisting: boolean,
+  filterUserIds?: string[],
+  filterTargetProductIds?: string[],
 ): Promise<UserAction[]> {
   const actions: UserAction[] = [];
   const conditions = rule.conditions || {};
@@ -261,7 +263,7 @@ async function processRule(
 
   if (!sourceProductId) return actions;
 
-  const targetProductIds: string[] =
+  let targetProductIds: string[] =
     rule.grant_target_type === "product_access"
       ? (Array.isArray(conditions.target_product_ids)
           ? conditions.target_product_ids
@@ -271,6 +273,13 @@ async function processRule(
         : [];
 
   if (targetProductIds.length === 0) return actions;
+
+  // Apply target_product_ids filter if provided
+  if (filterTargetProductIds?.length) {
+    const filterSet = new Set(filterTargetProductIds);
+    targetProductIds = targetProductIds.filter(id => filterSet.has(id));
+    if (targetProductIds.length === 0) return actions;
+  }
 
   const productInfoMap = new Map<string, { code: string; name: string }>();
   if (rule.grant_target_type === "product_access") {
