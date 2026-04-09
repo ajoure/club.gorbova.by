@@ -30,6 +30,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { checkPriorPurchase } from "../_shared/check-prior-purchase.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -498,29 +499,17 @@ async function checkRetroCondition(
   if (!productToCheck) return true;
 
   if (matchMode === "per_product") {
-    const { data } = await supabase
-      .from("orders_v2")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("product_id", targetProductId)
-      .eq("status", "paid")
-      .limit(1)
-      .maybeSingle();
-    return !!data;
+    // Use canonical shared resolver (direct match + module_list_mapped fallback)
+    // excludeOrderId = empty string since retroapply has no "current order"
+    const result = await checkPriorPurchase(supabase, userId, targetProductId, '00000000-0000-0000-0000-000000000000');
+    return result.found;
   }
 
   for (const reqProdId of requiredProductIds) {
-    const { data } = await supabase
-      .from("orders_v2")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("product_id", reqProdId)
-      .eq("status", "paid")
-      .limit(1)
-      .maybeSingle();
+    const result = await checkPriorPurchase(supabase, userId, reqProdId, '00000000-0000-0000-0000-000000000000');
 
-    if (matchMode === "any" && data) return true;
-    if (matchMode === "all" && !data) return false;
+    if (matchMode === "any" && result.found) return true;
+    if (matchMode === "all" && !result.found) return false;
   }
 
   return matchMode === "all";

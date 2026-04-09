@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { isCalendarMonthProduct, calcCalendarMonthEnd } from '../_shared/resolve-access-window.ts';
 import { writeLedgerEntry, buildPostCheck } from '../_shared/fulfillment-executor.ts';
+import { checkPriorPurchase } from '../_shared/check-prior-purchase.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1027,18 +1028,11 @@ Deno.serve(async (req) => {
                 : null;
 
               if (productToCheck) {
-                const { data: priorOrder } = await supabase
-                  .from('orders_v2')
-                  .select('id')
-                  .eq('user_id', userId)
-                  .eq('product_id', productToCheck)
-                  .eq('status', 'paid')
-                  .neq('id', orderId) // Exclude current order
-                  .limit(1)
-                  .maybeSingle();
+                // Use canonical shared resolver (direct match + module_list_mapped fallback)
+                const priorResult = await checkPriorPurchase(supabase, userId, productToCheck, orderId);
 
-                if (!priorOrder) {
-                  console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (no prior purchase)`);
+                if (!priorResult.found) {
+                  console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (no prior purchase, checked direct + module_list_mapped)`);
                   try {
                     await writeLedgerEntry(supabase, {
                       source_event_type: 'webhook',
@@ -1067,6 +1061,8 @@ Deno.serve(async (req) => {
                   productAccessResults.push({ target_product_id: targetProdId, status: 'skipped', reason: 'condition_not_met' });
                   continue;
                 }
+                
+                console.log(`[grant-access] product_access: target ${targetProdId} prior purchase FOUND via ${priorResult.match_type} (order: ${priorResult.order_id})`);
               } else {
                 // Target product not in condition list — skip
                 console.log(`[grant-access] product_access: target ${targetProdId} SKIPPED (not in condition product list)`);

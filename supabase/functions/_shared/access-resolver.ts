@@ -13,6 +13,8 @@
  * - runtime visibility (useTrainingContentRules)
  */
 
+import { checkPriorPurchase } from "./check-prior-purchase.ts";
+
 export interface AccessResolutionInput {
   order_id: string;
   product_id: string;
@@ -274,44 +276,16 @@ async function resolveProductAccessGrants(
       }
     }
 
-    // Resolve historical purchase context for scope
-    const { data: priorOrderData } = await supabase
-      .from('orders_v2')
-      .select('id, tariff_id, purchase_snapshot')
-      .eq('user_id', userId)
-      .eq('status', 'paid')
-      .neq('id', orderId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
     for (const targetProdId of targetProductIds) {
       // Per-product prior purchase check
       if (hasPriorPurchaseCondition) {
         const productToCheck = conditionProductIds.includes(targetProdId) ? targetProdId : null;
 
         if (productToCheck) {
-          const hasPrior = (priorOrderData || []).some(
-            (o: any) => o.product_id === productToCheck || 
-              // Check in the broader orders context
-              false
-          );
+          // Use canonical shared resolver (direct match + module_list_mapped fallback)
+          const priorResult = await checkPriorPurchase(supabase, userId, productToCheck, orderId);
 
-          // More precise check via DB
-          // Prefer orders with tariff_id (full product purchase) over module-only orders
-          const { data: priorOrders } = await supabase
-            .from('orders_v2')
-            .select('id, tariff_id, purchase_snapshot')
-            .eq('user_id', userId)
-            .eq('product_id', productToCheck)
-            .eq('status', 'paid')
-            .neq('id', orderId)
-            .order('tariff_id', { ascending: false, nullsFirst: false })
-            .limit(5);
-
-          // Pick best prior order: prefer one with tariff (full purchase)
-          const priorOrder = (priorOrders || []).find(o => o.tariff_id) || (priorOrders || [])[0] || null;
-
-          if (!priorOrder) {
+          if (!priorResult.found) {
             grants.push({
               product_id: targetProdId,
               product_code: '', // Will be resolved by executor
@@ -327,6 +301,7 @@ async function resolveProductAccessGrants(
           }
 
           // Resolve scope from historical purchase
+          const priorOrder = priorResult.order_data!;
           const snapshot = (priorOrder.purchase_snapshot || {}) as Record<string, any>;
           const historicalPurchaseType = snapshot.historical_purchase_type ||
             (priorOrder.tariff_id ? 'base_tariff_purchase' : 'module_only_standalone');
@@ -361,6 +336,8 @@ async function resolveProductAccessGrants(
               historical_module_product_ids: historicalModuleProductIds,
               scope_resolution_mode: scopeResolutionMode,
               source_window_rule: sourceWindowRule,
+              prior_purchase_match_type: priorResult.match_type,
+              prior_purchase_order_id: priorResult.order_id,
             },
           });
         } else {
