@@ -46,6 +46,10 @@ interface RetroApplyRequest {
   allow_reduce_access?: boolean;
   selected_action_ids?: string[];
   apply_categories?: string[];
+  /** Optional: limit processing to specific user UUIDs (prevents full-scan timeouts) */
+  user_ids?: string[];
+  /** Optional: limit processing to specific target product UUIDs */
+  target_product_ids?: string[];
 }
 
 interface UserAction {
