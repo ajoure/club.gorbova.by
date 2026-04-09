@@ -107,21 +107,15 @@ export async function checkPriorPurchase(
     const snapshot = order.purchase_snapshot as Record<string, any> | null;
     if (!snapshot) continue;
 
-    // Must be module_only_standalone
-    if (snapshot.historical_purchase_type !== 'module_only_standalone') continue;
-
-    // Must have module_list_mapped array with exactly 1 UUID
+    // Double-check: must have module_list_mapped with exactly 1 UUID
     const moduleList = snapshot.module_list_mapped;
     if (!Array.isArray(moduleList)) continue;
     if (moduleList.length !== 1) continue; // multi-module → manual_review, skip
 
-    // UUID must match target
-    if (moduleList[0] !== targetProductId) continue;
-
     return {
       found: true,
       order_id: order.id,
-      match_type: 'module_list_mapped',
+      match_type: 'module_list_mapped' as const,
       order_data: {
         id: order.id,
         tariff_id: order.tariff_id,
