@@ -327,16 +327,64 @@ export function EditDealDialog({ deal, open, onOpenChange, onSuccess }: EditDeal
       const productCode = product?.code || 'club';
 
       if (newStatus === 'paid' && deal.user_id) {
-        // Create or update entitlement
+        // Guard: product_id must be a valid UUID before upserting entitlement
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!formData.product_id || !uuidRegex.test(formData.product_id)) {
+          // Log audit warning for attempted entitlement upsert without valid product_id
+          console.error('[EditDealDialog] Blocked entitlement upsert: product_id is missing or invalid', {
+            deal_id: deal.id,
+            product_id: formData.product_id,
+            user_id: deal.user_id,
+          });
+          await supabase.from('audit_logs').insert({
+            action: 'entitlement.upsert_blocked_no_product_id',
+            actor_type: 'admin',
+            actor_user_id: (await supabase.auth.getUser()).data.user?.id || null,
+            meta: {
+              deal_id: deal.id,
+              product_id: formData.product_id ?? null,
+              product_code: productCode,
+              user_id: deal.user_id,
+              reason: 'product_id is missing or not a valid UUID — entitlement upsert skipped',
+            },
+          });
+          throw new Error('Невозможно сохранить доступ: у сделки нет корректного product_id (UUID). Выберите продукт.');
+        }
+
+        // Create or update entitlement — product_id from canonical product selection (ID-first)
         await supabase.from('entitlements').upsert({
           user_id: deal.user_id,
           profile_id: deal.profile_id,
           order_id: deal.id,
           product_code: productCode,
+          product_id: formData.product_id,
           status: 'active',
           expires_at: formData.access_end_at?.toISOString() || subscription?.access_end_at,
-          meta: { source: 'admin_edit', tariff_id: formData.tariff_id }
+          meta: {
+            source: 'admin_edit',
+            tariff_id: formData.tariff_id,
+            product_id: formData.product_id,
+            product_code: productCode,
+            order_id: deal.id,
+          }
         }, { onConflict: 'user_id,product_code' });
+
+        // Audit trail for entitlement create/update via admin edit
+        await supabase.from('audit_logs').insert({
+          action: 'entitlement.saved_via_admin_edit',
+          actor_type: 'admin',
+          actor_user_id: (await supabase.auth.getUser()).data.user?.id || null,
+          target_user_id: deal.user_id,
+          meta: {
+            deal_id: deal.id,
+            product_id: formData.product_id,
+            product_code: productCode,
+            tariff_id: formData.tariff_id,
+            order_id: deal.id,
+            profile_id: deal.profile_id,
+            expires_at: formData.access_end_at?.toISOString() || subscription?.access_end_at,
+          },
+        });
       }
 
       // 4. Handle status change to cancelled/refunded - check for other active deals before revoking
