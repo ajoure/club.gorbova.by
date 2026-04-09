@@ -87,13 +87,16 @@ export async function checkPriorPurchase(
   // Step 2: Fallback — check module_list_mapped in purchase_snapshot
   // Only for historical_purchase_type = 'module_only_standalone'
   // Only when module_list_mapped contains exactly 1 UUID matching targetProductId
+  // Use JSONB containment for efficient server-side filtering
   const { data: moduleOrders, error: moduleErr } = await supabase
     .from('orders_v2')
     .select('id, tariff_id, purchase_snapshot')
     .eq('user_id', userId)
     .eq('status', 'paid')
     .neq('id', excludeOrderId)
-    .limit(200);
+    .eq('purchase_snapshot->>historical_purchase_type', 'module_only_standalone')
+    .contains('purchase_snapshot', { module_list_mapped: [targetProductId] })
+    .limit(5);
 
   if (moduleErr) {
     console.error('[check-prior-purchase] Module fallback query error:', moduleErr.message);
