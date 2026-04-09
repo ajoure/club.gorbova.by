@@ -2,319 +2,858 @@
 
 &nbsp;
 
-1. План в целом правильный по структуре:
-  **A — Людмила canonical proof**,
-  **B — display layer**,
-  **C — Наталья / renewal flow**.
-  Так и оставляем.
-2. По **PATCH A (Людмила / Production)** добавь жёсткое правило исполнения:
+&nbsp;
+
+# **План: исправление отображения модульных сделок по** 
+
+# **Демко Людмиле**
+
+#  **и унификация display-layer**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## **Важное уточнение по кейсам**
+
+&nbsp;
+
+&nbsp;
+
+Не путать клиентов:
+
+&nbsp;
+
+- **Демко Людмила** — это один конкретный клиент, по которому уже подтверждены:
   &nbsp;
-  - сначала preview,
-  - потом сразу execute,
-  - потом сразу SQL-proof,
-  - потом сразу повторный preview = already_satisfied.
+  - модуль **Розничная торговля**
+  - модуль **Производство**
   &nbsp;
-  Не оставлять entitlement в expired дольше, чем на один короткий proof-run.
-3. По Людмиле в SQL-proof добавь еще два обязательных пункта:
-  &nbsp;
-  - запись в audit_logs или access_grant_ledger, что реактивация произошла именно через rules-retroapply;
-  - meta.source_type = retroapply, без ручных промежуточных маркеров, которые могут замаскировать повторную ручную правку.
-  &nbsp;
-4. По **PATCH B (display layer)** план пока слишком мягкий. По скринам видно, что проблема еще не закрыта:
-  в сделках у Людмилы по-прежнему показывается **родительский курс**, а не модуль.
-  Значит, в план надо добавить не просто “browser-proof”, а:
-  &nbsp;
-  - найти **конкретный consumer**, который в этом экране все еще не берет canonical display name;
-  - исправить именно его;
-  - затем дать повторный browser-proof по двум экранам:
-    &nbsp;
-    - Людмила,
-    - Зимко.
-    &nbsp;
-  &nbsp;
-5. Отдельно добавь в PATCH B явный DoD по Зимко:
-  &nbsp;
-  - модульные сделки отображаются как **два модуля** с правильными именами,
-  - не создаются новые “левые” сделки на родительский курс,
-  - суммы и даты совпадают с подтвержденными данными.
-  &nbsp;
-6. По **PATCH C (Казачок Наталья)** это уже настоящий root cause, и здесь план хороший. Но нужно жестко разделить:
-  &nbsp;
-  - **исправление кода для будущих renewals** — через bepaid-webhook -> grant-access-for-order;
-  - **ремонт текущего состояния Натальи** — отдельно, через RetroApply / canonical repair.
-    Иначе подрядчик “починит будущее”, а текущая клиентка так и останется без доступов.
-  &nbsp;
-7. По Наталье добавь отдельный блок:
-  **“Current-state repair for Kazachok”**
-  &nbsp;
-  - восстановить положенные entitlements сейчас;
-  - дать SQL-proof;
-  - только потом считать issue закрытым.
-    Потому что webhook fix сам по себе **не переиграет** уже прошедшее продление.
-  &nbsp;
-8. По Наталье формулировку про ea98d043 оставить, но сделать жёстче:
-  &nbsp;
-  - если нет доказанного standalone purchase на этот модуль, entitlement **не выдавать**;
-  - текущий expired entitlement зафиксировать как legacy/backfill anomaly;
-  - не продлевать его автоматически.
-  &nbsp;
-9. В PATCH C добавь обязательный proof после фикса webhook:
-  &nbsp;
-  - по **новому тестовому renewal** или по безопасному replay/canonical simulation,
-  - должен появиться access_grant_ledger,
-  - должен быть trace вызова grant-access-for-order,
-  - secondary grants должны реально построиться.
-    Иначе будет только “мы добавили вызов в код”, без доказательства, что путь живой.
-  &nbsp;
-10. В плане не хватает отдельного запрета на legacy-логику в renewal flow. Добавь:
+- **Зимко** — это **другой** клиент и отдельный кейс, его в этот план не смешивать.
+- В этом плане основной proof-case №1 — **Демко Людмила**.
+- Proof-case №2 можно оставить отдельным клиентом позже, но **не называть его Демко / Земко** и не смешивать данные.
 
 &nbsp;
 
 &nbsp;
-
-&nbsp;
-
-- новый патч **не должен** усиливать inline legacy обработку по product_code;
-- grant-access-for-order должен стать **единственным** каноническим путём secondary grants;
-- inline legacy branch можно временно оставить только для primary-safe compatibility, но без дальнейшего расширения.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-11. Добавь еще один STOP-guard:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- не закрывать задачу, пока по Наталье не будет доказано одновременно:
-  &nbsp;
-  - grant-access-for-order реально вызывается из renewal flow,
-  - текущие missing grants восстановлены,
-  - следующий renewal не требует ручного RetroApply.
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-12. Финальный порядок я бы зафиксировал так:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- **A1** Людмила Production canonical proof
-- **A2** Людмила display fix
-- **B1** Зимко display/data correction
-- **C1** webhook renewal fix
-- **C2** current-state repair Натальи
-- **C3** proof future renewal path
-- только потом consolidated cohort dry-run.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-13. И еще одна важная правка по формулировкам:
-  в отчете и плане не писать больше как логические идентификаторы cb20, cb2 и подобное.
-  Разрешить только такой формат:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- product_id
-- public_id
-- display_name
-- при необходимости отдельно: legacy product_code (read-only reference)
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-14. Итог: план годный, но **без этих правок его рано исполнять**, потому что иначе можно закрыть Людмилу формально, а Зимко и Наталья останутся недочиненными.
-
-&nbsp;
-
-&nbsp;
-
-План: Canonical proof + Казачок fix + display layer
-
-## Диагностика
-
-### A. Людмила — Production entitlement `2687b521`
-
-**Текущее состояние**: `status=active`, `expires_at=2026-05-05`, meta содержит `source_type: retroapply`, `source_rule_id: 1b497fba`, `business_subscription_id: e867f292`. Однако это результат ручной перезаписи meta (`CANONICAL-REPLACE-2026-04-09`), а не прохождения через rule engine. Retail entitlement `176e08a9` — полностью канонический (создан RetroApply), его не трогаем.
-
-### B. Людмила — Display names
-
-4 модульных заказа в `orders_v2`:
-
-- 1× Розница (`MANUAL-RESTORE-001`, `display_purchase_name = ЦБ 2.0: Розничная торговля`)
-- 3× Производство (GC-3822722, GC-3823669, GC-3824629, `display_purchase_name = ЦБ 2.0: Производство`)
-
-Все имеют `historical_purchase_type = module_only_standalone` + корректный `module_list_mapped`. Display layer (`getDealDisplayName`) уже приоритизирует `display_purchase_name` для таких сделок. Нужен browser-proof.
-
-### C. Казачок Наталья — корневая причина
-
-**Критический баг**: subscription renewal webhook (`bepaid-webhook/index.ts`, строки 1574-1618) обрабатывает entitlements **inline** по `product_code` (legacy!) и **НЕ вызывает `grant-access-for-order**`. Значит secondary grants (access_rules) при продлении подписки не срабатывают.
-
-Факты:
-
-- Сегодня 09.04 в 13:45 оплачен заказ `fac49672` (BUSINESS renewal)
-- Создана подписка `c30f04c3` (active, до 2026-05-09)
-- `access_grant_ledger` по этому `order_id`: **0 записей**
-- `audit_logs`: только `bepaid.subscription.processed`, нет `grant-access`
-- Entitlement `45d5f391` (Учет у ИП, `ea98d043`) → `expired` в 12:00 (привязан к старой BUSINESS `eba308ca`)
-- Entitlement `664332ed` (parent course `7101ed3c`) → `expired` в 12:00
-- Entitlement `9a7c303c` (Деньги BY, `c153c811`) → `expired` в 12:00
-
-Все три должны были быть reactivated/re-aligned при продлении BUSINESS. Не произошло, потому что `grant-access-for-order` не был вызван.
-
-**Важное уточнение по prior_purchase**: Казачок имеет `base_tariff_purchase` для `7101ed3c` (а не module_only_standalone). Rule `1b497fba` работает в режиме `per_product`: каждый target требует отдельного paid order. У Казачок есть paid order только на `7101ed3c` — значит rule должен выдать доступ к `7101ed3c`, но НЕ к `ea98d043` (модуль Учет у ИП), на который у неё нет отдельного заказа. Entitlement на `ea98d043` был создан ранее через `historical_backfill` — это аномалия, которую нужно зафиксировать.
 
 ---
 
-## PATCH A: Canonical proof для Production у Людмилы
+&nbsp;
 
-### Шаги
+&nbsp;
 
-1. **Expire** entitlement `2687b521` → `status = expired`, добавить в meta `deactivated_for_canonical_proof: true`, `deactivated_at: <timestamp>`
-2. **НЕ трогать** Retail entitlement `176e08a9` (уже каноничен)
-3. **RetroApply preview** для Людмилы:
-  - `user_ids: ["eb39c79d-2588-4ab6-b831-7cd2d5a1641d"]`
-  - `target_product_ids: ["064dd768-de8b-40db-89bc-f8d4a7e442ba"]`
-  - `rule_ids: ["1b497fba-031a-4318-8d9f-2530f1bac116"]`
-4. **Ожидаемый результат preview**: category = `missing_access` (expired entitlement found → reactivation path)
-5. **Execute** → entitlement reactivated через rule engine
-6. **SQL-proof block** (обязательный):
-  ```
-   status = 'active'
-   expires_at = '2026-05-05 20:59:59+00'
-   meta.source_rule_id = '1b497fba-031a-4318-8d9f-2530f1bac116'
-   meta.retroapply_reactivated = true
-   meta.previous_status = 'expired'
-   meta.business_subscription_id IS NOT NULL
-  ```
-7. **Повторный preview** → `already_satisfied`
+## **Проблема**
 
-### STOP-guard
+&nbsp;
 
-- Только entitlement `2687b521` (Production)
-- Retail `176e08a9` не трогать
-- Никаких других пользователей
+&nbsp;
+
+Для исторических сделок типа module_only_standalone система до сих пор показывает:
+
+&nbsp;
+
+- название **родительского курса** вместо названия купленного модуля;
+- PRD **родительского продукта** вместо PRD самого модуля;
+- в ряде мест display зависит от legacy snapshot/parent FK, а не от фактического UUID модуля.
+
+&nbsp;
+
+&nbsp;
+
+Из-за этого по **Демко Людмиле** модульные сделки отображаются некорректно, хотя доступы на модули уже выданы правильно.
+
+&nbsp;
 
 ---
 
-## PATCH B: Display layer browser-proof
+&nbsp;
 
-### Действия
+&nbsp;
 
-1. Открыть карточку Людмилы в админке
-2. Проверить, что сделки показываются как:
-  - «ЦБ 2.0: Розничная торговля» (не «Ценный бухгалтер | 1 ступень 2.0»)
-  - «ЦБ 2.0: Производство» (не «Ценный бухгалтер | 1 ступень 2.0»)
-3. Проверить, что в Доступах одновременно видны курс + Производство + Розница
-4. Grep-proof по display layer (список файлов, использующих `getDealDisplayName`)
+## **Подтвержденный scope этого плана**
 
----
+&nbsp;
 
-## PATCH C: Казачок Наталья — исправление subscription renewal flow
+&nbsp;
 
-### Корневой баг
+&nbsp;
 
-`bepaid-webhook/index.ts`, строки 1574-1618: subscription renewal обрабатывает entitlements inline по `product_code` и **не вызывает `grant-access-for-order**`. Это означает, что при каждом продлении BUSINESS:
+### **Клиент:** 
 
-- Primary entitlement обновляется inline (legacy path)
-- Secondary grants (rules, prior_purchase, bonus) — **не выполняются**
-- Expired rule-based entitlements не реактивируются
+### **Демко Людмила**
 
-### Исправление
+&nbsp;
 
-После inline entitlement upsert (строка ~1618), добавить вызов `grant-access-for-order` с `orderId = orderV2Id`. Это обеспечит:
+&nbsp;
 
-- Прохождение через access-resolver
-- Обработку всех access_rules для тарифа
-- Реактивацию expired secondary entitlements
-- Запись в `access_grant_ledger`
+Нужно доказуемо привести в порядок:
 
-### Безопасность
+&nbsp;
 
-- `grant-access-for-order` уже идемпотентен (проверяет `already_fulfilled`)
-- Inline primary entitlement upsert не конфликтует — grant-access тоже проверяет existing entitlement
-- Нужно убедиться, что subscription уже создана/обновлена ДО вызова grant-access (порядок уже соблюдается)
+1. сделки по **Розничной торговле**;
+2. сделки по **Производству**;
+3. отображение этих сделок во всех user-facing местах;
+4. корректный PRD именно модулей;
+5. отсутствие показа PRD родительского курса там, где куплен модуль.
 
-### Proof по Казачок
+&nbsp;
 
-После деплоя фикса:
-
-1. Прогнать RetroApply для Казачок по rule `1b497fba`:
-  - `user_ids: ["6b0e0451-c01b-4cd9-8fc4-dd7e83fd5c65"]`
-  - Ожидание: entitlement на `7101ed3c` (parent course) → reactivated/extended до 2026-05-09
-  - Entitlement на `c153c811` (Деньги BY, rule `6ba9727e`) → reactivated до 2026-05-09
-2. **Для `ea98d043` (Учет у ИП)**: у Казачок НЕТ paid order на этот модуль отдельно, rule `per_product` НЕ должен его выдать. Текущий expired entitlement — аномалия от `historical_backfill`. Зафиксировать как `anomaly_from_backfill`.
-3. SQL-proof:
-  ```
-   Entitlement 664332ed (7101ed3c): status=active, expires_at=2026-05-09
-   Entitlement 9a7c303c (c153c811): status=active, expires_at=2026-05-09
-   Entitlement 45d5f391 (ea98d043): status=expired (корректно — нет prior_purchase)
-  ```
-
-### DoD по Казачок
-
-- Доступ к parent course восстановлен через rule engine
-- Доступ к Деньги BY восстановлен через rule engine
-- Учет у ИП остаётся expired (нет основания)
-- Trace в `access_grant_ledger` по order_id / RetroApply batch
-- При следующем продлении BUSINESS → `grant-access-for-order` вызывается автоматически
+&nbsp;
 
 ---
 
-## Порядок исполнения
+&nbsp;
 
+&nbsp;
 
-| Шаг | Действие                                                                            | Блокирует |
-| --- | ----------------------------------------------------------------------------------- | --------- |
-| A1  | Expire `2687b521`, RetroApply preview+execute                                       | —         |
-| A2  | SQL-proof по Людмиле                                                                | A1        |
-| B1  | Browser-proof display (Людмила)                                                     | A2        |
-| C1  | Fix `bepaid-webhook` subscription renewal → добавить вызов `grant-access-for-order` | —         |
-| C2  | Deploy `bepaid-webhook`                                                             | C1        |
-| C3  | RetroApply для Казачок                                                              | C2        |
-| C4  | SQL-proof по Казачок                                                                | C3        |
-| D   | Consolidated dry-run по когорте (отдельный следующий шаг)                           | A+B+C     |
+## **Корневая причина**
 
+&nbsp;
 
-## STOP-guards
+&nbsp;
 
-1. Не запускать cohort execute
-2. Не трогать Retail entitlement Людмилы
-3. Не создавать entitlement на `ea98d043` для Казачок (нет основания)
-4. Не строить логику на `product_code` / legacy codes
-5. `orders_v2.product_id` в исторических заказах не менять
-6. Задачу не считать закрытой, пока не доказаны все три кейса
+У исторических module_only_standalone сделок:
+
+&nbsp;
+
+- orders_v2.product_id часто указывает на **родительский курс**;
+- фактический купленный модуль лежит в:
+  &nbsp;
+  - purchase_snapshot.module_list_mapped
+  &nbsp;
+- display-name часто берётся:
+  &nbsp;
+  - либо из purchase_snapshot.display_purchase_name,
+  - либо из FK на родителя,
+  - но не из реального продукта-модуля по UUID.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Целевое правило display-layer**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Для single-module сделки:**
+
+&nbsp;
+
+&nbsp;
+
+Если:
+
+&nbsp;
+
+- historical_purchase_type = module_only_standalone
+- module_list_mapped.length === 1
+- UUID валиден
+- продукт найден в products_v2
+
+&nbsp;
+
+&nbsp;
+
+то отображать нужно:
+
+&nbsp;
+
+- **display name** = products_[v2.name](http://v2.name) модуля
+- **public id** = products_v2.public_id модуля
+- **resolved module product id** = UUID модуля из module_list_mapped
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Для multi-module сделки:**
+
+&nbsp;
+
+&nbsp;
+
+Если:
+
+&nbsp;
+
+- module_list_mapped.length > 1
+
+&nbsp;
+
+&nbsp;
+
+то:
+
+&nbsp;
+
+- не выбирать “первый модуль”;
+- не показывать ложный PRD родителя;
+- использовать:
+  &nbsp;
+  - snapshot name как fallback,
+  - либо маркер несколько модулей,
+  - либо manual review.
+  &nbsp;
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Жесткое правило по идентификаторам**
+
+&nbsp;
+
+&nbsp;
+
+Новая логика должна работать только так:
+
+&nbsp;
+
+- **runtime-логика** → только через product_id
+- **UI-идентификатор** → через public_id
+- **человекочитаемое имя** → через products_[v2.name](http://v2.name)
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Запрещено**
+
+&nbsp;
+
+&nbsp;
+
+- строить новую логику на cb20, ЦБ 2.0, cb_module_*, slug, буквенных кодах;
+- использовать product_code как основу display/runtime;
+- использовать родительский PRD, если реально куплен модуль.
+
+&nbsp;
+
+&nbsp;
+
+product_code и legacy-коды остаются только как legacy read-only reference, не как SoT.
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Решение**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 1 — единый helper для display meta**
+
+&nbsp;
+
+&nbsp;
+
+Создать единый resolver, а не размазывать логику по компонентам.
+
+&nbsp;
+
+&nbsp;
+
+### **Новый helper**
+
+&nbsp;
+
+&nbsp;
+
+Например:
+
+&nbsp;
+
+- buildDealDisplayMeta(...)
+  или
+- resolveModuleDealDisplayMeta(...)
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Он должен возвращать:**
+
+&nbsp;
+
+&nbsp;
+
+- resolvedDisplayName
+- resolvedPublicId
+- resolvedModuleProductId
+- resolutionType
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Возможные** 
+
+### **resolutionType**
+
+### **:**
+
+&nbsp;
+
+&nbsp;
+
+- direct_module
+- multi_module
+- snapshot_fallback
+- parent_fallback
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 2 — исправить приоритет display name**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Для** 
+
+### **module_only_standalone**
+
+###  **+ single-module:**
+
+&nbsp;
+
+&nbsp;
+
+Приоритет должен быть таким:
+
+&nbsp;
+
+1. [moduleProduct.name](http://moduleProduct.name)
+2. purchase_snapshot.display_purchase_name
+3. [productsV2.name](http://productsV2.name)
+4. fallback
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Почему именно так**
+
+&nbsp;
+
+&nbsp;
+
+- [moduleProduct.name](http://moduleProduct.name) — актуальное каноническое имя модуля;
+- snapshot — приемлемый fallback;
+- [productsV2.name](http://productsV2.name) у сделки часто имя родительского курса;
+- parent name нельзя ставить выше snapshot.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 3 — исправить** 
+
+## **public_id**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Для single-module:**
+
+&nbsp;
+
+&nbsp;
+
+Показывать:
+
+&nbsp;
+
+- moduleProduct.public_id
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Для multi-module:**
+
+&nbsp;
+
+&nbsp;
+
+Не показывать PRD родителя как будто это PRD модуля.
+
+&nbsp;
+
+Разрешённые варианты:
+
+&nbsp;
+
+- скрыть PRD;
+- показать несколько модулей;
+- отправить кейс в manual review.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 4 — batch-resolve модульных продуктов**
+
+&nbsp;
+
+&nbsp;
+
+Во всех user-facing местах нужен единый паттерн:
+
+&nbsp;
+
+1. собрать UUID модулей из module_list_mapped;
+2. сделать один batch-query в products_v2;
+3. собрать map;
+4. передать map в единый helper display/meta.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Не делать**
+
+&nbsp;
+
+&nbsp;
+
+- по одному локальному резолву в каждом файле своей логикой;
+- 5 разных реализаций одного и того же.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 5 — покрыть все user-facing потребители**
+
+&nbsp;
+
+&nbsp;
+
+Проверить и привести к единому helper все места, где показываются сделки.
+
+&nbsp;
+
+&nbsp;
+
+### **Обязательные файлы**
+
+&nbsp;
+
+&nbsp;
+
+- src/components/admin/ContactDetailSheet.tsx
+- src/pages/admin/AdminDeals.tsx
+- src/components/admin/DealDetailSheet.tsx
+- src/components/admin/ContactPaymentsTab.tsx
+- src/components/admin/bepaid/ContactDealsDialog.tsx
+
+&nbsp;
+
+&nbsp;
+
+При необходимости также:
+
+&nbsp;
+
+- src/components/admin/payments/LinkDealDialog.tsx
+- src/components/admin/payments/LinkSubscriptionDealDialog.tsx
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 6 — grep-proof по обходным display-путям**
+
+&nbsp;
+
+&nbsp;
+
+Нужно проверить и устранить user-facing места, где модульные сделки показываются напрямую через:
+
+&nbsp;
+
+- deal.products_[v2.name](http://v2.name)
+- deal.product_name
+- deal.products_v2.public_id
+
+&nbsp;
+
+&nbsp;
+
+Если это user-facing display для сделок — должно идти только через unified helper.
+
+&nbsp;
+
+&nbsp;
+
+### **Допустимые исключения**
+
+&nbsp;
+
+&nbsp;
+
+Только если это:
+
+&nbsp;
+
+- сортировка;
+- техническая диагностика;
+- внутренний не-user-facing текст.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **PATCH 7 — data cleanup по snapshot только как follow-up**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Не делать это основным фиксом**
+
+&nbsp;
+
+&nbsp;
+
+Массовое переписывание purchase_snapshot.display_purchase_name — не основной путь.
+
+&nbsp;
+
+&nbsp;
+
+### **Допускается только как отдельный follow-up cleanup:**
+
+&nbsp;
+
+&nbsp;
+
+- только для single-module сделок;
+- только если UUID валиден;
+- только если продукт найден в products_v2;
+- только после dry-run отчёта;
+- без влияния на runtime-логику.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Proof-case №1 —** 
+
+## **Демко Людмила**
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+### **Обязательно проверить:**
+
+&nbsp;
+
+&nbsp;
+
+1. сделка по **Розничной торговле** показывает имя модуля;
+2. сделки по **Производству** показывают имя модуля;
+3. везде показывается PRD модуля, а не PRD родителя;
+4. в “Доступах” одновременно видны:
+  &nbsp;
+  - курс,
+  - Розничная торговля,
+  - Производство;
+  &nbsp;
+5. суммы и даты остаются правильными;
+6. ничего не ломается в уже выданных доступах.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Proof-case №2**
+
+&nbsp;
+
+&nbsp;
+
+Второй клиент проверяется отдельно, но:
+
+&nbsp;
+
+- не называть его Демко;
+- не смешивать с Людмилой;
+- не подменять данные Людмилы его кейсом.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **Что не меняется**
+
+&nbsp;
+
+&nbsp;
+
+- доступы, уже корректно выданные по rule engine;
+- orders_v2.product_id у исторических сделок массово не переписывается;
+- логика rules / entitlements в этом плане не является основным объектом правки;
+- legacy product_code не используется для новой display-логики.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **STOP-guards**
+
+&nbsp;
+
+&nbsp;
+
+1. Не путать **Демко Людмилу** с другими клиентами.
+2. Не показывать PRD родителя для single-module сделки.
+3. Не выбирать “первый модуль” для multi-module сделки.
+4. Не строить новую логику на cb20, ЦБ 2.0, product_code, slug.
+5. Не считать задачу закрытой, пока по **Демко Людмиле** не будет browser-proof.
+
+&nbsp;
+
+&nbsp;
+
+---
+
+&nbsp;
+
+&nbsp;
+
+## **DoD**
+
+&nbsp;
+
+&nbsp;
+
+1. По **Демко Людмиле**:
+  &nbsp;
+  - Розничная торговля отображается как модуль;
+  - Производство отображается как модуль.
+  &nbsp;
+2. Для этих сделок показывается public_id именно модуля.
+3. Ни один экран больше не показывает PRD родительского курса для single-module standalone сделки.
+4. Все user-facing display-path используют unified helper/meta-resolver.
+5. Multi-module сделки не показывают ложный PRD.
+6. Browser-proof по **Демко Людмиле** приложен.
+7. В новом патче нет новой логики на cb20 / legacy codes.
+
+&nbsp;
+
+&nbsp;
+
+Если пришлёшь следующий план/отчёт подрядчика, я уже проверю его именно на предмет того, чтобы он снова не смешал Демко Людмилу с другими клиентами и не полез обратно в legacy-коды.
+
+&nbsp;
+
+План: Исправление отображения модульных сделок + ответы на вопросы
+
+## Ответы на вопросы
+
+### Откуда берутся названия "ЦБ 2.0: Производство"?
+
+Это **закэшированные названия из `purchase_snapshot.display_purchase_name**` — поле в JSONB, записанное при импорте из GetCourse. На момент импорта модули назывались "ЦБ 2.0: Производство", "ЦБ 2.0: Розничная торговля" и т.д. Сейчас в `products_v2` они уже переименованы в "Ценный бухгалтер | 1 ступень 2.0 | Модуль: Производство", но **snapshot не обновляется при переименовании продукта** — это замороженный снимок.
+
+Хелпер `getDealDisplayName` для модульных сделок (`module_only_standalone`) **приоритизирует snapshot name над текущим именем продукта**. Это сделано потому, что `product_id` у этих сделок указывает на родительский курс (`7101ed3c`, PRD-000003), а не на сам модуль. Если бы мы взяли имя из FK join, показалось бы "Ценный бухгалтер | 1 ступень 2.0" (родитель) — ещё хуже.
+
+### Почему public_id у модулей = PRD-000003 (родительский)?
+
+Потому что `orders_v2.product_id` у всех 126 модульных сделок = `7101ed3c` (родительский курс). FK join на `products_v2` возвращает данные родителя, включая его `public_id = PRD-000003`. Реальные модули (`064dd768` = PRD-000005, `abee24cd` = PRD-000015) хранятся только в `purchase_snapshot.module_list_mapped`.
+
+### Как был выдан доступ?
+
+Доступ выдан через **rule engine** (`rules-retroapply`), правило `1b497fba`. Shared resolver `check-prior-purchase.ts` нашёл модульные покупки через fallback: `purchase_snapshot.module_list_mapped` содержит UUID модуля → match. Entitlements созданы с правильным `product_id` = UUID модуля (не родителя), `product_code` = `cb_module_production` / `cb_module_retail`.
+
+---
+
+## Корневая проблема
+
+Для `module_only_standalone` сделок UI показывает:
+
+- **Имя**: стale snapshot name ("ЦБ 2.0: ...") вместо текущего имени модуля из `products_v2`
+- **Public ID**: PRD-000003 (родитель) вместо PRD-000005/PRD-000015 (модуль)
+
+Всего затронуто **126 сделок** (120 single-module + 6 multi-module).
+
+## Исправление
+
+### 1. Изменить `getDealDisplayName` — убрать приоритет snapshot name
+
+Для `module_only_standalone` с одним модулем в `module_list_mapped`: использовать **текущее имя модуля из `products_v2**`, переданное через новый параметр `moduleProduct`. Snapshot name использовать только как последний fallback.
+
+Файл: `src/lib/deals/getDealDisplayName.ts`
+
+Добавить в `DealDisplayNameInput`:
+
+```typescript
+/** Resolved module product (from module_list_mapped UUID) */
+moduleProduct?: { name?: string | null; publicId?: string | null } | null;
+```
+
+Изменить приоритет для `module_only_standalone`:
+
+1. `moduleProduct.name` (текущее имя модуля из БД)
+2. `productsV2.name` (FK join — это родитель, но хотя бы актуальное)
+3. `snapshotName` (fallback — стale)
+4. `fallback`
+
+### 2. Резолвить модульный продукт на уровне потребителей
+
+В каждом месте, где рендерятся сделки, для `module_only_standalone` сделок с `module_list_mapped` = 1 UUID — подгружать продукт модуля из `products_v2` по этому UUID.
+
+Подход: собрать все уникальные module UUIDs из snapshot'ов, сделать один batch-запрос к `products_v2`, создать map, передать в `getDealDisplayName`.
+
+Затронутые файлы:
+
+- `src/components/admin/ContactDetailSheet.tsx` — deals tab (строки 3131-3230)
+- `src/pages/admin/AdminDeals.tsx` — список сделок
+- `src/components/admin/DealDetailSheet.tsx`
+- `src/components/admin/ContactPaymentsTab.tsx`
+- `src/components/admin/bepaid/ContactDealsDialog.tsx`
+
+### 3. Показывать public_id модуля, а не родителя
+
+В `ContactDetailSheet.tsx` (строка 3162) и аналогичных местах: для `module_only_standalone` показывать `moduleProduct.publicId` вместо `(deal.products_v2 as any)?.public_id`.
+
+### 4. Обновить snapshot names в БД (data migration)
+
+Обновить `purchase_snapshot.display_purchase_name` у всех 126 сделок, заменив "ЦБ 2.0: X" на актуальное имя модуля из `products_v2`. Это не критично для логики (после фикса п.1-3 snapshot name станет fallback), но убирает стale data.
 
 ## Изменяемые компоненты
 
 
-| Файл                                         | Действие                                                                                            |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `supabase/functions/bepaid-webhook/index.ts` | Добавить вызов `grant-access-for-order` после inline entitlement upsert в subscription renewal flow |
-| `entitlements` (данные)                      | Expire `2687b521` → canonical reactivation через RetroApply                                         |
-| Edge function deploy                         | `bepaid-webhook`, `rules-retroapply`                                                                |
+| Файл                                                 | Действие                                              |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| `src/lib/deals/getDealDisplayName.ts`                | Добавить `moduleProduct` параметр, изменить приоритет |
+| `src/components/admin/ContactDetailSheet.tsx`        | Резолвить module products, передать в helper          |
+| `src/pages/admin/AdminDeals.tsx`                     | Аналогично                                            |
+| `src/components/admin/DealDetailSheet.tsx`           | Аналогично                                            |
+| `src/components/admin/ContactPaymentsTab.tsx`        | Аналогично                                            |
+| `src/components/admin/bepaid/ContactDealsDialog.tsx` | Аналогично                                            |
+| DB migration                                         | UPDATE snapshot names на актуальные                   |
+
+
+## DoD
+
+1. Модульные сделки показывают текущее имя модуля из `products_v2`, а не стale snapshot
+2. Public ID модульных сделок = PRD модуля, а не PRD родителя
+3. При переименовании продукта в админке — имя автоматически обновляется в сделках (т.к. FK join)
+4. Multi-module сделки (6 шт.) показывают snapshot name как fallback (т.к. нельзя однозначно выбрать один модуль)
+5. Grep-proof: все потребители передают `moduleProduct`
