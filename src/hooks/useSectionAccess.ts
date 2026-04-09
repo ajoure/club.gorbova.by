@@ -33,6 +33,35 @@ interface UseSectionAccessResult {
 }
 
 /**
+ * Безопасный парсер kill-switch из app_settings.
+ * Поддерживает форматы:
+ *   - JSON-объект: { enabled: true/false }
+ *   - boolean: true / false
+ *   - string: "true" / "false"
+ * При отсутствии, ошибке или неизвестном формате → true (safe mode, gating включён).
+ */
+function parseGatingEnabled(value: unknown): boolean {
+  // JSON-объект: { enabled: true/false }
+  if (value && typeof value === "object" && "enabled" in (value as Record<string, unknown>)) {
+    const enabled = (value as Record<string, unknown>).enabled;
+    if (typeof enabled === "boolean") return enabled;
+    if (enabled === "true") return true;
+    if (enabled === "false") return false;
+  }
+
+  // Прямой boolean
+  if (typeof value === "boolean") return value;
+
+  // Строка
+  if (value === "true") return true;
+  if (value === "false") return false;
+
+  // Неизвестный формат → safe mode
+  console.warn("[useSectionAccess] section_gating_enabled: unexpected format, defaulting to enabled (safe mode)", value);
+  return true;
+}
+
+/**
  * Hook to check section access via get_user_section_access RPC.
  * Admin bypass: admins always get has_access=true (handled by RPC itself).
  * Kill-switch: reads app_settings.section_gating_enabled; if false, all sections treated as public.
@@ -41,7 +70,7 @@ export function useSectionAccess(): UseSectionAccessResult {
   const { user, role } = useAuth();
   const isAdmin = role === "admin" || role === "superadmin";
 
-  // Kill-switch from app_settings
+  // Kill-switch from app_settings — staleTime 10s for fast rollback
   const { data: gatingEnabled = true } = useQuery({
     queryKey: ["app-settings", "section_gating_enabled"],
     queryFn: async () => {
@@ -50,10 +79,13 @@ export function useSectionAccess(): UseSectionAccessResult {
         .select("value")
         .eq("key", "section_gating_enabled")
         .maybeSingle();
-      if (error || !data) return true; // default: enabled
-      return data.value === true || data.value === "true";
+
+      // Отсутствует или ошибка → safe mode (gating включён)
+      if (error || !data) return true;
+
+      return parseGatingEnabled(data.value);
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 10_000,
   });
 
   const { data: sections = [], isLoading, isError } = useQuery({
