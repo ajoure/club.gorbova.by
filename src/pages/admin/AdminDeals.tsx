@@ -418,7 +418,7 @@ export default function AdminDeals() {
         const payerName = getLatestPayerName(deal);
         return profile?.full_name || payerName || deal.customer_email || "";
       case "product_name":
-        return getDealDisplayName({ productsV2: deal.products_v2 as any, purchaseSnapshot: deal.purchase_snapshot }) || "";
+        return getDealDisplayName({ productsV2: deal.products_v2 as any, purchaseSnapshot: deal.purchase_snapshot, moduleProduct: moduleMetaMap?.get(deal.id)?.moduleProduct }) || "";
       case "tariff_name":
         return (deal.tariffs as any)?.name || "";
       case "deal_date":
@@ -426,7 +426,7 @@ export default function AdminDeals() {
       default:
         return deal[fieldKey];
     }
-  }, [fallbackProfilesMap]);
+  }, [fallbackProfilesMap, moduleMetaMap]);
 
   // Export columns
   const getDealsExportColumns = useCallback((): ExportColumn<any>[] => [
@@ -438,6 +438,7 @@ export default function AdminDeals() {
     { header: "Продукт", getValue: (d) => getDealDisplayName({
       productsV2: d.products_v2 as any,
       purchaseSnapshot: d.purchase_snapshot,
+      moduleProduct: moduleMetaMap?.get(d.id)?.moduleProduct,
       fallback: "",
     }) },
     { header: "Категория", getValue: (d) => {
@@ -450,7 +451,7 @@ export default function AdminDeals() {
     { header: "Валюта", getValue: (d) => d.currency || "" },
     { header: "Статус", getValue: (d) => getStatusConfig(d.status).label },
     { header: "Доступ до", getValue: (d) => d.trial_end_at ? format(new Date(d.trial_end_at), "dd.MM.yyyy") : "" },
-  ], [fallbackProfilesMap]);
+  ], [fallbackProfilesMap, moduleMetaMap]);
 
   // Sorting on loaded data
   const { sortedData: sortedDeals, sortKey, sortDirection, handleSort } = useTableSort({
