@@ -1,131 +1,96 @@
-Да, согласен, с учетом правок:
+# Да, согласен, с учетом правок:
 
 &nbsp;
 
-1. В dry-run добавь **обязательную проверку блока completed/finished** для Демко Людмилы.
-  На скрине видно Показать завершённые (3), значит сначала нужно доказать не только “нет в active”, но и:
+1. В PATCH 1 добавь не только product_id: formData.product_id, но и жёсткий guard перед upsert:
   &nbsp;
-  - запись ушла в completed,
-  - запись отсутствует совсем,
-  - запись есть в raw data, но режется predicate’ом.
+  - если formData.product_id пустой, null или не UUID — не делать upsert entitlement вообще;
+  - показать ошибку сохранения;
+  - записать warn/error в audit/log.
   &nbsp;
-2. В backend-proof по родительскому курсу проверь **обе сущности отдельно**:
+  Иначе вы просто перестанете терять product_id в одном кейсе, но сохраните возможность снова создать битую запись.
+2. В PATCH 1 зафиксируй, что product_id берётся только из канонического выбранного продукта сделки, а не из product_code и не из старых slug/code. В DoD это нужно явно прописать как ID-first proof.
+3. В PATCH 2 audit trail нужен не только для уже выполненного repair c40382bc, но и для самого будущего save-path через EditDealDialog:
   &nbsp;
-  - subscriptions_v2 по родительскому product_id
-  - entitlements по родительскому product_id
-    И для каждой явно вывести verdict:
-  - проходит active-predicate,
-  - проходит completed-predicate,
-  - режется productsWithRules,
-  - отсутствует.
+  - entitlement.created_via_admin_edit
+  - entitlement.updated_via_admin_edit
+  - в meta обязательно: product_id, product_code, order_id, deal_id, tariff_id, source='admin_edit'.
   &nbsp;
-3. В PATCH B зафиксируй жёстко:
-  **если root cause = productsWithRules / отсутствует active rule для parent product, сначала исправляется SoT/config или read-model, а не делается маскирующий UI-патч.**
-  Нельзя просто “показать курс”, если predicate считает его нелегальным.
-4. В execute-ветке добавь **строгое разделение**:
+  Иначе потом снова нельзя будет доказать, чем именно испортили запись.
+4. В PATCH 3 по Демко Людмиле добавь browser-proof не только active list, но и completed list:
   &nbsp;
-  - missing_access / expired_access → только canonical access path
-  - active_but_hidden_by_ui
-  - active_but_filtered_by_productsWithRules
-  - present_in_completed_only
-    Это должен быть явный финальный verdict перед любыми изменениями.
+  - родительский курс не должен быть в completed;
+  - не должно появиться дубля той же сущности одновременно в active и completed.
   &nbsp;
-5. Для canonical repair укажи, **какой именно путь считается каноническим** для родительского курса:
+5. В PATCH 4 на втором клиенте зафиксируй два разных сценария:
   &nbsp;
-  - grant-access-for-order
-  - или rules-retroapply
-    Нужен один выбранный write-path, без расплывчатого “rule engine / canonical repair path”.
+  - создание entitlement через EditDealDialog;
+  - повторное редактирование уже существующего entitlement.
   &nbsp;
-6. Добавь в DoD отдельный proof:
+  Одного только “сохранить ещё раз” мало. Нужен proof на create и update отдельно.
+6. В DoD добавь SQL-proof:
   &nbsp;
-  - у Демко Людмилы родительский курс виден **именно в active**, а не в completed,
-  - после фикса Показать завершённые (3) не содержит этот курс как скрытый ложный completed-case.
+  - после save через EditDealDialog у entitlement:
+    &nbsp;
+    - product_id IS NOT NULL
+    - product_id = ожидаемый UUID
+    - status = active
+    - запись проходит тот же predicate active list.
+    &nbsp;
   &nbsp;
-7. Пункт про src/components/user/UserSubscriptions.tsx перенеси в **follow-up / parity proof**, а не в основной scope текущего патча, если пока не доказано расхождение.
-  Сейчас основная задача — закрыть кейс Демко Людмилы в admin-proof, не раздувая scope.
-8. В DoD добавь **SQL-proof block по parent-course access**:
-  &nbsp;
-  - product_id родителя
-  - тип записи: subscription / entitlement
-  - status
-  - expires_at
-  - source_rule_id
-  - source_type
-  - included_in_active_list = true
-  &nbsp;
+  Иначе browser-proof может быть случайным из-за кэша/старых данных.
+7. Follow-up про onConflict: user_id,product_code оставить обязательно как отдельный PATCH и пометить как не закрытый после этого фикса. Это важно, потому что текущий патч лечит симптом, но не устраняет архитектурный риск.
 
 &nbsp;
 
 &nbsp;
 
-В остальном план стал нормальным: он уже не уходит в display-layer и правильно отделяет факт доступа от рендера.
+Исправленный смысл DoD:
 
 &nbsp;
 
-План:
+- product_id не просто “передаётся в upsert”, а гарантированно сохраняется, не обнуляется, участвует в predicate active list и подтверждён SQL-proof на create/update.
 
-1. Проблема
+&nbsp;
 
-По скрину Демко Людмилы подтверждён дефект: во вкладке «Доступы» среди активных карточек отсутствует родительский курс «Ценный бухгалтер | 1 ступень 2.0», хотя одновременно видны BUSINESS, два модуля и «Деньги BY 1 тариф». Это уже не проблема display-layer сделок, а проблема факта доступа или его рендера.
+&nbsp;
 
-2. Диагностика
+После этих правок план можно исполнять.
 
-Что уже подтверждено по коду:
+План: PATCH — EditDealDialog must preserve product_id in entitlement upsert
 
-- Вкладка «Доступы» в `src/components/admin/ContactDetailSheet.tsx` строится из двух списков:
-  - `activeSubscriptions`
-  - `activeEntitlements`
-- И subscriptions, и entitlements проходят жёсткий фильтр через `productsWithRules` из `useActiveAccessRuleProducts()` (`src/hooks/useAccessValidation.ts`).
-- Активный entitlement скрывается, если:
-  - `status !== active`
-  - `expires_at < now()`
-  - продукт деактивирован
-  - для `product_id` нет активного `access_rule`
-- Активная subscription скрывается, если:
-  - статус не `active|trial`
-  - срок истёк
-  - для `product_id` нет активного `access_rule`
-- UI не содержит явной логики “схлопнуть курс, если есть модули”; значит более вероятны два корня:
-  1. entitlement/subscription на родительский курс реально не проходит predicate;
-  2. запись уходит в completed из-за `productsWithRules` / status / expires_at.
+## Проблема
 
-Важно:
+В `EditDealDialog.tsx` строка 331-339: entitlement upsert **не включает `product_id**`. Это приводит к `product_id = NULL` у entitlements, созданных/обновлённых через ручное редактирование сделки. Такие записи исчезают из active list из-за фильтра `productsWithRules.has(product_id)`.
 
-- Сейчас план нельзя закрывать blind fix’ом.
-- Нужен backend-proof по родительскому `product_id` курса, а затем уже repair или UI-патч.
+## PATCH 1 — Добавить product_id в upsert
 
-3. Предлагаемое решение
+Файл: `src/components/admin/EditDealDialog.tsx`, строка 331-339.
 
-PATCH A — backend-proof по родительскому курсу Демко Людмилы
+```typescript
+await supabase.from('entitlements').upsert({
+  user_id: deal.user_id,
+  profile_id: deal.profile_id,
+  order_id: deal.id,
+  product_code: productCode,
+  product_id: formData.product_id,  // ← FIX: was missing
+  status: 'active',
+  expires_at: formData.access_end_at?.toISOString() || subscription?.access_end_at,
+  meta: { source: 'admin_edit', tariff_id: formData.tariff_id }
+}, { onConflict: 'user_id,product_code' });
+```
 
-- Проверить в БД все записи по родительскому продукту курса `7101ed3c-7839-4a74-ad95-aa0660369b22`:
-  - `subscriptions_v2`
-  - `entitlements`
-  - связанные `access_rules`
-- Зафиксировать:
-  - есть ли active entitlement;
-  - есть ли active subscription;
-  - какой `expires_at`;
-  - `source_rule_id`, `source_type`, `business_subscription_id`;
-  - проходит ли запись текущий predicate UI.
+## PATCH 2 — Audit trail для repair c40382bc
 
-PATCH B — root cause по вкладке «Доступы»
-Если родительский доступ есть в БД, но не показывается:
+Записать в `audit_logs` факт восстановления `product_id` у entitlement `c40382bc`:
 
-- чинить только read-path вкладки «Доступы»;
-- проверить, не режется ли курс из-за условия `productsWithRules.has(product_id)`;
-- проверить, не считается ли курс historical только потому, что для него нет активного product-level rule, хотя основание легально;
-- при необходимости вынести фильтрацию вкладки «Доступы» на единый effective-access/fact-view, а не на локальный predicate “только продукты с активным rule product_id”.
+- `action: entitlement.product_id_restored`
+- `entity_type: entitlement`, `entity_id: c40382bc`
+- `meta: { previous_product_id: null, restored_product_id: '7101ed3c-...', reason: 'EditDealDialog bug fix' }`
 
-Если родительского доступа нет или он expired:
+## PATCH 3 — Browser-proof по Демко Людмиле
 
-- восстановить его только канонически через BUSINESS/access_rules path;
-- без ручной вставки в `entitlements`;
-- через существующий write-path (rule engine / canonical repair path), с audit/ledger proof.
-
-PATCH C — browser-proof после фикса
-Проверить карточку Демко Людмилы повторно:
-в активных должны одновременно отображаться:
+Открыть карточку, вкладка «Доступы». Подтвердить одновременно видны:
 
 - Gorbova Club / BUSINESS
 - Ценный бухгалтер | 1 ступень 2.0
@@ -133,111 +98,30 @@ PATCH C — browser-proof после фикса
 - Модуль: Производство
 - Деньги BY 1 тариф
 
-4. Изменяемые компоненты
+Дополнительно: «Показать завершённые» **НЕ** содержит родительский курс.
 
-Обязательная проверка:
+## PATCH 4 — Контрольный proof на втором клиенте
 
-- `src/components/admin/ContactDetailSheet.tsx`
-- `src/hooks/useAccessValidation.ts`
-- активные `access_rules` для родительского продукта курса
-- записи в `subscriptions_v2`
-- записи в `entitlements`
-- при необходимости canonical backend path:
-  - `grant-access-for-order`
-  - `rules-retroapply`
+Найти другого клиента с entitlement. Убедиться, что при сохранении через EditDealDialog `product_id` корректно сохраняется и не обнуляется при повторном редактировании.
 
-Если root cause окажется в UI:
+## Follow-up риск (не в этом патче)
 
-- `src/components/user/UserSubscriptions.tsx` тоже нужно привести к той же логике, чтобы не было расхождения admin/user.
+`onConflict: 'user_id,product_code'` — legacy-ключ, противоречит ID-first принципу. Зафиксировать как отдельный follow-up PATCH: пересмотр entitlement upsert key.
 
-5. Что не будет изменено
+## Изменяемые файлы
 
-- Логика отображения модульных сделок по названиям в этом PATCH не является основной целью.
-- `orders_v2.product_id` исторических сделок массово не переписывается.
-- Legacy-коды (`cb20`, `product_code`) не используются как новая основа логики.
-- Не смешивать Демко Людмилу с другими клиентами.
-- Не запускать cohort-операции.
 
-6. Dry-run
+| Файл                                      | Действие                                                 |
+| ----------------------------------------- | -------------------------------------------------------- |
+| `src/components/admin/EditDealDialog.tsx` | Добавить `product_id: formData.product_id` (строка ~335) |
+| `audit_logs` (данные)                     | INSERT audit record для repair c40382bc                  |
 
-Сначала только безопасная проверка без мутаций:
 
-- SQL-read по Демко Людмиле:
-  - entitlement на родительский курс
-  - subscription на родительский курс
-  - активные access_rules для родительского курса
-- Сопоставление с predicate вкладки «Доступы»:
-  - почему запись попадает или не попадает в active list
-  - уходит ли она в finished list
-  - отсутствует ли полностью
+## DoD
 
-Отдельно dry-run verdict:
-
-- Case 1: `missing_access`
-- Case 2: `expired_access`
-- Case 3: `active_but_hidden_by_ui`
-- Case 4: `active_but_filtered_by_productsWithRules`
-
-7. Execute
-
-Выполнять только после dry-run verdict:
-
-Ветка 1 — если доступ отсутствует / expired:
-
-- восстановить родительский курс канонически через BUSINESS/access_rules path;
-- сразу после execute сделать SQL-proof;
-- затем browser-proof.
-
-Ветка 2 — если доступ активен, но не рендерится:
-
-- править только UI/read-path:
-  - не прятать родительский курс при наличии модулей;
-  - курс и модули должны отображаться одновременно.
-- затем browser-proof.
-
-8. STOP-guards
-
-- Не делать ручной INSERT entitlement.
-- Не изменять данные других пользователей.
-- Не трогать модульные entitlements Людмилы, если они уже корректны.
-- Не строить решение на `product_code`, `cb20`, названиях или slug.
-- Если dry-run покажет, что root cause в отсутствии active rule для product_id родителя, сначала отдельно зафиксировать это как конфигурационный дефект SoT, а не маскировать UI-патчем.
-- Не считать задачу закрытой без backend-proof и browser-proof.
-
-9. DoD
-
-Задача считается выполненной только если:
-
-- для Демко Людмилы backend-proof показывает корректное основание доступа к родительскому курсу;
-- во вкладке «Доступы» одновременно видны:
-  - BUSINESS
-  - Ценный бухгалтер | 1 ступень 2.0
-  - Модуль: Розничная торговля
-  - Модуль: Производство
-  - Деньги BY 1 тариф
-- курс не исчезает из активных карточек из-за наличия модулей;
-- нет ручной вставки доступа;
-- решение основано на ID-first логике и каноническом access path.
-
-10. Риски и зависимости
-
-Риски:
-
-- Фильтр `productsWithRules` может скрывать легальный доступ, если parent-course entitlement существует, но для его `product_id` нет текущего активного rule.
-- Возможен разрыв между admin-вкладкой и пользовательским кабинетом, потому что в `src/components/user/UserSubscriptions.tsx` используется тот же predicate.
-- Если у родительского курса должен быть entitlement, но rule/config отсутствует, понадобится не только repair, но и фиксация конфигурации как части root cause.
-
-Зависимости:
-
-- доступ к read-данным БД;
-- возможность проверить текущие `access_rules`, `entitlements`, `subscriptions_v2`;
-- после approval — выполнение SQL-read, browser verification и при необходимости канонического repair path.
-
-11. Требуется дополнительная информация
-
-Сейчас в read-only режиме я уже подтвердил UI-путь и логику фильтрации, но не могу выполнить SQL-read и repair.
-После approval следующего шага нужно:
-
-- прочитать БД по Демко Людмиле;
-- определить точный root cause;
-- только потом делать execute-патч по одной из двух веток.
+1. В EditDealDialog entitlement upsert всегда содержит `product_id`
+2. При создании entitlement через EditDealDialog — `product_id` сохраняется в БД
+3. При повторном редактировании existing entitlement — `product_id` не теряется
+4. Browser-proof: у Демко Людмилы видны все 5 карточек в active
+5. Repair `c40382bc` имеет audit trail
+6. Контрольный второй клиент проходит proof без `product_id = NULL`
