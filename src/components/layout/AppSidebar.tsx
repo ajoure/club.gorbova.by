@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRbac } from "@/hooks/useRbac";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
 import { useSectionAccess } from "@/hooks/useSectionAccess";
+import { resolveSectionCode } from "@/constants/sectionCodes";
 import { supabase } from "@/integrations/supabase/client";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarHeader, SidebarFooter, useSidebar } from "@/components/ui/sidebar";
 import { NavLink } from "@/components/NavLink";

@@ -12,13 +12,17 @@ interface SectionGuardProps {
  * SectionGuard — обёртка для защиты контента секции.
  *
  * Контракт:
+ * - Kill-switch off → всегда пропускает
+ * - Loading → spinner
+ * - isError → deny + error UI (данных нет, невозможно определить доступ)
  * - is_public=true → всегда пропускает
  * - is_public=false + has_access=true → пропускает
  * - is_public=false + has_access=false → overlay/paywall
  * - Admin → всегда пропускает (через RPC + early shortcut)
- * - RPC error + gated → deny + error UI
- * - Kill-switch off → всегда пропускает
+ * - Section not found in app_sections → пропускает (unmapped route)
  * - НЕ делает redirect
+ *
+ * sectionCode передаётся напрямую (уже snake_case), маппинг не нужен.
  */
 export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
   const { checkAccess, isLoading, isError, gatingEnabled } = useSectionAccess();
@@ -37,6 +41,24 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
     );
   }
 
+  // RPC error → deny with error UI (невозможно определить доступ)
+  // Это ДОЛЖНО быть ДО checkAccess(), т.к. при ошибке sections=[] и checkAccess вернёт found=false → allow
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
+        <AlertTriangle className="h-12 w-12 text-destructive" />
+        <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Произошла ошибка при проверке прав доступа к разделу.
+          Попробуйте обновить страницу.
+        </p>
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          Обновить страницу
+        </Button>
+      </div>
+    );
+  }
+
   const access = checkAccess(sectionCode);
 
   // Section not found in app_sections → pass through (safe default for unmapped routes)
@@ -47,23 +69,6 @@ export function SectionGuard({ sectionCode, children }: SectionGuardProps) {
   // Public section → always allow
   if (access.is_public) {
     return <>{children}</>;
-  }
-
-  // RPC error on gated section → deny with error message
-  if (isError) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 px-4 text-center gap-4">
-        <AlertTriangle className="h-12 w-12 text-destructive" />
-        <h2 className="text-lg font-semibold">Не удалось проверить доступ</h2>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Произошла ошибка при проверке прав доступа к разделу «{access.section_label}».
-          Попробуйте обновить страницу.
-        </p>
-        <Button variant="outline" onClick={() => window.location.reload()}>
-          Обновить страницу
-        </Button>
-      </div>
-    );
   }
 
   // Gated + has access → allow
