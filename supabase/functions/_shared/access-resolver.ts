@@ -13,6 +13,8 @@
  * - runtime visibility (useTrainingContentRules)
  */
 
+import { checkPriorPurchase } from "./check-prior-purchase.ts";
+
 export interface AccessResolutionInput {
   order_id: string;
   product_id: string;
