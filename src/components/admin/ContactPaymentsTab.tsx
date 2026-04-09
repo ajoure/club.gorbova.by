@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { resolveModuleDisplayMetaBatch } from "@/lib/deals/resolveModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
@@ -193,14 +194,21 @@ export function ContactPaymentsTab({ contactId, userId }: ContactPaymentsTabProp
           .from('orders_v2')
           .select('id, product_id, purchase_snapshot, products_v2(name, category)')
           .in('id', orderIds);
+
+        // Resolve module display meta
+        const moduleMeta = await resolveModuleDisplayMetaBatch(
+          (orders || []).map(o => ({ id: o.id, purchase_snapshot: o.purchase_snapshot as unknown }))
+        );
+
         ordersMap = new Map((orders || []).map(o => {
           const snapshot = o.purchase_snapshot as any;
           const fkName = (o.products_v2 as any)?.name || null;
           const category = (o.products_v2 as any)?.category || null;
-          const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, fallback: "" });
+          const meta = moduleMeta.get(o.id);
+          const rawName = getDealDisplayName({ productName: fkName, purchaseSnapshot: snapshot, moduleProduct: meta?.moduleProduct, fallback: "" });
           const resolvedName = getShortDisplayName(rawName, category);
           const isModuleStandalone = snapshot?.historical_purchase_type === 'module_only_standalone';
-          const missingDisplayName = isModuleStandalone && !snapshot?.display_purchase_name;
+          const missingDisplayName = isModuleStandalone && !snapshot?.display_purchase_name && !meta?.moduleProduct;
           return [
             o.id, 
             { id: o.id, product_name: resolvedName, category, _is_module_standalone: isModuleStandalone, _missing_display_name: missingDisplayName }

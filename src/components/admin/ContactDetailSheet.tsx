@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSubscriptionChargeCount } from "@/utils/subscriptionChargeCount";
 import { getDealDisplayName, getShortDisplayName } from "@/lib/deals/getDealDisplayName";
+import { useModuleDisplayMeta } from "@/hooks/useModuleDisplayMeta";
 import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
 import { SHEET_SHELL_CLASS } from "@/lib/sheetShell";
@@ -432,6 +433,8 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     },
     enabled: !!contact?.id,
   });
+
+  const { data: moduleMetaMap } = useModuleDisplayMeta(deals);
 
   const selectedDeal = useMemo(
     () => deals?.find(d => d.id === selectedDealId) ?? null,
@@ -3155,12 +3158,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               <span>{getShortDisplayName(getDealDisplayName({
                                 productsV2: deal.products_v2 as any,
                                 purchaseSnapshot: deal.purchase_snapshot,
+                                moduleProduct: moduleMetaMap?.get(deal.id)?.moduleProduct,
                                 fallback: "Продукт",
                               }), (deal.products_v2 as any)?.category)}</span>
                             </div>
-                            {deal.product_id && (
-                              <CopyableIdChip value={(deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8)} copyValue={deal.product_id} successMessage="Product ID скопирован" className="mt-0.5" />
-                            )}
+                            {deal.product_id && (() => {
+                              const meta = moduleMetaMap?.get(deal.id);
+                              const displayPublicId = (meta?.resolutionType === "direct_module" && meta.resolvedPublicId)
+                                ? meta.resolvedPublicId
+                                : (deal.products_v2 as any)?.public_id || deal.product_id.substring(0, 8);
+                              const copyValue = meta?.resolvedModuleProductId || deal.product_id;
+                              return <CopyableIdChip value={displayPublicId} copyValue={copyValue} successMessage="Product ID скопирован" className="mt-0.5" />;
+                            })()}
                             {deal.tariffs && (
                               <div className="text-sm text-muted-foreground">{(deal.tariffs as any)?.name}</div>
                             )}

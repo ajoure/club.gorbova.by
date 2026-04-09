@@ -1,20 +1,20 @@
 /**
  * getDealDisplayName — единый helper для отображаемого названия сделки.
  *
+ * Приоритет (module_only_standalone + single-module):
+ *   1. moduleProduct.name (актуальное имя модуля из products_v2)
+ *   2. purchase_snapshot.display_purchase_name (исторический снимок)
+ *   3. FK join: deal.products_v2?.name (родительский курс)
+ *   4. Альтернативное поле product?.name
+ *   5. fallback: "—"
+ *
  * Приоритет (обычная сделка):
- *   1. FK join: deal.products_v2?.name (текущее имя продукта из БД)
- *   2. Альтернативное поле product?.name (если передано отдельно)
- *   3. purchase_snapshot.display_purchase_name (исторический снимок)
+ *   1. FK join: deal.products_v2?.name
+ *   2. Альтернативное поле product?.name
+ *   3. purchase_snapshot.display_purchase_name
  *   4. fallback: "—"
  *
- * Приоритет (модульная покупка, historical_purchase_type = module_only_standalone):
- *   1. purchase_snapshot.display_purchase_name (модульное имя из snapshot)
- *   2. FK join: deal.products_v2?.name
- *   3. Альтернативное поле product?.name
- *   4. fallback: "—"
- *
- * Безопасно обрабатывает purchase_snapshot любого типа
- * (null, undefined, string, object, битый JSON).
+ * Безопасно обрабатывает purchase_snapshot любого типа.
  */
 
 export interface DealDisplayNameInput {
@@ -24,6 +24,8 @@ export interface DealDisplayNameInput {
   productName?: string | null;
   /** deal.purchase_snapshot — может быть чем угодно */
   purchaseSnapshot?: unknown;
+  /** Resolved module product from resolveModuleDisplayMeta */
+  moduleProduct?: { name?: string | null; publicId?: string | null } | null;
   /** fallback текст, по умолчанию "—" */
   fallback?: string;
 }
@@ -31,7 +33,6 @@ export interface DealDisplayNameInput {
 function safeExtractSnapshotName(snapshot: unknown): string | null {
   if (snapshot == null) return null;
 
-  // Если это строка — попробуем распарсить как JSON-объект
   if (typeof snapshot === "string") {
     try {
       const parsed = JSON.parse(snapshot);
@@ -44,7 +45,6 @@ function safeExtractSnapshotName(snapshot: unknown): string | null {
     return null;
   }
 
-  // Если объект — достаём display_purchase_name
   if (typeof snapshot === "object") {
     const obj = snapshot as Record<string, unknown>;
     const name = obj?.display_purchase_name;
@@ -68,25 +68,19 @@ function safeExtractHistoricalPurchaseType(snapshot: unknown): string | null {
  *
  * Для модулей: убирает префикс родителя (всё до последнего `|`), добавляет "Модуль: ".
  * Для остальных: trim trailing `|` и пробелы.
- *
- * Canonical DB name НЕ меняется. Это только display metadata.
- * Никогда не использовать для бизнес-логики, связки, fulfillment.
  */
 export function getShortDisplayName(name: string, category: string | null | undefined): string {
   if (!name?.trim()) return name;
 
   if (category === "module") {
-    // Берём часть после последнего `|` как короткое имя модуля
     const parts = name.split("|").map(p => p.trim()).filter(Boolean);
     const lastPart = parts[parts.length - 1];
     if (parts.length > 1 && lastPart) {
       return `Модуль: ${lastPart}`;
     }
-    // Если нет разделителя — возвращаем как есть с префиксом
     return `Модуль: ${name.trim()}`;
   }
 
-  // Для остальных: trim trailing | и пробелы
   return name.replace(/[\s|]+$/, "").trim();
 }
 
@@ -94,16 +88,35 @@ export function getDealDisplayName({
   productsV2,
   productName,
   purchaseSnapshot,
+  moduleProduct,
   fallback = "—",
 }: DealDisplayNameInput): string {
-  // Detect if this is a module_only_standalone deal from snapshot
   const histType = safeExtractHistoricalPurchaseType(purchaseSnapshot);
   const snapshotName = safeExtractSnapshotName(purchaseSnapshot);
 
-  // For module_only_standalone deals: snapshot display name takes priority
-  // because product_id points to the parent course, not the actual module purchased
-  if (histType === "module_only_standalone" && snapshotName) {
-    return snapshotName;
+  // For module_only_standalone deals: prioritize resolved module product name
+  if (histType === "module_only_standalone") {
+    // 1. Resolved module product name (current canonical name from products_v2)
+    if (moduleProduct?.name?.trim()) {
+      return moduleProduct.name;
+    }
+
+    // 2. Snapshot display name (historical, may be stale but better than parent)
+    if (snapshotName) {
+      return snapshotName;
+    }
+
+    // 3. FK join name (this is typically the parent course — last resort)
+    if (productsV2?.name?.trim()) {
+      return productsV2.name;
+    }
+
+    // 4. Alternative product name
+    if (productName?.trim()) {
+      return productName;
+    }
+
+    return fallback;
   }
 
   // Standard priority for regular deals:
@@ -112,12 +125,12 @@ export function getDealDisplayName({
     return productsV2.name;
   }
 
-  // 2. Альтернативное product name (из отдельного поля/маппинга)
+  // 2. Альтернативное product name
   if (productName?.trim()) {
     return productName;
   }
 
-  // 3. Snapshot fallback (for non-module deals or module deals without snapshot name)
+  // 3. Snapshot fallback
   if (snapshotName) {
     return snapshotName;
   }
