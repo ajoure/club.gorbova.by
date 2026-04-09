@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
               product_id: group.module_product_id,
               product_code: prodInfo.code,
               status: 'active',
-              expires_at: null, // historical standalone = no expiry
+              expires_at: null, // Policy: historical standalone modules have no tariff/access_days — NULL confirmed by data audit (all 127 orders have tariff_id=NULL)
               order_id: item.first_order_id,
               meta,
             })
