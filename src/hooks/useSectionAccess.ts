@@ -9,6 +9,7 @@ export interface SectionAccessEntry {
   section_route: string;
   is_public: boolean;
   has_access: boolean;
+  is_active: boolean;
   granted_via_product_id: string | null;
   granted_via_product_name: string | null;
   granted_via_tariff_id: string | null;
@@ -24,6 +25,7 @@ interface UseSectionAccessResult {
     found: boolean;
     is_public: boolean;
     has_access: boolean;
+    is_active: boolean;
     section_label: string;
     granted_via_product_name: string | null;
     granted_via_tariff_name: string | null;
@@ -108,6 +110,7 @@ export function useSectionAccess(): UseSectionAccessResult {
         found: false,
         is_public: true,
         has_access: true,
+        is_active: true,
         section_label: "",
         granted_via_product_name: null,
         granted_via_tariff_name: null,
@@ -120,6 +123,7 @@ export function useSectionAccess(): UseSectionAccessResult {
         found: true,
         is_public: true,
         has_access: true,
+        is_active: entry.is_active,
         section_label: entry.section_label,
         granted_via_product_name: entry.granted_via_product_name,
         granted_via_tariff_name: entry.granted_via_tariff_name,
@@ -132,6 +136,7 @@ export function useSectionAccess(): UseSectionAccessResult {
         found: true,
         is_public: entry.is_public,
         has_access: true,
+        is_active: entry.is_active,
         section_label: entry.section_label,
         granted_via_product_name: entry.granted_via_product_name,
         granted_via_tariff_name: entry.granted_via_tariff_name,
@@ -142,6 +147,7 @@ export function useSectionAccess(): UseSectionAccessResult {
       found: true,
       is_public: entry.is_public,
       has_access: entry.has_access,
+      is_active: entry.is_active,
       section_label: entry.section_label,
       granted_via_product_name: entry.granted_via_product_name,
       granted_via_tariff_name: entry.granted_via_tariff_name,
