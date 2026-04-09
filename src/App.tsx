@@ -194,23 +194,23 @@ const App = () => {
               <Route path="/live-access/:token" element={<LazyRoute><LiveAccessEntry /></LazyRoute>} />
               
               {/* Protected routes */}
-              <Route path="/products" element={<ProtectedRoute><LazyRoute><Learning /></LazyRoute></ProtectedRoute>} />
-              <Route path="/dashboard" element={<ProtectedRoute><LazyRoute><Dashboard /></LazyRoute></ProtectedRoute>} />
-              <Route path="/money" element={<ProtectedRoute><LazyRoute><Money /></LazyRoute></ProtectedRoute>} />
-              <Route path="/ai" element={<ProtectedRoute><LazyRoute><AI /></LazyRoute></ProtectedRoute>} />
-              <Route path="/knowledge" element={<ProtectedRoute><LazyRoute><Knowledge /></LazyRoute></ProtectedRoute>} />
+              <Route path="/products" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="products"><Learning /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/dashboard" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="dashboard"><Dashboard /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/money" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="money"><Money /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/ai" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="ai"><AI /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/knowledge" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="knowledge"><Knowledge /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/purchases" element={<ProtectedRoute><LazyRoute><Purchases /></LazyRoute></ProtectedRoute>} />
               <Route path="/accountant" element={<ProtectedRoute><LazyRoute><Accountant /></LazyRoute></ProtectedRoute>} />
               <Route path="/business" element={<ProtectedRoute><LazyRoute><Business /></LazyRoute></ProtectedRoute>} />
               <Route path="/audits" element={<ProtectedRoute><LazyRoute><Audits /></LazyRoute></ProtectedRoute>} />
               <Route path="/audits/mns-response" element={<ProtectedRoute><LazyRoute><MnsResponseService /></LazyRoute></ProtectedRoute>} />
               <Route path="/audits/mns-history" element={<ProtectedRoute><LazyRoute><MnsDocumentHistory /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development" element={<ProtectedRoute><LazyRoute><SelfDevelopment /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development/quests" element={<ProtectedRoute><LazyRoute><Quests /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development/quests/:questSlug" element={<ProtectedRoute><LazyRoute><QuestLessons /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development/quests/:questSlug/:lessonSlug" element={<ProtectedRoute><LazyRoute><QuestLesson /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development/habits" element={<ProtectedRoute><LazyRoute><HabitTracker /></LazyRoute></ProtectedRoute>} />
-              <Route path="/self-development/balance-wheel" element={<ProtectedRoute><LazyRoute><BalanceWheel /></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><SelfDevelopment /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><Quests /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><QuestLessons /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/quests/:questSlug/:lessonSlug" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><QuestLesson /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/habits" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><HabitTracker /></SectionGuard></LazyRoute></ProtectedRoute>} />
+              <Route path="/self-development/balance-wheel" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="self_development"><BalanceWheel /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/tools" element={<Navigate to="/tools/eisenhower" replace />} />
               <Route path="/tools/eisenhower" element={<ProtectedRoute><LazyRoute><SectionGuard sectionCode="eisenhower"><EisenhowerMatrix /></SectionGuard></LazyRoute></ProtectedRoute>} />
               <Route path="/tools/balance-wheel" element={<Navigate to="/self-development/balance-wheel" replace />} />
