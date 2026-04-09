@@ -1,82 +1,79 @@
-да, согласен, с учетом правок:
+# План: подключение SectionGuard ко всем секциям + единая visible/active/filtering логика
 
-&nbsp;
+## Статус: реализовано, ожидает runtime proof
 
-1. В SectionGuard не нужен resolveSectionCode, если он получает уже готовый sectionCode через prop. Маппинг нужен только там, где источник — sidebar key.
-2. Для leaderToolsItems проверь, что у элемента точно есть поле key. Если сейчас тип/объект его не содержит, сначала добавить key: "eisenhower" в сам массив, иначе план упирается в скрытую TS-ошибку.
-3. В DoD добавь отдельный proof на скорость срабатывания kill-switch:  
-enabled=false → deny снимается без ручного hard refresh максимум за 10 секунд или после явной invalidate.
-4. Добавь STOP-guard: пока SectionGuard подключён только к eisenhower, перевод в is_public=false других секций должен быть запрещён или хотя бы сопровождаться жёстким warning “enforcement ещё не подключён”.
-5. В DoD пункт про lock-иконку уточни: проверка должна быть на реально gated секции, а не абстрактно. Иначе формально пункт можно “закрыть” без живого кейса.
+## Корневые причины
 
-&nbsp;
+1. **SectionGuard подключён только к eisenhower** — `/ai`, `/money`, `/live`, `/self-development` не обёрнуты, поэтому `is_public=false` ни на что не влияет
+2. **Sidebar не живёт полностью от section-resolver** — деактивированный "Деньги" (`is_active=false`) всё равно виден, т.к. sidebar не использовал `is_active` из RPC (RPC ранее не возвращал inactive секции)
+3. Замочек на "Нейросеть" показывается (sidebar работает), но страница `/ai` открывается свободно (нет guard)
 
-&nbsp;
+## Что сделано
 
-# План: исправление 3 критических багов section_access enforcement
+### 1. RPC `get_user_section_access` — возвращает `is_active`
 
-## Диагностика
+- Убран фильтр `WHERE s.is_active = true` — теперь возвращаются ВСЕ секции
+- Добавлено поле `is_active` в результат
+- Для inactive секций `has_access = false` (кроме admin)
+- Admin видит все секции с полным доступом
 
-### Баг 1: Kill-switch парсинг (`useSectionAccess.ts:53-54`)
+### 2. `src/App.tsx` — обёрнуты все секции в SectionGuard
 
-Сейчас: `data.value === true || data.value === "true"`. В БД значение `true` (boolean). Но если записать JSON `{"enabled": false}`, код прочитает объект как truthy и вернёт неверный результат.  
-**Фикс:** Парсить с приоритетом: объект `{enabled}` → boolean → string → fallback `true` (safe mode). staleTime снизить до 10с.
+| Роут | sectionCode |
+|------|-------------|
+| `/ai` | `ai` |
+| `/money` | `money` |
+| `/live`, `/live/:slug` | `live` |
+| `/self-development` + все вложенные | `self_development` |
+| `/dashboard` | `dashboard` |
+| `/knowledge` | `knowledge` |
+| `/products` | `products` |
+| `/tools/eisenhower` | `eisenhower` |
 
-### Баг 2: Порядок проверок в SectionGuard (`SectionGuard.tsx:40-45`)
+### 3. `src/hooks/useSectionAccess.ts` — `is_active` в checkAccess
 
-Сейчас: при ошибке RPC `sections=[]` → `checkAccess()` возвращает `found: false` → guard пропускает (allow). Gated секция открывается при ошибке.  
-**Фикс:** Проверку `isError` поставить **до** `checkAccess()`. При ошибке RPC — deny + error UI.
+- `SectionAccessEntry` расширен полем `is_active`
+- `checkAccess()` возвращает `is_active`
+- Единый SoT: sidebar и guard используют один и тот же хук
 
-### Баг 3: Маппинг key → section_code
-
-Sidebar key `self-development` ≠ DB code `self_development`. `checkAccess("self-development")` → `found: false` → lock не покажется.  
-**Фикс:** Создать `src/constants/sectionCodes.ts` с маппингом, использовать в sidebar и guard.
-
-## Файлы и изменения
-
-### 1. Новый файл `src/constants/sectionCodes.ts`
-
-```typescript
-export const SIDEBAR_KEY_TO_SECTION_CODE: Record<string, string> = {
-  "self-development": "self_development",
-};
-export function resolveSectionCode(key: string): string {
-  return SIDEBAR_KEY_TO_SECTION_CODE[key] || key;
-}
-```
-
-### 2. `src/hooks/useSectionAccess.ts`
-
-- Kill-switch queryFn: парсинг `value` как JSON-объект / boolean / string / fallback `true`
-- `console.warn` при неизвестном формате
-- staleTime: `10_000` (10с, для быстрого отключения)
-
-### 3. `src/components/layout/SectionGuard.tsx`
+### 4. `src/components/layout/SectionGuard.tsx` — поддержка inactive
 
 Порядок проверок:
-
 1. Kill-switch off → allow
 2. Loading → spinner
-3. **isError → deny + error UI** (до checkAccess)
-4. checkAccess → found/public/access логика
+3. isError → deny + error UI
+4. not found → pass through
+5. **is_active=false → deny screen** (admin bypass через checkAccess)
+6. is_public=true → allow
+7. has_access=true → allow
+8. deny → paywall overlay
 
-### 4. `src/components/layout/AppSidebar.tsx`
+### 5. `src/components/layout/AppSidebar.tsx` — единая логика
 
-- Импорт `resolveSectionCode`
-- В `renderMenuItem`: `checkAccess(resolveSectionCode(item.key))`
-- В `leaderToolsItems.map`: `checkAccess(resolveSectionCode(item.key))`
+- `checkAccess()` вызывается всегда (не только при `gatingEnabled`)
+- `is_active=false` + non-admin → пункт меню скрыт
+- Lock-иконка: `gatingEnabled && !isAdmin && found && !is_public && !has_access`
 
-## Что НЕ меняется
+## Кэш (зафиксировано)
 
-- RPC, таблицы, миграции
-- AdminSections.tsx
-- Роуты (guard только на eisenhower)
-- money, live, ai — не подключаются
+- **Kill-switch** (`section_gating_enabled`): `staleTime = 10_000` (10с)
+- **Section access** (`section-access`): `staleTime = 60_000` (60с)
+- Два отдельных query, каждый со своим TTL
 
-## DoD
+## Ограничения
 
-1. Kill-switch: `true` → gating вкл; `{"enabled": false}` → gating выкл; отсутствует → safe mode (вкл)
-2. RPC error → deny + error UI для eisenhower
-3. `self-development` корректно маппится на `self_development`
-4. Lock-иконка видна обычному пользователю на gated секции
-5. Lock не видна admin
+- money и live обёрнуты guard-ом, но остаются `is_public=true` в БД
+- **Переводить money/live в `is_public=false` на этом этапе ЗАПРЕЩЕНО** без отдельного proof
+- SectionGuard — внешний фильтр, не заменяет внутренние проверки (module-level доступ через useSidebarModules)
+
+## DoD (ожидает runtime proof)
+
+1. `/ai` с `is_public=false` блокируется overlay для обычного пользователя
+2. `/tools/eisenhower` deny для non-admin — контрольный proof
+3. `is_active=false` скрывает sidebar item для обычного пользователя
+4. Direct URL на inactive section → deny screen для обычного пользователя
+5. Admin bypass — gated и inactive секции доступны
+6. Kill-switch `false` → deny снимается, lock исчезает без hard refresh
+7. `/self-development` + вложенный маршрут — оба закрыты при `is_public=false`
+8. knowledge/products — модульные ограничения внутри работают как раньше
+9. money/live остаются `is_public=true`, функционал не затронут
