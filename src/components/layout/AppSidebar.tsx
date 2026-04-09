@@ -186,7 +186,8 @@ export function AppSidebar() {
   // Render menu item - NO dynamic modules in dropdown, just static links
   const renderMenuItem = (item: MainMenuItem) => {
     const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
-    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+    const sectionCode = resolveSectionCode(item.key);
+    const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
     const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
 
     return (
@@ -240,7 +241,8 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {leaderToolsItems.map(item => {
-                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(item.key) : null;
+                const sectionCode = resolveSectionCode(item.key);
+                const sectionAccess = gatingEnabled && !isAdminUser ? checkAccess(sectionCode) : null;
                 const showLock = sectionAccess && sectionAccess.found && !sectionAccess.is_public && !sectionAccess.has_access;
                 return (
                   <SidebarMenuItem key={item.key}>
