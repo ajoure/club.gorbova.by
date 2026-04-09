@@ -312,7 +312,13 @@ async function processRule(
     }
   }
 
-  const userIds = [...userSubMap.keys()];
+  // Apply user_ids filter if provided (prevents full-scan timeouts)
+  let userIds = [...userSubMap.keys()];
+  if (filterUserIds?.length) {
+    const filterSet = new Set(filterUserIds);
+    userIds = userIds.filter(id => filterSet.has(id));
+    if (userIds.length === 0) return actions;
+  }
 
   // Batch fetch profiles with full_name
   const profileMap = new Map<string, { id: string; email: string; full_name: string | null }>();
