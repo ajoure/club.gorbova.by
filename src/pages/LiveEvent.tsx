@@ -432,6 +432,13 @@ export default function LiveEvent() {
           </div>
         )}
       </div>
+
+      {/* Contact Detail Sheet — reuse existing pattern */}
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={setContactSheetOpen}
+      />
     </div>
   );
 }
