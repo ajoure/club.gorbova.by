@@ -1093,8 +1093,9 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   };
 
   // Handle entitlement deletion (доступ по правилу)
-  const handleDeleteEntitlement = async (entitlementId: string, productName: string) => {
+  const handleDeleteEntitlement = async (entitlementId: string, productName: string, productId?: string, sourceType?: string, orderId?: string | null) => {
     if (!confirm(`Удалить доступ по правилу «${productName}»? Это действие необратимо.`)) return;
+    if (isProcessing) return; // блокировка повторного клика
     setIsProcessing(true);
     try {
       const { error } = await supabase
@@ -1108,11 +1109,18 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
         actor_type: 'admin',
         actor_user_id: (await supabase.auth.getUser()).data.user?.id || null,
         target_user_id: resolvedUserId || null,
-        meta: { entitlement_id: entitlementId, product_name: productName },
+        meta: {
+          entitlement_id: entitlementId,
+          product_name: productName,
+          product_id: productId || null,
+          source_type: sourceType || null,
+          order_id: orderId || null,
+        },
       });
       
       toast.success(`Доступ «${productName}» удалён`);
       queryClient.invalidateQueries({ queryKey: ["admin-contact-entitlements"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-contact"] });
     } catch (err: any) {
       toast.error(`Ошибка удаления: ${err.message}`);
     } finally {
@@ -3044,7 +3052,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                onClick={() => handleDeleteEntitlement(ent.id, product?.name || ent.product_code || "Продукт")}
+                                onClick={() => handleDeleteEntitlement(ent.id, product?.name || ent.product_code || "Продукт", ent.product_id, (ent.meta as any)?.source_type, ent.order_id)}
                                 disabled={isProcessing}
                                 className="h-6 w-6 text-muted-foreground hover:text-destructive"
                                 title="Удалить доступ по правилу"
