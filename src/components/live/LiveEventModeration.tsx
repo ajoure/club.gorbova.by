@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ShieldX, ShieldCheck, UserX } from "lucide-react";
+import { Loader2, ShieldX, ShieldCheck, UserX, VolumeX, Volume2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { toast } from "sonner";
@@ -104,6 +104,8 @@ export function LiveEventModerationPanel({ liveEventId }: { liveEventId: string 
   }
   const removedUsers = Array.from(currentStates.entries())
     .filter(([, s]) => s.action_type === "removed" || s.action_type === "banned");
+  const mutedUsers = Array.from(currentStates.entries())
+    .filter(([, s]) => s.action_type === "muted");
 
   return (
     <div className="space-y-4 p-3">
