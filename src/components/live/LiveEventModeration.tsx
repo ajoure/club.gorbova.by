@@ -155,6 +155,26 @@ export function LiveEventModerationPanel({ liveEventId }: { liveEventId: string 
         </div>
       )}
 
+      {mutedUsers.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-sm font-medium flex items-center gap-1.5">
+            <VolumeX className="h-4 w-4 text-amber-500" /> Заглушенные ({mutedUsers.length})
+          </h4>
+          {mutedUsers.map(([userId, state]) => (
+            <div key={userId} className="flex items-center justify-between border rounded p-2 text-sm">
+              <div>
+                <span className="font-medium">{state.userName}</span>
+                <span className="text-xs text-muted-foreground ml-2">Заглушен</span>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => restoreMutation.mutate(userId)}
+                disabled={restoreMutation.isPending}>
+                <Volume2 className="h-3 w-3 mr-1" /> Разглушить
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
       ) : (
@@ -166,8 +186,8 @@ export function LiveEventModerationPanel({ liveEventId }: { liveEventId: string 
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
               {actions.map((a: any) => (
                 <div key={a.id} className="flex items-center gap-2 text-xs border-b py-1.5">
-                  <Badge variant={a.action_type === "restored" ? "outline" : "destructive"} className="text-[9px]">
-                    {a.action_type === "removed" ? "Удалён" : a.action_type === "banned" ? "Заблокирован" : "Восстановлен"}
+                  <Badge variant={a.action_type === "restored" || a.action_type === "unmuted" ? "outline" : "destructive"} className="text-[9px]">
+                    {a.action_type === "removed" ? "Удалён" : a.action_type === "banned" ? "Заблокирован" : a.action_type === "muted" ? "Заглушен" : a.action_type === "unmuted" ? "Разглушен" : "Восстановлен"}
                   </Badge>
                   <span className="font-medium">{a.userName}</span>
                   {a.reason && <span className="text-muted-foreground">— {a.reason}</span>}
