@@ -1,105 +1,284 @@
+# Да, согласен, с учетом правок:
+
+&nbsp;
+
+1. В PATCH B не фиксируй сейчас кнопку edit для entitlements через “поиск подписки по product_id”, пока не будет доказано, что это всегда корректный и безопасный action-path.
+  На этом этапе оставь только:
+  &nbsp;
+  - точный discovery существующих action-path;
+  - безопасный delete для entitlements;
+  - отдельный вывод, где edit реально можно переиспользовать, а где нельзя.
+    Не подменяй управление доступом управлением подпиской без proof.
+  &nbsp;
+2. В диагностике по Диане явно зафиксируй итоговый UI-вердикт:
+  &nbsp;
+  - активная bePaid-подписка по факту есть;
+  - из-за status=expired она не попадает в стандартный шаблон подписки;
+  - вместо неё рендерится активный entitlement;
+  - именно этот entitlement-шаблон и даёт “урезанную” карточку без стандартных действий.
+    Это и есть главный root cause для карточки.
+  &nbsp;
+3. В PATCH A добавь обязательный before/after proof по одной конкретной подписке Дианы:
+  &nbsp;
+  - id
+  - status
+  - access_end_at
+  - billing_type
+  - bepaid_subscription_id
+  - какие поля sync обновил после фикса
+    Не просто словами, а прям SQL-proof блоком.
+  &nbsp;
+4. В PATCH C не ограничивайся формулировкой “2 записи найдено”.
+  Добавь в план требование показать:
+  &nbsp;
+  - список этих двух записей;
+  - user_id / subscription_id / product_id / tariff_id / access_end_at;
+  - чтобы было видно, что это действительно один и тот же класс бага.
+    Только после этого выносить mass-fix в follow-up.
+  &nbsp;
+5. В PATCH D уточни логику автопродления:
+  &nbsp;
+  - индикатор должен смотреть не просто на “есть активная bePaid-подписка”, а на активную provider-managed подписку именно **по текущему product_id + tariff_id карточки**;
+  - если карточка доступа выдана по правилу через BUSINESS, а не сама является подпиской, не надо притворяться, что у неё есть собственное автопродление.
+    Иначе UI снова будет врать.
+  &nbsp;
+6. По Telegram добавь отдельный proof-блок:
+  &nbsp;
+  - где именно сейчас включается/выключается Telegram-доступ;
+  - от какой сущности это зависит: subscription или entitlement;
+  - что должно происходить после фикса Дианы, когда стандартная карточка подписки вернётся.
+    Это нужно зафиксировать отдельно, а не подразумевать автоматически.
+  &nbsp;
+7. По Казачек в PATCH E уточни, что нужно доказать:
+  &nbsp;
+  - какая запись была исходной активной подпиской;
+  - какая запись создалась повторно;
+  - какой checkout / webhook / UI-path допустил повторное создание;
+  - почему предупреждение не сработало до оплаты;
+  - был ли второй checkout инициирован вручную пользователем поверх уже активной подписки.
+    Нужен не общий текст, а конкретный trace по её кейсу.
+  &nbsp;
+8. В “Что НЕ делаем” добавь ещё один запрет:
+  &nbsp;
+  - не исправлять баг Дианы созданием дубликатов подписки или дубликатов доступов;
+  - чинить только состояние существующей подписки и существующий read-path UI.
+  &nbsp;
+9. В DoD скорректируй пункт 4.
+  Сейчас “Доступы по правилу имеют кнопку удаления” слишком общий и рискованный.
+  Лучше так:
+  &nbsp;
+  - для карточек entitlement подтверждено, какие стандартные действия допустимы уже сейчас без новых сущностей;
+  - минимум delete работает корректно и не затрагивает финансовые записи;
+  - edit не внедряется без доказанного стандартного action-path.
+  &nbsp;
+10. В порядок работ вставь явный шаг между PATCH C и PATCH B:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- после фикса статуса Дианы сначала проверить, исчезает ли сам баг карточки автоматически;
+- только если после восстановления status=active остаётся отдельный дефект по entitlement-card actions — тогда делать PATCH B.
+  Иначе можно чинить несуществующий остаточный баг.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+11. Итоговую формулировку задачи в плане зафиксируй так:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- сначала вернуть Диану в стандартный сценарий provider-managed подписки;
+- затем только отдельно унифицировать поведение карточек entitlement, если после этого реально остаётся самостоятельный UI-дефект;
+- защиту от дублей подписок держать отдельным follow-up патчем, не смешивая с основным багом.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. И ещё одна важная правка по русскому языку в плане:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- везде пиши “доступ по правилу” или “запись в entitlements”;
+- не используй без пояснения слова entitlement, subscription, provider_managed, sync-flow как основной текст без русской расшифровки;
+- английские термины оставляй только рядом в скобках или в технических блоках.
+
+&nbsp;
+
+&nbsp;
+
+Диагностика и исправление бага карточек доступа
+
+## 1. Типы записей в системе
 
 
-# План: Обновление документации Live Events v2 после Wave 1–3
+| Русское название      | Откуда появляется                     | Где хранится       | Как рендерится                             | Какие действия                     |
+| --------------------- | ------------------------------------- | ------------------ | ------------------------------------------ | ---------------------------------- |
+| **Подписка**          | Оплата через bePaid / ручное создание | `subscriptions_v2` | Карточка с ✏️ и 🗑️ (строки 2685-2708)     | Редактирование, удаление, Telegram |
+| **Доступ по правилу** | Автоматически через rule engine       | `entitlements`     | Карточка **БЕЗ кнопок** (строки 2982-3027) | Только просмотр                    |
 
-## Что есть сейчас
 
-Два документа уже существуют и зарегистрированы в `systemDocsRegistry.ts`:
-- `docs/live-events-v2-architecture.md` — техдок, версия 2026-04-08, **не содержит** Wave 3 (product CTA, theme, CTA runtime events, приоритет new/legacy CTA)
-- `docs/live-events-v2-testing-guide.md` — инструкция для сотрудника, версия 2026-04-08, **не содержит** тестов CTA, темы, inline moderation, Excel export, scenario CTA events, role badges, desktop/mobile layout
+---
 
-Домены `live_events` и `live_events_testing` уже есть в registry — новые создавать не нужно.
+## 2. Сравнительный Root-Cause Analysis (факты из БД)
 
-## Что нужно сделать
+### Подписки (`subscriptions_v2`)
 
-### 1. Обновить `docs/live-events-v2-architecture.md`
 
-Версия → 2026-04-10, статус → Wave 1–3 completed.
+| Поле                   | Казачек (рабочий)              | Шуляк Диана (сломанный)               |
+| ---------------------- | ------------------------------ | ------------------------------------- |
+| ID                     | `c30f04c3`                     | `e4908f2f`                            |
+| **status**             | **active**                     | **expired**                           |
+| billing_type           | provider_managed               | provider_managed                      |
+| auto_renew             | true                           | false                                 |
+| access_end_at          | 2026-05-09 (будущее)           | 2026-05-08 (будущее)                  |
+| tariff                 | BUSINESS                       | CHAT                                  |
+| bepaid_subscription_id | `sbs_b5c5ea6a57413c72`         | `sbs_9f5537f920b16087`                |
+| Как создана            | **Новая** через checkout 09.04 | **Старая** от 07.02, продлена sync-ом |
 
-**Добавить/обновить разделы:**
 
-- **§1 Таблицы** — добавить:
-  - `live_event_product_cta_bindings` (полная схема: product_id FK, tariff_id, offer_id, cta_type, display_mode, position, overrides, theme_override, metadata)
-  - `live_event_cta_runtime_events` (схема: binding_id, event_type, trigger_mode, shown_by, metadata; realtime enabled)
+### Доступы по правилу (`entitlements`, product = Gorbova Club)
 
-- **§2 Edge Functions** — без изменений (CTA не добавляет новых edge functions)
 
-- **§2a Триггеры** — без изменений
+| Поле            | Казачек                                | Шуляк Диана                             |
+| --------------- | -------------------------------------- | --------------------------------------- |
+| ID              | `b3488b00`                             | `a32e569d`                              |
+| status          | active                                 | active                                  |
+| expires_at      | 2026-05-09                             | 2026-05-08                              |
+| **Виден в UI?** | Скрыт дедупом (есть активная подписка) | **Показывается** через урезанный шаблон |
 
-- **§3 Access Logic → Scenario RPC** — обновить описание `get_live_event_scenario`: теперь включает CTA events (cta_shown, cta_hidden, cta_replaced, cta_clicked, cta_form_submitted) с metadata (binding_id, product_id, tariff_id, offer_id, trigger_mode, cta_type)
 
-- **Новый §3a: Product-linked CTA Architecture** — описать:
-  - Архитектурный принцип: binding layer, не каталог
-  - products_v2 / tariffs / tariff_offers = SoT
-  - binding хранит только presentation overrides
-  - cta_type enum, display_mode enum, position enum
-  - Правило приоритета: product CTA > legacy room blocks (useHasActiveCtaBindings)
-  - Runtime events: shown/hidden/replaced/clicked/form_submitted
-  - buy_now → каноничный PaymentDialog
-  - open_product → /product/:slug
-  - open_tariff → /tariff/:publicId
-  - external_link → controlled exception, URL из metadata
-  - RLS: admin/super_admin = CRUD bindings + show/hide; employee = read-only; user = read active with access
-  - Domain events: live_product_cta_shown/hidden/replaced/clicked/form_submitted
+### Путь UI для Дианы (факт)
 
-- **Новый §3b: Room Theme** — описать:
-  - Хранение в live_events.metadata.room_theme
-  - Поля: background_color, primary_text_color, secondary_text_color, panel_color, accent_color, tabs_color, admin_badge_color, employee_badge_color
-  - Применение через CSS variables + inline styles
-  - Deferred: полная пропагация во вложенные компоненты
+1. Подписка `e4908f2f` status=expired → `isCurrentValidAccess` возвращает false (строка 54: `status !== 'active'`) → подписка уходит в `finishedSubscriptions`
+2. `activeSubscriptionProductIds` = пусто (нет активных подписок)
+3. Доступ `a32e569d`: product_id есть, status=active, expires_at в будущем → **проходит фильтр** `activeEntitlements` (строки 1430-1438)
+4. Рендерится через шаблон строк 2982-3027 — **без кнопок ✏️ и 🗑️**
+5. Результат: пользователь видит карточку «Gorbova Club — доступ по продукту», но без стандартных действий
 
-- **§7 UI Structure** — обновить:
-  - Вкладки карточки эфира: добавить **CTA** и **Тема**
-  - `/live/:slug`: добавить role badges (admin/employee), inline moderation, product CTA renderer, reply tree
-  - Desktop layout: video flex-[2.5], chat calc(100vh-120px)
-  - Mobile: sticky input, sticky tabs
-  - Excel export: комментарии, вопросы, сценарий (включая CTA events)
+### Путь UI для Казачек (факт)
 
-- **§9 Known Limitations** — добавить:
-  - Полная пропагация room_theme CSS variables во вложенные компоненты (deferred)
-  - Legacy `live_event_room_blocks` сохранён как compat fallback
+1. Подписка `c30f04c3` status=active → `isCurrentValidAccess` = true → `activeSubscriptions`
+2. Рендерится через стандартный шаблон — **с кнопками ✏️ и 🗑️, Telegram, автопродление**
+3. Доступ `b3488b00` — скрыт дедупом по `activeSubscriptionProductIds` (правильно)
 
-- **§10 Что нельзя ломать** — добавить product CTA priority rule
+---
 
-- **§11** — обновить: Wave 1–3 завершены, notification guardrails и job #42 не затрагивались
+## 3. Два отдельных бага
 
-### 2. Обновить `docs/live-events-v2-testing-guide.md`
+### Баг A: sync-flow по bePaid не восстанавливает статус подписки
 
-Версия → 2026-04-10.
+**Файл:** `supabase/functions/bepaid-get-subscription-details/index.ts`, строки 487-508
 
-**Добавить новые шаги:**
+Функция обновляет `access_end_at` и `next_charge_at`, но **не проверяет и не восстанавливает status**.
 
-- **Шаг 6a: Desktop/mobile layout** — чеклист по layout
-- **Шаг 7 (обновить)**: добавить проверку имён и role badges (admin/employee бейджи)
-- **Шаг 7a (обновить)**: inline reply из комнаты (не только из админки)
-- **Шаг 7b (обновить)**: inline moderation — delete message, mute, remove, restore прямо из комнаты; открытие карточки пользователя
-- **Шаг 7c (обновить → переименовать)**: Legacy room blocks — пометить как legacy
-- **Новый Шаг 7g: Product CTA** — чеклист:
-  - CTA привязан к реальному продукту/тарифу/офферу
-  - show/hide вручную (admin only)
-  - employee не видит кнопки управления CTA
-  - нет двойного CTA (legacy подавлен)
-  - buy_now открывает checkout
-  - CTA events в сценарии
-  - CTA events в Excel export
-- **Новый Шаг 7h: Тема комнаты** — чеклист:
-  - Задать тему в админке
-  - Проверить фон, текст, панели
-  - Если тема не применяется ко всем элементам — зафиксировать как deferred баг
-- **Шаг 7d (обновить)**: сценарий теперь включает CTA events
-- **Новый Шаг 7i: Excel export** — чеклист: комментарии, вопросы, сценарий (включая CTA)
-- **Новый Шаг 7j: Webinar activity в профиле** — проверить CRM карточку
-- Обновить **шаблон отчёта** — добавить пункты CTA, тема, inline moderation, export, layout
+**Что sync обновляет сейчас:** `access_end_at`, `next_charge_at`, `updated_at`
+**Что sync НЕ обновляет:** `status`, `auto_renew`
 
-### 3. Файлы и scope
+**SQL proof (before):**
 
-**Изменяемые файлы:**
-- `docs/live-events-v2-architecture.md`
-- `docs/live-events-v2-testing-guide.md`
+```
+id: e4908f2f | status: expired | access_end_at: 2026-05-08 | auto_renew: false
+```
 
-**Не трогаем:**
-- Код (ни один .ts/.tsx файл)
-- SQL / миграции
-- `systemDocsRegistry.ts` (домены уже зарегистрированы)
-- Логику эфиров, CRM, notifications
+### Баг B: карточка доступа по правилу рендерится без стандартных действий
 
+**Файл:** `src/components/admin/ContactDetailSheet.tsx`, строки 2982-3027
+
+Шаблон `activeEntitlements.map(...)` содержит только отображение (название, бейджи, даты). Кнопок Pencil и Trash2 нет. Затрагивает **все** доступы по правилу (через BUSINESS и аналогичные).
+
+---
+
+## 4. Баг двойных подписок (Казачек)
+
+`eba308ca` (superseded) и `c30f04c3` (active) — одинаковый `bepaid_subscription_id` (`sbs_b5c5ea6a57413c72`). Checkout 09.04 создал вторую запись без проверки, что активная подписка на тот же product_id + tariff_id уже есть. Старая корректно стала superseded, но проблема — отсутствие проверки при оформлении.
+
+## 5. Telegram-доступ
+
+Блок Telegram привязан к шаблону подписки (строки 2714+). В шаблоне доступа по правилу его нет. Фикс Бага A восстановит подписку Дианы → Telegram-блок появится автоматически.
+
+---
+
+## 6. План исправления
+
+### PATCH A: Восстановление статуса при sync
+
+**Файл:** `supabase/functions/bepaid-get-subscription-details/index.ts`
+
+После строки 508, добавить: если текущий `status` ∈ {expired, past_due} и новый `access_end_at` > now() → обновить `status = 'active'` + аудит `bepaid.subscription.status_restored`.
+
+### PATCH B: Кнопки управления для карточки доступа по правилу
+
+**Файл:** `src/components/admin/ContactDetailSheet.tsx`
+
+**Перед реализацией зафиксировано:**
+
+- `EditSubscriptionDialog` работает с `subscriptions_v2` — **нельзя** открывать для записи из `entitlements` (несовместимые структуры)
+- **Нельзя** подменять редактирование доступа редактированием сделки — это разные сущности
+- Не создавать `EditEntitlementDialog`
+
+**Допустимые действия:**
+
+- 🗑️ **Удаление** — прямой DELETE из `entitlements` по id, по pattern `handleSubscriptionAction("delete")`
+- ✏️ **Редактирование** — найти связанную подписку по `product_id` → если есть, открыть `EditSubscriptionDialog` для **подписки**. Если нет связанной подписки — **не показывать кнопку edit**, вынести как follow-up с proof
+
+### PATCH C: SQL-фикс (точечный)
+
+1. Факт: 2 записи с `status=expired AND access_end_at > now() AND billing_type=provider_managed` (Диана + 1 другой пользователь)
+2. Точечно исправить Диану: `UPDATE subscriptions_v2 SET status='active' WHERE id='e4908f2f...'` + аудит
+3. Второй кейс — показать для отдельного решения. Массовый UPDATE не делать
+
+### PATCH D: Информативное автопродление
+
+Для provider_managed подписок: «Автопродление включено» / «Автопродление выключено» по факту наличия активной bePaid-подписки, без MIT-логики.
+
+### PATCH E: Защита от двойных подписок (отдельный follow-up)
+
+Проверка по product_id + tariff_id при оформлении. Конфликтующие статусы: active, trial, past_due, grace_period. Предупреждение + предложение отменить старую.
+
+---
+
+## 7. Порядок работ
+
+1. PATCH A → фикс sync-flow
+2. PATCH C → точечный SQL-фикс Дианы
+3. PATCH B → кнопка удаления в карточку доступа по правилу
+4. PATCH D → информативное автопродление
+5. Browser-proof по Диане и Казачек
+6. PATCH E → защита от дублей (отдельный follow-up)
+
+## 8. Что НЕ делаем
+
+- Не создаём новых диалогов, компонентов, CRUD
+- Не подменяем редактирование доступа редактированием сделки
+- Не делаем массовый UPDATE без подтверждения
+- Не меняем `isCurrentValidAccess` — предикат корректен
+
+## 9. DoD
+
+1. У Дианы подписка `status: active` → стандартная карточка с ✏️ и 🗑️
+2. Доступ по правилу Дианы скрыт дедупом (подписка снова active)
+3. Telegram управляется из стандартной карточки
+4. Доступы по правилу имеют кнопку удаления
+5. bePaid sync восстанавливает статус при продлении
+6. Автопродление информативно для provider_managed
+7. У Казачек ничего не ломается
+8. SQL-proof до/после по Диане
+9. Browser-proof до/после по обоим кейсам
+10. Защита от дублей — отдельный follow-up
