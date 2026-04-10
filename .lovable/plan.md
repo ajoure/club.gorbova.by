@@ -54,6 +54,8 @@ tariff_id: c5981337-242b-49e8-8c99-64ccf8fac13e
 ### PATCH A: Фикс sync-flow bePaid
 **Файл:** `supabase/functions/bepaid-get-subscription-details/index.ts`
 - При sync дат, если подписка `expired`/`past_due` и `access_end_at` > now() → автоматически восстанавливает `status = 'active'` и `auto_renew = true`
+- Safeguard: только для `billing_type = 'provider_managed'`
+- Не трогает `cancelled`, `revoked`, `superseded`
 - Аудит: `bepaid.subscription.status_restored`
 - Задеплоено ✅
 
@@ -61,6 +63,9 @@ tariff_id: c5981337-242b-49e8-8c99-64ccf8fac13e
 **Файл:** `src/components/admin/ContactDetailSheet.tsx`
 - Добавлена кнопка 🗑️ (Trash2) в шаблон `activeEntitlements`
 - Использует прямой DELETE из `entitlements` с подтверждением и аудитом
+- Аудит включает: `entitlement_id`, `product_name`, `product_id`, `source_type`, `order_id`
+- Блокировка повторного клика через `isProcessing`
+- Инвалидация кэша: `admin-contact-entitlements` + `admin-contact`
 - ✏️ Edit **не добавлен** — нет доказанного стандартного action-path без новых сущностей
 
 ### PATCH C: SQL-фикс подписки Дианы
