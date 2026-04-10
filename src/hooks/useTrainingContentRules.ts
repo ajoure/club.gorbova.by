@@ -184,6 +184,25 @@ export function useActiveTrainingContentRules() {
 
       const tariffIds = (subs || []).map(s => s.tariff_id).filter(Boolean);
 
+      // Product-scoped tariff IDs from entitlement.meta (для entitlement-only доступа)
+      // Uses ONLY active entitlements with valid UUID in meta.tariff_id
+      // Scoped per product_id to prevent overgrant across products
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const entitlementTariffsByProduct: Record<string, string[]> = {};
+      (ents || []).forEach(e => {
+        if (!e.product_id) return;
+        const meta = (e.meta || {}) as Record<string, any>;
+        const tid = meta.tariff_id;
+        if (tid && typeof tid === 'string' && UUID_RE.test(tid)) {
+          if (!entitlementTariffsByProduct[e.product_id]) {
+            entitlementTariffsByProduct[e.product_id] = [];
+          }
+          if (!entitlementTariffsByProduct[e.product_id].includes(tid)) {
+            entitlementTariffsByProduct[e.product_id].push(tid);
+          }
+        }
+      });
+
       if (productIds.length === 0 && tariffIds.length === 0) return [];
 
       // Get all active training_content rules for user's products
@@ -211,6 +230,7 @@ export function useActiveTrainingContentRules() {
       return {
         rules: [...dbRules, ...syntheticRules],
         userTariffIds: tariffIds,
+        entitlementTariffsByProduct,
       };
     },
     enabled: !!user,
@@ -403,6 +423,7 @@ export function resolveTrainingContentFilter(
   trainingModuleId: string,
   productId: string | null,
   userTariffIds: string[],
+  entitlementTariffsByProduct: Record<string, string[]> = {},
 ): TrainingContentFilter | null {
   if (!productId || rules.length === 0) return null;
 
@@ -417,9 +438,16 @@ export function resolveTrainingContentFilter(
 
   let bestRule: TrainingContentRule | null = null;
 
-  // Priority 1: Tariff-level DB rules (most specific — direct purchase with active subscription)
+  // Priority 1: Tariff-level DB rules (most specific)
+  // effectiveTariffIds = global subscription tariffs + product-scoped entitlement tariffs
+  // entitlementTariffsByProduct[productId] is scoped to THIS product only — no cross-product overgrant
+  const productEntTariffs = productId ? (entitlementTariffsByProduct[productId] || []) : [];
+  const effectiveTariffIds = productEntTariffs.length > 0
+    ? [...userTariffIds, ...productEntTariffs]
+    : userTariffIds;
+
   for (const rule of dbRules) {
-    if (rule.tariff_id && userTariffIds.includes(rule.tariff_id)) {
+    if (rule.tariff_id && effectiveTariffIds.includes(rule.tariff_id)) {
       bestRule = rule;
       break;
     }
