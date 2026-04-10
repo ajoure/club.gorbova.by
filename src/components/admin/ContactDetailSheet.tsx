@@ -1092,7 +1092,34 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
     }
   };
 
-  // Handle auto-renew toggle with confirmation
+  // Handle entitlement deletion (доступ по правилу)
+  const handleDeleteEntitlement = async (entitlementId: string, productName: string) => {
+    if (!confirm(`Удалить доступ по правилу «${productName}»? Это действие необратимо.`)) return;
+    setIsProcessing(true);
+    try {
+      const { error } = await supabase
+        .from('entitlements')
+        .delete()
+        .eq('id', entitlementId);
+      if (error) throw error;
+      
+      await supabase.from('audit_logs').insert({
+        action: 'entitlement.admin_delete',
+        actor_type: 'admin',
+        actor_user_id: (await supabase.auth.getUser()).data.user?.id || null,
+        target_user_id: resolvedUserId || null,
+        meta: { entitlement_id: entitlementId, product_name: productName },
+      });
+      
+      toast.success(`Доступ «${productName}» удалён`);
+      queryClient.invalidateQueries({ queryKey: ["admin-contact-entitlements"] });
+    } catch (err: any) {
+      toast.error(`Ошибка удаления: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleToggleAutoRenew = async () => {
     if (!autoRenewTarget) return;
     
