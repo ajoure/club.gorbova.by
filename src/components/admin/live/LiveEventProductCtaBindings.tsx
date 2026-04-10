@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { isAdminRole } from "@/lib/liveRoomRoles";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,10 +63,11 @@ const EMPTY_FORM: BindingForm = {
 };
 
 export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: string }) {
-  const { session } = useAuth();
+  const { session, role } = useAuth();
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<BindingForm>(EMPTY_FORM);
+  const canManageCta = isAdminRole(role);
 
   const { data: bindings, isLoading } = useQuery({
     queryKey: ["cta-bindings-admin", liveEventId],
@@ -179,9 +181,11 @@ export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: stri
     <div className="space-y-3 p-3">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">Product CTA привязки</span>
-        <Button size="sm" className="h-7 text-xs gap-1" onClick={() => { setForm(EMPTY_FORM); setDialogOpen(true); }}>
-          <Plus className="h-3 w-3" /> Добавить CTA
-        </Button>
+        {canManageCta && (
+          <Button size="sm" className="h-7 text-xs gap-1" onClick={() => { setForm(EMPTY_FORM); setDialogOpen(true); }}>
+            <Plus className="h-3 w-3" /> Добавить CTA
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -202,10 +206,14 @@ export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: stri
                     <Badge variant="outline" className="text-[9px] px-1">{POSITION_LABELS[b.position] || b.position}</Badge>
                   </div>
                 </div>
-                <Switch checked={b.is_active} onCheckedChange={(v) => toggleMutation.mutate({ id: b.id, is_active: v })} />
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteMutation.mutate(b.id)}>
-                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                </Button>
+                {canManageCta && (
+                  <>
+                    <Switch checked={b.is_active} onCheckedChange={(v) => toggleMutation.mutate({ id: b.id, is_active: v })} />
+                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deleteMutation.mutate(b.id)}>
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           ))}

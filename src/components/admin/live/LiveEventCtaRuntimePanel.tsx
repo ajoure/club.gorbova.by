@@ -4,13 +4,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, Eye, EyeOff, RotateCcw } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { DomainEventService } from "@/lib/domain-events";
+import { isAdminRole } from "@/lib/liveRoomRoles";
 
 export function LiveEventCtaRuntimePanel({ liveEventId }: { liveEventId: string }) {
-  const { session } = useAuth();
+  const { session, role } = useAuth();
   const queryClient = useQueryClient();
+  const canManageCta = isAdminRole(role);
 
   const { data: bindings, isLoading } = useQuery({
     queryKey: ["cta-bindings-admin", liveEventId],
@@ -107,18 +109,20 @@ export function LiveEventCtaRuntimePanel({ liveEventId }: { liveEventId: string 
                 </Badge>
               </div>
               <div className="flex gap-1">
-                {!isShown ? (
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                    onClick={() => actionMutation.mutate({ bindingId: b.id, eventType: "shown" })}
-                    disabled={actionMutation.isPending}>
-                    <Eye className="h-3 w-3" /> Показать
-                  </Button>
-                ) : (
-                  <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                    onClick={() => actionMutation.mutate({ bindingId: b.id, eventType: "hidden" })}
-                    disabled={actionMutation.isPending}>
-                    <EyeOff className="h-3 w-3" /> Скрыть
-                  </Button>
+                {canManageCta && (
+                  !isShown ? (
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                      onClick={() => actionMutation.mutate({ bindingId: b.id, eventType: "shown" })}
+                      disabled={actionMutation.isPending}>
+                      <Eye className="h-3 w-3" /> Показать
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                      onClick={() => actionMutation.mutate({ bindingId: b.id, eventType: "hidden" })}
+                      disabled={actionMutation.isPending}>
+                      <EyeOff className="h-3 w-3" /> Скрыть
+                    </Button>
+                  )
                 )}
               </div>
             </CardContent>
