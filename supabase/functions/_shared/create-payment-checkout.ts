@@ -408,7 +408,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           .eq('user_id', user_id)
           .eq('product_id', product_id)
           .eq('tariff_id', tariff_id)
-          .in('status', ['active', 'trial', 'past_due', 'grace_period'])
+          .in('status', ['active', 'trial', 'past_due'])
           .limit(1)
           .maybeSingle();
 
