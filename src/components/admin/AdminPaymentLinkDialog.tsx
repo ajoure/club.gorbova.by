@@ -492,63 +492,57 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
-              {/* PATCH B2: Duplicate subscription warning */}
-              {paymentType === 'subscription' && selectedProductId && !duplicateCheckLoading && hasDuplicate && duplicateSubscription && (
+              {/* PATCH E: Conflict warning from server response */}
+              {conflictData && (
                 <div className="p-3 rounded-lg border border-destructive/50 bg-destructive/5 space-y-2">
                   <div className="flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4 shrink-0" />
-                    <p className="text-sm font-medium">Активная подписка bePaid уже существует</p>
+                    <p className="text-sm font-medium">Активная подписка уже существует</p>
                   </div>
                   <div className="text-xs text-muted-foreground space-y-0.5">
-                    <p>ID: {duplicateSubscription.provider_subscription_id} · Статус: {duplicateSubscription.state}</p>
-                    {duplicateSubscription.next_charge_at && (
-                      <p><p>Следующее списание: {formatPaymentTimeIANA(duplicateSubscription.next_charge_at, 'Europe/Warsaw')}</p></p>
+                    <p>Статус: {conflictData.status}</p>
+                    {conflictData.display_next_charge_at && (
+                      <p>Следующее списание: {formatPaymentTimeIANA(conflictData.display_next_charge_at, conflictData.timezone_used || 'Europe/Minsk')}</p>
                     )}
-                    {duplicateSubscription.card_last4 && (
-                      <p>Карта: {duplicateSubscription.card_brand?.toUpperCase()} •••• {duplicateSubscription.card_last4}</p>
+                    {conflictData.display_access_end_at && (
+                      <p>Доступ до: {formatPaymentTimeIANA(conflictData.display_access_end_at, conflictData.timezone_used || 'Europe/Minsk')}</p>
+                    )}
+                    {conflictData.bepaid_subscription_id && (
+                      <p>bePaid ID: {conflictData.bepaid_subscription_id}</p>
                     )}
                   </div>
-                  <div className="flex flex-col gap-2 mt-2">
-                    <Button
-                      type="button"
-                      variant="link"
-                      size="sm"
-                      className="h-auto p-0 text-xs justify-start text-primary"
-                      onClick={() => {
-                        navigate(`/admin/payments/bepaid-subscriptions?search=${duplicateSubscription.provider_subscription_id}`);
-                        onOpenChange(false);
-                      }}
-                    >
-                      Перейти к подписке →
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      size="sm"
-                      className="text-xs"
-                      disabled={cancelDuplicateMutation.isPending}
-                      onClick={handleCancelAndCreate}
-                    >
-                      {cancelDuplicateMutation.isPending ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      ) : null}
-                      Отменить текущую и создать новую
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Description */}
-              {selectedTariffId && (
-                <div className="space-y-2">
-                  <Label htmlFor="link-description">Комментарий (опционально)</Label>
-                  <Textarea
-                    id="link-description"
-                    placeholder="Описание для клиента..."
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows={2}
-                  />
+                  {replaceStep !== 'idle' && replaceStep !== 'error' ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {replaceStep === 'cancelling' && 'Отменяем текущую подписку…'}
+                      {replaceStep === 'creating' && 'Создаём новую ссылку…'}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2 mt-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setConflictData(null)}
+                      >
+                        Оставить текущую подписку
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="text-xs"
+                        disabled={replaceSubscriptionMutation.isPending}
+                        onClick={handleReplaceSubscription}
+                      >
+                        Заменить подписку (отменить старую)
+                      </Button>
+                    </div>
+                  )}
+                  {replaceStep === 'error' && (
+                    <p className="text-xs text-destructive mt-1">Ошибка замены. Попробуйте снова или отмените вручную.</p>
+                  )}
                 </div>
               )}
 
