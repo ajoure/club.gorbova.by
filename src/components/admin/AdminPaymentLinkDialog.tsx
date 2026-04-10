@@ -93,110 +93,77 @@ export function AdminPaymentLinkDialog({
     enabled: !!selectedTariffId,
   });
 
-  // === PATCH B2: Duplicate bePaid subscription check ===
-  const { data: duplicateSubscription, isLoading: duplicateCheckLoading } = useQuery({
-    queryKey: ["duplicate-bepaid-sub-check", userId, selectedProductId, paymentType],
-    queryFn: async () => {
-      if (!userId || !selectedProductId || paymentType !== 'subscription') return null;
+  // === PATCH E: No more client-side duplicate check — server handles it via structured conflict response ===
 
-      // Fetch active/pending bePaid provider subscriptions for this user
-      const { data: provSubs, error } = await supabase
-        .from("provider_subscriptions")
-        .select("id, provider_subscription_id, subscription_v2_id, state, next_charge_at, amount_cents, currency, card_brand, card_last4, meta")
-        .eq("user_id", userId)
-        .eq("provider", "bepaid")
-        .in("state", ["active", "pending"]);
+  // Replace subscription mutation (cancel old + create new)
+  const replaceSubscriptionMutation = useMutation({
+    mutationFn: async (conflictInfo: any) => {
+      const subV2Id = conflictInfo.subscription_v2_id;
 
-      if (error || !provSubs?.length) return null;
-
-      // Resolve product_id for each
-      const orderIds: string[] = [];
-      const subV2Ids: string[] = [];
-      for (const ps of provSubs) {
-        const metaObj = (ps.meta || {}) as Record<string, any>;
-        if (metaObj.order_id) orderIds.push(metaObj.order_id);
-        if (ps.subscription_v2_id) subV2Ids.push(ps.subscription_v2_id);
+      // Step 1: Cancel old subscription at provider
+      setReplaceStep('cancelling');
+      const { data: cancelData, error: cancelError } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
+        body: { subscription_v2_id: subV2Id, source: 'admin_replace' }
+      });
+      if (cancelError) throw new Error('Ошибка отмены у провайдера: ' + cancelError.message);
+      if (cancelData?.failed?.length > 0) {
+        throw new Error('Провайдер не смог отменить подписку: ' + (cancelData.failed[0]?.error || 'неизвестная ошибка'));
       }
 
-      const orderProductMap: Record<string, string> = {};
-      const tariffProductMap: Record<string, string> = {};
-
-      const [ordersResult, subsV2Result] = await Promise.all([
-        orderIds.length > 0
-          ? supabase.from("orders_v2").select("id, product_id").in("id", orderIds)
-          : Promise.resolve({ data: [] as any[] }),
-        subV2Ids.length > 0
-          ? supabase.from("subscriptions_v2").select("id, tariff_id").in("id", subV2Ids)
-          : Promise.resolve({ data: [] as any[] }),
-      ]);
-
-      for (const o of ordersResult.data || []) {
-        if (o.product_id) orderProductMap[o.id] = o.product_id;
+      // Step 2: Mark old subscription as superseded
+      const { error: updateErr } = await supabase
+        .from('subscriptions_v2')
+        .update({ status: 'superseded', auto_renew: false })
+        .eq('id', subV2Id);
+      if (updateErr) {
+        console.error('[PATCH E] Failed to mark old sub as superseded:', updateErr);
+        // Don't block — provider cancel already succeeded
       }
 
-      const tariffIds = (subsV2Result.data || []).map((s: any) => s.tariff_id).filter(Boolean);
-      if (tariffIds.length > 0) {
-        const { data: tariffsData } = await supabase
-          .from("tariffs")
-          .select("id, product_id")
-          .in("id", tariffIds);
-        for (const t of tariffsData || []) {
-          if (t.product_id) tariffProductMap[t.id] = t.product_id;
-        }
-      }
+      // Step 3: Audit
+      const { error: auditErr } = await supabase.from('audit_logs').insert({
+        actor_type: 'user',
+        actor_user_id: null, // will be set by RLS / current session
+        target_user_id: userId,
+        action: 'subscription.replaced',
+        meta: {
+          old_subscription_v2_id: subV2Id,
+          product_id: conflictInfo.product_id,
+          tariff_id: conflictInfo.tariff_id,
+          old_bepaid_subscription_id: conflictInfo.bepaid_subscription_id,
+          cancel_result: cancelData,
+          actor_type: 'admin',
+        },
+      });
+      if (auditErr) console.error('[PATCH E] audit insert failed:', auditErr);
 
-      const subV2TariffMap: Record<string, string> = {};
-      for (const s of subsV2Result.data || []) {
-        if (s.tariff_id) subV2TariffMap[s.id] = s.tariff_id;
-      }
-
-      // Find match
-      for (const ps of provSubs) {
-        const metaObj = (ps.meta || {}) as Record<string, any>;
-        let resolvedProductId: string | null = null;
-
-        if (metaObj.order_id && orderProductMap[metaObj.order_id]) {
-          resolvedProductId = orderProductMap[metaObj.order_id];
-        }
-        if (!resolvedProductId && ps.subscription_v2_id) {
-          const tid = subV2TariffMap[ps.subscription_v2_id];
-          if (tid && tariffProductMap[tid]) {
-            resolvedProductId = tariffProductMap[tid];
-          }
-        }
-
-        if (resolvedProductId === selectedProductId) {
-          return ps;
-        }
-      }
-
-      return null;
-    },
-    enabled: !!userId && !!selectedProductId && paymentType === 'subscription' && open,
-  });
-
-  const hasDuplicate = !!duplicateSubscription;
-
-  // Cancel existing subscription mutation
-  const cancelDuplicateMutation = useMutation({
-    mutationFn: async (providerSubId: string) => {
-      const { data, error } = await supabase.functions.invoke('bepaid-cancel-subscriptions', {
-        body: { subscription_ids: [providerSubId], source: 'admin_cancel' }
+      // Step 4: Create new checkout with replacement_of_subscription_v2_id
+      setReplaceStep('creating');
+      const { data, error } = await supabase.functions.invoke("admin-create-payment-link", {
+        body: {
+          user_id: userId,
+          product_id: selectedProductId,
+          tariff_id: selectedTariffId,
+          amount: Math.round(amount * 100),
+          payment_type: paymentType,
+          description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
+          replacement_of_subscription_v2_id: subV2Id,
+        },
       });
       if (error) throw error;
-      if (data?.failed?.length > 0) {
-        throw new Error(data.failed[0]?.error || 'Ошибка отмены подписки');
-      }
+      if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
       return data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['duplicate-bepaid-sub-check'] });
+    onSuccess: (data) => {
+      setGeneratedUrl(data.redirect_url);
+      setConflictData(null);
+      setReplaceStep('idle');
+      toast.success("Старая подписка отменена, новая ссылка создана");
       queryClient.invalidateQueries({ queryKey: ['contact-provider-subscriptions', userId] });
-      toast.success('Подписка отменена. Теперь можно создать новую.');
-      setDuplicateSubToCancel(null);
     },
     onError: (error: Error) => {
-      toast.error('Ошибка отмены: ' + error.message);
+      setReplaceStep('error');
+      toast.error('Ошибка замены подписки: ' + error.message);
     },
   });
 
