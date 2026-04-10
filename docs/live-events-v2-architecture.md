@@ -1,7 +1,7 @@
 # Live Events v2 — Техническая документация
 
-> **Версия**: 2026-04-08  
-> **Статус**: post-stabilization sprint; core stabilization completed, runtime room proof still required on real live stream  
+> **Версия**: 2026-04-10  
+> **Статус**: Wave 1–3 completed; deferred: полная theme propagation во вложенные компоненты  
 > **Аудитория**: разработчики / DevOps  
 
 ---
@@ -28,7 +28,7 @@
 | kinescope_live_event_id | text | ID live-события Kinescope (live_stream) |
 | kinescope_project_id | text | Папка Kinescope |
 | kinescope_stream_id | text | ID потока Kinescope |
-| metadata | jsonb | Включает notification_settings, provider_source_status, obs_data |
+| metadata | jsonb | Включает notification_settings, provider_source_status, obs_data, **room_theme** |
 | product_id | text | Legacy — не использовать напрямую |
 | access_rule | jsonb | Legacy — не использовать напрямую |
 
@@ -50,6 +50,7 @@
 |------|-----|----------|
 | author_display_name | text | Snapshot имени автора (заполняется trigger'ом) |
 | author_avatar_url | text | Snapshot аватара автора (заполняется trigger'ом) |
+| author_role | text | Роль автора на момент отправки (admin/employee/user) |
 | metadata | jsonb | Доп. данные |
 
 ### `live_event_questions`
@@ -59,6 +60,7 @@
 |------|-----|----------|
 | author_display_name | text | Snapshot имени автора (заполняется trigger'ом) |
 | author_avatar_url | text | Snapshot аватара автора (заполняется trigger'ом) |
+| author_role | text | Роль автора на момент отправки |
 | metadata | jsonb | Доп. данные |
 
 ### `live_event_replies`
@@ -84,13 +86,13 @@
 | id | uuid PK | |
 | live_event_id | uuid FK → live_events | |
 | user_id | uuid | Целевой пользователь |
-| action_type | text | `removed` / `banned` / `restored` |
+| action_type | text | `removed` / `banned` / `restored` / `muted` / `unmuted` |
 | reason | text (nullable) | Причина |
 | expires_at | timestamptz (nullable) | Срок действия |
 | created_by | uuid | Модератор |
 
-### `live_event_room_blocks`
-Интерактивные блоки в вебинарной комнате.
+### `live_event_room_blocks` (legacy)
+Интерактивные блоки в вебинарной комнате. **Legacy** — при наличии активного product CTA binding на той же позиции, legacy блок не рендерится (см. §3a).
 
 | Поле | Тип | Описание |
 |------|-----|----------|
@@ -104,6 +106,56 @@
 | config | jsonb | Конфигурация блока (text, url, style и т.д.) |
 
 > **Примечание**: `block_type = 'form'` присутствует в схеме как future-ready, но **не реализован в UI** в текущем спринте. Рендеринг форм разрешён только через каноническое CRM-flow (`site-form-submit`).
+
+### `live_event_product_cta_bindings` (Wave 3)
+Привязки продуктов к CTA-блокам эфира. Binding layer — не каталог; SoT цен и продуктов остаётся в products_v2/tariffs/tariff_offers.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| id | uuid PK | |
+| live_event_id | uuid FK → live_events | |
+| product_id | uuid FK → products_v2 | Продукт |
+| tariff_id | uuid FK → tariffs (nullable) | Тариф |
+| offer_id | uuid FK → tariff_offers (nullable) | Оффер (SoT цены) |
+| cta_type | text | `buy_now` / `open_product` / `open_tariff` / `external_link` |
+| display_mode | text | `always` / `live_only` / `replay_only` |
+| position | text | `under_video` / `sidebar` |
+| sort_order | integer | Порядок отображения |
+| is_active | boolean | Активен ли CTA |
+| overrides | jsonb | Presentation overrides (button_text, description) |
+| theme_override | jsonb | Цветовые override для конкретного CTA |
+| metadata | jsonb | Доп. данные (external_url для cta_type=external_link) |
+
+**RLS:**
+| Policy | CMD | Условие |
+|--------|-----|---------|
+| Staff can read all CTA bindings | SELECT | admin OR super_admin OR employee |
+| Users with event access can read active CTA bindings | SELECT | is_active=true AND user_has_live_event_access |
+| Admins can create CTA bindings | INSERT | admin OR super_admin |
+| Admins can update CTA bindings | UPDATE | admin OR super_admin |
+| Admins can delete CTA bindings | DELETE | admin OR super_admin |
+
+### `live_event_cta_runtime_events` (Wave 3)
+Runtime-события CTA: показ, скрытие, замена, клики, отправки форм. Realtime enabled.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| id | uuid PK | |
+| live_event_id | uuid FK → live_events | |
+| binding_id | uuid FK → live_event_product_cta_bindings | |
+| event_type | text | `shown` / `hidden` / `replaced` / `clicked` / `form_submitted` |
+| trigger_mode | text | `manual` / `auto` |
+| shown_by | uuid (nullable) | Кто показал (admin) |
+| user_id | uuid (nullable) | Кто кликнул (пользователь) |
+| metadata | jsonb | Доп. данные: product_id, tariff_id, offer_id, external_url, cta_type |
+
+**RLS:**
+| Policy | CMD | Условие |
+|--------|-----|---------|
+| Staff can read all CTA runtime events | SELECT | admin OR super_admin OR employee |
+| Users with event access can read CTA runtime events | SELECT | user_has_live_event_access |
+| Admins can show/hide/replace CTA | INSERT | (admin OR super_admin) AND event_type IN (shown, hidden, replaced) |
+| Users can record CTA clicks and submissions | INSERT | event_type IN (clicked, form_submitted) AND user_has_live_event_access |
 
 ### `crm_activity_log`
 Лог активности для CRM. Заполняется consumer'ом из domain_events.
@@ -217,7 +269,7 @@ Cron-функция рассылки уведомлений о предстоя�
 1. Lookup профиля: `SELECT FROM profiles WHERE user_id = NEW.user_id`  
    ⚠️ **Именно `profiles.user_id`**, не `profiles.id` — это было исправлено как баг в стабилизационном спринте.
 2. Приоритет имени: `full_name` → `first_name || ' ' || last_name` → masked email → `'Пользователь'`
-3. Записывает в `NEW.author_display_name` и `NEW.author_avatar_url`
+3. Записывает в `NEW.author_display_name`, `NEW.author_avatar_url` и `NEW.author_role`
 
 ### Domain events
 
@@ -257,6 +309,8 @@ Cron-функция рассылки уведомлений о предстоя�
 2. `kinescope_live_event_id` → iframe live player
 3. ни одного → `source_type: 'none'` (placeholder)
 
+**Debug block**: в UI комнаты (для admin/employee) доступен debug-блок с информацией об источнике: `source_kind`, `kinescope_video_id`, `kinescope_live_event_id`, `provider_source_status`. Позволяет диагностировать проблемы с видео без обращения к разработчику.
+
 ### Moderation overlay (security contract)
 
 RPC `is_user_removed_from_room(p_user_id, p_live_event_id)` проверяет, удалён ли пользователь из комнаты.
@@ -268,9 +322,122 @@ RPC `is_user_removed_from_room(p_user_id, p_live_event_id)` проверяет, 
 
 > Это **security contract**: удаление из комнаты блокирует доступ к видео, комментариям и вопросам на серверном уровне.
 
+**Inline moderation**: персонал (admin/employee) может выполнять действия модерации прямо из комнаты без перехода в админ-панель:
+- Удаление сообщения
+- Mute пользователя (запрет отправки сообщений, просмотр разрешён)
+- Unmute пользователя
+- Remove из комнаты (admin-only)
+- Restore пользователя (admin-only)
+- Открытие карточки пользователя через `openContactSheet`
+
 ### Scenario RPC
 
-`get_live_event_scenario(p_live_event_id, ...)` — unified timeline, объединяющий комментарии, вопросы, ответы и действия модерации. Поддерживает фильтры по типу.
+`get_live_event_scenario(p_live_event_id, ...)` — unified timeline, объединяющий:
+- Комментарии
+- Вопросы
+- Ответы (replies)
+- Действия модерации
+- **CTA runtime events** (Wave 3): `cta_shown`, `cta_hidden`, `cta_replaced`, `cta_clicked`, `cta_form_submitted`
+
+CTA events включают metadata: `binding_id`, `product_id`, `tariff_id`, `offer_id`, `trigger_mode`, `cta_type`. JOIN на `products_v2.name` для human-readable текста в timeline и Excel export.
+
+Поддерживает фильтры по типу событий.
+
+---
+
+## 3a. Product-linked CTA Architecture (Wave 3)
+
+### Принцип
+
+Product CTA — это **binding layer**, а не каталог. Источником истины (SoT) для цен, продуктов и тарифов остаются:
+- `products_v2` — основная сущность продукта
+- `tariffs` — тарифные пакеты
+- `tariff_offers` — конкретные офферы с ценами
+
+Binding (`live_event_product_cta_bindings`) хранит **только presentation overrides**: текст кнопки, описание, стиль. Цена всегда берётся из `tariff_offers.amount`.
+
+### cta_type
+
+| Тип | Действие | Маршрут |
+|-----|----------|---------|
+| `buy_now` | Открывает каноничный PaymentDialog | productId, price из offer.amount, offerId |
+| `open_product` | Переход на страницу продукта | `/product/{product.slug}` |
+| `open_tariff` | Переход на страницу тарифа | `/tariff/{tariff.public_id}`, fallback на product page |
+| `external_link` | Controlled exception — внешняя ссылка | URL из `metadata.external_url` |
+
+### Правило приоритета: Product CTA > Legacy room blocks
+
+Хук `useHasActiveCtaBindings(eventId, position)` проверяет наличие активных CTA bindings для данной позиции (`under_video` / `sidebar`).
+
+**Логика рендера:**
+```
+if (hasActiveProductCTA для позиции) → рендерим ТОЛЬКО product CTA
+else → рендерим legacy LiveEventRoomBlocks
+```
+
+Это исключает двойной рендер CTA и legacy блоков на одной позиции.
+
+### Runtime events
+
+При действиях над CTA создаются записи в `live_event_cta_runtime_events`:
+- `shown` — CTA показан зрителям (admin-only, trigger_mode=manual)
+- `hidden` — CTA скрыт (admin-only)
+- `replaced` — один CTA заменён другим (admin-only)
+- `clicked` — пользователь кликнул CTA
+- `form_submitted` — пользователь отправил форму CTA
+
+Metadata клика включает: `external_url`, `cta_type`, `product_id`, `tariff_id`, `offer_id`.
+
+### RLS матрица
+
+| Роль | bindings | runtime events (show/hide) | runtime events (click) |
+|------|----------|---------------------------|----------------------|
+| admin / super_admin | CRUD | INSERT shown/hidden/replaced | — |
+| employee | SELECT only | — | — |
+| user (with access) | SELECT active only | — | INSERT clicked/form_submitted |
+
+### Domain events
+
+CTA runtime events попадают в `get_live_event_scenario` и Excel export. Типы: `live_product_cta_shown`, `live_product_cta_hidden`, `live_product_cta_replaced`, `live_product_cta_clicked`, `live_product_cta_form_submitted`.
+
+---
+
+## 3b. Room Theme (Wave 3)
+
+### Хранение
+
+Тема комнаты хранится в `live_events.metadata.room_theme` (add-only расширение metadata).
+
+### Поля
+
+| Поле | Описание |
+|------|----------|
+| background_color | Фон комнаты |
+| primary_text_color | Основной текст |
+| secondary_text_color | Вторичный текст |
+| panel_color | Цвет панелей |
+| accent_color | Акцентный цвет |
+| tabs_color | Цвет вкладок |
+| admin_badge_color | Цвет бейджа админа |
+| employee_badge_color | Цвет бейджа сотрудника |
+
+### Применение
+
+Тема применяется в `LiveEvent.tsx` через:
+1. CSS-переменные на контейнере: `--room-bg`, `--room-text`, `--room-panel`, `--room-accent`, `--room-tabs`, `--room-admin-badge`, `--room-employee-badge`
+2. Inline styles: `backgroundColor`, `color` на основном контейнере
+
+### Редактор
+
+`LiveEventThemeEditor` — компонент админки для визуальной настройки темы с color picker, hex-input и preview.
+
+### ⚠️ Deferred: полная пропагация
+
+Текущая реализация:
+- ✅ **Работает**: фон комнаты, основной текст первого уровня
+- ⚠️ **Частично**: вложенные компоненты (Card, Tabs, Badge, chat messages) используют Tailwind-классы (`bg-card`, `text-foreground`), а не CSS-переменные темы
+
+**Follow-up patch**: пропагация CSS variables во все вложенные компоненты (чат, табы, бейджи, панели, card wrappers).
 
 ---
 
@@ -376,15 +543,47 @@ create → sync → [recreate] → detach
 
 **Вкладки карточки эфира:**
 - Основное / Источник / Доступы / Уведомления
-- **Модерация** — управление пользователями в комнате (remove/restore/ban)
-- **Сценарий** — unified timeline (comments, questions, replies, moderation) с фильтрами
-- **Блоки** — редактор room blocks (button, banner)
+- **Модерация** — управление пользователями в комнате (remove/restore/ban/mute/unmute)
+- **Сценарий** — unified timeline (comments, questions, replies, moderation, **CTA events**) с фильтрами
+- **Блоки** — редактор legacy room blocks (button, banner)
+- **CTA** — управление product CTA bindings (Wave 3): привязка продуктов/тарифов/офферов, show/hide (admin-only)
+- **Тема** — редактор room theme (Wave 3): цвета фона, текста, панелей, бейджей с preview
+
+**Excel export (вкладка Сценарий):**
+- Комментарии — отдельный лист
+- Вопросы — отдельный лист
+- Сценарий — unified timeline, включая CTA events с metadata
 
 ### `/live` (список эфиров)
 Личный кабинет пользователя. Отображается с DashboardLayout (боковое меню). Показывает только доступные пользователю эфиры.
 
-### `/live/:slug` (плеер)
-Полноэкранный режим без сайдбара. Kinescope-плеер + чат комментариев + вопросы ведущему + replies + room blocks (under_video + sidebar). Автоматически переключается между live/replay на основе `platform_status`.
+### `/live/:slug` (плеер / комната)
+Полноэкранный режим без сайдбара. Kinescope-плеер + чат комментариев + вопросы ведущему + replies + product CTA (или legacy room blocks) + role badges.
+
+**Desktop layout:**
+- Видео-область: `flex-[2.5]`
+- Колонка чата/вопросов: `calc(100vh - 120px)`, input фиксирован внизу
+- Product CTA / legacy blocks: `under_video` (под видео) и `sidebar` (в боковой колонке)
+
+**Mobile layout:**
+- Sticky input с поддержкой safe-area bottom
+- Sticky tabs (Чат / Вопросы)
+- Устранены лишние вертикальные отступы
+
+**Role badges:**
+- Admin: бейдж «Админ» с фоном (default: indigo, или `admin_badge_color` из theme)
+- Employee: бейдж «Сотрудник» с фоном (default: violet, или `employee_badge_color` из theme)
+- Сообщения персонала визуально выделены красным фоном
+
+**Inline moderation (из комнаты):**
+- Ответить (reply) — публичный или приватный
+- Удалить сообщение
+- Mute / Unmute пользователя (staff)
+- Remove / Restore (admin-only)
+- Открытие карточки пользователя (`openContactSheet`)
+
+**Webinar activity в профиле:**
+Активность пользователя в вебинарах отображается в CRM-карточке контакта (раздел «События» / Webinar Activity Section). Записи синхронизируются из `crm_activity_log`.
 
 ### Developer notes (UI)
 
@@ -392,6 +591,8 @@ create → sync → [recreate] → detach
   ⚠️ Legacy fallback по `profiles.id` был **багом** и исправлен в стабилизационном спринте. При возникновении edge case'ов — проверять именно этот lookup.
 
 - **Display name resolution** (UI fallback chain): `author_display_name` (snapshot) → `profiles.full_name` → `first_name + last_name` → masked email → `'Пользователь'`
+
+- **Role resolution**: `author_role` из snapshot; для inline controls используется `liveRoomRoles.ts` — `isStaffRole()`, `isAdminRole()`, `canModerateMessages()`, `canRemoveFromRoom()`.
 
 ---
 
@@ -405,10 +606,11 @@ create → sync → [recreate] → detach
 | **send-email** edge function | Отправка email-уведомлений | Средняя |
 | **pg_cron job #42** | Notification cron | **Деактивирован** |
 | **pg_cron job #43** | CRM activity consumer | **Активен**, каждую минуту |
-| **Supabase Realtime** | Живой чат комментариев/вопросов | Средняя |
+| **Supabase Realtime** | Живой чат комментариев/вопросов, CTA runtime events | Средняя |
 | **auth.users / profiles** | Аутентификация, профили | Критическая |
 | **subscriptions_v2 / entitlements** | Проверка доступа | Критическая |
 | **domain_events / domain_executions** | Event pipeline для CRM sync | Высокая |
+| **products_v2 / tariffs / tariff_offers** | SoT для product CTA (цены, продукты) | Высокая для CTA |
 
 ---
 
@@ -421,6 +623,8 @@ create → sync → [recreate] → detach
 5. **Множественные offset windows** — теоретически поддерживаются, но протестирован только один offset за раз.
 6. **Room block type `form`** — schema-ready, но **deferred in UI**. Реализация только через каноническое CRM-flow.
 7. **Runtime room proof** — live stream с реальным видео ещё не проверялся. Требуется отдельный runtime тест.
+8. **Полная пропагация room_theme CSS variables** — CSS-переменные темы заданы на контейнере, но вложенные компоненты (Card, Tabs, Badge, chat) используют Tailwind-классы. Требуется follow-up patch для глубокой темизации.
+9. **Legacy `live_event_room_blocks`** — сохранён как compat fallback. При наличии активного product CTA binding на той же позиции, legacy блок подавляется. Legacy блоки не удаляются, чтобы обеспечить обратную совместимость.
 
 ---
 
@@ -441,15 +645,18 @@ create → sync → [recreate] → detach
 | CRM idempotency | `idempotency_key` в `crm_activity_log` предотвращает дубли |
 | Moderation overlay (3 точки) | `user_has_live_event_access` + `live-resolve` + RLS INSERT policies |
 | `live-event-notifications-cron` | Guardrails, kill-switch — не трогать без явного approve |
+| Product CTA priority rule | Product CTA > legacy room blocks на одной позиции — не допускать двойной рендер |
 
 ---
 
-## 11. Что не затрагивается стабилизационным спринтом
+## 11. Что не затрагивалось в Wave 1–3
 
-Следующие компоненты **не были изменены** и не входят в scope стабилизации:
+Следующие компоненты **не были изменены** и не входят в scope:
 
 - `live-event-notifications-cron` — guardrails и kill-switch остаются без изменений
 - Incident guardrails / kill-switch — `live_notification_config` не изменялся
-- `recorded_webinar` и replay flow — не затрагивались
+- `recorded_webinar` и replay flow — не затрагивались (CTA и theme работают в обоих режимах)
 - `broadcast_templates` — не изменялись
 - `send-email` edge function — не затрагивалась
+- **pg_cron job #42** — остаётся деактивированным
+- **pg_cron job #43** — остаётся активным без изменений
