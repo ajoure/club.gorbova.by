@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Trash2, Reply, UserX, VolumeX, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { isStaffRole, isAdminRole, canModerateMessages, canRemoveFromRoom } from "@/lib/liveRoomRoles";
 
 interface InlineModerationProps {
   liveEventId: string;
@@ -28,11 +29,12 @@ export function LiveInlineModeration({
 }: InlineModerationProps) {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
-  const isAdmin = role === "admin" || role === "superadmin";
-  const isStaff = isAdmin; // employee support can be added later
+  const isStaff = isStaffRole(role);
+  const isAdmin = isAdminRole(role);
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
+      if (!canModerateMessages(role)) throw new Error("Нет прав");
       const { error } = await supabase.from(messageTable).delete().eq("id", messageId);
       if (error) throw error;
     },
@@ -45,6 +47,13 @@ export function LiveInlineModeration({
 
   const moderationMutation = useMutation({
     mutationFn: async (actionType: "removed" | "muted") => {
+      // Guard: only admin can remove, staff can mute
+      if (actionType === "removed" && !canRemoveFromRoom(role)) {
+        throw new Error("Нет прав на удаление из комнаты");
+      }
+      if (actionType === "muted" && !canModerateMessages(role)) {
+        throw new Error("Нет прав на модерацию");
+      }
       const { error } = await supabase.from("live_event_room_moderation").insert({
         live_event_id: liveEventId,
         user_id: messageUserId,
@@ -78,17 +87,21 @@ export function LiveInlineModeration({
           <ExternalLink className="h-3 w-3 text-muted-foreground hover:text-foreground" />
         </button>
       )}
-      {isAdmin && !isSelf && (
+      {!isSelf && (
         <>
+          {/* Staff: mute + delete */}
           <button onClick={() => moderationMutation.mutate("muted")} title="Заглушить" disabled={moderationMutation.isPending}>
             <VolumeX className="h-3 w-3 text-muted-foreground hover:text-amber-500" />
-          </button>
-          <button onClick={() => moderationMutation.mutate("removed")} title="Удалить из комнаты" disabled={moderationMutation.isPending}>
-            <UserX className="h-3 w-3 text-muted-foreground hover:text-destructive" />
           </button>
           <button onClick={() => deleteMutation.mutate()} title="Удалить сообщение" disabled={deleteMutation.isPending}>
             <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
           </button>
+          {/* Admin-only: remove from room */}
+          {isAdmin && (
+            <button onClick={() => moderationMutation.mutate("removed")} title="Удалить из комнаты" disabled={moderationMutation.isPending}>
+              <UserX className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+            </button>
+          )}
         </>
       )}
     </div>
