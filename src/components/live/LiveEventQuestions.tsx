@@ -46,7 +46,7 @@ export function LiveEventQuestions({ liveEventId, onOpenProfile }: LiveEventQues
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [newQuestion, setNewQuestion] = useState("");
-  const isAdmin = role === "admin" || role === "superadmin";
+  const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: questions, isLoading } = useQuery({
@@ -163,7 +163,7 @@ export function LiveEventQuestions({ liveEventId, onOpenProfile }: LiveEventQues
                     </div>
                     <p className="text-sm break-words">{q.content}</p>
                     {/* Admin: toggle answered inline */}
-                    {isAdmin && (
+                    {isStaff && (
                       <button
                         className="text-[10px] text-muted-foreground hover:text-primary mt-0.5"
                         onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })}

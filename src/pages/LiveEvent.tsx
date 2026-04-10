@@ -52,7 +52,7 @@ export default function LiveEvent() {
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
   const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
-  const isStaff = role === "admin" || role === "superadmin";
+  const isStaff = role === "admin" || role === "superadmin" || role === "employee";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopHeartbeat = useCallback(() => {
