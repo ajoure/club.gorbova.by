@@ -172,7 +172,7 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
       </div>
 
       {user && (
-        <div className="flex gap-2 p-3 border-t">
+        <div className="flex gap-2 p-3 border-t bg-card sticky bottom-0 z-10" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
           <Input
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
