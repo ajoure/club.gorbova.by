@@ -404,7 +404,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         const TZ = 'Europe/Minsk';
         const { data: existingSub, error: guardError } = await supabase
           .from('subscriptions_v2')
-          .select('id, status, access_end_at, next_charge_at, bepaid_subscription_id, billing_type, product_id, tariff_id')
+          .select('id, status, access_end_at, next_charge_at, billing_type, product_id, tariff_id')
           .eq('user_id', user_id)
           .eq('product_id', product_id)
           .eq('tariff_id', tariff_id)
