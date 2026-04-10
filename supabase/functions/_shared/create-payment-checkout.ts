@@ -419,16 +419,20 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
         }
 
         if (existingSub) {
-          // Additional provider verification
+          // Additional provider verification — look up via provider_subscriptions linked to this sub
+          let bepaidSubscriptionId: string | null = null;
           let providerSubscriptionId: string | null = null;
-          if (existingSub.bepaid_subscription_id) {
-            const { data: provSub } = await supabase
-              .from('provider_subscriptions')
-              .select('provider_subscription_id, state')
-              .eq('provider', 'bepaid')
-              .eq('provider_subscription_id', String(existingSub.bepaid_subscription_id))
-              .maybeSingle();
-            providerSubscriptionId = provSub?.provider_subscription_id || null;
+          const { data: provSub } = await supabase
+            .from('provider_subscriptions')
+            .select('provider_subscription_id, state')
+            .eq('subscription_v2_id', existingSub.id)
+            .eq('provider', 'bepaid')
+            .in('state', ['active', 'pending'])
+            .limit(1)
+            .maybeSingle();
+          if (provSub) {
+            bepaidSubscriptionId = provSub.provider_subscription_id;
+            providerSubscriptionId = provSub.provider_subscription_id;
           }
 
           // Format dates for display
@@ -437,7 +441,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
             try {
               const d = new Date(dateStr);
               if (isNaN(d.getTime())) return null;
-              // Simple ISO format — UI will reformat with timezone
               return d.toISOString();
             } catch { return null; }
           };
@@ -458,11 +461,16 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               status: existingSub.status,
               next_charge_at: existingSub.next_charge_at,
               access_end_at: existingSub.access_end_at,
-              bepaid_subscription_id: existingSub.bepaid_subscription_id ? String(existingSub.bepaid_subscription_id) : null,
+              bepaid_subscription_id: bepaidSubscriptionId,
               provider_subscription_id: providerSubscriptionId,
               product_id: existingSub.product_id,
               tariff_id: existingSub.tariff_id,
               display_next_charge_at: formatForDisplay(existingSub.next_charge_at),
+              display_access_end_at: formatForDisplay(existingSub.access_end_at),
+              timezone_used: TZ,
+            },
+          };
+        }
               display_access_end_at: formatForDisplay(existingSub.access_end_at),
               timezone_used: TZ,
             },
