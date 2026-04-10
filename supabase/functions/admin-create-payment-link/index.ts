@@ -10,6 +10,7 @@ interface CreatePaymentLinkRequest {
   payment_type: 'one_time' | 'subscription';
   description?: string;
   offer_id?: string;
+  replacement_of_subscription_v2_id?: string;
 }
 
 Deno.serve(async (req) => {
@@ -46,7 +47,7 @@ Deno.serve(async (req) => {
     }
 
     const body: CreatePaymentLinkRequest = await req.json();
-    const { user_id, product_id, tariff_id, amount, payment_type, description, offer_id } = body;
+    const { user_id, product_id, tariff_id, amount, payment_type, description, offer_id, replacement_of_subscription_v2_id } = body;
 
     if (!user_id || !product_id || !tariff_id || !amount) {
       return errorResponse('Missing required fields: user_id, product_id, tariff_id, amount');
@@ -74,6 +75,7 @@ Deno.serve(async (req) => {
       origin,
       actor_user_id: user.id,
       actor_type: 'admin',
+      replacement_of_subscription_v2_id,
     });
 
     if (!result.success) {

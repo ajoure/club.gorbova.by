@@ -546,6 +546,20 @@ export function AdminPaymentLinkDialog({
                 </div>
               )}
 
+              {/* Description */}
+              {selectedTariffId && (
+                <div className="space-y-2">
+                  <Label htmlFor="link-description">Комментарий (опционально)</Label>
+                  <Textarea
+                    id="link-description"
+                    placeholder="Описание для клиента..."
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+              )}
+
               {/* Summary */}
               {selectedProduct && selectedTariff && amount > 0 && (
                 <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 space-y-1">
