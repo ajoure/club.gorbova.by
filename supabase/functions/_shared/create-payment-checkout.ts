@@ -470,12 +470,6 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
               timezone_used: TZ,
             },
           };
-        }
-              display_access_end_at: formatForDisplay(existingSub.access_end_at),
-              timezone_used: TZ,
-            },
-          };
-        }
       }
     }
 
