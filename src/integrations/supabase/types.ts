@@ -13081,6 +13081,10 @@ export type Database = {
       inv22_subscription_desync: { Args: { p_limit?: number }; Returns: Json }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       is_superadmin: { Args: { check_user_id: string }; Returns: boolean }
+      is_user_muted_in_room: {
+        Args: { _live_event_id: string; _user_id: string }
+        Returns: boolean
+      }
       is_user_removed_from_room: {
         Args: { _live_event_id: string; _user_id: string }
         Returns: boolean
