@@ -218,7 +218,7 @@ export function useContainerLessons(): LessonsBySectionResult & { isAdminUser: b
         
         if (rootContainer) {
           const filter = resolveTrainingContentFilter(
-            tcData.rules, rootContainer.id, container.productId, tcData.userTariffIds
+            tcData.rules, rootContainer.id, container.productId, tcData.userTariffIds, tcData.entitlementTariffsByProduct || {}
           );
           if (filter && filter.mode === "partial") {
             if (!isLessonAllowed(filter, lesson.id, lesson.module_id)) {
