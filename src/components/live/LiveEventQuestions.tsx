@@ -134,13 +134,14 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
             const displayName = resolveDisplayName(q);
             const initials = getInitials(displayName);
             return (
-              <div key={q.id} className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "bg-muted/30" : ""}`}>
+              <div key={q.id} className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "bg-muted/30" : ""} ${getMessageHighlightClass(q.author_role)}`}>
                 <Avatar className="h-7 w-7 shrink-0">
                   <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-medium">{displayName}</span>
+                    <LiveRoleBadge role={q.author_role} />
                     <span className="text-[10px] text-muted-foreground">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
                     {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
                     {isAdmin && (
