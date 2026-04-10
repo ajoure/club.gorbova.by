@@ -23,6 +23,11 @@ const entryTypeLabels: Record<string, { label: string; icon: React.ReactNode; co
   question: { label: "Вопрос", icon: <HelpCircle className="h-3 w-3" />, color: "bg-blue-500/10 text-blue-700" },
   reply: { label: "Ответ", icon: <Reply className="h-3 w-3" />, color: "bg-green-500/10 text-green-700" },
   moderation: { label: "Модерация", icon: <ShieldX className="h-3 w-3" />, color: "bg-destructive/10 text-destructive" },
+  cta_shown: { label: "CTA показан", icon: <MessageSquare className="h-3 w-3" />, color: "bg-amber-500/10 text-amber-700" },
+  cta_hidden: { label: "CTA скрыт", icon: <MessageSquare className="h-3 w-3" />, color: "bg-amber-500/10 text-amber-700" },
+  cta_replaced: { label: "CTA заменён", icon: <MessageSquare className="h-3 w-3" />, color: "bg-amber-500/10 text-amber-700" },
+  cta_clicked: { label: "CTA клик", icon: <MessageSquare className="h-3 w-3" />, color: "bg-emerald-500/10 text-emerald-700" },
+  cta_form_submitted: { label: "CTA форма", icon: <MessageSquare className="h-3 w-3" />, color: "bg-emerald-500/10 text-emerald-700" },
 };
 
 export function LiveEventScenario({ liveEventId }: { liveEventId: string }) {
@@ -55,6 +60,9 @@ export function LiveEventScenario({ liveEventId }: { liveEventId: string }) {
             <SelectItem value="question">Вопросы</SelectItem>
             <SelectItem value="reply">Ответы</SelectItem>
             <SelectItem value="moderation">Модерация</SelectItem>
+            <SelectItem value="cta_shown">CTA показан</SelectItem>
+            <SelectItem value="cta_hidden">CTA скрыт</SelectItem>
+            <SelectItem value="cta_clicked">CTA клик</SelectItem>
           </SelectContent>
         </Select>
         {entries && (

@@ -12,6 +12,7 @@ import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
+import { LiveEventProductCta } from "@/components/live/LiveEventProductCta";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
@@ -390,7 +391,7 @@ export default function LiveEvent() {
               </div>
             </div>
           )}
-          {/* Room blocks — under_video */}
+          {/* Room blocks — under_video (legacy) */}
           {eventId && (
             <LiveEventRoomBlocks
               liveEventId={eventId}
@@ -398,16 +399,32 @@ export default function LiveEvent() {
               position="under_video"
             />
           )}
+          {/* Product CTA — under_video */}
+          {eventId && (
+            <LiveEventProductCta
+              liveEventId={eventId}
+              position="under_video"
+              displayContext={isReplay ? "replay" : "live"}
+              eventStartedAt={data?.scheduled_at}
+            />
+          )}
         </div>
 
         {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
         {eventId && (
           <div className="lg:flex-1 flex flex-col min-h-0 lg:min-h-0" style={{ maxHeight: 'calc(100vh - 120px)' }}>
-            {/* Sidebar room blocks */}
+            {/* Sidebar room blocks (legacy) */}
             <LiveEventRoomBlocks
               liveEventId={eventId}
               displayContext={isReplay ? "replay" : "live"}
               position="sidebar"
+            />
+            {/* Product CTA — sidebar */}
+            <LiveEventProductCta
+              liveEventId={eventId}
+              position="sidebar"
+              displayContext={isReplay ? "replay" : "live"}
+              eventStartedAt={data?.scheduled_at}
             />
             <Card className="flex-1 flex flex-col overflow-hidden min-h-[300px] lg:min-h-0">
               <Tabs defaultValue="comments" className="flex flex-col h-full">
