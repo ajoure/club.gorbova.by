@@ -5,11 +5,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, Send, CheckCircle2, Circle, Trash2, Reply } from "lucide-react";
+import { Loader2, Send, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { LiveRoleBadge, getMessageHighlightClass } from "./LiveRoleBadge";
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
+import { LiveInlineModeration } from "./LiveInlineModeration";
 
 interface Question {
   id: string;
@@ -36,12 +37,16 @@ function getInitials(name: string): string {
   return (parts[0]?.[0] || "") + (parts[1]?.[0] || "") || "?";
 }
 
-export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
+interface LiveEventQuestionsProps {
+  liveEventId: string;
+  onOpenProfile?: (userId: string) => void;
+}
+
+export function LiveEventQuestions({ liveEventId, onOpenProfile }: LiveEventQuestionsProps) {
   const { user, role } = useAuth();
   const queryClient = useQueryClient();
   const [newQuestion, setNewQuestion] = useState("");
   const isAdmin = role === "admin" || role === "superadmin";
-  const isStaff = isAdmin;
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: questions, isLoading } = useQuery({
@@ -111,14 +116,6 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("live_event_questions").delete().eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["live-event-questions", liveEventId] }),
-  });
-
   const handleSend = () => {
     if (!newQuestion.trim() || !user) return;
     sendMutation.mutate(newQuestion.trim());
@@ -138,37 +135,42 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
             return (
               <div key={q.id}>
                 <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "bg-muted/30" : ""} ${getMessageHighlightClass(q.author_role)}`}>
-                  <Avatar className="h-7 w-7 shrink-0">
+                  <Avatar
+                    className="h-7 w-7 shrink-0 cursor-pointer"
+                    onClick={() => onOpenProfile?.(q.user_id)}
+                  >
                     <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-medium">{displayName}</span>
+                      <span
+                        className="text-xs font-medium cursor-pointer hover:underline"
+                        onClick={() => onOpenProfile?.(q.user_id)}
+                      >
+                        {displayName}
+                      </span>
                       <LiveRoleBadge role={q.author_role} />
                       <span className="text-[10px] text-muted-foreground">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
                       {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
-                      {isStaff && (
-                        <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity ml-auto">
-                          <button
-                            onClick={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
-                            title="Ответить"
-                          >
-                            <Reply className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                          </button>
-                          {isAdmin && (
-                            <>
-                              <button onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })} title={q.is_answered ? "Снять отметку" : "Отметить как отвечен"}>
-                                {q.is_answered ? <Circle className="h-3 w-3 text-muted-foreground" /> : <CheckCircle2 className="h-3 w-3 text-primary" />}
-                              </button>
-                              <button onClick={() => deleteMutation.mutate(q.id)}>
-                                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
+                      <LiveInlineModeration
+                        liveEventId={liveEventId}
+                        messageId={q.id}
+                        messageUserId={q.user_id}
+                        messageTable="live_event_questions"
+                        onReply={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
+                        onOpenProfile={onOpenProfile}
+                      />
                     </div>
                     <p className="text-sm break-words">{q.content}</p>
+                    {/* Admin: toggle answered inline */}
+                    {isAdmin && (
+                      <button
+                        className="text-[10px] text-muted-foreground hover:text-primary mt-0.5"
+                        onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })}
+                      >
+                        {q.is_answered ? "Снять отметку" : "Отметить как отвечен"}
+                      </button>
+                    )}
                   </div>
                 </div>
                 {/* Threaded replies */}

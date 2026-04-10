@@ -12,6 +12,8 @@ import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
@@ -46,9 +48,11 @@ const HEARTBEAT_INTERVAL_MS = 45_000;
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
-  const { session } = useAuth();
+  const { session, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
+  const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
+  const isStaff = role === "admin" || role === "superadmin";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopHeartbeat = useCallback(() => {
@@ -418,16 +422,23 @@ export default function LiveEvent() {
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
-                  <LiveEventComments liveEventId={eventId} />
+                  <LiveEventComments liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
                 <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
-                  <LiveEventQuestions liveEventId={eventId} />
+                  <LiveEventQuestions liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
               </Tabs>
             </Card>
           </div>
         )}
       </div>
+
+      {/* Contact Detail Sheet — reuse existing pattern */}
+      <ContactDetailSheet
+        contact={selectedContact}
+        open={contactSheetOpen}
+        onOpenChange={setContactSheetOpen}
+      />
     </div>
   );
 }

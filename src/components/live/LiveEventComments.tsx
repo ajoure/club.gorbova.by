@@ -5,11 +5,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, Send, Trash2, Reply } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { LiveRoleBadge, getMessageHighlightClass } from "./LiveRoleBadge";
 import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
+import { LiveInlineModeration } from "./LiveInlineModeration";
 
 interface Comment {
   id: string;
@@ -35,13 +36,16 @@ function getInitials(name: string): string {
   return (parts[0]?.[0] || "") + (parts[1]?.[0] || "") || "?";
 }
 
-export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
-  const { user, role } = useAuth();
+interface LiveEventCommentsProps {
+  liveEventId: string;
+  onOpenProfile?: (userId: string) => void;
+}
+
+export function LiveEventComments({ liveEventId, onOpenProfile }: LiveEventCommentsProps) {
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [newComment, setNewComment] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isAdmin = role === "admin" || role === "superadmin";
-  const isStaff = isAdmin;
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: comments, isLoading } = useQuery({
@@ -120,16 +124,6 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: async (commentId: string) => {
-      const { error } = await supabase.from("live_event_comments").delete().eq("id", commentId);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["live-event-comments", liveEventId] });
-    },
-  });
-
   const handleSend = () => {
     if (!newComment.trim() || !user) return;
     sendMutation.mutate(newComment.trim());
@@ -151,29 +145,30 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
             return (
               <div key={comment.id}>
                 <div className={`flex gap-2 group rounded-lg p-2 ${getMessageHighlightClass(comment.author_role)}`}>
-                  <Avatar className="h-7 w-7 shrink-0">
+                  <Avatar
+                    className="h-7 w-7 shrink-0 cursor-pointer"
+                    onClick={() => onOpenProfile?.(comment.user_id)}
+                  >
                     <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-medium text-foreground">{displayName}</span>
+                      <span
+                        className="text-xs font-medium text-foreground cursor-pointer hover:underline"
+                        onClick={() => onOpenProfile?.(comment.user_id)}
+                      >
+                        {displayName}
+                      </span>
                       <LiveRoleBadge role={comment.author_role} />
                       <span className="text-[10px] text-muted-foreground">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
-                      {isStaff && (
-                        <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity ml-auto">
-                          <button
-                            onClick={() => setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName })}
-                            title="Ответить"
-                          >
-                            <Reply className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                          </button>
-                          {isAdmin && (
-                            <button onClick={() => deleteMutation.mutate(comment.id)}>
-                              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      <LiveInlineModeration
+                        liveEventId={liveEventId}
+                        messageId={comment.id}
+                        messageUserId={comment.user_id}
+                        messageTable="live_event_comments"
+                        onReply={() => setReplyingTo({ id: comment.id, userId: comment.user_id, name: displayName })}
+                        onOpenProfile={onOpenProfile}
+                      />
                     </div>
                     <p className="text-sm text-foreground break-words">{comment.content}</p>
                   </div>
