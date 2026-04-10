@@ -1,90 +1,97 @@
 
-# Отчёт: Финализация PATCH A, B, C, D — карточки доступа
+# Отчёт о выполненной работе: PATCH E — Запрет двойных подписок
 
-## Статус: Browser-proof завершён
-
----
-
-## Итоговый статус патчей
-
-| Патч | Статус | Browser-proof |
-|---|---|---|
-| **PATCH A** | ✅ Код + safeguard подтверждены | Диана: подписка active, карточка стандартная |
-| **PATCH C** | ✅ Данные + аудит подтверждены | Диана: subscription-card с ✏️🗑️ |
-| **PATCH B** | ✅ Код внесён, UI подтверждён | Кнопка 🗑️ видна на entitlement-карточках Казачек |
-| **PATCH D** | ✅ Код + browser-proof | bePaid-бейдж у Дианы и Казачек, toggle отсутствует |
+## Статус: Код завершён, browser-proof pending
 
 ---
 
-## PATCH E — Запрет двойных подписок — ✅ ВЫПОЛНЕН
+## 1. Что изменено
 
-### Изменённые файлы
+### Файлы
 
 | Файл | Что изменено |
 |---|---|
-| `supabase/functions/_shared/create-payment-checkout.ts` | Заменён Duplicate Guard: subscriptions_v2 SoT, fail-closed, структурированный conflict, replacement_of_subscription_v2_id |
+| `supabase/functions/_shared/create-payment-checkout.ts` | Заменён Duplicate Guard: subscriptions_v2 SoT, fail-closed, структурированный conflict, replacement_of_subscription_v2_id. Добавлен серверный аудит `subscription.replaced` с `new_order_id` после создания checkout |
 | `supabase/functions/admin-create-payment-link/index.ts` | Проброс replacement_of_subscription_v2_id, conflict в ответе |
-| `src/components/admin/AdminPaymentLinkDialog.tsx` | UI конфликта: предупреждение, «Оставить»/«Заменить», промежуточные статусы |
+| `src/components/admin/AdminPaymentLinkDialog.tsx` | UI конфликта: предупреждение, «Оставить»/«Заменить», промежуточные статусы. Аудит split: клиент пишет `subscription.replace_started` с явным `actor_user_id`, сервер пишет `subscription.replaced` с `new_order_id` |
 
-### Что реализовано
+### Аудит — двухэтапный
 
-1. **E.1 — Server-side guard (fail-closed)**
-   - Проверка по `subscriptions_v2` (user_id + product_id + tariff_id + status IN active/trial/past_due)
-   - При ошибке запроса — блокировка (fail-closed), а не пропуск
-   - Другой tariff_id — не блокируется
+1. **`subscription.replace_started`** — клиент, после успешной отмены старой подписки у провайдера, до создания нового checkout. Поля: `old_subscription_v2_id`, `product_id`, `tariff_id`, `old_bepaid_subscription_id`, `cancel_result`, `actor_type`, `actor_user_id` (явно через `supabase.auth.getUser()`), `target_user_id`.
 
-2. **E.2 — Структурированный ответ**
-   - `error: 'existing_subscription_conflict'`
-   - `conflict`: subscription_v2_id, status, next_charge_at, access_end_at, bepaid_subscription_id, provider_subscription_id, display_*, timezone_used
+2. **`subscription.replaced`** — сервер (`create-payment-checkout.ts`), после успешного создания нового checkout. Поля: `old_subscription_v2_id`, `new_order_id`, `new_checkout_or_order_id`, `product_id`, `tariff_id`, `bepaid_subscription_id`, `actor_type`, `actor_user_id`, `target_user_id`.
 
-3. **E.3 — UI предупреждение**
-   - Показ конфликта при попытке создания дубля
-   - Кнопки «Оставить текущую» / «Заменить подписку»
-   - Промежуточные статусы: «Отменяем…» → «Создаём…»
+### Терминальные статусы (из кода, строки 387)
 
-4. **E.4 — Безопасная замена**
-   - `replacement_of_subscription_v2_id` вместо generic `force_replace`
-   - Сервер проверяет, что старая подписка в терминальном статусе
-   - Отмена у провайдера → superseded → новый checkout
-   - Аудит `subscription.replaced` с полными meta
-
-5. **E.5 — STOP-guard**
-   - Если отмена у провайдера не прошла — новая подписка не создаётся
-   - Если старая подписка не в терминальном статусе — checkout блокируется
-   - Ошибка показывается в UI
-
-### Proof
-
-- **Тот же product+tariff** → `existing_subscription_conflict` с полным conflict (subscription_v2_id, bepaid_subscription_id, dates)
-- **Другой tariff** → checkout проходит нормально
-- **Fail-closed** — при ошибке запроса к subscriptions_v2 checkout блокируется
+```
+canceled, superseded, revoked, expired, expired_reentry
+```
 
 ---
 
-## Второй кейс того же баг-класса — PENDING
+## 2. Server-proof
 
-```
-id:             dea78a37-2185-4bd7-9107-d726b2a12c28
-user_id:        871ac688-88c8-4739-b2eb-51779bd69fed
-product_id:     85046734-2282-4ded-b0d3-8c66c8f5bc2b (Бухгалтерия как бизнес)
-tariff_id:      c5981337-242b-49e8-8c99-64ccf8fac13e (Ежемесячный доступ)
-status:         expired ← БАГ
-access_end_at:  2026-05-05 (будущее)
-auto_renew:     true
-billing_type:   provider_managed
-```
+### Proof 1: Дубль по тому же product_id + tariff_id — ЗАБЛОКИРОВАН ✅
 
-Профиль `871ac688` не найден в `profiles`. Тот же класс бага. **Не фиксим без отдельного подтверждения.**
+Подписка `c30f04c3` (Gorbova Club / BUSINESS, active) найдена → checkout не создан, вернулся `existing_subscription_conflict` с `subscription_v2_id`, `bepaid_subscription_id`, датами.
+
+### Proof 2: Другой тариф того же продукта — РАЗРЕШЁН ✅
+
+Тариф CHAT → checkout создан, `redirect_url` получен.
+
+### Proof 3: STOP-guard — replacement без отмены — ЗАБЛОКИРОВАН ✅
+
+`replacement_of_subscription_v2_id: c30f04c3`, status=active → ответ: «Заменяемая подписка ещё не отменена (статус: active)».
+
+### Proof 4: Fail-closed — подтверждён кодом ✅
+
+Строки 415-418: при ошибке запроса к subscriptions_v2 → checkout блокируется.
+
+### Proof 5: replacement через конкретный ID — не generic bypass ✅
+
+Строки 373-401: проверка конкретной подписки по UUID + терминальный статус.
 
 ---
 
-## DoD
+## 3. Negative-proof
 
-1. ✅ PATCH A доказан (код + safeguard)
-2. ✅ PATCH C доказан (SQL + аудит)
-3. ⚠️ Delete entitlement: кнопка визуально подтверждена, код верифицирован, полный click-proof требует отдельного теста
-4. ✅ PATCH D доказан browser-proof (bePaid бейдж + отсутствие toggle)
-5. ✅ По Диане финальный browser-proof есть
-6. ✅ По Казачек regression-proof есть
-7. ✅ Второй кейс показан отдельно без execute
-8. ✅ PATCH E выполнен: guard + UI + replacement + STOP-guard + proof
+- Если отмена у провайдера не прошла → UI показывает ошибку, новая ссылка не создаётся (STOP-guard на клиенте: строка 109-111)
+- Если guard-query падает → checkout не создаётся (fail-closed: строки 415-418)
+- Если replacement sub не в терминальном статусе → checkout не создаётся (строки 388-395)
+
+---
+
+## 4. Browser-proof — pending
+
+Checklist:
+1. Конфликт по тому же product_id + tariff_id → блок «Активная подписка уже существует» с датой по Минску
+2. «Оставить текущую» → ничего не создаётся
+3. «Заменить подписку» → «Отменяем…» → «Создаём…» → новая ссылка
+4. SQL: старая подписка в терминальном статусе, новая ровно одна
+
+---
+
+## 5. Что вне scope
+
+| Пункт | Статус |
+|---|---|
+| Кейс `dea78a37` (тот же баг-класс) | Pending, не фиксим без подтверждения |
+| Массовый поиск аналогичных случаев | Не в этом патче |
+| Guard для `public-checkout` | Отдельный scope |
+
+---
+
+## 6. DoD
+
+| Критерий | Статус |
+|---|---|
+| Дубль по product_id + tariff_id блокируется | ✅ Server-proof |
+| Другой тариф не блокируется | ✅ Server-proof |
+| Завершённая подписка не блокирует | ✅ Код (терминальные статусы: canceled, superseded, revoked, expired, expired_reentry) |
+| STOP-guard при не-отменённой подписке | ✅ Server-proof |
+| Fail-closed при ошибке запроса | ✅ Код |
+| replacement через конкретный ID | ✅ Server-proof + код |
+| Аудит `subscription.replace_started` с actor_user_id | ✅ Код (клиент, auth.getUser()) |
+| Аудит `subscription.replaced` с new_order_id | ✅ Код (сервер, после создания checkout) |
+| Browser-proof UI конфликта | ⏳ Требуется |
+| Даты по Europe/Minsk в UI | ✅ Код (formatPaymentTimeIANA) — нужен скрин |
