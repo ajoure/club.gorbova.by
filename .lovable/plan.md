@@ -16,39 +16,48 @@
 
 ---
 
-## Browser-proof по Диане Шуляк — ✅
+## PATCH E — Запрет двойных подписок — ✅ ВЫПОЛНЕН
 
-- Стандартная карточка подписки **Gorbova Club / CHAT** — статус «Активна»
-- Кнопки **✏️ и 🗑️** присутствуют
-- Бейджи **Telegram** и **GetCourse** видны
-- Даты: Начало 07.02.26, До 08.05.26, Попытка списания 08.05.26
-- **«Автопродление включено»** + бейдж **bePaid** (без toggle) — PATCH D подтверждён
-- Кнопки **«Управление»** и **«Управление доступом»** доступны
-- **Нет дубля** entitlement-карточки в активных
-- Внизу «Показать завершённые (2)» — в активных только подписка
+### Изменённые файлы
 
-## Browser-proof PATCH D — ✅
+| Файл | Что изменено |
+|---|---|
+| `supabase/functions/_shared/create-payment-checkout.ts` | Заменён Duplicate Guard: subscriptions_v2 SoT, fail-closed, структурированный conflict, replacement_of_subscription_v2_id |
+| `supabase/functions/admin-create-payment-link/index.ts` | Проброс replacement_of_subscription_v2_id, conflict в ответе |
+| `src/components/admin/AdminPaymentLinkDialog.tsx` | UI конфликта: предупреждение, «Оставить»/«Заменить», промежуточные статусы |
 
-Двойной proof:
-- **provider_managed** (Диана, ЗАКРОЙ ГОД у Казачек): бейдж «bePaid», toggle MIT отсутствует, текст информативный
-- **non-provider-managed** (Gorbova Club BUSINESS у Казачек с auto_renew=false): кнопка «Возобновить» на месте, стандартная логика сохранена
+### Что реализовано
 
-## Regression-proof по Казачек — ✅
+1. **E.1 — Server-side guard (fail-closed)**
+   - Проверка по `subscriptions_v2` (user_id + product_id + tariff_id + status IN active/trial/past_due)
+   - При ошибке запроса — блокировка (fail-closed), а не пропуск
+   - Другой tariff_id — не блокируется
 
-- Карточка **Gorbova Club / BUSINESS** — «Не продлевается», ✏️ и 🗑️ на месте
-- Бейджи **Telegram** и **GetCourse**
-- Кнопки **«Управление»** и **«Возобновить»**
-- Карточка **ЗАКРОЙ ГОД / Стандартный** — «Активна», ✏️ и 🗑️
-- Карточка **Ценный бухгалтер | 2 ступень / Премиум** — «Активна», ✏️ и 🗑️
-- Entitlement-карточки «Деньги BY 1 тариф» и «ЦБ 1 ступень 2.0» с кнопками 🗑️
-- Визуальной деградации нет
+2. **E.2 — Структурированный ответ**
+   - `error: 'existing_subscription_conflict'`
+   - `conflict`: subscription_v2_id, status, next_charge_at, access_end_at, bepaid_subscription_id, provider_subscription_id, display_*, timezone_used
 
-## PATCH B — кнопка удаления entitlements — ⚠️ ЧАСТИЧНО
+3. **E.3 — UI предупреждение**
+   - Показ конфликта при попытке создания дубля
+   - Кнопки «Оставить текущую» / «Заменить подписку»
+   - Промежуточные статусы: «Отменяем…» → «Создаём…»
 
-- Кнопка 🗑️ **визуально подтверждена** на карточках entitlement (Казачек)
-- Полный delete-proof (нажать → проверить audit) не выполнен на тестовом entitlement (тестовая запись без `access_rule_id` не попала в UI-фильтр)
-- Код функции `handleDeleteEntitlement` верифицирован: удаляет только из `entitlements`, пишет полный audit с `entitlement_id`, `product_id`, `product_name`, `source_type`, `order_id`, `target_user_id`
-- Для полного proof нужен entitlement с `access_rule_id` или ручной тест на боевой карточке
+4. **E.4 — Безопасная замена**
+   - `replacement_of_subscription_v2_id` вместо generic `force_replace`
+   - Сервер проверяет, что старая подписка в терминальном статусе
+   - Отмена у провайдера → superseded → новый checkout
+   - Аудит `subscription.replaced` с полными meta
+
+5. **E.5 — STOP-guard**
+   - Если отмена у провайдера не прошла — новая подписка не создаётся
+   - Если старая подписка не в терминальном статусе — checkout блокируется
+   - Ошибка показывается в UI
+
+### Proof
+
+- **Тот же product+tariff** → `existing_subscription_conflict` с полным conflict (subscription_v2_id, bepaid_subscription_id, dates)
+- **Другой tariff** → checkout проходит нормально
+- **Fail-closed** — при ошибке запроса к subscriptions_v2 checkout блокируется
 
 ---
 
@@ -69,15 +78,6 @@ billing_type:   provider_managed
 
 ---
 
-## PATCH E — Защита от дублей подписок — ОТДЕЛЬНЫЙ FOLLOW-UP
-
-Не смешивается с текущим патчем. Scope:
-- Проверка `product_id + tariff_id` при оформлении
-- Конфликтующие статусы: `active`, `trial`, `past_due`, `grace_period`
-- Предупреждение + предложение отменить старую
-
----
-
 ## DoD
 
 1. ✅ PATCH A доказан (код + safeguard)
@@ -87,4 +87,4 @@ billing_type:   provider_managed
 5. ✅ По Диане финальный browser-proof есть
 6. ✅ По Казачек regression-proof есть
 7. ✅ Второй кейс показан отдельно без execute
-8. ✅ PATCH E вынесен отдельно
+8. ✅ PATCH E выполнен: guard + UI + replacement + STOP-guard + proof
