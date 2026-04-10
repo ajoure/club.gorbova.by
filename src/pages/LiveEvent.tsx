@@ -12,6 +12,8 @@ import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
+import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
 interface ResolvedSource {
   resolved_source_kind: 'kinescope_video' | 'kinescope_live_embed' | 'none';
