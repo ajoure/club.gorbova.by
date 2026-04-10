@@ -221,6 +221,7 @@ export function useTrainingModules() {
       // PATCH B: Apply training_content filter for non-admins
       const tcRules = tcData?.rules || [];
       const tcUserTariffIds = tcData?.userTariffIds || [];
+      const tcEntTariffsByProduct = tcData?.entitlementTariffsByProduct || {};
 
       // Build parent product_id map for inheritance
       const parentProductMap = new Map<string, string>();
