@@ -3039,7 +3039,19 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                 )}
                               </div>
                             </div>
-                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Активен</Badge>
+                            <div className="flex items-center gap-1">
+                              <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">Активен</Badge>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => handleDeleteEntitlement(ent.id, product?.name || ent.product_code || "Продукт")}
+                                disabled={isProcessing}
+                                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                title="Удалить доступ по правилу"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
                           </div>
                           <div className="grid grid-cols-2 gap-2 text-xs">
                             <div>
