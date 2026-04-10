@@ -61,6 +61,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
   const {
     supabase, user_id, product_id, tariff_id, amount,
     payment_type, description, offer_id, origin, actor_user_id, actor_type,
+    replacement_of_subscription_v2_id,
   } = params;
 
   // === STOP-GUARD: validate required fields ===
