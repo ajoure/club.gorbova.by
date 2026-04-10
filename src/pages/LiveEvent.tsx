@@ -12,7 +12,7 @@ import { ru } from "date-fns/locale";
 import { LiveEventComments } from "@/components/live/LiveEventComments";
 import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventRoomBlocks } from "@/components/live/LiveEventRoomBlocks";
-import { LiveEventProductCta } from "@/components/live/LiveEventProductCta";
+import { LiveEventProductCta, useHasActiveCtaBindings } from "@/components/live/LiveEventProductCta";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
 import { useLiveContactSheet } from "@/hooks/useLiveContactSheet";
 
@@ -353,8 +353,27 @@ export default function LiveEvent() {
     (data?.event_status === "ended" && data?.replay_enabled);
   const resolvedSource = data?.resolved_source;
 
+  // Legacy CTA priority: product CTA bindings take precedence over legacy room blocks
+  const hasUnderVideoCta = useHasActiveCtaBindings(eventId || "", "under_video");
+  const hasSidebarCta = useHasActiveCtaBindings(eventId || "", "sidebar");
+
+  // Room theme from metadata
+  const roomTheme = (data as any)?.room_theme || (data as any)?.metadata?.room_theme;
+  const themeStyle: React.CSSProperties = roomTheme ? {
+    ['--room-bg' as string]: roomTheme.background_color || undefined,
+    ['--room-text' as string]: roomTheme.primary_text_color || undefined,
+    ['--room-text-secondary' as string]: roomTheme.secondary_text_color || undefined,
+    ['--room-panel' as string]: roomTheme.panel_color || undefined,
+    ['--room-accent' as string]: roomTheme.accent_color || undefined,
+    ['--room-tabs' as string]: roomTheme.tabs_color || undefined,
+    ['--room-admin-badge' as string]: roomTheme.admin_badge_color || undefined,
+    ['--room-employee-badge' as string]: roomTheme.employee_badge_color || undefined,
+    backgroundColor: roomTheme.background_color || undefined,
+    color: roomTheme.primary_text_color || undefined,
+  } : {};
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col" style={themeStyle}>
       {/* Header — compact */}
       <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
         <div className="flex items-center gap-3 mb-1">
@@ -391,8 +410,8 @@ export default function LiveEvent() {
               </div>
             </div>
           )}
-          {/* Room blocks — under_video (legacy) */}
-          {eventId && (
+          {/* Room blocks — under_video (legacy, only if no product CTA bindings) */}
+          {eventId && !hasUnderVideoCta && (
             <LiveEventRoomBlocks
               liveEventId={eventId}
               displayContext={isReplay ? "replay" : "live"}
@@ -413,12 +432,14 @@ export default function LiveEvent() {
         {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
         {eventId && (
           <div className="lg:flex-1 flex flex-col min-h-0 lg:min-h-0" style={{ maxHeight: 'calc(100vh - 120px)' }}>
-            {/* Sidebar room blocks (legacy) */}
-            <LiveEventRoomBlocks
-              liveEventId={eventId}
-              displayContext={isReplay ? "replay" : "live"}
-              position="sidebar"
-            />
+            {/* Sidebar room blocks (legacy, only if no product CTA bindings) */}
+            {!hasSidebarCta && (
+              <LiveEventRoomBlocks
+                liveEventId={eventId}
+                displayContext={isReplay ? "replay" : "live"}
+                position="sidebar"
+              />
+            )}
             {/* Product CTA — sidebar */}
             <LiveEventProductCta
               liveEventId={eventId}
