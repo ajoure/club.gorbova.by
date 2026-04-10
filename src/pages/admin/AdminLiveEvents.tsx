@@ -61,6 +61,7 @@ import { LiveEventScenario } from "@/components/live/LiveEventScenario";
 import { LiveEventRoomBlocksEditor } from "@/components/admin/live/LiveEventRoomBlocksEditor";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
+import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
 
 type EventType = "live_stream" | "recorded_webinar";
 type SourceKind = "kinescope_live_event" | "kinescope_video";
@@ -2260,6 +2261,10 @@ function LiveStreamControlPanel({
       {editingId && (
         <>
           <Separator />
+          <div className="flex items-center justify-between gap-2 py-2">
+            <span className="text-xs font-medium text-muted-foreground">Экспорт данных:</span>
+            <LiveEventExportButtons liveEventId={editingId} eventTitle={form.title || undefined} />
+          </div>
           <Tabs defaultValue="comments" className="w-full">
             <TabsList>
               <TabsTrigger value="comments" className="gap-1.5 text-xs">

@@ -135,6 +135,9 @@ import { ContactPaymentsTab } from "./ContactPaymentsTab";
 import { LinkedCardItem } from "./cards/LinkedCardItem";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
+import { WebinarActivitySection } from "./contact/WebinarActivitySection";
+import { isStaffRole } from "@/lib/liveRoomRoles";
+import { useAuth } from "@/contexts/AuthContext";
 
 // formatContactName imported from @/lib/nameUtils
 
@@ -182,6 +185,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
+  const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
@@ -3261,6 +3265,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">
+              {/* Webinar Activity Section */}
+              {resolvedUserId && (
+                <WebinarActivitySection userId={resolvedUserId} isStaff={isStaffRole(authRole)} />
+              )}
+
               {/* Notification Events Section */}
               {notificationEvents && notificationEvents.length > 0 && (
                 <Card>
