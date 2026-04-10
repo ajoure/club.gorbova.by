@@ -349,10 +349,11 @@ export default function LiveEvent() {
   const resolvedSource = data?.resolved_source;
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-6xl mx-auto px-4 py-8">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-2xl md:text-3xl font-bold text-foreground">{data?.title}</h1>
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header — compact */}
+      <div className="max-w-[1400px] w-full mx-auto px-3 md:px-6 pt-3 md:pt-4 pb-2">
+        <div className="flex items-center gap-3 mb-1">
+          <h1 className="text-lg md:text-2xl font-bold text-foreground truncate">{data?.title}</h1>
           {data?.event_type && (
             <Badge variant="outline" className="text-xs shrink-0">
               {data.event_type === "live_stream" ? "Живой эфир" : "Видео"}
@@ -360,71 +361,72 @@ export default function LiveEvent() {
           )}
         </div>
         {data?.description && (
-          <p className="text-muted-foreground mb-6">{data.description}</p>
+          <p className="text-sm text-muted-foreground line-clamp-1 mb-1">{data.description}</p>
         )}
         {isReplay && (
-          <div className="mb-4 inline-flex items-center gap-2 bg-muted rounded-lg px-3 py-1.5 text-sm text-muted-foreground">
-            <Video className="h-4 w-4" /> Запись эфира
+          <div className="inline-flex items-center gap-2 bg-muted rounded-lg px-2.5 py-1 text-xs text-muted-foreground">
+            <Video className="h-3.5 w-3.5" /> Запись эфира
           </div>
         )}
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Player — uses resolved_source from server */}
-          <div className="lg:col-span-2">
-            {resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
-              <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
-            ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
-              <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
-            ) : (
-              <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
-                <div className="text-center p-4">
-                  <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
-                  <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
-                </div>
+      {/* Main content — fills remaining height */}
+      <div className="flex-1 max-w-[1400px] w-full mx-auto px-3 md:px-6 pb-3 md:pb-6 flex flex-col lg:flex-row gap-3 md:gap-4 min-h-0">
+        {/* Player column — takes most width on desktop */}
+        <div className="lg:flex-[2.5] flex flex-col gap-2 min-w-0">
+          {resolvedSource?.resolved_source_kind === 'kinescope_video' && resolvedSource.resolved_embed_url ? (
+            <KinescopePlayerWrapper videoId={data?.kinescope_video_id!} />
+          ) : resolvedSource?.resolved_source_kind === 'kinescope_live_embed' && resolvedSource.resolved_embed_url ? (
+            <LiveEmbedPlayer embedUrl={resolvedSource.resolved_embed_url} />
+          ) : (
+            <div className="relative w-full aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+              <div className="text-center p-4">
+                <AlertTriangle className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">Источник видео недоступен</p>
               </div>
-            )}
-            {/* Room blocks — under_video */}
-            {eventId && (
-              <LiveEventRoomBlocks
-                liveEventId={eventId}
-                displayContext={isReplay ? "replay" : "live"}
-                position="under_video"
-              />
-            )}
-          </div>
-
-          {/* Comments / Questions sidebar */}
-          {eventId && (
-            <div className="lg:col-span-1 space-y-4">
-              {/* Sidebar room blocks */}
-              <LiveEventRoomBlocks
-                liveEventId={eventId}
-                displayContext={isReplay ? "replay" : "live"}
-                position="sidebar"
-              />
-              <Card className="h-[500px] flex flex-col overflow-hidden">
-                <Tabs defaultValue="comments" className="flex flex-col h-full">
-                  <TabsList className="w-full grid grid-cols-2 rounded-none border-b">
-                    <TabsTrigger value="comments" className="gap-1.5 text-xs">
-                      <MessageCircle className="h-3.5 w-3.5" />
-                      Чат
-                    </TabsTrigger>
-                    <TabsTrigger value="questions" className="gap-1.5 text-xs">
-                      <HelpCircle className="h-3.5 w-3.5" />
-                      Вопросы
-                    </TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
-                    <LiveEventComments liveEventId={eventId} />
-                  </TabsContent>
-                  <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
-                    <LiveEventQuestions liveEventId={eventId} />
-                  </TabsContent>
-                </Tabs>
-              </Card>
             </div>
           )}
+          {/* Room blocks — under_video */}
+          {eventId && (
+            <LiveEventRoomBlocks
+              liveEventId={eventId}
+              displayContext={isReplay ? "replay" : "live"}
+              position="under_video"
+            />
+          )}
         </div>
+
+        {/* Chat / Questions sidebar — full height on desktop, sensible on mobile */}
+        {eventId && (
+          <div className="lg:flex-1 flex flex-col min-h-0 lg:min-h-0" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+            {/* Sidebar room blocks */}
+            <LiveEventRoomBlocks
+              liveEventId={eventId}
+              displayContext={isReplay ? "replay" : "live"}
+              position="sidebar"
+            />
+            <Card className="flex-1 flex flex-col overflow-hidden min-h-[300px] lg:min-h-0">
+              <Tabs defaultValue="comments" className="flex flex-col h-full">
+                <TabsList className="w-full grid grid-cols-2 rounded-none border-b shrink-0 sticky top-0 z-10 bg-card">
+                  <TabsTrigger value="comments" className="gap-1.5 text-xs">
+                    <MessageCircle className="h-3.5 w-3.5" />
+                    Чат
+                  </TabsTrigger>
+                  <TabsTrigger value="questions" className="gap-1.5 text-xs">
+                    <HelpCircle className="h-3.5 w-3.5" />
+                    Вопросы
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
+                  <LiveEventComments liveEventId={eventId} />
+                </TabsContent>
+                <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
+                  <LiveEventQuestions liveEventId={eventId} />
+                </TabsContent>
+              </Tabs>
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );

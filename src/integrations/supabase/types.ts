@@ -5306,6 +5306,7 @@ export type Database = {
         Row: {
           author_avatar_url: string | null
           author_display_name: string | null
+          author_role: string | null
           content: string
           created_at: string
           id: string
@@ -5317,6 +5318,7 @@ export type Database = {
         Insert: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_role?: string | null
           content: string
           created_at?: string
           id?: string
@@ -5328,6 +5330,7 @@ export type Database = {
         Update: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_role?: string | null
           content?: string
           created_at?: string
           id?: string
@@ -5441,6 +5444,7 @@ export type Database = {
         Row: {
           author_avatar_url: string | null
           author_display_name: string | null
+          author_role: string | null
           content: string
           created_at: string
           id: string
@@ -5453,6 +5457,7 @@ export type Database = {
         Insert: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_role?: string | null
           content: string
           created_at?: string
           id?: string
@@ -5465,6 +5470,7 @@ export type Database = {
         Update: {
           author_avatar_url?: string | null
           author_display_name?: string | null
+          author_role?: string | null
           content?: string
           created_at?: string
           id?: string
