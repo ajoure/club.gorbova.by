@@ -1400,6 +1400,52 @@ export default function AdminLiveEvents() {
                 )}
               </FormSection>
 
+              {/* Source Debug Block — admin видит реальное состояние source */}
+              {editingId && (() => {
+                const currentEvent = events?.find(e => e.id === editingId);
+                if (!currentEvent) return null;
+                const meta = currentEvent.metadata as Record<string, any> | null;
+                const pss = meta?.provider_source_status || "unknown";
+                const lastSync = meta?.last_synced_at || meta?.last_provider_sync_at;
+                const hasVideoId = !!currentEvent.kinescope_video_id;
+                const hasLiveId = !!currentEvent.kinescope_live_event_id;
+                const resolvedKind = hasVideoId ? "kinescope_video" : hasLiveId ? "kinescope_live_embed" : "none";
+                const embedUrl = hasVideoId 
+                  ? `https://kinescope.io/embed/${currentEvent.kinescope_video_id}`
+                  : hasLiveId 
+                    ? `https://kinescope.io/embed/live/${currentEvent.kinescope_live_event_id}`
+                    : null;
+                const playUrl = hasVideoId ? `https://kinescope.io/${currentEvent.kinescope_video_id}` : null;
+
+                return (
+                  <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/10 p-3 space-y-2">
+                    <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                      <Monitor className="h-3.5 w-3.5" />
+                      Source Debug
+                    </h4>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
+                      <span className="text-muted-foreground">Provider status:</span>
+                      <span className={pss === "ok" ? "text-green-600 font-medium" : pss === "missing" || pss === "broken" ? "text-destructive font-medium" : "text-muted-foreground"}>
+                        {pss}
+                      </span>
+                      <span className="text-muted-foreground">Resolved source:</span>
+                      <span className="font-mono">{resolvedKind}</span>
+                      <span className="text-muted-foreground">Embed URL:</span>
+                      <span className="font-mono truncate" title={embedUrl || "—"}>{embedUrl ? "✅" : "❌"} {embedUrl || "—"}</span>
+                      <span className="text-muted-foreground">Play URL:</span>
+                      <span className="font-mono truncate" title={playUrl || "—"}>{playUrl || "—"}</span>
+                      <span className="text-muted-foreground">Last sync:</span>
+                      <span>{lastSync ? format(new Date(lastSync), "dd.MM.yyyy HH:mm:ss") : "—"}</span>
+                    </div>
+                    {embedUrl && (
+                      <Button variant="outline" size="sm" className="text-[10px] h-6" onClick={() => window.open(embedUrl, "_blank")}>
+                        <ExternalLink className="h-3 w-3 mr-1" /> Открыть embed
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Advanced settings */}
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
