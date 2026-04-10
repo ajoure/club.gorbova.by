@@ -61,6 +61,26 @@ interface LiveEventProductCtaProps {
   eventStartedAt?: string | null;
 }
 
+/** Hook to check if there are active product CTA bindings for a position */
+export function useHasActiveCtaBindings(liveEventId: string, position: string): boolean {
+  const { data } = useQuery({
+    queryKey: ["cta-bindings-exists", liveEventId, position],
+    enabled: !!liveEventId,
+    queryFn: async () => {
+      const { count, error } = await (supabase
+        .from("live_event_product_cta_bindings") as any)
+        .select("id", { count: "exact", head: true })
+        .eq("live_event_id", liveEventId)
+        .eq("position", position)
+        .eq("is_active", true);
+      if (error) return 0;
+      return count || 0;
+    },
+    staleTime: 60_000,
+  });
+  return (data || 0) > 0;
+}
+
 export function LiveEventProductCta({ liveEventId, position, displayContext, eventStartedAt }: LiveEventProductCtaProps) {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [paymentTarget, setPaymentTarget] = useState<{ productId: string; productName: string; price: string; offerId?: string } | null>(null);
@@ -149,14 +169,20 @@ export function LiveEventProductCta({ liveEventId, position, displayContext, eve
   if (!visibleBindings.length) return null;
 
   const handleCtaClick = async (binding: CtaBinding, product: ProductInfo | null, tariff: TariffInfo | null, offer: OfferInfo | null) => {
-    // Record click event
+    // Record click event with enriched metadata
     try {
       await (supabase.from("live_event_cta_runtime_events") as any).insert({
         live_event_id: liveEventId,
         binding_id: binding.id,
         event_type: "clicked",
         trigger_mode: "manual",
-        metadata: { cta_type: binding.cta_type },
+        metadata: {
+          cta_type: binding.cta_type,
+          product_id: binding.product_id,
+          tariff_id: binding.tariff_id || null,
+          offer_id: binding.offer_id || null,
+          ...(binding.cta_type === "external_link" ? { external_url: (binding.metadata as any)?.external_url } : {}),
+        },
       });
     } catch { /* non-blocking */ }
 
