@@ -192,7 +192,8 @@ export function AdminPaymentLinkDialog({
       setPaymentType("one_time");
       setGeneratedUrl(null);
       setShowCancelConfirm(false);
-      setDuplicateSubToCancel(null);
+      setConflictData(null);
+      setReplaceStep('idle');
     }
   }, [open]);
 
@@ -214,19 +215,26 @@ export function AdminPaymentLinkDialog({
           user_id: userId,
           product_id: selectedProductId,
           tariff_id: selectedTariffId,
-          amount: Math.round(amount * 100), // Convert to kopecks
+          amount: Math.round(amount * 100),
           payment_type: paymentType,
           description: description || `${selectedProduct?.name} — ${selectedTariff?.name}`,
         },
       });
 
       if (error) throw error;
+      // PATCH E: handle structured conflict response
+      if (!data.success && data.error === 'existing_subscription_conflict' && data.conflict) {
+        setConflictData(data.conflict);
+        return null; // don't treat as error — show conflict UI
+      }
       if (!data.success) throw new Error(data.error || "Ошибка создания ссылки");
       return data;
     },
     onSuccess: (data) => {
-      setGeneratedUrl(data.redirect_url);
-      toast.success("Ссылка на оплату создана");
+      if (data) {
+        setGeneratedUrl(data.redirect_url);
+        toast.success("Ссылка на оплату создана");
+      }
     },
     onError: (error) => {
       toast.error("Ошибка: " + (error as Error).message);
@@ -275,18 +283,17 @@ export function AdminPaymentLinkDialog({
     createLinkMutation.mutate();
   };
 
-  const handleCancelAndCreate = () => {
-    if (duplicateSubscription) {
-      setDuplicateSubToCancel(duplicateSubscription.provider_subscription_id);
+  const handleReplaceSubscription = () => {
+    if (conflictData) {
       setShowCancelConfirm(true);
     }
   };
 
-  const confirmCancelDuplicate = () => {
-    if (duplicateSubToCancel) {
-      cancelDuplicateMutation.mutate(duplicateSubToCancel);
-    }
+  const confirmReplace = () => {
     setShowCancelConfirm(false);
+    if (conflictData) {
+      replaceSubscriptionMutation.mutate(conflictData);
+    }
   };
 
   const activeProducts = products?.filter(p => p.is_active) || [];
@@ -296,7 +303,7 @@ export function AdminPaymentLinkDialog({
     !selectedProductId ||
     !selectedTariffId ||
     amount <= 0 ||
-    hasDuplicate;
+    !!conflictData;
 
   return (
     <>
