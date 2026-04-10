@@ -66,7 +66,8 @@ export function AdminPaymentLinkDialog({
   const [paymentType, setPaymentType] = useState<"one_time" | "subscription">("one_time");
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [duplicateSubToCancel, setDuplicateSubToCancel] = useState<string | null>(null);
+  const [conflictData, setConflictData] = useState<any>(null);
+  const [replaceStep, setReplaceStep] = useState<'idle' | 'cancelling' | 'creating' | 'error'>('idle');
 
   // Fetch products
   const { data: products, isLoading: productsLoading } = useProductsV2();
