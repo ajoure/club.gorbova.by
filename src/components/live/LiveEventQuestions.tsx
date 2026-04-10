@@ -5,10 +5,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Loader2, Send, CheckCircle2, Circle, Trash2 } from "lucide-react";
+import { Loader2, Send, CheckCircle2, Circle, Trash2, Reply } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { LiveRoleBadge, getMessageHighlightClass } from "./LiveRoleBadge";
+import { LiveEventReplyForm, LiveEventRepliesList } from "./LiveEventReplies";
 
 interface Question {
   id: string;
@@ -40,6 +41,8 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
   const queryClient = useQueryClient();
   const [newQuestion, setNewQuestion] = useState("");
   const isAdmin = role === "admin" || role === "superadmin";
+  const isStaff = isAdmin || role === "employee";
+  const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: questions, isLoading } = useQuery({
     queryKey: ["live-event-questions", liveEventId],
@@ -52,7 +55,6 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
         .limit(200);
       if (error) throw error;
 
-      // Fetch profiles for legacy fallback
       const legacy = (data || []).filter(q => !q.author_display_name);
       let profiles: Record<string, { full_name: string | null; first_name: string | null; last_name: string | null }> = {};
       if (legacy.length > 0) {
@@ -124,7 +126,7 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto space-y-3 p-3">
+      <div className="flex-1 overflow-y-auto space-y-1 p-3">
         {isLoading ? (
           <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
         ) : !questions?.length ? (
@@ -134,29 +136,58 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
             const displayName = resolveDisplayName(q);
             const initials = getInitials(displayName);
             return (
-              <div key={q.id} className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "bg-muted/30" : ""} ${getMessageHighlightClass(q.author_role)}`}>
-                <Avatar className="h-7 w-7 shrink-0">
-                  <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-medium">{displayName}</span>
-                    <LiveRoleBadge role={q.author_role} />
-                    <span className="text-[10px] text-muted-foreground">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
-                    {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
-                    {isAdmin && (
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
-                        <button onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })} title={q.is_answered ? "Снять отметку" : "Отметить как отвечен"}>
-                          {q.is_answered ? <Circle className="h-3 w-3 text-muted-foreground" /> : <CheckCircle2 className="h-3 w-3 text-primary" />}
-                        </button>
-                        <button onClick={() => deleteMutation.mutate(q.id)}>
-                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                        </button>
-                      </div>
-                    )}
+              <div key={q.id}>
+                <div className={`flex gap-2 group rounded-lg p-2 ${q.is_answered ? "bg-muted/30" : ""} ${getMessageHighlightClass(q.author_role)}`}>
+                  <Avatar className="h-7 w-7 shrink-0">
+                    <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-medium">{displayName}</span>
+                      <LiveRoleBadge role={q.author_role} />
+                      <span className="text-[10px] text-muted-foreground">{format(new Date(q.created_at), "HH:mm", { locale: ru })}</span>
+                      {q.is_answered && <CheckCircle2 className="h-3 w-3 text-primary inline" />}
+                      {isStaff && (
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity ml-auto">
+                          <button
+                            onClick={() => setReplyingTo({ id: q.id, userId: q.user_id, name: displayName })}
+                            title="Ответить"
+                          >
+                            <Reply className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                          </button>
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => toggleAnsweredMutation.mutate({ id: q.id, is_answered: !q.is_answered })} title={q.is_answered ? "Снять отметку" : "Отметить как отвечен"}>
+                                {q.is_answered ? <Circle className="h-3 w-3 text-muted-foreground" /> : <CheckCircle2 className="h-3 w-3 text-primary" />}
+                              </button>
+                              <button onClick={() => deleteMutation.mutate(q.id)}>
+                                <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-sm break-words">{q.content}</p>
                   </div>
-                  <p className="text-sm break-words">{q.content}</p>
                 </div>
+                {/* Threaded replies */}
+                <LiveEventRepliesList
+                  liveEventId={liveEventId}
+                  sourceQuestionId={q.id}
+                />
+                {/* Inline reply form */}
+                {replyingTo?.id === q.id && (
+                  <div className="ml-6 mt-1">
+                    <LiveEventReplyForm
+                      liveEventId={liveEventId}
+                      sourceQuestionId={q.id}
+                      targetUserId={q.user_id}
+                      targetDisplayName={displayName}
+                      onClose={() => setReplyingTo(null)}
+                    />
+                  </div>
+                )}
               </div>
             );
           })
