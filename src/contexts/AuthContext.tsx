@@ -3,7 +3,7 @@ import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { clearImpersonationStorage, hasStaleImpersonationState } from "@/lib/impersonationStorage";
 
-type AppRole = "user" | "admin" | "superadmin";
+type AppRole = "user" | "admin" | "superadmin" | "employee";
 
 interface AuthContextType {
   user: User | null;
@@ -49,6 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           if (roleCodes.includes("admin")) {
             setRole("admin");
+            return;
+          }
+          if (roleCodes.includes("employee") || roleCodes.includes("admin_gost")) {
+            setRole("employee");
             return;
           }
         }
