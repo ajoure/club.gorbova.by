@@ -2821,51 +2821,60 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                                   </>
                                 )}
                               </div>
-                              {/* Toggle button */}
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className={cn(
-                                    "h-6 w-6 p-0",
-                                    sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
-                                  )}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setAutoRenewTarget({
-                                      subscriptionId: sub.id,
-                                      currentValue: sub.auto_renew || false,
-                                      productName: product?.name || "Продукт",
-                                      hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
-                                    });
-                                    setAutoRenewConfirmOpen(true);
-                                  }}
-                                  title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
-                                >
-                                  <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
-                                </Button>
-                                
-                                {/* Switch to provider-managed (bePaid) button */}
-                                {sub.billing_type !== 'provider_managed' && !contactProviderSubscriptions?.some((ps: any) => ps.subscription_v2_id === sub.id && ['active', 'trial', 'pending'].includes(ps.state)) && (
+                              {/* Toggle button — only for non-provider_managed subscriptions */}
+                              {/* For provider_managed (bePaid) subscriptions, auto-renewal is managed by the payment provider — show info only */}
+                              {sub.billing_type === 'provider_managed' ? (
+                                <div className="flex items-center gap-1">
+                                  <Badge variant="outline" className="text-xs text-blue-600 border-blue-200">
+                                    bePaid
+                                  </Badge>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    className="h-6 px-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                    className={cn(
+                                      "h-6 w-6 p-0",
+                                      sub.auto_renew ? "text-green-600 hover:text-green-700" : "text-muted-foreground hover:text-primary"
+                                    )}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      createProviderSubAdminMutation.mutate(sub.id);
+                                      setAutoRenewTarget({
+                                        subscriptionId: sub.id,
+                                        currentValue: sub.auto_renew || false,
+                                        productName: product?.name || "Продукт",
+                                        hasPaymentMethod: !!(paymentMethods && paymentMethods.length > 0),
+                                      });
+                                      setAutoRenewConfirmOpen(true);
                                     }}
-                                    disabled={createProviderSubAdminMutation.isPending}
-                                    title="Переключить на bePaid — для карт с 3D-Secure"
+                                    title={sub.auto_renew ? "Отключить автопродление" : "Включить автопродление"}
                                   >
-                                    {createProviderSubAdminMutation.isPending ? (
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                    ) : (
-                                      <span className="text-xs">→ bePaid</span>
-                                    )}
+                                    <RefreshCw className={cn("w-3.5 h-3.5", sub.auto_renew && "animate-pulse")} />
                                   </Button>
-                                )}
-                              </div>
+                                  
+                                  {/* Switch to provider-managed (bePaid) button */}
+                                  {!contactProviderSubscriptions?.some((ps: any) => ps.subscription_v2_id === sub.id && ['active', 'trial', 'pending'].includes(ps.state)) && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        createProviderSubAdminMutation.mutate(sub.id);
+                                      }}
+                                      disabled={createProviderSubAdminMutation.isPending}
+                                      title="Переключить на bePaid — для карт с 3D-Secure"
+                                    >
+                                      {createProviderSubAdminMutation.isPending ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <span className="text-xs">→ bePaid</span>
+                                      )}
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )}
 
