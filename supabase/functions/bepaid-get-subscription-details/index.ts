@@ -495,12 +495,48 @@ Deno.serve(async (req) => {
           subV2Updates.access_end_at = endOfDayAppTz(truthAccessEnd);
         }
 
-        // Read old values for audit
+        // Read old values for audit + status restoration check
         const { data: oldSubV2 } = await supabase
           .from('subscriptions_v2')
-          .select('next_charge_at, access_end_at')
+          .select('next_charge_at, access_end_at, status, auto_renew')
           .eq('id', effectiveSubV2Id)
           .maybeSingle();
+
+        // PATCH-A: Restore status to 'active' if subscription was expired/past_due
+        // but access_end_at is being extended into the future (renewal payment received)
+        const effectiveAccessEnd = subV2Updates.access_end_at || oldSubV2?.access_end_at;
+        const currentStatus = oldSubV2?.status;
+        const restoredStatuses = ['expired', 'past_due'];
+        if (
+          currentStatus &&
+          restoredStatuses.includes(currentStatus) &&
+          effectiveAccessEnd &&
+          new Date(effectiveAccessEnd) > new Date()
+        ) {
+          subV2Updates.status = 'active';
+          // Also restore auto_renew if it was false — bePaid is still charging
+          if (oldSubV2?.auto_renew === false) {
+            subV2Updates.auto_renew = true;
+          }
+          console.log(`[bepaid-get-subscription-details] PATCH-A: Restoring status from '${currentStatus}' to 'active' for ${effectiveSubV2Id}`);
+
+          await supabase.from('audit_logs').insert({
+            action: 'bepaid.subscription.status_restored',
+            actor_type: 'system',
+            actor_label: 'bepaid-get-subscription-details',
+            target_user_id: existingPs.user_id || null,
+            meta: {
+              subscription_v2_id: effectiveSubV2Id,
+              provider_subscription_id: subscription_id,
+              old_status: currentStatus,
+              new_status: 'active',
+              old_auto_renew: oldSubV2?.auto_renew,
+              new_auto_renew: true,
+              access_end_at: effectiveAccessEnd,
+              reason: 'sync detected access_end_at in future with expired/past_due status',
+            },
+          });
+        }
 
         await supabase
           .from('subscriptions_v2')
