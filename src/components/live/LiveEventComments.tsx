@@ -41,7 +41,7 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
   const [newComment, setNewComment] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAdmin = role === "admin" || role === "superadmin";
-  const isStaff = isAdmin || role === "employee";
+  const isStaff = isAdmin;
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: comments, isLoading } = useQuery({

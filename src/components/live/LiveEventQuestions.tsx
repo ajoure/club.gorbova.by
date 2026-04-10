@@ -41,7 +41,7 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
   const queryClient = useQueryClient();
   const [newQuestion, setNewQuestion] = useState("");
   const isAdmin = role === "admin" || role === "superadmin";
-  const isStaff = isAdmin || role === "employee";
+  const isStaff = isAdmin;
   const [replyingTo, setReplyingTo] = useState<{ id: string; userId: string; name: string } | null>(null);
 
   const { data: questions, isLoading } = useQuery({
