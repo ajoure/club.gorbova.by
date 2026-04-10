@@ -15,29 +15,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ArrowLeft, ChevronRight, Eye, Users } from "lucide-react";
+import { ArrowLeft, ChevronRight, Eye, Users, MessageSquare } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { StudentProgressModal } from "@/components/admin/trainings/StudentProgressModal";
 import type { LessonProgressRecord as ModalRecord, LessonBlock as ModalBlock } from "@/components/admin/trainings/StudentProgressModal";
 import { ContactDetailSheet } from "@/components/admin/ContactDetailSheet";
+import {
+  getInteractiveBlocks,
+  getBlockLabel,
+  resolveProgressValue,
+  type BlockMeta,
+} from "@/lib/blockProgressResolver";
 
 type LessonProgressRecord = ModalRecord;
 type LessonBlock = ModalBlock;
- 
-const roleLabels: Record<string, string> = {
-  executor: "Исполнитель",
-  freelancer: "Фрилансер",
-  entrepreneur: "Предприниматель",
-};
- 
+
 export default function AdminLessonProgress() {
   const { moduleId, lessonId } = useParams<{ moduleId: string; lessonId: string }>();
   const navigate = useNavigate();
   const [selectedRecord, setSelectedRecord] = useState<LessonProgressRecord | null>(null);
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
- 
+
   // Fetch lesson info
   const { data: lesson, isLoading: lessonLoading } = useQuery({
     queryKey: ["admin-lesson", lessonId],
@@ -52,8 +52,8 @@ export default function AdminLessonProgress() {
     },
     enabled: !!lessonId,
   });
- 
-  // Fetch lesson blocks for displaying step titles
+
+  // Fetch lesson blocks (batch, single query)
   const { data: lessonBlocks } = useQuery({
     queryKey: ["lesson-blocks", lessonId],
     queryFn: async () => {
@@ -67,8 +67,8 @@ export default function AdminLessonProgress() {
     },
     enabled: !!lessonId,
   });
- 
-  // Fetch all progress records for this lesson (kvest state)
+
+  // Fetch all progress records (batch, single query)
   const { data: progressRecords, isLoading: progressLoading } = useQuery({
     queryKey: ["lesson-progress-admin", lessonId],
     queryFn: async () => {
@@ -85,6 +85,7 @@ export default function AdminLessonProgress() {
         return data.map(record => ({ ...record, profiles: null })) as LessonProgressRecord[];
       }
       
+      // Batch fetch profiles
       const { data: profiles } = await supabase
         .from("profiles")
         .select("id, user_id, email, full_name, phone, telegram_username, telegram_user_id, avatar_url, status, created_at, last_seen_at")
@@ -100,7 +101,7 @@ export default function AdminLessonProgress() {
     enabled: !!lessonId,
   });
 
-  // Fetch block responses (note/upload) from user_lesson_progress
+  // Batch fetch all block responses for all users in this lesson (no N+1)
   const { data: blockResponsesMap } = useQuery({
     queryKey: ["lesson-block-responses-admin", lessonId],
     queryFn: async () => {
@@ -112,17 +113,92 @@ export default function AdminLessonProgress() {
 
       const map: Record<string, Record<string, any>> = {};
       data?.forEach((r: any) => {
-        const resp = r.response as any;
-        if (resp?.type === "note" || resp?.type === "upload") {
-          if (!map[r.user_id]) map[r.user_id] = {};
-          map[r.user_id][r.block_id] = resp;
+        if (!map[r.user_id]) map[r.user_id] = {};
+        map[r.user_id][r.block_id] = r.response;
+      });
+      return map;
+    },
+    enabled: !!lessonId,
+  });
+
+  // Batch fetch feedback tickets for this lesson (no N+1)
+  const { data: feedbackMap } = useQuery({
+    queryKey: ["lesson-feedback-admin", lessonId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ticket_training_context")
+        .select("lesson_id, support_tickets!inner(id, user_id, status, has_unread_user, updated_at, category)")
+        .eq("lesson_id", lessonId!)
+        .eq("support_tickets.category", "training_feedback");
+
+      if (error) throw error;
+
+      const map: Record<string, { ticketId: string; hasUnreadUser: boolean; lastUpdated: string; status: string }> = {};
+      data?.forEach((row: any) => {
+        const ticket = row.support_tickets;
+        if (!ticket) return;
+        const userId = ticket.user_id;
+        // Keep the most recent ticket per user
+        if (!map[userId] || new Date(ticket.updated_at) > new Date(map[userId].lastUpdated)) {
+          map[userId] = {
+            ticketId: ticket.id,
+            hasUnreadUser: ticket.has_unread_user,
+            lastUpdated: ticket.updated_at,
+            status: ticket.status,
+          };
         }
       });
       return map;
     },
     enabled: !!lessonId,
   });
- 
+
+  // Derive interactive columns from lesson blocks
+  const interactiveBlocks = getInteractiveBlocks((lessonBlocks || []) as BlockMeta[]);
+
+  // Helper: resolve response for a user+block, checking both user_lesson_progress and state_json
+  const getUserBlockResponse = (record: LessonProgressRecord, block: BlockMeta) => {
+    // Primary: user_lesson_progress responses
+    const responses = blockResponsesMap?.[record.user_id] || {};
+    if (responses[block.id] !== undefined) return responses[block.id];
+
+    // Fallback: legacy state_json fields
+    const state = record.state_json as Record<string, unknown> | null;
+    if (!state) return null;
+
+    if (block.block_type === "quiz_survey" || block.block_type === "role_description") {
+      if (state.role) return { role: state.role, selected: state.role };
+    }
+    if (block.block_type === "diagnostic_table") {
+      if (state.pointA_rows && (state.pointA_rows as unknown[]).length > 0)
+        return { rows: state.pointA_rows };
+      if (state.pointA_v2_rows && (state.pointA_v2_rows as unknown[]).length > 0)
+        return { rows: state.pointA_v2_rows };
+    }
+    if (block.block_type === "sequential_form") {
+      if (state.pointB_answers && Object.keys(state.pointB_answers as object).length > 0)
+        return { answers: state.pointB_answers, completed: state.pointB_completed };
+    }
+    return null;
+  };
+
+  // Stats
+  const totalStudents = progressRecords?.length || 0;
+  const completedStudents = progressRecords?.filter(r => r.completed_at).length || 0;
+  const totalInteractive = interactiveBlocks.length;
+  const answeredCounts = progressRecords?.map(r => {
+    let count = 0;
+    for (const block of interactiveBlocks) {
+      const resp = getUserBlockResponse(r, block);
+      const resolved = resolveProgressValue(block.block_type, resp, block.content);
+      if (resolved.hasResponse) count++;
+    }
+    return count;
+  }) || [];
+  const avgAnswered = totalStudents > 0
+    ? Math.round(answeredCounts.reduce((s, c) => s + c, 0) / totalStudents)
+    : 0;
+
   if (lessonLoading) {
     return (
       <AdminLayout>
@@ -133,7 +209,7 @@ export default function AdminLessonProgress() {
       </AdminLayout>
     );
   }
- 
+
   if (!lesson) {
     return (
       <AdminLayout>
@@ -147,7 +223,7 @@ export default function AdminLessonProgress() {
       </AdminLayout>
     );
   }
- 
+
   return (
     <AdminLayout>
       <div className="container mx-auto px-4 py-6 max-w-6xl">
@@ -185,44 +261,35 @@ export default function AdminLessonProgress() {
           </Button>
         </div>
 
-        {/* Stats summary */}
+        {/* Stats summary — dynamic */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold">{progressRecords?.length || 0}</div>
+              <div className="text-2xl font-bold">{totalStudents}</div>
               <p className="text-sm text-muted-foreground">Всего учеников</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary">
-                {progressRecords?.filter(r => r.completed_at).length || 0}
-              </div>
+              <div className="text-2xl font-bold text-primary">{completedStudents}</div>
               <p className="text-sm text-muted-foreground">Завершили</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary/80">
-                {progressRecords?.filter(r => (r.state_json as any)?.pointA_completed).length || 0}
-              </div>
-              <p className="text-sm text-muted-foreground">Точка А</p>
+              <div className="text-2xl font-bold text-primary/80">{totalInteractive}</div>
+              <p className="text-sm text-muted-foreground">Интерактивных блоков</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4">
-              <div className="text-2xl font-bold text-primary/60">
-                {progressRecords?.filter(r => {
-                  const s = r.state_json as any;
-                  return s?.pointB_completed || (s?.pointB_answers && Object.keys(s.pointB_answers).length > 0);
-                }).length || 0}
-              </div>
-              <p className="text-sm text-muted-foreground">Точка B</p>
+              <div className="text-2xl font-bold text-primary/60">{avgAnswered}</div>
+              <p className="text-sm text-muted-foreground">Ответов (в среднем)</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Progress Table */}
+        {/* Progress Table — dynamic columns with horizontal scroll */}
         <Card>
           <CardHeader>
             <CardTitle>Список учеников</CardTitle>
@@ -240,119 +307,145 @@ export default function AdminLessonProgress() {
                 <p>Пока никто не начал прохождение</p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Ученик</TableHead>
-                    <TableHead>Роль</TableHead>
-                    <TableHead className="text-center">Точка А</TableHead>
-                    <TableHead className="text-center">Точка B</TableHead>
-                    <TableHead className="text-center">Ответы</TableHead>
-                    <TableHead>Статус</TableHead>
-                    <TableHead>Обновлено</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {progressRecords.map(record => {
-                    const state = record.state_json as any;
-                    const profile = record.profiles as any;
-                    const responses = blockResponsesMap?.[record.user_id] || {};
-                    const noteCount = Object.values(responses).filter((r: any) => r.type === "note").length;
-                    const uploadCount = Object.values(responses).filter((r: any) => r.type === "upload").length;
-                    
-                    return (
-                      <TableRow key={record.id}>
-                        <TableCell>
-                          <div>
-                            <button
-                              className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
-                              onClick={() => {
-                                if (profile) {
-                                  setSelectedContact({
-                                    id: profile.id,
-                                    user_id: profile.user_id,
-                                    email: profile.email,
-                                    full_name: profile.full_name,
-                                    first_name: null,
-                                    last_name: null,
-                                    phone: profile.phone || null,
-                                    telegram_username: profile.telegram_username || null,
-                                    telegram_user_id: profile.telegram_user_id || null,
-                                    avatar_url: profile.avatar_url || null,
-                                    status: profile.status || "active",
-                                    created_at: profile.created_at,
-                                    last_seen_at: profile.last_seen_at || null,
-                                    duplicate_flag: null,
-                                    deals_count: 0,
-                                    last_deal_at: null,
-                                  });
-                                  setContactSheetOpen(true);
-                                }
-                              }}
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="sticky left-0 bg-background z-10 min-w-[180px]">Ученик</TableHead>
+                      {interactiveBlocks.map((block) => (
+                        <TableHead
+                          key={block.id}
+                          className="text-center min-w-[120px] max-w-[180px]"
+                          title={getBlockLabel(block)}
+                        >
+                          <span className="line-clamp-2 text-xs">
+                            {getBlockLabel(block)}
+                          </span>
+                        </TableHead>
+                      ))}
+                      <TableHead className="text-center min-w-[100px]">💬 Связь</TableHead>
+                      <TableHead className="min-w-[90px]">Статус</TableHead>
+                      <TableHead className="min-w-[130px]">Обновлено</TableHead>
+                      <TableHead className="min-w-[90px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {progressRecords.map(record => {
+                      const profile = record.profiles as any;
+                      const feedback = feedbackMap?.[record.user_id];
+                      
+                      return (
+                        <TableRow key={record.id}>
+                          {/* Sticky student name column */}
+                          <TableCell className="sticky left-0 bg-background z-10">
+                            <div>
+                              <button
+                                className="font-medium text-left hover:underline hover:text-primary cursor-pointer"
+                                onClick={() => {
+                                  if (profile) {
+                                    setSelectedContact({
+                                      id: profile.id,
+                                      user_id: profile.user_id,
+                                      email: profile.email,
+                                      full_name: profile.full_name,
+                                      first_name: null,
+                                      last_name: null,
+                                      phone: profile.phone || null,
+                                      telegram_username: profile.telegram_username || null,
+                                      telegram_user_id: profile.telegram_user_id || null,
+                                      avatar_url: profile.avatar_url || null,
+                                      status: profile.status || "active",
+                                      created_at: profile.created_at,
+                                      last_seen_at: profile.last_seen_at || null,
+                                      duplicate_flag: null,
+                                      deals_count: 0,
+                                      last_deal_at: null,
+                                    });
+                                    setContactSheetOpen(true);
+                                  }
+                                }}
+                              >
+                                {profile?.full_name || "—"}
+                              </button>
+                              <p className="text-xs text-muted-foreground truncate max-w-[160px]">
+                                {profile?.email}
+                              </p>
+                            </div>
+                          </TableCell>
+
+                          {/* Dynamic interactive block columns */}
+                          {interactiveBlocks.map((block) => {
+                            const resp = getUserBlockResponse(record, block);
+                            const resolved = resolveProgressValue(block.block_type, resp, block.content);
+                            return (
+                              <TableCell key={block.id} className="text-center">
+                                {resolved.hasResponse ? (
+                                  <Badge
+                                    variant={resolved.isCorrect === false ? "destructive" : "default"}
+                                    className="text-xs max-w-[160px] truncate"
+                                    title={resolved.summary}
+                                  >
+                                    {resolved.summary}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground text-sm">—</span>
+                                )}
+                              </TableCell>
+                            );
+                          })}
+
+                          {/* Feedback column */}
+                          <TableCell className="text-center">
+                            {feedback ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <Badge
+                                  variant={feedback.hasUnreadUser ? "default" : "outline"}
+                                  className="text-xs cursor-pointer"
+                                  onClick={() => setSelectedRecord(record)}
+                                >
+                                  <MessageSquare className="h-3 w-3 mr-1" />
+                                  {feedback.hasUnreadUser ? "Новое" : "Есть"}
+                                </Badge>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {format(new Date(feedback.lastUpdated), "dd.MM HH:mm", { locale: ru })}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground text-sm">—</span>
+                            )}
+                          </TableCell>
+
+                          {/* Status */}
+                          <TableCell>
+                            <Badge 
+                              variant={record.completed_at ? "default" : "secondary"}
                             >
-                              {profile?.full_name || "—"}
-                            </button>
-                            <p className="text-sm text-muted-foreground">
-                              {profile?.email}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {state?.role ? (
-                            <Badge variant="outline">
-                              {roleLabels[state.role] || state.role}
+                              {record.completed_at ? "Завершён" : "В процессе"}
                             </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {state?.pointA_completed ? (
-                            <Badge variant="default">✓</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {(state?.pointB_completed || (state?.pointB_answers && Object.keys(state.pointB_answers).length > 0)) ? (
-                            <Badge variant="default">✓</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <div className="flex gap-1 justify-center">
-                            {noteCount > 0 && <Badge variant="outline">✏️ {noteCount}</Badge>}
-                            {uploadCount > 0 && <Badge variant="secondary">📎 {uploadCount}</Badge>}
-                            {noteCount === 0 && uploadCount === 0 && <span className="text-muted-foreground text-sm">—</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge 
-                            variant={record.completed_at ? "default" : "secondary"}
-                          >
-                            {record.completed_at ? "Завершён" : "В процессе"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {format(new Date(record.updated_at), "dd MMM yyyy, HH:mm", { locale: ru })}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedRecord(record)}
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            Просмотр
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                          </TableCell>
+
+                          {/* Updated at */}
+                          <TableCell className="text-sm text-muted-foreground">
+                            {format(new Date(record.updated_at), "dd MMM yyyy, HH:mm", { locale: ru })}
+                          </TableCell>
+
+                          {/* Actions */}
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setSelectedRecord(record)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              Просмотр
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
