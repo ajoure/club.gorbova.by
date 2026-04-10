@@ -347,3 +347,68 @@ export function useLessonFeedbackThreads(lessonId: string | undefined, studentUs
     enabled: !!lessonId && !!studentUserId,
   });
 }
+
+/**
+ * Batch fetch unread feedback count per lesson_id for current user.
+ * Single query — no N+1. Used by lesson lists (BusinessTrainingContent, LibraryModule).
+ * Returns Map<lesson_id, unread_count>.
+ *
+ * Anti-spam: no toast on initial load or refetch — only used for badge rendering.
+ */
+export function useUnreadFeedbackByLesson(lessonIds: string[]) {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    queryKey: ["unread-feedback-by-lesson", user?.id, lessonIds.join(",")],
+    queryFn: async () => {
+      if (!lessonIds.length) return new Map<string, number>();
+
+      const { data, error } = await supabase
+        .from("ticket_training_context")
+        .select("lesson_id, support_tickets!inner(id, has_unread_user, category, user_id)")
+        .in("lesson_id", lessonIds)
+        .eq("support_tickets.user_id", user!.id)
+        .eq("support_tickets.category", "training_feedback")
+        .eq("support_tickets.has_unread_user", true);
+
+      if (error) throw error;
+
+      const map = new Map<string, number>();
+      data?.forEach((row: any) => {
+        const lid = row.lesson_id;
+        map.set(lid, (map.get(lid) || 0) + 1);
+      });
+      return map;
+    },
+    enabled: !!user?.id && lessonIds.length > 0,
+    staleTime: 15000,
+  });
+
+  // Realtime invalidation (per-lesson isolation via user_id filter)
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`feedback-by-lesson-rt-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "support_tickets",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["unread-feedback-by-lesson", user.id] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, queryClient]);
+
+  return query;
+}
