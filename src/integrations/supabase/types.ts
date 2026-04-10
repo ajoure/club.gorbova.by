@@ -5349,6 +5349,54 @@ export type Database = {
           },
         ]
       }
+      live_event_cta_runtime_events: {
+        Row: {
+          binding_id: string
+          created_at: string
+          event_type: string
+          id: string
+          live_event_id: string
+          metadata: Json | null
+          shown_by: string | null
+          trigger_mode: string
+        }
+        Insert: {
+          binding_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          live_event_id: string
+          metadata?: Json | null
+          shown_by?: string | null
+          trigger_mode?: string
+        }
+        Update: {
+          binding_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          live_event_id?: string
+          metadata?: Json | null
+          shown_by?: string | null
+          trigger_mode?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_cta_runtime_events_binding_id_fkey"
+            columns: ["binding_id"]
+            isOneToOne: false
+            referencedRelation: "live_event_product_cta_bindings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_cta_runtime_events_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       live_event_notification_log: {
         Row: {
           channel: string
@@ -5436,6 +5484,113 @@ export type Database = {
             columns: ["template_id"]
             isOneToOne: false
             referencedRelation: "broadcast_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      live_event_product_cta_bindings: {
+        Row: {
+          button_text_override: string | null
+          created_at: string
+          created_by: string
+          cta_type: string
+          description_override: string | null
+          display_mode: string
+          id: string
+          image_override: string | null
+          is_active: boolean
+          live_event_id: string
+          metadata: Json | null
+          offer_id: string | null
+          position: string
+          product_id: string
+          public_id: string
+          show_after_minutes: number | null
+          show_at: string | null
+          sort_order: number
+          tariff_id: string | null
+          theme_override: Json | null
+          title_override: string | null
+          updated_at: string | null
+          updated_by: string | null
+        }
+        Insert: {
+          button_text_override?: string | null
+          created_at?: string
+          created_by: string
+          cta_type: string
+          description_override?: string | null
+          display_mode?: string
+          id?: string
+          image_override?: string | null
+          is_active?: boolean
+          live_event_id: string
+          metadata?: Json | null
+          offer_id?: string | null
+          position?: string
+          product_id: string
+          public_id?: string
+          show_after_minutes?: number | null
+          show_at?: string | null
+          sort_order?: number
+          tariff_id?: string | null
+          theme_override?: Json | null
+          title_override?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          button_text_override?: string | null
+          created_at?: string
+          created_by?: string
+          cta_type?: string
+          description_override?: string | null
+          display_mode?: string
+          id?: string
+          image_override?: string | null
+          is_active?: boolean
+          live_event_id?: string
+          metadata?: Json | null
+          offer_id?: string | null
+          position?: string
+          product_id?: string
+          public_id?: string
+          show_after_minutes?: number | null
+          show_at?: string | null
+          sort_order?: number
+          tariff_id?: string | null
+          theme_override?: Json | null
+          title_override?: string | null
+          updated_at?: string | null
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "live_event_product_cta_bindings_live_event_id_fkey"
+            columns: ["live_event_id"]
+            isOneToOne: false
+            referencedRelation: "live_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_product_cta_bindings_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "tariff_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_product_cta_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "live_event_product_cta_bindings_tariff_id_fkey"
+            columns: ["tariff_id"]
+            isOneToOne: false
+            referencedRelation: "tariffs"
             referencedColumns: ["id"]
           },
         ]

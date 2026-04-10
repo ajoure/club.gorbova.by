@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateTimePicker } from "@/components/ui/datetime-picker";
-import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor } from "lucide-react";
+import { Plus, Edit2, Loader2, Video, ExternalLink, ChevronDown, AlertCircle, CheckCircle2, Users, Link2, PlayCircle, Shield, Radio, Zap, Square, RefreshCw, Send, Copy, Eye, EyeOff, MessageSquare, HelpCircle, Unlink, RotateCcw, AlertTriangle, LayoutGrid, Monitor, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import { ru } from "date-fns/locale";
@@ -59,6 +59,9 @@ import { LiveEventQuestions } from "@/components/live/LiveEventQuestions";
 import { LiveEventModerationPanel } from "@/components/live/LiveEventModeration";
 import { LiveEventScenario } from "@/components/live/LiveEventScenario";
 import { LiveEventRoomBlocksEditor } from "@/components/admin/live/LiveEventRoomBlocksEditor";
+import { LiveEventProductCtaBindings } from "@/components/admin/live/LiveEventProductCtaBindings";
+import { LiveEventCtaRuntimePanel } from "@/components/admin/live/LiveEventCtaRuntimePanel";
+import { LiveEventThemeEditor } from "@/components/admin/live/LiveEventThemeEditor";
 import { DomainEventService } from "@/lib/domain-events";
 import { LiveEventsHelpDialog } from "@/components/admin/live/LiveEventsHelpDialog";
 import { LiveEventExportButtons } from "@/components/live/LiveEventExportButtons";
@@ -2282,6 +2285,12 @@ function LiveStreamControlPanel({
               <TabsTrigger value="blocks" className="gap-1.5 text-xs">
                 <LayoutGrid className="h-3 w-3" /> Блоки
               </TabsTrigger>
+              <TabsTrigger value="cta" className="gap-1.5 text-xs">
+                <ShoppingCart className="h-3 w-3" /> CTA
+              </TabsTrigger>
+              <TabsTrigger value="theme" className="gap-1.5 text-xs">
+                <Monitor className="h-3 w-3" /> Тема
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="comments" className="border rounded-lg mt-2">
               <LiveEventComments liveEventId={editingId} />
@@ -2297,6 +2306,13 @@ function LiveStreamControlPanel({
             </TabsContent>
             <TabsContent value="blocks" className="border rounded-lg mt-2">
               <LiveEventRoomBlocksEditor liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="cta" className="border rounded-lg mt-2">
+              <LiveEventProductCtaBindings liveEventId={editingId} />
+              <LiveEventCtaRuntimePanel liveEventId={editingId} />
+            </TabsContent>
+            <TabsContent value="theme" className="border rounded-lg mt-2">
+              <LiveEventThemeEditor liveEventId={editingId} />
             </TabsContent>
           </Tabs>
         </>

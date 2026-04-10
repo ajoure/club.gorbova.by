@@ -94,6 +94,11 @@ export function LiveEventExportButtons({ liveEventId, eventTitle }: LiveEventExp
         question: "Вопрос",
         reply: "Ответ",
         moderation: "Модерация",
+        cta_shown: "CTA показан",
+        cta_hidden: "CTA скрыт",
+        cta_replaced: "CTA заменён",
+        cta_clicked: "CTA клик",
+        cta_form_submitted: "CTA форма",
       };
 
       const columns: ExportColumn<typeof entries[0]>[] = [
