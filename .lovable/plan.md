@@ -1,360 +1,105 @@
 
 
-## **Финальный статус по Wave 1 + Wave 2 + Wave 3**
+# План: Обновление документации Live Events v2 после Wave 1–3
+
+## Что есть сейчас
+
+Два документа уже существуют и зарегистрированы в `systemDocsRegistry.ts`:
+- `docs/live-events-v2-architecture.md` — техдок, версия 2026-04-08, **не содержит** Wave 3 (product CTA, theme, CTA runtime events, приоритет new/legacy CTA)
+- `docs/live-events-v2-testing-guide.md` — инструкция для сотрудника, версия 2026-04-08, **не содержит** тестов CTA, темы, inline moderation, Excel export, scenario CTA events, role badges, desktop/mobile layout
+
+Домены `live_events` и `live_events_testing` уже есть в registry — новые создавать не нужно.
+
+## Что нужно сделать
+
+### 1. Обновить `docs/live-events-v2-architecture.md`
+
+Версия → 2026-04-10, статус → Wave 1–3 completed.
+
+**Добавить/обновить разделы:**
+
+- **§1 Таблицы** — добавить:
+  - `live_event_product_cta_bindings` (полная схема: product_id FK, tariff_id, offer_id, cta_type, display_mode, position, overrides, theme_override, metadata)
+  - `live_event_cta_runtime_events` (схема: binding_id, event_type, trigger_mode, shown_by, metadata; realtime enabled)
+
+- **§2 Edge Functions** — без изменений (CTA не добавляет новых edge functions)
+
+- **§2a Триггеры** — без изменений
+
+- **§3 Access Logic → Scenario RPC** — обновить описание `get_live_event_scenario`: теперь включает CTA events (cta_shown, cta_hidden, cta_replaced, cta_clicked, cta_form_submitted) с metadata (binding_id, product_id, tariff_id, offer_id, trigger_mode, cta_type)
+
+- **Новый §3a: Product-linked CTA Architecture** — описать:
+  - Архитектурный принцип: binding layer, не каталог
+  - products_v2 / tariffs / tariff_offers = SoT
+  - binding хранит только presentation overrides
+  - cta_type enum, display_mode enum, position enum
+  - Правило приоритета: product CTA > legacy room blocks (useHasActiveCtaBindings)
+  - Runtime events: shown/hidden/replaced/clicked/form_submitted
+  - buy_now → каноничный PaymentDialog
+  - open_product → /product/:slug
+  - open_tariff → /tariff/:publicId
+  - external_link → controlled exception, URL из metadata
+  - RLS: admin/super_admin = CRUD bindings + show/hide; employee = read-only; user = read active with access
+  - Domain events: live_product_cta_shown/hidden/replaced/clicked/form_submitted
+
+- **Новый §3b: Room Theme** — описать:
+  - Хранение в live_events.metadata.room_theme
+  - Поля: background_color, primary_text_color, secondary_text_color, panel_color, accent_color, tabs_color, admin_badge_color, employee_badge_color
+  - Применение через CSS variables + inline styles
+  - Deferred: полная пропагация во вложенные компоненты
+
+- **§7 UI Structure** — обновить:
+  - Вкладки карточки эфира: добавить **CTA** и **Тема**
+  - `/live/:slug`: добавить role badges (admin/employee), inline moderation, product CTA renderer, reply tree
+  - Desktop layout: video flex-[2.5], chat calc(100vh-120px)
+  - Mobile: sticky input, sticky tabs
+  - Excel export: комментарии, вопросы, сценарий (включая CTA events)
+
+- **§9 Known Limitations** — добавить:
+  - Полная пропагация room_theme CSS variables во вложенные компоненты (deferred)
+  - Legacy `live_event_room_blocks` сохранён как compat fallback
+
+- **§10 Что нельзя ломать** — добавить product CTA priority rule
+
+- **§11** — обновить: Wave 1–3 завершены, notification guardrails и job #42 не затрагивались
+
+### 2. Обновить `docs/live-events-v2-testing-guide.md`
+
+Версия → 2026-04-10.
+
+**Добавить новые шаги:**
+
+- **Шаг 6a: Desktop/mobile layout** — чеклист по layout
+- **Шаг 7 (обновить)**: добавить проверку имён и role badges (admin/employee бейджи)
+- **Шаг 7a (обновить)**: inline reply из комнаты (не только из админки)
+- **Шаг 7b (обновить)**: inline moderation — delete message, mute, remove, restore прямо из комнаты; открытие карточки пользователя
+- **Шаг 7c (обновить → переименовать)**: Legacy room blocks — пометить как legacy
+- **Новый Шаг 7g: Product CTA** — чеклист:
+  - CTA привязан к реальному продукту/тарифу/офферу
+  - show/hide вручную (admin only)
+  - employee не видит кнопки управления CTA
+  - нет двойного CTA (legacy подавлен)
+  - buy_now открывает checkout
+  - CTA events в сценарии
+  - CTA events в Excel export
+- **Новый Шаг 7h: Тема комнаты** — чеклист:
+  - Задать тему в админке
+  - Проверить фон, текст, панели
+  - Если тема не применяется ко всем элементам — зафиксировать как deferred баг
+- **Шаг 7d (обновить)**: сценарий теперь включает CTA events
+- **Новый Шаг 7i: Excel export** — чеклист: комментарии, вопросы, сценарий (включая CTA)
+- **Новый Шаг 7j: Webinar activity в профиле** — проверить CRM карточку
+- Обновить **шаблон отчёта** — добавить пункты CTA, тема, inline moderation, export, layout
+
+### 3. Файлы и scope
+
+**Изменяемые файлы:**
+- `docs/live-events-v2-architecture.md`
+- `docs/live-events-v2-testing-guide.md`
+
+**Не трогаем:**
+- Код (ни один .ts/.tsx файл)
+- SQL / миграции
+- `systemDocsRegistry.ts` (домены уже зарегистрированы)
+- Логику эфиров, CRM, notifications
 
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Wave 1 — закрыта**
-
-&nbsp;
-
-&nbsp;
-
-Закрыты:
-
-&nbsp;
-
-- video/source debug
-- room layout desktop/mobile
-- реальные имена + role badges
-- reply в комнате
-- inline moderation + muted/remove
-- открытие карточки пользователя из комнаты
-- employee role fix
-
-&nbsp;
-
-&nbsp;
-
-Осталось только **runtime-тестирование сотрудницей**.
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-### **Wave 2 — закрыта**
-
-&nbsp;
-
-&nbsp;
-
-Закрыты:
-
-&nbsp;
-
-- webinar activity в карточке профиля
-- сценарий через отдельную вкладку и RPC projection
-- Excel export: комментарии / вопросы / сценарий
-
-&nbsp;
-
-&nbsp;
-
-Осталось только **runtime-проверка данных на реальном сценарии использования**.
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-### **Wave 3 — закрыта условно**
-
-&nbsp;
-
-&nbsp;
-
-Закрыты:
-
-&nbsp;
-
-- product-linked CTA через products/tariffs/offers
-- RLS и UI-гварды по CTA
-- runtime CTA events
-- CTA в scenario/export
-- theme settings на уровне live_[events.metadata.room](http://events.metadata.room)_theme
-- приоритет new CTA над legacy CTA
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Deferred follow-up**
-
-&nbsp;
-
-&nbsp;
-
-- **Полная пропагация темы комнаты** во вложенные компоненты:
-  &nbsp;
-  - чат
-  - табы
-  - бейджи
-  - панели
-  - внутренние card-wrapper’ы
-  &nbsp;
-
-&nbsp;
-
-&nbsp;
-
-Сейчас тема применяется к контейнеру, фону и верхнему тексту, но не полностью ко всем внутренним UI-элементам.
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Общий статус проекта**
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Что можно считать выполненным уже сейчас**
-
-&nbsp;
-
-&nbsp;
-
-- Архитектурно основной scope реализован
-- База, RPC, triggers, domain events, CRM pipeline, exports, CTA bindings, moderation и replies — собраны
-- Критичных архитектурных дыр по текущему proof не видно
-- Notifications safety path не задет
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-### **Что осталось до полного финального закрытия**
-
-&nbsp;
-
-&nbsp;
-
-1. Провести **runtime/UAT тестирование** сотрудницей
-2. Отдельно решить, считать ли полную theme propagation обязательной сейчас или вынести в follow-up patch
-
-&nbsp;
-
-&nbsp;
-
----
-
-&nbsp;
-
-&nbsp;
-
-## **Короткий блок для подрядчика**
-
-&nbsp;
-
-```
-Итоговый статус:
-
-Wave 1 — принимается.
-Wave 2 — принимается.
-Wave 3 — принимается по основному scope.
-
-Отдельный deferred follow-up patch:
-— полная пропагация room_theme CSS variables во вложенные компоненты комнаты (чат, табы, бейджи, панели, card wrappers), чтобы тема применялась не только к контейнеру, но и ко всем внутренним UI-элементам.
-
-Дальше:
-1. Подготовить финальный proof package по Wave 1–3.
-2. Передать на runtime/UAT тест сотруднице.
-3. Все найденные баги UAT оформить отдельным consolidated fix patch.
-```
-
-&nbsp;
-
-## **Рекомендация**
-
-&nbsp;
-
-&nbsp;
-
-Сейчас логично **не открывать новый большой scope**, а перейти к **полноценному UAT** и потом собрать один consolidated patch по фактическим багам тестирования.
-
-&nbsp;
-
-Отчёт: Wave 3 — Полный Proof
-
-## 1. SQL Proof — RLS policies (ФАКТ из pg_policies)
-
-### live_event_product_cta_bindings
-
-
-| Policy                                               | CMD    | Условие                                                               |
-| ---------------------------------------------------- | ------ | --------------------------------------------------------------------- |
-| Staff can read all CTA bindings                      | SELECT | `admin OR super_admin OR employee`                                    |
-| Users with event access can read active CTA bindings | SELECT | `is_active = true AND user_has_live_event_access(uid, live_event_id)` |
-| Admins can create CTA bindings                       | INSERT | `admin OR super_admin`                                                |
-| Admins can update CTA bindings                       | UPDATE | `admin OR super_admin`                                                |
-| Admins can delete CTA bindings                       | DELETE | `admin OR super_admin`                                                |
-
-
-**✅ Старая policy "Staff can manage" удалена. Employee имеет только SELECT.**
-
-### live_event_cta_runtime_events
-
-
-| Policy                                              | CMD    | Условие                                                                                      |
-| --------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------- |
-| Staff can read all CTA runtime events               | SELECT | `admin OR super_admin OR employee`                                                           |
-| Users with event access can read CTA runtime events | SELECT | `user_has_live_event_access(uid, live_event_id)`                                             |
-| Admins can show hide replace CTA                    | INSERT | `(admin OR super_admin) AND event_type IN (shown, hidden, replaced)`                         |
-| Users can record CTA clicks and submissions         | INSERT | `event_type IN (clicked, form_submitted) AND user_has_live_event_access(uid, live_event_id)` |
-
-
-**✅ Employee НЕ может INSERT shown/hidden/replaced. Только admin/super_admin.**
-
----
-
-## 2. Role Matrix Proof (код)
-
-**LiveEventCtaRuntimePanel.tsx (строка 15):**
-
-```typescript
-const canManageCta = isAdminRole(role); // admin || superadmin
-```
-
-Кнопки Show/Hide обёрнуты в `{canManageCta && (...)}` (строка 112). Employee видит список и статусы, но без кнопок.
-
-**LiveEventProductCtaBindings.tsx (строка 70):**
-
-```typescript
-const canManageCta = isAdminRole(role);
-```
-
-"Добавить CTA" (строка 184), Switch toggle (строка 209), Edit/Delete — все под `{canManageCta && ...}`.
-
-**✅ UI-гварды соответствуют RLS. Двойная защита: фронт + БД.**
-
----
-
-## 3. Legacy/New CTA Priority Proof (код)
-
-**LiveEvent.tsx (строки 357-358):**
-
-```typescript
-const hasUnderVideoCta = useHasActiveCtaBindings(eventId, "under_video");
-const hasSidebarCta = useHasActiveCtaBindings(eventId, "sidebar");
-```
-
-**Рендер under_video (строки 413-429):**
-
-- Legacy: `{eventId && !hasUnderVideoCta && <LiveEventRoomBlocks ... />}`
-- New: `{eventId && <LiveEventProductCta ... />}`
-
-**Рендер sidebar (строки 435-449):**
-
-- Legacy: `{!hasSidebarCta && <LiveEventRoomBlocks ... />}`
-- New: `<LiveEventProductCta ... />`
-
-**✅ Если есть active product CTA binding для позиции — legacy renderer подавлен. Двойной рендер невозможен.**
-
----
-
-## 4. Product Reuse Proof (код)
-
-**buy_now (строки 190-199):** Открывает каноничный `PaymentDialog` с:
-
-- `productId: product.id` (из products_v2)
-- `price: String(offer.amount)` (из tariff_offers — SoT)
-- `offerId: offer.id` (из tariff_offers)
-- Цена НЕ хардкодится, берётся из БД
-
-**open_product (строки 202-205):** `/product/${product.slug}` — slug из products_v2
-
-**open_tariff (строки 208-214):** `/tariff/${tariff.public_id}` — public_id из tariffs, fallback на product page
-
-**external_link (строка 184):** URL из `binding.metadata.external_url`, metadata клика включает `external_url`, `cta_type`, `product_id`, `tariff_id`, `offer_id`
-
-**✅ Новая параллельная sales-логика не создана. Все пути через существующие SoT.**
-
----
-
-## 5. Scenario/Export Proof (SQL факт)
-
-RPC `get_live_event_scenario` содержит UNION ALL с CTA runtime events:
-
-- entry_type: `cta_shown`, `cta_hidden`, `cta_replaced`, `cta_clicked`, `cta_form_submitted`
-- metadata включает: `binding_id`, `product_id`, `tariff_id`, `offer_id`, `trigger_mode`, `cta_type`
-- JOIN на `products_v2.name` для human-readable текста
-
-**✅ CTA события попадают в сценарий и Excel export.**
-
----
-
-## 6. Theme Proof (код)
-
-**LiveEvent.tsx (строки 361-376):**
-
-```typescript
-const roomTheme = data?.room_theme || data?.metadata?.room_theme;
-const themeStyle = { '--room-bg': ..., '--room-text': ..., '--room-panel': ..., '--room-accent': ..., ... };
-// + inline backgroundColor и color
-```
-
-Применяется на `<div ... style={themeStyle}>` (строка 376).
-
-**⚠️ Замечание:** CSS variables заданы, но компоненты внутри (Card, Tabs, Badge) используют Tailwind классы (`bg-card`, `text-foreground`), а не `var(--room-bg)`. **Inline `backgroundColor` и `color` на контейнере работают для фона и текста первого уровня**, но вложенные компоненты (чат, бейджи, панели) **не подхватывают тему через CSS variables**.
-
-**Вердикт:** Фон и основной текст — ✅ работают. Панели, табы, бейджи — ⚠️ частично (нужна доработка CSS variables propagation в компонентах чата/табов, но это можно вынести в follow-up).
-
----
-
-## 7. Regression Proof
-
-- **recorded_webinar / replay:** Все изменения add-only. `LiveEvent.tsx` рендерит CTA в обоих режимах (`displayContext` передаётся). Legacy blocks не затронуты.
-- **Notifications:** Ни один файл notification path не изменён.
-- **Comments/Questions/Replies/Moderation:** UNION ALL в `get_live_event_scenario` добавляет новый блок, существующие 4 блока не изменены.
-
-**✅ Регрессии нет.**
-
----
-
-## Итоговая сводка Wave 3
-
-
-| Проверка                      | Статус                                          |
-| ----------------------------- | ----------------------------------------------- |
-| RLS — admin-only write        | ✅ Подтверждено из pg_policies                   |
-| RLS — employee read-only      | ✅ Подтверждено                                  |
-| UI guards — admin-only кнопки | ✅ Подтверждено из кода                          |
-| Legacy/new CTA priority       | ✅ Подтверждено из кода                          |
-| PaymentDialog reuse           | ✅ Подтверждено                                  |
-| Product/tariff routes         | ✅ Подтверждено                                  |
-| external_link metadata        | ✅ Подтверждено                                  |
-| Scenario CTA entries          | ✅ Подтверждено из SQL                           |
-| Theme — фон/текст             | ✅ Работает                                      |
-| Theme — панели/бейджи/табы    | ⚠️ Частично (CSS vars заданы, но не propagated) |
-| Regression                    | ✅ Нет регрессий                                 |
-
-
-## Рекомендация
-
-**Wave 3 можно считать закрытой по DoD** с одним deferred item:
-
-- **Deferred:** Пропагация CSS variables темы во вложенные компоненты (чат, табы, бейджи). Сейчас работает фон + текст первого уровня. Полная тема — follow-up.
-
-Если заказчик согласен с deferred для глубокой темизации — Wave 3 закрыта. Если нет — нужен ещё один патч на propagation CSS variables в компоненты чата.
