@@ -13,6 +13,7 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
 import { useTrainingLessons } from "@/hooks/useTrainingLessons";
 import { toast } from "sonner";
+import { useUnreadFeedbackByLesson } from "@/hooks/useTrainingFeedback";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { 
@@ -257,8 +258,12 @@ export default function BusinessTrainingContent() {
 
   // PATCH-D: Use real lessons count from module
   const completedCount = lessons.filter(l => l.is_completed).length;
-  const totalCount = lessons.length || 12; // Fallback if no lessons yet
+  const totalCount = lessons.length || 12;
   const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+
+  // Batch fetch unread feedback per lesson (shared hook, no N+1)
+  const lessonIds = lessons.map(l => l.id);
+  const { data: unreadByLesson } = useUnreadFeedbackByLesson(lessonIds);
 
   return (
     <DashboardLayout>
@@ -548,7 +553,14 @@ export default function BusinessTrainingContent() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-foreground truncate">{lesson.title}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-foreground truncate">{lesson.title}</p>
+                        {(unreadByLesson?.get(lesson.id) ?? 0) > 0 && (
+                          <Badge variant="default" className="shrink-0 text-[10px] px-1.5 py-0">
+                            💬 {unreadByLesson!.get(lesson.id)}
+                          </Badge>
+                        )}
+                      </div>
                       {isScheduledLesson && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
                           <Timer className="h-3 w-3" />

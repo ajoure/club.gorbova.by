@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { User, Target, Crosshair, FileText, PenLine, Upload, MessageSquare, ChevronDown } from "lucide-react";
+import { User, FileText, Upload, MessageSquare, ChevronDown } from "lucide-react";
 import { FeedbackDrawer } from "@/components/training-feedback/FeedbackDrawer";
 import { getFileTypeIcon } from "@/components/admin/lesson-editor/blocks/fileTypeIcons";
 import { format } from "date-fns";
@@ -30,6 +30,13 @@ import {
   CATEGORY_COLORS,
   type DiagnosticTableV2Row,
 } from "@/lib/diagnosticTableV1toV2";
+import {
+  getInteractiveBlocks,
+  getBlockLabel,
+  resolveProgressValue,
+  blockTypeLabel,
+  type BlockMeta,
+} from "@/lib/blockProgressResolver";
 
 export interface LessonProgressRecord {
   id: string;
@@ -85,12 +92,6 @@ interface StudentProgressModalProps {
   moduleId?: string;
 }
 
-const roleLabels: Record<string, string> = {
-  executor: "Исполнитель",
-  freelancer: "Фрилансер",
-  entrepreneur: "Предприниматель",
-};
-
 function getSequentialFormSteps(blocks: LessonBlock[]): FormStep[] {
   const sequentialBlock = blocks.find(b => b.block_type === "sequential_form");
   if (!sequentialBlock?.content) return [];
@@ -106,6 +107,7 @@ function normalizeUploadFiles(resp: any): UploadedFileItem[] {
     if (resp.file?.storage_path) return [resp.file];
   }
   if (resp.file?.storage_path) return [resp.file];
+  if (Array.isArray(resp.files)) return resp.files;
   return [];
 }
 
@@ -194,6 +196,245 @@ function V2ClientRowDetails({ row, allRows }: { row: DiagnosticTableV2Row; allRo
   );
 }
 
+// ─── Universal block response renderer (detail view) ───
+
+function BlockResponseDetail({ block, response, lessonBlocks }: {
+  block: BlockMeta;
+  response: unknown;
+  lessonBlocks: LessonBlock[];
+}) {
+  const resp = response as Record<string, unknown> | null;
+  if (!resp) return <p className="text-sm text-muted-foreground italic">Нет ответа</p>;
+
+  switch (block.block_type) {
+    case "input_short": {
+      const text = (resp.text as string) || (resp.value as string) || "";
+      return <p className="text-sm">{text || "—"}</p>;
+    }
+    case "file_upload": {
+      const files = normalizeUploadFiles(resp);
+      if (files.length === 0) return <p className="text-sm text-muted-foreground italic">Нет файлов</p>;
+      return (
+        <div className="space-y-1.5">
+          {files.map((file, fi) => {
+            const { Icon: FileIcon, colorClass } = getFileTypeIcon(file.original_name);
+            const sizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : null;
+            return (
+              <div key={fi} className="flex items-center gap-2">
+                <FileIcon className={`h-4 w-4 shrink-0 ${colorClass}`} />
+                <button
+                  onClick={() => downloadFile(file.storage_path, file.original_name)}
+                  className="text-sm text-primary hover:underline truncate"
+                >
+                  {file.original_name}
+                </button>
+                {sizeMB && <span className="text-xs text-muted-foreground">{sizeMB} MB</span>}
+              </div>
+            );
+          })}
+          {(resp as any).comment && (
+            <p className="text-xs text-muted-foreground italic">💬 {(resp as any).comment}</p>
+          )}
+        </div>
+      );
+    }
+    case "quiz_single":
+    case "quiz_multiple":
+    case "quiz_true_false": {
+      const selected = (resp.selected_options || resp.selected || resp.answer) as string[] | string;
+      const isCorrect = resp.is_correct as boolean | undefined;
+      const labels = Array.isArray(selected) ? selected : selected ? [String(selected)] : [];
+      return (
+        <div className="space-y-1">
+          {labels.map((l, i) => (
+            <Badge key={i} variant={isCorrect === false ? "destructive" : "outline"} className="mr-1">
+              {l}
+            </Badge>
+          ))}
+          {isCorrect !== undefined && (
+            <p className="text-xs mt-1">
+              {isCorrect ? "✓ Правильно" : "✗ Неправильно"}
+            </p>
+          )}
+        </div>
+      );
+    }
+    case "quiz_survey":
+    case "role_description": {
+      const selected = resp.selected || resp.answer || resp.value || resp.role;
+      const ROLE_LABELS: Record<string, string> = {
+        executor: "Исполнитель", freelancer: "Фрилансер", entrepreneur: "Предприниматель",
+      };
+      const label = typeof selected === "string" ? ROLE_LABELS[selected] || selected : JSON.stringify(selected);
+      return <Badge variant="outline">{label}</Badge>;
+    }
+    case "sequential_form": {
+      const answers = (resp.answers || resp) as Record<string, string>;
+      const steps = getSequentialFormSteps(lessonBlocks);
+      const entries = Object.entries(answers).filter(([k]) => k !== "completed" && k !== "type");
+      if (entries.length === 0) return <p className="text-sm text-muted-foreground italic">Нет ответов</p>;
+      return (
+        <div className="space-y-2">
+          {entries.map(([key, value], idx) => {
+            const step = steps.find(s => s.id === key);
+            return (
+              <div key={key} className="border-b pb-2 last:border-0">
+                <Label className="text-xs text-muted-foreground">
+                  {step?.title || `Шаг ${idx + 1}`}
+                </Label>
+                <p className="text-sm">{value || "—"}</p>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+    case "diagnostic_table": {
+      const rows = (resp.rows || resp.data) as unknown[];
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return <p className="text-sm text-muted-foreground italic">Данные не заполнены</p>;
+      }
+      // Check if V2 format
+      const isV2 = rows.some((r: any) => r.source_type !== undefined);
+      if (isV2) {
+        const v2Rows = rows as DiagnosticTableV2Row[];
+        return <DiagnosticTableV2Detail rows={v2Rows} />;
+      }
+      // V1 format
+      const v1Rows = rows as PointARow[];
+      return <DiagnosticTableV1Detail rows={v1Rows} />;
+    }
+    case "checklist": {
+      const items = (resp.checked || resp.items || resp.selected) as string[];
+      if (!Array.isArray(items) || items.length === 0) {
+        return <p className="text-sm text-muted-foreground italic">Не отмечено</p>;
+      }
+      return (
+        <div className="space-y-1">
+          {items.map((item, i) => (
+            <div key={i} className="flex items-center gap-2 text-sm">
+              <span className="text-primary">☑</span> {typeof item === "string" ? item : JSON.stringify(item)}
+            </div>
+          ))}
+        </div>
+      );
+    }
+    case "rating": {
+      const value = resp.value || resp.rating;
+      return <Badge variant="outline" className="text-base">⭐ {String(value)}</Badge>;
+    }
+    case "table_input": {
+      const rows = (resp.rows || resp.data) as Record<string, unknown>[];
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return <p className="text-sm text-muted-foreground italic">Нет данных</p>;
+      }
+      return <p className="text-sm">📋 {rows.length} строк заполнено</p>;
+    }
+    default:
+      return <p className="text-sm text-muted-foreground">Ответ получен (тип: {block.block_type})</p>;
+  }
+}
+
+function DiagnosticTableV1Detail({ rows }: { rows: PointARow[] }) {
+  const totalIncome = rows.reduce((s, r) => s + (r.income || 0), 0);
+  const totalTask = rows.reduce((s, r) => s + (r.work_hours || 0), 0);
+  const totalComm = rows.reduce((s, r) => s + (r.overhead_hours || 0), 0);
+  const totalHours = totalTask + totalComm;
+  const hourlyRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
+
+  return (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Источник</TableHead>
+            <TableHead className="text-right">Доход</TableHead>
+            <TableHead className="text-right">Часы задач</TableHead>
+            <TableHead className="text-right">Часы переписки</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, idx) => (
+            <TableRow key={idx}>
+              <TableCell>{row.source || "—"}</TableCell>
+              <TableCell className="text-right">{row.income || 0} BYN</TableCell>
+              <TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
+              <TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <Separator className="my-3" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
+        <div><Label className="text-muted-foreground">Задачи</Label><p className="font-semibold">{totalTask} ч</p></div>
+        <div><Label className="text-muted-foreground">Переписка</Label><p className="font-semibold">{totalComm} ч</p></div>
+        <div><Label className="text-muted-foreground">Доход/час</Label><p className="font-semibold text-primary">{hourlyRate} BYN/ч</p></div>
+      </div>
+    </>
+  );
+}
+
+function DiagnosticTableV2Detail({ rows }: { rows: DiagnosticTableV2Row[] }) {
+  const v2CategoryCounts: Record<string, number> = {};
+  rows.forEach(row => {
+    if (row.source_type === 'клиент') {
+      const computed = calculateV2Computed(row as unknown as Record<string, unknown>, rows as unknown as Record<string, unknown>[]);
+      if (computed.client_category) {
+        v2CategoryCounts[computed.client_category] = (v2CategoryCounts[computed.client_category] || 0) + 1;
+      }
+    }
+  });
+  const totalIncome = rows.reduce((s, r) => s + (Number(r.monthly_income) || 0), 0);
+  const totalHours = rows.reduce((s, r) => s + (Number(r.direct_hours) || 0) + (Number(r.mental_hours) || 0), 0);
+  const avgRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
+
+  return (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Клиент</TableHead>
+            <TableHead>Тип</TableHead>
+            <TableHead className="text-right">Доход</TableHead>
+            <TableHead className="text-right">Часы</TableHead>
+            <TableHead></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, idx) => (
+            <TableRow key={idx}>
+              <TableCell>{row.client || "—"}</TableCell>
+              <TableCell><Badge variant="outline" className="text-xs">{row.source_type || "—"}</Badge></TableCell>
+              <TableCell className="text-right">{row.monthly_income || 0} BYN</TableCell>
+              <TableCell className="text-right">{(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч</TableCell>
+              <TableCell><V2ClientRowDetails row={row} allRows={rows} /></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <Separator className="my-3" />
+      <div className="grid grid-cols-3 gap-3 text-sm">
+        <div><Label className="text-muted-foreground">Доход</Label><p className="font-semibold">{totalIncome} BYN</p></div>
+        <div><Label className="text-muted-foreground">Часы</Label><p className="font-semibold">{totalHours} ч</p></div>
+        <div><Label className="text-muted-foreground">Доход/час</Label><p className="font-semibold text-primary">{avgRate} BYN/ч</p></div>
+      </div>
+      {Object.keys(v2CategoryCounts).length > 0 && (
+        <div className="border-t pt-3 mt-3">
+          <p className="text-xs text-muted-foreground mb-2">Категории клиентов</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(v2CategoryCounts).map(([cat, count]) => (
+              <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
+                {cat}: {count}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function StudentProgressModal({
   record,
   lessonBlocks,
@@ -207,44 +448,31 @@ export function StudentProgressModal({
   const [feedbackTarget, setFeedbackTarget] = useState<{ blockId?: string; blockTitle?: string } | null>(null);
   if (!record) return null;
 
-  const state = record.state_json as {
-    role?: string;
-    pointA_rows?: PointARow[];
-    pointA_completed?: boolean;
-    pointA_v2_rows?: DiagnosticTableV2Row[];
-    pointA_v2_completed?: boolean;
-    pointB_answers?: Record<string, string>;
-    pointB_completed?: boolean;
-    completedSteps?: string[];
-  };
-
+  const state = record.state_json as Record<string, unknown> | null;
   const profile = record.profiles;
-  const steps = getSequentialFormSteps(lessonBlocks);
 
-  const pointARows = state?.pointA_rows || [];
-  const totalIncome = pointARows.reduce((sum, r) => sum + (r.income || 0), 0);
-  const totalTaskHours = pointARows.reduce((sum, r) => sum + (r.work_hours || 0), 0);
-  const totalCommHours = pointARows.reduce((sum, r) => sum + (r.overhead_hours || 0), 0);
-  const totalHours = totalTaskHours + totalCommHours;
-  const hourlyRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
+  // Get interactive blocks using shared resolver
+  const interactive = getInteractiveBlocks(lessonBlocks as BlockMeta[]);
 
-  const noteEntries = Object.entries(blockResponses || {}).filter(([, r]: any) => r?.type === "note");
-  const uploadEntries = Object.entries(blockResponses || {}).filter(([, r]: any) => {
-    if (r?.type !== "upload") return false;
-    return (Array.isArray(r.files) && r.files.length > 0) || r.file?.storage_path;
-  });
-
-  // V2 aggregates for category distribution
-  const v2Rows = (state?.pointA_v2_rows || []) as DiagnosticTableV2Row[];
-  const v2CategoryCounts: Record<string, number> = {};
-  v2Rows.forEach(row => {
-    if (row.source_type === 'клиент') {
-      const computed = calculateV2Computed(row as unknown as Record<string, unknown>, v2Rows as unknown as Record<string, unknown>[]);
-      if (computed.client_category) {
-        v2CategoryCounts[computed.client_category] = (v2CategoryCounts[computed.client_category] || 0) + 1;
-      }
+  // Build unified response map: merge blockResponses (user_lesson_progress) + state_json legacy
+  const getResponse = (block: BlockMeta): unknown => {
+    if (blockResponses?.[block.id] !== undefined) return blockResponses[block.id];
+    if (!state) return null;
+    if (block.block_type === "quiz_survey" || block.block_type === "role_description") {
+      if (state.role) return { role: state.role, selected: state.role };
     }
-  });
+    if (block.block_type === "diagnostic_table") {
+      if (state.pointA_v2_rows && (state.pointA_v2_rows as unknown[]).length > 0)
+        return { rows: state.pointA_v2_rows };
+      if (state.pointA_rows && (state.pointA_rows as unknown[]).length > 0)
+        return { rows: state.pointA_rows };
+    }
+    if (block.block_type === "sequential_form") {
+      if (state.pointB_answers && Object.keys(state.pointB_answers as object).length > 0)
+        return { answers: state.pointB_answers, completed: state.pointB_completed };
+    }
+    return null;
+  };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -262,223 +490,65 @@ export function StudentProgressModal({
             <CardContent className="pt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-lg">
-                    {profile?.full_name || "Без имени"}
-                  </p>
+                  <p className="font-semibold text-lg">{profile?.full_name || "Без имени"}</p>
                   <p className="text-muted-foreground">{profile?.email}</p>
                 </div>
-                {state?.role && (
-                  <Badge variant="outline" className="text-base px-3 py-1">
-                    {roleLabels[state.role] || state.role}
-                  </Badge>
-                )}
+                <Badge variant={record.completed_at ? "default" : "secondary"}>
+                  {record.completed_at ? "Завершён" : "В процессе"}
+                </Badge>
               </div>
             </CardContent>
           </Card>
 
-          {/* Point A - Diagnostic Table V1 */}
-          {(state?.pointA_rows?.length || state?.pointA_completed) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Target className="h-5 w-5 text-primary" />
-                  Диагностика точки А
-                  {state?.pointA_completed && (
-                    <Badge variant="default" className="ml-2">Завершено</Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {pointARows.length > 0 ? (
-                  <>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Источник дохода</TableHead>
-                          <TableHead className="text-right">Доход</TableHead>
-                          <TableHead className="text-right">Часы задач</TableHead>
-                          <TableHead className="text-right">Часы переписки</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pointARows.map((row, idx) => (
-                          <TableRow key={idx}>
-                            <TableCell>{row.source || "—"}</TableCell>
-                            <TableCell className="text-right">{row.income || 0} BYN</TableCell>
-                            <TableCell className="text-right">{row.work_hours || 0} ч</TableCell>
-                            <TableCell className="text-right">{row.overhead_hours || 0} ч</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    
-                    <Separator className="my-4" />
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <Label className="text-muted-foreground">Общий доход</Label>
-                        <p className="font-semibold">{totalIncome} BYN</p>
-                      </div>
-                      <div>
-                        <Label className="text-muted-foreground">Часы на задачи</Label>
-                        <p className="font-semibold">{totalTaskHours} ч</p>
-                      </div>
-                      <div>
-                        <Label className="text-muted-foreground">Часы переписки</Label>
-                        <p className="font-semibold">{totalCommHours} ч</p>
-                      </div>
-                      <div>
-                        <Label className="text-muted-foreground">Доход/час</Label>
-                        <p className="font-semibold text-primary">{hourlyRate} BYN/ч</p>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-muted-foreground">Данные не заполнены</p>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          {/* Universal block-by-block responses */}
+          {interactive.map((block) => {
+            const response = getResponse(block);
+            const resolved = resolveProgressValue(block.block_type, response, block.content);
+            const label = getBlockLabel(block);
 
-          {/* Point A V2 - Portfolio Analytics — separate section */}
-          {(v2Rows.length > 0 || state?.pointA_v2_completed) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Target className="h-5 w-5 text-teal-600" />
-                  Аналитика портфеля клиентов
-                  {state?.pointA_v2_completed && (
-                    <Badge variant="default" className="ml-2">Завершено</Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {v2Rows.length > 0 ? (
-                  <>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Клиент</TableHead>
-                          <TableHead>Тип</TableHead>
-                          <TableHead className="text-right">Доход</TableHead>
-                          <TableHead className="text-right">Часы</TableHead>
-                          <TableHead></TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {v2Rows.map((row, idx) => (
-                          <TableRow key={idx}>
-                            <TableCell>{row.client || "—"}</TableCell>
-                            <TableCell>
-                              <Badge variant="outline" className="text-xs">
-                                {row.source_type || "—"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">{row.monthly_income || 0} BYN</TableCell>
-                            <TableCell className="text-right">
-                              {(Number(row.direct_hours) || 0) + (Number(row.mental_hours) || 0)} ч
-                            </TableCell>
-                            <TableCell>
-                              <V2ClientRowDetails row={row} allRows={v2Rows} />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    
-                    <Separator className="my-4" />
-                    
-                    {(() => {
-                      const totalIncome = v2Rows.reduce((s, r) => s + (Number(r.monthly_income) || 0), 0);
-                      const totalHours = v2Rows.reduce((s, r) => s + (Number(r.direct_hours) || 0) + (Number(r.mental_hours) || 0), 0);
-                      const avgRate = totalHours > 0 ? Math.round(totalIncome / totalHours) : 0;
-                      return (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-3 gap-4 text-sm">
-                            <div>
-                              <Label className="text-muted-foreground">Общий доход</Label>
-                              <p className="font-semibold">{totalIncome} BYN</p>
-                            </div>
-                            <div>
-                              <Label className="text-muted-foreground">Общие часы</Label>
-                              <p className="font-semibold">{totalHours} ч</p>
-                            </div>
-                            <div>
-                              <Label className="text-muted-foreground">Доход/час</Label>
-                              <p className="font-semibold text-primary">{avgRate} BYN/ч</p>
-                            </div>
-                          </div>
-                          {/* Category distribution */}
-                          {Object.keys(v2CategoryCounts).length > 0 && (
-                            <div className="border-t pt-3">
-                              <p className="text-xs text-muted-foreground mb-2">Категории клиентов</p>
-                              <div className="flex flex-wrap gap-2">
-                                {Object.entries(v2CategoryCounts).map(([cat, count]) => (
-                                  <Badge key={cat} className={CATEGORY_COLORS[cat] || 'bg-muted text-muted-foreground'}>
-                                    {cat}: {count}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-                  </>
-                ) : (
-                  <p className="text-muted-foreground">Данные не заполнены</p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Point B - Sequential Form Answers */}
-          {(state?.pointB_answers || state?.pointB_completed) && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Crosshair className="h-5 w-5 text-primary" />
-                  Формула точки B
-                  {state?.pointB_completed && (
-                    <Badge variant="default" className="ml-2">Завершено</Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {steps.length > 0 ? (
-                  steps.map((step, idx) => {
-                    const answer = state?.pointB_answers?.[step.id];
-                    return (
-                      <div key={step.id} className="border-b pb-3 last:border-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge variant="outline" className="shrink-0">
-                            {idx + 1}
-                          </Badge>
-                          <Label className="font-medium">{step.title}</Label>
-                        </div>
-                        <p className="text-xs text-muted-foreground mb-2">{step.description}</p>
-                        <p className={`text-sm ${answer ? "" : "text-muted-foreground italic"}`}>
-                          {answer || "Нет ответа"}
-                        </p>
-                      </div>
-                    );
-                  })
-                ) : state?.pointB_answers ? (
-                  Object.entries(state.pointB_answers).map(([key, value], idx) => (
-                    <div key={key} className="border-b pb-3 last:border-0">
-                      <Label className="text-muted-foreground">Шаг {idx + 1}</Label>
-                      <p className="text-sm mt-1">{value || "—"}</p>
+            return (
+              <Card key={block.id}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between text-base">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-xs shrink-0">
+                        {blockTypeLabel(block.block_type)}
+                      </Badge>
+                      <span>{label}</span>
                     </div>
-                  ))
-                ) : (
-                  <p className="text-muted-foreground">Ответы не заполнены</p>
-                )}
-              </CardContent>
-            </Card>
-          )}
+                    <div className="flex items-center gap-2">
+                      {resolved.hasResponse ? (
+                        <Badge variant="default" className="text-xs">✓</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">Нет ответа</Badge>
+                      )}
+                      {lessonId && record && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setFeedbackTarget({ blockId: block.id, blockTitle: label })}
+                        >
+                          <MessageSquare className="h-3 w-3 mr-1" />
+                          Связь
+                        </Button>
+                      )}
+                    </div>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <BlockResponseDetail
+                    block={block}
+                    response={response}
+                    lessonBlocks={lessonBlocks}
+                  />
+                </CardContent>
+              </Card>
+            );
+          })}
 
           {/* Completed Steps Summary */}
-          {state?.completedSteps?.length ? (
+          {(state?.completedSteps as string[] | undefined)?.length ? (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 text-lg">
@@ -488,117 +558,11 @@ export function StudentProgressModal({
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Завершено блоков: {state.completedSteps.length}
+                  Завершено блоков: {(state!.completedSteps as string[]).length}
                 </p>
               </CardContent>
             </Card>
           ) : null}
-
-          {/* Text Answers (notes) */}
-          {noteEntries.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <PenLine className="h-5 w-5 text-primary" />
-                  Текстовые ответы
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {noteEntries.map(([blockId, resp]: any) => {
-                  const block = lessonBlocks.find(b => b.id === blockId);
-                  const blockTitle = (block?.content as any)?.title || `Блок ${blockId.slice(0, 6)}`;
-                  return (
-                    <div key={blockId} className="border-b pb-3 last:border-0">
-                      <div className="flex items-center justify-between">
-                        <Label className="font-medium text-sm">📌 {blockTitle}</Label>
-                        {lessonId && record && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={() => setFeedbackTarget({ blockId, blockTitle })}
-                          >
-                            <MessageSquare className="h-3 w-3 mr-1" />
-                            Обратная связь
-                          </Button>
-                        )}
-                      </div>
-                      <p className={`text-sm mt-1 ${resp.text ? "" : "text-muted-foreground italic"}`}>
-                        {resp.text || "Нет ответа"}
-                      </p>
-                      {resp.saved_at && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Сохранено: {format(new Date(resp.saved_at), "dd MMM yyyy HH:mm", { locale: ru })}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Uploaded Files */}
-          {uploadEntries.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Upload className="h-5 w-5 text-primary" />
-                  Загруженные файлы
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {uploadEntries.map(([blockId, resp]: any) => {
-                  const block = lessonBlocks.find(b => b.id === blockId);
-                  const blockTitle = (block?.content as any)?.title || `Блок ${blockId.slice(0, 6)}`;
-                  const files = normalizeUploadFiles(resp);
-
-                  return (
-                    <div key={blockId} className="border-b pb-3 last:border-0">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="font-medium text-sm">📁 {blockTitle}</Label>
-                        {lessonId && record && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={() => setFeedbackTarget({ blockId, blockTitle })}
-                          >
-                            <MessageSquare className="h-3 w-3 mr-1" />
-                            Обратная связь
-                          </Button>
-                        )}
-                      </div>
-                      <div className="space-y-1.5">
-                        {files.map((file, fi) => {
-                          const { Icon: FileIcon, colorClass } = getFileTypeIcon(file.original_name);
-                          const sizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : null;
-                          return (
-                            <div key={fi} className="flex items-center gap-2 group">
-                              <FileIcon className={`h-4 w-4 shrink-0 ${colorClass}`} />
-                              <button
-                                onClick={() => downloadFile(file.storage_path, file.original_name)}
-                                className="text-sm text-primary hover:underline truncate"
-                                title={file.original_name}
-                              >
-                                {file.original_name}
-                              </button>
-                              {sizeMB && (
-                                <span className="text-xs text-muted-foreground shrink-0">{sizeMB} MB</span>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {resp.comment && (
-                        <p className="text-xs text-muted-foreground mt-1 italic">💬 {resp.comment}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
-          )}
         </div>
       </DialogContent>
 
