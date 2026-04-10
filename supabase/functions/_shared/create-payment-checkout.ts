@@ -23,6 +23,8 @@ export interface CreateCheckoutParams {
   origin?: string;
   actor_user_id?: string;
   actor_type?: 'admin' | 'system';
+  /** ID подписки, которую заменяем. Сервер проверит, что она реально отменена, прежде чем создать новую. */
+  replacement_of_subscription_v2_id?: string;
 }
 
 export interface CreateCheckoutSuccess {
@@ -33,9 +35,24 @@ export interface CreateCheckoutSuccess {
   payment_type: 'one_time' | 'subscription';
 }
 
+export interface SubscriptionConflict {
+  subscription_v2_id: string;
+  status: string;
+  next_charge_at: string | null;
+  access_end_at: string | null;
+  bepaid_subscription_id: string | null;
+  provider_subscription_id: string | null;
+  product_id: string;
+  tariff_id: string;
+  display_next_charge_at: string | null;
+  display_access_end_at: string | null;
+  timezone_used: string;
+}
+
 export interface CreateCheckoutError {
   success: false;
   error: string;
+  conflict?: SubscriptionConflict;
 }
 
 export type CreateCheckoutResult = CreateCheckoutSuccess | CreateCheckoutError;
