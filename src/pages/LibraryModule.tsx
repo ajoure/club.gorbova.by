@@ -1,5 +1,6 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useUnreadFeedbackByLesson } from "@/hooks/useTrainingFeedback";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useTrainingLessons, TrainingLesson } from "@/hooks/useTrainingLessons";
@@ -141,6 +142,10 @@ export default function LibraryModule() {
 
   const completedCount = lessons.filter(l => l.is_completed).length;
   const progress = lessons.length > 0 ? Math.round((completedCount / lessons.length) * 100) : 0;
+
+  // Batch fetch unread feedback per lesson (shared hook, no N+1)
+  const lessonIds = lessons.map(l => l.id);
+  const { data: unreadByLesson } = useUnreadFeedbackByLesson(lessonIds);
 
   if (moduleLoading) {
     return (
@@ -370,11 +375,18 @@ export default function LibraryModule() {
 
                     {/* Lesson info */}
                     <div className="flex-1 min-w-0">
-                      <h3 className={`font-medium transition-colors ${
-                        lesson.is_completed ? "text-muted-foreground line-through" : ""
-                      } ${!isScheduled ? "group-hover:text-primary" : ""}`}>
-                        {lesson.title}
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className={`font-medium transition-colors ${
+                          lesson.is_completed ? "text-muted-foreground line-through" : ""
+                        } ${!isScheduled ? "group-hover:text-primary" : ""}`}>
+                          {lesson.title}
+                        </h3>
+                        {(unreadByLesson?.get(lesson.id) ?? 0) > 0 && (
+                          <Badge variant="default" className="shrink-0 text-[10px] px-1.5 py-0">
+                            💬 {unreadByLesson!.get(lesson.id)}
+                          </Badge>
+                        )}
+                      </div>
                       {isScheduled && lesson.published_at ? (
                         <p className="text-xs text-amber-600 flex items-center gap-1">
                           <Timer className="h-3 w-3" />
