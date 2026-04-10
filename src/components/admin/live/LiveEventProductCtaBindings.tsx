@@ -13,7 +13,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Plus, Trash2, Loader2, ShoppingCart, ExternalLink, FileText, Eye, Package } from "lucide-react";
 import { toast } from "sonner";
 import { DomainEventService } from "@/lib/domain-events";
-import { DateTimePicker } from "@/components/ui/datetime-picker";
 
 const CTA_TYPE_LABELS: Record<string, string> = {
   buy_now: "Купить",
