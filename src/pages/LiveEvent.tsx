@@ -422,10 +422,10 @@ export default function LiveEvent() {
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="comments" className="flex-1 overflow-hidden m-0">
-                  <LiveEventComments liveEventId={eventId} />
+                  <LiveEventComments liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
                 <TabsContent value="questions" className="flex-1 overflow-hidden m-0">
-                  <LiveEventQuestions liveEventId={eventId} />
+                  <LiveEventQuestions liveEventId={eventId} onOpenProfile={isStaff ? openContactSheet : undefined} />
                 </TabsContent>
               </Tabs>
             </Card>
