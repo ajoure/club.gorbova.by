@@ -120,12 +120,13 @@ export function AdminPaymentLinkDialog({
         // Don't block — provider cancel already succeeded
       }
 
-      // Step 3: Audit
+      // Step 3: Audit — stage 1: replace_started (after cancel, before new checkout)
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
       const { error: auditErr } = await supabase.from('audit_logs').insert({
         actor_type: 'user',
-        actor_user_id: null, // will be set by RLS / current session
+        actor_user_id: currentUser?.id || null,
         target_user_id: userId,
-        action: 'subscription.replaced',
+        action: 'subscription.replace_started',
         meta: {
           old_subscription_v2_id: subV2Id,
           product_id: conflictInfo.product_id,
@@ -135,7 +136,8 @@ export function AdminPaymentLinkDialog({
           actor_type: 'admin',
         },
       });
-      if (auditErr) console.error('[PATCH E] audit insert failed:', auditErr);
+      if (auditErr) console.error('[PATCH E] replace_started audit insert failed:', auditErr);
+      // Note: subscription.replaced (stage 2) is written server-side in create-payment-checkout.ts after new order is created
 
       // Step 4: Create new checkout with replacement_of_subscription_v2_id
       setReplaceStep('creating');
