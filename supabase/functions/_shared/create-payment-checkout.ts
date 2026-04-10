@@ -743,6 +743,27 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
     });
     if (auditCreatedErr2) console.error('[payment_checkout] audit insert failed', { action: 'payment_link.created', order_id: order.id, payment_type: 'subscription', error: auditCreatedErr2 });
 
+    // PATCH E: Server-side audit for subscription replacement (stage 2 — after new checkout created)
+    if (replacement_of_subscription_v2_id) {
+      const { error: replaceAuditErr } = await supabase.from('audit_logs').insert({
+        actor_type: auditActorType,
+        actor_user_id: actorUserId,
+        target_user_id: user_id,
+        action: 'subscription.replaced',
+        created_at: new Date().toISOString(),
+        meta: {
+          old_subscription_v2_id: replacement_of_subscription_v2_id,
+          new_order_id: order.id,
+          new_checkout_or_order_id: order.id,
+          product_id,
+          tariff_id,
+          bepaid_subscription_id: bepaidSubId,
+          actor_type: effectiveActorType,
+        },
+      });
+      if (replaceAuditErr) console.error('[payment_checkout] subscription.replaced audit insert failed', { order_id: order.id, replacement_of_subscription_v2_id, error: replaceAuditErr });
+    }
+
     return {
       success: true,
       redirect_url: redirectUrl,
