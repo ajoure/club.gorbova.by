@@ -3265,6 +3265,11 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
 
             {/* Communications Tab */}
             <TabsContent value="communications" className="m-0 space-y-4">
+              {/* Webinar Activity Section */}
+              {resolvedUserId && (
+                <WebinarActivitySection userId={resolvedUserId} isStaff={isStaffRole(authRole)} />
+              )}
+
               {/* Notification Events Section */}
               {notificationEvents && notificationEvents.length > 0 && (
                 <Card>
