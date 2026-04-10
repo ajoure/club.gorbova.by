@@ -122,7 +122,7 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto space-y-3 p-3 max-h-[400px]">
+      <div className="flex-1 overflow-y-auto space-y-3 p-3">
         {isLoading ? (
           <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
         ) : !questions?.length ? (
