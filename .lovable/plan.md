@@ -1,140 +1,225 @@
+# да, согласен, с учетом правок:
 
-# Отчёт о выполненной работе: PATCH E — Запрет двойных подписок
+&nbsp;
 
-## Статус: Код завершён, server-proof подтверждён, browser-proof частичный
+1. Добавь явное правило **ID-driven для динамических колонок и ответов**:
+  &nbsp;
+  - колонки, маппинг ответов, feedback-context и все связи строятся по lesson_id, block_id / UUID;
+  - заголовок блока используется только как display label;
+  - запрещено связывать ответы и колонки по названию блока, тексту вопроса или типу без ID-ключа. Это обязательно, потому что внутренняя логика должна работать только через идентификаторы. 
+  &nbsp;
+2. Добавь отдельный **shared resolver layer** для ответов по block_type:
+  &nbsp;
+  - один общий реестр/модуль render/resolveProgressValue(block_type, response, blockContent);
+  - его используют и AdminLessonProgress.tsx, и StudentProgressModal.tsx;
+  - запрещено делать две независимые таблицы соответствий типов блоков в двух местах. Это нужно из-за правила duplication prevention и service layer.
+  &nbsp;
+3. В Этап 1 добавь точное правило построения колонок:
+  &nbsp;
+  - брать только **интерактивные** блоки из урока;
+  - порядок колонок строго по lesson_blocks.sort_order;
+  - для неподдержанного интерактивного типа не ломать таблицу: показывать fallback-ячейку есть ответ / нет ответа;
+  - длинные уроки: ограничить ширину, horizontal scroll, sticky first columns. Иначе таблица станет непригодной на реальных уроках.
+  &nbsp;
+4. В Этап 1 добавь **stop-guard на N+1**:
+  &nbsp;
+  - нельзя делать отдельные запросы на каждый урок, каждый блок, каждого ученика;
+  - прогресс-таблица должна получать lesson blocks и user progress пакетно;
+  - feedback badges тоже считаются пакетно. Иначе план безопасно не масштабируется.
+  &nbsp;
+5. В Этап 2 добавь нормализацию ответа по типам:
+  &nbsp;
+  - quiz_* — показывать выбранные option ids + display labels + правильность, если у блока есть ключ правильных ответов;
+  - checklist — список выбранных пунктов;
+  - rating — numeric value;
+  - file_upload — имя файла, ссылка, статус наличия;
+  - sequential_form / diagnostic_table / table_input — компактный summary + кнопка раскрытия деталей;
+  - если response отсутствует или формат legacy, нужен fallback renderer, а не пустота.
+  &nbsp;
+6. В Этап 3 зафиксируй, что **бейджи фидбэка в списках уроков** должны идти из **одного общего источника**:
+  &nbsp;
+  - один shared hook / projection для unread feedback by lesson;
+  - BusinessTrainingContent.tsx и LibraryModule.tsx не должны каждый по-своему джойнить ticket_training_context и support_tickets;
+  - если текущего shape данных не хватает, допускается add-only SQL projection / RPC, но не новая таблица и не новая edge function. Это соответствует правилу reuse existing solutions и запрету тащить бизнес-логику в UI.
+  &nbsp;
+7. В Этап 3 добавь anti-spam правило для realtime/toast:
+  &nbsp;
+  - toast только на **новый переход в unread** или на новое сообщение в открытом lesson-context;
+  - при initial load, reconnect и background refetch toast не показывать;
+  - иначе ученик получит ложные дубли уведомлений.
+  &nbsp;
+8. В Этап 3 добавь **per-lesson isolation**:
+  &nbsp;
+  - unread badge считается строго по lesson_id;
+  - кнопка «Обратная связь» внутри урока открывает только lesson-scoped ticket/context;
+  - нельзя смешивать общий support unread count и lesson feedback unread count.
+  &nbsp;
+9. В Этап 4 добавь, что колонка «Обратная связь» в admin-таблице должна показывать не просто факт наличия тикета, а минимум:
+  &nbsp;
+  - есть ли тикет;
+  - есть ли unread у ученика;
+  - timestamp последнего сообщения;
+  - быстрый переход в feedback drawer.
+    Иначе колонка будет слишком слабой для практической работы.
+  &nbsp;
+10. Добавь отдельный **DoD по данным и производительности**:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- колонки соответствуют реальным интерактивным блокам конкретного урока;
+- unsupported block type не ломает таблицу и модалку;
+- один и тот же block type рендерится одинаково в таблице и в модалке;
+- unread badges совпадают между списком уроков, страницей урока и ticket context;
+- нет N+1 по урокам/блокам/тикетам;
+- на уроке с большим числом интерактивных блоков таблица остаётся рабочей.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+11. Добавь **отложенный follow-up блок**, не блокирующий основной scope:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- browser/runtime proof по realtime;
+- UX polish для mobile;
+- расширение summary для сложных block types;
+- возможная унификация с support center counters.
+  Это не должно тормозить основной спринт, если базовый безопасный scope уже закрыт.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+12. Добавь в раздел «Что НЕ делаем»:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- не создаём второй parallel SoT для lesson feedback поверх существующих support tickets;
+- не дублируем block-type mapping в UI;
+- не связываем сущности по title/text;
+- не переносим бизнес-логику unread/progress aggregation в два разных компонента. Это прямо следует из архитектурных правил platform bible.
+
+&nbsp;
+
+&nbsp;
+
+План: Динамические таблицы прогресса + двусторонняя обратная связь по урокам
 
 ---
 
-## 1. Что изменено
+## Проблема
 
-### Файлы
-
-| Файл | Что изменено |
-|---|---|
-| `supabase/functions/_shared/create-payment-checkout.ts` | Заменён Duplicate Guard: subscriptions_v2 SoT, fail-closed, структурированный conflict, replacement_of_subscription_v2_id. Серверный аудит `subscription.replaced` с `new_order_id` после создания checkout |
-| `supabase/functions/admin-create-payment-link/index.ts` | Проброс replacement_of_subscription_v2_id, conflict в ответе |
-| `src/components/admin/AdminPaymentLinkDialog.tsx` | UI конфликта: предупреждение, «Оставить»/«Заменить», промежуточные статусы. Клиентский аудит `subscription.replace_started` с явным `actor_user_id` через `supabase.auth.getUser()` |
-
-### Аудит — двухэтапный
-
-1. **`subscription.replace_started`** — клиент, после успешной отмены старой подписки у провайдера, до создания нового checkout. Поля: `old_subscription_v2_id`, `product_id`, `tariff_id`, `old_bepaid_subscription_id`, `cancel_result`, `actor_type`, `actor_user_id` (явно через `supabase.auth.getUser()`), `target_user_id`.
-
-2. **`subscription.replaced`** — сервер (`create-payment-checkout.ts`, строки 746-765), после успешного создания нового checkout. Поля: `old_subscription_v2_id`, `new_order_id`, `new_checkout_or_order_id`, `product_id`, `tariff_id`, `bepaid_subscription_id`, `actor_type`, `actor_user_id`, `target_user_id`.
-
-### Терминальные статусы (из кода, строка 387)
-
-```
-canceled, superseded, revoked, expired, expired_reentry
-```
+1. **Таблица прогресса одинаковая для всех уроков** — жёстко захардкожены колонки «Роль», «Точка А», «Точка B» (из `AdminLessonProgress.tsx`, строки 246-253). Но разные уроки содержат разные интерактивные блоки (`input_short`, `file_upload`, `quiz_single`, `sequential_form`, `diagnostic_table` и т.д.), и колонки должны соответствовать реальным блокам урока.
+2. **Модалка «Просмотр» частично показывает ответы** — `StudentProgressModal.tsx` показывает текстовые ответы и файлы, но не все типы блоков (quiz, checklist, rating).
+3. **Обратная связь уже частично реализована** — есть `FeedbackDrawer`, `useGetOrCreateFeedbackTicket`, `TicketChat`, категория `training_feedback` в тикетах. Но нет уведомлений ученику при новом сообщении от преподавателя **внутри урока**, и нет индикации обратной связи прямо в списке уроков.
 
 ---
 
-## 2. Server-proof
+## Что уже есть и переиспользуем
 
-### Proof 1: Дубль по тому же product_id + tariff_id — ЗАБЛОКИРОВАН ✅
 
-```json
-POST /admin-create-payment-link
-body: { user_id: "6b0e0451-...", product_id: "11c9f1b8-..." (Gorbova Club), tariff_id: "7c748940-..." (BUSINESS) }
+| Компонент                      | Что делает                                                        |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `FeedbackDrawer`               | Открывает чат обратной связи (Sheet + TicketChat)                 |
+| `useGetOrCreateFeedbackTicket` | Создаёт/находит тикет `training_feedback`                         |
+| `useStudentFeedbackTickets`    | Список фидбэк-тикетов ученика                                     |
+| `useUnreadFeedbackCount`       | Счётчик непрочитанных (уже на вкладке «Обратная связь» в Support) |
+| `ticket_training_context`      | Связка тикет ↔ урок/блок                                          |
+| `TicketChat`                   | Двусторонний чат с Telegram-bridge                                |
 
-Response:
-{
-  "success": false,
-  "error": "existing_subscription_conflict",
-  "conflict": {
-    "subscription_v2_id": "c30f04c3-3200-41f9-be09-e8bab09cad45",
-    "status": "active",
-    "bepaid_subscription_id": "sbs_b5c5ea6a57413c72",
-    "provider_subscription_id": "sbs_b5c5ea6a57413c72",
-    "next_charge_at": "2026-05-08T20:59:59+00:00",
-    "access_end_at": "2026-05-08T20:59:59+00:00",
-    "timezone_used": "Europe/Minsk"
-  }
-}
-```
-
-### Proof 2: Другой тариф того же продукта — РАЗРЕШЁН ✅
-
-```json
-POST /admin-create-payment-link
-body: { ..., tariff_id: "b276d8a5-..." (FULL) }
-
-Response:
-{ "success": true, "redirect_url": "https://checkout.bepaid.by/...", "order_id": "d0999c4d-..." }
-```
-
-### Proof 3: STOP-guard — replacement без отмены — ЗАБЛОКИРОВАН ✅
-
-```json
-POST /admin-create-payment-link
-body: { ..., replacement_of_subscription_v2_id: "c30f04c3-..." }
-
-Response:
-{ "success": false, "error": "Заменяемая подписка ещё не отменена (статус: active). Сначала отмените её у провайдера." }
-```
-
-### Proof 4: Fail-closed — подтверждён кодом ✅
-
-Строки 415-418: при ошибке запроса к subscriptions_v2 → checkout блокируется.
-
-### Proof 5: replacement через конкретный ID — не generic bypass ✅
-
-Строки 373-401: проверка конкретной подписки по UUID + терминальный статус.
 
 ---
 
-## 3. Negative-proof
+## Что делаем
 
-- Если отмена у провайдера не прошла → UI показывает ошибку, новая ссылка не создаётся (STOP-guard на клиенте: строки 109-111)
-- Если guard-query падает → checkout не создаётся (fail-closed: строки 415-418)
-- Если replacement sub не в терминальном статусе → checkout не создаётся (строки 388-395)
+### Этап 1: Динамические колонки в таблице прогресса
+
+**Файл: `src/pages/admin/AdminLessonProgress.tsx**`
+
+- Вместо хардкоженных «Роль / Точка А / Точка B» — строить колонки динамически из `lessonBlocks`:
+  - Для каждого интерактивного блока (`input_short`, `file_upload`, `quiz_*`, `sequential_form`, `diagnostic_table`, `checklist`, `rating`, `table_input`) — одна колонка с названием блока.
+  - В ячейке: ✓ (ответ есть) / — (нет ответа), или краткое значение для `input_short`.
+- Саммари-карточки (строки 189-223): вместо «Точка А / Точка B» — общее «Ответили на N из M блоков».
+
+### Этап 2: Полный просмотр ответов в модалке
+
+**Файл: `src/components/admin/trainings/StudentProgressModal.tsx**`
+
+- Добавить отображение ответов для всех типов блоков:
+  - `quiz_single/multiple/true_false` — показать выбранный ответ и правильность
+  - `checklist` — показать отмеченные пункты
+  - `input_short` — уже есть как «note», подтвердить
+  - `rating` — показать оценку
+- Универсальный рендерер ответов по `block_type` + `response` из `user_lesson_progress`.
+
+### Этап 3: Обратная связь — индикация в UI ученика
+
+**Уже работает:**
+
+- Преподаватель может писать обратную связь через `FeedbackDrawer`
+- Ученик видит её на вкладке «Обратная связь» в разделе «Поддержка»
+- Есть `useUnreadFeedbackCount` и realtime
+
+**Добавить:**
+
+1. **Бейдж непрочитанных в списке уроков** — в `BusinessTrainingContent.tsx` и `LibraryModule.tsx`:
+  - Рядом с каждым уроком показывать 💬 бейдж, если по нему есть непрочитанный фидбэк от преподавателя.
+  - Запрос: `ticket_training_context` JOIN `support_tickets` WHERE `has_unread_user = true` и `category = 'training_feedback'`.
+2. **Кнопка «Обратная связь» внутри урока** (страница прохождения урока):
+  - Если по уроку есть тикет `training_feedback` → показать кнопку / индикатор с количеством непрочитанных.
+  - По клику — открыть `FeedbackDrawer` (уже реализован) от лица ученика.
+3. **Уведомления:**
+  - Realtime уже подключен через `useStudentFeedbackTickets`.
+  - Добавить toast-уведомление при получении нового сообщения по фидбэку (через realtime на `ticket_messages`).
+
+### Этап 4: Индикация обратной связи в таблице прогресса (admin)
+
+**Файл: `src/pages/admin/AdminLessonProgress.tsx**`
+
+- Колонка «Обратная связь» в таблице — показать бейдж 💬 если есть тикет.
+- Внутри модалки `StudentProgressModal` уже есть кнопка «Обратная связь» на каждом блоке — это работает.
 
 ---
 
-## 4. Browser-proof — частичный
+## Изменяемые файлы
 
-Подтверждено скринами:
-1. ✅ Диалог «Ссылка на оплату» открывается на карточке Казачек
-2. ✅ Видна существующая подписка Gorbova Club — BUSINESS (active, bePaid, MASTER ****2970)
-3. ⏳ Полный UI-flow конфликта (выбор продукта из dropdown затруднён виртуализацией списка) — требует ручной проверки
 
----
+| Файл                                                      | Что меняется                                          |
+| --------------------------------------------------------- | ----------------------------------------------------- |
+| `src/pages/admin/AdminLessonProgress.tsx`                 | Динамические колонки, саммари, колонка обратной связи |
+| `src/components/admin/trainings/StudentProgressModal.tsx` | Универсальный рендерер ответов по block_type          |
+| `src/pages/BusinessTrainingContent.tsx`                   | Бейдж непрочитанных фидбэков у уроков                 |
+| `src/pages/LibraryModule.tsx`                             | Бейдж непрочитанных фидбэков у уроков                 |
+| `src/hooks/useTrainingFeedback.ts`                        | Хук для получения непрочитанных фидбэков по урокам    |
 
-## 5. SQL-proof (состояние Казачек)
 
-Подписка `c30f04c3` — Gorbova Club / BUSINESS:
-- status: `active`
-- next_charge_at: `2026-05-08T20:59:59+00:00`
-- access_end_at: `2026-05-08T20:59:59+00:00`
+## Что НЕ делаем
 
-Ранее замённая подписка `eba308ca` — status: `superseded` ✅
-Просроченные подписки `c5f83210`, `067fc30d` — status: `expired` ✅
+- Новых таблиц не создаём — всё на существующих `support_tickets`, `ticket_training_context`, `user_lesson_progress`, `lesson_blocks`
+- Новых edge functions не создаём
+- Систему уведомлений не переделываем — используем существующий realtime
 
-По паре product_id + tariff_id (Gorbova Club / BUSINESS) активная подписка ровно одна: `c30f04c3`.
+## DoD
 
----
-
-## 6. Что вне scope
-
-| Пункт | Статус |
-|---|---|
-| Кейс `dea78a37` (тот же баг-класс) | Pending |
-| Массовый поиск аналогичных случаев | Не в этом патче |
-| Guard для `public-checkout` | Отдельный scope |
-
----
-
-## 7. DoD
-
-| Критерий | Статус |
-|---|---|
-| Дубль по product_id + tariff_id блокируется | ✅ Server-proof |
-| Другой тариф не блокируется | ✅ Server-proof |
-| Завершённая подписка не блокирует | ✅ Код (canceled, superseded, revoked, expired, expired_reentry) |
-| STOP-guard при не-отменённой подписке | ✅ Server-proof |
-| Fail-closed при ошибке запроса | ✅ Код |
-| replacement через конкретный ID | ✅ Server-proof + код |
-| Аудит `subscription.replace_started` с actor_user_id | ✅ Код (клиент, auth.getUser()) |
-| Аудит `subscription.replaced` с new_order_id | ✅ Код (сервер, строки 746-765) |
-| Browser-proof UI конфликта | ⏳ Частичный — полный flow требует ручной проверки |
-| Даты по Europe/Minsk в UI | ✅ Код (formatPaymentTimeIANA) |
+1. Таблица прогресса показывает колонки, соответствующие интерактивным блокам урока
+2. «Просмотр» показывает ответы на все типы блоков
+3. Ученик видит бейдж 💬 у уроков, по которым есть непрочитанный фидбэк
+4. Ученик может открыть чат обратной связи из урока
+5. Преподаватель видит индикацию обратной связи в таблице прогресса
