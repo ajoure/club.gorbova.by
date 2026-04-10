@@ -135,6 +135,9 @@ import { ContactPaymentsTab } from "./ContactPaymentsTab";
 import { LinkedCardItem } from "./cards/LinkedCardItem";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAdminUsers } from "@/hooks/useAdminUsers";
+import { WebinarActivitySection } from "./contact/WebinarActivitySection";
+import { isStaffRole } from "@/lib/liveRoomRoles";
+import { useAuth } from "@/contexts/AuthContext";
 
 // formatContactName imported from @/lib/nameUtils
 
