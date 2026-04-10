@@ -148,13 +148,14 @@ export function LiveEventComments({ liveEventId }: { liveEventId: string }) {
             const displayName = resolveDisplayName(comment);
             const initials = getInitials(displayName);
             return (
-              <div key={comment.id} className="flex gap-2 group">
+              <div key={comment.id} className={`flex gap-2 group rounded-lg p-2 ${getMessageHighlightClass(comment.author_role)}`}>
                 <Avatar className="h-7 w-7 shrink-0">
                   <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-medium text-foreground">{displayName}</span>
+                    <LiveRoleBadge role={comment.author_role} />
                     <span className="text-[10px] text-muted-foreground">{format(new Date(comment.created_at), "HH:mm", { locale: ru })}</span>
                     {isAdmin && (
                       <button
