@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Loader2, Send, CheckCircle2, Circle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
+import { LiveRoleBadge, getMessageHighlightClass } from "./LiveRoleBadge";
 
 interface Question {
   id: string;
@@ -16,6 +17,7 @@ interface Question {
   is_answered: boolean;
   created_at: string;
   author_display_name: string | null;
+  author_role: string | null;
   profile?: { full_name: string | null; first_name: string | null; last_name: string | null } | null;
 }
 
@@ -44,7 +46,7 @@ export function LiveEventQuestions({ liveEventId }: { liveEventId: string }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("live_event_questions")
-        .select("id, user_id, content, is_answered, created_at, author_display_name")
+        .select("id, user_id, content, is_answered, created_at, author_display_name, author_role")
         .eq("live_event_id", liveEventId)
         .order("created_at", { ascending: true })
         .limit(200);
