@@ -48,9 +48,11 @@ const HEARTBEAT_INTERVAL_MS = 45_000;
 
 export default function LiveEvent() {
   const { slug } = useParams<{ slug: string }>();
-  const { session } = useAuth();
+  const { session, role } = useAuth();
   const [state, setState] = useState<PageState>("loading");
   const [data, setData] = useState<LiveResolveResult | null>(null);
+  const { selectedContact, contactSheetOpen, setContactSheetOpen, openContactSheet } = useLiveContactSheet();
+  const isStaff = role === "admin" || role === "superadmin";
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stopHeartbeat = useCallback(() => {
