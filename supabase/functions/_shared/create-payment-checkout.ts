@@ -373,7 +373,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
       if (replacement_of_subscription_v2_id) {
         const { data: oldSub, error: oldSubErr } = await supabase
           .from('subscriptions_v2')
-          .select('id, status, bepaid_subscription_id')
+          .select('id, status')
           .eq('id', replacement_of_subscription_v2_id)
           .maybeSingle();
 
