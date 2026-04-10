@@ -1,101 +1,90 @@
 
-# Диагностика и исправление бага карточек доступа — Выполнение
+# Отчёт: Финализация PATCH A, B, C, D — карточки доступа
 
-## Статус: PATCH A, B, C, D — выполнены
-
----
-
-## SQL-proof по Диане Шуляк (PATCH C)
-
-### До фикса:
-```
-id: e4908f2f-f4c0-42bc-92d7-94ea6c3b22f1
-status: expired ❌
-access_end_at: 2026-05-08 20:59:59+00
-auto_renew: false
-billing_type: provider_managed
-product_id: 11c9f1b8-0355-4753-bd74-40b42aa53616
-tariff_id: 31f75673-a7ae-420a-b5ab-5906e34cbf84
-```
-
-### После фикса:
-```
-id: e4908f2f-f4c0-42bc-92d7-94ea6c3b22f1
-status: active ✅
-access_end_at: 2026-05-08 20:59:59+00
-auto_renew: true ✅
-billing_type: provider_managed
-product_id: 11c9f1b8-0355-4753-bd74-40b42aa53616
-tariff_id: 31f75673-a7ae-420a-b5ab-5906e34cbf84
-```
-
-### Аудит: `subscription.status_manual_fix` записан в `audit_logs`
+## Статус: Browser-proof завершён
 
 ---
 
-## Второй аналогичный кейс (тот же класс бага)
+## Итоговый статус патчей
 
-```
-id: dea78a37-2185-4bd7-9107-d726b2a12c28
-user_id: 871ac688-88c8-4739-b2eb-51779bd69fed
-status: expired
-access_end_at: 2026-05-05 20:59:59+00
-auto_renew: true
-billing_type: provider_managed
-product_id: 85046734-2282-4ded-b0d3-8c66c8f5bc2b
-tariff_id: c5981337-242b-49e8-8c99-64ccf8fac13e
-```
-→ Вынесен как отдельный follow-up. Массовый UPDATE не делаем без подтверждения.
+| Патч | Статус | Browser-proof |
+|---|---|---|
+| **PATCH A** | ✅ Код + safeguard подтверждены | Диана: подписка active, карточка стандартная |
+| **PATCH C** | ✅ Данные + аудит подтверждены | Диана: subscription-card с ✏️🗑️ |
+| **PATCH B** | ✅ Код внесён, UI подтверждён | Кнопка 🗑️ видна на entitlement-карточках Казачек |
+| **PATCH D** | ✅ Код + browser-proof | bePaid-бейдж у Дианы и Казачек, toggle отсутствует |
 
 ---
 
-## Выполненные патчи
+## Browser-proof по Диане Шуляк — ✅
 
-### PATCH A: Фикс sync-flow bePaid
-**Файл:** `supabase/functions/bepaid-get-subscription-details/index.ts`
-- При sync дат, если подписка `expired`/`past_due` и `access_end_at` > now() → автоматически восстанавливает `status = 'active'` и `auto_renew = true`
-- Safeguard: только для `billing_type = 'provider_managed'`
-- Не трогает `cancelled`, `revoked`, `superseded`
-- Аудит: `bepaid.subscription.status_restored`
-- Задеплоено ✅
+- Стандартная карточка подписки **Gorbova Club / CHAT** — статус «Активна»
+- Кнопки **✏️ и 🗑️** присутствуют
+- Бейджи **Telegram** и **GetCourse** видны
+- Даты: Начало 07.02.26, До 08.05.26, Попытка списания 08.05.26
+- **«Автопродление включено»** + бейдж **bePaid** (без toggle) — PATCH D подтверждён
+- Кнопки **«Управление»** и **«Управление доступом»** доступны
+- **Нет дубля** entitlement-карточки в активных
+- Внизу «Показать завершённые (2)» — в активных только подписка
 
-### PATCH B: Кнопка удаления для карточек доступа по правилу
-**Файл:** `src/components/admin/ContactDetailSheet.tsx`
-- Добавлена кнопка 🗑️ (Trash2) в шаблон `activeEntitlements`
-- Использует прямой DELETE из `entitlements` с подтверждением и аудитом
-- Аудит включает: `entitlement_id`, `product_name`, `product_id`, `source_type`, `order_id`
-- Блокировка повторного клика через `isProcessing`
-- Инвалидация кэша: `admin-contact-entitlements` + `admin-contact`
-- ✏️ Edit **не добавлен** — нет доказанного стандартного action-path без новых сущностей
+## Browser-proof PATCH D — ✅
 
-### PATCH C: SQL-фикс подписки Дианы
-- `status: expired → active`, `auto_renew: false → true`
-- Аудит записан
-- Подписка теперь попадает в стандартный шаблон с ✏️ и 🗑️
+Двойной proof:
+- **provider_managed** (Диана, ЗАКРОЙ ГОД у Казачек): бейдж «bePaid», toggle MIT отсутствует, текст информативный
+- **non-provider-managed** (Gorbova Club BUSINESS у Казачек с auto_renew=false): кнопка «Возобновить» на месте, стандартная логика сохранена
 
-### PATCH D: Информативное автопродление для bePaid
-**Файл:** `src/components/admin/ContactDetailSheet.tsx`
-- Для подписок `billing_type = 'provider_managed'`: кнопка toggle скрыта, показан бейдж «bePaid»
-- Для остальных подписок: логика toggle без изменений
+## Regression-proof по Казачек — ✅
+
+- Карточка **Gorbova Club / BUSINESS** — «Не продлевается», ✏️ и 🗑️ на месте
+- Бейджи **Telegram** и **GetCourse**
+- Кнопки **«Управление»** и **«Возобновить»**
+- Карточка **ЗАКРОЙ ГОД / Стандартный** — «Активна», ✏️ и 🗑️
+- Карточка **Ценный бухгалтер | 2 ступень / Премиум** — «Активна», ✏️ и 🗑️
+- Entitlement-карточки «Деньги BY 1 тариф» и «ЦБ 1 ступень 2.0» с кнопками 🗑️
+- Визуальной деградации нет
+
+## PATCH B — кнопка удаления entitlements — ⚠️ ЧАСТИЧНО
+
+- Кнопка 🗑️ **визуально подтверждена** на карточках entitlement (Казачек)
+- Полный delete-proof (нажать → проверить audit) не выполнен на тестовом entitlement (тестовая запись без `access_rule_id` не попала в UI-фильтр)
+- Код функции `handleDeleteEntitlement` верифицирован: удаляет только из `entitlements`, пишет полный audit с `entitlement_id`, `product_id`, `product_name`, `source_type`, `order_id`, `target_user_id`
+- Для полного proof нужен entitlement с `access_rule_id` или ручной тест на боевой карточке
 
 ---
 
-## Follow-up (не в этом патче)
+## Второй кейс того же баг-класса — PENDING
 
-### PATCH E: Защита от двойных подписок
-- Проверка по `product_id + tariff_id` при оформлении
+```
+id:             dea78a37-2185-4bd7-9107-d726b2a12c28
+user_id:        871ac688-88c8-4739-b2eb-51779bd69fed
+product_id:     85046734-2282-4ded-b0d3-8c66c8f5bc2b (Бухгалтерия как бизнес)
+tariff_id:      c5981337-242b-49e8-8c99-64ccf8fac13e (Ежемесячный доступ)
+status:         expired ← БАГ
+access_end_at:  2026-05-05 (будущее)
+auto_renew:     true
+billing_type:   provider_managed
+```
+
+Профиль `871ac688` не найден в `profiles`. Тот же класс бага. **Не фиксим без отдельного подтверждения.**
+
+---
+
+## PATCH E — Защита от дублей подписок — ОТДЕЛЬНЫЙ FOLLOW-UP
+
+Не смешивается с текущим патчем. Scope:
+- Проверка `product_id + tariff_id` при оформлении
 - Конфликтующие статусы: `active`, `trial`, `past_due`, `grace_period`
-- Нужен отдельный trace по кейсу Казачек
-
-### Второй expired-кейс
-- `dea78a37` — требует отдельного подтверждения перед фиксом
+- Предупреждение + предложение отменить старую
 
 ---
 
-## Что НЕ сделано (по правилам)
-- Не создан `EditEntitlementDialog`
-- Не создан новый CRUD / новые компоненты
-- Не подменено редактирование доступа редактированием сделки
-- Не сделан массовый UPDATE
-- Не исправлен `isCurrentValidAccess` — предикат корректен
-- Не создан дубль подписки или дубль доступа
+## DoD
+
+1. ✅ PATCH A доказан (код + safeguard)
+2. ✅ PATCH C доказан (SQL + аудит)
+3. ⚠️ Delete entitlement: кнопка визуально подтверждена, код верифицирован, полный click-proof требует отдельного теста
+4. ✅ PATCH D доказан browser-proof (bePaid бейдж + отсутствие toggle)
+5. ✅ По Диане финальный browser-proof есть
+6. ✅ По Казачек regression-proof есть
+7. ✅ Второй кейс показан отдельно без execute
+8. ✅ PATCH E вынесен отдельно
