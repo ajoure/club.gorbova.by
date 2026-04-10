@@ -585,19 +585,19 @@ export function AdminPaymentLinkDialog({
         </DialogContent>
       </Dialog>
 
-      {/* Cancel confirmation dialog */}
+      {/* Replace confirmation dialog */}
       <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Отменить подписку?</AlertDialogTitle>
+            <AlertDialogTitle>Заменить подписку?</AlertDialogTitle>
             <AlertDialogDescription>
-              Отменить текущую подписку? Автосписания будут остановлены.
+              Текущая подписка будет отменена у провайдера. После успешной отмены будет создана новая ссылка на оплату. Если отмена не пройдёт, новая подписка не будет создана.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Нет</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCancelDuplicate}>
-              Да, отменить
+            <AlertDialogCancel>Нет, оставить</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmReplace}>
+              Да, заменить
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
