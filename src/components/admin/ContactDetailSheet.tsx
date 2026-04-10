@@ -3052,7 +3052,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                onClick={() => handleDeleteEntitlement(ent.id, product?.name || ent.product_code || "Продукт", ent.product_id, ent.source_type, ent.order_id)}
+                                onClick={() => handleDeleteEntitlement(ent.id, product?.name || ent.product_code || "Продукт", ent.product_id, (ent.meta as any)?.source_type, ent.order_id)}
                                 disabled={isProcessing}
                                 className="h-6 w-6 text-muted-foreground hover:text-destructive"
                                 title="Удалить доступ по правилу"
