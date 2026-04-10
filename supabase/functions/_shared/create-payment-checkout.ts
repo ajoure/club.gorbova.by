@@ -384,7 +384,7 @@ export async function createPaymentCheckout(params: CreateCheckoutParams): Promi
           return { success: false, error: 'Не удалось найти заменяемую подписку. Повторите попытку.' };
         }
 
-        const terminalStatuses = ['cancelled', 'superseded', 'revoked', 'expired'];
+        const terminalStatuses = ['canceled', 'superseded', 'revoked', 'expired', 'expired_reentry'];
         if (!terminalStatuses.includes(oldSub.status)) {
           console.error('[create-payment-checkout] PATCH E: replacement subscription not in terminal status', {
             replacement_of_subscription_v2_id, status: oldSub.status,
