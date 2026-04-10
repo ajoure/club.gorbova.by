@@ -185,6 +185,7 @@ export function ContactDetailSheet({ contact, open, onOpenChange, returnTo }: Co
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { hasPermission, isSuperAdmin, isAdmin } = usePermissions();
+  const { role: authRole } = useAuth();
   const { startImpersonation, resetPassword } = useAdminUsers();
   const [selectedSubscription, setSelectedSubscription] = useState<any>(null);
   const [extendDays, setExtendDays] = useState(30);
