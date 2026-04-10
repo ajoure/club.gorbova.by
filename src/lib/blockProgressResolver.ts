@@ -43,11 +43,37 @@ export function getInteractiveBlocks(blocks: BlockMeta[]): BlockMeta[] {
     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 }
 
-/** Get display label for a block (title from content, fallback to type) */
+/**
+ * Strip HTML tags from a string, decode common entities, normalize whitespace.
+ * Used exclusively for display-only labels — never for rich-text content rendering.
+ */
+function stripHtmlForLabel(html: string): string {
+  let text = html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text;
+}
+
+/** Get display label for a block (title from content, fallback to type).
+ *  Sanitizes HTML so labels render as plain text in tables/modals/drawers. */
 export function getBlockLabel(block: BlockMeta): string {
   const content = block.content as Record<string, unknown> | null;
-  if (content?.title && typeof content.title === "string") return content.title;
-  if (content?.label && typeof content.label === "string") return content.label;
+  if (content?.title && typeof content.title === "string") {
+    const clean = stripHtmlForLabel(content.title);
+    if (clean) return clean;
+  }
+  if (content?.label && typeof content.label === "string") {
+    const clean = stripHtmlForLabel(content.label);
+    if (clean) return clean;
+  }
   return blockTypeLabel(block.block_type);
 }
 
