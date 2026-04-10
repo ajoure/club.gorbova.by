@@ -53,8 +53,9 @@ export function LiveEventThemeEditor({ liveEventId }: { liveEventId: string }) {
         .select("metadata")
         .eq("id", liveEventId)
         .single();
-      if (data?.metadata?.room_theme) {
-        setTheme({ ...DEFAULT_THEME, ...data.metadata.room_theme });
+      const meta = data?.metadata as Record<string, any> | null;
+      if (meta?.room_theme) {
+        setTheme({ ...DEFAULT_THEME, ...meta.room_theme });
       }
       setLoaded(true);
     })();

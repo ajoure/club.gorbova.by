@@ -298,7 +298,10 @@ export function LiveEventProductCtaBindings({ liveEventId }: { liveEventId: stri
             {form.display_mode === "at_datetime" && (
               <div>
                 <Label className="text-xs">Показать в</Label>
-                <DateTimePicker date={form.show_at} setDate={(d) => setForm((p) => ({ ...p, show_at: d }))} />
+                <Input className="h-8 text-xs" type="datetime-local"
+                  value={form.show_at ? new Date(form.show_at.getTime() - form.show_at.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ""}
+                  onChange={(e) => setForm((p) => ({ ...p, show_at: e.target.value ? new Date(e.target.value) : undefined }))}
+                />
               </div>
             )}
 
