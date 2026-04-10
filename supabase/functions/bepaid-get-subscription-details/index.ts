@@ -507,7 +507,15 @@ Deno.serve(async (req) => {
         const effectiveAccessEnd = subV2Updates.access_end_at || oldSubV2?.access_end_at;
         const currentStatus = oldSubV2?.status;
         const restoredStatuses = ['expired', 'past_due'];
+        // Read billing_type for safeguard — only restore provider_managed subscriptions
+        const { data: billingCheck } = await supabase
+          .from('subscriptions_v2')
+          .select('billing_type')
+          .eq('id', effectiveSubV2Id)
+          .maybeSingle();
+        const isProviderManaged = billingCheck?.billing_type === 'provider_managed';
         if (
+          isProviderManaged &&
           currentStatus &&
           restoredStatuses.includes(currentStatus) &&
           effectiveAccessEnd &&
