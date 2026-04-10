@@ -79,7 +79,13 @@ Deno.serve(async (req) => {
     });
 
     if (!result.success) {
-      return errorResponse(result.error, 500);
+      // PATCH E: pass conflict data if present
+      const conflict = 'conflict' in result ? (result as any).conflict : undefined;
+      return jsonResponse({
+        success: false,
+        error: result.error,
+        ...(conflict ? { conflict } : {}),
+      }, 200); // 200 so UI can read structured response
     }
 
     return jsonResponse({
