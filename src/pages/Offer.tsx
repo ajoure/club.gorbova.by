@@ -19,7 +19,7 @@ function RenderItem({ item }: { item: OfferItem }) {
           : item.text}
       </p>
       {item.subItems && item.subItems.length > 0 && (
-        <ul className="list-disc list-inside ml-6 mt-2 space-y-1">
+        <ul className="list-none ml-6 mt-2 space-y-1">
           {item.subItems.map((sub) => (
             <li key={sub.id}>
               <strong>{sub.id}.</strong> {sub.text}
