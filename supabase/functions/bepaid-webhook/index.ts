@@ -2667,23 +2667,41 @@ Deno.serve(async (req) => {
               }
             }
 
-            // 3. Update telegram_access.active_until (owner field for Telegram revoke cron)
+            // 3. Update telegram_access.active_until — SCOPED to clubs linked to this product via access_rules
             try {
-              const { data: tgAccessRows } = await supabase
-                .from('telegram_access')
-                .select('id, active_until')
-                .eq('user_id', linkSubV2.user_id);
+              // Find club_ids associated with this product through active access_rules
+              const productIdForClub = linkSubV2.product_id;
+              const { data: clubRules } = await supabase
+                .from('access_rules')
+                .select('target_ref')
+                .eq('grant_target_type', 'club')
+                .eq('product_id', productIdForClub)
+                .eq('is_active', true);
 
-              if (tgAccessRows && tgAccessRows.length > 0) {
-                for (const tgRow of tgAccessRows) {
-                  const currentTgUntil = tgRow.active_until ? new Date(tgRow.active_until) : new Date(0);
-                  const newTgUntil = accessEndAt > currentTgUntil ? accessEndAt : currentTgUntil;
-                  await supabase
-                    .from('telegram_access')
-                    .update({ active_until: newTgUntil.toISOString(), updated_at: now.toISOString() })
-                    .eq('id', tgRow.id);
+              const relevantClubIds = (clubRules || []).map(r => r.target_ref).filter(Boolean);
+
+              if (relevantClubIds.length > 0) {
+                const { data: tgAccessRows } = await supabase
+                  .from('telegram_access')
+                  .select('id, active_until, club_id')
+                  .eq('user_id', linkSubV2.user_id)
+                  .in('club_id', relevantClubIds);
+
+                if (tgAccessRows && tgAccessRows.length > 0) {
+                  for (const tgRow of tgAccessRows) {
+                    const currentTgUntil = tgRow.active_until ? new Date(tgRow.active_until) : new Date(0);
+                    const newTgUntil = accessEndAt > currentTgUntil ? accessEndAt : currentTgUntil;
+                    await supabase
+                      .from('telegram_access')
+                      .update({ active_until: newTgUntil.toISOString(), updated_at: now.toISOString() })
+                      .eq('id', tgRow.id);
+                  }
+                  console.log('[WEBHOOK-LINK-ORDER] INLINE: telegram_access.active_until extended for', tgAccessRows.length, 'rows, clubs:', relevantClubIds);
+                } else {
+                  console.log('[WEBHOOK-LINK-ORDER] INLINE: no telegram_access rows for user in product clubs:', relevantClubIds);
                 }
-                console.log('[WEBHOOK-LINK-ORDER] INLINE: telegram_access.active_until extended for', tgAccessRows.length, 'rows');
+              } else {
+                console.log('[WEBHOOK-LINK-ORDER] INLINE: no club access_rules for product', productIdForClub, '- telegram_access update skipped');
               }
             } catch (tgErr) {
               console.error('[WEBHOOK-LINK-ORDER] telegram_access update error (non-fatal):', tgErr);
