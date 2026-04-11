@@ -8,7 +8,7 @@ function RenderItem({ item }: { item: OfferItem }) {
   return (
     <div>
       <p>
-        <strong>{item.id}.</strong>{" "}
+        {item.id !== "22.info" && <strong>{item.id}.</strong>}{" "}
         {item.id === "22.info"
           ? item.text.split("\n").map((line, i) => (
               <span key={i}>
