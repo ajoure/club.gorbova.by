@@ -2568,6 +2568,220 @@ Deno.serve(async (req) => {
         }
       }
 
+      // =====================================================================
+      // PATCH-LINK-INLINE: Inline update of access dates (parity with subv2 handler)
+      // Without this, renewals rely on delayed sync to update access_end_at/expires_at
+      // =====================================================================
+      if (grantedSubscriptionV2Id) {
+        try {
+          const now = new Date();
+          const bepaidActiveTo = body.active_to || body.subscription?.active_to;
+          const bepaidRenewAt = body.renew_at || body.subscription?.renew_at;
+
+          // Read current subscription for tariff info
+          const { data: linkSubV2 } = await supabase
+            .from('subscriptions_v2')
+            .select('id, user_id, product_id, tariff_id, access_end_at, meta, tariffs(access_days, getcourse_offer_id, code, name), products_v2(id, code, name)')
+            .eq('id', grantedSubscriptionV2Id)
+            .maybeSingle();
+
+          if (linkSubV2) {
+            const accessDays = (linkSubV2.tariffs as any)?.access_days || 30;
+
+            let accessEndAt: Date;
+            if (bepaidActiveTo) {
+              accessEndAt = new Date(endOfDayAppTz(bepaidActiveTo));
+            } else {
+              // Fallback: +accessDays (with mandatory audit)
+              accessEndAt = new Date(now.getTime() + accessDays * 24 * 60 * 60 * 1000);
+              console.warn('[WEBHOOK-LINK-ORDER] FALLBACK: no active_to from bePaid, using +accessDays');
+              await supabase.from('audit_logs').insert({
+                action: 'bepaid.webhook.link_order_fallback_access_days',
+                actor_type: 'system',
+                actor_label: 'bepaid-webhook',
+                target_user_id: linkSubV2.user_id,
+                meta: { subscription_id: grantedSubscriptionV2Id, access_days: accessDays, reason: 'no_active_to_field' },
+              });
+            }
+            const renewAt = bepaidRenewAt ? new Date(bepaidRenewAt) : accessEndAt;
+
+            // 1. Update subscriptions_v2
+            const existingSubMeta = (linkSubV2.meta as Record<string, any>) || {};
+            await supabase
+              .from('subscriptions_v2')
+              .update({
+                status: 'active',
+                billing_type: 'provider_managed',
+                access_end_at: accessEndAt.toISOString(),
+                next_charge_at: renewAt.toISOString(),
+                auto_renew: true,
+                meta: {
+                  ...existingSubMeta,
+                  bepaid_subscription_id: String(subscriptionId),
+                  bepaid_activated_at: now.toISOString(),
+                },
+              })
+              .eq('id', grantedSubscriptionV2Id);
+            console.log('[WEBHOOK-LINK-ORDER] INLINE: subscriptions_v2 access_end_at updated to', accessEndAt.toISOString());
+
+            // 2. Update entitlements (GREATEST logic)
+            const productCode = (linkSubV2.products_v2 as any)?.code;
+            const productIdForEnt = (linkSubV2.products_v2 as any)?.id || linkSubV2.product_id;
+            if (productCode) {
+              const { data: existingEntitlement } = await supabase
+                .from('entitlements')
+                .select('id, expires_at')
+                .eq('user_id', linkSubV2.user_id)
+                .eq('product_code', productCode)
+                .maybeSingle();
+
+              if (existingEntitlement) {
+                const currentExpires = existingEntitlement.expires_at ? new Date(existingEntitlement.expires_at) : new Date(0);
+                const newExpires = accessEndAt > currentExpires ? accessEndAt : currentExpires;
+                await supabase
+                  .from('entitlements')
+                  .update({
+                    expires_at: newExpires.toISOString(),
+                    status: 'active',
+                    updated_at: now.toISOString(),
+                  })
+                  .eq('id', existingEntitlement.id);
+                console.log('[WEBHOOK-LINK-ORDER] INLINE: entitlement extended to', newExpires.toISOString());
+              } else {
+                await supabase
+                  .from('entitlements')
+                  .insert({
+                    user_id: linkSubV2.user_id,
+                    profile_id: profile?.id || null,
+                    order_id: linkOrder.id,
+                    product_code: productCode,
+                    product_id: productIdForEnt,
+                    status: 'active',
+                    expires_at: accessEndAt.toISOString(),
+                    meta: {
+                      source: 'bepaid_link_order_webhook_inline',
+                      bepaid_subscription_id: String(subscriptionId),
+                    },
+                  });
+                console.log('[WEBHOOK-LINK-ORDER] INLINE: entitlement created');
+              }
+            }
+
+            // 3. Update telegram_access.active_until (owner field for Telegram revoke cron)
+            try {
+              const { data: tgAccessRows } = await supabase
+                .from('telegram_access')
+                .select('id, active_until')
+                .eq('user_id', linkSubV2.user_id);
+
+              if (tgAccessRows && tgAccessRows.length > 0) {
+                for (const tgRow of tgAccessRows) {
+                  const currentTgUntil = tgRow.active_until ? new Date(tgRow.active_until) : new Date(0);
+                  const newTgUntil = accessEndAt > currentTgUntil ? accessEndAt : currentTgUntil;
+                  await supabase
+                    .from('telegram_access')
+                    .update({ active_until: newTgUntil.toISOString(), updated_at: now.toISOString() })
+                    .eq('id', tgRow.id);
+                }
+                console.log('[WEBHOOK-LINK-ORDER] INLINE: telegram_access.active_until extended for', tgAccessRows.length, 'rows');
+              }
+            } catch (tgErr) {
+              console.error('[WEBHOOK-LINK-ORDER] telegram_access update error (non-fatal):', tgErr);
+            }
+
+            // 4. GetCourse sync (parity with subv2 handler)
+            const getcourseOfferId = (linkSubV2.tariffs as any)?.getcourse_offer_id;
+            const tariffCode = (linkSubV2.tariffs as any)?.code || (linkSubV2.tariffs as any)?.name || 'subscription';
+            if (getcourseOfferId) {
+              try {
+                const { data: profileForGC } = await supabase
+                  .from('profiles')
+                  .select('email, phone, first_name, last_name, full_name')
+                  .eq('user_id', linkSubV2.user_id)
+                  .maybeSingle();
+
+                const paymentEmail = transaction?.customer?.email || body.customer?.email;
+                const gcEmail = profileForGC?.email || paymentEmail || linkOrder.customer_email;
+
+                if (gcEmail) {
+                  let firstName = profileForGC?.first_name;
+                  let lastName = profileForGC?.last_name;
+                  if (!firstName && profileForGC?.full_name) {
+                    const parts = profileForGC.full_name.split(' ');
+                    firstName = parts[0];
+                    lastName = parts.slice(1).join(' ');
+                  }
+
+                  const gcResult = await sendToGetCourse(
+                    { email: gcEmail, phone: profileForGC?.phone || null, firstName: firstName || null, lastName: lastName || null },
+                    parseInt(String(getcourseOfferId), 10) || 0,
+                    linkOrder.order_number || `LINK-${linkOrder.id.slice(0, 8)}`,
+                    paymentAmount,
+                    tariffCode
+                  );
+
+                  // Update order meta with GC sync result
+                  const orderMeta = (linkOrder.meta && typeof linkOrder.meta === 'object') ? linkOrder.meta : {};
+                  await supabase.from('orders_v2').update({
+                    meta: {
+                      ...orderMeta,
+                      gc_sync_status: gcResult.success ? 'success' : 'failed',
+                      gc_sync_error: gcResult.error || null,
+                      gc_order_id: gcResult.gcOrderId || null,
+                      gc_deal_number: gcResult.gcDealNumber || null,
+                      gc_synced_at: new Date().toISOString(),
+                    },
+                  }).eq('id', linkOrder.id);
+
+                  await supabase.from('audit_logs').insert({
+                    actor_type: 'system',
+                    actor_user_id: null,
+                    actor_label: 'bepaid-webhook',
+                    action: gcResult.success ? 'gc_sync_success' : 'gc_sync_failed',
+                    target_user_id: linkSubV2.user_id,
+                    meta: {
+                      order_id: linkOrder.id,
+                      order_number: linkOrder.order_number,
+                      gc_offer_id: getcourseOfferId,
+                      gc_order_id: gcResult.gcOrderId,
+                      error: gcResult.error,
+                      source: 'link_order_webhook_inline',
+                    },
+                  });
+                  console.log('[WEBHOOK-LINK-ORDER] INLINE: GetCourse sync:', gcResult.success ? 'OK' : gcResult.error);
+                } else {
+                  console.log('[WEBHOOK-LINK-ORDER] INLINE: GetCourse sync skipped: no email');
+                }
+              } catch (gcErr) {
+                console.error('[WEBHOOK-LINK-ORDER] GetCourse sync error (non-fatal):', gcErr);
+              }
+            }
+
+            // 5. Audit log for inline dates update
+            await supabase.from('audit_logs').insert({
+              actor_type: 'system',
+              actor_user_id: null,
+              actor_label: 'bepaid-webhook',
+              action: 'bepaid.webhook.link_order_dates_updated',
+              target_user_id: linkSubV2.user_id,
+              meta: {
+                subscription_v2_id: grantedSubscriptionV2Id,
+                order_id: linkOrder.id,
+                provider_subscription_id: String(subscriptionId),
+                access_end_at: accessEndAt.toISOString(),
+                next_charge_at: renewAt.toISOString(),
+                bepaid_active_to: bepaidActiveTo || null,
+                bepaid_renew_at: bepaidRenewAt || null,
+                used_fallback: !bepaidActiveTo,
+                gc_offer_id: getcourseOfferId || null,
+              },
+            });
+          }
+        } catch (inlineErr) {
+          console.error('[WEBHOOK-LINK-ORDER] INLINE dates update error (non-fatal):', inlineErr);
+        }
+      }
+
       // 7. PATCH P2: Admin notification with PII masking
       try {
         const { data: customerProfile } = await supabase
