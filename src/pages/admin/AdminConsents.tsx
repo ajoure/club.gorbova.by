@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -132,7 +132,7 @@ export default function AdminConsents() {
       if (error) throw error;
       return { data: (data ?? []) as ProfileWithConsent[], filteredTotal: count ?? 0 };
     },
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const profiles = queryResult?.data ?? [];
