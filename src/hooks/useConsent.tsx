@@ -2,8 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
-
-const CURRENT_POLICY_VERSION = "v2026-01-07";
+import { CONSENT_POLICY_VERSION, CONSENT_POLICY_EFFECTIVE_DATE } from "@/lib/legalVersions";
 
 interface PolicyVersion {
   id: string;

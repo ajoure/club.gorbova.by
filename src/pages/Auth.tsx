@@ -12,8 +12,7 @@ import { z } from "zod";
 import { PhoneInput, isValidPhoneNumber } from "@/components/ui/phone-input";
 import logoImage from "@/assets/logo.png";
 import { getLastRoute, clearLastRoute, shouldIgnoreLastRouteOnIOS, overwriteLastRoute } from "@/hooks/useLastRoute";
-
-const CURRENT_POLICY_VERSION = "v2026-01-07";
+import { CONSENT_POLICY_VERSION as CURRENT_POLICY_VERSION } from "@/lib/legalVersions";
 
 const loginSchema = z.object({
   email: z.string().email("Введите корректный email"),
