@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useConsent } from "@/hooks/useConsent";
-import { usePolicyVersions, PolicyVersion } from "@/hooks/usePolicyVersions";
 import {
   Dialog,
   DialogContent,
@@ -13,81 +12,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Shield, ExternalLink, Loader2, Plus, Minus, RefreshCw } from "lucide-react";
+import { Shield, ExternalLink, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 
-interface PolicyChange {
-  type: "added" | "changed" | "removed";
-  text: string;
-}
-
-function VersionChanges({ version }: { version: PolicyVersion | undefined }) {
-  if (!version?.changes?.length) return null;
-
-  const getChangeIcon = (type: PolicyChange["type"]) => {
-    switch (type) {
-      case "added":
-        return <Plus className="h-3 w-3 text-green-500" />;
-      case "removed":
-        return <Minus className="h-3 w-3 text-destructive" />;
-      case "changed":
-        return <RefreshCw className="h-3 w-3 text-primary" />;
-    }
-  };
-
-  const getChangeBadgeVariant = (type: PolicyChange["type"]) => {
-    switch (type) {
-      case "added":
-        return "default" as const;
-      case "removed":
-        return "destructive" as const;
-      case "changed":
-        return "secondary" as const;
-    }
-  };
-
-  const getChangeLabel = (type: PolicyChange["type"]) => {
-    switch (type) {
-      case "added":
-        return "Добавлено";
-      case "removed":
-        return "Удалено";
-      case "changed":
-        return "Изменено";
-    }
-  };
-
-  return (
-    <div className="rounded-lg bg-muted/50 p-4 space-y-3">
-      <p className="text-sm font-medium">Что изменилось:</p>
-      {version.summary && (
-        <p className="text-sm text-muted-foreground">{version.summary}</p>
-      )}
-      <div className="space-y-2">
-        {version.changes.map((change, idx) => (
-          <div key={idx} className="flex items-start gap-2 text-sm">
-            {getChangeIcon(change.type)}
-            <Badge variant={getChangeBadgeVariant(change.type)} className="shrink-0 text-xs">
-              {getChangeLabel(change.type)}
-            </Badge>
-            <span className="text-muted-foreground">{change.text}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+const DOCUMENT_LINKS = [
+  { href: "/offer", label: "Публичная оферта" },
+  { href: "/privacy", label: "Политика конфиденциальности" },
+  { href: "/consent", label: "Согласие на обработку персональных данных" },
+];
 
 export function ConsentUpdateModal() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
-  const { needsConsentUpdate, currentPolicy, grantConsent, isLoading } = useConsent();
-  const { data: policyVersions } = usePolicyVersions();
+  const { needsConsentUpdate, grantConsent, isLoading } = useConsent();
   const [accepted, setAccepted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const currentVersion = policyVersions?.find((v) => v.is_current);
 
   const handleAccept = async () => {
     if (!accepted) {
@@ -118,34 +57,53 @@ export function ConsentUpdateModal() {
 
   return (
     <Dialog open={needsConsentUpdate} onOpenChange={() => {}}>
-      <DialogContent 
+      <DialogContent
         className="sm:max-w-lg max-h-[90vh] overflow-y-auto"
+        showCloseButton={false}
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
+        {/* Custom close button = logout */}
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+          aria-label="Закрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
-            Обновление политики конфиденциальности
+            Обновление юридических документов
           </DialogTitle>
           <DialogDescription>
-            Для продолжения использования сервиса необходимо подтвердить согласие с новой редакцией политики.
+            Для продолжения использования сервиса необходимо ознакомиться с обновлёнными документами и подтвердить согласие.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          <VersionChanges version={currentVersion} />
+          {/* Document links */}
+          <div className="rounded-lg bg-muted/50 p-4 space-y-3">
+            <p className="text-sm font-medium">Ознакомьтесь с документами:</p>
+            <div className="space-y-2">
+              {DOCUMENT_LINKS.map((doc) => (
+                <a
+                  key={doc.href}
+                  href={doc.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-primary hover:underline"
+                >
+                  <ExternalLink className="h-4 w-4 shrink-0" />
+                  {doc.label}
+                </a>
+              ))}
+            </div>
+          </div>
 
-          <a
-            href="/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 text-sm text-primary hover:underline"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Ознакомиться с политикой конфиденциальности
-          </a>
-
+          {/* Consent checkbox */}
           <div className="flex items-start gap-3 p-4 border rounded-lg">
             <Checkbox
               id="consent-accept"
@@ -153,14 +111,22 @@ export function ConsentUpdateModal() {
               onCheckedChange={(checked) => setAccepted(!!checked)}
             />
             <Label htmlFor="consent-accept" className="text-sm leading-snug cursor-pointer">
-              Я ознакомлен(а) и согласен(на) с новой редакцией{" "}
-              <a href="/privacy" target="_blank" className="text-primary hover:underline">
-                Политики конфиденциальности
+              Я ознакомлен(а) и согласен(на) с{" "}
+              <a href="/offer" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                Публичной офертой
+              </a>
+              ,{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                Политикой конфиденциальности
               </a>{" "}
-              и даю согласие на обработку персональных данных
+              и{" "}
+              <a href="/consent" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                Согласием на обработку персональных данных
+              </a>
             </Label>
           </div>
 
+          {/* Action buttons */}
           <div className="flex gap-3">
             <Button
               variant="outline"
