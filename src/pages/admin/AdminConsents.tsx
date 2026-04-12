@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,8 +32,12 @@ import {
   ShieldX,
   CheckCircle,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
 } from "lucide-react";
 import { ConsentDetailSheet } from "@/components/admin/ConsentDetailSheet";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 
 interface ProfileWithConsent {
   id: string;
@@ -48,74 +52,148 @@ interface ProfileWithConsent {
   created_at: string;
 }
 
+const PAGE_SIZE = 50;
+
+function buildSearchFilter(query: string): string | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const escaped = trimmed.replace(/%/g, "\\%");
+  const pattern = `%${escaped}%`;
+  return `full_name.ilike.${pattern},email.ilike.${pattern},first_name.ilike.${pattern},last_name.ilike.${pattern}`;
+}
+
 export default function AdminConsents() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "with" | "without">("all");
+  const [page, setPage] = useState(0);
   const [selectedProfile, setSelectedProfile] = useState<ProfileWithConsent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
-  // Fetch all profiles with consent info
-  const { data: profiles, isLoading } = useQuery({
-    queryKey: ["admin-consents-profiles"],
+  const debouncedSearch = useDebouncedValue(search, 300);
+
+  // Reset page on filter/search change
+  const handleFilterChange = useCallback((v: "all" | "with" | "without") => {
+    setFilter(v);
+    setPage(0);
+  }, []);
+
+  const handleSearchChange = useCallback((v: string) => {
+    setSearch(v);
+    setPage(0);
+  }, []);
+
+  // Global counts (independent of search/filter/page)
+  const { data: globalCounts } = useQuery({
+    queryKey: ["admin-consents-global-counts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, user_id, email, full_name, first_name, last_name, consent_version, consent_given_at, marketing_consent, created_at")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as ProfileWithConsent[];
+      const [totalRes, withRes, withoutRes] = await Promise.all([
+        supabase.from("profiles").select("id", { count: "exact", head: true }),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).not("consent_version", "is", null),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).is("consent_version", null),
+      ]);
+      return {
+        total: totalRes.count ?? 0,
+        withConsent: withRes.count ?? 0,
+        withoutConsent: withoutRes.count ?? 0,
+      };
     },
+    staleTime: 30_000,
   });
 
-  // Calculate stats
-  const stats = {
-    total: profiles?.length || 0,
-    withConsent: profiles?.filter(p => p.consent_version).length || 0,
-    withoutConsent: profiles?.filter(p => !p.consent_version).length || 0,
-  };
+  // Main paginated query
+  const { data: queryResult, isLoading } = useQuery({
+    queryKey: ["admin-consents-profiles", filter, debouncedSearch, page],
+    queryFn: async () => {
+      let q = supabase
+        .from("profiles")
+        .select(
+          "id, user_id, email, full_name, first_name, last_name, consent_version, consent_given_at, marketing_consent, created_at",
+          { count: "exact" }
+        )
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false });
 
-  // Filter profiles
-  const filteredProfiles = profiles?.filter(profile => {
-    // Search filter
-    const searchLower = search.toLowerCase();
-    const matchesSearch = !search || 
-      profile.email?.toLowerCase().includes(searchLower) ||
-      profile.full_name?.toLowerCase().includes(searchLower) ||
-      profile.first_name?.toLowerCase().includes(searchLower) ||
-      profile.last_name?.toLowerCase().includes(searchLower);
-    
-    // Consent filter
-    const matchesFilter = 
-      filter === "all" ||
-      (filter === "with" && profile.consent_version) ||
-      (filter === "without" && !profile.consent_version);
+      // Filter
+      if (filter === "with") q = q.not("consent_version", "is", null);
+      if (filter === "without") q = q.is("consent_version", null);
 
-    return matchesSearch && matchesFilter;
-  }) || [];
+      // Search
+      const searchFilter = buildSearchFilter(debouncedSearch);
+      if (searchFilter) q = q.or(searchFilter);
 
-  // Export to CSV
-  const handleExport = () => {
-    if (!filteredProfiles.length) return;
-    
-    const headers = ["Имя", "Email", "Политика", "Версия", "Дата согласия"];
-    const rows = filteredProfiles.map(p => [
-      p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
-      p.email || "—",
-      p.consent_version ? "Да" : "Нет",
-      p.consent_version || "—",
-      p.consent_given_at ? format(new Date(p.consent_given_at), "dd.MM.yyyy HH:mm:ss") : "—",
-    ]);
+      // Pagination
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+      q = q.range(from, to);
 
-    const csvContent = [headers, ...rows]
-      .map(row => row.map(cell => `"${cell}"`).join(","))
-      .join("\n");
+      const { data, error, count } = await q;
+      if (error) throw error;
+      return { data: (data ?? []) as ProfileWithConsent[], filteredTotal: count ?? 0 };
+    },
+    placeholderData: keepPreviousData,
+  });
 
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `consents_${format(new Date(), "yyyy-MM-dd")}.csv`;
-    link.click();
+  const profiles = queryResult?.data ?? [];
+  const filteredTotal = queryResult?.filteredTotal ?? 0;
+  const totalPages = Math.ceil(filteredTotal / PAGE_SIZE);
+  const from = page * PAGE_SIZE + 1;
+  const to = Math.min((page + 1) * PAGE_SIZE, filteredTotal);
+
+  // Export filtered data (batched, up to 10000)
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const MAX_EXPORT = 10000;
+      const allRows: ProfileWithConsent[] = [];
+      let offset = 0;
+
+      while (offset < MAX_EXPORT) {
+        let q = supabase
+          .from("profiles")
+          .select("id, user_id, email, full_name, first_name, last_name, consent_version, consent_given_at, marketing_consent, created_at")
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(offset, offset + 999);
+
+        if (filter === "with") q = q.not("consent_version", "is", null);
+        if (filter === "without") q = q.is("consent_version", null);
+        const searchFilter = buildSearchFilter(debouncedSearch);
+        if (searchFilter) q = q.or(searchFilter);
+
+        const { data, error } = await q;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        allRows.push(...(data as ProfileWithConsent[]));
+        if (data.length < 1000) break;
+        offset += 1000;
+      }
+
+      if (!allRows.length) return;
+
+      const headers = ["Имя", "Email", "Политика", "Версия", "Дата согласия"];
+      const rows = allRows.map(p => [
+        p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || "—",
+        p.email || "—",
+        p.consent_version ? "Да" : "Нет",
+        p.consent_version || "—",
+        p.consent_given_at ? format(new Date(p.consent_given_at), "dd.MM.yyyy HH:mm:ss") : "—",
+      ]);
+
+      const csvContent = [headers, ...rows]
+        .map(row => row.map(cell => `"${cell}"`).join(","))
+        .join("\n");
+
+      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      const limitNote = allRows.length >= MAX_EXPORT ? `_max${MAX_EXPORT}` : "";
+      link.download = `consents_${format(new Date(), "yyyy-MM-dd")}${limitNote}.csv`;
+      link.click();
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleRowClick = (profile: ProfileWithConsent) => {
@@ -136,7 +214,7 @@ export default function AdminConsents() {
         <p className="text-muted-foreground">Управление согласиями пользователей на обработку данных</p>
       </div>
 
-      {/* Stats cards */}
+      {/* Stats cards — global totals */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -144,7 +222,7 @@ export default function AdminConsents() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
+            <div className="text-2xl font-bold">{globalCounts?.total ?? "—"}</div>
           </CardContent>
         </Card>
         <Card>
@@ -153,7 +231,7 @@ export default function AdminConsents() {
             <ShieldCheck className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.withConsent}</div>
+            <div className="text-2xl font-bold text-green-600">{globalCounts?.withConsent ?? "—"}</div>
           </CardContent>
         </Card>
         <Card>
@@ -162,7 +240,7 @@ export default function AdminConsents() {
             <ShieldX className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.withoutConsent}</div>
+            <div className="text-2xl font-bold text-red-600">{globalCounts?.withoutConsent ?? "—"}</div>
           </CardContent>
         </Card>
       </div>
@@ -174,11 +252,11 @@ export default function AdminConsents() {
           <Input
             placeholder="Поиск по имени или email..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => handleSearchChange(e.target.value)}
             className="pl-10"
           />
         </div>
-        <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+        <Select value={filter} onValueChange={(v) => handleFilterChange(v as typeof filter)}>
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue />
           </SelectTrigger>
@@ -188,8 +266,8 @@ export default function AdminConsents() {
             <SelectItem value="without">Без согласия</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" onClick={handleExport} disabled={!filteredProfiles.length}>
-          <Download className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={handleExport} disabled={filteredTotal === 0 || isExporting}>
+          {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
           CSV
         </Button>
       </div>
@@ -197,7 +275,7 @@ export default function AdminConsents() {
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          {isLoading ? (
+          {isLoading && !profiles.length ? (
             <div className="p-6 space-y-3">
               {[...Array(5)].map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
@@ -215,17 +293,17 @@ export default function AdminConsents() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredProfiles.length === 0 ? (
+                  {profiles.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                         Пользователи не найдены
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredProfiles.map((profile) => (
-                      <TableRow 
-                        key={profile.id} 
-                        className="hover:bg-muted/50"
+                    profiles.map((profile) => (
+                      <TableRow
+                        key={profile.id}
+                        className="hover:bg-muted/50 cursor-pointer"
                         onClick={() => handleRowClick(profile)}
                       >
                         <TableCell>
@@ -263,6 +341,38 @@ export default function AdminConsents() {
                   )}
                 </TableBody>
               </Table>
+            </div>
+          )}
+
+          {/* Pagination */}
+          {filteredTotal > 0 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t">
+              <p className="text-sm text-muted-foreground">
+                Показано {from}–{to} из {filteredTotal.toLocaleString("ru-RU")}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p - 1)}
+                  disabled={page === 0}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Назад
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {page + 1} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={page >= totalPages - 1}
+                >
+                  Вперёд
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
