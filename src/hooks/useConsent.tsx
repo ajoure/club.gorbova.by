@@ -43,8 +43,8 @@ export function useConsent() {
         console.error("Error fetching current policy:", error);
         return {
           id: "fallback",
-          version: CURRENT_POLICY_VERSION,
-          effective_date: "2026-01-07",
+          version: CONSENT_POLICY_VERSION,
+          effective_date: CONSENT_POLICY_EFFECTIVE_DATE,
           summary: null,
           is_current: true,
           created_at: new Date().toISOString(),
@@ -174,7 +174,7 @@ export function useConsent() {
         user_id: user.id,
         email: user.email,
         consent_type: "marketing",
-        policy_version: currentPolicy?.version || CURRENT_POLICY_VERSION,
+        policy_version: currentPolicy?.version || CONSENT_POLICY_VERSION,
         granted,
         source: "settings",
       });
@@ -206,6 +206,6 @@ export function useConsent() {
     grantConsent,
     revokeConsent,
     updateMarketingConsent,
-    CURRENT_POLICY_VERSION,
+    CONSENT_POLICY_VERSION,
   };
 }
