@@ -4417,6 +4417,9 @@ Deno.serve(async (req) => {
               await supabase.functions.invoke('telegram-grant-access', {
                 body: {
                   user_id: orderV2.user_id,
+                  club_id: productV2.telegram_club_id,
+                  source_id: orderV2.id,
+                  source: 'bepaid-webhook:legacy-single',
                   duration_days: accessDays,
                 },
               });
@@ -5493,12 +5496,10 @@ ${userName}, к сожалению, не удалось провести опл�
             // Fallback: if no explicit mapping but it's a subscription product, grant to all active clubs
             console.log('No explicit mappings, using fallback for subscription product');
             
-            const telegramGrantResult = await supabase.functions.invoke('telegram-grant-access', {
-              body: { 
-                user_id: order.user_id,
-                duration_days: product.duration_days
-              },
-            });
+            // Fallback path: no explicit club mapping. Skip telegram-grant-access without club_id.
+            // Club grants should come from access_rules. Log warning for audit.
+            console.warn('[TELEGRAM] Fallback path skipped: no club_id available for product', product.id);
+            const telegramGrantResult = { data: null, error: 'skipped: no club_id in fallback path' };
             
             if (telegramGrantResult.error) {
               console.error('Failed to grant Telegram access (fallback):', telegramGrantResult.error);
