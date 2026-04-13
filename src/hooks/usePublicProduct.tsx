@@ -186,7 +186,12 @@ export function usePublicProductBySlug(slug: string | null, userId?: string | nu
 // Helper to get current domain
 export function getCurrentDomain(): string {
   const hostname = window.location.hostname;
-  if (hostname === "localhost" || hostname === "127.0.0.1") {
+  if (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.includes(".lovable.app") ||
+    hostname.includes(".lovableproject.com")
+  ) {
     return "";
   }
   return hostname;
