@@ -1,170 +1,195 @@
-# Отчёт о выполнении: Cleanup двух пользователей + фиксация системных багов Telegram-доступа
+Да, согласен, с учетом правок:
 
-## Дата: 2026-04-13
+&nbsp;
 
-## Статус: ВЫПОЛНЕНО
+1. Серверный conflict-guard в public-product всё равно нужен.  
+Нельзя убирать его только потому, что хук “передаёт один параметр”.  
+Edge Function должна сама валидировать:  
 
----
+  - передан только один lookup-ключ, или
+  - если передано несколько — они должны резолвиться в один и тот же продукт, иначе controlled error 409/400.
+2. &nbsp;
+3. Не ограничивай anti-regression только usePublicProduct.  
+Добавь в discovery отдельную проверку:  
 
-## КОРРЕКЦИЯ ПРЕДЫДУЩЕГО FORENSIC
+  - все места, где pricing/CTA/checkout используют [product.id](http://product.id), product.code, domain, slug;
+  - особенно подтвердить, что после перевода страниц CTA и checkout берут тот же resolved product, а не резолвят продукт повторно по другому признаку.
+4. &nbsp;
+5. ProductPricing.tsx не просто “не трогать”, а явно классифицировать.  
+Раз он использует usePublicProductBySlug(slug), в плане нужно зафиксировать:  
 
-Предыдущий вывод «37 человек в чате и 0 активных подписок» был **ошибочным**. Корректные данные:
+  - это отдельный intentional resolver-path;
+  - он не конфликтует с новым canonical explicit binding для page-based лендингов;
+  - slug здесь не используется как замена code для остальных страниц.  
+  Иначе потом снова начнут смешивать slug, domain, code.
+6. &nbsp;
+7. Для public-product добавь proof-ответ, по какому ключу продукт был найден.  
+Например, в ответе EF вернуть мета-поле:  
 
-| Факт | Значение |
-|------|----------|
-| Физически в чате | **37** |
-| С активной подпиской на «Бухгалтерия как бизнес» | **31** |
-| Admin / Owner | **2** (Горбова, Федорчук) |
-| Лишние (wrong-grant) | **2** (Шуляк, Севериненко) |
+  - resolved_by: 'product_id' | 'product_code' | 'domain'
+  - resolved_value: ...  
+  Это сильно упростит forensic и regression-proof.
+8. &nbsp;
+9. В productPages.ts лучше хранить не только code, но и комментарий/назначение страницы.  
+Минимум:  
 
-**Правило:** выводы по клубу не делаются без сверки по 4 слоям: `telegram_club_members` → `telegram_access` → `telegram_access_grants` → `subscriptions_v2 / entitlements`.
+  - consultation
+  - club
+  - buh_business  
+  И прямо зафиксировать, что это page-binding config, а не source of truth продукта. Source of truth по-прежнему БД.
+10. &nbsp;
+11. PATCH B (исправление primary_domain) не должен блокировать PATCH A.  
+Это у тебя уже разделено, но добавь жёстко:  
 
----
+  - даже если DB config-fix не применён,
+  - explicit binding по code уже должен полностью чинить preview и production page rendering.
+12. &nbsp;
+13. Нужен один дополнительный negative-proof на mismatch.  
+Проверить кейс:  
 
-## EXECUTION A — Точечный cleanup (ВЫПОЛНЕНО)
+  - product_code=consultation
+  - domain=[club.gorbova.by](http://club.gorbova.by)  
+  EF должна вернуть controlled conflict error, а не молча консультацию или клуб.
+14. &nbsp;
+15. Уточни, что slug у buh_business сейчас нестабилен для routing-proof.  
+У тебя в таблице видно, что slug там фактически URL-подобный. Значит, в плане нужно прямо написать:  
 
-### Dry-run proof (before)
+  - slug не использовать как canonical explicit key для page-binding этого продукта.
+16. &nbsp;
+17. Уточни финальный список entrypoints как closed scope текущего PATCH.  
+Напиши явно:  
 
-| Пользователь | buh_active_subs | buh_active_ents | state_chat | grant_status | in_chat | gorbova_subs |
-|--------------|----------------|----------------|------------|-------------|---------|-------------|
-| Диана Шуляк | 0 | 0 | removed | revoked | **true** | 1 |
-| Ольга Севериненко | 0 | 0 | removed | revoked | **true** | 1 |
+  - scope текущего патча ограничен найденными файлами из grep;
+  - если в реализации обнаружатся дополнительные public pricing/product entrypoints, они добавляются add-only в этот же PATCH.
+18. &nbsp;
+19. DoD усили.  
+Добавь два пункта:
 
-### Execute
+&nbsp;
 
-Вызов `telegram-revoke-access` через canonical path с `force_revoke: true`:
-- Диана: chat_revoked=true, dm_sent=true ✓
-- Ольга: chat_revoked=true, dm_sent=true ✓
+&nbsp;
 
-### After-proof
+&nbsp;
 
-| Пользователь | in_chat | tcm_status | state_chat | state_channel | gorbova_subs | gorbova_state |
-|--------------|---------|-----------|------------|--------------|-------------|--------------|
-| Диана Шуляк | **false** | **removed** | **revoked** | **revoked** | 1 | pending |
-| Ольга Севериненко | **false** | **removed** | **revoked** | **revoked** | 1 | pending |
+- public-product корректно резолвит продукт по code и возвращает resolved_by=product_code;
+- на страницах консультации / клуба / бизнес-тренинга тарифы и checkout используют один и тот же [product.id](http://product.id) без повторного альтернативного резолва.
 
-Gorbova Club доступ у обоих не затронут (active subs = 1).
+&nbsp;
 
----
+&nbsp;
 
-## EXECUTION B — Фиксация системных багов (ВЫПОЛНЕНО)
+В остальном направление правильное:
 
-### Баг 1 (P0): pending → active
+расширять существующий usePublicProduct, использовать уникальный products_v2.code, вынести page-binding в единый config и оставить DomainRouter только как legacy fallback.
 
-**Файл:** `supabase/functions/telegram-cron-sync/index.ts`
-**Фикс:** После обновления `telegram_club_members` (строка 191), добавлен блок: если `in_chat=true` и у пользователя `telegram_access.state_chat = 'pending'` — обновляет на `active` + audit log.
-**Safety:** Только для пользователей, подтверждённых Telegram API как member/administrator/creator.
+&nbsp;
 
-### Баг 2 (P0): telegram-check-expired не видит pending
+# План: Единый canonical resolver для публичного продукта
 
-**Файл:** `supabase/functions/telegram-check-expired/index.ts`
-**Фикс:** Строка 81 расширена:
+## Discovery: DB-proof по `code` в `products_v2`
+
+### Колонка `code` существует и имеет UNIQUE constraint
+
 ```
-.or('state_chat.eq.active,state_channel.eq.active,state_chat.eq.pending,state_channel.eq.pending')
+INDEX: products_v2_code_key — CREATE UNIQUE INDEX products_v2_code_key ON public.products_v2 USING btree (code)
 ```
 
-### Баг 3: entitlement.expires_at overshoot (+30 дней)
+### Реальные значения трёх ключевых продуктов
 
-**Файл:** `supabase/functions/grant-access-for-order/index.ts`
-**Фикс:** Строки 299-312 — для club renewal с `extendFromCurrent=true`, `accessStartAt` уже выставлен на `existingProductSub.access_end_at`, поэтому `calcCalendarMonthEnd(accessStartAt)` корректно даёт новый конец. Добавлен explicit log для дифференциации renewal vs new.
-**Правило:** `subscription.access_end_at` = canonical SoT для club-продукта.
 
-### Баг 4: dangerous fallback findClubId → any active club
+| Продукт                | UUID           | `code` (unique) | `slug`                                      | `primary_domain`                 |
+| ---------------------- | -------------- | --------------- | ------------------------------------------- | -------------------------------- |
+| Gorbova Club           | `11c9f1b8-...` | `club`          | `club.gorbova.by`                           | `club.gorbova.by`                |
+| Платная консультация   | `9d0d6de8-...` | `consultation`  | `consultation.gorbova.by`                   | `cons.gorbova.by` (**mismatch**) |
+| Бухгалтерия как бизнес | `85046734-...` | `buh_business`  | `https://club.gorbova.by/business-training` | `business-training.gorbova.by`   |
 
-**Файл:** `supabase/functions/telegram-revoke-access/index.ts`
-**Фикс:** Строки 136-143 — fallback к «any active club» удалён. Если `club_id` не определён — функция возвращает null → 400 ошибка.
 
----
-
-## Canonical Owner Table
-
-| Этап lifecycle | Owner-функция | Compensating paths | Запрещено |
-|----------------|---------------|-------------------|-----------|
-| Выдача Telegram доступа | `telegram-grant-access` | `/start` → тот же grant | Прямой insert из UI |
-| Создание `telegram_access` | `telegram-grant-access` | — | UI/SQL insert |
-| Создание `telegram_access_grants` | `telegram-grant-access` | — | Параллельная запись |
-| Отправка 2 ссылок (чат + канал) | `telegram-grant-access` | queue processor | Отдельный custom path |
-| `pending → active` | **`telegram-cron-sync`** | — | Ручной SQL update |
-| Продление `active_until` | `telegram-grant-access` → resolver | bepaid-webhook sync | `now() + 30 days` |
-| Revoke / kick | `telegram-revoke-access` | `telegram-check-expired` → revoke | SQL-kick / SQL-revoke |
-| Sync in_chat/in_channel | `telegram-cron-sync` | — | Manual update |
+**Вывод:** `products_v2.code` — стабильный, уникальный, с constraint. Подходит как explicit binding key.
 
 ---
 
-## Parity-check: Gorbova Club vs Бухгалтерия как бизнес
+## Полный grep: все usage points
 
-| Параметр | Gorbova Club | Бухгалтерия | Одинаково? |
-|----------|-------------|-------------|------------|
-| Выдача | `grant-access-for-order` → `telegram-grant-access` | То же | **Да** |
-| Invite | `telegram-grant-access` (chat + channel) | То же | **Да** |
-| Продление | `bepaid-webhook` → `grant-access-for-order` | То же | **Да** |
-| Revoke/kick | `telegram-revoke-access` / `telegram-check-expired` | То же | **Да** |
-| Sync | `telegram-cron-sync` | То же | **Да** |
-| Разница | club_id, product_id, access_rule_id | Другие ID | Config only |
 
----
+| Файл                                        | Что использует                                     | Классификация                                 |
+| ------------------------------------------- | -------------------------------------------------- | --------------------------------------------- |
+| `src/pages/Consultation.tsx`                | `getCurrentDomain()` → `usePublicProduct(domain)`  | **BROKEN** — перевести на explicit `code`     |
+| `src/components/landing/LandingPricing.tsx` | `usePublicProduct("club.gorbova.by")`              | Хардкод домена — перевести на explicit `code` |
+| `src/pages/BusinessTraining.tsx`            | `usePublicProduct("business-training.gorbova.by")` | Хардкод домена — перевести на explicit `code` |
+| `src/pages/BusinessTrainingContent.tsx`     | `usePublicProduct("business-training.gorbova.by")` | Хардкод домена — перевести на explicit `code` |
+| `src/components/layout/DomainRouter.tsx`    | `getCurrentDomain()` → `usePublicProduct(domain)`  | **Legacy fallback** — оставить как есть       |
+| `src/hooks/useSitePricingData.ts`           | `product_id` напрямую в URL                        | **Уже правильно** — не трогать                |
+| `src/pages/ProductPricing.tsx`              | `usePublicProductBySlug(slug)`                     | Slug-based — не трогать                       |
 
-## Forensic: Ирина Царева
-
-| Шаг | Данные | Статус |
-|-----|--------|--------|
-| Order | `8f11d65c`, paid, 12.04.2026 | OK |
-| Subscription | `a504cb23`, active, access_end=2026-05-13 | OK |
-| Entitlement | `b6423dca`, expires_at=2026-06-12 | **БАГ: +30д** |
-| telegram_access | state_chat=pending, active_until=2026-06-12 | **БАГ: pending** |
-| Grant | `2d793def`, auto_subscription | OK |
-| Invite | sent | OK |
-| tcm.in_chat | true | OK |
-
-**Вывод:** Не баг выдачи — комбинация бага state-machine (pending→active) + бага расчёта дат (entitlement overshoot).
-
-## Forensic: Екатерина Кузьменок (reference-case)
-
-| Шаг | Ирина | Екатерина | Совпадает? |
-|-----|-------|-----------|------------|
-| state_chat=active | НЕТ (pending) | НЕТ (pending) | Оба broken |
-| active_until = sub end | НЕТ (+30д) | НЕТ (+30д) | Оба broken |
-
-Причина идентична — системный баг.
 
 ---
 
-## Regression / Safety
+## Архитектура решения
 
-| Риск | Защита |
-|------|--------|
-| Admin/owner кикнуты | ADMIN_GUARD (administrator/creator check) |
-| Gorbova Club пострадал | Kick scoped по club_id, подтверждено after-proof |
-| Valid-pending удалён | `active_until < now()` check в check-expired |
-| Ссылки не отправляются | Логика отправки не менялась |
-| Новый path | Не создано новых функций/таблиц |
+### Принцип: расширить существующий `usePublicProduct`, не плодить новый хук
+
+Текущая сигнатура: `usePublicProduct(domain, userId)`.
+
+Новая сигнатура: `usePublicProduct(lookup, userId)`, где `lookup` — объект:
+
+```typescript
+type ProductLookup = 
+  | { productId: string }      // приоритет 1
+  | { productCode: string }    // приоритет 2
+  | { domain: string }         // приоритет 3 (legacy)
+  | string                     // backward compat: трактуется как domain
+  | null;                      // disabled
+```
+
+Backward compatibility: если передана строка — это domain (все старые вызовы работают без изменений).
+
+### EF `public-product`: добавить `product_code` param
+
+Текущий EF уже принимает `domain` и `product_id`. Добавить третий param `product_code` — lookup по `products_v2.code`.
+
+Приоритет в EF: `product_id` → `product_code` → `domain`.
+
+**Conflict guard:** Если передано несколько параметров — использовать по приоритету, без конфликтной проверки (один param на вызов из хука). Хук всегда передаёт ровно один param.
+
+### Единая page-config map (constants)
+
+Вместо разбрасывания строк по компонентам — единый файл констант:
+
+```typescript
+// src/config/productPages.ts
+export const PRODUCT_PAGES = {
+  club: { code: "club" },
+  consultation: { code: "consultation" },
+  businessTraining: { code: "buh_business" },
+} as const;
+```
+
+Страницы импортируют из одного места. Добавление нового продукта = одна строка в конфиге.
 
 ---
 
-## Файлы изменены
+## Два патча
 
-| Файл | Изменение |
-|------|-----------|
-| `supabase/functions/telegram-cron-sync/index.ts` | pending → active блок |
-| `supabase/functions/telegram-check-expired/index.ts` | Фильтр расширен на pending |
-| `supabase/functions/grant-access-for-order/index.ts` | Entitlement aligned с sub end при renewal |
-| `supabase/functions/telegram-revoke-access/index.ts` | Dangerous fallback удалён |
+### PATCH A — Canonical resolver + перевод страниц
+
+1. `**supabase/functions/public-product/index.ts**` — добавить `product_code` param с lookup по `code`
+2. `**src/hooks/usePublicProduct.tsx**` — расширить `usePublicProduct` для приёма `ProductLookup | string | null`
+3. `**src/config/productPages.ts**` — новый файл с константами продуктов
+4. `**src/pages/Consultation.tsx**` — `usePublicProduct({ productCode: PRODUCT_PAGES.consultation.code }, user?.id)`
+5. `**src/components/landing/LandingPricing.tsx**` — `usePublicProduct({ productCode: PRODUCT_PAGES.club.code }, user?.id)`
+6. `**src/pages/BusinessTraining.tsx**` — `usePublicProduct({ productCode: PRODUCT_PAGES.businessTraining.code }, user?.id)`
+7. `**src/pages/BusinessTrainingContent.tsx**` — `usePublicProduct({ productCode: PRODUCT_PAGES.businessTraining.code }, user?.id)`
+
+`DomainRouter.tsx` — **не трогаем**, остаётся legacy domain fallback.
+
+### PATCH B — DB config correction
+
+Отдельным шагом: обновить `primary_domain` для «Платная консультация» с `cons.gorbova.by` → `consultation.gorbova.by`, чтобы legacy domain fallback тоже работал.
 
 ---
 
-## DoD
+## Правила (зафиксировать)
 
-1. ✅ Диана Шуляк и Ольга Севериненко удалены через canonical `telegram-revoke-access` с before/after proof
-2. ✅ 31 платящий пользователь не затронут
-3. ✅ Admin/owner/team не затронуты
-4. ✅ `pending → active` реализован в `telegram-cron-sync`
-5. ✅ Pending с истёкшим `active_until` обрабатывается `telegram-check-expired`
-6. ✅ `entitlement.expires_at` при renewal aligned с `subscription.access_end_at`
-7. ✅ Ирина Царева расследована: баг state-machine + entitlement overshoot
-8. ✅ Екатерина Кузьменок — reference-case, идентичные баги
-9. ✅ Оба клуба работают через один canonical lifecycle
-10. ✅ Новые функции / таблицы / paths не созданы
-11. ✅ Gorbova Club не пострадал (подтверждено)
-12. ✅ Dangerous fallback `findClubId` удалён
-13. ✅ Edge functions задеплоены
-14. ✅ Temporary kick-wrong-grants function удалена после использования
+1. `DomainRouter` — **только legacy fallback** для продуктовых поддоменов. НЕ source of truth для тарифного блока.
+2. Source of truth для pricing block = explicit `productCode` или `productId`, переданный в компонент.
+3. Checkout/CTA получают `product.id` из того же resolved
