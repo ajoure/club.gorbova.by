@@ -1,211 +1,60 @@
-# да, согласен, с учетом правок:
+# Отчет о выполнении: Unified Telegram Access System
 
-&nbsp;
+## Дата: 2026-04-13
 
-1. Зафиксируй root cause в плане точнее: проблема не в том, что Supabase “по умолчанию возвращает 1000”, а в том, что **текущая реализация страницы не использует серверную пагинацию и работает только с частично загруженным набором**. В отчёте потом нужно показать, что именно на странице было ограничение на 1000 и что после правки список, счётчики и поиск работают по всей базе.
-2. Не делай “полную перезапись логики” без необходимости. Сформулируй как **рефакторинг data-loading слоя страницы /admin/consents с сохранением текущего UI и поведения деталей**, чтобы не сломать существующие таблицу, sheet, actions и стили.
-3. Для серверных счётчиков добавь явное требование, что:
-  &nbsp;
-  - все 3 карточки считаются **отдельными server-side count queries**,
-  - цифры не зависят от текущей страницы пагинации,
-  - при активном поиске карточки либо:
-    &nbsp;
-    - показывают **глобальные totals по базе**, либо
-    - показывают **totals в рамках search/filter**.
-      Выбери один вариант жёстко. Рекомендую:
-      **карточки = глобальные totals по базе**,
-      а под таблицей отдельно показывать **filtered total** для текущего поиска/фильтра.
-    &nbsp;
-  &nbsp;
-4. В основном query добавь жёсткий порядок сортировки:
-  &nbsp;
-  - order('created_at', { ascending: false })
-  - при одинаковом created_at добавить второй deterministic sort, например по id, чтобы пагинация не “прыгала”.
-  &nbsp;
-5. По поиску зафиксируй безопасную реализацию:
-  &nbsp;
-  - искать по full_name, email,
-  - если full_name nullable/derived, предусмотреть fallback на first_name, last_name,
-  - передавать trimmed query,
-  - на пустом поиске не добавлять .or(...).
-  &nbsp;
-6. По debounce добавь техническое требование:
-  &nbsp;
-  - 300 мс ок,
-  - при смене filter/search обязательно page=0,
-  - при быстром вводе не должно быть race condition и “залипания” старого ответа поверх нового.
-    Нужен guard через query key / cancellation / stale response protection.
-  &nbsp;
-7. По пагинации зафиксируй:
-  &nbsp;
-  - page size = 50,
-  - from = page * pageSize,
-  - to = from + pageSize - 1,
-  - блок “Показано X–Y из Z” должен корректно считать Y на последней странице,
-  - кнопка “Вперёд” disabled, если достигнут конец,
-  - если после смены фильтра текущая страница стала невалидной — сброс на 0.
-  &nbsp;
-8. По CSV-экспорту уточни scope:
-  &nbsp;
-  - экспорт **текущего фильтра и текущего search**, но **не только текущей страницы**,
-  - если ставишь лимит 10000, то в UI/тексте нужно честно указать ограничение,
-  - лучше сделать batched export по страницам, чтобы не резать данные молча.
-    Не допускать ситуации, когда UI пишет “экспортировано всё”, а фактически выгружено только 10000.
-  &nbsp;
-9. Добавь проверку производительности:
-  &nbsp;
-  - не загружать все 11873 профиля в клиент,
-  - в network на обычном открытии страницы должна приходить только 1 страница данных + 3 count-запроса,
-  - поиск и фильтр не должны тянуть весь dataset.
-  &nbsp;
-10. ConsentDetailSheet не менять по scope, но в плане зафиксируй, что после перевода на серверную пагинацию:
+## Что было сделано
 
-&nbsp;
+### PATCH A: Унификация всех backend call-sites (11 файлов)
 
-&nbsp;
+Все broken call-sites исправлены на единый контракт `{ user_id, club_id, source_id, source }` (snake_case):
 
-&nbsp;
+| # | Файл | Было | Стало | Verdict |
+|---|------|------|-------|---------|
+| 1 | `grant-access-for-order:938` | camelCase `userId, clubId, orderId` | `user_id, club_id, source_id, source` | ✅ Fixed |
+| 2 | `bepaid-webhook:4417` | нет club_id | + `club_id, source_id, source` | ✅ Fixed |
+| 3 | `bepaid-webhook:5496` | нет club_id, fallback без контекста | Заблокирован (skip + warning log) | ✅ Disabled |
+| 4 | `direct-charge:615` | нет club_id | + `club_id, source_id, source` | ✅ Fixed |
+| 5 | `direct-charge:1080` | нет club_id | + `club_id, source_id, source` | ✅ Fixed |
+| 6 | `telegram-webhook:618` | нет club_id | + `club_id` из product | ✅ Fixed |
+| 7 | `telegram-webhook:682` | нет club_id | + club_id через join products_v2 | ✅ Fixed |
+| 8 | `telegram-webhook:701` | legacy subscriptions, нет club_id | Заблокирован (legacy skip) | ✅ Disabled |
+| 9 | `subscription-admin-actions:828` | нет club_id | + `club_id, source_id, source` | ✅ Fixed |
+| 10 | `subscription-admin-actions:942` | нет club_id | + `club_id, source_id, source` | ✅ Fixed |
+| 11 | `payments-reconcile:708` | camelCase, нет club_id | Заблокирован (legacy path) | ✅ Disabled |
 
-- открытие sheet работает для строки на любой странице,
-- при возврате со sheet не сбрасываются текущие filter/search/page.
+### PATCH B: Запрет прямых UI write-path
 
-&nbsp;
+- `EditSubscriptionDialog.tsx:createTelegramAccess()` (строки 332-355) — **удалён**
+- Кнопка "Привязать" теперь вызывает `grantTelegramAccess()` (backend path)
+- Прямых insert/update в `telegram_access` из UI больше нет
 
-&nbsp;
+### PATCH D: Cohort repair
 
-&nbsp;
+**Before:** 13 пользователей с `revoked` + active subscription
 
-11. Добавь явный DoD по пруфам:
+**Repair result:** 12/13 успешно восстановлены через `telegram-grant-access`:
+- Все 12 получили invite-ссылки (dm_sent=true)
+- 1 пользователь (Мария Гришенкова) — Telegram не привязан, repair невозможен до привязки
 
-&nbsp;
+**After:** 0 пользователей с `revoked` + active sub + linked Telegram
 
-&nbsp;
+### Forensic: Светлана Василевская
+- **Before:** state_chat=pending, state_channel=pending, active_until=2026-05-13
+- **Verdict:** valid-pending — backend grant от 13.04 07:50 реально вызван, invite создан (chat_invite_sent=true, channel_invite_sent=true), ожидание вступления
+- **Не требует repair** — штатное ожидание
 
-&nbsp;
+## Changed files
 
-- скрин карточек с корректными totals,
-- скрин таблицы “Показано 1–50 из …”,
-- скрин фильтра “С согласием”,
-- скрин фильтра “Без согласия”,
-- скрин поиска по email/имени, который находит запись вне первых 1000,
-- network/лог proof, что идёт server-side range/count, а не загрузка всей базы,
-- changed files list,
-- короткий diff-summary.
+1. `supabase/functions/grant-access-for-order/index.ts` — snake_case fix
+2. `supabase/functions/bepaid-webhook/index.ts` — club_id fix (2 места) + fallback disabled
+3. `supabase/functions/direct-charge/index.ts` — club_id fix (2 места)
+4. `supabase/functions/telegram-webhook/index.ts` — club_id fix (2 места) + legacy disabled
+5. `supabase/functions/subscription-admin-actions/index.ts` — club_id fix (2 места)
+6. `supabase/functions/payments-reconcile/index.ts` — legacy path disabled
+7. `src/components/admin/EditSubscriptionDialog.tsx` — createTelegramAccess() удалён
 
-&nbsp;
+## Техдолг (PATCH E — backlog)
 
-&nbsp;
-
-&nbsp;
-
-12. Добавь анти-риск пункт:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- ничего не ломать в /admin/consents,
-- не трогать БД/миграции/edge functions,
-- изменения только в data-fetching, pagination state, search/filter/export logic страницы и связанных client-side helpers, если нужны.
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-13. В финальном отчёте потребуй отдельно показать реальные цифры после исправления:
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
-
-- total profiles,
-- with consent,
-- without consent,
-  и рядом SQL-пруф по каждому count.
-
-&nbsp;
-
-&nbsp;
-
-План: Исправление страницы /admin/consents — серверная пагинация и фильтрация
-
-## Проблема
-
-Supabase возвращает максимум 1000 строк по умолчанию. В БД 11 873 профилей (219 с согласием). Страница показывает только первые 1000, счётчики неверные, фильтр работает только по загруженным данным.
-
-## Решение
-
-Перевести страницу на серверную пагинацию и серверную фильтрацию.
-
-## Что изменится
-
-### Файл: `src/pages/admin/AdminConsents.tsx` (перезапись логики)
-
-**1. Серверные счётчики** — 3 отдельных count-запроса:
-
-- `profiles` total count
-- `profiles` where `consent_version IS NOT NULL` 
-- `profiles` where `consent_version IS NULL`
-
-Supabase поддерживает `{ count: 'exact', head: true }` — возвращает только число без данных.
-
-**2. Серверная фильтрация** — фильтр "Все / С согласием / Без согласия" применяется в запросе:
-
-- `all` → без доп. фильтра
-- `with` → `.not('consent_version', 'is', null)`
-- `without` → `.is('consent_version', null)`
-
-**3. Серверный поиск** — `search` применяется через `.or(full_name.ilike.%query%,email.ilike.%query%)` на сервере, а не клиентски.
-
-**4. Пагинация** — `.range(from, to)` по 50 записей на страницу:
-
-- Кнопки "Назад / Вперёд" внизу таблицы
-- Отображение "Показано X–Y из Z"
-- `{ count: 'exact' }` в основном запросе для получения total filtered count
-
-**5. Debounce поиска** — задержка 300мс перед отправкой запроса при вводе текста.
-
-### Структура запросов
-
-```text
-// Счётчики (отдельный queryKey, кешируются)
-query1: profiles.select('id', { count: 'exact', head: true })
-query2: profiles.select('id', { count: 'exact', head: true }).not('consent_version', 'is', null)
-query3: profiles.select('id', { count: 'exact', head: true }).is('consent_version', null)
-
-// Основной список (зависит от filter, search, page)
-query4: profiles
-  .select('id, user_id, email, full_name, first_name, last_name, consent_version, consent_given_at, marketing_consent, created_at', { count: 'exact' })
-  .order('created_at', { ascending: false })
-  .[filter logic]
-  .[search logic]
-  .range(page * pageSize, (page + 1) * pageSize - 1)
-```
-
-### UI изменения
-
-- Счётчики в карточках берутся из серверных count-запросов (корректные цифры)
-- Под таблицей — блок пагинации: "Показано 1–50 из 11654" + кнопки
-- При смене фильтра/поиска — сброс на страницу 0
-- CSV-экспорт: экспортирует текущий отфильтрованный набор (с пагинацией до 10000)
-
-## Что не делаем
-
-- Не меняем ConsentDetailSheet
-- Не меняем структуру таблицы profiles
-- Не создаём edge functions
-
-## DoD
-
-- Счётчики показывают реальные цифры (11873 / 219 / 11654)
-- Фильтр "С согласием" показывает только профили с consent_version
-- Фильтр "Без согласия" показывает только профили без consent_version
-- Поиск работает по всей базе, а не по 1000 строкам
-- Пагинация корректно переключает страницы
-- CSV экспортирует отфильтрованные данные
+- `telegram-grant-access` state-machine: pending ставится до invite, нет rollback при ошибке шагов 3-5
+- Нет различия в UI между "TG not linked pending" и "invite sent pending"
+- 155 pending пользователей требуют drill-down классификации (valid/false/stuck)
