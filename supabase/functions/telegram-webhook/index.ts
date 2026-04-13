@@ -618,9 +618,10 @@ Deno.serve(async (req) => {
                 await supabase.functions.invoke('telegram-grant-access', {
                   body: {
                     user_id: tokenData.user_id,
-                    duration_days: tariff?.access_days || 30,
-                    source: 'telegram_link_pending',
+                    club_id: product?.telegram_club_id || null,
                     source_id: order.id,
+                    source: 'telegram_link_pending',
+                    duration_days: tariff?.access_days || 30,
                   },
                 });
               }
@@ -679,11 +680,20 @@ Deno.serve(async (req) => {
 
           if (subV2) {
             hasActiveSubscription = true;
+            // Resolve club_id from subscription's product
+            const { data: subProduct } = await supabase
+              .from('subscriptions_v2')
+              .select('product_id, products_v2!inner(telegram_club_id)')
+              .eq('id', subV2.id)
+              .maybeSingle();
+            const subClubId = (subProduct?.products_v2 as any)?.telegram_club_id || null;
+            
             await supabase.functions.invoke('telegram-grant-access', {
               body: { 
                 user_id: tokenData.user_id,
-                source: 'telegram_link',
+                club_id: subClubId,
                 source_id: subV2.order_id,
+                source: 'telegram_link',
               },
             });
           } else {
@@ -698,9 +708,9 @@ Deno.serve(async (req) => {
 
             if (subscription) {
               hasActiveSubscription = true;
-              await supabase.functions.invoke('telegram-grant-access', {
-                body: { user_id: tokenData.user_id },
-              });
+              // Legacy subscriptions path — skip without club_id (legacy data lacks product context)
+              console.warn('[TELEGRAM] Legacy subscription path: no club_id resolvable, skipping grant');
+              // await supabase.functions.invoke('telegram-grant-access', { body: { user_id: tokenData.user_id } });
             }
           }
 

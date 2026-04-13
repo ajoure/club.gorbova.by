@@ -705,9 +705,9 @@ async function processLegacyQueueItem(supabase: any, item: any, order: any, payl
 
       // Grant Telegram access (legacy path — direct call)
       try {
-        await supabase.functions.invoke("telegram-grant-access", {
-          body: { userId, productId },
-        });
+        // Legacy reconcile path: skip telegram grant without club_id (legacy data)
+        console.warn('[TELEGRAM] Legacy reconcile path: no club_id resolvable for product', productId, '— skipping grant');
+        // await supabase.functions.invoke("telegram-grant-access", { body: { user_id: userId, club_id: ???, source_id: order.id, source: 'payments-reconcile:legacy' } });
       } catch (e) {
         console.error("Error granting Telegram access:", e);
       }

@@ -936,9 +936,10 @@ Deno.serve(async (req) => {
               "Authorization": `Bearer ${supabaseServiceKey}`,
             },
             body: JSON.stringify({
-              userId,
-              clubId,
-              orderId,
+              user_id: userId,
+              club_id: clubId,
+              source_id: orderId,
+              source: 'grant-access-for-order',
               // Sub-patch B: Pass parent lineage from ledger write
               parent_event_key: grantLedgerSourceEventKey || null,
               parent_execution_key: grantLedgerExecutionKey || null,

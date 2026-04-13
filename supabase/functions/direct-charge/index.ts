@@ -615,6 +615,9 @@ Deno.serve(async (req) => {
         await supabase.functions.invoke('telegram-grant-access', {
           body: {
             user_id: user.id,
+            club_id: product.telegram_club_id,
+            source_id: order?.id || null,
+            source: 'direct-charge:trial',
             duration_days: effectiveTrialDays,
           },
         });
@@ -1080,6 +1083,9 @@ Deno.serve(async (req) => {
         await supabase.functions.invoke('telegram-grant-access', {
           body: {
             user_id: user.id,
+            club_id: product.telegram_club_id,
+            source_id: order.id,
+            source: 'direct-charge:payment',
             duration_days: accessDays,
           },
         });
