@@ -297,8 +297,19 @@ Deno.serve(async (req) => {
       accessEndAt = new Date(customAccessEndAt);
       console.log(`[grant-access-for-order] Using customAccessEndAt: ${accessEndAt.toISOString()}`);
     } else if (isClubProduct && !customAccessDays) {
-      accessEndAt = calcCalendarMonthEnd(accessStartAt);
-      console.log(`[grant-access-for-order] Calendar month product: ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
+      // PATCH: For renewals with existing subscription, align entitlement
+      // with subscription.access_end_at (canonical SoT) instead of
+      // calculating from order date which causes +30 day overshoot.
+      if (existingProductSub?.access_end_at && extendFromCurrent) {
+        // accessStartAt was already set to existingProductSub.access_end_at (line 287)
+        // so calcCalendarMonthEnd(accessStartAt) gives the CORRECT new sub end.
+        // But we must use that same date for entitlement too.
+        accessEndAt = calcCalendarMonthEnd(accessStartAt);
+        console.log(`[grant-access-for-order] Club renewal: entitlement aligned with sub end: ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
+      } else {
+        accessEndAt = calcCalendarMonthEnd(accessStartAt);
+        console.log(`[grant-access-for-order] Calendar month product (new): ${accessStartAt.toISOString()} → ${accessEndAt.toISOString()}`);
+      }
     } else {
       // For non-calendar-month or custom days: use duration in days
       accessEndAt = new Date(accessStartAt.getTime() + durationDays * 24 * 60 * 60 * 1000);

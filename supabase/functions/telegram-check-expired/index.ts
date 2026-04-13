@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
         active_until,
         telegram_clubs(*, telegram_bots(*))
       `)
-      .or('state_chat.eq.active,state_channel.eq.active')
+      .or('state_chat.eq.active,state_channel.eq.active,state_chat.eq.pending,state_channel.eq.pending')
       .lt('active_until', now);
 
     if (queryError) {

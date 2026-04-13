@@ -133,15 +133,10 @@ async function findClubId(supabase: any, userId: string | null, telegramUserId: 
     if (member?.club_id) return member.club_id;
   }
   
-  // Fallback: get any active club
-  const { data: anyClub } = await supabase
-    .from('telegram_clubs')
-    .select('id')
-    .eq('is_active', true)
-    .limit(1)
-    .single();
-  
-  return anyClub?.id || null;
+  // PATCH: Removed dangerous "any active club" fallback.
+  // With multiple clubs, guessing is unsafe. Return null to force 400 error.
+  console.warn('[findClubId] Could not determine club_id — no fallback to random club');
+  return null;
 }
 
 Deno.serve(async (req) => {
