@@ -7,7 +7,8 @@ import { ConsultationHeader } from "@/components/consultation/ConsultationHeader
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { AnimatedSection } from "@/components/landing/AnimatedSection";
 import { UniversalPricingSection, UniversalPricingSkeleton } from "@/components/landing/UniversalPricingSection";
-import { usePublicProduct, getCurrentDomain } from "@/hooks/usePublicProduct";
+import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { PRODUCT_PAGES } from "@/config/productPages";
 import { useAuth } from "@/contexts/AuthContext";
 import { 
   Check, 
@@ -71,8 +72,7 @@ const results = [
 
 export default function Consultation() {
   const { user } = useAuth();
-  const domain = getCurrentDomain();
-  const { data: productData, isLoading } = usePublicProduct(domain || null, user?.id);
+  const { data: productData, isLoading } = usePublicProduct({ productCode: PRODUCT_PAGES.consultation.code }, user?.id);
 
   return (
     <div className="min-h-screen bg-background">

@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useTelegramLinkStatus, useStartTelegramLink } from "@/hooks/useTelegramLink";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { PRODUCT_PAGES } from "@/config/productPages";
 import { useTrainingLessons } from "@/hooks/useTrainingLessons";
 import { toast } from "sonner";
 import { useUnreadFeedbackByLesson } from "@/hooks/useTrainingFeedback";
@@ -66,7 +67,7 @@ export default function BusinessTrainingContent() {
   const { lessons, loading: lessonsLoading } = useTrainingLessons(moduleData?.id);
 
   // Fetch product data for payment
-  const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
+  const { data: productData } = usePublicProduct({ productCode: PRODUCT_PAGES.businessTraining.code }, user?.id);
 
   // PATCH-C: Unified access check - entitlement OR subscription(by product_id) OR prereg paid
   const { data: accessData, isLoading: accessLoading } = useQuery({
