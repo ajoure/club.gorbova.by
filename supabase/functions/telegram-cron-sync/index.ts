@@ -190,6 +190,47 @@ Deno.serve(async (req) => {
               updated_at: new Date().toISOString(),
             }).eq('id', member.id);
 
+            // ── pending → active transition ──────────────────────────────
+            // If Telegram confirms user is physically in chat AND their
+            // telegram_access state is still 'pending', promote to 'active'.
+            const userId = member.profiles?.user_id;
+            if (inChat && userId) {
+              const { data: pendingAccess } = await supabase
+                .from('telegram_access')
+                .select('id, state_chat, state_channel')
+                .eq('user_id', userId)
+                .eq('club_id', club.id)
+                .eq('state_chat', 'pending')
+                .maybeSingle();
+
+              if (pendingAccess) {
+                const nowIso = new Date().toISOString();
+                await supabase.from('telegram_access')
+                  .update({
+                    state_chat: 'active',
+                    state_channel: 'active',
+                    last_sync_at: nowIso,
+                  })
+                  .eq('id', pendingAccess.id);
+
+                await supabase.from('audit_logs').insert({
+                  action: 'telegram.pending_to_active',
+                  actor_type: 'system',
+                  actor_user_id: null,
+                  actor_label: 'telegram-cron-sync',
+                  target_user_id: userId,
+                  meta: {
+                    club_id: club.id,
+                    telegram_access_id: pendingAccess.id,
+                    tg_user_id: member.telegram_user_id,
+                    chat_status: chatStatus,
+                  },
+                });
+                console.log(`PENDING→ACTIVE: user ${member.telegram_user_id} in club ${club.id}`);
+              }
+            }
+            // ── end pending → active ─────────────────────────────────────
+
             checkedCount++;
 
             // ADMIN GUARD: skip autokick for administrator/creator — Telegram won't allow ban anyway
