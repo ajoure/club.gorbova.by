@@ -107,16 +107,59 @@ export interface PublicProductData {
   } | null;
   is_reentry_pricing?: boolean;
   reentry_message?: string;
+  _meta?: {
+    resolved_by: 'product_id' | 'product_code' | 'domain';
+    resolved_value: string;
+  };
 }
 
-export function usePublicProduct(domain: string | null, userId?: string | null) {
-  return useQuery({
-    queryKey: ["public-product", domain, userId],
-    queryFn: async (): Promise<PublicProductData | null> => {
-      if (!domain) return null;
+// ─── Lookup types ───
+// Explicit binding by product code (preferred for page-based landings)
+// Explicit binding by product ID
+// Legacy domain-based lookup (for DomainRouter fallback)
 
-      // Build URL with optional user_id for reentry pricing
-      let fetchUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product?domain=${encodeURIComponent(domain)}`;
+export type ProductLookup =
+  | { productCode: string }
+  | { productId: string }
+  | { domain: string }
+  | string   // backward compat: treated as domain
+  | null;    // disabled
+
+/**
+ * Normalize ProductLookup into query params for the EF.
+ * Returns null if lookup is disabled.
+ */
+function buildLookupParams(lookup: ProductLookup): { key: string; param: string; value: string } | null {
+  if (lookup === null || lookup === undefined) return null;
+
+  // Backward compat: plain string = domain
+  if (typeof lookup === "string") {
+    if (!lookup) return null; // empty string = disabled
+    return { key: lookup, param: "domain", value: lookup };
+  }
+
+  if ("productId" in lookup && lookup.productId) {
+    return { key: lookup.productId, param: "product_id", value: lookup.productId };
+  }
+  if ("productCode" in lookup && lookup.productCode) {
+    return { key: lookup.productCode, param: "product_code", value: lookup.productCode };
+  }
+  if ("domain" in lookup && lookup.domain) {
+    return { key: lookup.domain, param: "domain", value: lookup.domain };
+  }
+
+  return null;
+}
+
+export function usePublicProduct(lookup: ProductLookup, userId?: string | null) {
+  const resolved = buildLookupParams(lookup);
+
+  return useQuery({
+    queryKey: ["public-product", resolved?.param, resolved?.key, userId],
+    queryFn: async (): Promise<PublicProductData | null> => {
+      if (!resolved) return null;
+
+      let fetchUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/public-product?${resolved.param}=${encodeURIComponent(resolved.value)}`;
       if (userId) {
         fetchUrl += `&user_id=${encodeURIComponent(userId)}`;
       }
@@ -137,8 +180,8 @@ export function usePublicProduct(domain: string | null, userId?: string | null) 
 
       return response.json();
     },
-    enabled: !!domain,
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    enabled: !!resolved,
+    staleTime: 1000 * 60 * 5,
     retry: false,
   });
 }
@@ -183,7 +226,7 @@ export function usePublicProductBySlug(slug: string | null, userId?: string | nu
   });
 }
 
-// Helper to get current domain
+// Helper to get current domain (legacy — only used by DomainRouter)
 export function getCurrentDomain(): string {
   const hostname = window.location.hostname;
   if (

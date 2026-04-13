@@ -11,6 +11,7 @@ import { ProductLandingFooter } from "@/components/landing/ProductLandingFooter"
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { PRODUCT_PAGES } from "@/config/productPages";
 import { toast } from "sonner";
 import { 
   Calendar, 
@@ -73,7 +74,7 @@ export default function BusinessTraining() {
   const [showPayment, setShowPayment] = useState(false);
 
   // Fetch dynamic product data from API
-  const { data: productData } = usePublicProduct("business-training.gorbova.by", user?.id);
+  const { data: productData } = usePublicProduct({ productCode: PRODUCT_PAGES.businessTraining.code }, user?.id);
 
   // Extract tariff and dynamic offers from product data
   const tariff = productData?.tariffs?.[0];

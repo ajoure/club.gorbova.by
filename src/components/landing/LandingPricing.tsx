@@ -2,12 +2,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { AnimatedSection } from "./AnimatedSection";
 import { UniversalPricingSection, UniversalPricingSkeleton } from "./UniversalPricingSection";
 import { usePublicProduct } from "@/hooks/usePublicProduct";
+import { PRODUCT_PAGES } from "@/config/productPages";
 
 export function LandingPricing() {
   const { user } = useAuth();
 
-  // Always use the production domain for the club landing, not preview domains
-  const { data: productData, isLoading } = usePublicProduct("club.gorbova.by", user?.id);
+  const { data: productData, isLoading } = usePublicProduct({ productCode: PRODUCT_PAGES.club.code }, user?.id);
 
   if (isLoading) {
     return <UniversalPricingSkeleton />;
