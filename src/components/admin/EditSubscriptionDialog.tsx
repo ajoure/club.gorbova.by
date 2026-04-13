@@ -328,31 +328,10 @@ export function EditSubscriptionDialog({
     },
   });
 
-  // Create telegram_access record if doesn't exist
-  const createTelegramAccess = async () => {
-    if (!subscription?.user_id || !currentClubId) return;
-    
-    setIsTelegramLoading(true);
-    try {
-      // Create access record
-      const { error } = await supabase.from("telegram_access").insert({
-        user_id: subscription.user_id,
-        club_id: currentClubId,
-        active_until: dateRange?.to?.toISOString() || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        state_chat: "pending",
-        state_channel: "pending",
-      });
-      
-      if (error && !error.message.includes("duplicate")) throw error;
-      
-      await refetchTelegram();
-      toast.success("Telegram доступ создан");
-    } catch (err) {
-      toast.error("Ошибка: " + (err as Error).message);
-    } finally {
-      setIsTelegramLoading(false);
-    }
-  };
+  // PATCH B: Direct insert into telegram_access REMOVED.
+  // All Telegram access creation must go through the canonical backend path (telegram-grant-access).
+  // The old createTelegramAccess() wrote state_chat='pending' without calling backend,
+  // creating false-pending records with no invite link or audit trail.
 
   // Manual Telegram grant — PATCH TG-SUBSCRIPTION-SAVE-FALSE-GRANT: Only via backend
   const grantTelegramAccess = async () => {
@@ -841,7 +820,7 @@ export function EditSubscriptionDialog({
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={createTelegramAccess}
+                      onClick={grantTelegramAccess}
                       disabled={isTelegramLoading}
                       className="flex-1 bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
                     >
