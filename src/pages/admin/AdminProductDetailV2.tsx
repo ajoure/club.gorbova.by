@@ -731,7 +731,7 @@ export default function AdminProductDetailV2() {
               </Button>
             )}
           </div>
-          <ProductSitePageBinding productId={productId!} primaryDomain={(product as any).primary_domain} />
+          <ProductSitePageBinding productId={productId!} primaryDomain={(product as any).primary_domain} productName={(product as any).name} />
         </GlassCard>
 
         {/* Pill-style tabs */}
