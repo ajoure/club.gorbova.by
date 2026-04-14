@@ -3,10 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /**
  * useEqualHeight — post-render measurement for equal-height carousel cards.
  * 
- * Measured DOM node: inner wrapper div inside each CarouselItem (via ref).
- * minHeight applied to: same inner wrapper div via inline style.
- * Embla clones: only indices 0..itemCount-1 are measured.
- * Recalculates on: initial render (delayed), resize, itemCount change, ref attachment.
+ * Strategy: temporarily remove h-full and minHeight from measured elements,
+ * let content determine natural height, measure, then restore.
  */
 export function useEqualHeight(itemCount: number) {
   const refsArray = useRef<(HTMLDivElement | null)[]>([]);
@@ -19,14 +17,23 @@ export function useEqualHeight(itemCount: number) {
       const elements = refsArray.current
         .slice(0, itemCount)
         .filter((el): el is HTMLDivElement => el !== null && el.isConnected);
-      
+
       if (elements.length === 0) return;
 
-      // Clear minHeight to measure natural height
-      elements.forEach(el => { el.style.minHeight = 'auto'; });
+      // Save and clear height constraints to measure natural content height
+      const saved = elements.map(el => ({
+        minHeight: el.style.minHeight,
+        height: el.style.height,
+      }));
+
+      elements.forEach(el => {
+        el.style.minHeight = '';
+        el.style.height = 'auto';
+        el.classList.remove('h-full');
+      });
 
       // Force reflow
-      void elements[0].offsetHeight;
+      void document.body.offsetHeight;
 
       let maxH = 0;
       elements.forEach(el => {
@@ -34,32 +41,33 @@ export function useEqualHeight(itemCount: number) {
         if (h > maxH) maxH = h;
       });
 
+      // Restore h-full class and apply computed minHeight
+      elements.forEach((el, i) => {
+        el.classList.add('h-full');
+        el.style.height = saved[i].height;
+      });
+
       if (maxH > 0) {
-        elements.forEach(el => { el.style.minHeight = `${maxH}px`; });
         setMinHeight(maxH);
+        elements.forEach(el => {
+          el.style.minHeight = `${maxH}px`;
+        });
       }
     });
   }, [itemCount]);
 
   const setRef = useCallback((index: number) => (el: HTMLDivElement | null) => {
-    // Ensure array is long enough
     while (refsArray.current.length <= index) {
       refsArray.current.push(null);
     }
     refsArray.current[index] = el;
-    // Trigger recalculate when a ref is attached
-    if (el) {
-      recalculate();
-    }
+    if (el) recalculate();
   }, [recalculate]);
 
   useEffect(() => {
-    // Delayed recalculations for fonts/images loading
     const t1 = setTimeout(recalculate, 300);
     const t2 = setTimeout(recalculate, 800);
-
     window.addEventListener('resize', recalculate);
-
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
