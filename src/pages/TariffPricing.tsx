@@ -1,21 +1,16 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { usePublicTariffByPublicId } from "@/hooks/usePublicTariff";
 import { TariffCard } from "@/components/landing/TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
-import { useAuth } from "@/contexts/AuthContext";
 import { Loader2, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 
 export default function TariffPricing() {
   const { tariffPublicId } = useParams<{ tariffPublicId: string }>();
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
   const { data, isLoading, error, refetch } = usePublicTariffByPublicId(
-    tariffPublicId || null,
-    user?.id
+    tariffPublicId || null
   );
 
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -25,43 +20,7 @@ export default function TariffPricing() {
     productId: string;
   } | null>(null);
 
-  // Restore offer selection from URL after auth redirect (same pattern as ProductLanding)
-  useEffect(() => {
-    const offerId = searchParams.get("offer");
-    if (offerId && user && data?.tariff) {
-      const offer = (data.tariff.offers || []).find(
-        (o: any) => o.id === offerId && o.is_active !== false
-      );
-      if (offer) {
-        // Validate tariff has internal code for payment
-        if (!data.tariff.code) {
-          toast({
-            title: "Ошибка",
-            description: "Тариф настроен некорректно (нет internal code)",
-            variant: "destructive",
-          });
-        } else {
-          setSelectedOffer({
-            offer,
-            tariff: data.tariff,
-            productId: data.product.id,
-          });
-          setPaymentOpen(true);
-        }
-      }
-      // Clear offer param from URL to prevent re-open on refresh/back
-      setSearchParams({}, { replace: true });
-    }
-  }, [searchParams, user, data, setSearchParams]);
-
   const handleSelectOffer = (offer: any) => {
-    if (!user) {
-      // Auth redirect — exactly as ProductLanding
-      const returnUrl = `${window.location.pathname}?offer=${offer.id}`;
-      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
-      return;
-    }
-
     if (!data?.tariff?.code) {
       toast({
         title: "Ошибка",

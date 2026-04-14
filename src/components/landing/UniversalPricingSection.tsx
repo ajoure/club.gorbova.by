@@ -1,10 +1,8 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
-import { useAuth } from "@/contexts/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TariffCarouselGrid } from "./TariffCarouselGrid";
 import { AlertTriangle } from "lucide-react";
@@ -19,10 +17,6 @@ interface UniversalPricingSectionProps {
   disclaimer?: string;
   isReentryPricing?: boolean;
   reentryMessage?: string;
-  /** User ID for auth redirect flow */
-  userId?: string | null;
-  /** Base path for auth redirect (defaults to current pathname) */
-  redirectBasePath?: string;
 }
 
 export function UniversalPricingSection({
@@ -33,11 +27,7 @@ export function UniversalPricingSection({
   disclaimer,
   isReentryPricing,
   reentryMessage,
-  redirectBasePath,
 }: UniversalPricingSectionProps) {
-  const navigate = useNavigate();
-  const { user } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
     offer: TariffOffer;
@@ -48,35 +38,7 @@ export function UniversalPricingSection({
   const config = product.landing_config || {};
   const priceSuffix = config.price_suffix || "BYN";
 
-  // Restore offer selection from URL after auth redirect
-  useEffect(() => {
-    const offerId = searchParams.get("offer");
-    if (offerId && user && tariffs) {
-      for (const tariff of tariffs) {
-        const offer = tariff.offers?.find(o => o.id === offerId);
-        if (offer) {
-          setSelectedOffer({ offer, tariff, productId: product.id });
-          setPaymentOpen(true);
-          setSearchParams(prev => {
-            const p = new URLSearchParams(prev);
-            p.delete("offer");
-            return p;
-          }, { replace: true });
-          break;
-        }
-      }
-    }
-  }, [searchParams, user, tariffs, product.id, setSearchParams]);
-
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
-    if (!user) {
-      const basePath = redirectBasePath || window.location.pathname;
-      const sp = new URLSearchParams(window.location.search);
-      sp.set("offer", offer.id);
-      const returnUrl = `${basePath}?${sp.toString()}`;
-      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
-      return;
-    }
     setSelectedOffer({ offer, tariff, productId: product.id });
     setPaymentOpen(true);
   };

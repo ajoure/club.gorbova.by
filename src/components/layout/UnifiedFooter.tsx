@@ -92,8 +92,8 @@ export function UnifiedFooter({
                     Преимущества
                   </a>
                   <a 
-                    href="#pricing" 
-                    onClick={(e) => handleAnchorClick(e, "#pricing")}
+                    href="#tariffs" 
+                    onClick={(e) => handleAnchorClick(e, "#tariffs")}
                     className="text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Тарифы
