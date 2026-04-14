@@ -5,58 +5,66 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * 
  * Measured DOM node: inner wrapper div inside each CarouselItem (via ref).
  * minHeight applied to: same inner wrapper div via inline style.
- * Embla clones: filtered by index < itemCount.
- * Recalculates on: initial render (delayed), resize, itemCount change.
+ * Embla clones: only indices 0..itemCount-1 are measured.
+ * Recalculates on: initial render (delayed), resize, itemCount change, ref attachment.
  */
 export function useEqualHeight(itemCount: number) {
   const refsArray = useRef<(HTMLDivElement | null)[]>([]);
   const [minHeight, setMinHeight] = useState<number | undefined>(undefined);
-
-  // Ensure array is correct length
-  if (refsArray.current.length !== itemCount) {
-    refsArray.current = Array(itemCount).fill(null);
-  }
-
-  const setRef = useCallback((index: number) => (el: HTMLDivElement | null) => {
-    refsArray.current[index] = el;
-  }, []);
+  const rafId = useRef<number>(0);
 
   const recalculate = useCallback(() => {
-    const elements = refsArray.current.filter(
-      (el): el is HTMLDivElement => el !== null && el.isConnected
-    );
-    if (elements.length === 0) return;
+    cancelAnimationFrame(rafId.current);
+    rafId.current = requestAnimationFrame(() => {
+      const elements = refsArray.current
+        .slice(0, itemCount)
+        .filter((el): el is HTMLDivElement => el !== null && el.isConnected);
+      
+      if (elements.length === 0) return;
 
-    // Clear minHeight to measure natural height
-    elements.forEach(el => { el.style.minHeight = ''; });
+      // Clear minHeight to measure natural height
+      elements.forEach(el => { el.style.minHeight = '0'; });
 
-    // Measure after layout recalc
-    void elements[0].offsetHeight; // force reflow
+      // Force reflow
+      void elements[0].offsetHeight;
 
-    let maxH = 0;
-    elements.forEach(el => {
-      const h = el.scrollHeight;
-      if (h > maxH) maxH = h;
+      let maxH = 0;
+      elements.forEach(el => {
+        const h = el.scrollHeight;
+        if (h > maxH) maxH = h;
+      });
+
+      if (maxH > 0) {
+        elements.forEach(el => { el.style.minHeight = `${maxH}px`; });
+        setMinHeight(maxH);
+      }
     });
+  }, [itemCount]);
 
-    if (maxH > 0) {
-      setMinHeight(maxH);
+  const setRef = useCallback((index: number) => (el: HTMLDivElement | null) => {
+    // Ensure array is long enough
+    while (refsArray.current.length <= index) {
+      refsArray.current.push(null);
     }
-  }, []);
+    refsArray.current[index] = el;
+    // Trigger recalculate when a ref is attached
+    if (el) {
+      recalculate();
+    }
+  }, [recalculate]);
 
   useEffect(() => {
-    const t1 = setTimeout(recalculate, 150);
-    const t2 = setTimeout(recalculate, 500);
-    const t3 = setTimeout(recalculate, 1000);
+    // Delayed recalculations for fonts/images loading
+    const t1 = setTimeout(recalculate, 300);
+    const t2 = setTimeout(recalculate, 800);
 
-    const handleResize = () => recalculate();
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', recalculate);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      clearTimeout(t3);
-      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(rafId.current);
+      window.removeEventListener('resize', recalculate);
     };
   }, [itemCount, recalculate]);
 
