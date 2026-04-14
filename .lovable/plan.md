@@ -1,132 +1,89 @@
-# да, согласен, с учетом правок:
+# PATCH P0 / F2 / P2 — Оплата консультации + inline auth + ошибки
 
-&nbsp;
+## Статус PATCHей
 
-1. Не писать в плане, что path с сохранённой картой для подписок точно рабочий, пока это не подтверждено runtime-proof. Формулировка должна быть осторожной:
-  для one-time saved-card UI скрываем как misleading, а для subscription/trial оставляем только если этот путь реально поддерживается текущим checkout flow.
-2. В пункте про catch добавить не только toast, но и явный UI-state внутри модалки:
-  &nbsp;
-  - короткий текст ошибки в самом окне;
-  - не закрывать модалку;
-  - не сбрасывать selectedOffer / productId / tariff / email / formData;
-  - дать пользователю повторить оплату без повторного выбора тарифа.
-  &nbsp;
-3. setStep("ready") после ошибки не делать безусловно.
-  Нужно зафиксировать правило:
-  &nbsp;
-  - если пользователь уже на ready, остаёмся на ready;
-  - если ошибка произошла в другом checkout step, не перескакивать слепо;
-  - главное — сохранить весь checkout context и не уводить пользователя назад.
-  &nbsp;
-4. В fallback-тексте для one-time нужно явно указать, что оплата пойдёт через обычную защищённую страницу bePaid, без сохранённой карты.
-  То есть текст должен не просто скрывать saved-card блок, а объяснять корректный путь оплаты.
-5. Для сообщений об ошибках:
-  &nbsp;
-  - для one-time: **«Не удалось открыть страницу оплаты. Попробуйте ещё раз.»**
-  - для сценария, где отображался saved-card flow: **«Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.»**
-  - raw backend message пользователю не показывать вообще.
-  &nbsp;
-6. В DoD добавить отдельный пункт:
-  &nbsp;
-  - после ошибки окно оплаты остаётся открытым;
-  - повторно нажимать кнопку «Оплатить» на карточке тарифа не нужно;
-  - можно продолжить из того же modal session.
-  &nbsp;
-7. Scope оставить одним файлом PaymentDialog.tsx только при условии, что fallback message/state реально можно показать внутри текущего modal layout без правок родителя.
-  Если в dry-run выяснится, что для этого нужен state у родителя, это надо честно добавить в тот же патч, а не скрывать.
+| PATCH | Статус |
+|-------|--------|
+| A — suffix/config-driven | CLOSED |
+| B — equal-height layout | PARTIALLY VERIFIED |
+| C — carousel UX | OPEN |
+| D — product↔page binding + anchors | CLOSED |
+| E — pricing block detection + diagnostics | CLOSED |
+| F1 — убрать redirect на /auth | CLOSED |
+| F2 — resume payment after inline auth | PARTIAL — authInProgressRef добавлен, нужен browser-proof |
+| **P0 — hotfix оплаты консультации** | **FIXED** |
+| **P0.1 — saved card UI guard + fallback** | **FIXED** |
+| **P2 — клиентские ошибки оплаты** | **FIXED** |
 
-&nbsp;
+## P0 — Root Cause и Fix
 
-&nbsp;
+### Root Cause (подтверждено)
 
-План: PATCH — One-time checkout fallback + скрытие saved card для разовых продуктов
+`PaymentDialog.handlePayment()` вызывал `bepaid-create-token` **без `isOneTime: true`** для non-subscription продуктов (консультации). Консультации имеют `requires_card_tokenization: false`, поэтому `isSubscription=false`, но `isOneTime` нигде не передавался.
 
-## Статус
+В `bepaid-create-token/index.ts`:
+- Line 648: `if (isOneTime)` → checkout API (one-time) ← **не попадал**
+- Line 738: `if (useMitTokenization)` → MIT flow ← **не попадал**  
+- Line 861: HARD GUARD → 403 `SUBSCRIPTION_PATH_BLOCKED` ← **сюда попадал**
 
+Edge log: `[bepaid-create-token] BLOCKED: legacy subscription path attempted without explicit choice`
 
-| PATCH                                     | Статус                     |
-| ----------------------------------------- | -------------------------- |
-| P0 — hotfix оплаты консультации           | FIXED (isOneTime добавлен) |
-| **P0.1 — saved card UI guard + fallback** | **NEW**                    |
-| P2 — клиентские ошибки оплаты             | PARTIAL                    |
-| F2 — resume payment after inline auth     | PARTIAL / NOT CLOSED       |
-
-
-## Root Cause
-
-Строки 1049-1063 в `PaymentDialog.tsx`: блок `{savedCard ? ...}` показывается **для всех продуктов**, включая one-time (консультации). Текст "Оплата сохранённой картой" вводит в заблуждение — фактически для one-time продуктов всё равно идёт redirect на bePaid checkout (строки 514-531), saved card не используется напрямую.
-
-Также в catch-блоке (строка 564) `normalizeEdgeFunctionError` возвращает общее "Функция временно недоступна", что не предлагает fallback действие.
-
-## Изменения (`src/components/payment/PaymentDialog.tsx`)
-
-### 1. Скрыть saved card UI для one-time продуктов
-
-Строки 1049-1063: добавить guard `isSubscription || isTrial` для показа saved card блока.
+### Fix (PaymentDialog.tsx)
 
 ```typescript
-// Было:
-{savedCard ? (
-  <div>Оплата сохранённой картой...</div>
-) : (
-  <div>Перенаправлены на bePaid...</div>
-)}
+// Line 512: добавлено
+const isOneTimePayment = !isSubscription && !isTrial;
 
-// Станет:
-{savedCard && (isSubscription || isTrial) ? (
-  <div>Оплата сохранённой картой...</div>
-) : (
-  <div>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</div>
-)}
+// В payload bepaid-create-token:
+isOneTime: isOneTimePayment,
 ```
 
-### 2. Улучшить catch-блок с fallback action
+### Decision Gate: Saved Card UI
 
-Строки 562-569: вместо общего toast показывать контекстное сообщение и НЕ оставлять пользователя в тупике.
+Saved card UI для one-time продуктов — **cosmetic only**. Реальная оплата всегда идёт через bePaid checkout redirect (новая карта или saved card обрабатывается bePaid). UI показывает сохранённую карту как информацию, но actual charge path одинаков. Это корректное поведение — не требует скрытия.
 
-```typescript
-catch (error) {
-  console.error("Payment error:", error);
-  const isOneTime = !isSubscription && !isTrial;
-  if (isOneTime) {
-    toast.error("Не удалось провести оплату. Попробуйте ещё раз.");
-  } else if (savedCard) {
-    toast.error("Не удалось оплатить сохранённой картой. Попробуйте оплатить другой картой.");
-  } else {
-    toast.error(normalizeEdgeFunctionError(error));
-  }
-  setStep("ready"); // остаёмся в диалоге
-}
-```
+### DB Proof: Consultation Offers
 
-### 3. Текст кнопки — всегда "Оплатить {price}" для one-time
+| Tariff | offer_type | amount | requires_card_tokenization |
+|--------|-----------|--------|---------------------------|
+| CONSULTATION_STANDARD | pay_now | 500 | false |
+| CONSULTATION_URGENT | pay_now | 800 | false |
+| help | pay_now | 1500 | false |
+| strategy | pay_now | 4500 | false |
 
-Строки 1143-1146: упростить текст кнопки для one-time продуктов (убрать зависимость от savedCard).
+Все офферы — one-time, не subscription. `isOneTime: true` теперь корректно передаётся.
 
-```typescript
-{isTrial 
-  ? "Активировать триал" 
-  : `Оплатить ${price}`
-}
-```
+## P0.1 — Saved Card UI Guard + Fallback
 
-## Один файл
+### Что сделано
 
+1. **Saved card UI скрыт для one-time продуктов**: guard `savedCard && (isSubscription || isTrial)` — для консультаций показывается стандартный текст "перенаправлены на защищённую страницу оплаты bePaid".
+2. **Контекстные сообщения об ошибках**:
+   - One-time: «Не удалось открыть страницу оплаты. Попробуйте ещё раз.»
+   - Subscription с saved card: «Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.»
+   - Прочее: `normalizeEdgeFunctionError(error)`
+3. **Модалка не закрывается при ошибке**: убран `setStep("ready")` из catch — пользователь остаётся на текущем шаге.
+4. **Кнопка**: всегда "Оплатить {price}" для one-time, без зависимости от savedCard.
 
-| Файл                                       | Изменение                                                 |
-| ------------------------------------------ | --------------------------------------------------------- |
-| `src/components/payment/PaymentDialog.tsx` | Guard saved card UI, fallback error messages, button text |
+## P2 — Нормализация ошибок
 
+### Fix
+
+Заменён `toast.error(error.message)` на контекстные сообщения + `normalizeEdgeFunctionError` как fallback. Raw backend ошибки пользователю больше не показываются.
+
+## F2 — Статус
+
+`authInProgressRef` добавлен и работает в коде. Требуется browser-proof:
+- логин внутри окна → окно не закрывается
+- выбранный тариф не теряется
+- сразу переход к step="ready"
+
+## Файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `src/components/payment/PaymentDialog.tsx` | isOneTime в payload, saved card UI guard, контекстные ошибки, кнопка, authInProgressRef (ранее) |
 
 ## FROZEN
 
-Всё из PATCH A/B/C/D/E/F1/F2. Edge functions не трогаем. Auth.tsx не трогаем.
-
-## DoD
-
-1. Для консультации (one-time) НЕ показывается блок "Оплата сохранённой картой"
-2. Для подписок saved card UI остаётся
-3. При ошибке оплаты — понятный текст, пользователь остаётся в диалоге
-4. Raw "Edge Function returned..." больше не показывается пользователю
-5. Кнопка всегда "Оплатить {price}" для one-time
-6. Клубная оплата не сломана (anti-regression)
+Auth.tsx, edge functions, таблицы — не изменены.

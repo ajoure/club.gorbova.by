@@ -561,9 +561,15 @@ export function PaymentDialog({
       }
     } catch (error) {
       console.error("Payment error:", error);
-      const userMessage = normalizeEdgeFunctionError(error);
-      toast.error(userMessage);
-      setStep("ready");
+      const isOneTime = !isSubscription && !isTrial;
+      if (isOneTime) {
+        toast.error("Не удалось открыть страницу оплаты. Попробуйте ещё раз.");
+      } else if (savedCard) {
+        toast.error("Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.");
+      } else {
+        toast.error(normalizeEdgeFunctionError(error));
+      }
+      // Stay on current step — don't reset checkout context
     } finally {
       setIsLoading(false);
     }
@@ -1046,7 +1052,7 @@ export function PaymentDialog({
               )}
             </div>
 
-            {savedCard ? (
+            {savedCard && (isSubscription || isTrial) ? (
               <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 space-y-1">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <CreditCard className="h-4 w-4 text-primary" />
@@ -1140,10 +1146,7 @@ export function PaymentDialog({
                 ) : (
                   <CreditCard className="mr-2 h-4 w-4" />
                 )}
-                {savedCard 
-                  ? (isTrial ? "Активировать триал" : `Оплатить ${price}`)
-                  : `Оплатить ${price}`
-                }
+                {isTrial ? "Активировать триал" : `Оплатить ${price}`}
               </Button>
             </div>
 
