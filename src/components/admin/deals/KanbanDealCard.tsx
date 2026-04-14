@@ -14,7 +14,7 @@ import type { BoardDeal } from "@/hooks/useDealsBoard";
 
 interface Props {
   deal: BoardDeal;
-  onOpen: () => void;
+  onOpenDeal: (dealId: string) => void;
   isDragging?: boolean;
   onMoveClick?: (dealId: string, anchorEl: HTMLElement) => void;
   showMoveButton?: boolean;
@@ -53,7 +53,7 @@ function isHighValue(deal: BoardDeal) {
   return Number(deal.final_price || 0) > 500;
 }
 
-export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDragging, onMoveClick, showMoveButton }: Props) {
+export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpenDeal, isDragging, onMoveClick, showMoveButton }: Props) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: deal.id,
   });
@@ -75,7 +75,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDra
       className={cn(
         "group relative rounded-xl border border-border/30 transition-all duration-150",
         "bg-card/40 backdrop-blur-md hover:bg-card/60 hover:shadow-md hover:border-border/50",
-        isDragging && "shadow-xl scale-105 opacity-80",
+        isDragging && "opacity-0 pointer-events-none",
         stale && "border-l-2 border-l-amber-400"
       )}
     >
@@ -84,7 +84,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDra
         {...attributes}
         {...listeners}
         onClick={(e) => {
-          if (!isDragging) onOpen();
+          if (!isDragging) onOpenDeal(deal.id);
         }}
         className="p-3 cursor-grab active:cursor-grabbing"
       >
@@ -142,9 +142,9 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDra
           title="Переместить"
           aria-label="Переместить в другую стадию"
           className={cn(
-            "absolute bottom-2.5 right-2.5 flex items-center justify-center",
-            "h-3.5 w-3.5 min-w-[28px] min-h-[28px]",
-            "rounded-full bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground",
+            "absolute bottom-2 right-2 flex items-center justify-center",
+            "h-3 w-3 min-w-[24px] min-h-[24px]",
+            "text-muted-foreground/50 hover:text-foreground",
             "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity",
             "touch-action-manipulation"
           )}
@@ -155,7 +155,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDra
             onMoveClick(deal.id, e.currentTarget);
           }}
         >
-          <ArrowRightLeft className="h-2.5 w-2.5" />
+          <ArrowRightLeft className="h-2 w-2" />
         </button>
       )}
     </div>
