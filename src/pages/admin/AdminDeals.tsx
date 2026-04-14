@@ -50,12 +50,17 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  List,
+  Kanban,
+  ChevronDown,
+  Plus,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
@@ -76,6 +81,8 @@ import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { usePipelines } from "@/hooks/usePipelines";
+import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
 
 const PAGE_SIZE = 100;
 
@@ -208,7 +215,6 @@ function buildDealsQuery(
 
 export default function AdminDeals() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
@@ -222,6 +228,32 @@ export default function AdminDeals() {
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+
+  // View mode: list or board
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
+  const selectedPipelineId = searchParams.get("pipeline") || null;
+
+  const setViewMode = useCallback((mode: "list" | "board") => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("view", mode);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSelectedPipelineId = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("pipeline", id);
+      else next.delete("pipeline");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // Pipelines
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn } = usePipelines();
+  const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
 
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
@@ -681,31 +713,106 @@ export default function AdminDeals() {
 
   return (
     <div className="space-y-4">
-      {/* Pill-style Tabs */}
-      <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
-          {DEAL_PRESETS.map((preset) => {
-            const isActive = activePreset === preset.id;
-            return (
-              <button
-                key={preset.id}
-                onClick={() => handleTabChange(preset.id)}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                  isActive
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <span>{preset.label}</span>
-                {preset.count !== undefined && preset.count > 0 && (
-                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
-                    {preset.count > 99 ? "99+" : preset.count}
-                  </Badge>
-                )}
-              </button>
-            );
-          })}
+      {/* View Toggle + Pipeline Selector */}
+      <div className="flex items-center gap-3 px-1 pt-1 pb-1.5 shrink-0 flex-wrap">
+        {/* View mode toggle */}
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
+          <button
+            onClick={() => setViewMode("list")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+              viewMode === "list"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            Список
+          </button>
+          <button
+            onClick={() => setViewMode("board")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+              viewMode === "board"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Kanban className="h-3.5 w-3.5" />
+            Воронка
+          </button>
         </div>
+
+        {/* Pipeline selector (visible in board mode) */}
+        {viewMode === "board" && pipelines.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                <Kanban className="h-3.5 w-3.5" />
+                <span>{pipelines.find(p => p.id === activePipelineId)?.name || "Воронка"}</span>
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {pipelines.map((p) => (
+                <DropdownMenuItem
+                  key={p.id}
+                  onClick={() => setSelectedPipelineId(p.id)}
+                  className={p.id === activePipelineId ? "bg-accent" : ""}
+                >
+                  {p.name}
+                  {p.is_default && (
+                    <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
+                      default
+                    </Badge>
+                  )}
+                </DropdownMenuItem>
+              ))}
+              {canEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={async () => {
+                      const name = prompt("Название новой воронки:");
+                      if (name?.trim()) {
+                        const p = await createPipelineFn(name.trim());
+                        setSelectedPipelineId(p.id);
+                      }
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-2" />
+                    Создать воронку
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Pill-style Tabs (only in list mode) */}
+        {viewMode === "list" && (
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {DEAL_PRESETS.map((preset) => {
+              const isActive = activePreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => handleTabChange(preset.id)}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>{preset.label}</span>
+                  {preset.count !== undefined && preset.count > 0 && (
+                    <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
+                      {preset.count > 99 ? "99+" : preset.count}
+                    </Badge>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Product Pills Filter */}
@@ -815,7 +922,18 @@ export default function AdminDeals() {
         </div>
       </div>
 
-      {/* Stats line */}
+      {/* Board View */}
+      {viewMode === "board" && activePipelineId && (
+        <DealsKanbanBoard
+          pipelineId={activePipelineId}
+          search={debouncedSearch}
+          productId={selectedProductId}
+          onOpenDeal={(id) => setSelectedDealId(id)}
+        />
+      )}
+
+      {/* List View - Stats line */}
+      {viewMode === "list" && (
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
         <span>
           Показано: <strong className="text-foreground">{Math.min(displayLimit, allDeals.length)}</strong>
@@ -824,8 +942,10 @@ export default function AdminDeals() {
           )}
         </span>
       </div>
+      )}
 
-      {/* Deals Table */}
+      {/* Deals Table (list mode only) */}
+      {viewMode === "list" && (
       <GlassCard className="p-0 overflow-hidden">
         {isLoading ? (
           <div className="p-6 space-y-4">
@@ -1045,9 +1165,10 @@ export default function AdminDeals() {
           </div>
         )}
       </GlassCard>
+      )}
 
-      {/* Show More button — reuses Contacts pattern */}
-      {(() => {
+      {/* Show More button — reuses Contacts pattern (list mode only) */}
+      {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
         const remaining = (totalCount ?? allDeals.length) - loadedCount;
         if (remaining <= 0 && allDeals.length <= displayLimit && !hasNextPage) return null;
