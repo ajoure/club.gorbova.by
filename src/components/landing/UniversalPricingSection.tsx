@@ -117,7 +117,7 @@ export function UniversalPricingSection({
 
           <TariffCarouselGrid count={tariffs.length}>
             {tariffs.map((tariff, index) => (
-              <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100}>
+              <AnimatedSection key={tariff.id} animation="fade-up" delay={index * 100} className="h-full">
                 <TariffCard
                   tariff={tariff}
                   onSelectOffer={handleSelectOffer}

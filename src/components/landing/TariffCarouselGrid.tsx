@@ -106,8 +106,9 @@ function CarouselView({
         opts={{
           align: "center",
           loop: true,
-          dragFree: true,
+          dragFree: false,
           slidesToScroll: 1,
+          duration: 20,
         }}
         className="w-full"
       >
@@ -128,14 +129,15 @@ function CarouselView({
                     : "basis-[88%] md:basis-[52%] lg:basis-[36%]",
                 )}
               >
+                {/* No scale/translateY — only opacity for active state (STOP-guard: no geometry changes) */}
                 <div
                   className={cn(
-                    "w-full flex flex-col h-full transition-all duration-300 ease-out",
+                    "w-full flex flex-col h-full transition-opacity duration-300 ease-out",
                     isActive
-                      ? "scale-100 opacity-100"
+                      ? "opacity-100"
                       : isAdjacent
-                        ? "scale-[0.97] opacity-80"
-                        : "scale-[0.95] opacity-60",
+                        ? "opacity-[0.92]"
+                        : "opacity-[0.85]",
                   )}
                 >
                   {child}
