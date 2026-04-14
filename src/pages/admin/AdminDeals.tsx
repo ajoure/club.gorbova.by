@@ -908,8 +908,8 @@ export default function AdminDeals() {
           </button>
         </div>
 
-        {/* Pipeline selector (board mode) */}
-        {viewMode === "board" && pipelines.length > 0 && (
+        {/* Pipeline selector (both modes) */}
+        {pipelines.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
@@ -1198,6 +1198,8 @@ export default function AdminDeals() {
           search={debouncedSearch}
           productId={selectedProductId}
           tariffIds={selectedTariffIds}
+          dateFrom={dateFilter.from}
+          dateTo={dateFilter.to}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}
