@@ -20,7 +20,7 @@ export function PricingSection({ content, product, tariffs }: PricingSectionProp
   const subtitle = (content.subtitle as string) || undefined;
 
   return (
-    <section className="py-12 px-6">
+    <section id="tariffs" className="py-12 px-6">
       <UniversalPricingSection
         product={product}
         tariffs={tariffs}

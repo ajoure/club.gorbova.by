@@ -124,6 +124,9 @@ function CarouselView({
 
   return (
     <div ref={carouselContainerRef} className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-8", className)}>
+      {/* Mobile gradient hints — affordance that cards are scrollable */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-6 z-10 bg-gradient-to-r from-background to-transparent md:hidden" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-6 z-10 bg-gradient-to-l from-background to-transparent md:hidden" />
       <Carousel
         setApi={setApi}
         opts={{

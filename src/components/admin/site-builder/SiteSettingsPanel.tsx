@@ -4,10 +4,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSiteDomainBindings } from "@/hooks/useSiteDomainBindings";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Globe, Home } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { normalizeDomain } from "@/services/sitePages/domainUtils";
 import { Badge } from "@/components/ui/badge";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface SiteSettingsPanelProps {
   pageId: string;
@@ -25,8 +30,69 @@ export function SiteSettingsPanel({
   pageId, title, slug, seoSettings, themeSettings,
   onTitleChange, onSlugChange, onSeoChange, onThemeChange,
 }: SiteSettingsPanelProps) {
+  const queryClient = useQueryClient();
   const { bindings, bindDomain, unbindDomain, setHome, isBinding, isSettingHome } = useSiteDomainBindings(pageId);
   const [newDomain, setNewDomain] = useState("");
+
+  // Fetch current product binding for this page
+  const { data: currentPage } = useQuery({
+    queryKey: ["site-page-product-binding", pageId],
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("site_pages") as any)
+        .select("id, product_id")
+        .eq("id", pageId)
+        .single();
+      if (error) throw error;
+      return data as { id: string; product_id: string | null };
+    },
+    enabled: !!pageId,
+  });
+
+  // Fetch products for dropdown
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const { data: products } = useQuery({
+    queryKey: ["products-for-page-binding"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return (data || []) as { id: string; name: string }[];
+    },
+    enabled: productDropdownOpen,
+  });
+
+  const bindProductMutation = useMutation({
+    mutationFn: async (newProductId: string | null) => {
+      const { error } = await (supabase.from("site_pages") as any)
+        .update({ product_id: newProductId })
+        .eq("id", pageId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site-page-product-binding", pageId] });
+      queryClient.invalidateQueries({ queryKey: ["product-site-page"] });
+      queryClient.invalidateQueries({ queryKey: ["site-pages"] });
+      toast.success("Привязка обновлена");
+    },
+    onError: (e: Error) => {
+      if (e.message?.includes("idx_site_pages_product_id_unique")) {
+        toast.error("Этот продукт уже привязан к другой странице");
+      } else {
+        toast.error(e.message);
+      }
+    },
+  });
+
+  const handleProductChange = (value: string) => {
+    if (value === "__none") {
+      bindProductMutation.mutate(null);
+    } else {
+      bindProductMutation.mutate(value);
+    }
+  };
 
   const handleAddDomain = () => {
     if (!newDomain.trim()) return;
@@ -185,6 +251,40 @@ export function SiteSettingsPanel({
               Привязать
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Product Binding */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Привязанный продукт</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label className="text-xs">Продукт</Label>
+            <Select
+              value={currentPage?.product_id || "__none"}
+              onValueChange={handleProductChange}
+              onOpenChange={setProductDropdownOpen}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Не привязан" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">Не привязан</SelectItem>
+                {(products || []).map(p => (
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {currentPage?.product_id && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">ID продукта:</span>
+              <CopyableIdChip value={currentPage.product_id.slice(0, 8) + "…"} copyValue={currentPage.product_id} />
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Страница ID: <CopyableIdChip value={pageId.slice(0, 8) + "…"} copyValue={pageId} />
+          </p>
         </CardContent>
       </Card>
     </div>
