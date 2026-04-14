@@ -407,7 +407,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -423,9 +423,17 @@ export default function AdminDeals() {
         if (error) throw error;
         const rows = (data || []).map(rpcRowToNested);
         // Client-side tariff filter for RPC results
-        const filtered = selectedTariffIds.length > 0
+        let filtered = selectedTariffIds.length > 0
           ? rows.filter((r: any) => selectedTariffIds.includes(r.tariff_id))
           : rows;
+        // Client-side pipeline filter for RPC results (RPC doesn't support pipeline param)
+        if (activePipelineId) {
+          const isDefault = activePipeline?.is_default;
+          filtered = filtered.filter((r: any) => {
+            if (isDefault) return r.pipeline_id === activePipelineId || !r.pipeline_id;
+            return r.pipeline_id === activePipelineId;
+          });
+        }
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
@@ -433,7 +441,7 @@ export default function AdminDeals() {
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
