@@ -64,6 +64,7 @@ import {
   Plus,
   SlidersHorizontal,
   X,
+  Pencil,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -881,20 +882,48 @@ export default function AdminDeals() {
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuContent align="start" className="w-64">
               {pipelines.map((p) => (
-                <DropdownMenuItem
-                  key={p.id}
-                  onClick={() => setSelectedPipelineId(p.id)}
-                  className={p.id === activePipelineId ? "bg-accent" : ""}
-                >
-                  {p.name}
-                  {p.is_default && (
-                    <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
-                      default
-                    </Badge>
+                <div key={p.id} className="flex items-center group/pipe">
+                  <DropdownMenuItem
+                    onClick={() => setSelectedPipelineId(p.id)}
+                    className={cn("flex-1", p.id === activePipelineId && "bg-accent")}
+                  >
+                    {p.name}
+                    {p.is_default && (
+                      <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
+                        default
+                      </Badge>
+                    )}
+                  </DropdownMenuItem>
+                  {canEdit && (
+                    <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover/pipe:opacity-100 transition-opacity">
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                        title="Переименовать"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamePipelineTarget({ id: p.id, name: p.name });
+                          setRenamePipelineValue(p.name);
+                        }}
+                      >
+                        <Pencil className="h-2.5 w-2.5" />
+                      </button>
+                      {!p.is_default && (
+                        <button
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Удалить"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletePipelineTarget({ id: p.id, name: p.name });
+                          }}
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
-                </DropdownMenuItem>
+                </div>
               ))}
               {canEdit && (
                 <>
