@@ -1,4 +1,4 @@
-# PATCH F2 — Resume payment after inline auth — CLOSED
+# PATCH P0 / F2 / P2 — Оплата консультации + inline auth + ошибки
 
 ## Статус PATCHей
 
@@ -10,52 +10,67 @@
 | D — product↔page binding + anchors | CLOSED |
 | E — pricing block detection + diagnostics | CLOSED |
 | F1 — убрать redirect на /auth | CLOSED |
-| F2 — resume payment after inline auth | **CLOSED** |
+| F2 — resume payment after inline auth | PARTIAL — authInProgressRef добавлен, нужен browser-proof |
+| **P0 — hotfix оплаты консультации** | **FIXED** |
+| **P2 — клиентские ошибки оплаты** | **FIXED** |
 
-## Что сделано
+## P0 — Root Cause и Fix
 
-### F2.1 Фикс useEffect race condition
+### Root Cause (подтверждено)
 
-- Добавлен `authInProgressRef = useRef(false)` — предотвращает сброс состояния диалога при обновлении `user`/`session` после inline auth
-- `useEffect`: если `authInProgressRef.current === true` и `user && session` — пропускает полный reset, только обновляет `existingUserId` и загружает saved card
-- При закрытии диалога (`open=false`) флаг всегда сбрасывается
+`PaymentDialog.handlePayment()` вызывал `bepaid-create-token` **без `isOneTime: true`** для non-subscription продуктов (консультации). Консультации имеют `requires_card_tokenization: false`, поэтому `isSubscription=false`, но `isOneTime` нигде не передавался.
 
-### F2.2 handleLoginSubmit — authInProgressRef
+В `bepaid-create-token/index.ts`:
+- Line 648: `if (isOneTime)` → checkout API (one-time) ← **не попадал**
+- Line 738: `if (useMitTokenization)` → MIT flow ← **не попадал**  
+- Line 861: HARD GUARD → 403 `SUBSCRIPTION_PATH_BLOCKED` ← **сюда попадал**
 
-- Перед `signInWithPassword` ставится `authInProgressRef.current = true`
-- При ошибке логина — флаг сбрасывается
-- При catch — флаг сбрасывается
-- Успех → `setStep("ready")` уже был, теперь useEffect не перебивает его
+Edge log: `[bepaid-create-token] BLOCKED: legacy subscription path attempted without explicit choice`
 
-### F2.3 loadSavedCard — вынесен в отдельную функцию
+### Fix (PaymentDialog.tsx)
 
-- `async function loadSavedCard(userId)` — безопасная, не блокирует checkout
-- Ошибки загрузки карты логируются, но не ломают оплату
-- Переиспользуется в useEffect (initial open) и после inline login
+```typescript
+// Line 512: добавлено
+const isOneTimePayment = !isSubscription && !isTrial;
 
-### F2.4 Consent links — унификация с Auth.tsx
+// В payload bepaid-create-token:
+isOneTime: isOneTimePayment,
+```
 
-- Две ссылки: `/privacy` (Политика конфиденциальности) + `/consent` (согласие на обработку ПД)
-- Формат идентичен Auth.tsx
+### Decision Gate: Saved Card UI
 
-### F2.5 UX-блок "Зачем эти данные"
+Saved card UI для one-time продуктов — **cosmetic only**. Реальная оплата всегда идёт через bePaid checkout redirect (новая карта или saved card обрабатывается bePaid). UI показывает сохранённую карту как информацию, но actual charge path одинаков. Это корректное поведение — не требует скрытия.
 
-- Заменён текст "Заполните данные — и мы создадим личный кабинет" на структурированный блок:
-  - Email — для личного кабинета, доступов и уведомлений по покупке
-  - Телефон — для связи по заказу и восстановления доступа
-  - Имя и фамилия — для оформления покупки и документов
+### DB Proof: Consultation Offers
 
-## Canonical owner
+| Tariff | offer_type | amount | requires_card_tokenization |
+|--------|-----------|--------|---------------------------|
+| CONSULTATION_STANDARD | pay_now | 500 | false |
+| CONSULTATION_URGENT | pay_now | 800 | false |
+| help | pay_now | 1500 | false |
+| strategy | pay_now | 4500 | false |
 
-- `PaymentDialog` = canonical guest checkout flow
-- `authInProgressRef` = guard против race condition при inline auth
+Все офферы — one-time, не subscription. `isOneTime: true` теперь корректно передаётся.
+
+## P2 — Нормализация ошибок
+
+### Fix
+
+Заменён `toast.error(error.message)` на `toast.error(normalizeEdgeFunctionError(error))` в `handlePayment` catch block. Используется существующий `src/utils/normalizeEdgeFunctionError.ts`.
+
+## F2 — Статус
+
+`authInProgressRef` добавлен и работает в коде. Требуется browser-proof:
+- логин внутри окна → окно не закрывается
+- выбранный тариф не теряется
+- сразу переход к step="ready"
 
 ## Файлы
 
 | Файл | Изменение |
 |------|-----------|
-| `src/components/payment/PaymentDialog.tsx` | authInProgressRef, loadSavedCard, consent links, UX text |
+| `src/components/payment/PaymentDialog.tsx` | isOneTime в payload, normalizeEdgeFunctionError, authInProgressRef (ранее) |
 
 ## FROZEN
 
-Всё из PATCH A/B/C/D/E/F1. Auth.tsx не тронут.
+Auth.tsx, edge functions, таблицы — не изменены.
