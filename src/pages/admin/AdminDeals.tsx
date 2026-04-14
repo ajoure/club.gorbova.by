@@ -215,7 +215,6 @@ function buildDealsQuery(
 
 export default function AdminDeals() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
