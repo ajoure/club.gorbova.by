@@ -65,7 +65,7 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         q = q.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%`);
       }
 
-      q = q.order("updated_at", { ascending: false });
+      q = q.order("updated_at", { ascending: false }).order("id", { ascending: false });
 
       // Fetch all pages (Supabase returns max 1000 per request)
       const PAGE = 1000;
