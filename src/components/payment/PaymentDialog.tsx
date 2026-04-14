@@ -295,12 +295,17 @@ export function PaymentDialog({
     setIsLoading(true);
 
     try {
+      // Set flag BEFORE auth to prevent useEffect from resetting dialog state
+      authInProgressRef.current = true;
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
       });
 
       if (error) {
+        // Auth failed — reset flag so useEffect works normally
+        authInProgressRef.current = false;
         if (error.message.includes("Invalid login credentials")) {
           setLoginError("Неверный пароль");
         } else {
@@ -353,6 +358,7 @@ export function PaymentDialog({
       }
     } catch (error) {
       console.error("Login error:", error);
+      authInProgressRef.current = false;
       setLoginError("Произошла ошибка при входе");
     } finally {
       setIsLoading(false);
