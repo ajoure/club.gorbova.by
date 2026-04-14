@@ -887,7 +887,7 @@ export default function AdminDeals() {
                 <div key={p.id} className="flex items-center group/pipe">
                   <DropdownMenuItem
                     onClick={() => setSelectedPipelineId(p.id)}
-                    className={cn("flex-1", p.id === activePipelineId && "bg-accent")}
+                    className={`flex-1 ${p.id === activePipelineId ? "bg-accent" : ""}`}
                   >
                     {p.name}
                     {p.is_default && (
