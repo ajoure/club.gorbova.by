@@ -1210,7 +1210,61 @@ export default function AdminDeals() {
         </DialogContent>
       </Dialog>
 
-      {/* Deals Table (list mode only) */}
+      {/* Rename Pipeline Dialog */}
+      <Dialog open={!!renamePipelineTarget} onOpenChange={(open) => !open && setRenamePipelineTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Переименовать воронку</DialogTitle>
+            <DialogDescription>
+              Введите новое название для воронки «{renamePipelineTarget?.name}»
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Input
+              value={renamePipelineValue}
+              onChange={(e) => setRenamePipelineValue(e.target.value)}
+              placeholder="Новое название..."
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRenamePipeline();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setRenamePipelineTarget(null); setRenamePipelineValue(""); }}>
+              Отмена
+            </Button>
+            <Button onClick={handleRenamePipeline} disabled={!renamePipelineValue.trim() || isRenamingPipeline}>
+              {isRenamingPipeline && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Сохранить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Pipeline Dialog */}
+      <AlertDialog open={!!deletePipelineTarget} onOpenChange={(open) => !open && setDeletePipelineTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить воронку «{deletePipelineTarget?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Воронка будет удалена вместе со всеми стадиями. Если в воронке есть сделки или привязки к продуктам, удаление будет заблокировано.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingPipeline}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeletePipeline}
+              disabled={isDeletingPipeline}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingPipeline && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {viewMode === "list" && (
       <GlassCard className="p-0 overflow-hidden">
         {isLoading ? (
