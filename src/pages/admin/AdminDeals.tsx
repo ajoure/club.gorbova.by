@@ -64,6 +64,7 @@ import {
   Plus,
   SlidersHorizontal,
   X,
+  Pencil,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -293,7 +294,7 @@ export default function AdminDeals() {
   }, [setSearchParams]);
 
   // Pipelines
-  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn } = usePipelines();
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
 
   // Contact sheet state
@@ -774,6 +775,15 @@ export default function AdminDeals() {
   const [newPipelineName, setNewPipelineName] = useState("");
   const [isCreatingPipeline, setIsCreatingPipeline] = useState(false);
 
+  // Rename pipeline state
+  const [renamePipelineTarget, setRenamePipelineTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renamePipelineValue, setRenamePipelineValue] = useState("");
+  const [isRenamingPipeline, setIsRenamingPipeline] = useState(false);
+
+  // Delete pipeline state
+  const [deletePipelineTarget, setDeletePipelineTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingPipeline, setIsDeletingPipeline] = useState(false);
+
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
     setIsCreatingPipeline(true);
@@ -786,6 +796,37 @@ export default function AdminDeals() {
       // error handled by mutation
     } finally {
       setIsCreatingPipeline(false);
+    }
+  };
+
+  const handleRenamePipeline = async () => {
+    if (!renamePipelineTarget || !renamePipelineValue.trim()) return;
+    setIsRenamingPipeline(true);
+    try {
+      await renamePipelineFn({ id: renamePipelineTarget.id, name: renamePipelineValue.trim() });
+      setRenamePipelineTarget(null);
+      setRenamePipelineValue("");
+    } catch {
+      // error handled by mutation
+    } finally {
+      setIsRenamingPipeline(false);
+    }
+  };
+
+  const handleDeletePipeline = async () => {
+    if (!deletePipelineTarget) return;
+    setIsDeletingPipeline(true);
+    try {
+      await deletePipelineFn(deletePipelineTarget.id);
+      // If we deleted the active pipeline, switch to default
+      if (selectedPipelineId === deletePipelineTarget.id) {
+        setSelectedPipelineId(null);
+      }
+      setDeletePipelineTarget(null);
+    } catch {
+      // error handled by mutation (includes guard for non-empty pipelines)
+    } finally {
+      setIsDeletingPipeline(false);
     }
   };
 
@@ -841,20 +882,48 @@ export default function AdminDeals() {
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuContent align="start" className="w-64">
               {pipelines.map((p) => (
-                <DropdownMenuItem
-                  key={p.id}
-                  onClick={() => setSelectedPipelineId(p.id)}
-                  className={p.id === activePipelineId ? "bg-accent" : ""}
-                >
-                  {p.name}
-                  {p.is_default && (
-                    <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
-                      default
-                    </Badge>
+                <div key={p.id} className="flex items-center group/pipe">
+                  <DropdownMenuItem
+                    onClick={() => setSelectedPipelineId(p.id)}
+                    className={`flex-1 ${p.id === activePipelineId ? "bg-accent" : ""}`}
+                  >
+                    {p.name}
+                    {p.is_default && (
+                      <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
+                        default
+                      </Badge>
+                    )}
+                  </DropdownMenuItem>
+                  {canEdit && (
+                    <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover/pipe:opacity-100 transition-opacity">
+                      <button
+                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                        title="Переименовать"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenamePipelineTarget({ id: p.id, name: p.name });
+                          setRenamePipelineValue(p.name);
+                        }}
+                      >
+                        <Pencil className="h-2.5 w-2.5" />
+                      </button>
+                      {!p.is_default && (
+                        <button
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                          title="Удалить"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletePipelineTarget({ id: p.id, name: p.name });
+                          }}
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
-                </DropdownMenuItem>
+                </div>
               ))}
               {canEdit && (
                 <>
@@ -1141,7 +1210,61 @@ export default function AdminDeals() {
         </DialogContent>
       </Dialog>
 
-      {/* Deals Table (list mode only) */}
+      {/* Rename Pipeline Dialog */}
+      <Dialog open={!!renamePipelineTarget} onOpenChange={(open) => !open && setRenamePipelineTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Переименовать воронку</DialogTitle>
+            <DialogDescription>
+              Введите новое название для воронки «{renamePipelineTarget?.name}»
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Input
+              value={renamePipelineValue}
+              onChange={(e) => setRenamePipelineValue(e.target.value)}
+              placeholder="Новое название..."
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRenamePipeline();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setRenamePipelineTarget(null); setRenamePipelineValue(""); }}>
+              Отмена
+            </Button>
+            <Button onClick={handleRenamePipeline} disabled={!renamePipelineValue.trim() || isRenamingPipeline}>
+              {isRenamingPipeline && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Сохранить
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Pipeline Dialog */}
+      <AlertDialog open={!!deletePipelineTarget} onOpenChange={(open) => !open && setDeletePipelineTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить воронку «{deletePipelineTarget?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Воронка будет удалена вместе со всеми стадиями. Если в воронке есть сделки или привязки к продуктам, удаление будет заблокировано.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingPipeline}>Отмена</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeletePipeline}
+              disabled={isDeletingPipeline}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeletingPipeline && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Удалить
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {viewMode === "list" && (
       <GlassCard className="p-0 overflow-hidden">
         {isLoading ? (
