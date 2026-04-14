@@ -25,17 +25,18 @@ interface Props {
   isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
+  tariffIds?: string[];
   onOpenDeal: (dealId: string) => void;
 }
 
-export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, productId, onOpenDeal }: Props) {
+export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, onOpenDeal }: Props) {
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
   const { stages, isLoading: stagesLoading, createStage, renameStage, deleteStage } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
-    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId });
+    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds });
 
   const [activeDeal, setActiveDeal] = useState<BoardDeal | null>(null);
   const [showNewStage, setShowNewStage] = useState(false);
@@ -76,20 +77,35 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
     setShowNewStage(false);
   };
 
-  // Summary totals
+  // Summary totals — includes __unassigned
   const summaryTotals = useMemo(() => {
-    let totalActive = 0;
+    const unassigned = grouped.__unassigned || [];
+    const unassignedTotals = getStageTotals(unassigned);
+
+    let assignedCount = 0;
+    let totalSum = unassignedTotals.sum;
     let wonCount = 0;
     let wonSum = 0;
     let lostCount = 0;
+
     for (const s of stages) {
       const stageDeals = grouped[s.id] || [];
       const totals = getStageTotals(stageDeals);
-      if (s.stage_type === "open") totalActive += totals.sum;
-      if (s.stage_type === "closed_won") { wonCount = totals.count; wonSum = totals.sum; }
-      if (s.stage_type === "closed_lost") lostCount = totals.count;
+      totalSum += totals.sum;
+      if (s.stage_type === "open") assignedCount += totals.count;
+      if (s.stage_type === "closed_won") { wonCount = totals.count; wonSum = totals.sum; assignedCount += totals.count; }
+      if (s.stage_type === "closed_lost") { lostCount = totals.count; assignedCount += totals.count; }
     }
-    return { totalActive, wonCount, wonSum, lostCount, totalDeals: deals.length };
+
+    return {
+      totalDeals: deals.length,
+      totalSum,
+      unassignedCount: unassignedTotals.count,
+      assignedCount,
+      wonCount,
+      wonSum,
+      lostCount,
+    };
   }, [stages, grouped, deals, getStageTotals]);
 
   if (stagesLoading || dealsLoading) {
@@ -133,6 +149,7 @@ export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, produc
               } : undefined}
               availableStages={stages}
               canEdit={canEdit}
+              pipelineId={pipelineId}
             />
           )}
 

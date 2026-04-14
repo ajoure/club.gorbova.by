@@ -127,7 +127,6 @@ export function KanbanColumnHeader({
                       <DropdownMenuItem
                         onClick={() => {
                           if (!hasDeals) {
-                            // If no deals, just pick any target and delete
                             const target = availableStages.find(s => s.stage_type === 'open' && s.is_default) || availableStages[0];
                             if (target) onDelete(target.id);
                           } else {
@@ -157,7 +156,7 @@ export function KanbanColumnHeader({
         </div>
       </div>
 
-      {/* Remap delete dialog */}
+      {/* Remap delete dialog — styled */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
@@ -166,17 +165,27 @@ export function KanbanColumnHeader({
           <p className="text-sm text-muted-foreground">
             В этой стадии {count} сделок. Выберите стадию, в которую перенести сделки перед удалением:
           </p>
-          <select
-            value={remapTargetId}
-            onChange={(e) => setRemapTargetId(e.target.value)}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-          >
+          <div className="space-y-2">
             {availableStages.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+              <button
+                key={s.id}
+                onClick={() => setRemapTargetId(s.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-sm text-left transition-all ${
+                  remapTargetId === s.id
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border/40 bg-card/30 text-muted-foreground hover:bg-card/60 hover:border-border"
+                }`}
+              >
+                <div
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: s.color }}
+                />
+                <span className="font-medium">{s.name}</span>
+                {s.stage_type === "closed_won" && <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">Успех</Badge>}
+                {s.stage_type === "closed_lost" && <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">Отказ</Badge>}
+              </button>
             ))}
-          </select>
+          </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowDeleteDialog(false)}>
               Отмена
