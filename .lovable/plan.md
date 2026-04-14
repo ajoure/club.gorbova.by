@@ -2,435 +2,406 @@
 
 &nbsp;
 
-1. Главная правка: **не оставляй два owner-а расчёта suffix**.
-  Сейчас у тебя TariffCard.tsx и tariffCardViewModel.ts оба считают suffix. Это риск расхождения.
-  Нужно сделать **один shared resolver**:
+1. **PATCH B нужно сформулировать как один owner-layout для preview и public.**
+  Явно запиши: проблема не только в scale, а в **разной DOM-цепочке**.
+  Обязательное требование: TariffCarouselGrid должен рендерить одинаковую layout-цепочку в обоих режимах. AnimatedSection в public — structural mismatch, его нужно либо довести до полного h-full flex-совместимого состояния, либо убрать из цепочки карточки, если он продолжает ломать equal-height.
+2. **useEqualHeight не объявлять сразу основным решением.**
+  Сначала обязателен dry-run:
   &nbsp;
-  - например src/lib/resolveTariffDisplayConfig.ts
-  - он считает price_suffix, old_price, badge, cta_text
-  - public runtime и admin preview используют **одну и ту же функцию**
+  - убрать scale;
+  - выровнять opacity;
+  - добавить h-full на public wrapper;
+  - проверить consultation/preview/public.
+    Только если после этого карточки реально остаются разной высоты — подключать useEqualHeight как fallback.
   &nbsp;
-2. В план обязательно добавь, что **public EF должен отдавать meta из tariffs**, иначе card_config на публичном runtime по-прежнему не существует.
-  Это сейчас не просто улучшение, а **обязательное условие**, иначе баг с suffix полностью не закрывается.
-3. Зафиксируй окончательный приоритет так:
+3. **Если будет useEqualHeight, нужен точный технический контракт.**
+  Добавь в план:
   &nbsp;
-  - tariff.meta.card_config.price_suffix
-  - tariff.period_label
-  - product.landing_config.price_suffix
-  - "BYN"
-    И отдельно укажи:
-    **никакой логики по offer_type, slug, code, названию продукта или тарифа для suffix не допускается.**
+  - какой DOM-узел измеряется;
+  - на какой DOM-узел ставится minHeight;
+  - как фильтруются Embla clones при loop;
+  - когда идёт пересчёт: initial render, resize, breakpoint change, data change, font load.
+    Без этого подрядчик снова сделает “плавающее” решение.
   &nbsp;
-4. Добавь отдельный discovery/proof по полям, которые должны быть **строго config-driven**:
+4. **STOP-guards по active card должны быть жёстче.**
+  Запрещено любое геометрическое отличие активной карточки:
   &nbsp;
-  - price_suffix
-  - price_display
-  - old_price
-  - badge_text
-  - cta_text
-  - period_label
-  - offer_type
-  - button_label
-    Нужен список: **откуда каждое поле приходит в preview / public / embed**.
+  - scale
+  - translateY
+  - иной padding
+  - иной font-size
+  - иной border-width
+  - иной min/max-height
+  - любые vertical offsets
+    Допустимы только мягкие визуальные отличия без изменения геометрии: opacity, ring, shadow.
   &nbsp;
-5. По консультации у тебя важное открытие: один тариф pay_now уже хранится с period_label = "BYN/мес".
-  Это не только runtime bug, но и **data/config inconsistency**.
-  Поэтому план надо разделить на:
+5. **Добавь обязательную ревизию внутренних зон TariffCard.**
+  Недостаточно написать “там всё ок”.
+  Подрядчик должен отдельно проверить:
   &nbsp;
-  - **PATCH A** — код, чтобы public начал уважать tariff-level config
-  - **PATCH B** — equal-height + carousel UX
-  - **PATCH C** — **one-off config correction** для уже битых тарифов, которые сейчас сохранены неверно
-    И отдельно: future validation в admin UI — backlog, не в этом патче.
+  - title zone
+  - price zone
+  - description zone
+  - features zone
+  - CTA zone
+    И подтвердить, что ни одна зона не даёт скрытого расхождения по высоте.
   &nbsp;
-6. Добавь обязательный **config-audit report по всем активным тарифам**:
-  таблица:
+6. **Нужен отдельный decision по line-clamp.**
+  Сейчас в плане выбран вариант “не использовать”, но это надо оформить как решение с проверкой.
+  Добавь:
   &nbsp;
-  - product
-  - tariff
-  - offer_type
-  - card_config.price_suffix
-  - period_label
-  - landing_config.price_suffix
-  - итоговый rendered suffix
-  - verdict: OK / CONFLICT
-    Без этого нельзя утверждать, что решение не локально под консультацию.
+  - line-clamp по умолчанию не используется;
+  - если visual proof покажет, что отдельные title/description ломают карточку, допускается точечный clamp как follow-up, но не молча в этом патче.
   &nbsp;
-7. По EF fallback "BYN" — зафиксируй, что это **только fallback при полном отсутствии настроек**.
-  Нужен отдельный proof в плане:
+7. **duration не фиксируй заранее.**
+  Правильно, что ты написал tuning-pass.
+  Но укажи финально: подрядчик обязан протестировать минимум 2–3 близких значения и зафиксировать итоговое только после visual proof. Не просто поставить 20.
+8. **Нужен отдельный acceptance-блок по click-vs-drag.**
+  Не просто упоминание, а обязательный DoD:
   &nbsp;
-  - если card_config.price_suffix задан, fallback не участвует
-  - если period_label задан, fallback не участвует
-  - если задан product-level suffix, fallback не участвует
+  - CTA кликается стабильно;
+  - drag не вызывает ложный click;
+  - стрелки быстро работают подряд;
+  - dots корректны после drag и arrows;
+  - mobile swipe не ломает CTA.
   &nbsp;
-8. По карусели: не ограничивайся loop: true и dragFree: true.
-  Добавь обязательную проверку:
+9. **Прямо зафиксируй, что сейчас сломаны и preview, и public, и чинятся они одним патчем.**
+  Это уже у тебя есть по смыслу, но добавь как явное требование в scope и DoD:
+  preview/public parity по layout обязательна в этом PATCH B/C, не отдельным follow-up.
+10. **Добавь negative/regression proof по режимам 4 / 3 / 1 карточка.**
+  Сейчас это есть, но нужно жёстче:
   &nbsp;
-  - desktop mouse drag
-  - trackpad horizontal scroll
-  - mobile swipe
-  - click по CTA внутри карточки
-  - keyboard arrows
-  - отсутствие визуального дёргания при loop
-    И зафиксируй fallback: если dragFree ухудшает UX, оставить обычный drag, но **loop оставить обязательно**.
+  - consultation (4 карточки) — основной carousel-case;
+  - 3 карточки — grid regression;
+  - 1 карточка — single-card regression.
+    Без этих трёх proof-case патч не считается закрытым.
   &nbsp;
-9. По equal-height: добавь в DoD визуальные кейсы:
+11. **PATCH A зафиксируй как frozen ещё жёстче.**
+  Напиши прямо:
   &nbsp;
-  - badge / no badge
-  - long title
-  - long description
-  - old price / no old price
-  - разная длина CTA
-    И требуй **before/after screenshots**, а не только проверку классов.
+  - запрещено менять suffix resolver;
+  - запрещено менять EF response shape;
+  - запрещено менять config-driven pricing logic;
+  - запрещено ломать preview/public parity по suffix.
+    Любые такие изменения только при новом отдельном баге с доказательством.
   &nbsp;
-10. Обязательный smoke-test:
-  создать **новый тестовый продукт с нуля** и доказать:
+12. **Wheel/trackpad plugin — только отдельный enhancement, не часть обязательного deliverable.**
+  В текущем PATCH базовый UX должен стать хорошим без него.
+  Если после этого останется явный UX-gap — вынести в follow-up PATCH, не смешивать сейчас.
+13. **Нужен итоговый формат плана ровно в 3 блоках:**
   &nbsp;
-  - preview читает настройки корректно
-  - public читает те же настройки
-  - embed читает те же настройки
-  - suffix/цены/CTA меняются без ручной правки кода
-    Это должно быть частью DoD, а не пожеланием.
-  &nbsp;
-11. primary_domain для консультации вынеси отдельно как **config/data fix**, но не смешивай с основным pricing patch.
-  Иначе подрядчик может сослаться на домен и не закрыть главный баг с tariff config.
-12. В итоговый отчёт обязательно включить:
-  &nbsp;
-  - changed files list
-  - discovery-table по всем активным тарифам
-  - before/after screenshots
-  - proof одинакового результата в preview / public / embed
-  - список конфликтных тарифов в БД, которые требуют ручной коррекции настроек
+  - **A — frozen suffix/config-driven rendering**
+  - **B — equal-height layout fix**
+  - **C — carousel interaction UX**
+    И явно написать, что **закрыт только A**, а **B и C остаются открытыми до visual proof**.
   &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Текст для подрядчика:
+Копируемый блок для Lovable:
 
 ```
 Дополни план правками:
 
-1. Не оставляй два owner-а расчёта suffix. Сделай один shared resolver для display-config тарифной карточки и используй его и в public runtime, и в admin preview.
+1. Зафиксируй root cause жёстче: проблема не только в `scale`, а в structural mismatch между preview и public. `AnimatedSection` в public — обязательная причина, которую нужно устранить, чтобы DOM-цепочка layout была одинаковой.
 
-2. Зафиксируй как обязательное изменение: все public EF должны отдавать `tariffs.meta`, иначе `card_config` на публичном runtime недоступен и баг не закрывается.
+2. `useEqualHeight` не считать базовым решением по умолчанию. Сначала обязательный dry-run:
+- убрать `scale`
+- выровнять opacity
+- добавить `h-full` в public wrapper
+- проверить consultation/preview/public
+Только если после этого equal-height не достигнут чистым CSS/flex-stretch — подключать `useEqualHeight` как fallback.
 
-3. Окончательный приоритет suffix:
-`tariff.meta.card_config.price_suffix` → `tariff.period_label` → `product.landing_config.price_suffix` → `"BYN"`.
-Запретить любую логику по product code / slug / name / offer_type для suffix.
+3. Если `useEqualHeight` всё же нужен, пропиши технический контракт:
+- какой DOM-узел измеряется
+- на какой узел ставится `minHeight`
+- как исключаются Embla clones при `loop`
+- когда идёт пересчёт: initial render, resize, breakpoint change, data change, font load
 
-4. Дай карту источников данных для preview / public / embed:
-откуда приходят `card_config`, `period_label`, `landing_config`, `offer_type`, `button_label`.
+4. Добавь жёсткий STOP-guard: active card не может отличаться геометрией.
+Запрещено:
+- scale
+- translateY
+- другой padding
+- другой font-size
+- другой border-width
+- другой min/max-height
+- любые vertical offsets
 
-5. Раздели работу на:
-- PATCH A — public runtime уважает tariff-level config
-- PATCH B — equal-height + carousel UX
-- PATCH C — one-off correction конфликтных тарифных настроек в БД
-Отдельно зафиксируй backlog на admin validation `offer_type ↔ period_label`.
+5. Добавь обязательную ревизию внутренних зон `TariffCard`:
+- title
+- price
+- description
+- features
+- CTA
+Нужно подтвердить, что ни одна зона не создаёт скрытое различие высот.
 
-6. Добавь config-audit по всем активным тарифам:
-product / tariff / offer_type / card_config.price_suffix / period_label / landing_config.price_suffix / rendered suffix / verdict.
+6. Стратегию line-clamp зафиксируй явно:
+- по умолчанию line-clamp не используется;
+- если visual proof покажет, что конкретный title/description ломает layout, это отдельное точечное решение или follow-up, а не молчаливое изменение.
 
-7. Для EF fallback `"BYN"` дай negative-proof, что fallback не перебивает реально заданные поля.
+7. `duration` не фиксировать заранее. Добавь tuning-pass:
+- проверить минимум 2–3 близких значения;
+- выбрать финальное по фактическому UX;
+- зафиксировать итог только после visual proof.
 
-8. По карусели проверь:
-mouse drag, trackpad, mobile swipe, CTA click, keyboard, loop without jitter.
-Если `dragFree` ухудшает UX — откати только его, но не loop.
+8. Добавь отдельный DoD-блок click-vs-drag:
+- CTA кликается стабильно
+- drag не вызывает ложный click
+- стрелки быстро работают подряд
+- dots корректны после drag и after arrows
+- mobile swipe не ломает CTA
 
-9. Equal-height проверить на 5 визуальных кейсах:
-badge/no badge, long title, long description, old price/no old price, different CTA length.
-Нужны before/after screenshots.
+9. Явно зафиксируй: сейчас сломаны и preview, и public. Они чинятся одним PATCH B/C, не отдельными follow-up.
 
-10. Обязательный smoke-test:
-создать новый тестовый продукт с нуля и доказать, что preview/public/embed одинаково читают config без ручных правок кода.
+10. Обязательные proof-cases:
+- consultation (4 карточки) — основной carousel-case
+- 3 карточки — regression для grid
+- 1 карточка — regression для single-card layout
 
-11. `primary_domain` для consultation вынеси отдельным config/data fix и не подменяй им основной pricing patch.
+11. PATCH A считать frozen:
+- не трогать suffix resolver
+- не трогать EF response shape
+- не трогать config-driven pricing logic
+- не ломать preview/public parity по suffix
+Любые такие правки только при новом отдельном баге с доказательством.
 
-12. В финальный отчёт включи:
-- changed files list
-- discovery-table по всем активным тарифам
-- before/after screenshots
-- proof одинакового результата в preview/public/embed
-- список конфликтных тарифов, требующих ручной коррекции в БД/админке
+12. Wheel/trackpad plugin не считать обязательным deliverable текущего PATCH.
+Базовый UX должен стать хорошим без него.
+Если останется явный UX-gap — вынести wheel/trackpad в отдельный enhancement PATCH.
 
-Нужен обновлённый consolidated plan без дублирующей логики расчёта suffix и без локальных хаков под consultation.
+13. Верни обновлённый consolidated plan в формате:
+A) frozen suffix/config-driven rendering
+B) equal-height layout fix
+C) carousel interaction UX
+И явно укажи, что сейчас закрыт только A, а B и C остаются открытыми до visual proof.
 
-План: Config-driven тарифные карточки + карусель
+План: Equal-height layout + Carousel UX (PATCH B + C)
 ```
 
-## Критическое открытие: `card_config` НЕ доступен на public runtime
-
-**Root cause бага с "BYN/мес":**
-
-Все три публичные EF (`public-product`, `public-product-by-slug`, `public-tariff-by-public-id`) НЕ включают `meta` в SELECT из таблицы `tariffs`. Значит `tariffs.meta.card_config` никогда не попадает на клиент в публичном runtime.
-
-В `TariffCard.tsx` строка 103:
-
-```typescript
-const resolvedSuffix = priceSuffix !== "BYN" ? priceSuffix : (cc?.price_suffix || "BYN");
-```
-
-`cc` (card_config) всегда `undefined` на public pages → единственный источник suffix — `priceSuffix` prop из `UniversalPricingSection`, который берёт `product.landing_config.price_suffix` = `"BYN/мес"` для всех продуктов.
-
-В admin preview `buildTariffCardViewModel` получает tariff с `meta` напрямую из БД → `cc?.price_suffix` работает → показывает правильно.
-
-**Это объясняет расхождение preview vs public.**
-
----
-
-## Карта источников данных
-
-```text
-┌─────────────────────┬──────────────────────────────────┬───────────────────────┐
-│ Путь                │ SoT продукта                     │ SoT тарифа            │
-├─────────────────────┼──────────────────────────────────┼───────────────────────┤
-│ Public runtime      │ EF public-product →              │ EF → tariffs          │
-│ (Consultation,      │ products_v2 (landing_config)      │ (NO meta, NO         │
-│  LandingPricing,    │                                  │  card_config!)         │
-│  BusinessTraining)  │                                  │ + tariff_offers        │
-│                     │                                  │ + tariff_features      │
-├─────────────────────┼──────────────────────────────────┼───────────────────────┤
-│ Admin preview       │ products_v2 direct DB read        │ tariffs direct DB     │
-│ (AdminProductDetail │ (ALL columns incl. meta)          │ read (ALL columns     │
-│  V2.tsx)            │                                  │ incl. meta.card_config)│
-├─────────────────────┼──────────────────────────────────┼───────────────────────┤
-│ Embed/site-builder  │ EF public-product via             │ Same as public        │
-│ (PricingSection,    │ useSitePricingData (product_id)   │ runtime               │
-│  useSitePricingData)│                                  │                       │
-├─────────────────────┼──────────────────────────────────┼───────────────────────┤
-│ Slug-based          │ EF public-product-by-slug         │ Same fields, no meta  │
-│ (ProductPricing)    │                                  │                       │
-└─────────────────────┴──────────────────────────────────┴───────────────────────┘
-```
-
-**Где читается каждое поле:**
+## Статус трёх PATCHей
 
 
-| Поле                          | Public runtime                                                                   | Admin preview                                        |
-| ----------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `landing_config.price_suffix` | EF → `product.landing_config` → `UniversalPricingSection` → `priceSuffix` prop   | Direct DB → `buildTariffCardViewModel` override      |
-| `tariff.period_label`         | EF SELECT включает → приходит на клиент, но **нигде не используется для suffix** | Direct DB → `buildTariffCardViewModel` не использует |
-| `tariff.meta.card_config`     | **НЕ передаётся** (meta не в SELECT)                                             | Direct DB → полный доступ                            |
-| `offer.offer_type`            | EF → `tariff_offers` → приходит корректно                                        | Direct DB                                            |
+| PATCH                              | Статус     | Правило                                                                                                                 |
+| ---------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| A — suffix/config-driven rendering | **FROZEN** | Запрещено трогать resolver, EF response shape, config-driven pricing logic без нового отдельного бага с доказательством |
+| B — equal-height layout            | **ОТКРЫТ** | Текущая реализация сломана                                                                                              |
+| C — carousel interaction UX        | **ОТКРЫТ** | `dragFree: true` дал плохой результат                                                                                   |
 
 
 ---
 
-## Config-driven vs marketing-copy
+## Root cause (жёсткая формулировка)
 
-### Обязаны быть config-driven (из настроек тарифа/оффера):
+Две обязательные причины визуального развала:
 
-- **price** — `offer.amount` > `card_config.price_display` > `tariff.current_price`
-- **old_price** — `card_config.old_price` > `tariff.base_price`
-- **price_suffix** — `card_config.price_suffix` > `tariff.period_label` > `product.landing_config.price_suffix` > `"BYN"`
-- **CTA text** — `card_config.cta_text` > `offer.button_label` > `"Оплатить"`
-- **badge** — `card_config.badge_text` > `tariff.badge`
-- **offer_type** — `offer.offer_type` (только из оффера, никогда не вычисляется)
+### Причина 1: CSS `scale` transform на inner wrapper
 
-### Допустим статичный marketing-copy (не баг):
+`TariffCarouselGrid.tsx` L134-138: `scale-[0.97]` / `scale-[0.95]` уменьшают визуальный размер неактивных карточек, но НЕ layout-размер. Центральная карточка выглядит крупнее при одинаковом DOM-размере.
 
-- Текст "Безопасная оплата через bePaid..." в `UniversalPricingSection`
-- Хардкод "BYN" в `PaymentDialog` summary (это валюта платежа, не suffix)
-- Страничные marketing-тексты в `Products.tsx`, `Learning.tsx`, `Money.tsx`
+### Причина 2: Structural mismatch DOM-дерева preview vs public
+
+Это не побочная причина, а **обязательная для устранения**:
+
+- **Public runtime** (`UniversalPricingSection.tsx` L120): `TariffCard` обёрнут в `AnimatedSection` — дополнительный `div` без `h-full`, с `translate-y-8` до анимации. Этот div **разрывает** цепочку flex-stretch от `CarouselItem` до `TariffCard`.
+- **Admin preview** (`AdminProductDetailV2.tsx` L1200): `TariffCard` вставлен напрямую в `TariffCarouselGrid` без промежуточного wrapper.
+
+**Вывод:** `TariffCarouselGrid` не должен иметь разные визуальные правила для preview/public. DOM-цепочка layout обязана быть одинаковой в обоих режимах. `AnimatedSection` в public — structural mismatch, который обязан быть устранён добавлением `className="h-full"`.
+
+### Полный root-cause стек по уровням
+
+
+| Уровень                         | Элемент                               | Проблема                                                  |
+| ------------------------------- | ------------------------------------- | --------------------------------------------------------- |
+| CarouselContent                 | `div.flex.items-stretch`              | OK, stretch передаётся                                    |
+| CarouselItem                    | `div.flex.h-full.basis-[36%]`         | OK                                                        |
+| Inner wrapper (L131-139)        | `div.scale-[0.97].opacity-80`         | **ПРОБЛЕМА**: `scale` меняет визуальную высоту            |
+| AnimatedSection (только public) | `div` без `h-full`, с `translate-y-8` | **ПРОБЛЕМА**: разрывает flex-stretch, structural mismatch |
+| TariffCard → GlassCard          | `div.p-6.flex.flex-col.h-full`        | OK, padding одинаковый                                    |
+
 
 ---
 
-## Canonical owner расчёта price_suffix
+## PATCH B — Equal-height layout
 
-**Решение: один owner — Edge Function.** EF собирает финальный suffix и отдаёт его в tariff object. Клиент только отображает.
+### Порядок работы (dry-run first)
 
-Сейчас suffix считается в 3 местах независимо:
+**Шаг 1 — Минимальный CSS-фикс (без JS):**
 
-1. `tariffCardViewModel.ts` L90 — для admin preview
-2. `TariffCard.tsx` L103 — для рендера
-3. `UniversalPricingSection.tsx` L49 — prop extraction
+1. Убрать `scale-[0.97]`, `scale-[0.95]` из inner wrapper (L134-138)
+2. Заменить opacity: active `opacity-100`, adjacent `opacity-[0.92]`, rest `opacity-[0.85]`
+3. Добавить `className="h-full"` на `AnimatedSection` в `UniversalPricingSection.tsx` L120
+4. Визуально сверить результат preview vs public
 
-**После фикса:**
+**Шаг 2 — Проверка: достаточно ли CSS/flex-stretch?**
 
-- EF `public-product` включает `meta` в SELECT → возвращает `resolved_price_suffix` на каждом тарифе
-- `TariffCard` использует `tariff.period_label` как resolved suffix (EF пишет туда финальное значение)
-- `tariffCardViewModel.ts` — единственный нормализатор для admin preview, тоже считает suffix один раз
-- `TariffCard.tsx` — только consume, не пересчитывает
+- Если `items-stretch` + `h-full` на всех уровнях дают одинаковую высоту — задача закрыта без JS
+- Проверить на consultation (4 карточки) + club (3, grid) + single-card
 
-**Или проще (меньше изменений):** EF начинает отдавать `meta` → клиент использует `card_config.price_suffix` → один расчёт в `TariffCard` с правильным приоритетом.
+**Шаг 3 — Только если CSS не решил:**
 
-Выбираю вариант 2 (меньше рисков): **добавить `meta` в SELECT всех 3 EF** + **исправить приоритет в одном месте — `TariffCard.tsx**`.
+- Добавить `useEqualHeight` как fallback
+- Scope измерения:
+  - **Измеряемый DOM-узел**: inner wrapper (`div` внутри `CarouselItem`, ref на каждый)
+  - **Куда ставится `minHeight**`: на тот же inner wrapper через inline style
+  - **Исключение Embla clones**: при `loop: true` Embla добавляет clone-ы с `data-embla-clone` — фильтровать по этому атрибуту
+  - **Когда пересчёт**: initial render, `ResizeObserver` на контейнере, при изменении `items.length`
 
-`tariffCardViewModel.ts` остаётся canonical owner только для admin preview path. Приоритет идентичен.
+### STOP-guards: active card НЕ может отличаться геометрией
 
-**Запрет:** `TariffCard` и `buildTariffCardViewModel` НЕ должны оба вычислять suffix при совместном использовании. В admin preview `buildTariffCardViewModel` вычисляет → записывает в `card_config.price_suffix` → `TariffCard` берёт из `cc.price_suffix` (consume). В public runtime `TariffCard` вычисляет сам (потому что `buildTariffCardViewModel` не используется).
+Запрещено для active/center/selected карточки:
+
+- `scale` / `scaleX` / `scaleY`
+- `translateY` / вертикальный offset
+- Изменение `font-size`
+- Изменение `padding` / `margin`
+- Изменение `border-width`
+- Изменение `min-height` / `max-height`
+- `shadow` или `ring`, визуально меняющие perceived height за счёт extra spacing
+
+Допустимо: `opacity`, `ring`/`border-color` без изменения width, `box-shadow` без изменения spacing.
+
+### Ревизия внутренних зон TariffCard
+
+Нужно проверить по коду, что ни одна зона не создаёт скрытое различие высот:
+
+
+| Зона                               | Текущий CSS                    | Что проверить                                         |
+| ---------------------------------- | ------------------------------ | ----------------------------------------------------- |
+| Title (`text-center mb-4`)         | Фиксированный margin           | Нет скрытого min-height                               |
+| Price (`text-center mb-4`)         | Фиксированный margin           | old_price добавляет строку — не должно ломать соседей |
+| Description (`text-sm mb-4`)       | Фиксированный margin           | Длинный текст растягивает зону                        |
+| Features (`space-y-2 mb-6 flex-1`) | `flex-1` забирает пространство | Без features блок отсутствует — CTA поднимается       |
+| CTA (`space-y-2 mt-auto`)          | `mt-auto` прибивает к низу     | OK если outer height одинаковый                       |
+
+
+### Стратегия line-clamp
+
+Решение: **не использовать line-clamp** для title и description.
+
+- Title: обычно 1-2 строки, clamp обрежет важную информацию
+- Description: обычно 1-3 строки, обрезка нежелательна
+- Equal-height через flex-stretch компенсирует разницу: `flex-1` на features zone забирает свободное пространство, `mt-auto` на CTA выравнивает кнопки
+
+Если при visual proof окажется, что конкретный description слишком длинный (5+ строк) — можно добавить `line-clamp-3` точечно, но это решение принимается по факту, не заранее.
+
+### Обязательные test-cases
+
+
+| Кейс                            | Что проверяется                                          |
+| ------------------------------- | -------------------------------------------------------- |
+| Badge / no badge                | Badge `absolute -top-3` — не влияет на внутреннюю высоту |
+| Old price / no old price        | Доп. строка в price zone                                 |
+| Длинный title (2+ строки)       | Title zone растягивается                                 |
+| Длинное description (3+ строки) | Description растягивается                                |
+| Много features (5+)             | Features zone `flex-1` компенсирует                      |
+| Без features                    | CTA поднимается, `mt-auto` работает                      |
+
+
+### Preview и public чинятся одним PATCH
+
+Нельзя исправить public и оставить preview "на потом". Оба режима исправляются одновременно одними и теми же CSS-правилами. `TariffCarouselGrid` — единый layout owner для обоих.
 
 ---
 
-## Discovery: offer_type vs period_label конфликты
+## PATCH C — Carousel interaction UX
+
+### Embla opts: конкретные изменения
 
 
-| product_code | tariff                        | offer_type | period_label | Конфликт?                               |
-| ------------ | ----------------------------- | ---------- | ------------ | --------------------------------------- |
-| consultation | Несрочная консультация        | pay_now    | BYN          | ✓ OK                                    |
-| consultation | Срочная консультация          | pay_now    | BYN          | ✓ OK                                    |
-| consultation | **Помощь при проверке**       | pay_now    | **BYN/мес**  | **⚠ КОНФЛИКТ** — pay_now + "/мес"       |
-| consultation | Стратегия защиты              | pay_now    | BYN          | ✓ OK                                    |
-| club         | FULL/BUSINESS/CHAT            | pay_now    | BYN/мес      | ✓ OK (клуб = подписка)                  |
-| buh_business | Ежемесячный                   | pay_now    | BYN/мес      | ✓ OK (подписка)                         |
-| cb20         | Бухгалтер/Главный/Бизнес-леди | pay_now    | **дней**     | **⚠ Нестандартный** — "дней" как suffix |
+| Параметр         | БЫЛО           | БУДЕТ           | Почему                                                                                                 |
+| ---------------- | -------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
+| `dragFree`       | `true`         | `**false**`     | `dragFree` давал "болтание" и полу-позиции. `false` = чёткий snap                                      |
+| `loop`           | `true`         | `true`          | Без изменений                                                                                          |
+| `duration`       | не задан (~25) | **tuning-pass** | Не фиксировать 20 как догму. Проверить 18, 20, 22. Зафиксировать финальное значение после visual proof |
+| `align`          | `"center"`     | `"center"`      | Без изменений                                                                                          |
+| `slidesToScroll` | `1`            | `1`             | Без изменений                                                                                          |
 
 
-**Verdict:** "Помощь при проверке" (consultation) — pay_now с "BYN/мес" — конфликт. Но это data issue, не code issue. После фикса приоритета admin может исправить `period_label` → "BYN" в настройках.
+### Tuning-pass для duration
 
-**По UI подсказке:** Сейчас admin UI не валидирует связку offer_type↔period_label. Это отдельная задача за рамками текущего патча, но зафиксировано как known gap.
+1. Установить `duration: 20`, проверить ощущение
+2. Попробовать `duration: 18` (быстрее) и `duration: 22` (плавнее)
+3. Выбрать значение без дёрганья и тормозов
+4. Зафиксировать финальное после visual proof
+
+### Click-vs-drag DoD (отдельный блок)
+
+
+| Проверка                                              | Ожидание                                  |
+| ----------------------------------------------------- | ----------------------------------------- |
+| Быстрый клик по CTA внутри карточки                   | Открывается оплата, drag не перехватывает |
+| Drag по карточке → отпускание                         | Snap к ближайшему слайду, CTA не сработал |
+| Быстрые последовательные клики по стрелкам (3-4 раза) | Карусель плавно проматывает без дёрганья  |
+| Dots после drag                                       | Корректно показывают текущий слайд        |
+| Dots после arrows                                     | Корректно обновляются                     |
+
+
+### Active/inactive state
+
+- Active: `opacity-100`
+- Adjacent: `opacity-[0.92]` — лёгкое затухание, текст читаем
+- Rest: `opacity-[0.85]` — заметное, но не "мёртвое"
+
+Если при visual proof 0.92/0.85 слишком бледно или слишком однородно — допустима корректировка значений. Но запрещено менять геометрию (см. STOP-guards).
+
+### Wheel/trackpad scroll
+
+**Не является обязательным deliverable текущего PATCH.**
+Base acceptance criteria должны быть достигнуты без wheel-plugin.
+Если после закрытия PATCH B+C останется явный UX-gap — вынести wheel/trackpad enhancement отдельным follow-up PATCH.
 
 ---
 
-## Два PATCHа
+## Файлы
 
-### PATCH A — Исправить public runtime: добавить `meta` в EF + исправить приоритет suffix
 
-**1. EF `public-product/index.ts**` (L152-156): добавить `meta` в SELECT tariffs
+| Файл                                                 | Изменение                                                            |
+| ---------------------------------------------------- | -------------------------------------------------------------------- |
+| `src/components/landing/TariffCarouselGrid.tsx`      | Убрать `scale`; смягчить opacity; `dragFree: false`; duration tuning |
+| `src/components/landing/UniversalPricingSection.tsx` | `className="h-full"` на `AnimatedSection` L120                       |
+| `src/hooks/useEqualHeight.ts`                        | **Только если CSS не решил** — fallback хук                          |
 
-```
-id, code, name, description, badge, subtitle,
-price_monthly, period_label, access_days, features, is_popular,
-discount_enabled, discount_percent, original_price,
-trial_enabled, trial_days, trial_price, trial_auto_charge, sort_order, meta
-```
 
-**2. EF `public-product-by-slug/index.ts**` (L86-90): аналогично добавить `meta`
+### НЕ трогаем (FROZEN)
 
-**3. EF `public-tariff-by-public-id/index.ts**` (L36-42): аналогично
+- `src/lib/resolveTariffDisplayConfig.ts`
+- `src/components/landing/TariffCard.tsx` (suffix logic)
+- `src/lib/tariffCardViewModel.ts`
+- Edge Functions
+- `carousel.tsx`
 
-**4. EF fallback default** — все 3 EF: `price_suffix: "BYN/мес"` → `price_suffix: "BYN"` (true fallback только когда `landing_config = null`)
+---
 
-**5. `src/components/landing/TariffCard.tsx**` L103: исправить приоритет suffix
+## Proof-cases (обязательные)
 
-```typescript
-// БЫЛО: product-level побеждал
-const resolvedSuffix = priceSuffix !== "BYN" ? priceSuffix : (cc?.price_suffix || "BYN");
-// СТАЛО: tariff-level побеждает, product — fallback
-const resolvedSuffix = cc?.price_suffix || tariff.period_label || priceSuffix || "BYN";
-```
 
-**6. `src/lib/tariffCardViewModel.ts**` L90: идентичный приоритет для admin preview
+| Кейс                        | Тип                     | Что показать                                  |
+| --------------------------- | ----------------------- | --------------------------------------------- |
+| Consultation (4 карточки)   | Carousel — **основной** | Одинаковая высота, CTA baseline, suffix "BYN" |
+| Club (3 карточки)           | Grid — **regression**   | Grid layout не сломан                         |
+| Бизнес-тренинг (1 карточка) | Single — **regression** | Single-card layout не сломан                  |
 
-```typescript
-// БЫЛО
-price_suffix: overridePriceSuffix || cc?.price_suffix || "BYN",
-// СТАЛО
-price_suffix: cc?.price_suffix || tariff.period_label || overridePriceSuffix || "BYN",
-```
 
-**7. `src/hooks/usePublicProduct.tsx**`: добавить `meta` в тип `PublicTariff`
+Для каждого — **три viewport**: admin preview desktop, public desktop, public mobile (375px).
 
-**8. `src/pages/admin/AdminProductDetailV2.tsx**` L268: default `period_label` при создании тарифа: `"BYN/мес"` → `"BYN"`
+В каждом отдельно подписать:
 
-**Proof что EF fallback не перебивает:** fallback `price_suffix: "BYN"` применяется только при `landing_config || { ... }` — т.е. когда у продукта вообще нет `landing_config`. У всех активных продуктов `landing_config` заполнен → fallback не применяется.
-
-### PATCH B — Equal-height карточки + карусель UX
-
-**9. `src/components/landing/TariffCarouselGrid.tsx**`:
-
-- `CarouselItem`: класс `h-full`
-- Внутренний `div` (L131): `h-full`
-- Carousel opts: `loop: true`, `dragFree: true`, `containScroll: false`
-- `TariffCard` уже имеет `h-full` на GlassCard и `mt-auto` на CTA — проверить визуально
-
-**Visual DoD кейсы:**
-
-- Карточка с badge / без badge
-- Длинный title
-- Длинное description
-- С old_price / без
-- Разная длина CTA
-- Desktop drag / trackpad / wheel
-- Mobile swipe
-- Click по CTA не перехватывается drag
-- Loop без визуальных скачков
-- Keyboard ← → навигация
-
-**STOP-guard:** если `dragFree` ломает snap/click — откатить на обычный drag, но `loop: true` обязателен.
-
-### PATCH C — DB config correction (отдельно)
-
-Обновить `primary_domain` для консультации: `cons.gorbova.by` → `consultation.gorbova.by`
+- Высота карточек одинакова ✓/✗
+- CTA на одной горизонтальной линии ✓/✗
+- Характер перелистывания (для carousel)
+- Suffix не сломан повторно ✓/✗
 
 ---
 
 ## Запреты
 
-1. Нельзя делать `if consultation` / `if pay_now && product_id === ...`
-2. Нельзя патчить руками конкретный продукт в БД как основное решение
-3. Нельзя вычислять "/мес" по названию тарифа/продукта
-4. Нельзя hardcode по slug/code/id
-5. Только config-driven rendering
-
----
-
-## Anti-regression
-
-
-| Проверка                                             | Метод                                                 |
-| ---------------------------------------------------- | ----------------------------------------------------- |
-| Консультация — preview                               | Browser screenshot                                    |
-| Консультация — правильный suffix ("BYN" для разовых) | Network proof: `card_config.price_suffix` в ответе EF |
-| Клуб — suffix "BYN/мес"                              | EF curl                                               |
-| CB20 — suffix "дней"                                 | EF curl                                               |
-| Неверный product_code → 404                          | EF curl                                               |
-| Legacy domain → работает                             | EF curl                                               |
-| Payment dialog / CTA — тот же product.id             | Code audit (уже подтверждено)                         |
-| Admin preview = public                               | Визуальное сравнение                                  |
-| Embed = public                                       | Через useSitePricingData (тот же EF)                  |
-| Carousel: drag, loop, click, mobile                  | Browser test                                          |
-| Equal-height: разные кейсы                           | Browser screenshot                                    |
-
-
-### Negative proof:
-
-- `product_code=consultation` + `domain=club.gorbova.by` → 409
-- `product_code=nonexistent` → 404
-- EF fallback "BYN" не перебивает реально заданные значения
-
----
-
-## Config-proof формат (для каждого тест-кейса)
-
-
-| Продукт      | Тариф     | offer_type | card_config.price_suffix | period_label | landing_config.price_suffix | Rendered suffix              |
-| ------------ | --------- | ---------- | ------------------------ | ------------ | --------------------------- | ---------------------------- |
-| consultation | Несрочная | pay_now    | "BYN"                    | "BYN"        | "BYN/мес"                   | **"BYN"** ← card_config      |
-| consultation | Срочная   | pay_now    | null                     | "BYN"        | "BYN/мес"                   | **"BYN"** ← period_label     |
-| club         | FULL      | pay_now    | null                     | "BYN/мес"    | "BYN/мес"                   | **"BYN/мес"** ← period_label |
-| cb20         | Бухгалтер | pay_now    | null                     | "дней"       | "BYN/мес"                   | **"дней"** ← period_label    |
-
-
----
-
-## Итого файлов
-
-
-| Файл                                                     | Изменение                          |
-| -------------------------------------------------------- | ---------------------------------- |
-| `supabase/functions/public-product/index.ts`             | +`meta` в SELECT, fallback → "BYN" |
-| `supabase/functions/public-product-by-slug/index.ts`     | +`meta` в SELECT, fallback → "BYN" |
-| `supabase/functions/public-tariff-by-public-id/index.ts` | +`meta` в SELECT, fallback → "BYN" |
-| `src/hooks/usePublicProduct.tsx`                         | +`meta` в тип `PublicTariff`       |
-| `src/components/landing/TariffCard.tsx`                  | Исправить suffix priority          |
-| `src/lib/tariffCardViewModel.ts`                         | Исправить suffix priority          |
-| `src/components/landing/TariffCarouselGrid.tsx`          | Equal-height + carousel UX         |
-| `src/pages/admin/AdminProductDetailV2.tsx`               | Default period_label → "BYN"       |
-| БД: products_v2                                          | primary_domain fix (PATCH C)       |
-
-
-**Scope closure:** Если в процессе реализации grep обнаружит дополнительные entrypoints — они добавляются add-only в этот же PATCH.
-
-## DoD
-
-1. Один canonical приоритет suffix реализован в двух owner-точках: `TariffCard` (public) и `tariffCardViewModel` (admin preview) с идентичной логикой
-2. `TariffCard` и `buildTariffCardViewModel` не вычисляют suffix параллельно при совместном использовании
-3. EF отдаёт `meta` → `card_config` доступен на public runtime
-4. Preview / public / embed показывают одинаковый результат
-5. Config-proof для каждого продукта подтверждён
-6. Carousel: loop, drag, click по CTA, mobile swipe, keyboard
-7. Equal-height визуально подтверждён на разных кейсах
-8. Нет special-case по consultation/club/business
-9. Legacy domain fallback работает
-10. EF fallback "BYN" не перебивает реально заданные значения
+1. Suffix/config-driven patch повторно не ломать — **FROZEN**
+2. Active card не может отличаться геометрией (scale/translateY/padding/font-size/border-width)
+3. `dragFree: true` не использовать как дефолт
+4. Два разных layout-механизма для preview и public запрещены
+5. Wheel-plugin — не обязательный deliverable, только follow-up
+6. `useEqualHeight` — только fallback после proof что CSS не решил
+7. `duration` — не фиксировать без tuning-pass
