@@ -223,6 +223,35 @@ export async function moveDealToPipeline(
   });
 }
 
+// ─── Bulk assign deals ───
+export async function bulkAssignDealsToStage(
+  dealIds: string[],
+  pipelineId: string,
+  stageId: string
+): Promise<{ affected: number }> {
+  if (dealIds.length === 0) return { affected: 0 };
+
+  const CHUNK = 200;
+  let affected = 0;
+  for (let i = 0; i < dealIds.length; i += CHUNK) {
+    const chunk = dealIds.slice(i, i + CHUNK);
+    const { error, count } = await supabase
+      .from("orders_v2")
+      .update({ pipeline_id: pipelineId, pipeline_stage_id: stageId })
+      .in("id", chunk);
+    if (error) throw error;
+    affected += count || chunk.length;
+  }
+
+  await writeAudit("deal.bulk_stage_assigned", {
+    pipeline_id: pipelineId,
+    stage_id: stageId,
+    deal_ids_count: dealIds.length,
+  });
+
+  return { affected };
+}
+
 // ─── Audit helper ───
 async function writeAudit(action: string, meta: Record<string, unknown>) {
   try {
