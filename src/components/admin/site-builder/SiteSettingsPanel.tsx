@@ -4,10 +4,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSiteDomainBindings } from "@/hooks/useSiteDomainBindings";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Globe, Home } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { normalizeDomain } from "@/services/sitePages/domainUtils";
 import { Badge } from "@/components/ui/badge";
+import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
 interface SiteSettingsPanelProps {
   pageId: string;
