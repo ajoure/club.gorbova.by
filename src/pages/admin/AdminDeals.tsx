@@ -713,31 +713,106 @@ export default function AdminDeals() {
 
   return (
     <div className="space-y-4">
-      {/* Pill-style Tabs */}
-      <div className="px-1 pt-1 pb-1.5 shrink-0">
-        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
-          {DEAL_PRESETS.map((preset) => {
-            const isActive = activePreset === preset.id;
-            return (
-              <button
-                key={preset.id}
-                onClick={() => handleTabChange(preset.id)}
-                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                  isActive
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <span>{preset.label}</span>
-                {preset.count !== undefined && preset.count > 0 && (
-                  <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
-                    {preset.count > 99 ? "99+" : preset.count}
-                  </Badge>
-                )}
-              </button>
-            );
-          })}
+      {/* View Toggle + Pipeline Selector */}
+      <div className="flex items-center gap-3 px-1 pt-1 pb-1.5 shrink-0 flex-wrap">
+        {/* View mode toggle */}
+        <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
+          <button
+            onClick={() => setViewMode("list")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+              viewMode === "list"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            Список
+          </button>
+          <button
+            onClick={() => setViewMode("board")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+              viewMode === "board"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Kanban className="h-3.5 w-3.5" />
+            Воронка
+          </button>
         </div>
+
+        {/* Pipeline selector (visible in board mode) */}
+        {viewMode === "board" && pipelines.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                <Kanban className="h-3.5 w-3.5" />
+                <span>{pipelines.find(p => p.id === activePipelineId)?.name || "Воронка"}</span>
+                <ChevronDown className="h-3 w-3 opacity-50" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              {pipelines.map((p) => (
+                <DropdownMenuItem
+                  key={p.id}
+                  onClick={() => setSelectedPipelineId(p.id)}
+                  className={p.id === activePipelineId ? "bg-accent" : ""}
+                >
+                  {p.name}
+                  {p.is_default && (
+                    <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
+                      default
+                    </Badge>
+                  )}
+                </DropdownMenuItem>
+              ))}
+              {canEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={async () => {
+                      const name = prompt("Название новой воронки:");
+                      if (name?.trim()) {
+                        const p = await createPipelineFn(name.trim());
+                        setSelectedPipelineId(p.id);
+                      }
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5 mr-2" />
+                    Создать воронку
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        {/* Pill-style Tabs (only in list mode) */}
+        {viewMode === "list" && (
+          <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
+            {DEAL_PRESETS.map((preset) => {
+              const isActive = activePreset === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => handleTabChange(preset.id)}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>{preset.label}</span>
+                  {preset.count !== undefined && preset.count > 0 && (
+                    <Badge className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full bg-primary/20 text-primary">
+                      {preset.count > 99 ? "99+" : preset.count}
+                    </Badge>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Product Pills Filter */}
