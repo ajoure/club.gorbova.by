@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { Globe, ExternalLink, Link2, Unlink, Copy, Plus, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
+import { Globe, ExternalLink, Link2, Unlink, Copy, Plus, Minus, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
 import { toast } from "sonner";
 import { getCanonicalPricingUrl, getCanonicalPageUrl } from "@/lib/productCanonicalUrl";
 import { resolveProductPageState, getProductPageDiagnostic, type ProductPageDiagnostic } from "@/lib/resolveProductPageState";
@@ -153,6 +153,29 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
     onSuccess: () => {
       invalidateAll();
       toast.success("Блок тарифов добавлен на страницу");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Remove pricing block(s) from page
+  const removePricingBlockMutation = useMutation({
+    mutationFn: async () => {
+      if (!linkedPage) throw new Error("Нет привязанной страницы");
+      const blocks = linkedPage.blocks || [];
+      const filtered = blocks.filter(
+        (b) => !(b.type === "pricing" && (b.content as Record<string, unknown>)?.product_id === productId)
+      );
+      if (filtered.length === blocks.length) {
+        throw new Error("Блок тарифов этого продукта не найден на странице");
+      }
+      const { error } = await (supabase.from("site_pages") as any)
+        .update({ blocks: filtered })
+        .eq("id", linkedPage.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast.success("Блок тарифов убран со страницы");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -310,6 +333,8 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
         diagnostic={diagnostic}
         onAddPricingBlock={() => addPricingBlockMutation.mutate()}
         isAdding={addPricingBlockMutation.isPending}
+        onRemovePricingBlock={() => removePricingBlockMutation.mutate()}
+        isRemoving={removePricingBlockMutation.isPending}
       />
     </div>
   );
@@ -319,14 +344,18 @@ function DiagnosticBadge({
   diagnostic,
   onAddPricingBlock,
   isAdding,
+  onRemovePricingBlock,
+  isRemoving,
 }: {
   diagnostic: ProductPageDiagnostic;
   onAddPricingBlock: () => void;
   isAdding: boolean;
+  onRemovePricingBlock: () => void;
+  isRemoving: boolean;
 }) {
   switch (diagnostic) {
     case "not_linked":
-      return null; // handled by main UI above
+      return null;
 
     case "linked_no_pricing":
       return (
@@ -369,6 +398,16 @@ function DiagnosticBadge({
         <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400">
           <Info className="h-3 w-3 shrink-0" />
           <span>На странице несколько блоков тарифов этого продукта</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-5 text-[10px] px-1.5 gap-1 text-destructive"
+            onClick={onRemovePricingBlock}
+            disabled={isRemoving}
+          >
+            <Minus className="h-3 w-3" />
+            Убрать все
+          </Button>
         </div>
       );
 
@@ -377,6 +416,16 @@ function DiagnosticBadge({
         <div className="flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="h-3 w-3 shrink-0" />
           <span>Продающая страница готова</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 text-[10px] px-1.5 gap-1 text-muted-foreground hover:text-destructive"
+            onClick={onRemovePricingBlock}
+            disabled={isRemoving}
+          >
+            <Minus className="h-3 w-3" />
+            Убрать блок
+          </Button>
         </div>
       );
   }
