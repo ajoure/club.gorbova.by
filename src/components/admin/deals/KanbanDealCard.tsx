@@ -1,18 +1,6 @@
+import { memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle,
@@ -23,14 +11,13 @@ import {
   TrendingUp,
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
-import type { CrmPipelineStage } from "@/services/pipelineService";
 
 interface Props {
   deal: BoardDeal;
   onOpen: () => void;
   isDragging?: boolean;
-  onMoveTo?: (stageId: string) => void;
-  availableStages?: CrmPipelineStage[];
+  onMoveClick?: (dealId: string, anchorEl: HTMLElement) => void;
+  showMoveButton?: boolean;
 }
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
@@ -66,7 +53,7 @@ function isHighValue(deal: BoardDeal) {
   return Number(deal.final_price || 0) > 500;
 }
 
-export function KanbanDealCard({ deal, onOpen, isDragging, onMoveTo, availableStages }: Props) {
+export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpen, isDragging, onMoveClick, showMoveButton }: Props) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: deal.id,
   });
@@ -80,8 +67,6 @@ export function KanbanDealCard({ deal, onOpen, isDragging, onMoveTo, availableSt
   const style = transform
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
-
-  const showMoveButton = onMoveTo && availableStages && availableStages.length > 0;
 
   return (
     <div
@@ -144,56 +129,35 @@ export function KanbanDealCard({ deal, onOpen, isDragging, onMoveTo, availableSt
           )}
         </div>
 
-        {/* Order number — with right padding so move button doesn't overlap */}
-        <div className={cn("text-[10px] text-muted-foreground/60 mt-1 font-mono", showMoveButton && "pr-7")}>
+        {/* Order number */}
+        <div className={cn("text-[10px] text-muted-foreground/60 mt-1 font-mono", showMoveButton && "pr-6")}>
           {deal.order_number}
         </div>
       </div>
 
-      {/* Compact move icon-button — absolute positioned, no layout impact */}
-      {showMoveButton && (
-        <div
-          className="absolute bottom-2.5 right-2.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+      {/* Compact move icon-button — simple button, no portal/dropdown */}
+      {showMoveButton && onMoveClick && (
+        <button
+          type="button"
+          title="Переместить"
+          aria-label="Переместить в другую стадию"
+          className={cn(
+            "absolute bottom-2.5 right-2.5 flex items-center justify-center",
+            "h-3.5 w-3.5 min-w-[28px] min-h-[28px]",
+            "rounded-full bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground",
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity",
+            "touch-action-manipulation"
+          )}
+          style={{ touchAction: "manipulation" }}
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMoveClick(deal.id, e.currentTarget);
+          }}
         >
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <DropdownMenu>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 rounded-full bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground"
-                      aria-label="Переместить в другую стадию"
-                    >
-                      <ArrowRightLeft className="h-3 w-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="text-xs">
-                  Переместить
-                </TooltipContent>
-                <DropdownMenuContent align="end" side="bottom" className="w-48">
-                  {availableStages!.map((s) => (
-                    <DropdownMenuItem
-                      key={s.id}
-                      onClick={() => onMoveTo!(s.id)}
-                    >
-                      <div
-                        className="w-2 h-2 rounded-full mr-2 shrink-0"
-                        style={{ backgroundColor: s.color }}
-                      />
-                      {s.name}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
+          <ArrowRightLeft className="h-2.5 w-2.5" />
+        </button>
       )}
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { KanbanDealCard } from "./KanbanDealCard";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
@@ -6,7 +6,6 @@ import type { BoardDeal } from "@/hooks/useDealsBoard";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,7 +35,8 @@ interface Props {
   deals: BoardDeal[];
   totals: { count: number; sum: number; avg: number };
   onOpenDeal: (id: string) => void;
-  onMoveDeal?: (dealId: string, targetStageId: string) => void;
+  onMoveClick?: (dealId: string, anchorEl: HTMLElement) => void;
+  showMoveButton: boolean;
   availableStages: CrmPipelineStage[];
   canEdit: boolean;
   onRename?: (name: string) => void;
@@ -44,7 +44,7 @@ interface Props {
   pipelineId?: string;
 }
 
-export function KanbanColumn({
+export const KanbanColumn = memo(function KanbanColumn({
   stageId,
   name,
   color,
@@ -52,7 +52,8 @@ export function KanbanColumn({
   deals,
   totals,
   onOpenDeal,
-  onMoveDeal,
+  onMoveClick,
+  showMoveButton,
   availableStages,
   canEdit,
   onRename,
@@ -146,8 +147,8 @@ export function KanbanColumn({
                 key={deal.id}
                 deal={deal}
                 onOpen={() => onOpenDeal(deal.id)}
-                onMoveTo={onMoveDeal ? (stageId) => onMoveDeal(deal.id, stageId) : undefined}
-                availableStages={availableStages}
+                onMoveClick={onMoveClick}
+                showMoveButton={showMoveButton}
               />
             ))
           )}
@@ -175,4 +176,4 @@ export function KanbanColumn({
       </AlertDialog>
     </>
   );
-}
+});
