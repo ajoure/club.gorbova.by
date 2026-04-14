@@ -30,8 +30,8 @@ export function LandingCTA() {
               бизнес и растут в доходе
             </p>
             <Button size="lg" onClick={() => {
-              const pricingSection = document.getElementById("pricing");
-              pricingSection?.scrollIntoView({ behavior: "smooth" });
+              const section = document.getElementById("tariffs") || document.getElementById("pricing");
+              section?.scrollIntoView({ behavior: "smooth" });
             }} className="text-lg px-8 py-6">
               Выбрать тариф
               <ArrowRight className="ml-2" size={20} />

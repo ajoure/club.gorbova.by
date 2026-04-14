@@ -12,8 +12,8 @@ export function LandingHero() {
   };
 
   const handleChoosePlan = () => {
-    const pricingSection = document.getElementById("pricing");
-    pricingSection?.scrollIntoView({ behavior: "smooth" });
+    const section = document.getElementById("tariffs") || document.getElementById("pricing");
+    section?.scrollIntoView({ behavior: "smooth" });
   };
 
   return (

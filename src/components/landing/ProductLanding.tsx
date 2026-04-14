@@ -1,11 +1,9 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AnimatedSection } from "./AnimatedSection";
 import { TariffCard } from "./TariffCard";
 import { PaymentDialog } from "@/components/payment/PaymentDialog";
-import { useAuth } from "@/contexts/AuthContext";
 import { ChevronRight, Shield } from "lucide-react";
 import type { PublicProductData, PublicTariff, TariffOffer } from "@/hooks/usePublicProduct";
 
@@ -17,9 +15,6 @@ interface ProductLandingProps {
 }
 
 export function ProductLanding({ data, header, footer, customSections }: ProductLandingProps) {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [selectedOffer, setSelectedOffer] = useState<{
     offer: TariffOffer;
@@ -30,34 +25,7 @@ export function ProductLanding({ data, header, footer, customSections }: Product
   const { product, tariffs } = data;
   const config = product.landing_config || {};
 
-  // Restore offer selection from URL after auth redirect
-  useEffect(() => {
-    const offerId = searchParams.get("offer");
-    if (offerId && user && tariffs) {
-      for (const tariff of tariffs) {
-        const offer = tariff.offers?.find(o => o.id === offerId);
-        if (offer) {
-          setSelectedOffer({ offer, tariff, productId: product.id });
-          setPaymentOpen(true);
-          setSearchParams(prev => {
-            const p = new URLSearchParams(prev);
-            p.delete("offer");
-            return p;
-          }, { replace: true });
-          break;
-        }
-      }
-    }
-  }, [searchParams, user, tariffs, product.id, setSearchParams]);
-
   const handleSelectOffer = (offer: TariffOffer, tariff: PublicTariff) => {
-    if (!user) {
-      const sp = new URLSearchParams(window.location.search);
-      sp.set("offer", offer.id);
-      const returnUrl = `${window.location.pathname}?${sp.toString()}`;
-      navigate(`/auth?redirectTo=${encodeURIComponent(returnUrl)}`);
-      return;
-    }
     setSelectedOffer({ offer, tariff, productId: product.id });
     setPaymentOpen(true);
   };
