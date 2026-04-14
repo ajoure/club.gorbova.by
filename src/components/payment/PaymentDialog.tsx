@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -158,9 +158,44 @@ export function PaymentDialog({
   // Check if telegram is already linked
   const isTelegramLinked = telegramStatus?.status === 'active';
 
+  // Ref to prevent useEffect from resetting state after inline auth
+  const authInProgressRef = useRef(false);
+
+  // Load saved payment card — safe, non-blocking
+  const loadSavedCard = async (userId: string) => {
+    setIsLoadingCard(true);
+    try {
+      const { data, error } = await supabase
+        .from("payment_methods")
+        .select("id, brand, last4")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .eq("is_default", true)
+        .maybeSingle();
+      
+      console.log("Payment methods query result:", { data, error });
+      if (data) {
+        setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
+      }
+    } catch (err) {
+      console.error("Error loading payment method:", err);
+      // Non-fatal — don't block checkout
+    } finally {
+      setIsLoadingCard(false);
+    }
+  };
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
+      // After inline auth: user/session changed but dialog should stay on current step
+      if (authInProgressRef.current && user && session) {
+        authInProgressRef.current = false;
+        setExistingUserId(user.id);
+        loadSavedCard(user.id);
+        return; // Skip full reset — keep formData, step, selectedOffer intact
+      }
+
       setSavedCard(null);
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
@@ -185,27 +220,7 @@ export function PaymentDialog({
         }
         
         // Check for saved payment method
-        setIsLoadingCard(true);
-        (async () => {
-          try {
-            const { data, error } = await supabase
-              .from("payment_methods")
-              .select("id, brand, last4")
-              .eq("user_id", user.id)
-              .eq("status", "active")
-              .eq("is_default", true)
-              .maybeSingle();
-            
-            console.log("Payment methods query result:", { data, error });
-            if (data) {
-              setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
-            }
-          } catch (err) {
-            console.error("Error loading payment method:", err);
-          } finally {
-            setIsLoadingCard(false);
-          }
-        })();
+        loadSavedCard(user.id);
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -216,6 +231,9 @@ export function PaymentDialog({
       setEmailCheckResult(null);
       setLoginError(null);
       setPrivacyConsent(false);
+    } else {
+      // Dialog closed — always reset authInProgressRef
+      authInProgressRef.current = false;
     }
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
