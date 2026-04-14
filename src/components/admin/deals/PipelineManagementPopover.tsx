@@ -82,18 +82,26 @@ function SortablePipelineItem({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "group/item flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all duration-150 cursor-pointer select-none",
+        "group/item relative flex items-center gap-1.5 px-2.5 py-2 rounded-xl transition-all duration-200 cursor-pointer select-none",
         isActive
-          ? "bg-primary/10 border-l-2 border-primary"
-          : "hover:bg-muted/50 border-l-2 border-transparent",
-        isDragging && "shadow-lg bg-card/90 backdrop-blur-xl z-50 opacity-90"
+          ? "bg-gradient-to-r from-primary/12 to-primary/5 shadow-[inset_0_0_16px_rgba(59,130,246,0.06)]"
+          : "hover:bg-muted/30 hover:shadow-sm",
+        isDragging && "shadow-lg ring-1 ring-primary/20 bg-card/90 backdrop-blur-xl z-50 opacity-95"
       )}
       onClick={onSelect}
     >
+      {/* Active accent dot */}
+      <div className={cn(
+        "absolute left-0.5 top-1/2 -translate-y-1/2 w-1 h-4 rounded-full transition-all duration-200",
+        isActive
+          ? "bg-primary shadow-[0_0_6px_rgba(59,130,246,0.4)]"
+          : "bg-transparent group-hover/item:bg-muted-foreground/15"
+      )} />
+
       {/* Drag handle */}
       {canEdit && (
         <button
-          className="flex-shrink-0 touch-none cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-muted/60 text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+          className="flex-shrink-0 touch-none cursor-grab active:cursor-grabbing p-0.5 rounded-md hover:bg-muted/60 text-muted-foreground/30 hover:text-muted-foreground/60 transition-colors"
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
@@ -105,15 +113,15 @@ function SortablePipelineItem({
       {/* Name + badge */}
       <div className="flex-1 min-w-0 flex items-center gap-1.5">
         <span className={cn(
-          "text-sm truncate",
-          isActive ? "font-semibold text-foreground" : "font-medium text-foreground/80"
+          "text-sm truncate transition-colors duration-200",
+          isActive ? "font-semibold text-primary" : "font-medium text-foreground/80"
         )}>
           {pipeline.name}
         </span>
         {pipeline.is_default && (
           <Badge
             variant="secondary"
-            className="flex-shrink-0 text-[9px] h-4 px-1.5 bg-primary/15 text-primary border-0"
+            className="flex-shrink-0 text-[9px] h-4 px-1.5 bg-gradient-to-r from-primary/20 to-primary/10 text-primary ring-1 ring-primary/20 border-0 font-semibold"
           >
             основная
           </Badge>
@@ -122,9 +130,9 @@ function SortablePipelineItem({
 
       {/* Actions */}
       {canEdit && (
-        <div className="flex items-center gap-0.5 opacity-0 group-hover/item:opacity-100 transition-opacity flex-shrink-0">
+        <div className="flex items-center gap-0.5 opacity-0 group-hover/item:opacity-100 transition-opacity duration-150 flex-shrink-0">
           <button
-            className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="h-5 w-5 flex items-center justify-center rounded-md hover:bg-muted/70 text-muted-foreground/50 hover:text-foreground transition-colors"
             title="Переименовать"
             onClick={(e) => {
               e.stopPropagation();
@@ -139,10 +147,10 @@ function SortablePipelineItem({
                 <TooltipTrigger asChild>
                   <button
                     className={cn(
-                      "h-5 w-5 flex items-center justify-center rounded transition-colors",
+                      "h-5 w-5 flex items-center justify-center rounded-md transition-colors",
                       canDelete
-                        ? "hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                        : "text-muted-foreground/30 cursor-not-allowed"
+                        ? "hover:bg-destructive/10 text-muted-foreground/50 hover:text-destructive"
+                        : "text-muted-foreground/20 cursor-not-allowed"
                     )}
                     title={canDelete ? "Удалить" : deleteReason}
                     disabled={!canDelete}
@@ -230,41 +238,49 @@ export function PipelineManagementPopover({
       <PopoverTrigger asChild>
         <button
           className={cn(
-            "inline-flex items-center gap-1.5 h-7 px-3 rounded-xl text-xs font-medium",
-            "bg-card/50 backdrop-blur-md border border-border/30",
-            "hover:bg-card/70 hover:border-border/50",
-            "transition-all duration-200 cursor-pointer select-none",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+            "inline-flex items-center gap-2 h-8 px-3.5 rounded-xl text-xs font-medium",
+            "bg-gradient-to-r from-card/70 to-card/50 backdrop-blur-xl",
+            "border border-border/30 ring-1 ring-primary/10",
+            "hover:shadow-md hover:border-primary/25 hover:ring-primary/20",
+            "transition-all duration-250 cursor-pointer select-none",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
           )}
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-primary flex-shrink-0" />
-          <span className="truncate max-w-[180px]">
+          <span className="relative h-2 w-2 flex-shrink-0">
+            <span className="absolute inset-0 rounded-full bg-primary animate-pulse opacity-40" />
+            <span className="absolute inset-0.5 rounded-full bg-primary" />
+          </span>
+          <span className="truncate max-w-[180px] text-foreground/90">
             {activePipeline?.name || "Воронка"}
           </span>
-          <ChevronDown className="h-3 w-3 opacity-40 flex-shrink-0" />
+          <ChevronDown className="h-3 w-3 text-muted-foreground/50 flex-shrink-0 transition-transform duration-200" />
         </button>
       </PopoverTrigger>
       <PopoverContent
         align="start"
         sideOffset={6}
         className={cn(
-          "w-72 p-2 rounded-2xl",
-          "bg-card/80 backdrop-blur-2xl border-border/20",
-          "shadow-2xl shadow-black/10"
+          "w-[280px] p-0 rounded-2xl overflow-hidden",
+          "bg-card/75 backdrop-blur-3xl border-border/20",
+          "shadow-[0_8px_40px_rgba(0,0,0,0.12)]"
         )}
       >
-        <div className="space-y-1">
+        {/* Subtle gradient overlay at top */}
+        <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-primary/[0.03] to-transparent pointer-events-none rounded-t-2xl" />
+
+        <div className="relative space-y-0.5 p-2">
           {/* Header */}
-          <div className="px-2 py-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+          <div className="px-2.5 pt-1 pb-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-primary/50">
               Воронки продаж
             </span>
+            <div className="mt-1.5 h-px bg-gradient-to-r from-primary/20 via-border/30 to-transparent" />
           </div>
 
           {/* Sortable list */}
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
             <SortableContext items={orderedPipelines.map((p) => p.id)} strategy={verticalListSortingStrategy}>
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 px-0.5">
                 {orderedPipelines.map((p) => {
                   const guard = getDeleteGuard(p);
                   return (
@@ -288,12 +304,12 @@ export function PipelineManagementPopover({
           {/* Create */}
           {canEdit && (
             <>
-              <div className="h-px bg-border/20 mx-1 my-1" />
+              <div className="h-px bg-gradient-to-r from-transparent via-border/25 to-transparent mx-2 my-1" />
               <button
-                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs font-medium text-muted-foreground/70 hover:text-foreground hover:bg-gradient-to-r hover:from-primary/8 hover:to-transparent transition-all duration-200"
                 onClick={() => { onCreate(); setOpen(false); }}
               >
-                <Plus className="h-3.5 w-3.5" />
+                <Plus className="h-3.5 w-3.5 text-primary/50" />
                 Создать воронку
               </button>
             </>
