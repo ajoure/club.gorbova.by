@@ -2,81 +2,66 @@
 
 &nbsp;
 
-1. **Period filter в board и list должен быть единым source of truth через URL.**
-  Поддержать в searchParams:
+1. PipelineManagementPopover делать не только красивым, но и **единым selector/pipeline-manager** для обоих режимов:
   &nbsp;
-  - period_preset
-  - date_from
-  - date_to
-  - вместе с view, pipeline, product, tariffs.
-    Нельзя оставлять period только как локальный useState.
+  - Список
+  - Воронка
+    Один и тот же компонент, один и тот же порядок, один и тот же active pipeline state.
   &nbsp;
-2. **В board и list должна применяться одинаковая логика default pipeline.**
-  Не просто .eq("pipeline_id", pipelineId) для list-view.
-  Для Основной нужно сохранить уже принятую логику:
+2. В SortablePipelineItem нужно явно зафиксировать **жёсткие delete-guards в UI**:
   &nbsp;
-  - показывать pipeline_id = activePipelineId
-  - **и** pipeline_id IS NULL
-    иначе list и board снова будут расходиться.
+  - Основная — без delete action вообще;
+  - pipeline с сделками — delete disabled;
+  - pipeline с crm_pipeline_product_bindings — delete disabled;
+  - не просто полагаться на service error, а визуально блокировать действие заранее.
   &nbsp;
-3. **Добавить activePipelineId в list-query не только в buildDealsQuery, но и в RPC-ветку поиска.**
-  Если search uses search_deal_rows, а pipeline filter не передаётся туда, то search results будут отличаться от обычного list-view.
-  Нужно либо:
+3. Reorder pipelines должен быть **идемпотентным и безопасным**:
   &nbsp;
-  - расширить RPC параметром p_pipeline_id и default-pipeline semantics,
-  - либо после RPC применять тот же pipeline-filter safely.
+  - после drag reorder active pipeline не должна сбрасываться;
+  - после refresh порядок должен совпадать;
+  - selector в Список и Воронка должен показывать одинаковый порядок;
+  - если reorder не изменил фактический порядок, mutation не вызывать.
   &nbsp;
-4. **Date filtering в useDealsBoard делать по тем же полям и границам, что и в list-view.**
-  То есть same contract:
+4. В новом UI сделать **явное разделение типов воронок**:
   &nbsp;
-  - gte(...T00:00:00Z)
-  - lte(...T23:59:59Z)
-    без второй, “похожей, но другой” логики.
+  - Основная
+  - product-pipelines
+    Без визуального мусора, но с понятной иерархией.
+    Минимум:
+  - default badge у Основной;
+  - active pipeline accent;
+  - product pipelines ниже/рядом в одном читаемом списке.
   &nbsp;
-5. **Machine-check proof сделать не только для counts, но и для sums.**
-  Для сценариев:
+5. Для reorder нужен **machine-proof**, а не только визуальный скрин:
   &nbsp;
-  - all
-  - this week
-  - this month
-  - last month
-  - custom range
-    показать:
-  - total deals
-  - paid deals
-  - total sum
-    и отдельно list vs board equality.
-  &nbsp;
-6. **Pipeline selector redesign — ок, но не сломать текущие CRUD и guards.**
-  В новом selector UI обязательно сохранить:
-  &nbsp;
-  - create
-  - rename
-  - delete
-  - delete guard для non-empty / bound pipelines
-  - Основная без удаления.
-  &nbsp;
-7. **Reorder pipelines должен быть idempotent и сохранять active selection.**
-  После reorder:
-  &nbsp;
-  - активная воронка остаётся активной;
-  - refresh сохраняет новый порядок;
-  - list-view и board-view используют один и тот же порядок.
-  &nbsp;
-8. **Для reorder pipelines нужен отдельный DoD-proof.**
-  Показать:
-  &nbsp;
-  - изменить порядок;
+  - изменить порядок 2–3 воронок;
   - refresh;
-  - порядок сохранился;
-  - selector в list и board показывает одинаковый порядок.
+  - показать, что order_index реально изменился и UI его сохраняет.
   &nbsp;
-9. **Gorbova Club = 1001 не просто “подтвердить”, а явно вынести в verify как закрытый вопрос.**
-  Чтобы больше к нему не возвращаться:
+6. В PipelineManagementPopover добавить **keyboard-safe UX**:
   &nbsp;
-  - DB count = pipeline count = filtered all-period count.
+  - Escape закрывает popover;
+  - Enter работает в rename dialog как submit;
+  - focus не теряется при drag/reorder;
+  - click outside закрывает popover корректно.
   &nbsp;
-10. **Обновлённый final DoD:**
+7. Rename/Delete dialogs оставить как есть — это правильно, но в plan нужно явно указать:
+  &nbsp;
+  - popover только открывает callbacks;
+  - CRUD-proof по rename/delete обязателен после интеграции нового selector UI.
+  &nbsp;
+8. Trigger button стилизовать богаче, но без потери читаемости:
+  &nbsp;
+  - активная pipeline должна читаться сразу;
+  - long names не должны ломать layout;
+  - Бухгалтерия как бизнес, Подоходный налог с физлиц и т.п. должны влезать нормально или аккуратно truncation с tooltip.
+  &nbsp;
+9. В DoD добавить ещё два пункта:
+  &nbsp;
+  - reorder pipelines работает и в Список, и в Воронка;
+  - rename/delete/create/reorder собраны в один полноценный pipeline management UI без деградации текущих filters/period/pipeline state.
+  &nbsp;
+10. Финальный proof по этому patch должен включать:
 
 &nbsp;
 
@@ -84,104 +69,102 @@
 
 &nbsp;
 
-- period filter работает в list и board;
-- period сохраняется в URL;
-- pipeline selector есть в list и board;
-- list и board используют одинаковую pipeline semantics, включая Основную + NULL;
-- reorder pipelines работает;
-- selector визуально переработан;
-- machine-check по counts и sums совпадает для list/board на одинаковых фильтрах;
-- Gorbova Club = 1001 закрыт как подтверждённый факт.
+- новый selector UI;
+- active pipeline highlight;
+- drag handle;
+- reorder до/после refresh;
+- rename;
+- delete guard;
+- create pipeline;
+- одинаковый selector в list-view и board-view.
 
 &nbsp;
 
 &nbsp;
 
-План: Period filter fix + Pipeline selector в list-view + Pipeline management UI
+План: Pipeline Management UI — redesign selector + reorder
 
 ## Диагностика
 
+Текущий selector (AdminDeals.tsx строки 912-974) — стандартный `DropdownMenu` с плоским списком `DropdownMenuItem`. Inline rename/delete кнопки уже есть, но визуал бедный. `reorderPipelines` в `usePipelines` и `pipelineService` уже существует — backend готов, но UI для drag-reorder отсутствует.
 
-| Проблема                                  | Root cause                                                                                 | Файл / строка                             |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| Period filter не работает в board-view    | `DealsKanbanBoard` не получает `dateFilter` props; `useDealsBoard` не принимает date range | `AdminDeals.tsx:1159`, `useDealsBoard.ts` |
-| Period filter не сохраняется в URL        | `dateFilter` хранится в `useState`, не в `searchParams`                                    | `AdminDeals.tsx:245`                      |
-| Pipeline selector отсутствует в list-view | Условие `viewMode === "board" &&` скрывает selector                                        | `AdminDeals.tsx:876`                      |
-| List-view не фильтрует по pipeline        | `buildDealsQuery` не принимает `pipelineId`                                                | `AdminDeals.tsx:159`                      |
-| Нет reorder pipelines                     | Функционал отсутствует (есть только `reorderStages`)                                       | `pipelineService.ts`                      |
-| Pipeline selector визуально бедный        | Стандартный `DropdownMenu` без стилизации                                                  | `AdminDeals.tsx:877-938`                  |
+## Решение
 
-
-**Gorbova Club = 1001** подтверждено по БД: `paid_gorbova_total = paid_gorbova_in_pipeline = 1001`. Это корректное значение.
+Заменить `DropdownMenu` на `Popover` с кастомным содержимым: glass-стилизованная панель с `@dnd-kit` sortable list для reorder и inline CRUD.
 
 ## Изменения
 
-### 1. Добавить `dateFilter` в board-view
+### 1. Новый компонент `PipelineManagementPopover.tsx`
 
-`**useDealsBoard.ts**`: добавить `dateFrom?: string; dateTo?: string` в `UseDealsBoardOpts`. Применять `.gte("deal_date", ...)` / `.lte("deal_date", ...)` в query builder (аналогично list-view `buildDealsQuery`).
+Отдельный компонент `src/components/admin/deals/PipelineManagementPopover.tsx`:
 
-`**DealsKanbanBoard.tsx**`: добавить props `dateFrom`, `dateTo`, прокинуть в `useDealsBoard`.
+- **Popover** вместо DropdownMenu — полный контроль над содержимым
+- **Glass styling**: `bg-card/60 backdrop-blur-xl border-border/30 shadow-2xl rounded-2xl`
+- **DndContext + SortableContext** с `verticalListSortingStrategy` для reorder
+- Каждая pipeline — `useSortable` item с:
+  - `GripVertical` drag handle слева
+  - Название pipeline
+  - Badge `default` для Основной
+  - Inline кнопки rename / delete (hover-visible), кроме Основной (только rename)
+  - Active pipeline: accent border-left + `bg-primary/10` background
+- **Create button** внизу: `+ Создать воронку`
+- **onDragEnd**: `arrayMove` + вызов `reorderPipelines(orderedIds)`
+- **Guards при delete**: проверка через `deletePipeline` в service (уже бросает ошибку для непустых)
 
-`**AdminDeals.tsx:1159**`: передать `dateFrom={dateFilter.from}` `dateTo={dateFilter.to}` в `<DealsKanbanBoard>`.
+Props:
 
-### 2. Сохранить `dateFilter` в URL
+```
+pipelines, activePipelineId, onSelect, onRename, onDelete, onCreate, onReorder, canEdit
+```
 
-`**AdminDeals.tsx**`: убрать `useState<DateFilter>`, вместо этого читать/писать `date_from` и `date_to` из `searchParams` (аналогично `pipeline`, `product`, `tariffs`). Добавить `setDateFilter` через `setSearchParams`.
+### 2. Sortable pipeline item
 
-### 3. Pipeline selector в обоих режимах
+Внутренний компонент `SortablePipelineItem` (внутри того же файла):
 
-`**AdminDeals.tsx:876**`: убрать условие `viewMode === "board" &&`. Показывать pipeline selector всегда, когда `pipelines.length > 0`.
+- `useSortable` от `@dnd-kit/sortable`
+- `CSS.Transform.toString(transform)` для drag animation
+- Визуал:
+  - Active: `border-l-2 border-primary bg-primary/8`
+  - Default: `hover:bg-muted/40`
+  - Drag: `shadow-lg bg-card/80 backdrop-blur-xl`
+  - GripVertical: `h-3.5 w-3.5 text-muted-foreground/50 cursor-grab`
+  - Pipeline name: `text-sm font-medium`
+  - Action buttons: `opacity-0 group-hover:opacity-100`
 
-### 4. Фильтрация list-view по pipeline
+### 3. Trigger button стилизация
 
-`**buildDealsQuery**`: добавить параметр `pipelineId`. Если задан — `.eq("pipeline_id", pipelineId)`. Для default pipeline — `.or(pipeline_id.eq.X,pipeline_id.is.null)`.
+Trigger (в AdminDeals.tsx):
 
-`**useInfiniteQuery` queryKey**: добавить `activePipelineId`.
+- `bg-card/40 backdrop-blur-md border-border/30 hover:bg-card/60`
+- Активная pipeline показана с subtle accent dot
+- `rounded-xl` вместо стандартного `rounded-md`
 
-### 5. Reorder pipelines
+### 4. AdminDeals.tsx — интеграция
 
-`**pipelineService.ts**`: добавить `reorderPipelines(orderedIds: string[])` — аналогичная логика как `reorderStages` (temporary negative index, then set final).
+- Удалить текущий `DropdownMenu` selector (строки 912-974)
+- Заменить на `<PipelineManagementPopover>`
+- Передать `reorderPipelines` из `usePipelines` hook
+- Rename/Delete dialogs оставить как есть (уже работают)
 
-`**usePipelines.ts**`: добавить `reorderMutation`.
+### 5. Rename / Delete dialogs
 
-### 6. Pipeline management UI redesign
-
-Заменить текущий `DropdownMenu` на более полноценный `Popover` / dialog-based management panel:
-
-- Список pipelines с drag handles для reorder (используя `@dnd-kit`)
-- Inline rename/delete кнопки
-- Create внизу
-- Active pipeline выделена визуально (accent border/bg)
-- Glass/high-end styling: `bg-card/60 backdrop-blur-xl`, gradient accents для active
-
-### 7. Machine-check proof
-
-После реализации — запустить SQL-проверки:
-
-- Count/sum deals в board vs list для одного периода/pipeline/product
-- Gorbova Club counts по разным period presets
-- Verify URL persistence после refresh
+Оставить существующие `Dialog` (rename) и `AlertDialog` (delete) в AdminDeals.tsx — они уже работают. `PipelineManagementPopover` только вызывает `onRename(pipeline)` / `onDelete(pipeline)` callbacks.
 
 ## Изменяемые файлы
 
 
-| Файл                   | Что                                                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `useDealsBoard.ts`     | Добавить dateFrom/dateTo фильтрацию                                                                           |
-| `DealsKanbanBoard.tsx` | Прокинуть dateFrom/dateTo props                                                                               |
-| `AdminDeals.tsx`       | URL-based dateFilter, pipeline selector в обоих режимах, pipeline filter в list query, redesigned selector UI |
-| `pipelineService.ts`   | Добавить `reorderPipelines`                                                                                   |
-| `usePipelines.ts`      | Добавить reorder mutation                                                                                     |
+| Файл                                                       | Что                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `src/components/admin/deals/PipelineManagementPopover.tsx` | Новый компонент — glass popover с dnd-kit reorder                              |
+| `src/pages/admin/AdminDeals.tsx`                           | Заменить DropdownMenu на PipelineManagementPopover, прокинуть reorderPipelines |
 
 
 ## DoD
 
-1. Period filter применяется и в list, и в board
-2. Period filter сохраняется в URL
-3. Pipeline selector виден в обоих режимах
-4. List-view фильтрует по pipeline
-5. Reorder pipelines работает и сохраняется
-6. Pipeline selector визуально переработан
-7. Gorbova Club = 1001 подтверждено
-8. Machine-check: list и board дают одинаковый dataset на одном периоде
-9. Комбинации pipeline + period + product + tariff корректны
+1. Selector визуально переработан — glass/high-end
+2. Active pipeline сразу читается (accent)
+3. Drag handle виден, reorder мышью работает
+4. Порядок сохраняется в БД, после refresh тот же
+5. Selector одинаков в list и board
+6. Create/rename/delete/reorder в одном UI
+7. Guard: Основную нельзя удалить, непустую нельзя удалить
