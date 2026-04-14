@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveUserIds, getOrderUserId } from '../_shared/user-resolver.ts';
 import { getBepaidCredsStrict, createBepaidAuthHeader, isBepaidCredsError } from '../_shared/bepaid-credentials.ts';
+import { createPaymentCheckout } from '../_shared/create-payment-checkout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -662,92 +663,71 @@ Deno.serve(async (req) => {
 
     // For one-time payments (e.g., consultations), use checkout API instead of subscriptions
     if (isOneTime) {
-      console.log('Processing one-time payment via checkout API');
+      console.log('[bepaid-create-token] One-time payment: delegating to canonical createPaymentCheckout');
       
-      const checkoutPayload = {
-        checkout: {
-          version: '2.1',
-          transaction_type: 'payment',
-          order: {
-            amount: Math.round(paymentAmount * 100), // Convert to cents
-            currency: productInfo.currency,
-            description: description || productInfo.name,
-            tracking_id: trackingId,
-          },
-          settings: {
-            language: 'ru',
-            return_url: buildReturnUrl(successUrl, 'processing'),
-            cancel_url: buildReturnUrl(failUrl, 'cancelled'),
-            notification_url: `${supabaseUrl}/functions/v1/bepaid-webhook`,
-            auto_return: 3,
-          },
-          customer: {
-            email: emailLower,
-            first_name: customerFirstName || undefined,
-            last_name: customerLastName || undefined,
-            phone: customerPhone || undefined,
-            ip: customerIp,
-          },
-        },
-      };
+      // Resolve tariff_id UUID for the shared helper
+      let tariffIdForCheckout: string | null = null;
+      if (tariffCode) {
+        const { data: tariffRow } = await supabase
+          .from('tariffs')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('code', tariffCode)
+          .maybeSingle();
+        tariffIdForCheckout = tariffRow?.id ?? null;
+      }
+      if (!tariffIdForCheckout && offerId) {
+        const { data: offerRow } = await supabase
+          .from('tariff_offers')
+          .select('tariff_id')
+          .eq('id', offerId)
+          .maybeSingle();
+        tariffIdForCheckout = offerRow?.tariff_id ?? null;
+      }
 
-      console.log('Sending checkout to bePaid:', JSON.stringify(checkoutPayload, null, 2));
+      if (!tariffIdForCheckout) {
+        console.error('[bepaid-create-token] Cannot resolve tariff_id for one-time checkout', { tariffCode, offerId, productId });
+        return paymentFallbackResponse('Не удалось определить тариф для оплаты. Попробуйте ещё раз.', {
+          flow: 'one_time_checkout',
+          productId,
+          tariffCode: tariffCode || null,
+          offerId: offerId || null,
+        });
+      }
 
-      const checkoutResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${bepaidAuth}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(checkoutPayload),
+      const amountKopecks = Math.round(paymentAmount * 100);
+      const checkoutResult = await createPaymentCheckout({
+        supabase,
+        user_id: userId,
+        product_id: productId,
+        tariff_id: tariffIdForCheckout,
+        amount: amountKopecks,
+        payment_type: 'one_time',
+        description: description || productInfo.name,
+        offer_id: offerId,
+        origin: origin,
+        actor_type: 'system',
       });
 
-      const checkoutData = await checkoutResponse.json();
-      console.log('bePaid checkout response:', JSON.stringify(checkoutData, null, 2));
-
-      const checkoutToken = checkoutData?.checkout?.token as string | undefined;
-      const checkoutRedirectUrl = checkoutData?.checkout?.redirect_url as string | undefined;
-
-      if (!checkoutResponse.ok || !checkoutToken || !checkoutRedirectUrl) {
-        const errMsg = checkoutData?.message || checkoutData?.errors?.[0]?.message || 'Payment service error';
-        console.error('bePaid checkout API error:', errMsg, checkoutData);
-
-        await supabase
-          .from('orders')
-          .update({ status: 'failed', error_message: errMsg })
-          .eq('id', order.id);
-
-        return paymentFallbackResponse(errMsg, {
-          provider: 'bepaid',
+      if (!checkoutResult.success) {
+        console.error('[bepaid-create-token] createPaymentCheckout failed:', checkoutResult.error);
+        return paymentFallbackResponse(checkoutResult.error, {
           flow: 'one_time_checkout',
-          orderId: order.id,
-          statusCode: checkoutResponse.status,
           productId,
           offerId: offerId || null,
         });
       }
 
-      // Persist checkout token on our order
-      await supabase
-        .from('orders')
-        .update({
-          bepaid_token: checkoutToken,
-          status: 'processing',
-          meta: {
-            ...(order.meta as Record<string, any> || {}),
-            bepaid_checkout_token: checkoutToken,
-            is_one_time: true,
-          },
-        })
-        .eq('id', order.id);
+      console.log('[bepaid-create-token] One-time checkout created via canonical flow:', {
+        order_id: checkoutResult.order_id,
+        payment_type: checkoutResult.payment_type,
+      });
 
       return new Response(
         JSON.stringify({
           success: true,
-          token: checkoutToken,
-          redirectUrl: checkoutRedirectUrl,
-          orderId: order.id,
+          redirectUrl: checkoutResult.redirect_url,
+          orderId: checkoutResult.order_id,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -802,7 +782,7 @@ Deno.serve(async (req) => {
       const mitResponse = await fetch('https://checkout.bepaid.by/ctp/api/checkouts', {
         method: 'POST',
         headers: {
-          'Authorization': `Basic ${bepaidAuth}`,
+          'Authorization': bepaidAuth,
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },

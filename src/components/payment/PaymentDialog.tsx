@@ -1081,21 +1081,10 @@ export function PaymentDialog({
               )}
             </div>
 
-            {savedCard && (isSubscription || isTrial) ? (
-              <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 space-y-1">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <CreditCard className="h-4 w-4 text-primary" />
-                  <span>Оплата сохранённой картой</span>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  {savedCard.brand?.toUpperCase()} •••• {savedCard.last4}
-                </p>
-              </div>
-            ) : (
-              <div className="rounded-lg bg-primary/10 p-3 text-sm">
-                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid без использования сохранённой карты.</p>
-              </div>
-            )}
+            <div className="rounded-lg bg-primary/10 p-3 text-sm flex items-start gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+            </div>
             
             {/* Subscription info - dynamic based on product type */}
             {(isSubscription || isTrial) && (
