@@ -442,6 +442,19 @@ export default function AdminDeals() {
     staleTime: 5 * 60 * 1000,
   });
 
+  // Fetch tariffs for filter (depends on selected product)
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-filter", selectedProductId],
+    queryFn: async () => {
+      let q = supabase.from("tariffs").select("id, name, product_id");
+      if (selectedProductId) q = q.eq("product_id", selectedProductId);
+      const { data } = await q.order("name");
+      return data || [];
+    },
+    enabled: !!selectedProductId,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Fallback: fetch profiles ONLY for deals without profile_id but with user_id
   const missingUserIds = useMemo(() => {
     const ids = new Set<string>();
