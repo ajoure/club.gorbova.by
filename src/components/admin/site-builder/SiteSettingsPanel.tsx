@@ -30,8 +30,69 @@ export function SiteSettingsPanel({
   pageId, title, slug, seoSettings, themeSettings,
   onTitleChange, onSlugChange, onSeoChange, onThemeChange,
 }: SiteSettingsPanelProps) {
+  const queryClient = useQueryClient();
   const { bindings, bindDomain, unbindDomain, setHome, isBinding, isSettingHome } = useSiteDomainBindings(pageId);
   const [newDomain, setNewDomain] = useState("");
+
+  // Fetch current product binding for this page
+  const { data: currentPage } = useQuery({
+    queryKey: ["site-page-product-binding", pageId],
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("site_pages") as any)
+        .select("id, product_id")
+        .eq("id", pageId)
+        .single();
+      if (error) throw error;
+      return data as { id: string; product_id: string | null };
+    },
+    enabled: !!pageId,
+  });
+
+  // Fetch products for dropdown
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const { data: products } = useQuery({
+    queryKey: ["products-for-page-binding"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("products_v2")
+        .select("id, name")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+      return (data || []) as { id: string; name: string }[];
+    },
+    enabled: productDropdownOpen,
+  });
+
+  const bindProductMutation = useMutation({
+    mutationFn: async (newProductId: string | null) => {
+      const { error } = await (supabase.from("site_pages") as any)
+        .update({ product_id: newProductId })
+        .eq("id", pageId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["site-page-product-binding", pageId] });
+      queryClient.invalidateQueries({ queryKey: ["product-site-page"] });
+      queryClient.invalidateQueries({ queryKey: ["site-pages"] });
+      toast.success("Привязка обновлена");
+    },
+    onError: (e: Error) => {
+      if (e.message?.includes("idx_site_pages_product_id_unique")) {
+        toast.error("Этот продукт уже привязан к другой странице");
+      } else {
+        toast.error(e.message);
+      }
+    },
+  });
+
+  const handleProductChange = (value: string) => {
+    if (value === "__none") {
+      bindProductMutation.mutate(null);
+    } else {
+      bindProductMutation.mutate(value);
+    }
+  };
 
   const handleAddDomain = () => {
     if (!newDomain.trim()) return;
