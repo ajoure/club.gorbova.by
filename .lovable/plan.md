@@ -1,89 +1,158 @@
-# PATCH P0 / F2 / P2 — Оплата консультации + inline auth + ошибки
+# да, согласен, с учетом правок:
 
-## Статус PATCHей
+&nbsp;
 
-| PATCH | Статус |
-|-------|--------|
-| A — suffix/config-driven | CLOSED |
-| B — equal-height layout | PARTIALLY VERIFIED |
-| C — carousel UX | OPEN |
-| D — product↔page binding + anchors | CLOSED |
-| E — pricing block detection + diagnostics | CLOSED |
-| F1 — убрать redirect на /auth | CLOSED |
-| F2 — resume payment after inline auth | PARTIAL — authInProgressRef добавлен, нужен browser-proof |
-| **P0 — hotfix оплаты консультации** | **FIXED** |
-| **P0.1 — saved card UI guard + fallback** | **FIXED** |
-| **P2 — клиентские ошибки оплаты** | **FIXED** |
+1. В разделе **Диагностика** зафиксируй жёстче:
+  рабочий flow из карточки контакта через admin-create-payment-link → _shared/create-payment-checkout.ts считать **основным каноническим owner-flow для one-time checkout**.
+  bepaid-create-token не считать owner, а только legacy entrypoint, который должен быть приведён к каноническому backend path.
+2. В разделе **Изменения 1** уточни формулировку:
+  цель не просто “заменить inline checkout код”, а **устранить самостоятельную one-time реализацию внутри bepaid-create-token**.
+  После патча one-time ветка не должна:
+  &nbsp;
+  - писать в orders;
+  - собирать checkout payload вручную;
+  - формировать свой tracking;
+  - иметь собственную bePaid business-логику.
+    Она должна только резолвить входные данные и передавать их в createPaymentCheckout().
+  &nbsp;
+3. Добавь отдельный подпункт по **legacy cleanup guard**:
+  после перевода one-time path на shared helper нужно убедиться, что в runtime больше **не создаются новые записи в legacy orders** из сайтовых тарифных кнопок.
+  Это важный proof, иначе можно формально “починить редирект”, но оставить старый сломанный хвост.
+4. В блоке про **MIT ветку** уточни:
+  не ограничиваться только заменой auth header, а явно проверить, используется ли MIT path вообще из client flow после текущих изменений.
+  Если не используется с сайтовых тарифных кнопок, не расширять scope и не делать лишних архитектурных правок.
+  Только зафиксировать, что баг найден, и минимально убрать double Basic, если этот код остаётся живым.
+5. В разделе **Saved card** усили правило:
+  нужно не просто убрать misleading текст, а привести UI к правде:
+  &nbsp;
+  - не показывать, что оплата пойдёт сохранённой картой, если фактически идёт обычный bePaid checkout;
+  - не запирать пользователя в сохранённой карте;
+  - всегда оставлять сценарий обычной оплаты через bePaid.
+    То есть интерфейс должен соответствовать фактическому backend flow.
+  &nbsp;
+6. В разделе **DoD / P0** добавь ещё один обязательный proof:
+  &nbsp;
+  - тот же продукт, который успешно оплачивается через ссылку из карточки контакта,
+  - после патча должен успешно оплачиваться и из сайтовой тарифной кнопки
+    **на том же backend owner-path**, а не просто “как-то работать”.
+  &nbsp;
+7. Добавь в **Verify** отдельную проверку:
+  сравнить before/after именно для одного и того же сценария:
+  &nbsp;
+  - тот же продукт;
+  - тот же тариф/offer;
+  - та же роль пользователя;
+  - ссылка из карточки контакта — success;
+  - кнопка на сайте — после фикса тоже success.
+    Это нужно как прямое доказательство, что сайты переведены на рабочую схему, а не получили отдельный временный костыль.
+  &nbsp;
+8. В **STOP-guards** добавь:
+  если в ходе реализации выяснится, что [club.gorbova.by](http://club.gorbova.by) для подписок использует другой корректный flow, это **не причина плодить второй owner для one-time**.
+  Для подписок допускается существующий рабочий subscription path,
+  но **для one-time все сайты должны быть сведены к одному каноническому flow**, совпадающему с рабочей ссылкой оплаты из карточки контакта.
+9. В финальном выводе для Lovable зафиксируй одной фразой:
+  **не чинить симптом в bepaid-create-token, а подчинить его существующему рабочему one-time payment owner-flow, чтобы сайты и ссылки оплаты использовали один и тот же downstream без расхождения.**
 
-## P0 — Root Cause и Fix
+&nbsp;
 
-### Root Cause (подтверждено)
+&nbsp;
 
-`PaymentDialog.handlePayment()` вызывал `bepaid-create-token` **без `isOneTime: true`** для non-subscription продуктов (консультации). Консультации имеют `requires_card_tokenization: false`, поэтому `isSubscription=false`, но `isOneTime` нигде не передавался.
+P0 — Единый канонический payment flow + UX сохранённой карты
 
-В `bepaid-create-token/index.ts`:
-- Line 648: `if (isOneTime)` → checkout API (one-time) ← **не попадал**
-- Line 738: `if (useMitTokenization)` → MIT flow ← **не попадал**  
-- Line 861: HARD GUARD → 403 `SUBSCRIPTION_PATH_BLOCKED` ← **сюда попадал**
+## Статус
 
-Edge log: `[bepaid-create-token] BLOCKED: legacy subscription path attempted without explicit choice`
 
-### Fix (PaymentDialog.tsx)
+| PATCH                          | Статус               |
+| ------------------------------ | -------------------- |
+| P0 — hotfix оплаты (все сайты) | OPEN                 |
+| P0.1 — saved card UI           | REVISION             |
+| P2 — клиентские ошибки         | FIXED                |
+| F2 — auth persistence          | PARTIAL / NOT CLOSED |
 
-```typescript
-// Line 512: добавлено
-const isOneTimePayment = !isSubscription && !isTrial;
 
-// В payload bepaid-create-token:
-isOneTime: isOneTimePayment,
-```
+## Диагностика — доказанные факты
 
-### Decision Gate: Saved Card UI
+### Owner-map: три payment path в системе
 
-Saved card UI для one-time продуктов — **cosmetic only**. Реальная оплата всегда идёт через bePaid checkout redirect (новая карта или saved card обрабатывается bePaid). UI показывает сохранённую карту как информацию, но actual charge path одинаков. Это корректное поведение — не требует скрытия.
 
-### DB Proof: Consultation Offers
+| Flow                           | Edge Function                                                      | Auth Header                                                     | Таблица                          | Tracking            | Статус     |
+| ------------------------------ | ------------------------------------------------------------------ | --------------------------------------------------------------- | -------------------------------- | ------------------- | ---------- |
+| Admin link / карточка контакта | `admin-create-payment-link` → `_shared/create-payment-checkout.ts` | `bepaidAuth` = `Basic <base64>` (строка 308) ✅                  | `orders_v2`                      | `link:order:{UUID}` | ✅ РАБОТАЕТ |
+| Club subscription              | `bepaid-create-subscription-checkout`                              | корректный                                                      | `orders_v2` + `subscriptions_v2` | structured          | ✅ РАБОТАЕТ |
+| **Сайтовые кнопки (one-time)** | `bepaid-create-token` inline                                       | ``Basic ${bepaidAuth}`` = `Basic Basic <base64>` (строка 699) ❌ | legacy `orders`                  | `{order.id}`        | ❌ СЛОМАН   |
+| **MIT flow**                   | `bepaid-create-token` inline                                       | ``Basic ${bepaidAuth}`` (строка 805) ❌                          | legacy `orders`                  | `{order.id}`        | ❌ СЛОМАН   |
 
-| Tariff | offer_type | amount | requires_card_tokenization |
-|--------|-----------|--------|---------------------------|
-| CONSULTATION_STANDARD | pay_now | 500 | false |
-| CONSULTATION_URGENT | pay_now | 800 | false |
-| help | pay_now | 1500 | false |
-| strategy | pay_now | 4500 | false |
 
-Все офферы — one-time, не subscription. `isOneTime: true` теперь корректно передаётся.
+### Root cause — доказано кодом
 
-## P0.1 — Saved Card UI Guard + Fallback
+1. **Double Basic prefix**: `createBepaidAuthHeader()` (строка 116 `bepaid-credentials.ts`) возвращает `"Basic <base64>"`. В `bepaid-create-token` строка 699: ``Basic ${bepaidAuth}`` → `Basic Basic <base64>` → bePaid 500.
+2. **Параллельный drift**: `bepaid-create-token` собирает one-time checkout инлайн, игнорируя канонический `_shared/create-payment-checkout.ts`. Пишет в legacy `orders` (строка 444-470), нет `purchase_snapshot`, нет dedup, другой tracking.
+3. **MIT flow**: строка 805 — тот же double-prefix баг, те же legacy `orders`.
 
-### Что сделано
+### Canonical owner — найден
 
-1. **Saved card UI скрыт для one-time продуктов**: guard `savedCard && (isSubscription || isTrial)` — для консультаций показывается стандартный текст "перенаправлены на защищённую страницу оплаты bePaid".
-2. **Контекстные сообщения об ошибках**:
-   - One-time: «Не удалось открыть страницу оплаты. Попробуйте ещё раз.»
-   - Subscription с saved card: «Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.»
-   - Прочее: `normalizeEdgeFunctionError(error)`
-3. **Модалка не закрывается при ошибке**: убран `setStep("ready")` из catch — пользователь остаётся на текущем шаге.
-4. **Кнопка**: всегда "Оплатить {price}" для one-time, без зависимости от savedCard.
+`_shared/create-payment-checkout.ts` — единственная рабочая функция создания платёжной ссылки. Используется из `admin-create-payment-link`. Все downstream (webhook → order update → entitlements → access) завязаны на tracking format `link:order:{UUID}` и таблицу `orders_v2`.
 
-## P2 — Нормализация ошибок
+### Saved card — доказано misleading для ВСЕХ типов
 
-### Fix
+По коду PaymentDialog.tsx строки 502-504: client flow **всегда** идёт через стандартный bePaid checkout с 3DS. Saved card **не передаётся** в bePaid ни для one-time, ни для subscription client flow. bePaid всегда показывает форму ввода карты. UI «Оплата сохранённой картой» вводит в заблуждение для **всех** продуктов.
 
-Заменён `toast.error(error.message)` на контекстные сообщения + `normalizeEdgeFunctionError` как fallback. Raw backend ошибки пользователю больше не показываются.
+## Принцип решения
 
-## F2 — Статус
+**Жёсткое правило**: не создавать никаких новых edge functions, payment handlers, checkout flows, временных product-specific веток. Исправление — только через переиспользование уже существующей рабочей `createPaymentCheckout()`.
 
-`authInProgressRef` добавлен и работает в коде. Требуется browser-proof:
-- логин внутри окна → окно не закрывается
-- выбранный тариф не теряется
-- сразу переход к step="ready"
+## Изменения
 
-## Файлы
+### 1. `supabase/functions/bepaid-create-token/index.ts`
 
-| Файл | Изменение |
-|------|-----------|
-| `src/components/payment/PaymentDialog.tsx` | isOneTime в payload, saved card UI guard, контекстные ошибки, кнопка, authInProgressRef (ранее) |
+**One-time ветка** (строки 664-753): заменить inline checkout код на вызов `createPaymentCheckout()`:
 
-## FROZEN
+- Импортировать `createPaymentCheckout` из `../_shared/create-payment-checkout.ts`
+- Resolve `tariff_id` UUID через существующий lookup (строки 494-501 уже делают это для tariffCode)
+- Передать: `supabase`, `user_id: userId`, `product_id: productId`, `tariff_id`, `amount` в копейках, `payment_type: 'one_time'`, `offer_id`, `origin`, `actor_type: 'system'`
+- Вернуть `redirectUrl` из результата shared helper
+- Убрать запись в legacy `orders` для этого path — shared helper пишет в `orders_v2`
 
-Auth.tsx, edge functions, таблицы — не изменены.
+**MIT ветка** (строки 756-883): минимальный фикс auth header — строка 805: `'Authorization': bepaidAuth` вместо ``Basic ${bepaidAuth}``
+
+### 2. `src/components/payment/PaymentDialog.tsx`
+
+**Убрать misleading saved card UI для ВСЕХ продуктов** (строки 1084-1098). Единый текст: «После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.»
+
+Обоснование: saved card в client flow — cosmetic only для всех типов продуктов. bePaid всегда показывает форму карты.
+
+### 3. `.lovable/plan.md` — обновить статусы
+
+## НЕ делаем
+
+- Не создаём новых edge functions / payment handlers / checkout flows
+- Не создаём новую логику для consultation / site builder / «закрой год» отдельно
+- Не оставляем клуб на одном flow, а остальные сайты на другом
+- Не допускаем разных webhook/downstream после оплаты
+- Не трогаем `bepaid-create-subscription-checkout`, `admin-create-payment-link`, `_shared/create-payment-checkout.ts`, webhook
+- Не оживляем `ConsultationPaymentDialog.tsx`
+
+## STOP-guards
+
+- Если `createPaymentCheckout` требует `tariff_id` UUID — resolve через существующий tariff lookup в `bepaid-create-token` (строки 494-501)
+- Если рабочий flow уже есть в карточке контакта — запрещено изобретать новый path вместо переиспользования
+- Если club subscription flow работает — не трогать
+- Не закрывать P0, пока consultation и другие сайты не подтверждены на каноническом owner-path
+
+## DoD
+
+### P0
+
+- Сайтовые кнопки используют тот же `createPaymentCheckout()`, что и admin link из карточки контакта
+- Auth header корректный (нет двойного `Basic`)
+- Заказ создаётся в `orders_v2` (не legacy `orders`)
+- Tracking `link:order:{UUID}` — webhook обрабатывает корректно
+- Downstream после оплаты: order → subscription → entitlements → access — тот же путь
+- Club, consultation, «ЗАКРОЙ ГОД» не расходятся по payment owner-path
+- При ошибке модалка не закрывается, пользователь может повторить
+- Пользователь не видит misleading «Оплата сохранённой картой»
+- Runtime-proof обязателен перед закрытием
+
+### F2
+
+- Остаётся PARTIAL / NOT CLOSED до browser-proof
