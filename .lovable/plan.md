@@ -1,4 +1,4 @@
-# PATCH F — Guest checkout flow + club CTA fix — CLOSED
+# PATCH F2 — Resume payment after inline auth — CLOSED
 
 ## Статус PATCHей
 
@@ -9,36 +9,53 @@
 | C — carousel UX | OPEN |
 | D — product↔page binding + anchors | CLOSED |
 | E — pricing block detection + diagnostics | CLOSED |
-| F — guest checkout flow + club CTA fix | **CLOSED** |
+| F1 — убрать redirect на /auth | CLOSED |
+| F2 — resume payment after inline auth | **CLOSED** |
 
 ## Что сделано
 
-### F1. Убран auth-redirect guard из pricing entrypoints
+### F2.1 Фикс useEffect race condition
 
-- `UniversalPricingSection.tsx` — убран `if (!user) navigate("/auth")`, убран `useEffect` restore offer, убраны неиспользуемые импорты
-- `ProductLanding.tsx` — то же самое
-- `TariffPricing.tsx` — то же самое
+- Добавлен `authInProgressRef = useRef(false)` — предотвращает сброс состояния диалога при обновлении `user`/`session` после inline auth
+- `useEffect`: если `authInProgressRef.current === true` и `user && session` — пропускает полный reset, только обновляет `existingUserId` и загружает saved card
+- При закрытии диалога (`open=false`) флаг всегда сбрасывается
 
-Теперь `PaymentDialog` всегда открывается напрямую. Диалог сам обрабатывает guest через inline auth flow (email → login/register → payment).
+### F2.2 handleLoginSubmit — authInProgressRef
 
-### F2. Фикс scroll к тарифам
+- Перед `signInWithPassword` ставится `authInProgressRef.current = true`
+- При ошибке логина — флаг сбрасывается
+- При catch — флаг сбрасывается
+- Успех → `setStep("ready")` уже был, теперь useEffect не перебивает его
 
-- `LandingHero.tsx` — `getElementById("pricing")` → fallback `getElementById("tariffs") || getElementById("pricing")`
-- `LandingCTA.tsx` — то же самое
-- `UnifiedFooter.tsx` — `href="#pricing"` → `href="#tariffs"`
+### F2.3 loadSavedCard — вынесен в отдельную функцию
 
-### Canonical owner
+- `async function loadSavedCard(userId)` — безопасная, не блокирует checkout
+- Ошибки загрузки карты логируются, но не ломают оплату
+- Переиспользуется в useEffect (initial open) и после inline login
+
+### F2.4 Consent links — унификация с Auth.tsx
+
+- Две ссылки: `/privacy` (Политика конфиденциальности) + `/consent` (согласие на обработку ПД)
+- Формат идентичен Auth.tsx
+
+### F2.5 UX-блок "Зачем эти данные"
+
+- Заменён текст "Заполните данные — и мы создадим личный кабинет" на структурированный блок:
+  - Email — для личного кабинета, доступов и уведомлений по покупке
+  - Телефон — для связи по заказу и восстановления доступа
+  - Имя и фамилия — для оформления покупки и документов
+
+## Canonical owner
 
 - `PaymentDialog` = canonical guest checkout flow
-- Любые внешние guards `if (!user) navigate("/auth")` в pricing entrypoints — legacy/broken, удалены
+- `authInProgressRef` = guard против race condition при inline auth
 
 ## Файлы
 
 | Файл | Изменение |
 |------|-----------|
-| `src/components/landing/UniversalPricingSection.tsx` | Убран auth guard + useEffect restore |
-| `src/components/landing/ProductLanding.tsx` | Убран auth guard + useEffect restore |
-| `src/pages/TariffPricing.tsx` | Убран auth guard + useEffect restore |
-| `src/components/landing/LandingHero.tsx` | scroll anchor fix |
-| `src/components/landing/LandingCTA.tsx` | scroll anchor fix |
-| `src/components/layout/UnifiedFooter.tsx` | anchor `#pricing` → `#tariffs` |
+| `src/components/payment/PaymentDialog.tsx` | authInProgressRef, loadSavedCard, consent links, UX text |
+
+## FROZEN
+
+Всё из PATCH A/B/C/D/E/F1. Auth.tsx не тронут.
