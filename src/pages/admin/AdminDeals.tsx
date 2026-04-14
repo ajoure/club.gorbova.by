@@ -1097,6 +1097,7 @@ export default function AdminDeals() {
           isDefaultPipeline={activePipeline?.is_default}
           search={debouncedSearch}
           productId={selectedProductId}
+          tariffIds={selectedTariffIds}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}
