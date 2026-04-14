@@ -105,9 +105,9 @@ function CarouselView({
         setApi={setApi}
         opts={{
           align: "center",
-          loop: false,
+          loop: true,
+          dragFree: true,
           slidesToScroll: 1,
-          containScroll: "trimSnaps",
         }}
         className="w-full"
       >
@@ -122,7 +122,7 @@ function CarouselView({
               <CarouselItem
                 key={i}
                 className={cn(
-                  "pl-4 md:pl-5 flex",
+                  "pl-4 md:pl-5 flex h-full",
                   forceMobile
                     ? "basis-[88%]"
                     : "basis-[88%] md:basis-[52%] lg:basis-[36%]",
@@ -130,7 +130,7 @@ function CarouselView({
               >
                 <div
                   className={cn(
-                    "w-full flex flex-col transition-all duration-300 ease-out",
+                    "w-full flex flex-col h-full transition-all duration-300 ease-out",
                     isActive
                       ? "scale-100 opacity-100"
                       : isAdjacent
