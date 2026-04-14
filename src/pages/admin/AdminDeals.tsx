@@ -944,7 +944,8 @@ export default function AdminDeals() {
       </div>
       )}
 
-      {/* Deals Table */}
+      {/* Deals Table (list mode only) */}
+      {viewMode === "list" && (
       <GlassCard className="p-0 overflow-hidden">
         {isLoading ? (
           <div className="p-6 space-y-4">
