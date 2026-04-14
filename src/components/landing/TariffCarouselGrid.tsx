@@ -71,6 +71,7 @@ function CarouselView({
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
   const [scrollSnaps, setScrollSnaps] = useState<number[]>([]);
+  const { setRef, minHeight } = useEqualHeight(items.length);
 
   const onSelect = useCallback(() => {
     if (!api) return;
