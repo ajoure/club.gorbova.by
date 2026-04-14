@@ -100,8 +100,30 @@ function CarouselView({
     };
   }, [api, onSelect, onReInit]);
 
+  // Equal-height: measure all slides and apply uniform minHeight
+  useEffect(() => {
+    const container = carouselContainerRef.current;
+    if (!container) return;
+
+    const equalize = () => {
+      const slides = container.querySelectorAll<HTMLDivElement>('[data-eq-slide]');
+      if (slides.length === 0) return;
+      slides.forEach(el => { el.style.minHeight = ''; });
+      void container.offsetHeight;
+      let maxH = 0;
+      slides.forEach(el => { if (el.scrollHeight > maxH) maxH = el.scrollHeight; });
+      if (maxH > 0) slides.forEach(el => { el.style.minHeight = `${maxH}px`; });
+    };
+
+    const t1 = setTimeout(equalize, 200);
+    const t2 = setTimeout(equalize, 600);
+    const t3 = setTimeout(equalize, 1200);
+    window.addEventListener('resize', equalize);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); window.removeEventListener('resize', equalize); };
+  }, [items.length]);
+
   return (
-    <div className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-8", className)}>
+    <div ref={carouselContainerRef} className={cn("w-full max-w-6xl mx-auto relative px-2 md:px-8", className)}>
       <Carousel
         setApi={setApi}
         opts={{
@@ -132,16 +154,15 @@ function CarouselView({
               >
                 {/* No scale/translateY — only opacity for active state (STOP-guard: no geometry changes) */}
                 <div
-                  ref={setRef(i)}
+                  data-eq-slide
                   className={cn(
-                    "w-full flex flex-col h-full transition-opacity duration-300 ease-out",
+                    "w-full flex flex-col transition-opacity duration-300 ease-out",
                     isActive
                       ? "opacity-100"
                       : isAdjacent
                         ? "opacity-[0.92]"
                         : "opacity-[0.85]",
                   )}
-                  style={minHeight ? { minHeight } : undefined}
                 >
                   {child}
                 </div>
