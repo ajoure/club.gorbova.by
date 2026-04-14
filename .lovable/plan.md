@@ -2,98 +2,109 @@
 
 &nbsp;
 
-1. **PATCH B нужно сформулировать как один owner-layout для preview и public.**
-  Явно запиши: проблема не только в scale, а в **разной DOM-цепочке**.
-  Обязательное требование: TariffCarouselGrid должен рендерить одинаковую layout-цепочку в обоих режимах. AnimatedSection в public — structural mismatch, его нужно либо довести до полного h-full flex-совместимого состояния, либо убрать из цепочки карточки, если он продолжает ломать equal-height.
-2. **useEqualHeight не объявлять сразу основным решением.**
-  Сначала обязателен dry-run:
+1. **Исправить URL-архитектуру: отказаться от поддоменов как primary path.**
+  В плане явно зафиксировать, что canonical public URL для продуктовых/тарифных страниц строится через основной домен и slug страницы:
   &nbsp;
-  - убрать scale;
-  - выровнять opacity;
-  - добавить h-full на public wrapper;
-  - проверить consultation/preview/public.
-    Только если после этого карточки реально остаются разной высоты — подключать useEqualHeight как fallback.
+  - gorbova.by/<page-slug>
+  - gorbova.by/<page-slug>#tariffs
+    Поддомены оставить только как legacy/fallback, не как основную модель.
   &nbsp;
-3. **Если будет useEqualHeight, нужен точный технический контракт.**
-  Добавь в план:
+2. **Связать site builder и pricing/product system через page-level canonical binding.**
+  Не просто показывать тарифы на отдельной slug-странице, а сделать единую модель:
   &nbsp;
-  - какой DOM-узел измеряется;
-  - на какой DOM-узел ставится minHeight;
-  - как фильтруются Embla clones при loop;
-  - когда идёт пересчёт: initial render, resize, breakpoint change, data change, font load.
-    Без этого подрядчик снова сделает “плавающее” решение.
+  - страница в конструкторе может быть canonical page продукта
+  - pricing block на этой странице должен подтягивать тарифы именно связанного продукта
+  - canonical pricing URL продукта всегда должен вычисляться от slug этой страницы
   &nbsp;
-4. **STOP-guards по active card должны быть жёстче.**
-  Запрещено любое геометрическое отличие активной карточки:
+3. **Добавить двустороннюю ручную привязку product ↔ site page.**
+  Обязательно в обе стороны:
   &nbsp;
-  - scale
-  - translateY
-  - иной padding
-  - иной font-size
-  - иной border-width
-  - иной min/max-height
-  - любые vertical offsets
-    Допустимы только мягкие визуальные отличия без изменения геометрии: opacity, ring, shadow.
+  - в карточке продукта можно указать site_page_id
+  - в карточке/настройках страницы можно указать product_id
   &nbsp;
-5. **Добавь обязательную ревизию внутренних зон TariffCard.**
-  Недостаточно написать “там всё ок”.
-  Подрядчик должен отдельно проверить:
+4. **Сделать ID видимыми и пригодными для ручной связки.**
+  В обеих сущностях должно быть:
   &nbsp;
-  - title zone
-  - price zone
-  - description zone
-  - features zone
-  - CTA zone
-    И подтвердить, что ни одна зона не даёт скрытого расхождения по высоте.
+  - отображение собственного ID
+  - копирование ID
+  - отображение связанной сущности
+  - кнопка перехода на связанную сущность
   &nbsp;
-6. **Нужен отдельный decision по line-clamp.**
-  Сейчас в плане выбран вариант “не использовать”, но это надо оформить как решение с проверкой.
-  Добавь:
+5. **Один canonical source of truth для связи.**
+  Не допускать двух несинхронных связей.
+  Нужно прямо прописать, какая таблица и какое поле являются единственным owner relation.
+  Базово: site_pages.product_id как canonical binding, а UI продукта просто управляет этой же связью.
+6. **Явно зафиксировать кардинальность связи.**
+  По умолчанию принять:
   &nbsp;
-  - line-clamp по умолчанию не используется;
-  - если visual proof покажет, что отдельные title/description ломают карточку, допускается точечный clamp как follow-up, но не молча в этом патче.
+  - **1 product ↔ 1 canonical page**
+    Если подрядчик хочет оставить many pages → 1 product, то это допустимо только как secondary/non-canonical pages, но canonical pricing URL у продукта всё равно должен быть один.
   &nbsp;
-7. **duration не фиксируй заранее.**
-  Правильно, что ты написал tuning-pass.
-  Но укажи финально: подрядчик обязан протестировать минимум 2–3 близких значения и зафиксировать итоговое только после visual proof. Не просто поставить 20.
-8. **Нужен отдельный acceptance-блок по click-vs-drag.**
-  Не просто упоминание, а обязательный DoD:
+7. **Добавить обязательные валидации ручной привязки.**
   &nbsp;
-  - CTA кликается стабильно;
-  - drag не вызывает ложный click;
-  - стрелки быстро работают подряд;
-  - dots корректны после drag и arrows;
-  - mobile swipe не ломает CTA.
+  - проверка существования введённого ID
+  - запрет привязки к архивной/удалённой сущности
+  - ошибка, если продукт уже привязан к другой canonical page
+  - confirm при перепривязке
+  - защита от циклов/рассинхрона
   &nbsp;
-9. **Прямо зафиксируй, что сейчас сломаны и preview, и public, и чинятся они одним патчем.**
-  Это уже у тебя есть по смыслу, но добавь как явное требование в scope и DoD:
-  preview/public parity по layout обязательна в этом PATCH B/C, не отдельным follow-up.
-10. **Добавь negative/regression proof по режимам 4 / 3 / 1 карточка.**
-  Сейчас это есть, но нужно жёстче:
+8. **Если сайта у продукта нет — всё равно должен существовать public pricing page.**
+  Это нужно зафиксировать отдельно:
   &nbsp;
-  - consultation (4 карточки) — основной carousel-case;
-  - 3 карточки — grid regression;
-  - 1 карточка — single-card regression.
-    Без этих трёх proof-case патч не считается закрытым.
+  - при отсутствии полноценной страницы сайта система должна уметь создать canonical public page для тарифов продукта
+  - URL должен быть на основном домене через slug, а не на localhost и не на временном тех-домене
+  - такая страница должна поддерживать #tariffs
   &nbsp;
-11. **PATCH A зафиксируй как frozen ещё жёстче.**
-  Напиши прямо:
+9. **Если страница сайта есть — pricing block должен быть встраиваемым и переиспользуемым.**
+  Нужно описать два сценария:
   &nbsp;
-  - запрещено менять suffix resolver;
-  - запрещено менять EF response shape;
-  - запрещено менять config-driven pricing logic;
-  - запрещено ломать preview/public parity по suffix.
-    Любые такие изменения только при новом отдельном баге с доказательством.
+  - canonical page целиком
+  - встраиваемый pricing block внутри любой страницы конструктора
+    И в обоих случаях тарифы должны подтягиваться от одного и того же product binding.
   &nbsp;
-12. **Wheel/trackpad plugin — только отдельный enhancement, не часть обязательного deliverable.**
-  В текущем PATCH базовый UX должен стать хорошим без него.
-  Если после этого останется явный UX-gap — вынести в follow-up PATCH, не смешивать сейчас.
-13. **Нужен итоговый формат плана ровно в 3 блоках:**
+10. **Уточнить anchor policy.**
+  Сейчас в плане и коде должен использоваться один canonical anchor.
+  Если уже принят #tariffs, то закрепить его как единый стандарт и не плодить параллельно #prices.
+  Если нужен alias #prices для legacy-ботов/старых ссылок — добавить редирект/scroll alias, но canonical оставить один.
+11. **Добавить legacy compatibility для уже существующих ссылок.**
+  Если сейчас в ботах/рассылках уже используются ссылки вида:
   &nbsp;
-  - **A — frozen suffix/config-driven rendering**
-  - **B — equal-height layout fix**
-  - **C — carousel interaction UX**
-    И явно написать, что **закрыт только A**, а **B и C остаются открытыми до visual proof**.
+  - club.gorbova.by/#prices
+  - или другие legacy-варианты
+    то в плане должен быть отдельный блок:
+  - как они продолжают работать
+  - делается ли redirect на новый canonical path
+  - как не сломать старые ссылки в сообщениях
+  &nbsp;
+12. **Нужен отдельный proof-block по site builder integration.**
+  Проверить оба сценария:
+  &nbsp;
+  - сначала создан сайт/страница → потом привязали продукт
+  - сначала создан продукт → потом привязали страницу
+    В обоих случаях должен получаться одинаковый canonical pricing URL и одинаковый pricing block.
+  &nbsp;
+13. **PATCH C не считать закрытым без реального browser-proof carousel на desktop и mobile.**
+  В план нужно добавить, что визуальное “стало лучше” недостаточно. Нужны доказательства:
+  &nbsp;
+  - desktop: arrows, drag, dots, click-vs-drag по CTA
+  - mobile: swipe, видимость того, что карточки можно листать, корректность CTA
+  - preview и public должны вести себя одинаково
+  &nbsp;
+14. **Для mobile добавить явный affordance листания.**
+  Сейчас это не доказано. В плане потребовать конкретное решение:
+  &nbsp;
+  - либо частично видимый соседний слайд
+  - либо fade/gradient hint
+  - либо стрелки/подсказка на mobile
+    Но пользователь должен сразу понимать, что карточки листаются.
+  &nbsp;
+15. **Не ограничиваться только консультацией.**
+  Все изменения по URL, binding, pricing block и carousel должны работать одинаково для:
+  &nbsp;
+  - текущих продуктов
+  - новых продуктов
+  - новых страниц конструктора
+    Без special-case по consultation/club/business.
   &nbsp;
 
 &nbsp;
@@ -105,303 +116,243 @@
 ```
 Дополни план правками:
 
-1. Зафиксируй root cause жёстче: проблема не только в `scale`, а в structural mismatch между preview и public. `AnimatedSection` в public — обязательная причина, которую нужно устранить, чтобы DOM-цепочка layout была одинаковой.
+1. Зафиксируй новую canonical URL-модель: основной путь через основной домен и slug страницы, а не через поддомены.
+Canonical:
+- `gorbova.by/<page-slug>`
+- `gorbova.by/<page-slug>#tariffs`
 
-2. `useEqualHeight` не считать базовым решением по умолчанию. Сначала обязательный dry-run:
-- убрать `scale`
-- выровнять opacity
-- добавить `h-full` в public wrapper
-- проверить consultation/preview/public
-Только если после этого equal-height не достигнут чистым CSS/flex-stretch — подключать `useEqualHeight` как fallback.
+2. Поддомены оставить только как legacy/fallback. Они не должны быть primary architecture.
 
-3. Если `useEqualHeight` всё же нужен, пропиши технический контракт:
-- какой DOM-узел измеряется
-- на какой узел ставится `minHeight`
-- как исключаются Embla clones при `loop`
-- когда идёт пересчёт: initial render, resize, breakpoint change, data change, font load
+3. Добавь двустороннюю ручную привязку `product ↔ site page`:
+- из карточки продукта можно указать `site_page_id`;
+- из карточки страницы можно указать `product_id`.
 
-4. Добавь жёсткий STOP-guard: active card не может отличаться геометрией.
-Запрещено:
-- scale
-- translateY
-- другой padding
-- другой font-size
-- другой border-width
-- другой min/max-height
-- любые vertical offsets
+4. Сделай ID обеих сущностей видимыми и копируемыми:
+- `product id`
+- `site/page id`
 
-5. Добавь обязательную ревизию внутренних зон `TariffCard`:
-- title
-- price
-- description
-- features
-- CTA
-Нужно подтвердить, что ни одна зона не создаёт скрытое различие высот.
+5. Зафиксируй один canonical source of truth для связи.
+Нельзя делать две независимые ссылки, которые могут разъехаться.
+Базово использовать один owner relation, например `site_pages.product_id`, а UI продукта должен управлять этой же связью.
 
-6. Стратегию line-clamp зафиксируй явно:
-- по умолчанию line-clamp не используется;
-- если visual proof покажет, что конкретный title/description ломает layout, это отдельное точечное решение или follow-up, а не молчаливое изменение.
+6. Явно опиши кардинальность связи.
+Базовый ожидаемый вариант:
+- `1 product ↔ 1 canonical page`
+Если допускаются дополнительные страницы, это должны быть secondary pages, но canonical pricing URL у продукта должен быть один.
 
-7. `duration` не фиксировать заранее. Добавь tuning-pass:
-- проверить минимум 2–3 близких значения;
-- выбрать финальное по фактическому UX;
-- зафиксировать итог только после visual proof.
+7. Для ручной привязки добавь обязательные валидации:
+- ID существует;
+- сущность не архивная/не удалённая;
+- если уже есть старая привязка — warning/confirm;
+- защита от рассинхрона и конфликтов.
 
-8. Добавь отдельный DoD-блок click-vs-drag:
-- CTA кликается стабильно
-- drag не вызывает ложный click
-- стрелки быстро работают подряд
-- dots корректны после drag и after arrows
-- mobile swipe не ломает CTA
+8. Если у продукта нет готового сайта, система всё равно должна уметь создать canonical public pricing page на основном домене через slug.
+Не localhost, не временный тех-домен.
 
-9. Явно зафиксируй: сейчас сломаны и preview, и public. Они чинятся одним PATCH B/C, не отдельными follow-up.
+9. Если страница сайта уже существует, pricing block должен быть встраиваемым внутрь страницы конструктора и подтягивать тарифы связанного продукта.
+Нужны оба сценария:
+- standalone canonical page;
+- embedded pricing block внутри существующей страницы.
 
-10. Обязательные proof-cases:
-- consultation (4 карточки) — основной carousel-case
-- 3 карточки — regression для grid
-- 1 карточка — regression для single-card layout
+10. Уточни anchor policy.
+Если уже используем `#tariffs`, закрепить его как canonical anchor.
+Не плодить параллельно `#prices`.
+Если нужен legacy alias для старых ссылок — добавить alias/redirect, но canonical anchor оставить один.
 
-11. PATCH A считать frozen:
-- не трогать suffix resolver
-- не трогать EF response shape
-- не трогать config-driven pricing logic
-- не ломать preview/public parity по suffix
-Любые такие правки только при новом отдельном баге с доказательством.
+11. Добавь legacy compatibility для уже отправленных ссылок из бота/рассылок.
+Нужно отдельно описать:
+- какие старые ссылки продолжают работать;
+- какие редиректятся на новый canonical path;
+- как не ломаются уже отправленные пользователям ссылки.
 
-12. Wheel/trackpad plugin не считать обязательным deliverable текущего PATCH.
-Базовый UX должен стать хорошим без него.
-Если останется явный UX-gap — вынести wheel/trackpad в отдельный enhancement PATCH.
+12. Добавь отдельный proof-block по двусторонней связке:
+- сначала создан сайт/страница → потом привязан продукт;
+- сначала создан продукт → потом привязана страница;
+- в обоих случаях canonical pricing URL и блок тарифов работают одинаково.
 
-13. Верни обновлённый consolidated plan в формате:
-A) frozen suffix/config-driven rendering
-B) equal-height layout fix
-C) carousel interaction UX
-И явно укажи, что сейчас закрыт только A, а B и C остаются открытыми до visual proof.
+13. PATCH C (carousel UX) не считать закрытым без browser-proof:
+- desktop: arrows, drag, dots, click-vs-drag по CTA;
+- mobile: swipe, явный affordance листания, корректный CTA;
+- preview и public должны вести себя одинаково.
 
-План: Equal-height layout + Carousel UX (PATCH B + C)
+14. Для mobile обязательно добавить явный affordance, что карточки листаются:
+- частично видимый соседний слайд и/или
+- fade/gradient hint и/или
+- mobile arrows / indicator.
+Сейчас это должно быть отдельно доказано.
+
+15. Все изменения должны быть универсальными для всех продуктов и новых страниц конструктора.
+Без special-case по consultation/club/business.
+
+16. Всё это добавить add-only поверх уже существующих PATCH A/B/C/D.
+Ничего из уже утверждённой config-driven pricing логики, equal-height и site-builder integration не удалять.
 ```
 
-## Статус трёх PATCHей
+&nbsp;
+
+&nbsp;
+
+# План: PATCH D — Product ↔ Site Page привязка, anchor `#tariffs`, carousel proof
+
+## Статус PATCHей
 
 
-| PATCH                              | Статус     | Правило                                                                                                                 |
-| ---------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| A — suffix/config-driven rendering | **FROZEN** | Запрещено трогать resolver, EF response shape, config-driven pricing logic без нового отдельного бага с доказательством |
-| B — equal-height layout            | **ОТКРЫТ** | Текущая реализация сломана                                                                                              |
-| C — carousel interaction UX        | **ОТКРЫТ** | `dragFree: true` дал плохой результат                                                                                   |
-
-
----
-
-## Root cause (жёсткая формулировка)
-
-Две обязательные причины визуального развала:
-
-### Причина 1: CSS `scale` transform на inner wrapper
-
-`TariffCarouselGrid.tsx` L134-138: `scale-[0.97]` / `scale-[0.95]` уменьшают визуальный размер неактивных карточек, но НЕ layout-размер. Центральная карточка выглядит крупнее при одинаковом DOM-размере.
-
-### Причина 2: Structural mismatch DOM-дерева preview vs public
-
-Это не побочная причина, а **обязательная для устранения**:
-
-- **Public runtime** (`UniversalPricingSection.tsx` L120): `TariffCard` обёрнут в `AnimatedSection` — дополнительный `div` без `h-full`, с `translate-y-8` до анимации. Этот div **разрывает** цепочку flex-stretch от `CarouselItem` до `TariffCard`.
-- **Admin preview** (`AdminProductDetailV2.tsx` L1200): `TariffCard` вставлен напрямую в `TariffCarouselGrid` без промежуточного wrapper.
-
-**Вывод:** `TariffCarouselGrid` не должен иметь разные визуальные правила для preview/public. DOM-цепочка layout обязана быть одинаковой в обоих режимах. `AnimatedSection` в public — structural mismatch, который обязан быть устранён добавлением `className="h-full"`.
-
-### Полный root-cause стек по уровням
-
-
-| Уровень                         | Элемент                               | Проблема                                                  |
-| ------------------------------- | ------------------------------------- | --------------------------------------------------------- |
-| CarouselContent                 | `div.flex.items-stretch`              | OK, stretch передаётся                                    |
-| CarouselItem                    | `div.flex.h-full.basis-[36%]`         | OK                                                        |
-| Inner wrapper (L131-139)        | `div.scale-[0.97].opacity-80`         | **ПРОБЛЕМА**: `scale` меняет визуальную высоту            |
-| AnimatedSection (только public) | `div` без `h-full`, с `translate-y-8` | **ПРОБЛЕМА**: разрывает flex-stretch, structural mismatch |
-| TariffCard → GlassCard          | `div.p-6.flex.flex-col.h-full`        | OK, padding одинаковый                                    |
+| PATCH                                                  | Статус                                                        |
+| ------------------------------------------------------ | ------------------------------------------------------------- |
+| A — suffix/config-driven rendering                     | **CLOSED**                                                    |
+| B — equal-height layout                                | **PARTIALLY VERIFIED** — визуально улучшен, нужен final proof |
+| C — carousel interaction UX                            | **OPEN** — drag/scroll/mobile не доказаны browser-proof       |
+| D — product↔page binding + anchors + mobile affordance | **NEW**                                                       |
 
 
 ---
 
-## PATCH B — Equal-height layout
+## Discovery: что уже есть
 
-### Порядок работы (dry-run first)
+### Связь product ↔ site_page
 
-**Шаг 1 — Минимальный CSS-фикс (без JS):**
+- Таблица `site_pages` уже имеет колонку `product_id` (FK → `products_v2.id`)
+- `SitePageService.createPage()` и `updatePage()` уже принимают `product_id`
+- Связь `isOneToOne: false` — сейчас допускается many pages → 1 product
+- **НО**: в admin UI продукта (`AdminProductDetailV2`) нет поля для выбора/привязки страницы
+- **НО**: в admin UI конструктора (`PricingBlockEditor`) привязка идёт на уровне блока (`content.product_id`), а не страницы
 
-1. Убрать `scale-[0.97]`, `scale-[0.95]` из inner wrapper (L134-138)
-2. Заменить opacity: active `opacity-100`, adjacent `opacity-[0.92]`, rest `opacity-[0.85]`
-3. Добавить `className="h-full"` на `AnimatedSection` в `UniversalPricingSection.tsx` L120
-4. Визуально сверить результат preview vs public
+### Anchor
 
-**Шаг 2 — Проверка: достаточно ли CSS/flex-stretch?**
+- `UniversalPricingSection` рендерит `<section id="tariffs">` — anchor уже `#tariffs`, не `#prices`
+- `PricingSection` (site-builder wrapper) добавляет свой `<section className="py-12 px-6">` поверх — anchor `id="tariffs"` находится внутри, но доступен для scroll
+- **Нигде нет** smooth-scroll обработки при загрузке с hash
 
-- Если `items-stretch` + `h-full` на всех уровнях дают одинаковую высоту — задача закрыта без JS
-- Проверить на consultation (4 карточки) + club (3, grid) + single-card
+### Routing
 
-**Шаг 3 — Только если CSS не решил:**
+- Публичные страницы доступны по `/:slug` через `SitePageBySlug`
+- На `gorbova.by` нужно чтобы `gorbova.by/club` → страница с slug `club`
+- `gorbova.by/club#tariffs` должен открыть страницу и прокрутить к тарифам
 
-- Добавить `useEqualHeight` как fallback
-- Scope измерения:
-  - **Измеряемый DOM-узел**: inner wrapper (`div` внутри `CarouselItem`, ref на каждый)
-  - **Куда ставится `minHeight**`: на тот же inner wrapper через inline style
-  - **Исключение Embla clones**: при `loop: true` Embla добавляет clone-ы с `data-embla-clone` — фильтровать по этому атрибуту
-  - **Когда пересчёт**: initial render, `ResizeObserver` на контейнере, при изменении `items.length`
+### Кардинальность
 
-### STOP-guards: active card НЕ может отличаться геометрией
-
-Запрещено для active/center/selected карточки:
-
-- `scale` / `scaleX` / `scaleY`
-- `translateY` / вертикальный offset
-- Изменение `font-size`
-- Изменение `padding` / `margin`
-- Изменение `border-width`
-- Изменение `min-height` / `max-height`
-- `shadow` или `ring`, визуально меняющие perceived height за счёт extra spacing
-
-Допустимо: `opacity`, `ring`/`border-color` без изменения width, `box-shadow` без изменения spacing.
-
-### Ревизия внутренних зон TariffCard
-
-Нужно проверить по коду, что ни одна зона не создаёт скрытое различие высот:
-
-
-| Зона                               | Текущий CSS                    | Что проверить                                         |
-| ---------------------------------- | ------------------------------ | ----------------------------------------------------- |
-| Title (`text-center mb-4`)         | Фиксированный margin           | Нет скрытого min-height                               |
-| Price (`text-center mb-4`)         | Фиксированный margin           | old_price добавляет строку — не должно ломать соседей |
-| Description (`text-sm mb-4`)       | Фиксированный margin           | Длинный текст растягивает зону                        |
-| Features (`space-y-2 mb-6 flex-1`) | `flex-1` забирает пространство | Без features блок отсутствует — CTA поднимается       |
-| CTA (`space-y-2 mt-auto`)          | `mt-auto` прибивает к низу     | OK если outer height одинаковый                       |
-
-
-### Стратегия line-clamp
-
-Решение: **не использовать line-clamp** для title и description.
-
-- Title: обычно 1-2 строки, clamp обрежет важную информацию
-- Description: обычно 1-3 строки, обрезка нежелательна
-- Equal-height через flex-stretch компенсирует разницу: `flex-1` на features zone забирает свободное пространство, `mt-auto` на CTA выравнивает кнопки
-
-Если при visual proof окажется, что конкретный description слишком длинный (5+ строк) — можно добавить `line-clamp-3` точечно, но это решение принимается по факту, не заранее.
-
-### Обязательные test-cases
-
-
-| Кейс                            | Что проверяется                                          |
-| ------------------------------- | -------------------------------------------------------- |
-| Badge / no badge                | Badge `absolute -top-3` — не влияет на внутреннюю высоту |
-| Old price / no old price        | Доп. строка в price zone                                 |
-| Длинный title (2+ строки)       | Title zone растягивается                                 |
-| Длинное description (3+ строки) | Description растягивается                                |
-| Много features (5+)             | Features zone `flex-1` компенсирует                      |
-| Без features                    | CTA поднимается, `mt-auto` работает                      |
-
-
-### Preview и public чинятся одним PATCH
-
-Нельзя исправить public и оставить preview "на потом". Оба режима исправляются одновременно одними и теми же CSS-правилами. `TariffCarouselGrid` — единый layout owner для обоих.
+- Базовая модель: **1 product ↔ 1 canonical page** (для pricing URL)
+- `site_pages.product_id` уже есть как FK, но `isOneToOne: false` — нужно добавить UNIQUE constraint или обрабатывать программно
+- Pricing block на странице привязывается к product через `content.product_id` — это уровень блока, не страницы
+- Страничный `product_id` нужен для обратной связи: "какая страница canonical для этого продукта"
 
 ---
 
-## PATCH C — Carousel interaction UX
+## PATCH D — Изменения
 
-### Embla opts: конкретные изменения
+### D1. Двусторонняя привязка product ↔ site page
 
+**БД:**
 
-| Параметр         | БЫЛО           | БУДЕТ           | Почему                                                                                                 |
-| ---------------- | -------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `dragFree`       | `true`         | `**false**`     | `dragFree` давал "болтание" и полу-позиции. `false` = чёткий snap                                      |
-| `loop`           | `true`         | `true`          | Без изменений                                                                                          |
-| `duration`       | не задан (~25) | **tuning-pass** | Не фиксировать 20 как догму. Проверить 18, 20, 22. Зафиксировать финальное значение после visual proof |
-| `align`          | `"center"`     | `"center"`      | Без изменений                                                                                          |
-| `slidesToScroll` | `1`            | `1`             | Без изменений                                                                                          |
+- Добавить UNIQUE index на `site_pages.product_id` (WHERE product_id IS NOT NULL) — гарантирует 1 product ↔ 1 canonical page
+- Это не сломает существующие данные (сейчас product_id либо null, либо уникален де-факто)
 
+**Admin UI продукта (`AdminProductDetailV2.tsx`):**
 
-### Tuning-pass для duration
+- Добавить секцию "Страница сайта" с:
+  - Dropdown со списком страниц из site_pages (или поле для ввода page ID)
+  - Отображение: slug страницы, canonical URL, кнопка "Перейти в конструктор"
+  - Если страница привязана — показать `gorbova.by/<slug>#tariffs` как canonical pricing URL с кнопкой копирования
+  - Если не привязана — кнопка "Создать страницу" (создаёт минимальную страницу с pricing block, привязанным к этому продукту)
 
-1. Установить `duration: 20`, проверить ощущение
-2. Попробовать `duration: 18` (быстрее) и `duration: 22` (плавнее)
-3. Выбрать значение без дёрганья и тормозов
-4. Зафиксировать финальное после visual proof
+**Admin UI конструктора страниц:**
 
-### Click-vs-drag DoD (отдельный блок)
+- В настройках страницы добавить поле "Привязанный продукт" с dropdown из products_v2
+- Показать product ID для копирования
+- Валидации:
+  - Проверка существования ID
+  - Предупреждение если product уже привязан к другой странице
+  - Запрет привязки к удалённому/неактивному продукту
 
+**Единый source of truth:** колонка `site_pages.product_id`. Запись идёт через один и тот же update path:
 
-| Проверка                                              | Ожидание                                  |
-| ----------------------------------------------------- | ----------------------------------------- |
-| Быстрый клик по CTA внутри карточки                   | Открывается оплата, drag не перехватывает |
-| Drag по карточке → отпускание                         | Snap к ближайшему слайду, CTA не сработал |
-| Быстрые последовательные клики по стрелкам (3-4 раза) | Карусель плавно проматывает без дёрганья  |
-| Dots после drag                                       | Корректно показывают текущий слайд        |
-| Dots после arrows                                     | Корректно обновляются                     |
+- Из продукта: `SitePageService.updatePage(pageId, { product_id })` или отвязка старой + привязка новой
+- Из конструктора: тот же `updatePage(pageId, { product_id })`
+- Нет двух независимых ссылок — один FK, одна точка записи
 
+### D2. Anchor scroll при загрузке с hash
 
-### Active/inactive state
+**Файл: `src/pages/SitePageBySlug.tsx**`
 
-- Active: `opacity-100`
-- Adjacent: `opacity-[0.92]` — лёгкое затухание, текст читаем
-- Rest: `opacity-[0.85]` — заметное, но не "мёртвое"
+- После загрузки страницы и рендера блоков — проверить `window.location.hash`
+- Если hash есть (например `#tariffs`) — выполнить `document.getElementById('tariffs')?.scrollIntoView({ behavior: 'smooth' })`
+- Задержка ~300ms после рендера, чтобы pricing data успела загрузиться
 
-Если при visual proof 0.92/0.85 слишком бледно или слишком однородно — допустима корректировка значений. Но запрещено менять геометрию (см. STOP-guards).
+**Файл: `src/components/site-renderer/blocks/PricingSection.tsx**`
 
-### Wheel/trackpad scroll
+- Добавить `id="tariffs"` на внешний `<section>` — сейчас anchor внутри `UniversalPricingSection`, но wrapper PricingSection добавляет свой div поверх. Нужно убедиться, что `id="tariffs"` доступен на уровне, до которого scroll дойдёт корректно
 
-**Не является обязательным deliverable текущего PATCH.**
-Base acceptance criteria должны быть достигнуты без wheel-plugin.
-Если после закрытия PATCH B+C останется явный UX-gap — вынести wheel/trackpad enhancement отдельным follow-up PATCH.
+### D3. Canonical pricing URL — config-driven
+
+**Новый утилитный файл: `src/lib/productCanonicalUrl.ts**`
+
+```typescript
+function getCanonicalPricingUrl(product: { primary_domain?: string }, pageSlug?: string): string {
+  // Если есть привязанная страница в конструкторе
+  if (pageSlug) return `https://gorbova.by/${pageSlug}#tariffs`;
+  // Fallback на primary_domain (legacy)
+  if (product.primary_domain) return `https://${product.primary_domain}/#tariffs`;
+  return '';
+}
+```
+
+Используется в admin UI для отображения canonical URL.
+
+### D4. Mobile carousel affordance
+
+**Файл: `src/components/landing/TariffCarouselGrid.tsx**`
+
+- На mobile показать частично видимый соседний слайд (уже `basis-[88%]` — 12% видно). Проверить, достаточно ли этого визуально
+- Добавить gradient fade на краях карусели на mobile: `bg-gradient-to-r from-transparent via-transparent to-background/60` справа
+- Dots уже есть — они являются основным индикатором
+
+### D5. Browser-proof для carousel (закрытие PATCH C)
+
+Обязательная проверка в браузере:
+
+- Desktop: drag мышкой, стрелки, dots
+- Desktop: trackpad horizontal scroll (если работает нативно через Embla — ОК, если нет — не ломать)
+- Mobile (375px): swipe, dots, CTA click
+- Click-vs-drag: CTA не срабатывает при drag, стрелки работают подряд
 
 ---
 
 ## Файлы
 
 
-| Файл                                                 | Изменение                                                            |
-| ---------------------------------------------------- | -------------------------------------------------------------------- |
-| `src/components/landing/TariffCarouselGrid.tsx`      | Убрать `scale`; смягчить opacity; `dragFree: false`; duration tuning |
-| `src/components/landing/UniversalPricingSection.tsx` | `className="h-full"` на `AnimatedSection` L120                       |
-| `src/hooks/useEqualHeight.ts`                        | **Только если CSS не решил** — fallback хук                          |
+| Файл                                                                       | Изменение                                        |
+| -------------------------------------------------------------------------- | ------------------------------------------------ |
+| `src/pages/SitePageBySlug.tsx`                                             | Hash scroll после рендера                        |
+| `src/components/site-renderer/blocks/PricingSection.tsx`                   | `id="tariffs"` на wrapper                        |
+| `src/pages/admin/AdminProductDetailV2.tsx`                                 | Секция "Страница сайта" с двусторонней привязкой |
+| `src/components/admin/site-builder/SiteBlockEditor.tsx` или settings panel | Поле "Привязанный продукт" на уровне страницы    |
+| `src/lib/productCanonicalUrl.ts`                                           | **Новый** — canonical URL builder                |
+| `src/components/landing/TariffCarouselGrid.tsx`                            | Mobile gradient hint                             |
+| БД: migration                                                              | UNIQUE index на `site_pages.product_id`          |
 
 
-### НЕ трогаем (FROZEN)
+### FROZEN (не трогаем)
 
-- `src/lib/resolveTariffDisplayConfig.ts`
-- `src/components/landing/TariffCard.tsx` (suffix logic)
-- `src/lib/tariffCardViewModel.ts`
-- Edge Functions
-- `carousel.tsx`
-
----
-
-## Proof-cases (обязательные)
-
-
-| Кейс                        | Тип                     | Что показать                                  |
-| --------------------------- | ----------------------- | --------------------------------------------- |
-| Consultation (4 карточки)   | Carousel — **основной** | Одинаковая высота, CTA baseline, suffix "BYN" |
-| Club (3 карточки)           | Grid — **regression**   | Grid layout не сломан                         |
-| Бизнес-тренинг (1 карточка) | Single — **regression** | Single-card layout не сломан                  |
-
-
-Для каждого — **три viewport**: admin preview desktop, public desktop, public mobile (375px).
-
-В каждом отдельно подписать:
-
-- Высота карточек одинакова ✓/✗
-- CTA на одной горизонтальной линии ✓/✗
-- Характер перелистывания (для carousel)
-- Suffix не сломан повторно ✓/✗
+- `resolveTariffDisplayConfig.ts`, EF, suffix logic (PATCH A)
+- Equal-height measurement logic (PATCH B)
+- Embla opts (PATCH C — только browser-proof, не код)
 
 ---
 
-## Запреты
+## DoD
 
-1. Suffix/config-driven patch повторно не ломать — **FROZEN**
-2. Active card не может отличаться геометрией (scale/translateY/padding/font-size/border-width)
-3. `dragFree: true` не использовать как дефолт
-4. Два разных layout-механизма для preview и public запрещены
-5. Wheel-plugin — не обязательный deliverable, только follow-up
-6. `useEqualHeight` — только fallback после proof что CSS не решил
-7. `duration` — не фиксировать без tuning-pass
+1. **Привязка product→page**: из карточки продукта можно выбрать/создать страницу, видно slug и canonical URL
+2. **Привязка page→product**: из конструктора можно указать product_id, видна обратная связь
+3. **UNIQUE constraint**: один продукт = одна canonical страница, валидация при конфликте
+4. **Anchor**: `gorbova.by/<slug>#tariffs` открывает страницу и скроллит к тарифам
+5. **Canonical URL**: автоматически вычисляется из page slug, показывается в admin
+6. **Mobile affordance**: gradient hint или иной визуальный признак карусели
+7. **Browser-proof PATCH C**: desktop drag/arrows/dots + mobile swipe/CTA — скриншоты/видео
+8. **Suffix не сломан**: hosted/public/preview показывают одинаковый config-driven результат
+
+### Proof-cases
+
+- `gorbova.by/club#tariffs` → скролл к тарифам клуба
+- Создать новый тестовый продукт → привязать страницу → canonical URL работает
+- Привязка из продукта и из конструктора даёт одинаковый результат
+- Mobile 375px — карусель очевидно листается
