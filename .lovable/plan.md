@@ -2,174 +2,224 @@
 
 &nbsp;
 
-1. **PATCH 1 сформулировать точнее на уровне query-логики.**
-  Для default pipeline нужно не просто “показывать NULL”, а явно зафиксировать правило:
+1. **Сохранять фильтры не только в state, но и в URL как source of truth.**
+  Прямо зафиксировать:
   &nbsp;
-  - default pipeline показывает:
-    &nbsp;
-    - сделки с pipeline_id = selectedDefaultPipelineId
-    - **и** сделки с pipeline_id IS NULL
-    &nbsp;
-  - не-default pipeline показывает только свои сделки.
-    Это правило нужно сохранить и для search/product filter, чтобы OR pipeline_id IS NULL не ломал остальные фильтры.
+  - product
+  - tariffs
+  - view
+  - pipeline
+    должны жить в query params, чтобы:
+  - refresh не сбрасывал состояние,
+  - list/board делили один filter-state,
+  - можно было дать ссылку на конкретный filtered view.
   &nbsp;
-2. **Dropdown по продуктам делать не как одноразовый “Продукт”, а как заготовку под общий filter popover.**
-  Сейчас можно реализовать только блок “Продукт”, но сам контейнер лучше сразу назвать и сверстать как **Фильтры**, чтобы потом туда без переделки добавить:
+2. **Тарифы должны фильтроваться по выбранному продукту, но без поломки сценария “Все продукты”.**
+  Нужно явно прописать поведение:
   &nbsp;
-  - тариф,
-  - статус,
-  - owner,
-  - и другие поля.
-    То есть сейчас внутри только продукт, но архитектурно это уже не временный костыль.
+  - если продукт не выбран → блок тарифов скрыт или disabled;
+  - если выбран продукт → показываются только тарифы этого продукта;
+  - если продукт сменился → невалидные тарифы сбрасываются автоматически;
+  - если выбран “Все продукты” → тарифный фильтр очищается.
   &nbsp;
-3. **После PATCH 1 нужно явно показать bucket “Без стадии” как первый-class state.**
-  Раз все 2847 сделок без pipeline_stage_id, колонка Без стадии должна:
+3. **Multi-select по тарифам сделать с явными выбранными значениями в UI.**
+  Не просто чекбоксы внутри popover, а показать снаружи:
   &nbsp;
-  - явно отображаться первой,
-  - иметь count/sum,
-  - быть визуально нормальной колонкой, а не скрытым fallback.
-    Это теперь центральный сценарий для default pipeline.
+  - либо count selected,
+  - либо компактные chips/summary вида Тарифы: 2.
+    Иначе пользователь не понимает, что фильтр активен.
   &nbsp;
-4. **Нужно проверить summary strip после фикса query.**
-  Сейчас после включения NULL сделок в default pipeline summary может начать считать их некорректно.
-  Нужно отдельно зафиксировать:
+4. **PATCH 2 должен затрагивать не только board query, но и все counts/summaries.**
+  Нужно прямо дописать:
   &nbsp;
-  - totalDeals
-  - total active pipeline value
-  - won/lost counts
-    считаются на том же dataset, что и board, без расхождений.
+  - list counters,
+  - board summary,
+  - totals по колонкам
+    считают данные уже с учетом product/tariff filters.
+    Иначе цифры сверху и карточки снова разъедутся.
   &nbsp;
-5. **Dialog вместо prompt() должен быть не inline-костылём, а нормальным reusable UI.**
-  Нужны:
+5. **Bulk assign для “Без стадии” делать не только “все”, но и безопасно.**
+  Минимум:
   &nbsp;
-  - glass dialog,
-  - input,
-  - validation пустого имени,
-  - loading state,
-  - create/cancel,
-  - autofocus.
-    И не через window.prompt, не через window.confirm.
+  - confirm step,
+  - count затрагиваемых сделок,
+  - target stage preview,
+  - toast с результатом,
+  - audit с количеством и target stage.
+    Иначе легко сделать массовое ошибочное назначение.
   &nbsp;
-6. **Product cloud нужно не просто удалить, а убрать весь лишний вертикальный разрыв после toolbar.**
-  В DoD добавить визуальный критерий:
+6. **В bulkAssignDealsToStage нужен batched/safe execution, а не один огромный update без guard.**
+  Прямо дописать:
   &nbsp;
-  - board начинается сразу под compact toolbar,
-  - верхняя часть не съедает экран,
-  - без большой пустой зоны между управлением и колонками.
+  - dry-run count,
+  - execute,
+  - affected rows count,
+  - audit meta: deal_ids_count, pipeline_id, stage_id.
+    Это особенно важно при сотнях unassigned deals.
   &nbsp;
-7. **Нужен proof после фикса, не только описание.**
-  В DoD добавить обязательные пруфы:
+7. **Summary strip нужно сделать максимально ясным, без двусмысленной “Активной воронки”.**
+  Лучше сразу утвердить новый состав:
   &nbsp;
-  - сколько сделок показано в default pipeline,
-  - сколько в колонке Без стадии,
-  - скрин board с реальными карточками,
-  - скрин compact toolbar без product cloud,
-  - скрин dialog создания pipeline вместо prompt().
+  - Всего
+  - Сумма
+  - Без стадии
+  - В стадиях
+  - Успешно
+  - Отказ
+    Если отдельный показатель “Активная воронка” остаётся, он должен быть вторичным, а не главным.
   &nbsp;
-8. **PATCH 5 “нет backfill” оставить обязательно.**
-  Это правильное решение. Массовый апдейт всех сделок сейчас не делать.
-  Но надо прямо дописать, что при перемещении конкретной сделки из Без стадии в стадию:
+8. **Product binding UI нельзя считать закрытым, но в proof-отчёте нужно явно пометить как deferred.**
+  В плане уже написано, что binding UI остаётся follow-up — это правильно.
+  Нужно только отдельно зафиксировать в финальном отчёте, что:
   &nbsp;
-  - ей уже назначаются pipeline_id и pipeline_stage_id,
-  - после refresh она остаётся в выбранной стадии.
+  - multi-pipeline UI есть,
+  - product binding backend/model есть,
+  - полноценный binding management UI отложен и не заявляется как завершённый.
   &nbsp;
+9. **Remap dialog — не просто заменить сырой select, а привести к стилю платформы и проверить keyboard flow.**
+  Нужно:
+  &nbsp;
+  - glass-styled select/popover,
+  - focus state,
+  - enter/escape,
+  - disabled delete button, пока target stage не выбран.
+  &nbsp;
+10. **DoD дополнить proof-пунктами.**
+  Добавить обязательно:
 
 &nbsp;
 
 &nbsp;
 
-После этих правок patch можно исполнять как **внутренний fix-патч текущего спринта**, без остановки основного scope.
+&nbsp;
+
+- скрин/filter popover с продуктом и тарифами;
+- скрин active filters state;
+- proof, что list-view и board-view показывают одинаковый filtered dataset;
+- proof bulk assign из “Без стадии”;
+- proof refresh persistence с выбранными product + tariffs + pipeline + view.
 
 &nbsp;
 
-План: PATCH-фикс воронки — пустой board + layout + prompt()
+&nbsp;
 
-## Диагностика — доказано
+После этих правок план можно исполнять как финальный patch для закрытия спринта.
 
+&nbsp;
 
-| Факт                       | Значение                              |
-| -------------------------- | ------------------------------------- |
-| Всего сделок в `orders_v2` | 2847                                  |
-| С `pipeline_id`            | **0**                                 |
-| С `pipeline_stage_id`      | **0**                                 |
-| Pipeline "Основная"        | создан (id: `e8606cb2...`)            |
-| Стадии                     | 4 шт: Новая, В работе, Успешно, Отказ |
+План: ФИНАЛЬНЫЙ PATCH — фильтры, summary, tariff, proofs
+
+## Диагностика текущего состояния
 
 
-**Root cause пустого board**: запрос в `useDealsBoard.ts` строка 50 фильтрует `.eq("pipeline_id", pipelineId)` — все 2847 сделок имеют `pipeline_id = NULL`, поэтому возвращается 0 записей.
+| Элемент                  | Статус                  | Проблема                                                    |
+| ------------------------ | ----------------------- | ----------------------------------------------------------- |
+| Board query              | ✅ Работает              | Default pipeline показывает NULL сделки                     |
+| Product filter           | ⚠️ Отдельный dropdown   | Нужно переместить внутрь filter popover                     |
+| Tariff filter            | ❌ Отсутствует           | Нет ни в UI, ни в useDealsBoard                             |
+| Summary strip            | ⚠️ Вводит в заблуждение | Не учитывает `__unassigned`, показывает только staged deals |
+| Filter popover           | ❌ Не существует         | Нужен единый compact filter рядом с поиском                 |
+| Drag & drop              | ✅ Код есть              | Нужен runtime proof                                         |
+| Menu move                | ✅ Код есть              | `onMoveTo` в KanbanDealCard работает                        |
+| Stage CRUD               | ✅ Код есть              | create/rename/delete/remap — всё реализовано                |
+| Multi-pipeline           | ✅ Код есть              | Dialog создания, selector, seed                             |
+| Audit                    | ✅ Код есть              | `writeAudit` в pipelineService.ts                           |
+| Bulk assign "Без стадии" | ❌ Отсутствует           | Нет UI для массового назначения                             |
 
-**Дополнительные проблемы**:
-
-1. Product chips (строки 818-851 `AdminDeals.tsx`) — огромное облако 20+ кнопок, занимает полэкрана
-2. `prompt()` на строке 774 — создание воронки через browser prompt
-3. Toolbar раздут: view toggle + pipeline selector + product cloud + period + search — 4-5 рядов
 
 ## Изменения
 
-### PATCH 1 — Board query: показывать сделки без pipeline
+### PATCH 1 — Единый Filter Popover вместо отдельного Product dropdown
+
+**Файл**: `src/pages/admin/AdminDeals.tsx`
+
+Заменить текущий `DropdownMenu` для продуктов (строки 873-916) на кнопку **«Фильтры»** с Popover:
+
+- Кнопка `Filter` рядом с поиском (иконка `SlidersHorizontal`)
+- При наличии активных фильтров — badge с count
+- Внутри Popover:
+  - **Продукт**: single-select с поиском, "Все продукты"
+  - **Тариф**: multi-select, зависимый от выбранного продукта
+  - Кнопка "Сбросить фильтры"
+- Состояние фильтров сохраняется при переключении list/board через URL params (`product`, `tariffs`)
+
+### PATCH 2 — Добавить фильтр тарифов
+
+**Файл**: `src/pages/admin/AdminDeals.tsx`
+
+- Добавить state `selectedTariffIds: string[]`
+- Fetch тарифов: query `tariffs` filtered by `product_id` когда выбран продукт
+- При смене продукта — сбрасывать невалидные тарифы
+- Передать `tariffIds` в `useDealsBoard` и в list-view query (`buildDealsQuery`)
 
 **Файл**: `src/hooks/useDealsBoard.ts`
 
-Строка 50: изменить `.eq("pipeline_id", pipelineId)` на логику, которая также включает сделки с `pipeline_id IS NULL` когда выбран default pipeline. Конкретно:
+- Добавить `tariffIds?: string[]` в `UseDealsBoardOpts`
+- Добавить фильтр `.in("tariff_id", tariffIds)` в query когда массив непустой
+- Добавить в queryKey
 
-- Если выбранный pipeline — `is_default`, то фильтр: `pipeline_id.eq.{pipelineId},pipeline_id.is.null` (через `.or()`)
-- Иначе: `.eq("pipeline_id", pipelineId)` как сейчас
+**Файл**: `src/pages/admin/AdminDeals.tsx` (list query)
 
-Сделки без `pipeline_stage_id` попадают в `__unassigned` колонку (уже реализовано в `groupByStage`).
+- Добавить tariff filter в `buildDealsQuery`
 
-Передать `isDefault` флаг как параметр в hook.
+### PATCH 3 — Исправить Summary Strip
 
-### PATCH 2 — Убрать product cloud, заменить на компактный dropdown
+**Файл**: `src/components/admin/deals/KanbanSummaryStrip.tsx`
 
-**Файл**: `src/pages/admin/AdminDeals.tsx`
+- Переделать props: `totalDeals`, `totalSum`, `unassignedCount`, `assignedCount`, `wonCount`, `wonSum`, `lostCount`
+- Показать: «Всего сделок: N», «Сумма: X», «Без стадии: N», «Успешно: N (X)», «Отказ: N»
 
-Строки 818-851: удалить `GlassFilterPanel` с chip-cloud продуктов. Вместо этого добавить компактную кнопку-dropdown «Продукт» прямо в верхний toolbar (рядом с поиском). Внутри dropdown — список продуктов с search, single-select, «Все продукты».
+**Файл**: `src/components/admin/deals/DealsKanbanBoard.tsx`
 
-### PATCH 3 — Уплотнить верхний toolbar
+- Пересчитать summary включая `__unassigned` deals
+- `totalActive` = сумма всех open stages + unassigned
 
-**Файл**: `src/pages/admin/AdminDeals.tsx`
+### PATCH 4 — Bulk assign для колонки "Без стадии"
 
-Собрать в одну компактную строку:
+**Файл**: `src/components/admin/deals/KanbanColumn.tsx`
 
-- View toggle (Список/Воронка)
-- Pipeline selector (в board mode)
-- Search input
-- Product dropdown
-- Period selector + export + refresh
+- Для `stageId === "__unassigned"` добавить кнопку "Назначить все в стадию" в header
+- По клику — dropdown с выбором целевой стадии
+- Вызов bulk update через pipelineService
 
-Убрать лишние вертикальные отступы между блоками. Цель — board начинается максимально высоко.
+**Файл**: `src/services/pipelineService.ts`
 
-### PATCH 4 — Заменить `prompt()` на Dialog
+- Добавить `bulkAssignDealsToStage(dealIds: string[], pipelineId: string, stageId: string)`
+- Audit log: `deal.bulk_stage_assigned`
 
-**Файл**: `src/pages/admin/AdminDeals.tsx`
+### PATCH 5 — Мелкие UX-правки
 
-Строка 774: `prompt("Название новой воронки:")` — заменить на glass Dialog с Input + кнопками Создать/Отмена. Добавить state `showCreatePipelineDialog` + `newPipelineName`. Использовать существующий Dialog компонент.
-
-### PATCH 5 — Нет backfill
-
-Массовый backfill (`UPDATE orders_v2 SET pipeline_id = ...`) **не делаем** — по требованию пользователя: сделки остаются с `pipeline_id = NULL`, отображаются в default pipeline через PATCH 1.
+- В `KanbanColumnHeader.tsx` строка 169: заменить `<select>` на styled Select/RadioGroup в remap dialog
+- Убедиться, что filter popover не ломает layout
 
 ## Файлы
 
 
-| Действие | Файл                                                                              |
-| -------- | --------------------------------------------------------------------------------- |
-| Edit     | `src/hooks/useDealsBoard.ts` — query с OR для default pipeline                    |
-| Edit     | `src/pages/admin/AdminDeals.tsx` — layout, product dropdown, dialog вместо prompt |
+| Действие | Файл                                                                        |
+| -------- | --------------------------------------------------------------------------- |
+| Edit     | `src/pages/admin/AdminDeals.tsx` — filter popover, tariff state, URL params |
+| Edit     | `src/hooks/useDealsBoard.ts` — tariffIds filter                             |
+| Edit     | `src/components/admin/deals/DealsKanbanBoard.tsx` — summary fix             |
+| Edit     | `src/components/admin/deals/KanbanSummaryStrip.tsx` — новые метрики         |
+| Edit     | `src/components/admin/deals/KanbanColumn.tsx` — bulk assign для unassigned  |
+| Edit     | `src/components/admin/deals/KanbanColumnHeader.tsx` — styled select в remap |
+| Edit     | `src/services/pipelineService.ts` — bulkAssignDealsToStage                  |
 
 
-## НЕ делаем
+## Что НЕ делаем
 
-- Массовый backfill/mapping сделок
-- Новые таблицы/миграции
-- Изменения в `pipelineService.ts`
-- Новые компоненты (всё inline в существующих файлах)
+- Новые таблицы / миграции
+- Изменения в pipeline/stage CRUD логике
+- Product binding UI (остаётся в follow-up)
+- Автоматическое назначение сделок в воронки
 
 ## DoD
 
-1. Board показывает реальные сделки (2847 в колонке "Без стадии" для default pipeline)
-2. Product cloud убран, заменён на компактный dropdown
-3. Toolbar в 1-2 строки, board начинается выше
-4. `prompt()` заменён на Dialog
-5. Totals пересчитываются корректно
-6. List-view не сломан
+1. Единый filter popover рядом с поиском (продукт + тариф)
+2. Multi-select тарифов, зависимый от продукта
+3. Фильтры работают одинаково в list и board view
+4. Summary strip показывает корректные данные включая unassigned
+5. Bulk assign "Без стадии" → стадия работает
+6. Нет отдельного product dropdown вне filter popover
+7. Remap dialog использует styled компонент вместо `<select>`
+8. Состояние фильтров сохраняется при переключении view и refresh
