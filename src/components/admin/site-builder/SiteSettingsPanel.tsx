@@ -253,6 +253,40 @@ export function SiteSettingsPanel({
           </div>
         </CardContent>
       </Card>
+
+      {/* Product Binding */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Привязанный продукт</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label className="text-xs">Продукт</Label>
+            <Select
+              value={currentPage?.product_id || "__none"}
+              onValueChange={handleProductChange}
+              onOpenChange={setProductDropdownOpen}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Не привязан" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">Не привязан</SelectItem>
+                {(products || []).map(p => (
+                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {currentPage?.product_id && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">ID продукта:</span>
+              <CopyableIdChip value={currentPage.product_id.slice(0, 8) + "…"} copyValue={currentPage.product_id} />
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Страница ID: <CopyableIdChip value={pageId.slice(0, 8) + "…"} copyValue={pageId} />
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
