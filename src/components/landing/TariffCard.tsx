@@ -52,7 +52,6 @@ export interface TariffCardData {
   card_config?: CardConfig;
   meta?: { card_config?: CardConfig; [key: string]: any } | null;
 }
-}
 
 interface TariffCardProps {
   tariff: TariffCardData;
