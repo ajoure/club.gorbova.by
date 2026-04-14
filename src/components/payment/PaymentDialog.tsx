@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -158,9 +158,44 @@ export function PaymentDialog({
   // Check if telegram is already linked
   const isTelegramLinked = telegramStatus?.status === 'active';
 
+  // Ref to prevent useEffect from resetting state after inline auth
+  const authInProgressRef = useRef(false);
+
+  // Load saved payment card — safe, non-blocking
+  const loadSavedCard = async (userId: string) => {
+    setIsLoadingCard(true);
+    try {
+      const { data, error } = await supabase
+        .from("payment_methods")
+        .select("id, brand, last4")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .eq("is_default", true)
+        .maybeSingle();
+      
+      console.log("Payment methods query result:", { data, error });
+      if (data) {
+        setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
+      }
+    } catch (err) {
+      console.error("Error loading payment method:", err);
+      // Non-fatal — don't block checkout
+    } finally {
+      setIsLoadingCard(false);
+    }
+  };
+
   // Reset state when dialog opens
   useEffect(() => {
     if (open) {
+      // After inline auth: user/session changed but dialog should stay on current step
+      if (authInProgressRef.current && user && session) {
+        authInProgressRef.current = false;
+        setExistingUserId(user.id);
+        loadSavedCard(user.id);
+        return; // Skip full reset — keep formData, step, selectedOffer intact
+      }
+
       setSavedCard(null);
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
@@ -185,27 +220,7 @@ export function PaymentDialog({
         }
         
         // Check for saved payment method
-        setIsLoadingCard(true);
-        (async () => {
-          try {
-            const { data, error } = await supabase
-              .from("payment_methods")
-              .select("id, brand, last4")
-              .eq("user_id", user.id)
-              .eq("status", "active")
-              .eq("is_default", true)
-              .maybeSingle();
-            
-            console.log("Payment methods query result:", { data, error });
-            if (data) {
-              setSavedCard({ id: data.id, brand: data.brand || "", last4: data.last4 || "" });
-            }
-          } catch (err) {
-            console.error("Error loading payment method:", err);
-          } finally {
-            setIsLoadingCard(false);
-          }
-        })();
+        loadSavedCard(user.id);
       } else {
         // User is not authenticated - start with email step
         setFormData({ email: "", firstName: "", lastName: "", phone: "+375", password: "" });
@@ -216,6 +231,9 @@ export function PaymentDialog({
       setEmailCheckResult(null);
       setLoginError(null);
       setPrivacyConsent(false);
+    } else {
+      // Dialog closed — always reset authInProgressRef
+      authInProgressRef.current = false;
     }
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
@@ -277,12 +295,17 @@ export function PaymentDialog({
     setIsLoading(true);
 
     try {
+      // Set flag BEFORE auth to prevent useEffect from resetting dialog state
+      authInProgressRef.current = true;
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email.toLowerCase().trim(),
         password: formData.password,
       });
 
       if (error) {
+        // Auth failed — reset flag so useEffect works normally
+        authInProgressRef.current = false;
         if (error.message.includes("Invalid login credentials")) {
           setLoginError("Неверный пароль");
         } else {
@@ -335,6 +358,7 @@ export function PaymentDialog({
       }
     } catch (error) {
       console.error("Login error:", error);
+      authInProgressRef.current = false;
       setLoginError("Произошла ошибка при входе");
     } finally {
       setIsLoading(false);
@@ -788,9 +812,17 @@ export function PaymentDialog({
               </p>
             </div>
 
-            <p className="text-sm text-muted-foreground">
-              Заполните данные — и мы создадим личный кабинет после оплаты
-            </p>
+            <div className="rounded-lg bg-muted/30 p-3 space-y-1.5">
+              <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <Info className="h-4 w-4 text-primary" />
+                Зачем эти данные?
+              </p>
+              <ul className="text-xs text-muted-foreground space-y-0.5 pl-5 list-disc">
+                <li>Email — для личного кабинета, доступов и уведомлений по покупке</li>
+                <li>Телефон — для связи по заказу и восстановления доступа</li>
+                <li>Имя и фамилия — для оформления покупки и документов</li>
+              </ul>
+            </div>
 
             {/* Name fields in row with icons */}
             <div className="grid grid-cols-2 gap-3">
@@ -855,7 +887,7 @@ export function PaymentDialog({
             </div>
 
             <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
+              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
             </div>
 
             {/* Privacy consent checkbox */}
@@ -871,7 +903,11 @@ export function PaymentDialog({
                 <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                   Политикой конфиденциальности
                 </a>{" "}
-                и даю согласие на обработку персональных данных
+                и даю{" "}
+                <a href="/consent" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  согласие
+                </a>{" "}
+                на обработку персональных данных
               </Label>
             </div>
 
