@@ -242,7 +242,22 @@ export default function AdminDeals() {
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
-  const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
+  // dateFilter from URL
+  const dateFilter = useMemo<DateFilter>(() => {
+    const from = searchParams.get("date_from") || undefined;
+    const to = searchParams.get("date_to") || undefined;
+    return { from, to };
+  }, [searchParams]);
+  const setDateFilter = useCallback((df: DateFilter) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (df.from) next.set("date_from", df.from);
+      else next.delete("date_from");
+      if (df.to) next.set("date_to", df.to);
+      else next.delete("date_to");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
   // View mode & filters from URL
