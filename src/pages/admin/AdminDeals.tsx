@@ -293,7 +293,7 @@ export default function AdminDeals() {
   }, [setSearchParams]);
 
   // Pipelines
-  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn } = usePipelines();
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
 
   // Contact sheet state
@@ -774,6 +774,15 @@ export default function AdminDeals() {
   const [newPipelineName, setNewPipelineName] = useState("");
   const [isCreatingPipeline, setIsCreatingPipeline] = useState(false);
 
+  // Rename pipeline state
+  const [renamePipelineTarget, setRenamePipelineTarget] = useState<{ id: string; name: string } | null>(null);
+  const [renamePipelineValue, setRenamePipelineValue] = useState("");
+  const [isRenamingPipeline, setIsRenamingPipeline] = useState(false);
+
+  // Delete pipeline state
+  const [deletePipelineTarget, setDeletePipelineTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingPipeline, setIsDeletingPipeline] = useState(false);
+
   const handleCreatePipeline = async () => {
     if (!newPipelineName.trim()) return;
     setIsCreatingPipeline(true);
@@ -786,6 +795,37 @@ export default function AdminDeals() {
       // error handled by mutation
     } finally {
       setIsCreatingPipeline(false);
+    }
+  };
+
+  const handleRenamePipeline = async () => {
+    if (!renamePipelineTarget || !renamePipelineValue.trim()) return;
+    setIsRenamingPipeline(true);
+    try {
+      await renamePipelineFn({ id: renamePipelineTarget.id, name: renamePipelineValue.trim() });
+      setRenamePipelineTarget(null);
+      setRenamePipelineValue("");
+    } catch {
+      // error handled by mutation
+    } finally {
+      setIsRenamingPipeline(false);
+    }
+  };
+
+  const handleDeletePipeline = async () => {
+    if (!deletePipelineTarget) return;
+    setIsDeletingPipeline(true);
+    try {
+      await deletePipelineFn(deletePipelineTarget.id);
+      // If we deleted the active pipeline, switch to default
+      if (selectedPipelineId === deletePipelineTarget.id) {
+        setSelectedPipelineId(null);
+      }
+      setDeletePipelineTarget(null);
+    } catch {
+      // error handled by mutation (includes guard for non-empty pipelines)
+    } finally {
+      setIsDeletingPipeline(false);
     }
   };
 
