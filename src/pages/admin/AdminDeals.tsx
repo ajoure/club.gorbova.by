@@ -1165,9 +1165,10 @@ export default function AdminDeals() {
           </div>
         )}
       </GlassCard>
+      )}
 
-      {/* Show More button — reuses Contacts pattern */}
-      {(() => {
+      {/* Show More button — reuses Contacts pattern (list mode only) */}
+      {viewMode === "list" && (() => {
         const loadedCount = Math.min(displayLimit, allDeals.length);
         const remaining = (totalCount ?? allDeals.length) - loadedCount;
         if (remaining <= 0 && allDeals.length <= displayLimit && !hasNextPage) return null;
