@@ -94,6 +94,7 @@ import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
+import { PipelineManagementPopover } from "@/components/admin/deals/PipelineManagementPopover";
 
 const PAGE_SIZE = 100;
 
@@ -324,6 +325,37 @@ export default function AdminDeals() {
   // Pipelines
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
+
+  // Deal counts per pipeline (for delete guards)
+  const { data: pipelineDealCounts } = useQuery({
+    queryKey: ["pipeline-deal-counts"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("orders_v2")
+        .select("pipeline_id")
+        .not("pipeline_id", "is", null);
+      if (error) throw error;
+      const counts = new Map<string, number>();
+      (data || []).forEach((d: any) => {
+        counts.set(d.pipeline_id, (counts.get(d.pipeline_id) || 0) + 1);
+      });
+      return counts;
+    },
+    staleTime: 30_000,
+  });
+
+  // Bound pipeline IDs (for delete guards)
+  const { data: boundPipelineIds } = useQuery({
+    queryKey: ["pipeline-bindings"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("crm_pipeline_product_bindings")
+        .select("pipeline_id");
+      if (error) throw error;
+      return new Set((data || []).map((d: any) => d.pipeline_id));
+    },
+    staleTime: 30_000,
+  });
 
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
