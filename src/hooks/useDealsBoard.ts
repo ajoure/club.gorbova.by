@@ -28,6 +28,8 @@ interface UseDealsBoardOpts {
   search?: string;
   productId?: string | null;
   tariffIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds }: UseDealsBoardOpts) {

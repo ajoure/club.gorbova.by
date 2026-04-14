@@ -184,6 +184,23 @@ export async function reorderStages(pipelineId: string, orderedIds: string[]) {
   await writeAudit("pipeline_stage.reordered", { pipeline_id: pipelineId, order: orderedIds });
 }
 
+export async function reorderPipelines(orderedIds: string[]) {
+  // Temporary negative indices to avoid unique constraint conflicts
+  for (let i = 0; i < orderedIds.length; i++) {
+    await supabase
+      .from("crm_pipelines")
+      .update({ order_index: -(i + 1000) })
+      .eq("id", orderedIds[i]);
+  }
+  for (let i = 0; i < orderedIds.length; i++) {
+    await supabase
+      .from("crm_pipelines")
+      .update({ order_index: i })
+      .eq("id", orderedIds[i]);
+  }
+  await writeAudit("pipeline.reordered", { order: orderedIds });
+}
+
 // ─── Deal stage changes ───
 export async function moveDealToStage(
   dealId: string,
