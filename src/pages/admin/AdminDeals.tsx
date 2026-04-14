@@ -266,6 +266,26 @@ export default function AdminDeals() {
     }, { replace: true });
   }, [setSearchParams]);
 
+  const setSelectedProductId = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("product", id);
+      else next.delete("product");
+      // Clear tariffs when product changes
+      next.delete("tariffs");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSelectedTariffIds = useCallback((ids: string[]) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (ids.length > 0) next.set("tariffs", ids.join(","));
+      else next.delete("tariffs");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   // Pipelines
   const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
