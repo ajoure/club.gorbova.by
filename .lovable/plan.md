@@ -12,6 +12,7 @@
 | F1 — убрать redirect на /auth | CLOSED |
 | F2 — resume payment after inline auth | PARTIAL — authInProgressRef добавлен, нужен browser-proof |
 | **P0 — hotfix оплаты консультации** | **FIXED** |
+| **P0.1 — saved card UI guard + fallback** | **FIXED** |
 | **P2 — клиентские ошибки оплаты** | **FIXED** |
 
 ## P0 — Root Cause и Fix
@@ -52,11 +53,23 @@ Saved card UI для one-time продуктов — **cosmetic only**. Реал
 
 Все офферы — one-time, не subscription. `isOneTime: true` теперь корректно передаётся.
 
+## P0.1 — Saved Card UI Guard + Fallback
+
+### Что сделано
+
+1. **Saved card UI скрыт для one-time продуктов**: guard `savedCard && (isSubscription || isTrial)` — для консультаций показывается стандартный текст "перенаправлены на защищённую страницу оплаты bePaid".
+2. **Контекстные сообщения об ошибках**:
+   - One-time: «Не удалось открыть страницу оплаты. Попробуйте ещё раз.»
+   - Subscription с saved card: «Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.»
+   - Прочее: `normalizeEdgeFunctionError(error)`
+3. **Модалка не закрывается при ошибке**: убран `setStep("ready")` из catch — пользователь остаётся на текущем шаге.
+4. **Кнопка**: всегда "Оплатить {price}" для one-time, без зависимости от savedCard.
+
 ## P2 — Нормализация ошибок
 
 ### Fix
 
-Заменён `toast.error(error.message)` на `toast.error(normalizeEdgeFunctionError(error))` в `handlePayment` catch block. Используется существующий `src/utils/normalizeEdgeFunctionError.ts`.
+Заменён `toast.error(error.message)` на контекстные сообщения + `normalizeEdgeFunctionError` как fallback. Raw backend ошибки пользователю больше не показываются.
 
 ## F2 — Статус
 
@@ -69,7 +82,7 @@ Saved card UI для one-time продуктов — **cosmetic only**. Реал
 
 | Файл | Изменение |
 |------|-----------|
-| `src/components/payment/PaymentDialog.tsx` | isOneTime в payload, normalizeEdgeFunctionError, authInProgressRef (ранее) |
+| `src/components/payment/PaymentDialog.tsx` | isOneTime в payload, saved card UI guard, контекстные ошибки, кнопка, authInProgressRef (ранее) |
 
 ## FROZEN
 
