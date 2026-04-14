@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
         discount_enabled, discount_percent, original_price,
         trial_enabled, trial_days, trial_price, trial_auto_charge,
         sort_order, product_id, is_active,
-        visible_from, visible_to
+        visible_from, visible_to, meta
       `)
       .eq("public_id", tariffPublicId)
       .single();
@@ -228,7 +228,7 @@ Deno.serve(async (req) => {
             tariffs_title: "Тариф",
             tariffs_subtitle: "",
             show_badges: true,
-            price_suffix: "BYN/мес",
+            price_suffix: "BYN",
           },
         },
         tariff: tariffResult,

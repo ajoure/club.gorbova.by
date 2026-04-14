@@ -2,15 +2,18 @@
  * Tariff Card View-Model Normalizer
  * 
  * Decouples TariffCard rendering from business logic.
- * Used by both public landing pages and admin preview.
+ * Used by admin preview path. Public runtime uses TariffCard directly.
+ * Both paths use the shared resolver from resolveTariffDisplayConfig.ts.
  * 
  * RULES:
  * - price_display is VISUAL-ONLY fallback, never used in checkout/payments
- * - old_price priority: card_config.old_price > tariff.original_price
+ * - old_price priority: card_config.old_price > tariff.base_price
  * - is_highlighted priority: card_config.is_highlighted > tariff.is_popular
  * - badge priority: card_config.badge_text > tariff.badge
- * - price suffix priority: priceSuffix param > card_config.price_suffix > "BYN"
+ * - price suffix priority: card_config.price_suffix > tariff.period_label > product.landing_config.price_suffix > "BYN"
  */
+
+import { resolvePriceSuffix, resolveBadgeText, resolveOldPrice } from "./resolveTariffDisplayConfig";
 
 export interface CardConfig {
   badge_text?: string | null;
@@ -73,21 +76,28 @@ export function buildTariffCardViewModel(
 ): TariffCardViewModel {
   const cc = tariff.meta?.card_config;
 
-  // Resolve badge: card_config > tariff.badge
-  const badge = cc?.badge_text ?? tariff.badge ?? null;
+  // Resolve badge via shared resolver
+  const badge = resolveBadgeText({ cardConfig: cc, tariffBadge: tariff.badge });
 
   // Resolve is_highlighted: style_variant "highlighted" > card_config.is_highlighted > tariff.is_popular (legacy fallback)
   const isHighlighted = cc?.style_variant === "highlighted" || cc?.is_highlighted || tariff.is_popular || false;
 
-  // Resolve old_price: card_config.old_price > tariff.original_price
-  const oldPrice = cc?.old_price ?? (tariff as any).original_price ?? null;
+  // Resolve old_price via shared resolver
+  const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: (tariff as any).original_price ?? null });
 
-  // Build card_config for TariffCard
+  // Resolve price_suffix via shared resolver: card_config > period_label > product-level > "BYN"
+  const resolvedSuffix = resolvePriceSuffix({
+    cardConfig: cc,
+    periodLabel: tariff.period_label,
+    productPriceSuffix: overridePriceSuffix,
+  });
+
+  // Build card_config for TariffCard (pre-resolved, TariffCard will consume directly)
   const cardConfig: CardConfig = {
     badge_text: badge,
     price_display: cc?.price_display ?? null,
     old_price: oldPrice,
-    price_suffix: overridePriceSuffix || cc?.price_suffix || "BYN",
+    price_suffix: resolvedSuffix,
     cta_text: cc?.cta_text ?? null,
     footnote: cc?.footnote ?? null,
     is_highlighted: !!isHighlighted,
