@@ -227,12 +227,12 @@ export async function moveDealToPipeline(
 async function writeAudit(action: string, meta: Record<string, unknown>) {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    await supabase.from("audit_logs").insert({
+    await supabase.from("audit_logs").insert([{
       action,
       actor_type: "user",
       actor_user_id: user?.id || null,
-      meta,
-    });
+      meta: meta as any,
+    }]);
   } catch (e) {
     console.error("[pipelineService] audit write failed:", e);
   }
