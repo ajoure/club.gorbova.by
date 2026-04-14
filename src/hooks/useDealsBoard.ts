@@ -27,11 +27,12 @@ interface UseDealsBoardOpts {
   isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
+  tariffIds?: string[];
 }
 
-export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId];
+  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
@@ -57,6 +58,9 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
       }
 
       if (productId) q = q.eq("product_id", productId);
+      if (tariffIds && tariffIds.length > 0) {
+        q = q.in("tariff_id", tariffIds);
+      }
       if (search) {
         q = q.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%`);
       }

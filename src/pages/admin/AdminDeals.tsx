@@ -62,6 +62,8 @@ import {
   Kanban,
   ChevronDown,
   Plus,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -70,6 +72,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -87,7 +90,6 @@ import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
-import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
@@ -158,6 +160,7 @@ function buildDealsQuery(
   debouncedSearch: string,
   selectedProductId: string | null,
   dateFilter: DateFilter,
+  tariffIds?: string[],
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -202,6 +205,11 @@ function buildDealsQuery(
     query = query.eq("product_id", selectedProductId);
   }
 
+  // Tariff filter
+  if (tariffIds && tariffIds.length > 0) {
+    query = query.in("tariff_id", tariffIds);
+  }
+
   // Date filter
   if (dateFilter.from) {
     query = query.gte("deal_date", `${dateFilter.from}T00:00:00Z`);
@@ -229,7 +237,6 @@ export default function AdminDeals() {
   const [search, setSearch] = useState("");
   const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
@@ -237,10 +244,16 @@ export default function AdminDeals() {
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
-  // View mode: list or board
+  // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
   const selectedPipelineId = searchParams.get("pipeline") || null;
+  const selectedProductId = searchParams.get("product") || null;
+  const selectedTariffIds = useMemo(() => {
+    const raw = searchParams.get("tariffs");
+    if (!raw) return [] as string[];
+    return raw.split(",").filter(Boolean);
+  }, [searchParams]);
 
   const setViewMode = useCallback((mode: "list" | "board") => {
     setSearchParams((prev) => {
@@ -255,6 +268,26 @@ export default function AdminDeals() {
       const next = new URLSearchParams(prev);
       if (id) next.set("pipeline", id);
       else next.delete("pipeline");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSelectedProductId = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("product", id);
+      else next.delete("product");
+      // Clear tariffs when product changes
+      next.delete("tariffs");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSelectedTariffIds = useCallback((ids: string[]) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (ids.length > 0) next.set("tariffs", ids.join(","));
+      else next.delete("tariffs");
       return next;
     }, { replace: true });
   }, [setSearchParams]);
@@ -346,7 +379,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, dateFilter],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -361,14 +394,18 @@ export default function AdminDeals() {
         });
         if (error) throw error;
         const rows = (data || []).map(rpcRowToNested);
+        // Client-side tariff filter for RPC results
+        const filtered = selectedTariffIds.length > 0
+          ? rows.filter((r: any) => selectedTariffIds.includes(r.tariff_id))
+          : rows;
         return {
-          rows,
+          rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
         };
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
@@ -402,6 +439,19 @@ export default function AdminDeals() {
         .eq("is_active", true);
       return data || [];
     },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch tariffs for filter (depends on selected product)
+  const { data: tariffs } = useQuery({
+    queryKey: ["tariffs-filter", selectedProductId],
+    queryFn: async () => {
+      let q = supabase.from("tariffs").select("id, name, product_id");
+      if (selectedProductId) q = q.eq("product_id", selectedProductId);
+      const { data } = await q.order("name");
+      return data || [];
+    },
+    enabled: !!selectedProductId,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -739,8 +789,7 @@ export default function AdminDeals() {
     }
   };
 
-  // Product filter popover state
-  const [showProductFilter, setShowProductFilter] = useState(false);
+  // Filter popover search state
   const [productSearch, setProductSearch] = useState("");
 
   const filteredProducts = useMemo(() => {
@@ -749,10 +798,6 @@ export default function AdminDeals() {
     const s = productSearch.toLowerCase();
     return products.filter((p) => p.name.toLowerCase().includes(s));
   }, [products, productSearch]);
-
-  const selectedProductName = selectedProductId
-    ? products?.find((p) => p.id === selectedProductId)?.name || "Продукт"
-    : null;
 
   const activePipeline = pipelines.find((p) => p.id === activePipelineId);
 
@@ -869,51 +914,125 @@ export default function AdminDeals() {
           />
         </div>
 
-        {/* Product filter dropdown */}
-        <DropdownMenu open={showProductFilter} onOpenChange={setShowProductFilter}>
-          <DropdownMenuTrigger asChild>
+        {/* Unified filter popover */}
+        <Popover>
+          <PopoverTrigger asChild>
             <Button
-              variant={selectedProductId ? "default" : "outline"}
+              variant={(selectedProductId || selectedTariffIds.length > 0) ? "default" : "outline"}
               size="sm"
               className="h-7 gap-1.5 text-xs"
             >
-              <Tag className="h-3 w-3" />
-              <span className="max-w-[120px] truncate">
-                {selectedProductName || "Продукт"}
-              </span>
-              <ChevronDown className="h-3 w-3 opacity-50" />
+              <SlidersHorizontal className="h-3 w-3" />
+              <span>Фильтры</span>
+              {(selectedProductId || selectedTariffIds.length > 0) && (
+                <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full">
+                  {(selectedProductId ? 1 : 0) + (selectedTariffIds.length > 0 ? 1 : 0)}
+                </Badge>
+              )}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64 max-h-80">
-            <div className="p-2">
-              <Input
-                placeholder="Найти продукт..."
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                className="h-7 text-xs"
-                autoFocus
-              />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72 p-0" sideOffset={6}>
+            <div className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground">Фильтры</span>
+                {(selectedProductId || selectedTariffIds.length > 0) && (
+                  <button
+                    onClick={() => { setSelectedProductId(null); setSelectedTariffIds([]); }}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+
+              {/* Product filter */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-muted-foreground">Продукт</label>
+                <Input
+                  placeholder="Найти продукт..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="h-7 text-xs"
+                />
+                <div className="max-h-36 overflow-y-auto space-y-0.5">
+                  <button
+                    onClick={() => setSelectedProductId(null)}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                      !selectedProductId ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                    }`}
+                  >
+                    Все продукты
+                  </button>
+                  {filteredProducts.map((product) => (
+                    <button
+                      key={product.id}
+                      onClick={() => setSelectedProductId(product.id)}
+                      className={`w-full text-left px-2 py-1.5 rounded text-xs truncate transition-colors ${
+                        selectedProductId === product.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                      }`}
+                    >
+                      {product.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tariff filter — only when product selected */}
+              {selectedProductId && tariffs && tariffs.length > 0 && (
+                <div className="space-y-1.5 border-t border-border/30 pt-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-medium text-muted-foreground">
+                      Тарифы
+                      {selectedTariffIds.length > 0 && (
+                        <span className="ml-1 text-primary">({selectedTariffIds.length})</span>
+                      )}
+                    </label>
+                    {selectedTariffIds.length > 0 && (
+                      <button
+                        onClick={() => setSelectedTariffIds([])}
+                        className="text-[10px] text-muted-foreground hover:text-foreground"
+                      >
+                        Очистить
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-36 overflow-y-auto space-y-0.5">
+                    {tariffs.map((t) => {
+                      const isSelected = selectedTariffIds.includes(t.id);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedTariffIds(selectedTariffIds.filter(id => id !== t.id));
+                            } else {
+                              setSelectedTariffIds([...selectedTariffIds, t.id]);
+                            }
+                          }}
+                          className={`w-full flex items-center gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                            isSelected ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                          }`}
+                        >
+                          <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${
+                            isSelected ? "bg-primary border-primary" : "border-border"
+                          }`}>
+                            {isSelected && <CheckCircle className="h-2.5 w-2.5 text-primary-foreground" />}
+                          </div>
+                          <span className="truncate">{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {selectedProductId && (!tariffs || tariffs.length === 0) && (
+                <div className="text-[11px] text-muted-foreground/60 border-t border-border/30 pt-3">
+                  Нет тарифов для этого продукта
+                </div>
+              )}
             </div>
-            <DropdownMenuSeparator />
-            <div className="max-h-56 overflow-y-auto">
-              <DropdownMenuItem
-                onClick={() => { setSelectedProductId(null); setShowProductFilter(false); setProductSearch(""); }}
-                className={!selectedProductId ? "bg-accent" : ""}
-              >
-                Все продукты
-              </DropdownMenuItem>
-              {filteredProducts.map((product) => (
-                <DropdownMenuItem
-                  key={product.id}
-                  onClick={() => { setSelectedProductId(product.id); setShowProductFilter(false); setProductSearch(""); }}
-                  className={selectedProductId === product.id ? "bg-accent" : ""}
-                >
-                  <span className="truncate">{product.name}</span>
-                </DropdownMenuItem>
-              ))}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </PopoverContent>
+        </Popover>
 
         {/* Period + actions */}
         <div className="flex items-center gap-1.5 ml-auto">
@@ -973,6 +1092,7 @@ export default function AdminDeals() {
           isDefaultPipeline={activePipeline?.is_default}
           search={debouncedSearch}
           productId={selectedProductId}
+          tariffIds={selectedTariffIds}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}
