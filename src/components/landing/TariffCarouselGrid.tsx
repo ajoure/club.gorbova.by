@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { useEqualHeight } from "@/hooks/useEqualHeight";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Carousel,
@@ -71,7 +70,7 @@ function CarouselView({
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
   const [scrollSnaps, setScrollSnaps] = useState<number[]>([]);
-  const { setRef, minHeight } = useEqualHeight(items.length);
+  const carouselContainerRef = useRef<HTMLDivElement>(null);
 
   const onSelect = useCallback(() => {
     if (!api) return;
