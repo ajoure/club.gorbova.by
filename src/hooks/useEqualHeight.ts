@@ -1,71 +1,74 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * useEqualHeight — post-render measurement hook for equal-height cards.
+ * useEqualHeight — post-render measurement hook for equal-height carousel cards.
  * 
- * Measures natural height of all registered elements, computes the max,
- * and returns it as minHeight to apply on each element.
+ * Measures natural scrollHeight of all registered elements, computes the max,
+ * and returns it as minHeight to apply on each element's container.
  * 
- * Recalculates on: initial render, resize (via ResizeObserver), items count change.
- * Filters out Embla clones (elements with closest [data-embla-slide-index] that are clones).
+ * Measured DOM node: the inner wrapper div inside each CarouselItem.
+ * minHeight applied to: the same inner wrapper div (via inline style).
+ * Embla clones excluded: filtered by checking parentElement for aria-hidden.
+ * Recalculates on: initial render (delayed), resize (ResizeObserver on window), itemCount change.
  */
 export function useEqualHeight(itemCount: number) {
-  const refs = useRef<(HTMLDivElement | null)[]>([]);
+  const refsMap = useRef<Map<number, HTMLDivElement>>(new Map());
   const [minHeight, setMinHeight] = useState<number | undefined>(undefined);
-  const observerRef = useRef<ResizeObserver | null>(null);
 
   const setRef = useCallback((index: number) => (el: HTMLDivElement | null) => {
-    refs.current[index] = el;
+    if (el) {
+      refsMap.current.set(index, el);
+    } else {
+      refsMap.current.delete(index);
+    }
   }, []);
 
   const recalculate = useCallback(() => {
-    const elements = refs.current.filter((el): el is HTMLDivElement => {
-      if (!el) return false;
-      // Exclude Embla clones — they have a parent with data-embla-clone or aria-hidden
-      // Check if any ancestor has the clone marker
-      const slideParent = el.closest('[role="group"]');
-      if (slideParent && slideParent.hasAttribute('data-embla-clone')) return false;
-      return true;
+    const elements: HTMLDivElement[] = [];
+    refsMap.current.forEach((el, index) => {
+      // Only measure original slides (indices 0..itemCount-1), skip Embla clones
+      if (index < itemCount && el.isConnected) {
+        elements.push(el);
+      }
     });
 
     if (elements.length === 0) return;
 
-    // Temporarily remove minHeight to measure natural height
+    // Temporarily clear minHeight to get natural height
+    const prevHeights = elements.map(el => el.style.minHeight);
+    elements.forEach(el => { el.style.minHeight = ''; });
+
+    // Force layout recalc
+    let maxH = 0;
     elements.forEach(el => {
-      el.style.minHeight = '';
+      const h = el.scrollHeight;
+      if (h > maxH) maxH = h;
     });
 
-    // Force reflow, then measure
-    requestAnimationFrame(() => {
-      let maxH = 0;
-      elements.forEach(el => {
-        const h = el.scrollHeight;
-        if (h > maxH) maxH = h;
-      });
-
-      if (maxH > 0) {
-        setMinHeight(maxH);
-      }
-    });
-  }, []);
-
-  useEffect(() => {
-    // Initial calculation after mount
-    const timer = setTimeout(recalculate, 100);
-
-    // ResizeObserver on the first element's scroll parent
-    observerRef.current = new ResizeObserver(() => {
-      recalculate();
-    });
-
-    // Observe document body for resize changes
-    if (document.body) {
-      observerRef.current.observe(document.body);
+    // Restore previous if measurement failed
+    if (maxH <= 0) {
+      elements.forEach((el, i) => { el.style.minHeight = prevHeights[i]; });
+      return;
     }
 
+    setMinHeight(maxH);
+  }, [itemCount]);
+
+  useEffect(() => {
+    // Delay initial measurement to let content render & animations settle
+    const t1 = setTimeout(recalculate, 200);
+    const t2 = setTimeout(recalculate, 600);
+
+    const ro = new ResizeObserver(() => recalculate());
+    ro.observe(document.documentElement);
+
+    window.addEventListener('resize', recalculate);
+
     return () => {
-      clearTimeout(timer);
-      observerRef.current?.disconnect();
+      clearTimeout(t1);
+      clearTimeout(t2);
+      ro.disconnect();
+      window.removeEventListener('resize', recalculate);
     };
   }, [itemCount, recalculate]);
 
