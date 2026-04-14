@@ -379,7 +379,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, dateFilter],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -394,14 +394,18 @@ export default function AdminDeals() {
         });
         if (error) throw error;
         const rows = (data || []).map(rpcRowToNested);
+        // Client-side tariff filter for RPC results
+        const filtered = selectedTariffIds.length > 0
+          ? rows.filter((r: any) => selectedTariffIds.includes(r.tariff_id))
+          : rows;
         return {
-          rows,
+          rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
         };
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
