@@ -44,6 +44,22 @@ function generatePassword(length = 12): string {
   return password;
 }
 
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function paymentFallbackResponse(error: string, details?: Record<string, unknown>) {
+  return jsonResponse({
+    success: false,
+    error,
+    fallback: true,
+    ...(details ? { details } : {}),
+  });
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -702,10 +718,14 @@ Deno.serve(async (req) => {
           .update({ status: 'failed', error_message: errMsg })
           .eq('id', order.id);
 
-        return new Response(
-          JSON.stringify({ success: false, error: errMsg }),
-          { status: checkoutResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return paymentFallbackResponse(errMsg, {
+          provider: 'bepaid',
+          flow: 'one_time_checkout',
+          orderId: order.id,
+          statusCode: checkoutResponse.status,
+          productId,
+          offerId: offerId || null,
+        });
       }
 
       // Persist checkout token on our order
@@ -808,10 +828,14 @@ Deno.serve(async (req) => {
           .update({ status: 'failed', error_message: errMsg })
           .eq('id', order.id);
 
-        return new Response(
-          JSON.stringify({ success: false, error: errMsg }),
-          { status: mitResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+        return paymentFallbackResponse(errMsg, {
+          provider: 'bepaid',
+          flow: 'mit_checkout',
+          orderId: order.id,
+          statusCode: mitResponse.status,
+          productId,
+          offerId: offerId || null,
+        });
       }
 
       // Persist checkout token - NO bePaid subscription created
@@ -953,9 +977,9 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Error creating payment token:', error);
-    return new Response(
-      JSON.stringify({ success: false, error: 'Internal server error' }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return paymentFallbackResponse('Payment service error', {
+      provider: 'bepaid',
+      flow: 'unexpected_error',
+    });
   }
 });
