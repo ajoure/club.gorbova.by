@@ -2319,6 +2319,155 @@ export type Database = {
           },
         ]
       }
+      crm_pipeline_product_bindings: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          metadata: Json | null
+          pipeline_id: string
+          product_id: string
+          public_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json | null
+          pipeline_id: string
+          product_id: string
+          public_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          metadata?: Json | null
+          pipeline_id?: string
+          product_id?: string
+          public_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_product_bindings_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "crm_pipeline_product_bindings_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products_v2"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipeline_stages: {
+        Row: {
+          color: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          is_default: boolean
+          metadata: Json | null
+          name: string
+          order_index: number
+          pipeline_id: string
+          public_id: string
+          stage_type: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_default?: boolean
+          metadata?: Json | null
+          name: string
+          order_index?: number
+          pipeline_id: string
+          public_id?: string
+          stage_type?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_default?: boolean
+          metadata?: Json | null
+          name?: string
+          order_index?: number
+          pipeline_id?: string
+          public_id?: string
+          stage_type?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_pipeline_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_pipelines: {
+        Row: {
+          code: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          is_default: boolean
+          metadata: Json | null
+          name: string
+          order_index: number
+          public_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_default?: boolean
+          metadata?: Json | null
+          name: string
+          order_index?: number
+          public_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_default?: boolean
+          metadata?: Json | null
+          name?: string
+          order_index?: number
+          public_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       deploy_logs: {
         Row: {
           commit_sha: string
@@ -6568,6 +6717,8 @@ export type Database = {
           paid_amount: number | null
           payer_type: string | null
           payment_plan_id: string | null
+          pipeline_id: string | null
+          pipeline_stage_id: string | null
           pricing_stage_id: string | null
           product_id: string | null
           profile_id: string | null
@@ -6604,6 +6755,8 @@ export type Database = {
           paid_amount?: number | null
           payer_type?: string | null
           payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
           profile_id?: string | null
@@ -6640,6 +6793,8 @@ export type Database = {
           paid_amount?: number | null
           payer_type?: string | null
           payment_plan_id?: string | null
+          pipeline_id?: string | null
+          pipeline_stage_id?: string | null
           pricing_stage_id?: string | null
           product_id?: string | null
           profile_id?: string | null
@@ -6673,6 +6828,20 @@ export type Database = {
             columns: ["payment_plan_id"]
             isOneToOne: false
             referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipelines"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_v2_pipeline_stage_id_fkey"
+            columns: ["pipeline_stage_id"]
+            isOneToOne: false
+            referencedRelation: "crm_pipeline_stages"
             referencedColumns: ["id"]
           },
           {
