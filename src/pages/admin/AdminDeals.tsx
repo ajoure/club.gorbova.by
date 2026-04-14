@@ -941,69 +941,22 @@ export default function AdminDeals() {
         </div>
 
         {/* Pipeline selector (both modes) */}
-        {pipelines.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
-                <Kanban className="h-3 w-3" />
-                <span>{activePipeline?.name || "Воронка"}</span>
-                <ChevronDown className="h-3 w-3 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64">
-              {pipelines.map((p) => (
-                <div key={p.id} className="flex items-center group/pipe">
-                  <DropdownMenuItem
-                    onClick={() => setSelectedPipelineId(p.id)}
-                    className={`flex-1 ${p.id === activePipelineId ? "bg-accent" : ""}`}
-                  >
-                    {p.name}
-                    {p.is_default && (
-                      <Badge variant="secondary" className="ml-auto text-[9px] h-4 px-1">
-                        default
-                      </Badge>
-                    )}
-                  </DropdownMenuItem>
-                  {canEdit && (
-                    <div className="flex items-center gap-0.5 pr-1 opacity-0 group-hover/pipe:opacity-100 transition-opacity">
-                      <button
-                        className="h-5 w-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                        title="Переименовать"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setRenamePipelineTarget({ id: p.id, name: p.name });
-                          setRenamePipelineValue(p.name);
-                        }}
-                      >
-                        <Pencil className="h-2.5 w-2.5" />
-                      </button>
-                      {!p.is_default && (
-                        <button
-                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                          title="Удалить"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeletePipelineTarget({ id: p.id, name: p.name });
-                          }}
-                        >
-                          <Trash2 className="h-2.5 w-2.5" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {canEdit && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setShowCreatePipelineDialog(true)}>
-                    <Plus className="h-3.5 w-3.5 mr-2" />
-                    Создать воронку
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {pipelines.length > 0 && activePipelineId && (
+          <PipelineManagementPopover
+            pipelines={pipelines}
+            activePipelineId={activePipelineId}
+            onSelect={(id) => setSelectedPipelineId(id)}
+            onRename={(p) => {
+              setRenamePipelineTarget(p);
+              setRenamePipelineValue(p.name);
+            }}
+            onDelete={(p) => setDeletePipelineTarget(p)}
+            onCreate={() => setShowCreatePipelineDialog(true)}
+            onReorder={reorderPipelinesFn}
+            canEdit={canEdit}
+            dealCounts={pipelineDealCounts}
+            boundPipelineIds={boundPipelineIds}
+          />
         )}
 
         {/* Preset tabs (list mode only) */}
