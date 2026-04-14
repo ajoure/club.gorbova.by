@@ -24,11 +24,12 @@ export interface BoardDeal {
 
 interface UseDealsBoardOpts {
   pipelineId: string | null;
+  isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
 }
 
-export function useDealsBoard({ pipelineId, search, productId }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId }: UseDealsBoardOpts) {
   const qc = useQueryClient();
   const queryKey = ["deals-board", pipelineId, search, productId];
 
