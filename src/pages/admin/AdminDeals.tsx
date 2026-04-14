@@ -919,51 +919,125 @@ export default function AdminDeals() {
           />
         </div>
 
-        {/* Product filter dropdown */}
-        <DropdownMenu open={showProductFilter} onOpenChange={setShowProductFilter}>
-          <DropdownMenuTrigger asChild>
+        {/* Unified filter popover */}
+        <Popover>
+          <PopoverTrigger asChild>
             <Button
-              variant={selectedProductId ? "default" : "outline"}
+              variant={(selectedProductId || selectedTariffIds.length > 0) ? "default" : "outline"}
               size="sm"
               className="h-7 gap-1.5 text-xs"
             >
-              <Tag className="h-3 w-3" />
-              <span className="max-w-[120px] truncate">
-                {selectedProductName || "Продукт"}
-              </span>
-              <ChevronDown className="h-3 w-3 opacity-50" />
+              <SlidersHorizontal className="h-3 w-3" />
+              <span>Фильтры</span>
+              {(selectedProductId || selectedTariffIds.length > 0) && (
+                <Badge variant="secondary" className="h-4 min-w-4 px-1 text-[10px] font-semibold rounded-full">
+                  {(selectedProductId ? 1 : 0) + (selectedTariffIds.length > 0 ? 1 : 0)}
+                </Badge>
+              )}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64 max-h-80">
-            <div className="p-2">
-              <Input
-                placeholder="Найти продукт..."
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                className="h-7 text-xs"
-                autoFocus
-              />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-72 p-0" sideOffset={6}>
+            <div className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-foreground">Фильтры</span>
+                {(selectedProductId || selectedTariffIds.length > 0) && (
+                  <button
+                    onClick={() => { setSelectedProductId(null); setSelectedTariffIds([]); }}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Сбросить
+                  </button>
+                )}
+              </div>
+
+              {/* Product filter */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-medium text-muted-foreground">Продукт</label>
+                <Input
+                  placeholder="Найти продукт..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="h-7 text-xs"
+                />
+                <div className="max-h-36 overflow-y-auto space-y-0.5">
+                  <button
+                    onClick={() => setSelectedProductId(null)}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                      !selectedProductId ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                    }`}
+                  >
+                    Все продукты
+                  </button>
+                  {filteredProducts.map((product) => (
+                    <button
+                      key={product.id}
+                      onClick={() => setSelectedProductId(product.id)}
+                      className={`w-full text-left px-2 py-1.5 rounded text-xs truncate transition-colors ${
+                        selectedProductId === product.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                      }`}
+                    >
+                      {product.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tariff filter — only when product selected */}
+              {selectedProductId && tariffs && tariffs.length > 0 && (
+                <div className="space-y-1.5 border-t border-border/30 pt-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[11px] font-medium text-muted-foreground">
+                      Тарифы
+                      {selectedTariffIds.length > 0 && (
+                        <span className="ml-1 text-primary">({selectedTariffIds.length})</span>
+                      )}
+                    </label>
+                    {selectedTariffIds.length > 0 && (
+                      <button
+                        onClick={() => setSelectedTariffIds([])}
+                        className="text-[10px] text-muted-foreground hover:text-foreground"
+                      >
+                        Очистить
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-36 overflow-y-auto space-y-0.5">
+                    {tariffs.map((t) => {
+                      const isSelected = selectedTariffIds.includes(t.id);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            if (isSelected) {
+                              setSelectedTariffIds(selectedTariffIds.filter(id => id !== t.id));
+                            } else {
+                              setSelectedTariffIds([...selectedTariffIds, t.id]);
+                            }
+                          }}
+                          className={`w-full flex items-center gap-2 text-left px-2 py-1.5 rounded text-xs transition-colors ${
+                            isSelected ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted text-foreground"
+                          }`}
+                        >
+                          <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${
+                            isSelected ? "bg-primary border-primary" : "border-border"
+                          }`}>
+                            {isSelected && <CheckCircle className="h-2.5 w-2.5 text-primary-foreground" />}
+                          </div>
+                          <span className="truncate">{t.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {selectedProductId && (!tariffs || tariffs.length === 0) && (
+                <div className="text-[11px] text-muted-foreground/60 border-t border-border/30 pt-3">
+                  Нет тарифов для этого продукта
+                </div>
+              )}
             </div>
-            <DropdownMenuSeparator />
-            <div className="max-h-56 overflow-y-auto">
-              <DropdownMenuItem
-                onClick={() => { setSelectedProductId(null); setShowProductFilter(false); setProductSearch(""); }}
-                className={!selectedProductId ? "bg-accent" : ""}
-              >
-                Все продукты
-              </DropdownMenuItem>
-              {filteredProducts.map((product) => (
-                <DropdownMenuItem
-                  key={product.id}
-                  onClick={() => { setSelectedProductId(product.id); setShowProductFilter(false); setProductSearch(""); }}
-                  className={selectedProductId === product.id ? "bg-accent" : ""}
-                >
-                  <span className="truncate">{product.name}</span>
-                </DropdownMenuItem>
-              ))}
-            </div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </PopoverContent>
+        </Popover>
 
         {/* Period + actions */}
         <div className="flex items-center gap-1.5 ml-auto">
