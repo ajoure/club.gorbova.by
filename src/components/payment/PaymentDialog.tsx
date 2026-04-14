@@ -150,6 +150,7 @@ export function PaymentDialog({
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
   const [showTrialUsedModal, setShowTrialUsedModal] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentFlowType, setPaymentFlowType] = useState<PaymentFlowType>('provider_managed');
   
   // Telegram link hooks
@@ -201,6 +202,7 @@ export function PaymentDialog({
       setIsLoadingCard(false);
       setTelegramDeepLink(null);
       setShowTrialUsedModal(false);
+      setPaymentError(null);
       if (user && session) {
         // User is authenticated - use their data
         setFormData({
@@ -235,6 +237,7 @@ export function PaymentDialog({
     } else {
       // Dialog closed — always reset authInProgressRef
       authInProgressRef.current = false;
+      setPaymentError(null);
     }
   }, [open, user, session, isClubProduct, isTelegramLinked, isTelegramStatusLoading]);
 
@@ -445,6 +448,7 @@ export function PaymentDialog({
 
   const handlePayment = async () => {
     setIsLoading(true);
+    setPaymentError(null);
     setStep("processing");
 
     console.log("handlePayment called", { savedCard, tariffCode, user: !!user, productId, paymentFlowType });
@@ -487,7 +491,9 @@ export function PaymentDialog({
         if (data.redirect_url) {
           window.location.href = data.redirect_url;
         } else {
-          toast.error("Не удалось получить ссылку на подписку");
+          const message = "Не удалось получить ссылку на оплату.";
+          setPaymentError(message);
+          toast.error(message);
           setStep("ready");
         }
         return;
@@ -549,6 +555,18 @@ export function PaymentDialog({
           setIsLoading(false);
           return;
         }
+
+        const fallbackMessage = isOneTimePayment
+          ? "Не удалось открыть страницу оплаты. Попробуйте ещё раз."
+          : "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.";
+
+        if (data?.fallback) {
+          setPaymentError(fallbackMessage);
+          toast.error(fallbackMessage);
+          setStep("ready");
+          return;
+        }
+
         throw new Error(data.error || "Ошибка создания платежа");
       }
 
@@ -556,20 +574,22 @@ export function PaymentDialog({
       if (data.redirectUrl) {
         window.location.href = data.redirectUrl;
       } else {
-        toast.error("Не удалось получить ссылку на оплату");
+        const message = "Не удалось получить ссылку на оплату";
+        setPaymentError(message);
+        toast.error(message);
         setStep("ready");
       }
     } catch (error) {
       console.error("Payment error:", error);
       const isOneTime = !isSubscription && !isTrial;
-      if (isOneTime) {
-        toast.error("Не удалось открыть страницу оплаты. Попробуйте ещё раз.");
-      } else if (savedCard) {
-        toast.error("Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой.");
-      } else {
-        toast.error(normalizeEdgeFunctionError(error));
-      }
-      // Stay on current step — don't reset checkout context
+      const message = isOneTime
+        ? "Не удалось открыть страницу оплаты. Попробуйте ещё раз."
+        : savedCard
+          ? "Не удалось продолжить оплату. Попробуйте ещё раз или оплатите другой картой."
+          : normalizeEdgeFunctionError(error);
+      setPaymentError(message);
+      toast.error(message);
+      setStep("ready");
     } finally {
       setIsLoading(false);
     }
@@ -685,6 +705,7 @@ export function PaymentDialog({
     setFormData(prev => ({ ...prev, password: "" }));
     setEmailCheckResult(null);
     setLoginError(null);
+    setPaymentError(null);
     setErrors({});
     setStep("email");
   };
@@ -1033,6 +1054,14 @@ export function PaymentDialog({
               </Alert>
             )}
 
+            {paymentError && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Не удалось продолжить оплату</AlertTitle>
+                <AlertDescription>{paymentError}</AlertDescription>
+              </Alert>
+            )}
+
             <div className="rounded-lg bg-muted/50 p-4 space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <CheckCircle className="h-4 w-4 text-primary" />
@@ -1064,7 +1093,7 @@ export function PaymentDialog({
               </div>
             ) : (
               <div className="rounded-lg bg-primary/10 p-3 text-sm">
-                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid.</p>
+                <p>После нажатия кнопки вы будете перенаправлены на защищённую страницу оплаты bePaid без использования сохранённой карты.</p>
               </div>
             )}
             
