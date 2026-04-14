@@ -28,11 +28,13 @@ interface UseDealsBoardOpts {
   search?: string;
   productId?: string | null;
   tariffIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
 }
 
-export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds];
+  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
@@ -63,6 +65,14 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
       }
       if (search) {
         q = q.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%`);
+      }
+
+      // Date filter — same contract as list-view buildDealsQuery
+      if (dateFrom) {
+        q = q.gte("deal_date", `${dateFrom}T00:00:00Z`);
+      }
+      if (dateTo) {
+        q = q.lte("deal_date", `${dateTo}T23:59:59Z`);
       }
 
       q = q.order("updated_at", { ascending: false }).order("id", { ascending: false });

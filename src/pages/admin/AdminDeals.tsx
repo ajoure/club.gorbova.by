@@ -162,6 +162,8 @@ function buildDealsQuery(
   selectedProductId: string | null,
   dateFilter: DateFilter,
   tariffIds?: string[],
+  pipelineId?: string | null,
+  isDefaultPipeline?: boolean,
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -181,6 +183,7 @@ function buildDealsQuery(
       trial_end_at,
       product_id,
       tariff_id,
+      pipeline_id,
       user_id,
       profile_id,
       reconcile_source,
@@ -227,6 +230,15 @@ function buildDealsQuery(
     );
   }
 
+  // Pipeline filter
+  if (pipelineId) {
+    if (isDefaultPipeline) {
+      query = query.or(`pipeline_id.eq.${pipelineId},pipeline_id.is.null`);
+    } else {
+      query = query.eq("pipeline_id", pipelineId);
+    }
+  }
+
   return query;
 }
 
@@ -242,7 +254,6 @@ export default function AdminDeals() {
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
-  const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
   // View mode & filters from URL
@@ -255,6 +266,23 @@ export default function AdminDeals() {
     if (!raw) return [] as string[];
     return raw.split(",").filter(Boolean);
   }, [searchParams]);
+
+  // dateFilter from URL
+  const dateFilter = useMemo<DateFilter>(() => {
+    const from = searchParams.get("date_from") || undefined;
+    const to = searchParams.get("date_to") || undefined;
+    return { from, to };
+  }, [searchParams]);
+  const setDateFilter = useCallback((df: DateFilter) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (df.from) next.set("date_from", df.from);
+      else next.delete("date_from");
+      if (df.to) next.set("date_to", df.to);
+      else next.delete("date_to");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const setViewMode = useCallback((mode: "list" | "board") => {
     setSearchParams((prev) => {
@@ -294,7 +322,7 @@ export default function AdminDeals() {
   }, [setSearchParams]);
 
   // Pipelines
-  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn } = usePipelines();
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
 
   // Contact sheet state
@@ -380,7 +408,7 @@ export default function AdminDeals() {
     isFetchingNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter],
+    queryKey: ["admin-deals", activePreset, debouncedSearch, selectedProductId, selectedTariffIds, dateFilter, activePipelineId],
     queryFn: async ({ pageParam = 0 }) => {
       // When search is active → use RPC for full-name search across profiles
       if (debouncedSearch) {
@@ -396,9 +424,17 @@ export default function AdminDeals() {
         if (error) throw error;
         const rows = (data || []).map(rpcRowToNested);
         // Client-side tariff filter for RPC results
-        const filtered = selectedTariffIds.length > 0
+        let filtered = selectedTariffIds.length > 0
           ? rows.filter((r: any) => selectedTariffIds.includes(r.tariff_id))
           : rows;
+        // Client-side pipeline filter for RPC results (RPC doesn't support pipeline param)
+        if (activePipelineId) {
+          const isDefault = activePipeline?.is_default;
+          filtered = filtered.filter((r: any) => {
+            if (isDefault) return r.pipeline_id === activePipelineId || !r.pipeline_id;
+            return r.pipeline_id === activePipelineId;
+          });
+        }
         return {
           rows: filtered,
           nextOffset: rows.length === PAGE_SIZE ? pageParam + PAGE_SIZE : undefined,
@@ -406,7 +442,7 @@ export default function AdminDeals() {
       }
 
       // Default mode → lightweight PostgREST query (no name search needed)
-      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds);
+      const query = buildDealsQuery(activePreset, debouncedSearch, selectedProductId, dateFilter, selectedTariffIds, activePipelineId, activePipeline?.is_default);
       const { data, error } = await query
         .order("deal_date", { ascending: false, nullsFirst: false })
         .order("id", { ascending: false })
@@ -872,8 +908,8 @@ export default function AdminDeals() {
           </button>
         </div>
 
-        {/* Pipeline selector (board mode) */}
-        {viewMode === "board" && pipelines.length > 0 && (
+        {/* Pipeline selector (both modes) */}
+        {pipelines.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
@@ -1162,6 +1198,8 @@ export default function AdminDeals() {
           search={debouncedSearch}
           productId={selectedProductId}
           tariffIds={selectedTariffIds}
+          dateFrom={dateFilter.from}
+          dateTo={dateFilter.to}
           onOpenDeal={(id) => setSelectedDealId(id)}
         />
       )}

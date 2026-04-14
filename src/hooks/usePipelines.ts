@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchPipelines, createPipeline, renamePipeline, deletePipeline } from "@/services/pipelineService";
+import { fetchPipelines, createPipeline, renamePipeline, deletePipeline, reorderPipelines } from "@/services/pipelineService";
 import { toast } from "sonner";
 
 const QUERY_KEY = ["crm-pipelines"];
@@ -41,11 +41,21 @@ export function usePipelines() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const reorderMutation = useMutation({
+    mutationFn: (orderedIds: string[]) => reorderPipelines(orderedIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEY });
+      toast.success("Порядок воронок сохранён");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return {
     pipelines,
     isLoading,
     createPipeline: createMutation.mutateAsync,
     renamePipeline: renameMutation.mutateAsync,
     deletePipeline: deleteMutation.mutateAsync,
+    reorderPipelines: reorderMutation.mutateAsync,
   };
 }
