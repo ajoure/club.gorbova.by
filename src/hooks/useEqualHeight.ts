@@ -1,80 +1,51 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
- * useEqualHeight — post-render measurement for equal-height carousel cards.
- * 
- * Strategy: temporarily remove h-full and minHeight from measured elements,
- * let content determine natural height, measure, then restore.
+ * useEqualHeight — measures natural content heights and equalizes them.
+ * Uses a container ref to find all slide wrappers, rather than individual refs.
  */
-export function useEqualHeight(itemCount: number) {
-  const refsArray = useRef<(HTMLDivElement | null)[]>([]);
-  const [minHeight, setMinHeight] = useState<number | undefined>(undefined);
-  const rafId = useRef<number>(0);
+export function useEqualHeight(containerRef: React.RefObject<HTMLDivElement | null>, itemCount: number) {
+  const [minHeight, setMinHeight] = useState<number>(0);
 
   const recalculate = useCallback(() => {
-    cancelAnimationFrame(rafId.current);
-    rafId.current = requestAnimationFrame(() => {
-      const elements = refsArray.current
-        .slice(0, itemCount)
-        .filter((el): el is HTMLDivElement => el !== null && el.isConnected);
+    const container = containerRef.current;
+    if (!container) return;
 
-      if (elements.length === 0) return;
+    // Find all direct slide wrapper divs (the ones with data-eq-slide attribute)
+    const slides = container.querySelectorAll<HTMLDivElement>('[data-eq-slide]');
+    if (slides.length === 0) return;
 
-      // Save and clear height constraints to measure natural content height
-      const saved = elements.map(el => ({
-        minHeight: el.style.minHeight,
-        height: el.style.height,
-      }));
+    // Clear previous minHeight
+    slides.forEach(el => { el.style.minHeight = ''; });
 
-      elements.forEach(el => {
-        el.style.minHeight = '';
-        el.style.height = 'auto';
-        el.classList.remove('h-full');
-      });
+    // Force reflow
+    void container.offsetHeight;
 
-      // Force reflow
-      void document.body.offsetHeight;
-
-      let maxH = 0;
-      elements.forEach(el => {
-        const h = el.scrollHeight;
-        if (h > maxH) maxH = h;
-      });
-
-      // Restore h-full class and apply computed minHeight
-      elements.forEach((el, i) => {
-        el.classList.add('h-full');
-        el.style.height = saved[i].height;
-      });
-
-      if (maxH > 0) {
-        setMinHeight(maxH);
-        elements.forEach(el => {
-          el.style.minHeight = `${maxH}px`;
-        });
-      }
+    // Measure natural heights
+    let maxH = 0;
+    slides.forEach(el => {
+      const h = el.scrollHeight;
+      if (h > maxH) maxH = h;
     });
-  }, [itemCount]);
 
-  const setRef = useCallback((index: number) => (el: HTMLDivElement | null) => {
-    while (refsArray.current.length <= index) {
-      refsArray.current.push(null);
+    if (maxH > 0) {
+      slides.forEach(el => { el.style.minHeight = `${maxH}px`; });
+      setMinHeight(maxH);
     }
-    refsArray.current[index] = el;
-    if (el) recalculate();
-  }, [recalculate]);
+  }, [containerRef, itemCount]);
 
   useEffect(() => {
-    const t1 = setTimeout(recalculate, 300);
-    const t2 = setTimeout(recalculate, 800);
+    const t1 = setTimeout(recalculate, 200);
+    const t2 = setTimeout(recalculate, 600);
+    const t3 = setTimeout(recalculate, 1200);
     window.addEventListener('resize', recalculate);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      cancelAnimationFrame(rafId.current);
+      clearTimeout(t3);
       window.removeEventListener('resize', recalculate);
     };
-  }, [itemCount, recalculate]);
+  }, [recalculate]);
 
-  return { setRef, minHeight };
+  return minHeight;
 }
