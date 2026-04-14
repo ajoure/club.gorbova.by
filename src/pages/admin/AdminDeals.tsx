@@ -789,8 +789,7 @@ export default function AdminDeals() {
     }
   };
 
-  // Product filter popover state
-  const [showProductFilter, setShowProductFilter] = useState(false);
+  // Filter popover search state
   const [productSearch, setProductSearch] = useState("");
 
   const filteredProducts = useMemo(() => {
@@ -799,10 +798,6 @@ export default function AdminDeals() {
     const s = productSearch.toLowerCase();
     return products.filter((p) => p.name.toLowerCase().includes(s));
   }, [products, productSearch]);
-
-  const selectedProductName = selectedProductId
-    ? products?.find((p) => p.id === selectedProductId)?.name || "Продукт"
-    : null;
 
   const activePipeline = pipelines.find((p) => p.id === activePipelineId);
 
