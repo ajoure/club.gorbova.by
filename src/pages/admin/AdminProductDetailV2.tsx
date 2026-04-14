@@ -46,6 +46,7 @@ import { PaymentDialog } from "@/components/payment/PaymentDialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
+import { ProductSitePageBinding } from "@/components/admin/product/ProductSitePageBinding";
 import { getStatusBadgeClass } from "@/utils/badgeUtils";
 import {
   useProductV2,
@@ -730,6 +731,7 @@ export default function AdminProductDetailV2() {
               </Button>
             )}
           </div>
+          <ProductSitePageBinding productId={productId!} primaryDomain={(product as any).primary_domain} />
         </GlassCard>
 
         {/* Pill-style tabs */}
