@@ -812,9 +812,17 @@ export function PaymentDialog({
               </p>
             </div>
 
-            <p className="text-sm text-muted-foreground">
-              Заполните данные — и мы создадим личный кабинет после оплаты
-            </p>
+            <div className="rounded-lg bg-muted/30 p-3 space-y-1.5">
+              <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <Info className="h-4 w-4 text-primary" />
+                Зачем эти данные?
+              </p>
+              <ul className="text-xs text-muted-foreground space-y-0.5 pl-5 list-disc">
+                <li>Email — для личного кабинета, доступов и уведомлений по покупке</li>
+                <li>Телефон — для связи по заказу и восстановления доступа</li>
+                <li>Имя и фамилия — для оформления покупки и документов</li>
+              </ul>
+            </div>
 
             {/* Name fields in row with icons */}
             <div className="grid grid-cols-2 gap-3">
@@ -879,7 +887,7 @@ export function PaymentDialog({
             </div>
 
             <div className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
-              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на email.</p>
+              <p>После оплаты мы создадим для вас личный кабинет и отправим данные для входа на указанный email.</p>
             </div>
 
             {/* Privacy consent checkbox */}
