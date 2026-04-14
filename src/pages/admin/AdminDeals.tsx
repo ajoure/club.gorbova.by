@@ -922,7 +922,18 @@ export default function AdminDeals() {
         </div>
       </div>
 
-      {/* Stats line */}
+      {/* Board View */}
+      {viewMode === "board" && activePipelineId && (
+        <DealsKanbanBoard
+          pipelineId={activePipelineId}
+          search={debouncedSearch}
+          productId={selectedProductId}
+          onOpenDeal={(id) => setSelectedDealId(id)}
+        />
+      )}
+
+      {/* List View - Stats line */}
+      {viewMode === "list" && (
       <div className="flex items-center gap-4 text-sm text-muted-foreground">
         <span>
           Показано: <strong className="text-foreground">{Math.min(displayLimit, allDeals.length)}</strong>
@@ -931,6 +942,7 @@ export default function AdminDeals() {
           )}
         </span>
       </div>
+      )}
 
       {/* Deals Table */}
       <GlassCard className="p-0 overflow-hidden">
