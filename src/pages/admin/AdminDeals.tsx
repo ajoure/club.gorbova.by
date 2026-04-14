@@ -183,6 +183,7 @@ function buildDealsQuery(
       trial_end_at,
       product_id,
       tariff_id,
+      pipeline_id,
       user_id,
       profile_id,
       reconcile_source,
