@@ -30,6 +30,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -711,15 +719,52 @@ export default function AdminDeals() {
     }
   }, [tabCounts, activePreset]);
 
+  // Create pipeline dialog state
+  const [showCreatePipelineDialog, setShowCreatePipelineDialog] = useState(false);
+  const [newPipelineName, setNewPipelineName] = useState("");
+  const [isCreatingPipeline, setIsCreatingPipeline] = useState(false);
+
+  const handleCreatePipeline = async () => {
+    if (!newPipelineName.trim()) return;
+    setIsCreatingPipeline(true);
+    try {
+      const p = await createPipelineFn(newPipelineName.trim());
+      setSelectedPipelineId(p.id);
+      setShowCreatePipelineDialog(false);
+      setNewPipelineName("");
+    } catch {
+      // error handled by mutation
+    } finally {
+      setIsCreatingPipeline(false);
+    }
+  };
+
+  // Product filter popover state
+  const [showProductFilter, setShowProductFilter] = useState(false);
+  const [productSearch, setProductSearch] = useState("");
+
+  const filteredProducts = useMemo(() => {
+    if (!products) return [];
+    if (!productSearch.trim()) return products;
+    const s = productSearch.toLowerCase();
+    return products.filter((p) => p.name.toLowerCase().includes(s));
+  }, [products, productSearch]);
+
+  const selectedProductName = selectedProductId
+    ? products?.find((p) => p.id === selectedProductId)?.name || "Продукт"
+    : null;
+
+  const activePipeline = pipelines.find((p) => p.id === activePipelineId);
+
   return (
-    <div className="space-y-4">
-      {/* View Toggle + Pipeline Selector */}
-      <div className="flex items-center gap-3 px-1 pt-1 pb-1.5 shrink-0 flex-wrap">
+    <div className="space-y-2">
+      {/* Compact toolbar — single row */}
+      <div className="flex items-center gap-2 px-1 pt-1 flex-wrap">
         {/* View mode toggle */}
         <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20">
           <button
             onClick={() => setViewMode("list")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
               viewMode === "list"
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -730,7 +775,7 @@ export default function AdminDeals() {
           </button>
           <button
             onClick={() => setViewMode("board")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-200 ${
               viewMode === "board"
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -741,13 +786,13 @@ export default function AdminDeals() {
           </button>
         </div>
 
-        {/* Pipeline selector (visible in board mode) */}
+        {/* Pipeline selector (board mode) */}
         {viewMode === "board" && pipelines.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                <Kanban className="h-3.5 w-3.5" />
-                <span>{pipelines.find(p => p.id === activePipelineId)?.name || "Воронка"}</span>
+              <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs">
+                <Kanban className="h-3 w-3" />
+                <span>{activePipeline?.name || "Воронка"}</span>
                 <ChevronDown className="h-3 w-3 opacity-50" />
               </Button>
             </DropdownMenuTrigger>
@@ -769,15 +814,7 @@ export default function AdminDeals() {
               {canEdit && (
                 <>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={async () => {
-                      const name = prompt("Название новой воронки:");
-                      if (name?.trim()) {
-                        const p = await createPipelineFn(name.trim());
-                        setSelectedPipelineId(p.id);
-                      }
-                    }}
-                  >
+                  <DropdownMenuItem onClick={() => setShowCreatePipelineDialog(true)}>
                     <Plus className="h-3.5 w-3.5 mr-2" />
                     Создать воронку
                   </DropdownMenuItem>
@@ -787,7 +824,7 @@ export default function AdminDeals() {
           </DropdownMenu>
         )}
 
-        {/* Pill-style Tabs (only in list mode) */}
+        {/* Preset tabs (list mode only) */}
         {viewMode === "list" && (
           <div className="inline-flex p-0.5 rounded-full bg-muted/40 backdrop-blur-md border border-border/20 overflow-x-auto max-w-full scrollbar-none">
             {DEAL_PRESETS.map((preset) => {
@@ -813,63 +850,78 @@ export default function AdminDeals() {
             })}
           </div>
         )}
-      </div>
 
-      {/* Product Pills Filter */}
-      {products && products.length > 0 && (
-        <GlassFilterPanel className="mx-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Tag className="h-4 w-4 text-muted-foreground shrink-0" />
-            <button
-              onClick={() => setSelectedProductId(null)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                !selectedProductId
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              Все продукты
-            </button>
-            {products.map((product) => {
-              const isActive = selectedProductId === product.id;
-              return (
-                <button
-                  key={product.id}
-                  onClick={() => setSelectedProductId(isActive ? null : product.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 whitespace-nowrap ${
-                    isActive
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "bg-muted/50 text-muted-foreground hover:text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <span>{product.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </GlassFilterPanel>
-      )}
+        {/* Search */}
+        <div className="relative flex-1 min-w-[180px] max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Поиск по номеру, email..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-7 text-xs"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            data-form-type="other"
+            data-lpignore="true"
+            data-1p-ignore
+          />
+        </div>
 
-      {/* Actions row */}
-      <div className="flex items-center justify-between flex-wrap gap-3 px-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <PeriodSelector value={dateFilter} onChange={setDateFilter} />
-          {isSuperAdmin() && tabCounts && tabCounts.imported > 0 && (
-            <Button 
-              variant="outline" 
+        {/* Product filter dropdown */}
+        <DropdownMenu open={showProductFilter} onOpenChange={setShowProductFilter}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant={selectedProductId ? "default" : "outline"}
               size="sm"
-              onClick={() => setShowArchiveCleanupDialog(true)}
-              className="text-destructive hover:text-destructive gap-1.5 h-8"
+              className="h-7 gap-1.5 text-xs"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Удалить архив</span>
+              <Tag className="h-3 w-3" />
+              <span className="max-w-[120px] truncate">
+                {selectedProductName || "Продукт"}
+              </span>
+              <ChevronDown className="h-3 w-3 opacity-50" />
             </Button>
-          )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64 max-h-80">
+            <div className="p-2">
+              <Input
+                placeholder="Найти продукт..."
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                className="h-7 text-xs"
+                autoFocus
+              />
+            </div>
+            <DropdownMenuSeparator />
+            <div className="max-h-56 overflow-y-auto">
+              <DropdownMenuItem
+                onClick={() => { setSelectedProductId(null); setShowProductFilter(false); setProductSearch(""); }}
+                className={!selectedProductId ? "bg-accent" : ""}
+              >
+                Все продукты
+              </DropdownMenuItem>
+              {filteredProducts.map((product) => (
+                <DropdownMenuItem
+                  key={product.id}
+                  onClick={() => { setSelectedProductId(product.id); setShowProductFilter(false); setProductSearch(""); }}
+                  className={selectedProductId === product.id ? "bg-accent" : ""}
+                >
+                  <span className="truncate">{product.name}</span>
+                </DropdownMenuItem>
+              ))}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Period + actions */}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <PeriodSelector value={dateFilter} onChange={setDateFilter} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8" disabled={allDeals.length === 0}>
-                <Download className="h-3.5 w-3.5 sm:mr-1.5" />
-                <span className="hidden sm:inline">Экспорт</span>
+              <Button variant="outline" size="sm" className="h-7 w-7 p-0" disabled={allDeals.length === 0}>
+                <Download className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -891,34 +943,26 @@ export default function AdminDeals() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="outline" size="sm" className="h-8" onClick={() => {
+          <Button variant="outline" size="sm" className="h-7 w-7 p-0" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
             queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
             queryClient.invalidateQueries({ queryKey: ["deals-fallback-profiles"] });
+            queryClient.invalidateQueries({ queryKey: ["deals-board"] });
             toast.success("Данные обновлены");
           }}>
             <RefreshCw className="h-3.5 w-3.5" />
           </Button>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="flex flex-col sm:flex-row gap-3 px-1">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Поиск по номеру, email, телефону..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore
-          />
+          {isSuperAdmin() && tabCounts && tabCounts.imported > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowArchiveCleanupDialog(true)}
+              className="text-destructive hover:text-destructive h-7 text-xs gap-1"
+            >
+              <Trash2 className="h-3 w-3" />
+              <span className="hidden sm:inline">Архив</span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -926,6 +970,7 @@ export default function AdminDeals() {
       {viewMode === "board" && activePipelineId && (
         <DealsKanbanBoard
           pipelineId={activePipelineId}
+          isDefaultPipeline={activePipeline?.is_default}
           search={debouncedSearch}
           productId={selectedProductId}
           onOpenDeal={(id) => setSelectedDealId(id)}
@@ -934,7 +979,7 @@ export default function AdminDeals() {
 
       {/* List View - Stats line */}
       {viewMode === "list" && (
-      <div className="flex items-center gap-4 text-sm text-muted-foreground">
+      <div className="flex items-center gap-4 text-sm text-muted-foreground px-1">
         <span>
           Показано: <strong className="text-foreground">{Math.min(displayLimit, allDeals.length)}</strong>
           {totalCount !== undefined && (
@@ -943,6 +988,38 @@ export default function AdminDeals() {
         </span>
       </div>
       )}
+
+      {/* Create Pipeline Dialog */}
+      <Dialog open={showCreatePipelineDialog} onOpenChange={setShowCreatePipelineDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Создать воронку</DialogTitle>
+            <DialogDescription>
+              Введите название для новой воронки продаж
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Input
+              value={newPipelineName}
+              onChange={(e) => setNewPipelineName(e.target.value)}
+              placeholder="Название воронки..."
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreatePipeline();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setShowCreatePipelineDialog(false); setNewPipelineName(""); }}>
+              Отмена
+            </Button>
+            <Button onClick={handleCreatePipeline} disabled={!newPipelineName.trim() || isCreatingPipeline}>
+              {isCreatingPipeline && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Создать
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Deals Table (list mode only) */}
       {viewMode === "list" && (
