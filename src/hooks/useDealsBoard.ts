@@ -65,12 +65,22 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         q = q.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%`);
       }
 
-      q = q.order("updated_at", { ascending: false }).limit(500);
+      q = q.order("updated_at", { ascending: false });
 
-      const { data, error } = await q;
-      if (error) throw error;
+      // Fetch all pages (Supabase returns max 1000 per request)
+      const PAGE = 1000;
+      let allData: any[] = [];
+      let offset = 0;
+      while (true) {
+        const { data: page, error } = await q.range(offset, offset + PAGE - 1);
+        if (error) throw error;
+        if (!page || page.length === 0) break;
+        allData = allData.concat(page);
+        if (page.length < PAGE) break;
+        offset += PAGE;
+      }
 
-      return (data || []).map((d: any) => ({
+      return allData.map((d: any) => ({
         id: d.id,
         order_number: d.order_number,
         status: d.status,
