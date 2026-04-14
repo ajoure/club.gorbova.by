@@ -242,6 +242,19 @@ export default function AdminDeals() {
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
   const [showArchiveCleanupDialog, setShowArchiveCleanupDialog] = useState(false);
+  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
+
+  // View mode & filters from URL
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
+  const selectedPipelineId = searchParams.get("pipeline") || null;
+  const selectedProductId = searchParams.get("product") || null;
+  const selectedTariffIds = useMemo(() => {
+    const raw = searchParams.get("tariffs");
+    if (!raw) return [] as string[];
+    return raw.split(",").filter(Boolean);
+  }, [searchParams]);
+
   // dateFilter from URL
   const dateFilter = useMemo<DateFilter>(() => {
     const from = searchParams.get("date_from") || undefined;
@@ -258,18 +271,6 @@ export default function AdminDeals() {
       return next;
     }, { replace: true });
   }, [setSearchParams]);
-  const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
-
-  // View mode & filters from URL
-  const [searchParams, setSearchParams] = useSearchParams();
-  const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
-  const selectedPipelineId = searchParams.get("pipeline") || null;
-  const selectedProductId = searchParams.get("product") || null;
-  const selectedTariffIds = useMemo(() => {
-    const raw = searchParams.get("tariffs");
-    if (!raw) return [] as string[];
-    return raw.split(",").filter(Boolean);
-  }, [searchParams]);
 
   const setViewMode = useCallback((mode: "list" | "board") => {
     setSearchParams((prev) => {
