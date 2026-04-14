@@ -67,6 +67,14 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
         q = q.or(`order_number.ilike.%${search}%,customer_email.ilike.%${search}%`);
       }
 
+      // Date filter — same contract as list-view buildDealsQuery
+      if (dateFrom) {
+        q = q.gte("deal_date", `${dateFrom}T00:00:00Z`);
+      }
+      if (dateTo) {
+        q = q.lte("deal_date", `${dateTo}T23:59:59Z`);
+      }
+
       q = q.order("updated_at", { ascending: false }).order("id", { ascending: false });
 
       // Fetch all pages (Supabase returns max 1000 per request)
