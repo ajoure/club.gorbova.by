@@ -2,224 +2,164 @@
 
 &nbsp;
 
-1. **Сохранять фильтры не только в state, но и в URL как source of truth.**
-  Прямо зафиксировать:
+1. **PATCH 3 по dropdown positioning сформулировать безопаснее.**
+  Не утверждать заранее, что проблема точно только в transform + draggable listeners. Это рабочая гипотеза, но в плане лучше писать:
   &nbsp;
-  - product
-  - tariffs
-  - view
-  - pipeline
-    должны жить в query params, чтобы:
-  - refresh не сбрасывал состояние,
-  - list/board делили один filter-state,
-  - можно было дать ссылку на конкретный filtered view.
+  - проверить DropdownMenuTrigger,
+  - проверить Portal,
+  - проверить transform на draggable wrapper,
+  - проверить scope {...listeners} / {...attributes},
+  - после этого применить минимальный fix без деградации drag&drop.
+    Иначе подрядчик может жёстко переделать структуру карточки там, где проблема была только в trigger scope.
   &nbsp;
-2. **Тарифы должны фильтроваться по выбранному продукту, но без поломки сценария “Все продукты”.**
-  Нужно явно прописать поведение:
+2. **Не убирать transform с корневой draggable-карточки без необходимости.**
+  В плане надо явно написать:
+  сначала попробовать минимальный fix:
   &nbsp;
-  - если продукт не выбран → блок тарифов скрыт или disabled;
-  - если выбран продукт → показываются только тарифы этого продукта;
-  - если продукт сменился → невалидные тарифы сбрасываются автоматически;
-  - если выбран “Все продукты” → тарифный фильтр очищается.
+  - вынести DropdownMenuTrigger из drag handle scope,
+  - добавить stopPropagation / preventDefault на action-zone,
+  - проверить стандартный popover/dropdown компонент.
+    Только если это не решает баг — менять DOM-структуру карточки глубже.
   &nbsp;
-3. **Multi-select по тарифам сделать с явными выбранными значениями в UI.**
-  Не просто чекбоксы внутри popover, а показать снаружи:
+3. **PATCH 2 по backfill уточнить по условию UPDATE.**
+  Сейчас написано WHERE status = 'paid' AND pipeline_stage_id IS NULL.
+  Нужно сделать корректнее:
   &nbsp;
-  - либо count selected,
-  - либо компактные chips/summary вида Тарифы: 2.
-    Иначе пользователь не понимает, что фильтр активен.
+  - обновлять paid, у которых **нет корректной closed_won стадии**,
+  - не ломать уже вручную расставленные валидные сделки.
+    Лучше формулировка:
+  - status = 'paid'
+  - и либо pipeline_stage_id IS NULL,
+  - либо pipeline_stage_id не указывает на stage c stage_type='closed_won'.
+    Иначе часть оплаченных сделок может остаться вне Успешно, если раньше им вручную назначили другую стадию.
   &nbsp;
-4. **PATCH 2 должен затрагивать не только board query, но и все counts/summaries.**
-  Нужно прямо дописать:
+4. **Dry-run / Verify расширить ещё одной метрикой.**
+  Добавить:
   &nbsp;
-  - list counters,
-  - board summary,
-  - totals по колонкам
-    считают данные уже с учетом product/tariff filters.
-    Иначе цифры сверху и карточки снова разъедутся.
+  - сколько paid уже были в closed_won,
+  - сколько paid были не в closed_won,
+  - сколько реально обновлено execute-ом.
+    Это даст прозрачный proof, что backfill не тронул лишнее.
   &nbsp;
-5. **Bulk assign для “Без стадии” делать не только “все”, но и безопасно.**
-  Минимум:
+5. **PATCH 1: полный fetch не должен ломать производительность молча.**
+  В план нужно добавить:
   &nbsp;
-  - confirm step,
-  - count затрагиваемых сделок,
-  - target stage preview,
-  - toast с результатом,
-  - audit с количеством и target stage.
-    Иначе легко сделать массовое ошибочное назначение.
+  - сначала убрать data-truncation для counts/totals;
+  - если full render 2847 карточек тормозит UI, оставить follow-up на virtualization;
+  - но totals и grouping обязаны считаться по полному dataset уже сейчас.
+    То есть performance-risk зафиксировать, но не блокировать fix.
   &nbsp;
-6. **В bulkAssignDealsToStage нужен batched/safe execution, а не один огромный update без guard.**
-  Прямо дописать:
+6. **После PATCH 1 обязательно проверить колонку Без стадии.**
+  Сейчас после полного fetch она может резко вырасти по высоте и начать ломать UX/scroll.
+  В DoD добавить:
   &nbsp;
-  - dry-run count,
-  - execute,
-  - affected rows count,
-  - audit meta: deal_ids_count, pipeline_id, stage_id.
-    Это особенно важно при сотнях unassigned deals.
+  - board остаётся usable после загрузки полного dataset,
+  - scroll/column rendering не ломаются,
+  - dropdown “Переместить” по-прежнему позиционируется корректно в длинной колонке.
   &nbsp;
-7. **Summary strip нужно сделать максимально ясным, без двусмысленной “Активной воронки”.**
-  Лучше сразу утвердить новый состав:
+7. **PATCH 4 не считать “автоматически корректным” без proof.**
+  Да, summary использует массив из hook, но после PATCH 1+2 всё равно нужен отдельный proof:
   &nbsp;
-  - Всего
-  - Сумма
-  - Без стадии
-  - В стадиях
-  - Успешно
-  - Отказ
-    Если отдельный показатель “Активная воронка” остаётся, он должен быть вторичным, а не главным.
+  - total deals = полному scope,
+  - paid в Успешно,
+  - non-paid в Без стадии,
+  - totals сверху совпадают с фактическими counts по колонкам.
   &nbsp;
-8. **Product binding UI нельзя считать закрытым, но в proof-отчёте нужно явно пометить как deferred.**
-  В плане уже написано, что binding UI остаётся follow-up — это правильно.
-  Нужно только отдельно зафиксировать в финальном отчёте, что:
+8. **DoD дополнить явным proof на bugfix dropdown.**
+  Не просто “меню открывается не в углу”, а:
   &nbsp;
-  - multi-pipeline UI есть,
-  - product binding backend/model есть,
-  - полноценный binding management UI отложен и не заявляется как завершённый.
+  - клик по Переместить,
+  - меню появилось под кнопкой,
+  - выбрать стадию,
+  - сделка переместилась,
+  - refresh,
+  - сделка осталась в новой стадии.
   &nbsp;
-9. **Remap dialog — не просто заменить сырой select, а привести к стилю платформы и проверить keyboard flow.**
-  Нужно:
+9. **В целом сам план хороший и логичный.**
+  По сути вектор правильный:
   &nbsp;
-  - glass-styled select/popover,
-  - focus state,
-  - enter/escape,
-  - disabled delete button, пока target stage не выбран.
+  - убрать truncation 500,
+  - выполнить controlled backfill paid -> Успешно,
+  - починить dropdown positioning.
+    После правок выше этот patch можно исполнять.
   &nbsp;
-10. **DoD дополнить proof-пунктами.**
-  Добавить обязательно:
 
 &nbsp;
 
 &nbsp;
 
-&nbsp;
+План: финальный fix-патч — лимит 500 + backfill + dropdown positioning
 
-- скрин/filter popover с продуктом и тарифами;
-- скрин active filters state;
-- proof, что list-view и board-view показывают одинаковый filtered dataset;
-- proof bulk assign из “Без стадии”;
-- proof refresh persistence с выбранными product + tariffs + pipeline + view.
-
-&nbsp;
-
-&nbsp;
-
-После этих правок план можно исполнять как финальный patch для закрытия спринта.
-
-&nbsp;
-
-План: ФИНАЛЬНЫЙ PATCH — фильтры, summary, tariff, proofs
-
-## Диагностика текущего состояния
+## Диагностика
 
 
-| Элемент                  | Статус                  | Проблема                                                    |
-| ------------------------ | ----------------------- | ----------------------------------------------------------- |
-| Board query              | ✅ Работает              | Default pipeline показывает NULL сделки                     |
-| Product filter           | ⚠️ Отдельный dropdown   | Нужно переместить внутрь filter popover                     |
-| Tariff filter            | ❌ Отсутствует           | Нет ни в UI, ни в useDealsBoard                             |
-| Summary strip            | ⚠️ Вводит в заблуждение | Не учитывает `__unassigned`, показывает только staged deals |
-| Filter popover           | ❌ Не существует         | Нужен единый compact filter рядом с поиском                 |
-| Drag & drop              | ✅ Код есть              | Нужен runtime proof                                         |
-| Menu move                | ✅ Код есть              | `onMoveTo` в KanbanDealCard работает                        |
-| Stage CRUD               | ✅ Код есть              | create/rename/delete/remap — всё реализовано                |
-| Multi-pipeline           | ✅ Код есть              | Dialog создания, selector, seed                             |
-| Audit                    | ✅ Код есть              | `writeAudit` в pipelineService.ts                           |
-| Bulk assign "Без стадии" | ❌ Отсутствует           | Нет UI для массового назначения                             |
+| Проблема                          | Root cause                                                                                                                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Board показывает макс 500 сделок  | `.limit(500)` в `useDealsBoard.ts` строка 68                                                                                                                      |
+| Paid сделки не в Успешно          | Backfill не выполнен, все `pipeline_stage_id = NULL`                                                                                                              |
+| Меню «Переместить» улетает в угол | `useDraggable` listeners на родительском div перехватывают pointer events; `transform` стиль на карточке ломает positioning context для Portal-based DropdownMenu |
 
 
 ## Изменения
 
-### PATCH 1 — Единый Filter Popover вместо отдельного Product dropdown
-
-**Файл**: `src/pages/admin/AdminDeals.tsx`
-
-Заменить текущий `DropdownMenu` для продуктов (строки 873-916) на кнопку **«Фильтры»** с Popover:
-
-- Кнопка `Filter` рядом с поиском (иконка `SlidersHorizontal`)
-- При наличии активных фильтров — badge с count
-- Внутри Popover:
-  - **Продукт**: single-select с поиском, "Все продукты"
-  - **Тариф**: multi-select, зависимый от выбранного продукта
-  - Кнопка "Сбросить фильтры"
-- Состояние фильтров сохраняется при переключении list/board через URL params (`product`, `tariffs`)
-
-### PATCH 2 — Добавить фильтр тарифов
-
-**Файл**: `src/pages/admin/AdminDeals.tsx`
-
-- Добавить state `selectedTariffIds: string[]`
-- Fetch тарифов: query `tariffs` filtered by `product_id` когда выбран продукт
-- При смене продукта — сбрасывать невалидные тарифы
-- Передать `tariffIds` в `useDealsBoard` и в list-view query (`buildDealsQuery`)
+### PATCH 1 — Убрать limit(500), полный fetch
 
 **Файл**: `src/hooks/useDealsBoard.ts`
 
-- Добавить `tariffIds?: string[]` в `UseDealsBoardOpts`
-- Добавить фильтр `.in("tariff_id", tariffIds)` в query когда массив непустой
-- Добавить в queryKey
+Заменить `.limit(500)` на цикл батчевого fetch через `.range()`:
 
-**Файл**: `src/pages/admin/AdminDeals.tsx` (list query)
+- Батч = 1000 записей
+- Цикл до `data.length < PAGE_SIZE`
+- Все остальные фильтры (product, tariff, search, pipeline OR) сохраняются
 
-- Добавить tariff filter в `buildDealsQuery`
+### PATCH 2 — Controlled backfill paid → Успешно
 
-### PATCH 3 — Исправить Summary Strip
+Выполнить через database tool:
 
-**Файл**: `src/components/admin/deals/KanbanSummaryStrip.tsx`
+1. Dry-run: SELECT counts (paid, non-paid, already assigned)
+2. UPDATE `orders_v2` SET `pipeline_id`, `pipeline_stage_id` WHERE `status = 'paid'` AND `pipeline_stage_id IS NULL`
+3. INSERT audit log: `deal.bulk_backfill_success_stage` с meta
+4. Verify: повторный SELECT для proof
 
-- Переделать props: `totalDeals`, `totalSum`, `unassignedCount`, `assignedCount`, `wonCount`, `wonSum`, `lostCount`
-- Показать: «Всего сделок: N», «Сумма: X», «Без стадии: N», «Успешно: N (X)», «Отказ: N»
+### PATCH 3 — Исправить позиционирование dropdown «Переместить»
 
-**Файл**: `src/components/admin/deals/DealsKanbanBoard.tsx`
+**Файл**: `src/components/admin/deals/KanbanDealCard.tsx`
 
-- Пересчитать summary включая `__unassigned` deals
-- `totalActive` = сумма всех open stages + unassigned
+Root cause: `useDraggable` привязывает `onPointerDown`/`onKeyDown` listeners через `{...listeners}` к корневому div. Когда DropdownMenu открывается, pointer events перехватываются draggable, а transform на карточке смещает positioning context для Portal.
 
-### PATCH 4 — Bulk assign для колонки "Без стадии"
+Исправление:
 
-**Файл**: `src/components/admin/deals/KanbanColumn.tsx`
+- Вынести блок hover-actions (`div` строки 143-185) из-под `{...listeners}` scope — сделать его отдельным элементом, который не наследует drag listeners
+- Конкретно: разделить карточку на две зоны:
+  - Верхняя (drag zone): `ref={setNodeRef}`, `{...attributes}`, `{...listeners}`, `style={transform}`
+  - Нижняя (actions zone): без listeners, без transform — нормальный DOM для DropdownMenu
+- Либо альтернативно: обернуть только контент карточки (строки 96-140) в drag handle через `{...listeners}`, а actions div оставить вне drag scope
+- Добавить `onPointerDown={(e) => e.stopPropagation()}` на actions div для предотвращения drag initiation при клике по кнопкам
 
-- Для `stageId === "__unassigned"` добавить кнопку "Назначить все в стадию" в header
-- По клику — dropdown с выбором целевой стадии
-- Вызов bulk update через pipelineService
+Это решит и positioning (Portal anchor будет в нормальном DOM без transform), и interaction (клик по dropdown не начнёт drag).
 
-**Файл**: `src/services/pipelineService.ts`
+### PATCH 4 — Summary пересчёт
 
-- Добавить `bulkAssignDealsToStage(dealIds: string[], pipelineId: string, stageId: string)`
-- Audit log: `deal.bulk_stage_assigned`
-
-### PATCH 5 — Мелкие UX-правки
-
-- В `KanbanColumnHeader.tsx` строка 169: заменить `<select>` на styled Select/RadioGroup в remap dialog
-- Убедиться, что filter popover не ломает layout
+Никаких изменений кода не нужно — summary уже считается по `deals` массиву из hook. После PATCH 1+2 массив будет полным → summary автоматически корректен.
 
 ## Файлы
 
 
-| Действие | Файл                                                                        |
-| -------- | --------------------------------------------------------------------------- |
-| Edit     | `src/pages/admin/AdminDeals.tsx` — filter popover, tariff state, URL params |
-| Edit     | `src/hooks/useDealsBoard.ts` — tariffIds filter                             |
-| Edit     | `src/components/admin/deals/DealsKanbanBoard.tsx` — summary fix             |
-| Edit     | `src/components/admin/deals/KanbanSummaryStrip.tsx` — новые метрики         |
-| Edit     | `src/components/admin/deals/KanbanColumn.tsx` — bulk assign для unassigned  |
-| Edit     | `src/components/admin/deals/KanbanColumnHeader.tsx` — styled select в remap |
-| Edit     | `src/services/pipelineService.ts` — bulkAssignDealsToStage                  |
+| Действие | Файл                                                                       |
+| -------- | -------------------------------------------------------------------------- |
+| Edit     | `src/hooks/useDealsBoard.ts` — убрать limit(500), batch fetch              |
+| Edit     | `src/components/admin/deals/KanbanDealCard.tsx` — fix dropdown positioning |
+| Data     | `orders_v2` — backfill paid → Успешно                                      |
+| Data     | `audit_logs` — INSERT backfill record                                      |
 
-
-## Что НЕ делаем
-
-- Новые таблицы / миграции
-- Изменения в pipeline/stage CRUD логике
-- Product binding UI (остаётся в follow-up)
-- Автоматическое назначение сделок в воронки
 
 ## DoD
 
-1. Единый filter popover рядом с поиском (продукт + тариф)
-2. Multi-select тарифов, зависимый от продукта
-3. Фильтры работают одинаково в list и board view
-4. Summary strip показывает корректные данные включая unassigned
-5. Bulk assign "Без стадии" → стадия работает
-6. Нет отдельного product dropdown вне filter popover
-7. Remap dialog использует styled компонент вместо `<select>`
-8. Состояние фильтров сохраняется при переключении view и refresh
+1. Board загружает все сделки (не 500)
+2. Paid сделки в колонке Успешно
+3. Не-paid сделки в Без стадии
+4. Summary totals корректны по полному dataset
+5. Audit log backfill записан
+6. Меню «Переместить» открывается от кнопки на карточке, не в углу экрана
+7. Dropdown корректно работает внутри scrollable board
+8. После refresh данные и состояние сохраняются
