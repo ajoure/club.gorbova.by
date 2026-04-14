@@ -31,7 +31,7 @@ interface UseDealsBoardOpts {
 
 export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, search, productId];
+  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
@@ -47,8 +47,14 @@ export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId
           products_v2(name),
           tariffs(name),
           profiles:profile_id(full_name, email, avatar_url)
-        `)
-        .eq("pipeline_id", pipelineId);
+        `);
+
+      // Default pipeline: show its own deals + unassigned (NULL) deals
+      if (isDefaultPipeline) {
+        q = q.or(`pipeline_id.eq.${pipelineId},pipeline_id.is.null`);
+      } else {
+        q = q.eq("pipeline_id", pipelineId);
+      }
 
       if (productId) q = q.eq("product_id", productId);
       if (search) {
