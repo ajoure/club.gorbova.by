@@ -50,12 +50,17 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  List,
+  Kanban,
+  ChevronDown,
+  Plus,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
@@ -76,6 +81,8 @@ import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
 import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { usePipelines } from "@/hooks/usePipelines";
+import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
 
 const PAGE_SIZE = 100;
 
