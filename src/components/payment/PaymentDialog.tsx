@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { normalizeEdgeFunctionError } from "@/utils/normalizeEdgeFunctionError";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -507,6 +508,9 @@ export function PaymentDialog({
         useMitTokenization: shouldUseMitTokenization 
       });
       
+      // P0: For non-subscription, non-trial products (e.g. consultations), use one-time checkout
+      const isOneTimePayment = !isSubscription && !isTrial;
+
       const { data, error } = await supabase.functions.invoke("bepaid-create-token", {
         body: {
           productId,
@@ -520,6 +524,7 @@ export function PaymentDialog({
           offerId,
           isTrial,
           trialDays,
+          isOneTime: isOneTimePayment,
           // PATCH-3: Signal MIT flow to avoid creating bePaid subscription
           useMitTokenization: shouldUseMitTokenization,
         },
@@ -556,7 +561,8 @@ export function PaymentDialog({
       }
     } catch (error) {
       console.error("Payment error:", error);
-      toast.error(error instanceof Error ? error.message : "Ошибка при создании платежа");
+      const userMessage = normalizeEdgeFunctionError(error);
+      toast.error(userMessage);
       setStep("ready");
     } finally {
       setIsLoading(false);
