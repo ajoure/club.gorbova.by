@@ -23,7 +23,7 @@ export function useEqualHeight(itemCount: number) {
       if (elements.length === 0) return;
 
       // Clear minHeight to measure natural height
-      elements.forEach(el => { el.style.minHeight = '0'; });
+      elements.forEach(el => { el.style.minHeight = 'auto'; });
 
       // Force reflow
       void elements[0].offsetHeight;
