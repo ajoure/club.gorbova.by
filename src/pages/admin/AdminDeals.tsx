@@ -322,7 +322,7 @@ export default function AdminDeals() {
   }, [setSearchParams]);
 
   // Pipelines
-  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn } = usePipelines();
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn, renamePipeline: renamePipelineFn, deletePipeline: deletePipelineFn, reorderPipelines: reorderPipelinesFn } = usePipelines();
   const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
 
   // Contact sheet state
