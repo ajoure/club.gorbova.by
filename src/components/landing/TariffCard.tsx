@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Check, ChevronRight } from "lucide-react";
 import type { CardConfig } from "@/lib/tariffCardViewModel";
+import { resolvePriceSuffix, resolveBadgeText, resolveOldPrice } from "@/lib/resolveTariffDisplayConfig";
 import { cn } from "@/lib/utils";
 
 export interface TariffCardFeature {
@@ -95,15 +96,19 @@ export function TariffCard({
   const displayPrice = primaryOffer?.amount ?? cc?.price_display ?? tariff.current_price ?? null;
   const hasActivePayOffers = payNowOffers.length > 0;
 
-  // Old/strikethrough price: card_config.old_price > tariff.original_price (via base_price). Show only if > displayPrice
-  const oldPrice = cc?.old_price ?? tariff.base_price ?? null;
+  // Old/strikethrough price: card_config.old_price > tariff.base_price. Show only if > displayPrice
+  const oldPrice = resolveOldPrice({ cardConfig: cc, tariffBasePrice: tariff.base_price });
   const showOldPrice = oldPrice != null && displayPrice != null && oldPrice > displayPrice;
 
-  // Resolved suffix: priceSuffix prop > card_config.price_suffix > "BYN"
-  const resolvedSuffix = priceSuffix !== "BYN" ? priceSuffix : (cc?.price_suffix || "BYN");
+  // Resolved suffix via shared resolver: card_config > period_label > product-level > "BYN"
+  const resolvedSuffix = resolvePriceSuffix({
+    cardConfig: cc,
+    periodLabel: tariff.period_label,
+    productPriceSuffix: priceSuffix,
+  });
 
-  // Badge: card_config.badge_text > tariff.badge
-  const badgeText = cc?.badge_text ?? tariff.badge ?? null;
+  // Badge via shared resolver: card_config.badge_text > tariff.badge
+  const badgeText = resolveBadgeText({ cardConfig: cc, tariffBadge: tariff.badge });
 
   // Style variant
   const styleVariant = cc?.style_variant || "default";

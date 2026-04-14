@@ -66,6 +66,7 @@ export interface PublicTariff {
   current_price?: number | null;
   base_price?: number | null;
   discount_percent?: number | null;
+  meta?: { card_config?: import("@/lib/tariffCardViewModel").CardConfig; [key: string]: any } | null;
 }
 
 export interface LandingConfig {
