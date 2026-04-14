@@ -32,9 +32,9 @@ interface UseDealsBoardOpts {
   dateTo?: string;
 }
 
-export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds }: UseDealsBoardOpts) {
+export function useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo }: UseDealsBoardOpts) {
   const qc = useQueryClient();
-  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds];
+  const queryKey = ["deals-board", pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo];
 
   const { data: deals = [], isLoading } = useQuery({
     queryKey,
