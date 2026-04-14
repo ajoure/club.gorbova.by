@@ -333,6 +333,8 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
         diagnostic={diagnostic}
         onAddPricingBlock={() => addPricingBlockMutation.mutate()}
         isAdding={addPricingBlockMutation.isPending}
+        onRemovePricingBlock={() => removePricingBlockMutation.mutate()}
+        isRemoving={removePricingBlockMutation.isPending}
       />
     </div>
   );
