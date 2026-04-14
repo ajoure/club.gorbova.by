@@ -157,6 +157,29 @@ export function ProductSitePageBinding({ productId, primaryDomain, productName }
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // Remove pricing block(s) from page
+  const removePricingBlockMutation = useMutation({
+    mutationFn: async () => {
+      if (!linkedPage) throw new Error("Нет привязанной страницы");
+      const blocks = linkedPage.blocks || [];
+      const filtered = blocks.filter(
+        (b) => !(b.type === "pricing" && (b.content as Record<string, unknown>)?.product_id === productId)
+      );
+      if (filtered.length === blocks.length) {
+        throw new Error("Блок тарифов этого продукта не найден на странице");
+      }
+      const { error } = await (supabase.from("site_pages") as any)
+        .update({ blocks: filtered })
+        .eq("id", linkedPage.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidateAll();
+      toast.success("Блок тарифов убран со страницы");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   // Create selling page with pricing block
   const createSellingPageMutation = useMutation({
     mutationFn: async () => {
