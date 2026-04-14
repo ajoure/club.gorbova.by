@@ -133,6 +133,7 @@ function CarouselView({
               >
                 {/* No scale/translateY — only opacity for active state (STOP-guard: no geometry changes) */}
                 <div
+                  ref={setRef(i)}
                   className={cn(
                     "w-full flex flex-col h-full transition-opacity duration-300 ease-out",
                     isActive
@@ -141,6 +142,7 @@ function CarouselView({
                         ? "opacity-[0.92]"
                         : "opacity-[0.85]",
                   )}
+                  style={minHeight ? { minHeight } : undefined}
                 >
                   {child}
                 </div>
