@@ -162,6 +162,8 @@ function buildDealsQuery(
   selectedProductId: string | null,
   dateFilter: DateFilter,
   tariffIds?: string[],
+  pipelineId?: string | null,
+  isDefaultPipeline?: boolean,
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -225,6 +227,15 @@ function buildDealsQuery(
     query = query.or(
       `order_number.ilike.%${s}%,customer_email.ilike.%${s}%,customer_phone.ilike.%${s}%`
     );
+  }
+
+  // Pipeline filter
+  if (pipelineId) {
+    if (isDefaultPipeline) {
+      query = query.or(`pipeline_id.eq.${pipelineId},pipeline_id.is.null`);
+    } else {
+      query = query.eq("pipeline_id", pipelineId);
+    }
   }
 
   return query;
