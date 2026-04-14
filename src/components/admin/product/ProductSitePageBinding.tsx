@@ -344,14 +344,18 @@ function DiagnosticBadge({
   diagnostic,
   onAddPricingBlock,
   isAdding,
+  onRemovePricingBlock,
+  isRemoving,
 }: {
   diagnostic: ProductPageDiagnostic;
   onAddPricingBlock: () => void;
   isAdding: boolean;
+  onRemovePricingBlock: () => void;
+  isRemoving: boolean;
 }) {
   switch (diagnostic) {
     case "not_linked":
-      return null; // handled by main UI above
+      return null;
 
     case "linked_no_pricing":
       return (
@@ -394,6 +398,16 @@ function DiagnosticBadge({
         <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400">
           <Info className="h-3 w-3 shrink-0" />
           <span>На странице несколько блоков тарифов этого продукта</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-5 text-[10px] px-1.5 gap-1 text-destructive"
+            onClick={onRemovePricingBlock}
+            disabled={isRemoving}
+          >
+            <Minus className="h-3 w-3" />
+            Убрать все
+          </Button>
         </div>
       );
 
@@ -402,6 +416,16 @@ function DiagnosticBadge({
         <div className="flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="h-3 w-3 shrink-0" />
           <span>Продающая страница готова</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 text-[10px] px-1.5 gap-1 text-muted-foreground hover:text-destructive"
+            onClick={onRemovePricingBlock}
+            disabled={isRemoving}
+          >
+            <Minus className="h-3 w-3" />
+            Убрать блок
+          </Button>
         </div>
       );
   }
