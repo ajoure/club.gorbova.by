@@ -146,7 +146,7 @@ export const KanbanColumn = memo(function KanbanColumn({
               <KanbanDealCard
                 key={deal.id}
                 deal={deal}
-                onOpen={() => onOpenDeal(deal.id)}
+                onOpenDeal={onOpenDeal}
                 onMoveClick={onMoveClick}
                 showMoveButton={showMoveButton}
               />
