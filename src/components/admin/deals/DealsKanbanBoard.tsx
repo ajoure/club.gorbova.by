@@ -22,19 +22,20 @@ import { usePermissions } from "@/hooks/usePermissions";
 
 interface Props {
   pipelineId: string;
+  isDefaultPipeline?: boolean;
   search?: string;
   productId?: string | null;
   onOpenDeal: (dealId: string) => void;
 }
 
-export function DealsKanbanBoard({ pipelineId, search, productId, onOpenDeal }: Props) {
+export function DealsKanbanBoard({ pipelineId, isDefaultPipeline, search, productId, onOpenDeal }: Props) {
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
   const { stages, isLoading: stagesLoading, createStage, renameStage, deleteStage } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
-    useDealsBoard({ pipelineId, search, productId });
+    useDealsBoard({ pipelineId, isDefaultPipeline, search, productId });
 
   const [activeDeal, setActiveDeal] = useState<BoardDeal | null>(null);
   const [showNewStage, setShowNewStage] = useState(false);
