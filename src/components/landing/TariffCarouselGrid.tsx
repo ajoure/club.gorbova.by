@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useEqualHeight } from "@/hooks/useEqualHeight";
 import { cn } from "@/lib/utils";
 import {
   Carousel,
