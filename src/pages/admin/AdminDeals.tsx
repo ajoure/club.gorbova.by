@@ -160,6 +160,7 @@ function buildDealsQuery(
   debouncedSearch: string,
   selectedProductId: string | null,
   dateFilter: DateFilter,
+  tariffIds?: string[],
 ) {
   // Lightweight select: only columns used in the table row
   let query = supabase
@@ -202,6 +203,11 @@ function buildDealsQuery(
   // Product filter
   if (selectedProductId) {
     query = query.eq("product_id", selectedProductId);
+  }
+
+  // Tariff filter
+  if (tariffIds && tariffIds.length > 0) {
+    query = query.in("tariff_id", tariffIds);
   }
 
   // Date filter
