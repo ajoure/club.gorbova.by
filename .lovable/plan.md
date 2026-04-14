@@ -2,110 +2,133 @@
 
 &nbsp;
 
-1. **Исправить URL-архитектуру: отказаться от поддоменов как primary path.**
-  В плане явно зафиксировать, что canonical public URL для продуктовых/тарифных страниц строится через основной домен и slug страницы:
+1. **Не убирать явную модель “страница продукта” vs “продающая страница” полностью в вычисление по blocks.**
+  Проверка по blocks нужна обязательно, но только как **факт наличия pricing block**, а не как единственная бизнес-модель.
+  Иначе снова получится неявная логика.
+  Нужно разделить:
   &nbsp;
-  - gorbova.by/<page-slug>
-  - gorbova.by/<page-slug>#tariffs
-    Поддомены оставить только как legacy/fallback, не как основную модель.
+  - **canonical page продукта** — страница, привязанная к продукту;
+  - **pricing-ready state** — на этой странице реально есть pricing block данного продукта.
   &nbsp;
-2. **Связать site builder и pricing/product system через page-level canonical binding.**
-  Не просто показывать тарифы на отдельной slug-странице, а сделать единую модель:
+2. **Не вводить отдельное поле page_role в БД, но в UI и сервисном слое ввести явное вычисляемое состояние.**
+  То есть не хранить дублирующий флаг в таблице, но везде оперировать не сырым blocks.some(...), а нормализованным состоянием:
   &nbsp;
-  - страница в конструкторе может быть canonical page продукта
-  - pricing block на этой странице должен подтягивать тарифы именно связанного продукта
-  - canonical pricing URL продукта всегда должен вычисляться от slug этой страницы
+  - isLinked
+  - hasPricingBlock
+  - isPricingReady
+    Это даст явность без риска рассинхрона.
   &nbsp;
-3. **Добавить двустороннюю ручную привязку product ↔ site page.**
-  Обязательно в обе стороны:
+3. **Добавить общий resolver состояния страницы продукта.**
+  Не делать blocks.some(...) прямо в нескольких компонентах.
+  Нужен один helper/service-level resolver, например:
   &nbsp;
-  - в карточке продукта можно указать site_page_id
-  - в карточке/настройках страницы можно указать product_id
+  - resolveProductPageState(page, productId)
+    который возвращает:
+  - linked
+  - hasPricingBlock
+  - pricingBlockCount
+  - pricingBlockMatchesProduct
+  - canonicalPricingUrlReady
   &nbsp;
-4. **Сделать ID видимыми и пригодными для ручной связки.**
-  В обеих сущностях должно быть:
+4. **Проверка pricing block должна быть не только по type === 'pricing', но и по совпадению content.product_id === productId.**
+  И это должно быть прямо зафиксировано в плане как обязательный guard.
+  Иначе страница может содержать pricing block чужого продукта, а UI ошибочно посчитает её продающей.
+5. **Добавить отдельную диагностику для некорректной страницы:**
   &nbsp;
-  - отображение собственного ID
-  - копирование ID
-  - отображение связанной сущности
-  - кнопка перехода на связанную сущность
+  - страница привязана;
+  - pricing block есть;
+  - но он указывает на другой продукт.
+    Это отдельное состояние, не равное “блока нет”.
   &nbsp;
-5. **Один canonical source of truth для связи.**
-  Не допускать двух несинхронных связей.
-  Нужно прямо прописать, какая таблица и какое поле являются единственным owner relation.
-  Базово: site_pages.product_id как canonical binding, а UI продукта просто управляет этой же связью.
-6. **Явно зафиксировать кардинальность связи.**
-  По умолчанию принять:
+6. **Уточнить, что canonical pricing URL показывается только при isPricingReady = true.**
+  Не просто “если есть pricing block”, а если:
   &nbsp;
-  - **1 product ↔ 1 canonical page**
-    Если подрядчик хочет оставить many pages → 1 product, то это допустимо только как secondary/non-canonical pages, но canonical pricing URL у продукта всё равно должен быть один.
+  - страница привязана к продукту;
+  - найден хотя бы один pricing block;
+  - найден pricing block именно этого продукта.
   &nbsp;
-7. **Добавить обязательные валидации ручной привязки.**
+7. **Добавить защиту от дублирующих pricing block одного и того же продукта на одной странице.**
+  В плане сейчас этого нет.
+  Нужно определить поведение:
   &nbsp;
-  - проверка существования введённого ID
-  - запрет привязки к архивной/удалённой сущности
-  - ошибка, если продукт уже привязан к другой canonical page
-  - confirm при перепривязке
-  - защита от циклов/рассинхрона
+  - либо разрешить, но считать страницу pricing-ready при первом совпадении;
+  - либо показывать warning “на странице несколько тарифных блоков этого продукта”;
+  - либо запрещать добавление второго блока через quick action.
+    Предпочтительно: не создавать второй pricing block автоматически, если уже есть хотя бы один валидный.
   &nbsp;
-8. **Если сайта у продукта нет — всё равно должен существовать public pricing page.**
-  Это нужно зафиксировать отдельно:
+8. **Быстрое действие “Добавить pricing block” должно быть add-only и безопасным.**
+  Нужно явно указать:
   &nbsp;
-  - при отсутствии полноценной страницы сайта система должна уметь создать canonical public page для тарифов продукта
-  - URL должен быть на основном домене через slug, а не на localhost и не на временном тех-домене
-  - такая страница должна поддерживать #tariffs
+  - не дублировать existing pricing block того же продукта;
+  - не ломать порядок блоков;
+  - вставлять в предсказуемое место страницы;
+  - перед вставкой делать dry-check по existing blocks.
   &nbsp;
-9. **Если страница сайта есть — pricing block должен быть встраиваемым и переиспользуемым.**
-  Нужно описать два сценария:
+9. **Нужно определить место вставки pricing block.**
+  Сейчас в плане этого нет.
+  Иначе блок будет добавляться “куда-то”.
+  Зафиксировать правило:
   &nbsp;
-  - canonical page целиком
-  - встраиваемый pricing block внутри любой страницы конструктора
-    И в обоих случаях тарифы должны подтягиваться от одного и того же product binding.
+  - либо в конец страницы;
+  - либо после hero/intro блока;
+  - либо через явный выбор пользователя.
+    Самый безопасный вариант для патча: **в конец страницы**, без перестановки существующих блоков.
   &nbsp;
-10. **Уточнить anchor policy.**
-  Сейчас в плане и коде должен использоваться один canonical anchor.
-  Если уже принят #tariffs, то закрепить его как единый стандарт и не плодить параллельно #prices.
-  Если нужен alias #prices для legacy-ботов/старых ссылок — добавить редирект/scroll alias, но canonical оставить один.
-11. **Добавить legacy compatibility для уже существующих ссылок.**
-  Если сейчас в ботах/рассылках уже используются ссылки вида:
+10. **Кнопка “Создать продающую страницу” должна создавать не просто страницу со slug, а минимально рабочую структуру.**
+  Зафиксировать:
   &nbsp;
-  - club.gorbova.by/#prices
-  - или другие legacy-варианты
-    то в плане должен быть отдельный блок:
-  - как они продолжают работать
-  - делается ли redirect на новый canonical path
-  - как не сломать старые ссылки в сообщениях
+  - slug по slugify(product name/code) с uniqueness suffix при конфликте;
+  - статус draft/published по правилам текущего конструктора;
+  - внутри сразу создаётся pricing block с product_id;
+  - canonical binding на product создаётся сразу.
   &nbsp;
-12. **Нужен отдельный proof-block по site builder integration.**
-  Проверить оба сценария:
+11. **Нужно явно развести две кнопки в UI продукта:**
   &nbsp;
-  - сначала создан сайт/страница → потом привязали продукт
-  - сначала создан продукт → потом привязали страницу
-    В обоих случаях должен получаться одинаковый canonical pricing URL и одинаковый pricing block.
+  - “Привязать страницу”
+  - “Создать продающую страницу”
+    Это не одно и то же действие.
   &nbsp;
-13. **PATCH C не считать закрытым без реального browser-proof carousel на desktop и mobile.**
-  В план нужно добавить, что визуальное “стало лучше” недостаточно. Нужны доказательства:
+12. **В карточке продукта нужно показывать два разных URL:**
   &nbsp;
-  - desktop: arrows, drag, dots, click-vs-drag по CTA
-  - mobile: swipe, видимость того, что карточки можно листать, корректность CTA
-  - preview и public должны вести себя одинаково
+  - URL страницы: /<slug>
+  - URL тарифов: /<slug>#tariffs
+    Второй показывать только если isPricingReady = true.
   &nbsp;
-14. **Для mobile добавить явный affordance листания.**
-  Сейчас это не доказано. В плане потребовать конкретное решение:
+13. **Нужно добавить явный статус-блок в карточке продукта, а не просто warning.**
+  Например:
   &nbsp;
-  - либо частично видимый соседний слайд
-  - либо fade/gradient hint
-  - либо стрелки/подсказка на mobile
-    Но пользователь должен сразу понимать, что карточки листаются.
+  - страница не привязана;
+  - страница привязана, тарифного блока нет;
+  - страница привязана, тарифный блок найден;
+  - найден тарифный блок чужого продукта;
+  - найдено несколько тарифных блоков продукта.
   &nbsp;
-15. **Не ограничиваться только консультацией.**
-  Все изменения по URL, binding, pricing block и carousel должны работать одинаково для:
+14. **Не ограничиваться только ProductSitePageBinding.**
+  Такой же state resolver нужен и в настройках страницы, чтобы в обеих точках UI был одинаковый verdict, а не две разные логики.
+15. **Обязательно добавить обратный quick action из страницы:**
   &nbsp;
-  - текущих продуктов
-  - новых продуктов
-  - новых страниц конструктора
-    Без special-case по consultation/club/business.
+  - “Открыть продукт”
+  - “Перейти к тарифам продукта”
+  - “Проверить, есть ли на странице pricing block этого продукта”
   &nbsp;
+16. **Добавить proof-case для вашего текущего кейса “Закрой год”.**
+  В плане обязательно зафиксировать:
+  &nbsp;
+  - страница привязана к продукту;
+  - pricing block на ней отсутствует;
+  - URL #tariffs не должен считаться готовым продающим URL;
+  - после добавления pricing block статус должен поменяться автоматически.
+  &nbsp;
+17. **Нужно оставить path-based URL как единственный canonical вариант.**
+  Это важно отдельно закрепить add-only:
+  &nbsp;
+  - не возвращаться к subdomain-подходу;
+  - canonical формат: gorbova.by/<slug>#tariffs.
+  &nbsp;
+18. **Формулировку в плане заменить:**
+  не “вычисление через содержимое блоков вместо явного поля”, а
+  **“явное вычисляемое состояние на основе содержимого блоков, вынесенное в единый resolver”**.
+  Это точнее и соответствует вашему требованию, чтобы логика была понятной, а не спрятанной.
 
 &nbsp;
 
@@ -114,245 +137,189 @@
 Копируемый блок для Lovable:
 
 ```
-Дополни план правками:
+Дополни план следующей информацией:
 
-1. Зафиксируй новую canonical URL-модель: основной путь через основной домен и slug страницы, а не через поддомены.
-Canonical:
-- `gorbova.by/<page-slug>`
-- `gorbova.by/<page-slug>#tariffs`
+1. Не делай единственной бизнес-моделью сырую проверку `blocks.some(...)`. 
+Нужен единый resolver состояния страницы продукта, например `resolveProductPageState(page, productId)`.
 
-2. Поддомены оставить только как legacy/fallback. Они не должны быть primary architecture.
+2. Не добавляй дублирующее поле `page_role` / `is_pricing_page` в БД, чтобы не создавать риск рассинхрона.
+Но в UI и сервисном слое введи явные вычисляемые состояния:
+- isLinked
+- hasPricingBlock
+- isPricingReady
+- pricingBlockMatchesProduct
+- pricingBlockCount
 
-3. Добавь двустороннюю ручную привязку `product ↔ site page`:
-- из карточки продукта можно указать `site_page_id`;
-- из карточки страницы можно указать `product_id`.
+3. Проверка pricing block обязана быть не просто по `type === 'pricing'`, а по:
+- block.type === 'pricing'
+- block.content.product_id === current productId
 
-4. Сделай ID обеих сущностей видимыми и копируемыми:
-- `product id`
-- `site/page id`
+4. Добавь отдельное диагностическое состояние:
+- страница привязана;
+- pricing block есть;
+- но он указывает на другой продукт.
+Это не равно состоянию “блока нет”.
 
-5. Зафиксируй один canonical source of truth для связи.
-Нельзя делать две независимые ссылки, которые могут разъехаться.
-Базово использовать один owner relation, например `site_pages.product_id`, а UI продукта должен управлять этой же связью.
+5. Canonical pricing URL показывать только если:
+- страница привязана к продукту;
+- найден pricing block;
+- найден pricing block именно этого продукта.
+То есть только при `isPricingReady = true`.
 
-6. Явно опиши кардинальность связи.
-Базовый ожидаемый вариант:
-- `1 product ↔ 1 canonical page`
-Если допускаются дополнительные страницы, это должны быть secondary pages, но canonical pricing URL у продукта должен быть один.
+6. Добавь защиту от дублей:
+если на странице уже есть pricing block этого продукта, quick action “Добавить pricing block” не должен создавать второй.
+Нужно либо запретить, либо показать warning о дубликате.
 
-7. Для ручной привязки добавь обязательные валидации:
-- ID существует;
-- сущность не архивная/не удалённая;
-- если уже есть старая привязка — warning/confirm;
-- защита от рассинхрона и конфликтов.
+7. Зафиксируй место вставки pricing block:
+для текущего патча безопасный вариант — добавлять в конец страницы, не меняя порядок существующих блоков.
 
-8. Если у продукта нет готового сайта, система всё равно должна уметь создать canonical public pricing page на основном домене через slug.
-Не localhost, не временный тех-домен.
+8. В продукте разведи два действия:
+- “Привязать страницу”
+- “Создать продающую страницу”
+Это разные действия.
 
-9. Если страница сайта уже существует, pricing block должен быть встраиваемым внутрь страницы конструктора и подтягивать тарифы связанного продукта.
-Нужны оба сценария:
-- standalone canonical page;
-- embedded pricing block внутри существующей страницы.
+9. “Создать продающую страницу” должно:
+- создать новую страницу;
+- сгенерировать уникальный slug;
+- сразу добавить pricing block текущего продукта;
+- сразу привязать страницу к продукту.
 
-10. Уточни anchor policy.
-Если уже используем `#tariffs`, закрепить его как canonical anchor.
-Не плодить параллельно `#prices`.
-Если нужен legacy alias для старых ссылок — добавить alias/redirect, но canonical anchor оставить один.
+10. В карточке продукта показывай раздельно:
+- URL страницы: `/<slug>`
+- URL тарифов: `/<slug>#tariffs`
+Второй URL показывать только если `isPricingReady = true`.
 
-11. Добавь legacy compatibility для уже отправленных ссылок из бота/рассылок.
-Нужно отдельно описать:
-- какие старые ссылки продолжают работать;
-- какие редиректятся на новый canonical path;
-- как не ломаются уже отправленные пользователям ссылки.
+11. Добавь явный status-block в UI продукта:
+- страница не привязана;
+- страница привязана, тарифного блока нет;
+- страница привязана, тарифный блок найден;
+- найден тарифный блок другого продукта;
+- найдено несколько тарифных блоков этого продукта.
 
-12. Добавь отдельный proof-block по двусторонней связке:
-- сначала создан сайт/страница → потом привязан продукт;
-- сначала создан продукт → потом привязана страница;
-- в обоих случаях canonical pricing URL и блок тарифов работают одинаково.
+12. Такой же resolver состояния страницы продукта используй и в настройках страницы, чтобы verdict в продукте и в конструкторе был одинаковым.
 
-13. PATCH C (carousel UX) не считать закрытым без browser-proof:
-- desktop: arrows, drag, dots, click-vs-drag по CTA;
-- mobile: swipe, явный affordance листания, корректный CTA;
-- preview и public должны вести себя одинаково.
+13. Добавь обратные quick actions из страницы:
+- “Открыть продукт”
+- “Перейти к продукту”
+- “Проверить pricing block этого продукта”
 
-14. Для mobile обязательно добавить явный affordance, что карточки листаются:
-- частично видимый соседний слайд и/или
-- fade/gradient hint и/или
-- mobile arrows / indicator.
-Сейчас это должно быть отдельно доказано.
+14. Добавь proof-case на текущий кейс “Закрой год”:
+- страница привязана к продукту;
+- pricing block отсутствует;
+- `#tariffs` не считается готовым продающим URL;
+- после добавления pricing block статус автоматически меняется.
 
-15. Все изменения должны быть универсальными для всех продуктов и новых страниц конструктора.
-Без special-case по consultation/club/business.
+15. Зафиксируй path-based canonical URL как единственный вариант:
+- `gorbova.by/<slug>`
+- `gorbova.by/<slug>#tariffs`
+Без возврата к subdomain-логике.
 
-16. Всё это добавить add-only поверх уже существующих PATCH A/B/C/D.
-Ничего из уже утверждённой config-driven pricing логики, equal-height и site-builder integration не удалять.
+16. Формулировку “решение через blocks вместо явного поля” замени на:
+“явное вычисляемое состояние на основе blocks, вынесенное в единый resolver”.
+
+План: Разделение canonical page и pricing page продукта
 ```
-
-&nbsp;
-
-&nbsp;
-
-# План: PATCH D — Product ↔ Site Page привязка, anchor `#tariffs`, carousel proof
 
 ## Статус PATCHей
 
 
-| PATCH                                                  | Статус                                                        |
-| ------------------------------------------------------ | ------------------------------------------------------------- |
-| A — suffix/config-driven rendering                     | **CLOSED**                                                    |
-| B — equal-height layout                                | **PARTIALLY VERIFIED** — визуально улучшен, нужен final proof |
-| C — carousel interaction UX                            | **OPEN** — drag/scroll/mobile не доказаны browser-proof       |
-| D — product↔page binding + anchors + mobile affordance | **NEW**                                                       |
+| PATCH                                        | Статус             |
+| -------------------------------------------- | ------------------ |
+| A — suffix/config-driven                     | CLOSED             |
+| B — equal-height layout                      | PARTIALLY VERIFIED |
+| C — carousel UX                              | OPEN               |
+| D — product↔page binding + anchors           | CLOSED             |
+| **E — pricing page detection + diagnostics** | **NEW**            |
 
 
 ---
 
-## Discovery: что уже есть
+## Суть проблемы
 
-### Связь product ↔ site_page
+Сейчас `ProductSitePageBinding` показывает canonical pricing URL (`/<slug>#tariffs`) сразу после привязки страницы, даже если на странице нет pricing block. Это вводит в заблуждение: ссылка ведёт в пустоту.
 
-- Таблица `site_pages` уже имеет колонку `product_id` (FK → `products_v2.id`)
-- `SitePageService.createPage()` и `updatePage()` уже принимают `product_id`
-- Связь `isOneToOne: false` — сейчас допускается many pages → 1 product
-- **НО**: в admin UI продукта (`AdminProductDetailV2`) нет поля для выбора/привязки страницы
-- **НО**: в admin UI конструктора (`PricingBlockEditor`) привязка идёт на уровне блока (`content.product_id`), а не страницы
+Нужно разделить:
 
-### Anchor
+- **canonical page** — любая страница, привязанная к продукту
+- **pricing page** — страница, на которой реально есть pricing block с `product_id` этого продукта
 
-- `UniversalPricingSection` рендерит `<section id="tariffs">` — anchor уже `#tariffs`, не `#prices`
-- `PricingSection` (site-builder wrapper) добавляет свой `<section className="py-12 px-6">` поверх — anchor `id="tariffs"` находится внутри, но доступен для scroll
-- **Нигде нет** smooth-scroll обработки при загрузке с hash
+## Решение: вычисление через содержимое блоков (не отдельное поле)
 
-### Routing
+**Почему не отдельное поле `page_role` / `is_pricing_page`:**
 
-- Публичные страницы доступны по `/:slug` через `SitePageBySlug`
-- На `gorbova.by` нужно чтобы `gorbova.by/club` → страница с slug `club`
-- `gorbova.by/club#tariffs` должен открыть страницу и прокрутить к тарифам
+- Блоки (`site_pages.blocks`) — это уже source of truth для контента страницы
+- Добавление отдельного поля создаёт риск рассинхрона: пользователь удалил pricing block, а поле осталось `true`
+- Проверка `blocks.some(b => b.type === 'pricing' && b.content.product_id === productId)` — детерминированная и не "магическая", это прямое чтение структуры страницы
 
-### Кардинальность
+**Если пользователь настаивает на явном поле** — можно добавить вычисляемое (computed) свойство в TypeScript, а не в БД. Это даёт явность без рассинхрона.
 
-- Базовая модель: **1 product ↔ 1 canonical page** (для pricing URL)
-- `site_pages.product_id` уже есть как FK, но `isOneToOne: false` — нужно добавить UNIQUE constraint или обрабатывать программно
-- Pricing block на странице привязывается к product через `content.product_id` — это уровень блока, не страницы
-- Страничный `product_id` нужен для обратной связи: "какая страница canonical для этого продукта"
+## Изменения
 
----
+### E1. Утилита `hasPricingBlock`
 
-## PATCH D — Изменения
-
-### D1. Двусторонняя привязка product ↔ site page
-
-**БД:**
-
-- Добавить UNIQUE index на `site_pages.product_id` (WHERE product_id IS NOT NULL) — гарантирует 1 product ↔ 1 canonical page
-- Это не сломает существующие данные (сейчас product_id либо null, либо уникален де-факто)
-
-**Admin UI продукта (`AdminProductDetailV2.tsx`):**
-
-- Добавить секцию "Страница сайта" с:
-  - Dropdown со списком страниц из site_pages (или поле для ввода page ID)
-  - Отображение: slug страницы, canonical URL, кнопка "Перейти в конструктор"
-  - Если страница привязана — показать `gorbova.by/<slug>#tariffs` как canonical pricing URL с кнопкой копирования
-  - Если не привязана — кнопка "Создать страницу" (создаёт минимальную страницу с pricing block, привязанным к этому продукту)
-
-**Admin UI конструктора страниц:**
-
-- В настройках страницы добавить поле "Привязанный продукт" с dropdown из products_v2
-- Показать product ID для копирования
-- Валидации:
-  - Проверка существования ID
-  - Предупреждение если product уже привязан к другой странице
-  - Запрет привязки к удалённому/неактивному продукту
-
-**Единый source of truth:** колонка `site_pages.product_id`. Запись идёт через один и тот же update path:
-
-- Из продукта: `SitePageService.updatePage(pageId, { product_id })` или отвязка старой + привязка новой
-- Из конструктора: тот же `updatePage(pageId, { product_id })`
-- Нет двух независимых ссылок — один FK, одна точка записи
-
-### D2. Anchor scroll при загрузке с hash
-
-**Файл: `src/pages/SitePageBySlug.tsx**`
-
-- После загрузки страницы и рендера блоков — проверить `window.location.hash`
-- Если hash есть (например `#tariffs`) — выполнить `document.getElementById('tariffs')?.scrollIntoView({ behavior: 'smooth' })`
-- Задержка ~300ms после рендера, чтобы pricing data успела загрузиться
-
-**Файл: `src/components/site-renderer/blocks/PricingSection.tsx**`
-
-- Добавить `id="tariffs"` на внешний `<section>` — сейчас anchor внутри `UniversalPricingSection`, но wrapper PricingSection добавляет свой div поверх. Нужно убедиться, что `id="tariffs"` доступен на уровне, до которого scroll дойдёт корректно
-
-### D3. Canonical pricing URL — config-driven
-
-**Новый утилитный файл: `src/lib/productCanonicalUrl.ts**`
+**Новый файл: `src/lib/hasPricingBlock.ts**`
 
 ```typescript
-function getCanonicalPricingUrl(product: { primary_domain?: string }, pageSlug?: string): string {
-  // Если есть привязанная страница в конструкторе
-  if (pageSlug) return `https://gorbova.by/${pageSlug}#tariffs`;
-  // Fallback на primary_domain (legacy)
-  if (product.primary_domain) return `https://${product.primary_domain}/#tariffs`;
-  return '';
+export function hasPricingBlock(blocks: SiteBlock[], productId: string): boolean {
+  return blocks.some(b => b.type === 'pricing' && 
+    (b.content as any).product_id === productId);
 }
 ```
 
-Используется в admin UI для отображения canonical URL.
+### E2. Обновление `ProductSitePageBinding`
 
-### D4. Mobile carousel affordance
+Добавить в запрос `linkedPage` поле `blocks`. На основе `hasPricingBlock` показать 3 состояния:
 
-**Файл: `src/components/landing/TariffCarouselGrid.tsx**`
+1. **Страница не привязана** — текущий UI (dropdown привязки)
+2. **Страница привязана, pricing block отсутствует** — warning + кнопка "Добавить блок тарифов" + canonical pricing URL **не показывается**
+3. **Страница привязана, pricing block есть** — canonical pricing URL показывается как готовый, кнопка копирования активна
 
-- На mobile показать частично видимый соседний слайд (уже `basis-[88%]` — 12% видно). Проверить, достаточно ли этого визуально
-- Добавить gradient fade на краях карусели на mobile: `bg-gradient-to-r from-transparent via-transparent to-background/60` справа
-- Dots уже есть — они являются основным индикатором
+### E3. Быстрые действия из карточки продукта
 
-### D5. Browser-proof для carousel (закрытие PATCH C)
+- **Перейти на страницу** — ссылка в конструктор (уже есть)
+- **Добавить pricing block** — вызывает `SitePageService.updatePage(pageId, { blocks: [...existingBlocks, newPricingBlock] })` с pricing block, привязанным к `productId`
+- **Копировать pricing URL** — только если pricing block существует
+- **Создать продающую страницу** — создаёт новую страницу с pricing block уже внутри, привязывает к продукту
 
-Обязательная проверка в браузере:
+### E4. Canonical pricing URL — условный
 
-- Desktop: drag мышкой, стрелки, dots
-- Desktop: trackpad horizontal scroll (если работает нативно через Embla — ОК, если нет — не ломать)
-- Mobile (375px): swipe, dots, CTA click
-- Click-vs-drag: CTA не срабатывает при drag, стрелки работают подряд
+В `ProductSitePageBinding` и в `productCanonicalUrl.ts`:
 
----
+- `getCanonicalPricingUrl` возвращает URL только если передан флаг `hasPricing: true`
+- Иначе возвращает `""` — URL не показывается
+
+### E5. Действие "Создать продающую страницу"
+
+Кнопка в UI продукта (когда страница не привязана). Создаёт:
+
+- Новую `site_page` со slug = product code/slug
+- С одним pricing block внутри (`type: 'pricing', content: { product_id }`)
+- Привязывает к продукту через `product_id`
+- Результат: сразу готовый pricing URL
+
+### E6. Защита от удаления pricing block
+
+Не блокировать удаление, но: после удаления pricing block со страницы, в карточке продукта статус автоматически меняется на "страница привязана, блока тарифов нет" (реактивно через `blocks` в запросе).
 
 ## Файлы
 
 
-| Файл                                                                       | Изменение                                        |
-| -------------------------------------------------------------------------- | ------------------------------------------------ |
-| `src/pages/SitePageBySlug.tsx`                                             | Hash scroll после рендера                        |
-| `src/components/site-renderer/blocks/PricingSection.tsx`                   | `id="tariffs"` на wrapper                        |
-| `src/pages/admin/AdminProductDetailV2.tsx`                                 | Секция "Страница сайта" с двусторонней привязкой |
-| `src/components/admin/site-builder/SiteBlockEditor.tsx` или settings panel | Поле "Привязанный продукт" на уровне страницы    |
-| `src/lib/productCanonicalUrl.ts`                                           | **Новый** — canonical URL builder                |
-| `src/components/landing/TariffCarouselGrid.tsx`                            | Mobile gradient hint                             |
-| БД: migration                                                              | UNIQUE index на `site_pages.product_id`          |
+| Файл                                                      | Изменение                                           |
+| --------------------------------------------------------- | --------------------------------------------------- |
+| `src/lib/hasPricingBlock.ts`                              | **Новый** — утилита проверки                        |
+| `src/components/admin/product/ProductSitePageBinding.tsx` | 3 состояния, быстрые действия, условный pricing URL |
+| `src/lib/productCanonicalUrl.ts`                          | Без изменений (логика условности — в UI)            |
 
 
-### FROZEN (не трогаем)
+### FROZEN
 
-- `resolveTariffDisplayConfig.ts`, EF, suffix logic (PATCH A)
-- Equal-height measurement logic (PATCH B)
-- Embla opts (PATCH C — только browser-proof, не код)
-
----
+- Всё из PATCH A/B/C/D
 
 ## DoD
 
-1. **Привязка product→page**: из карточки продукта можно выбрать/создать страницу, видно slug и canonical URL
-2. **Привязка page→product**: из конструктора можно указать product_id, видна обратная связь
-3. **UNIQUE constraint**: один продукт = одна canonical страница, валидация при конфликте
-4. **Anchor**: `gorbova.by/<slug>#tariffs` открывает страницу и скроллит к тарифам
-5. **Canonical URL**: автоматически вычисляется из page slug, показывается в admin
-6. **Mobile affordance**: gradient hint или иной визуальный признак карусели
-7. **Browser-proof PATCH C**: desktop drag/arrows/dots + mobile swipe/CTA — скриншоты/видео
-8. **Suffix не сломан**: hosted/public/preview показывают одинаковый config-driven результат
-
-### Proof-cases
-
-- `gorbova.by/club#tariffs` → скролл к тарифам клуба
-- Создать новый тестовый продукт → привязать страницу → canonical URL работает
-- Привязка из продукта и из конструктора даёт одинаковый результат
-- Mobile 375px — карусель очевидно листается
+1. Страница привязана без pricing block → warning, pricing URL не показан
+2. После добавления pricing block → URL появляется и работает
+3. `/<slug>#tariffs` скроллит к блоку (уже работает из PATCH D)
+4. Удаление pricing block → статус возвращается к "нет блока"
+5. "Создать продающую страницу" создаёт страницу с pricing block
+6. Универсально для всех продуктов
