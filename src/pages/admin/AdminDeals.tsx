@@ -62,6 +62,8 @@ import {
   Kanban,
   ChevronDown,
   Plus,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -70,6 +72,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { exportToExcel, exportToCSV, ExportColumn } from "@/utils/exportTableData";
 import { copyToClipboard, getDealUrl } from "@/utils/clipboardUtils";
 import { getEffectiveDealDate } from "@/utils/getEffectiveDealDate";
@@ -87,7 +90,6 @@ import { useTableSort } from "@/hooks/useTableSort";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PeriodSelector, DateFilter } from "@/components/ui/period-selector";
 import { ArchiveCleanupDialog } from "@/components/admin/ArchiveCleanupDialog";
-import { GlassFilterPanel } from "@/components/admin/GlassFilterPanel";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePipelines } from "@/hooks/usePipelines";
 import { DealsKanbanBoard } from "@/components/admin/deals/DealsKanbanBoard";
