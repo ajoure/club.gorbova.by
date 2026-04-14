@@ -230,6 +230,32 @@ export default function AdminDeals() {
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
+  // View mode: list or board
+  const [searchParams, setSearchParams] = useSearchParams();
+  const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
+  const selectedPipelineId = searchParams.get("pipeline") || null;
+
+  const setViewMode = useCallback((mode: "list" | "board") => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("view", mode);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setSelectedPipelineId = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("pipeline", id);
+      else next.delete("pipeline");
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // Pipelines
+  const { pipelines, isLoading: pipelinesLoading, createPipeline: createPipelineFn } = usePipelines();
+  const activePipelineId = selectedPipelineId || pipelines.find((p) => p.is_default)?.id || pipelines[0]?.id || null;
+
   // Contact sheet state
   const [contactSheetOpen, setContactSheetOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<any>(null);
