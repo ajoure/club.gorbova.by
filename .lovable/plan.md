@@ -2,242 +2,186 @@
 
 &nbsp;
 
-1. **Блок B (merge module pipelines) нужно сделать с жёстким guard на непредвиденные сделки.**
-  Перед execute обязательно проверить по 8 module-pipelines:
+1. **Period filter в board и list должен быть единым source of truth через URL.**
+  Поддержать в searchParams:
   &nbsp;
-  - есть ли там **что-то кроме paid**;
-  - есть ли сделки не в closed_won;
-  - есть ли вообще записи, которые не должны уехать в Ценный бухгалтер | 1 ступень 2.0.
-    Если в этих pipeline есть не только успешные сделки, не переносить всё SQL-ом “по pipeline_id IN (...)” вслепую. Сначала показать breakdown и только потом выполнять merge.
+  - period_preset
+  - date_from
+  - date_to
+  - вместе с view, pipeline, product, tariffs.
+    Нельзя оставлять period только как локальный useState.
   &nbsp;
-2. **В merge лучше зафиксировать безопасный порядок как idempotent execute.**
-  Нужно явно прописать:
+2. **В board и list должна применяться одинаковая логика default pipeline.**
+  Не просто .eq("pipeline_id", pipelineId) для list-view.
+  Для Основной нужно сохранить уже принятую логику:
   &nbsp;
-  - найти target pipeline Ценный бухгалтер | 1 ступень 2.0;
-  - найти её stage Успешно;
-  - проверить source pipelines;
-  - перенести сделки;
-  - перепривязать bindings;
-  - verify, что source pipelines пусты;
-  - только потом удалить stages и pipelines.
-    Если pipeline уже удалена/частично перенесена, patch должен отработать повторно безопасно, без дублей и without fail.
+  - показывать pipeline_id = activePipelineId
+  - **и** pipeline_id IS NULL
+    иначе list и board снова будут расходиться.
   &nbsp;
-3. **В delete pipeline UI лучше не “предупреждать”, а реально блокировать удаление непустых/bound pipelines.**
-  Сейчас в плане формулировка мягкая. Лучше жёстко:
+3. **Добавить activePipelineId в list-query не только в buildDealsQuery, но и в RPC-ветку поиска.**
+  Если search uses search_deal_rows, а pipeline filter не передаётся туда, то search results будут отличаться от обычного list-view.
+  Нужно либо:
   &nbsp;
-  - если в pipeline есть сделки — delete запрещён;
-  - если на pipeline висят crm_pipeline_product_bindings — delete запрещён;
-  - сначала cleanup/remap, потом delete.
-    Для Основной — delete полностью недоступен.
+  - расширить RPC параметром p_pipeline_id и default-pipeline semantics,
+  - либо после RPC применять тот же pipeline-filter safely.
   &nbsp;
-4. **Normalization block в целом верный, но нужен proof по affected rows именно после merge.**
-  Так как модули сначала вливаются в ЦБ 1 ступень 2.0, потом идёт normalization, в verify нужно отдельно показать:
+4. **Date filtering в useDealsBoard делать по тем же полям и границам, что и в list-view.**
+  То есть same contract:
   &nbsp;
-  - сколько legacy deals нормализовано в ЦБ 1 ступень 2.0;
-  - сколько legacy deals нормализовано в ЗАКРОЙ ГОД;
-  - что исключённые продукты (Gorbova Club, Платная консультация) не изменились.
+  - gte(...T00:00:00Z)
+  - lte(...T23:59:59Z)
+    без второй, “похожей, но другой” логики.
   &nbsp;
-5. **Для normalization добавить machine-check не только по counts, но и по суммам “до/после” по каждой затронутой pipeline.**
-  Минимум:
+5. **Machine-check proof сделать не только для counts, но и для sums.**
+  Для сценариев:
   &nbsp;
-  - Ценный бухгалтер | 1 ступень 2.0
-  - ЗАКРОЙ ГОД
-  - grand total all successful after normalization
-    И отдельно — skipped = 0/не 0, если что-то не обновилось.
+  - all
+  - this week
+  - this month
+  - last month
+  - custom range
+    показать:
+  - total deals
+  - paid deals
+  - total sum
+    и отдельно list vs board equality.
   &nbsp;
-6. **Блок A по drag fix усилить одним конкретным правилом.**
-  Для source card во время drag:
+6. **Pipeline selector redesign — ок, но не сломать текущие CRUD и guards.**
+  В новом selector UI обязательно сохранить:
   &nbsp;
-  - не просто opacity-30, а проверить, что нет визуального второго полноценного экземпляра карточки;
-  - если двоение остаётся, скрывать source card сильнее (opacity-0 или placeholder-only mode) на время drag.
-    То есть criterion успеха — не CSS-значение, а отсутствие визуального дубля.
+  - create
+  - rename
+  - delete
+  - delete guard для non-empty / bound pipelines
+  - Основная без удаления.
   &nbsp;
-7. **В KanbanColumn fix нужен не просто “stable callback”, а реально убрать inline function из map.**
-  Это важный пункт. В плане лучше явно написать:
+7. **Reorder pipelines должен быть idempotent и сохранять active selection.**
+  После reorder:
   &nbsp;
-  - карточка получает dealId и onOpenDeal,
-  - внутри карточки сама вызывает onOpenDeal(dealId),
-  - никаких inline lambda в .map() для onOpen.
-    Иначе React.memo останется частично бесполезным.
+  - активная воронка остаётся активной;
+  - refresh сохраняет новый порядок;
+  - list-view и board-view используют один и тот же порядок.
   &nbsp;
-8. **В final proof после всех execute обязательно показать selector/pipeline usability.**
-  После merge и cleanup должно быть доказано:
+8. **Для reorder pipelines нужен отдельный DoD-proof.**
+  Показать:
   &nbsp;
-  - module-pipelines исчезли;
-  - осталась одна pipeline Ценный бухгалтер | 1 ступень 2.0;
-  - selector не засорён лишними pipeline;
-  - rename/delete controls работают.
+  - изменить порядок;
+  - refresh;
+  - порядок сохранился;
+  - selector в list и board показывает одинаковый порядок.
   &nbsp;
-9. **Итоговое дополнение к плану:**
+9. **Gorbova Club = 1001 не просто “подтвердить”, а явно вынести в verify как закрытый вопрос.**
+  Чтобы больше к нему не возвращаться:
+  &nbsp;
+  - DB count = pipeline count = filtered all-period count.
+  &nbsp;
+10. **Обновлённый final DoD:**
 
 &nbsp;
 
-```
-Добавь к плану следующие обязательные правки.
-
-1. Перед merge 8 module-pipelines обязательно сделать dry-run breakdown:
-- pipeline_id
-- total deals
-- paid deals
-- non-paid deals
-- closed_won / not closed_won
-Если в source pipeline есть что-то кроме ожидаемых successful deals — стоп и показать это отдельно.
-
-2. Merge выполнять только в idempotent-safe порядке:
-- найти target pipeline + target stage "Успешно"
-- проверить source pipelines
-- перенести сделки
-- перепривязать bindings
-- verify source pipelines empty
-- только потом удалить source stages и source pipelines
-
-3. Delete pipeline UI:
-- delete запрещён для pipeline с сделками
-- delete запрещён для pipeline с product bindings
-- Основную не удалять вообще
-- не ограничиваться просто warning, нужен реальный guard
-
-4. После normalization дать proof:
-- affected rows
-- totals before/after
-- отдельно по `Ценный бухгалтер | 1 ступень 2.0`
-- отдельно по `ЗАКРОЙ ГОД`
-- исключённые продукты не изменились
-
-5. Drag fix считать успешным только если визуально нет дубля source card.
-Если `opacity-30` не решает — перейти на placeholder-only/hidden source state во время drag.
-
-6. В `KanbanColumn` убрать inline onOpen lambda из `map()`.
-Карточка должна сама вызывать `onOpenDeal(dealId)` внутри себя.
-
-7. В финальном proof показать selector после cleanup:
-- module-pipelines удалены
-- target pipeline осталась одна
-- selector usable
-- rename/delete UI работает
-```
-
-После этих правок план можно исполнять.
+&nbsp;
 
 &nbsp;
 
-План: финальный consolidated patch
+- period filter работает в list и board;
+- period сохраняется в URL;
+- pipeline selector есть в list и board;
+- list и board используют одинаковую pipeline semantics, включая Основную + NULL;
+- reorder pipelines работает;
+- selector визуально переработан;
+- machine-check по counts и sums совпадает для list/board на одинаковых фильтрах;
+- Gorbova Club = 1001 закрыт как подтверждённый факт.
 
-## Текущее состояние (из БД)
+&nbsp;
 
-**Pipelines:** 18 штук (Основная + 17 product-pipelines).
-**Module pipelines для merge:** 8 шт (Розничная торговля, Производство, Маркетплейсы, Грузо-/пассажироперевозки, Общепит, Строительство, ПВТ, Учёт у ИП) — итого 51 deal.
-**Target pipeline:** `a0000001-...02` «Ценный бухгалтер | 1 ступень 2.0», closed_won stage `b0000001-0002-...03`.
+&nbsp;
 
-**Normalization dry-run (final_price > 2700, исключая Gorbova Club и Платную консультацию):**
+План: Period filter fix + Pipeline selector в list-view + Pipeline management UI
 
-
-| Продукт                    | Deals   | Total before  | Total after (÷27) | Delta          |
-| -------------------------- | ------- | ------------- | ----------------- | -------------- |
-| ЗАКРОЙ ГОД                 | 80      | 1 465 451     | 54 276            | -1 411 175     |
-| ЦБ 1 ступень 2.0           | 71      | 2 996 121     | 110 968           | -2 885 154     |
-| Модуль: Розничная торговля | 2       | 19 210        | 711               | -18 498        |
-| Модуль: Маркетплейсы       | 1       | 9 608         | 356               | -9 252         |
-| Модуль: Производство       | 1       | 9 602         | 356               | -9 246         |
-| Модуль: Строительство      | 1       | 9 608         | 356               | -9 252         |
-| **Итого**                  | **156** | **4 509 589** | **166 022**       | **-4 343 567** |
+## Диагностика
 
 
----
+| Проблема                                  | Root cause                                                                                 | Файл / строка                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| Period filter не работает в board-view    | `DealsKanbanBoard` не получает `dateFilter` props; `useDealsBoard` не принимает date range | `AdminDeals.tsx:1159`, `useDealsBoard.ts` |
+| Period filter не сохраняется в URL        | `dateFilter` хранится в `useState`, не в `searchParams`                                    | `AdminDeals.tsx:245`                      |
+| Pipeline selector отсутствует в list-view | Условие `viewMode === "board" &&` скрывает selector                                        | `AdminDeals.tsx:876`                      |
+| List-view не фильтрует по pipeline        | `buildDealsQuery` не принимает `pipelineId`                                                | `AdminDeals.tsx:159`                      |
+| Нет reorder pipelines                     | Функционал отсутствует (есть только `reorderStages`)                                       | `pipelineService.ts`                      |
+| Pipeline selector визуально бедный        | Стандартный `DropdownMenu` без стилизации                                                  | `AdminDeals.tsx:877-938`                  |
 
-## 4 блока изменений
 
-### A. Drag/Move performance final fix
+**Gorbova Club = 1001** подтверждено по БД: `paid_gorbova_total = paid_gorbova_in_pipeline = 1001`. Это корректное значение.
 
-**KanbanDealCard.tsx:**
+## Изменения
 
-- Source card при drag: заменить `isDragging && "shadow-xl scale-105 opacity-80"` → `isDragging && "opacity-30 pointer-events-none"` (ghost placeholder)
-- Move button: убрать `bg-muted/60 rounded-full`, уменьшить до `h-3 w-3`, иконка `h-2 w-2`, оставить `min-w-[24px] min-h-[24px]` для touch
+### 1. Добавить `dateFilter` в board-view
 
-**KanbanColumn.tsx (строка 149):**
+`**useDealsBoard.ts**`: добавить `dateFrom?: string; dateTo?: string` в `UseDealsBoardOpts`. Применять `.gte("deal_date", ...)` / `.lte("deal_date", ...)` в query builder (аналогично list-view `buildDealsQuery`).
 
-- `onOpen={() => onOpenDeal(deal.id)}` — inline lambda ломает `React.memo`. Исправить: карточка уже знает `deal.id`, нужно передавать `onOpenDeal` напрямую и вызывать `onOpenDeal(deal.id)` внутри карточки (изменить Props карточки: `onOpen` → `onOpenDeal + dealId`)
+`**DealsKanbanBoard.tsx**`: добавить props `dateFrom`, `dateTo`, прокинуть в `useDealsBoard`.
 
-### B. Merge 8 module pipelines → ЦБ 1 ступень 2.0
+`**AdminDeals.tsx:1159**`: передать `dateFrom={dateFilter.from}` `dateTo={dateFilter.to}` в `<DealsKanbanBoard>`.
 
-**Порядок execute (через insert tool):**
+### 2. Сохранить `dateFilter` в URL
 
-1. `UPDATE orders_v2 SET pipeline_id = 'a0000001-...02', pipeline_stage_id = 'b0000001-0002-...03' WHERE pipeline_id IN (8 module pipeline IDs)`
-2. `DELETE FROM crm_pipeline_product_bindings WHERE pipeline_id IN (8 IDs)`
-3. Rebind 8 module product_ids к pipeline `a0000001-...02`: `INSERT INTO crm_pipeline_product_bindings (pipeline_id, product_id) VALUES ...`
-4. Verify source pipelines empty
-5. `DELETE FROM crm_pipeline_stages WHERE pipeline_id IN (8 IDs)`
-6. `DELETE FROM crm_pipelines WHERE id IN (8 IDs)`
-7. Audit: `pipeline.module_merge`
+`**AdminDeals.tsx**`: убрать `useState<DateFilter>`, вместо этого читать/писать `date_from` и `date_to` из `searchParams` (аналогично `pipeline`, `product`, `tariffs`). Добавить `setDateFilter` через `setSearchParams`.
 
-### C. Pipeline management UI
+### 3. Pipeline selector в обоих режимах
 
-**AdminDeals.tsx**, pipeline selector (строки 844-868):
+`**AdminDeals.tsx:876**`: убрать условие `viewMode === "board" &&`. Показывать pipeline selector всегда, когда `pipelines.length > 0`.
 
-- Для каждой pipeline (кроме Основной) добавить inline кнопки: rename + delete
-- Для Основной: только rename
-- State: `renamePipelineTarget`, `deletePipelineTarget`
-- Rename → Dialog с Input
-- Delete → guard: если pipeline непустая → AlertDialog с предупреждением; если есть bindings → предупредить; если пустая → подтверждение и удаление
-- Переиспользовать `renamePipeline` / `deletePipeline` из `usePipelines` (уже есть и уже с guard на непустые)
+### 4. Фильтрация list-view по pipeline
 
-### D. Normalization: RUB → BYN (÷27)
+`**buildDealsQuery**`: добавить параметр `pipelineId`. Если задан — `.eq("pipeline_id", pipelineId)`. Для default pipeline — `.or(pipeline_id.eq.X,pipeline_id.is.null)`.
 
-**Execute (через insert tool, после merge):**
+`**useInfiniteQuery` queryKey**: добавить `activePipelineId`.
 
-```sql
-UPDATE orders_v2 
-SET final_price = round(final_price / 27.0, 2)
-WHERE status = 'paid'
-  AND final_price > 2700
-  AND product_id NOT IN (
-    '11c9f1b8-...', -- Gorbova Club
-    '9d0d6de8-...'  -- Платная консультация
-  )
-```
+### 5. Reorder pipelines
 
-Единый UPDATE — покрывает ЦБ 1 ступень, ЗАКРОЙ ГОД и все модули (156 deals).
+`**pipelineService.ts**`: добавить `reorderPipelines(orderedIds: string[])` — аналогичная логика как `reorderStages` (temporary negative index, then set final).
 
-**Audit:** `deal.bulk_normalize_rub_to_byn_legacy_amounts` с meta: affected=156, rate=27, threshold=2700, excluded products.
+`**usePipelines.ts**`: добавить `reorderMutation`.
 
----
+### 6. Pipeline management UI redesign
 
-## Порядок execute
+Заменить текущий `DropdownMenu` на более полноценный `Popover` / dialog-based management panel:
 
-1. **A** — код: drag fix + move icon
-2. **B** — data: merge module pipelines
-3. **B verify** — counts
-4. **D** — data: normalization ÷27
-5. **D verify** — sums before/after
-6. **C** — код: pipeline management UI
-7. **Final proof** — machine-check
+- Список pipelines с drag handles для reorder (используя `@dnd-kit`)
+- Inline rename/delete кнопки
+- Create внизу
+- Active pipeline выделена визуально (accent border/bg)
+- Glass/high-end styling: `bg-card/60 backdrop-blur-xl`, gradient accents для active
+
+### 7. Machine-check proof
+
+После реализации — запустить SQL-проверки:
+
+- Count/sum deals в board vs list для одного периода/pipeline/product
+- Gorbova Club counts по разным period presets
+- Verify URL persistence после refresh
 
 ## Изменяемые файлы
 
 
-| Файл                                  | Что                                                  |
-| ------------------------------------- | ---------------------------------------------------- |
-| `KanbanDealCard.tsx`                  | Drag opacity fix, move icon уменьшить, stable onOpen |
-| `KanbanColumn.tsx`                    | Stable onOpenDeal callback                           |
-| `AdminDeals.tsx`                      | Pipeline rename/delete UI                            |
-| Data: `orders_v2`                     | Merge deals + normalize amounts                      |
-| Data: `crm_pipelines`                 | Delete 8 module pipelines                            |
-| Data: `crm_pipeline_stages`           | Delete 32 module stages                              |
-| Data: `crm_pipeline_product_bindings` | Rebind modules                                       |
-| Data: `audit_logs`                    | merge + normalization audit                          |
+| Файл                   | Что                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `useDealsBoard.ts`     | Добавить dateFrom/dateTo фильтрацию                                                                           |
+| `DealsKanbanBoard.tsx` | Прокинуть dateFrom/dateTo props                                                                               |
+| `AdminDeals.tsx`       | URL-based dateFilter, pipeline selector в обоих режимах, pipeline filter в list query, redesigned selector UI |
+| `pipelineService.ts`   | Добавить `reorderPipelines`                                                                                   |
+| `usePipelines.ts`      | Добавить reorder mutation                                                                                     |
 
 
 ## DoD
 
-1. Drag: source card → placeholder (opacity-30), один ghost, без двоения
-2. Move icon уменьшена до h-3 w-3
-3. 8 module pipelines слиты в ЦБ 1 ступень 2.0
-4. Module bindings перепривязаны
-5. 156 legacy deals нормализованы (÷27)
-6. Исключены: Gorbova Club, Платная консультация
-7. Pipeline rename/delete UI в selector
-8. Guard для непустых/bound pipelines
-9. Основная защищена от удаления
-10. Summary/pipeline sums реалистичны
-11. Audit записи по merge и normalization
-12. Machine-check proof: counts + sums per pipeline
+1. Period filter применяется и в list, и в board
+2. Period filter сохраняется в URL
+3. Pipeline selector виден в обоих режимах
+4. List-view фильтрует по pipeline
+5. Reorder pipelines работает и сохраняется
+6. Pipeline selector визуально переработан
+7. Gorbova Club = 1001 подтверждено
+8. Machine-check: list и board дают одинаковый dataset на одном периоде
+9. Комбинации pipeline + period + product + tariff корректны
