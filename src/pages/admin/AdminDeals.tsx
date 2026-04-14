@@ -231,7 +231,6 @@ export default function AdminDeals() {
   const [search, setSearch] = useState("");
   const [activePreset, setActivePreset] = useState("all");
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showBulkEditDialog, setShowBulkEditDialog] = useState(false);
   const [showBulkExtendDialog, setShowBulkExtendDialog] = useState(false);
@@ -239,10 +238,16 @@ export default function AdminDeals() {
   const [dateFilter, setDateFilter] = useState<DateFilter>({ from: undefined, to: undefined });
   const [displayLimit, setDisplayLimit] = useState(PAGE_SIZE);
 
-  // View mode: list or board
+  // View mode & filters from URL
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = (searchParams.get("view") === "board" ? "board" : "list") as "list" | "board";
   const selectedPipelineId = searchParams.get("pipeline") || null;
+  const selectedProductId = searchParams.get("product") || null;
+  const selectedTariffIds = useMemo(() => {
+    const raw = searchParams.get("tariffs");
+    if (!raw) return [] as string[];
+    return raw.split(",").filter(Boolean);
+  }, [searchParams]);
 
   const setViewMode = useCallback((mode: "list" | "board") => {
     setSearchParams((prev) => {
