@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CopyableIdChip } from "@/components/ui/CopyableIdChip";
-import { Globe, ExternalLink, Link2, Unlink, Copy, Plus, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
+import { Globe, ExternalLink, Link2, Unlink, Copy, Plus, Minus, AlertTriangle, CheckCircle2, XCircle, Info } from "lucide-react";
 import { toast } from "sonner";
 import { getCanonicalPricingUrl, getCanonicalPageUrl } from "@/lib/productCanonicalUrl";
 import { resolveProductPageState, getProductPageDiagnostic, type ProductPageDiagnostic } from "@/lib/resolveProductPageState";
