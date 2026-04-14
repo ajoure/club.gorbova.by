@@ -48,8 +48,10 @@ export interface TariffCardData {
   // Nested data (from public EF)
   features?: TariffCardFeature[];
   offers?: TariffCardOffer[];
-  // Visual config from meta.card_config
+  // Visual config: direct card_config (from admin preview) or from meta.card_config (from public EF)
   card_config?: CardConfig;
+  meta?: { card_config?: CardConfig; [key: string]: any } | null;
+}
 }
 
 interface TariffCardProps {
@@ -80,7 +82,8 @@ export function TariffCard({
   showButtons = true,
   priceSuffix = "BYN",
 }: TariffCardProps) {
-  const cc = tariff.card_config;
+  // Resolve card_config: direct prop (admin preview) > meta.card_config (public EF)
+  const cc = tariff.card_config || tariff.meta?.card_config;
 
   // Resolve data: props override → nested in tariff → empty
   const resolvedFeatures = featuresProp ?? tariff.features ?? [];

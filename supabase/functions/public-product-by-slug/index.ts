@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
         id, code, name, description, badge, subtitle, price_monthly,
         period_label, access_days, features, is_popular,
         discount_enabled, discount_percent, original_price,
-        trial_enabled, trial_days, trial_price, trial_auto_charge, sort_order
+        trial_enabled, trial_days, trial_price, trial_auto_charge, sort_order, meta
       `)
       .eq("product_id", product.id)
       .eq("is_active", true)
@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
             tariffs_title: "Тарифы",
             tariffs_subtitle: "Выберите подходящий формат участия",
             show_badges: true,
-            price_suffix: "BYN/мес",
+            price_suffix: "BYN",
           },
         },
         tariffs: tariffsWithPrices,
