@@ -131,14 +131,12 @@ export async function createStage(
   // Auto-pick color if not provided
   const resolvedColor = color || getNextStageColor(openStages.map((s) => s.color));
 
-  // Shift closed stages up
-  for (const cs of closedStages) {
-    if (cs.order_index >= newIndex) {
-      await supabase
-        .from("crm_pipeline_stages")
-        .update({ order_index: cs.order_index + 1 })
-        .eq("id", cs.id);
-    }
+  // Two-phase shift: move closed stages to negative zone to avoid unique constraint
+  for (let i = 0; i < closedStages.length; i++) {
+    await supabase
+      .from("crm_pipeline_stages")
+      .update({ order_index: -(i + 1000) })
+      .eq("id", closedStages[i].id);
   }
 
   const { data, error } = await supabase
@@ -147,6 +145,15 @@ export async function createStage(
     .select()
     .single();
   if (error) throw error;
+
+  // Phase 2: restore closed stages after the new one
+  for (let i = 0; i < closedStages.length; i++) {
+    await supabase
+      .from("crm_pipeline_stages")
+      .update({ order_index: newIndex + 1 + i })
+      .eq("id", closedStages[i].id);
+  }
+
   await writeAudit("pipeline_stage.created", { stage_id: data.id, pipeline_id: pipelineId, name });
   return data as unknown as CrmPipelineStage;
 }
