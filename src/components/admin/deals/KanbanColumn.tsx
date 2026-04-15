@@ -146,6 +146,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           onDeselectAll={() => onDeselectAllInStage?.(stageId)}
           onEnterSelectionMode={onEnterSelectionMode}
           onExitSelectionMode={onExitSelectionMode}
+          dragHandleProps={dragHandleProps}
         />
 
         {/* Bulk assign button for unassigned column */}
