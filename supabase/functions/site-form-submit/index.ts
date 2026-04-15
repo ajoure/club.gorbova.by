@@ -70,6 +70,10 @@ interface RequestBody {
   product_id?: string;
   tariff_id?: string;
   auth_mode?: boolean;
+  product_binding_enabled?: boolean;
+  deal_creation_enabled?: boolean;
+  pipeline_id?: string;
+  pipeline_stage_id?: string;
 }
 
 // ─── Main ───
@@ -80,9 +84,19 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // 1. Parse & validate
     const body: RequestBody = await req.json();
-    const { page_id, fields, redirect_url, product_id, tariff_id, auth_mode } = body;
+    const {
+      page_id, fields, redirect_url,
+      auth_mode,
+      product_binding_enabled,
+      deal_creation_enabled,
+      pipeline_id,
+      pipeline_stage_id,
+    } = body;
+
+    // Guard: ignore product_id/tariff_id if product_binding not enabled
+    const productId = product_binding_enabled ? (body.product_id || undefined) : undefined;
+    const tariffId = product_binding_enabled ? (body.tariff_id || undefined) : undefined;
 
     if (!page_id || typeof page_id !== "string") {
       return json({ error: "page_id is required" }, 400);
@@ -91,13 +105,12 @@ Deno.serve(async (req) => {
       return json({ error: "fields must be an array" }, 400);
     }
 
-    // 2. Service client
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey);
 
-    // 3. Get workspace_id from site_pages
+    // Get workspace_id from site_pages
     const { data: page, error: pageError } = await admin
       .from("site_pages")
       .select("id, workspace_id")
@@ -117,26 +130,28 @@ Deno.serve(async (req) => {
         workspaceId,
         fields,
         redirectUrl: redirect_url,
-        productId: product_id,
-        tariffId: tariff_id,
+        productId,
+        tariffId,
+        dealCreationEnabled: !!deal_creation_enabled,
+        pipelineId: pipeline_id || null,
+        pipelineStageId: pipeline_stage_id || null,
         supabaseUrl,
         anonKey,
       });
     }
 
     // ─── LEGACY BRANCH (auth_mode=false) ───
-    // Check at least one field has a value
     const hasValue = fields.some((f) => f.value && f.value.trim());
     if (!hasValue) {
       return json({ error: "At least one field must have a value" }, 400);
     }
 
-    // 3b. Validate product/tariff if provided
-    if (product_id) {
+    // Validate product/tariff if provided
+    if (productId) {
       const { data: product, error: prodErr } = await admin
         .from("products_v2")
         .select("id")
-        .eq("id", product_id)
+        .eq("id", productId)
         .eq("is_active", true)
         .single();
 
@@ -144,12 +159,12 @@ Deno.serve(async (req) => {
         return json({ error: "Product not found or inactive" }, 400);
       }
 
-      if (tariff_id) {
+      if (tariffId) {
         const { data: tariff, error: tariffErr } = await admin
           .from("tariffs")
           .select("id")
-          .eq("id", tariff_id)
-          .eq("product_id", product_id)
+          .eq("id", tariffId)
+          .eq("product_id", productId)
           .eq("is_active", true)
           .single();
 
@@ -159,7 +174,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 4. Build form_data and field_mapping
+    // ─── STAGE 1: Create submission (always) ───
     const formData: Record<string, string> = {};
     const fieldMapping: Record<string, string> = {};
     const mappedValues: Record<string, string> = {};
@@ -173,11 +188,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. INSERT submission
     const submissionMeta: Record<string, unknown> = {};
     if (redirect_url) submissionMeta.redirect_url = redirect_url;
-    if (product_id) submissionMeta.product_id = product_id;
-    if (tariff_id) submissionMeta.tariff_id = tariff_id;
+    if (productId) submissionMeta.product_id = productId;
+    if (tariffId) submissionMeta.tariff_id = tariffId;
+    if (deal_creation_enabled) {
+      submissionMeta.deal_creation_enabled = true;
+      if (pipeline_id) submissionMeta.pipeline_id = pipeline_id;
+      if (pipeline_stage_id) submissionMeta.pipeline_stage_id = pipeline_stage_id;
+    }
 
     const { data: submission, error: subError } = await admin
       .from("site_form_submissions")
@@ -199,7 +218,7 @@ Deno.serve(async (req) => {
       return json({ error: "Failed to create submission" }, 500);
     }
 
-    // 6. Domain event
+    // Domain event
     await admin.from("domain_events").insert({
       event_type: "site_form_submitted",
       entity_type: "site_form_submission",
@@ -210,26 +229,21 @@ Deno.serve(async (req) => {
         submission_id: submission.id,
         public_id: submission.public_id,
         mapped_fields: Object.keys(mappedValues),
-        product_id: product_id || null,
-        tariff_id: tariff_id || null,
+        product_id: productId || null,
+        tariff_id: tariffId || null,
+        deal_creation_enabled: !!deal_creation_enabled,
       },
       status: "pending",
     });
 
-    // 7. CRM resolve step
+    // ─── STAGE 2: Resolve canonical profile ───
     let profileId: string | null = null;
     let resolveStatus = "skipped";
     let resolveDetails: Record<string, unknown> = { reason: "no_identifiers" };
 
-    const email = mappedValues.email
-      ? normalizeEmail(mappedValues.email)
-      : null;
-    const phone = mappedValues.phone
-      ? normalizePhone(mappedValues.phone)
-      : null;
-    const telegram = mappedValues.telegram_username
-      ? normalizeTelegram(mappedValues.telegram_username)
-      : null;
+    const email = mappedValues.email ? normalizeEmail(mappedValues.email) : null;
+    const phone = mappedValues.phone ? normalizePhone(mappedValues.phone) : null;
+    const telegram = mappedValues.telegram_username ? normalizeTelegram(mappedValues.telegram_username) : null;
 
     const hasIdentifier = email || phone || telegram;
 
@@ -261,9 +275,7 @@ Deno.serve(async (req) => {
 
           if (data) {
             const matched = data.filter((p) => {
-              const pLast9 = p.phone
-                ? p.phone.replace(/\D/g, "").slice(-9)
-                : "";
+              const pLast9 = p.phone ? p.phone.replace(/\D/g, "").slice(-9) : "";
               return pLast9 === last9;
             });
             if (matched.length > 0) {
@@ -290,10 +302,7 @@ Deno.serve(async (req) => {
       if (matchedProfiles.length === 1) {
         profileId = matchedProfiles[0].id;
         resolveStatus = "matched";
-        resolveDetails = {
-          match_type: matchType,
-          profile_id: profileId,
-        };
+        resolveDetails = { match_type: matchType, profile_id: profileId };
       } else if (matchedProfiles.length > 1) {
         resolveStatus = "failed";
         resolveDetails = {
@@ -301,19 +310,13 @@ Deno.serve(async (req) => {
           match_type: matchType,
           matched_count: matchedProfiles.length,
           matched_ids: matchedProfiles.map((p) => p.id),
-          email,
-          phone,
-          telegram,
         };
 
         await admin.from("audit_logs").insert({
           action: "site_form_ambiguous_match",
           actor_type: "system",
           actor_label: "site-form-submit",
-          meta: {
-            submission_id: submission.id,
-            ...resolveDetails,
-          },
+          meta: { submission_id: submission.id, ...resolveDetails },
         });
       } else {
         const newProfile: Record<string, unknown> = {
@@ -337,17 +340,11 @@ Deno.serve(async (req) => {
         if (createErr) {
           console.error("Create profile error:", createErr);
           resolveStatus = "failed";
-          resolveDetails = {
-            error: "profile_creation_failed",
-            message: createErr.message,
-          };
+          resolveDetails = { error: "profile_creation_failed", message: createErr.message };
         } else {
           profileId = newP!.id;
           resolveStatus = "created";
-          resolveDetails = {
-            profile_id: profileId,
-            fields_set: Object.keys(newProfile),
-          };
+          resolveDetails = { profile_id: profileId, fields_set: Object.keys(newProfile) };
         }
       }
 
@@ -359,7 +356,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 8. Domain execution for CRM resolve
+    // Domain execution for CRM resolve
     await admin.from("domain_executions").insert({
       event_type: "site_form_submitted",
       entity_type: "site_form_submission",
@@ -369,7 +366,7 @@ Deno.serve(async (req) => {
       result: resolveDetails,
     });
 
-    // 9. Audit log for submission
+    // Audit log
     await admin.from("audit_logs").insert({
       action: "site_form_submission_created",
       actor_type: "system",
@@ -384,36 +381,46 @@ Deno.serve(async (req) => {
       },
     });
 
-    // 10. Order creation (if product_id and profileId resolved)
-    if (product_id && profileId) {
-      await handleOrderCreation(admin, {
+    // ─── STAGE 3: Product binding (metadata only, no order creation) ───
+    // Product info is already in submissionMeta — no side effects needed here
+
+    // ─── STAGE 4: Deal creation ───
+    if (deal_creation_enabled && profileId) {
+      await handleDealCreation(admin, {
         submissionId: submission.id,
         profileId,
-        productId: product_id,
-        tariffId: tariff_id || null,
+        productId: productId || null,
+        tariffId: tariffId || null,
+        pipelineId: pipeline_id || null,
+        pipelineStageId: pipeline_stage_id || null,
         pageId: page_id,
         workspaceId,
         email,
         phone,
       });
-    } else if (product_id && !profileId) {
+    } else if (deal_creation_enabled && !profileId) {
       await admin.from("domain_executions").insert({
         event_type: "site_form_order_requested",
         entity_type: "site_form_submission",
         entity_id: submission.id,
         step: "create_order",
         status: "skipped",
-        result: {
-          reason: "no_profile_resolved",
-          resolve_status: resolveStatus,
+        result: { reason: "no_profile_resolved", resolve_status: resolveStatus },
+      });
+    } else if (!deal_creation_enabled) {
+      // Explicitly log that deal creation was skipped because disabled
+      await admin.from("audit_logs").insert({
+        action: "site_form_deal_creation_skipped",
+        actor_type: "system",
+        actor_label: "site-form-submit",
+        meta: {
+          submission_id: submission.id,
+          reason: "deal_creation_disabled",
         },
       });
     }
 
-    return json({
-      success: true,
-      submission_id: submission.id,
-    });
+    return json({ success: true, submission_id: submission.id });
   } catch (err) {
     console.error("site-form-submit error:", err);
     return json({ error: "Internal server error" }, 500);
@@ -432,11 +439,19 @@ async function handleAuthModeSubmit(
     redirectUrl?: string;
     productId?: string;
     tariffId?: string;
+    dealCreationEnabled: boolean;
+    pipelineId: string | null;
+    pipelineStageId: string | null;
     supabaseUrl: string;
     anonKey: string;
   }
 ) {
-  const { pageId, workspaceId, fields, redirectUrl, productId, tariffId, supabaseUrl, anonKey } = ctx;
+  const {
+    pageId, workspaceId, fields, redirectUrl,
+    productId, tariffId,
+    dealCreationEnabled, pipelineId, pipelineStageId,
+    supabaseUrl, anonKey,
+  } = ctx;
 
   // 1. Validate JWT — server-side trust
   const authHeader = req.headers.get("Authorization");
@@ -444,7 +459,6 @@ async function handleAuthModeSubmit(
     return json({ error: "Unauthorized: auth_mode requires authentication" }, 401);
   }
 
-  // Create user-scoped client to validate token
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
@@ -460,7 +474,7 @@ async function handleAuthModeSubmit(
     return json({ error: "Unauthorized: no user ID in token" }, 401);
   }
 
-  // 2. Find canonical profile by auth.uid()
+  // ─── STAGE 2: Resolve canonical profile ───
   let profileId: string | null = null;
   let profileCreated = false;
 
@@ -474,8 +488,6 @@ async function handleAuthModeSubmit(
   if (existingProfile) {
     profileId = existingProfile.id;
   } else {
-    // No canonical profile yet — create one in this workspace
-    // Pull user metadata from auth
     const { data: authUser } = await admin.auth.admin.getUserById(userId);
 
     const newProfile: Record<string, unknown> = {
@@ -505,7 +517,7 @@ async function handleAuthModeSubmit(
     profileCreated = true;
   }
 
-  // 3. Validate product/tariff
+  // Validate product/tariff if provided
   if (productId) {
     const { data: product, error: prodErr } = await admin
       .from("products_v2")
@@ -533,7 +545,7 @@ async function handleAuthModeSubmit(
     }
   }
 
-  // 4. Build form_data from extra fields
+  // Build form_data from extra fields
   const formData: Record<string, string> = {};
   const fieldMapping: Record<string, string> = {};
   const mappedValues: Record<string, string> = {};
@@ -547,10 +559,10 @@ async function handleAuthModeSubmit(
     }
   }
 
-  // 5. Server-side upsert pipeline — fill only NULL fields
+  // Server-side upsert pipeline — fill only NULL fields
   const profileUpdate: Record<string, unknown> = {};
 
-  // Instagram: normalize and fill only if NULL
+  // Instagram: normalize server-side as source of truth, fill only if NULL
   if (mappedValues.instagram_url) {
     const normalizedIg = normalizeInstagramServer(mappedValues.instagram_url);
     if (normalizedIg) {
@@ -561,9 +573,6 @@ async function handleAuthModeSubmit(
     }
   }
 
-  // Do NOT overwrite email, phone, first_name, last_name from form fields
-  // These are already set by auth signup flow
-
   if (Object.keys(profileUpdate).length > 0) {
     await admin
       .from("profiles")
@@ -571,7 +580,7 @@ async function handleAuthModeSubmit(
       .eq("id", profileId);
   }
 
-  // 6. Insert submission
+  // ─── STAGE 1: Create submission (always, new each time) ───
   const submissionMeta: Record<string, unknown> = {
     auth_mode: true,
     user_id: userId,
@@ -579,6 +588,11 @@ async function handleAuthModeSubmit(
   if (redirectUrl) submissionMeta.redirect_url = redirectUrl;
   if (productId) submissionMeta.product_id = productId;
   if (tariffId) submissionMeta.tariff_id = tariffId;
+  if (dealCreationEnabled) {
+    submissionMeta.deal_creation_enabled = true;
+    if (pipelineId) submissionMeta.pipeline_id = pipelineId;
+    if (pipelineStageId) submissionMeta.pipeline_stage_id = pipelineStageId;
+  }
 
   const { data: submission, error: subError } = await admin
     .from("site_form_submissions")
@@ -601,7 +615,7 @@ async function handleAuthModeSubmit(
     return json({ error: "Failed to create submission" }, 500);
   }
 
-  // 7. Domain event
+  // Domain event
   await admin.from("domain_events").insert({
     event_type: "auth_mode_form_submitted",
     entity_type: "site_form_submission",
@@ -617,12 +631,13 @@ async function handleAuthModeSubmit(
       mapped_fields: Object.keys(mappedValues),
       product_id: productId || null,
       tariff_id: tariffId || null,
+      deal_creation_enabled: dealCreationEnabled,
       telegram_linked: !!(existingProfile?.telegram_user_id),
     },
     status: "pending",
   });
 
-  // 8. Audit log
+  // Audit log
   await admin.from("audit_logs").insert({
     action: "auth_mode_form_submitted",
     actor_type: "user",
@@ -639,23 +654,44 @@ async function handleAuthModeSubmit(
     },
   });
 
-  // 9. Order creation
-  if (productId && profileId) {
+  // ─── STAGE 4: Deal creation ───
+  if (dealCreationEnabled && profileId) {
     const { data: profile } = await admin
       .from("profiles")
       .select("email, phone")
       .eq("id", profileId)
       .single();
 
-    await handleOrderCreation(admin, {
+    await handleDealCreation(admin, {
       submissionId: submission.id,
       profileId,
-      productId,
+      productId: productId || null,
       tariffId: tariffId || null,
+      pipelineId,
+      pipelineStageId,
       pageId,
       workspaceId,
       email: profile?.email || null,
       phone: profile?.phone || null,
+    });
+  } else if (dealCreationEnabled && !profileId) {
+    await admin.from("domain_executions").insert({
+      event_type: "site_form_order_requested",
+      entity_type: "site_form_submission",
+      entity_id: submission.id,
+      step: "create_order",
+      status: "skipped",
+      result: { reason: "no_profile_resolved" },
+    });
+  } else if (!dealCreationEnabled) {
+    await admin.from("audit_logs").insert({
+      action: "site_form_deal_creation_skipped",
+      actor_type: "system",
+      actor_label: "site-form-submit",
+      meta: {
+        submission_id: submission.id,
+        reason: "deal_creation_disabled",
+      },
     });
   }
 
@@ -665,22 +701,79 @@ async function handleAuthModeSubmit(
   });
 }
 
-// ─── Order creation helper ───
+// ─── Deal creation helper ───
+// Uses orders_v2 as operational carrier for site-form deals.
+// Reuse policy: reuse only draft/pending with same deterministic key.
+// Never reuse paid/completed/cancelled.
 
-async function handleOrderCreation(
+async function handleDealCreation(
   admin: ReturnType<typeof createClient>,
   ctx: {
     submissionId: string;
     profileId: string;
-    productId: string;
+    productId: string | null;
     tariffId: string | null;
+    pipelineId: string | null;
+    pipelineStageId: string | null;
     pageId: string;
     workspaceId: string;
     email: string | null;
     phone: string | null;
   }
 ) {
-  const { submissionId, profileId, productId, tariffId, pageId, workspaceId, email, phone } = ctx;
+  const {
+    submissionId, profileId, productId, tariffId,
+    pipelineId, pipelineStageId,
+    pageId, workspaceId, email, phone,
+  } = ctx;
+
+  // Validate pipeline/stage if provided
+  if (pipelineId) {
+    const { data: pipeline, error: pipeErr } = await admin
+      .from("crm_pipelines")
+      .select("id")
+      .eq("id", pipelineId)
+      .single();
+
+    if (pipeErr || !pipeline) {
+      console.error("Pipeline not found:", pipelineId);
+      await admin.from("domain_executions").insert({
+        event_type: "site_form_order_requested",
+        entity_type: "site_form_submission",
+        entity_id: submissionId,
+        step: "validate_pipeline",
+        status: "failed",
+        result: { error: "pipeline_not_found", pipeline_id: pipelineId },
+      });
+      return;
+    }
+
+    if (pipelineStageId) {
+      const { data: stage, error: stageErr } = await admin
+        .from("crm_pipeline_stages")
+        .select("id")
+        .eq("id", pipelineStageId)
+        .eq("pipeline_id", pipelineId)
+        .single();
+
+      if (stageErr || !stage) {
+        console.error("Stage not found or not in pipeline:", pipelineStageId);
+        await admin.from("domain_executions").insert({
+          event_type: "site_form_order_requested",
+          entity_type: "site_form_submission",
+          entity_id: submissionId,
+          step: "validate_pipeline_stage",
+          status: "failed",
+          result: {
+            error: "stage_not_found_or_wrong_pipeline",
+            pipeline_id: pipelineId,
+            pipeline_stage_id: pipelineStageId,
+          },
+        });
+        return;
+      }
+    }
+  }
 
   await admin.from("domain_events").insert({
     event_type: "site_form_order_requested",
@@ -691,23 +784,43 @@ async function handleOrderCreation(
       profile_id: profileId,
       product_id: productId,
       tariff_id: tariffId,
+      pipeline_id: pipelineId,
+      pipeline_stage_id: pipelineStageId,
     },
     status: "pending",
   });
 
   try {
+    // Deterministic dedup key: profile + product + pipeline + stage + reconcile_source
     let dedupQuery = admin
       .from("orders_v2")
       .select("id, order_number")
       .eq("profile_id", profileId)
-      .eq("product_id", productId)
       .eq("reconcile_source", "site_form")
       .in("status", ["draft", "pending"]);
+
+    if (productId) {
+      dedupQuery = dedupQuery.eq("product_id", productId);
+    } else {
+      dedupQuery = dedupQuery.is("product_id", null);
+    }
 
     if (tariffId) {
       dedupQuery = dedupQuery.eq("tariff_id", tariffId);
     } else {
       dedupQuery = dedupQuery.is("tariff_id", null);
+    }
+
+    if (pipelineId) {
+      dedupQuery = dedupQuery.eq("pipeline_id", pipelineId);
+    } else {
+      dedupQuery = dedupQuery.is("pipeline_id", null);
+    }
+
+    if (pipelineStageId) {
+      dedupQuery = dedupQuery.eq("pipeline_stage_id", pipelineStageId);
+    } else {
+      dedupQuery = dedupQuery.is("pipeline_stage_id", null);
     }
 
     const { data: existingOrders } = await dedupQuery.limit(1);
@@ -744,6 +857,8 @@ async function handleOrderCreation(
           profile_id: profileId,
           product_id: productId,
           tariff_id: tariffId,
+          pipeline_id: pipelineId,
+          pipeline_stage_id: pipelineStageId,
           reason: "existing_draft",
         },
       });
@@ -751,6 +866,7 @@ async function handleOrderCreation(
       return;
     }
 
+    // Generate order number
     const { data: orderNumberData, error: orderNumErr } = await admin.rpc(
       "generate_order_number"
     );
@@ -763,16 +879,14 @@ async function handleOrderCreation(
         entity_id: submissionId,
         step: "create_order",
         status: "failed",
-        result: {
-          error: "generate_order_number_failed",
-          message: orderNumErr?.message || "No order number returned",
-        },
+        result: { error: "generate_order_number_failed", message: orderNumErr?.message || "No order number returned" },
       });
       return;
     }
 
     const orderNumber = orderNumberData as string;
 
+    // Resolve pricing from tariff offer
     let basePrice = 0;
     let finalPrice = 0;
     let offerId: string | null = null;
@@ -797,27 +911,34 @@ async function handleOrderCreation(
       }
     }
 
+    // Create draft order — product_id can be null (deal without product)
+    const orderInsert: Record<string, unknown> = {
+      order_number: orderNumber,
+      profile_id: profileId,
+      base_price: basePrice,
+      final_price: finalPrice,
+      currency: "BYN",
+      status: "draft",
+      reconcile_source: "site_form",
+      customer_email: email,
+      customer_phone: phone,
+      meta: {
+        submission_id: submissionId,
+        page_id: pageId,
+        workspace_id: workspaceId,
+        source: "site_form",
+      },
+    };
+
+    if (productId) orderInsert.product_id = productId;
+    if (tariffId) orderInsert.tariff_id = tariffId;
+    if (offerId) orderInsert.offer_id = offerId;
+    if (pipelineId) orderInsert.pipeline_id = pipelineId;
+    if (pipelineStageId) orderInsert.pipeline_stage_id = pipelineStageId;
+
     const { data: newOrder, error: orderErr } = await admin
       .from("orders_v2")
-      .insert({
-        order_number: orderNumber,
-        profile_id: profileId,
-        product_id: productId,
-        tariff_id: tariffId,
-        offer_id: offerId,
-        base_price: basePrice,
-        final_price: finalPrice,
-        currency: "BYN",
-        status: "draft",
-        reconcile_source: "site_form",
-        customer_email: email,
-        customer_phone: phone,
-        meta: {
-          submission_id: submissionId,
-          page_id: pageId,
-          workspace_id: workspaceId,
-        },
-      })
+      .insert(orderInsert)
       .select("id")
       .single();
 
@@ -829,10 +950,7 @@ async function handleOrderCreation(
         entity_id: submissionId,
         step: "create_order",
         status: "failed",
-        result: {
-          error: "order_insert_failed",
-          message: orderErr?.message,
-        },
+        result: { error: "order_insert_failed", message: orderErr?.message },
       });
       return;
     }
@@ -855,6 +973,8 @@ async function handleOrderCreation(
         base_price: basePrice,
         final_price: finalPrice,
         offer_id: offerId,
+        pipeline_id: pipelineId,
+        pipeline_stage_id: pipelineStageId,
         price_warning: priceWarning,
       },
     });
@@ -871,6 +991,8 @@ async function handleOrderCreation(
         product_id: productId,
         tariff_id: tariffId,
         offer_id: offerId,
+        pipeline_id: pipelineId,
+        pipeline_stage_id: pipelineStageId,
         base_price: basePrice,
         final_price: finalPrice,
       },
@@ -883,10 +1005,7 @@ async function handleOrderCreation(
       entity_id: submissionId,
       step: "create_order",
       status: "failed",
-      result: {
-        error: "unexpected_error",
-        message: String(err),
-      },
+      result: { error: "unexpected_error", message: String(err) },
     });
   }
 }
