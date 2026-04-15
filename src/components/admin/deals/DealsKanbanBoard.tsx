@@ -157,6 +157,14 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const handleDragStart = useCallback((e: DragStartEvent) => {
     if (bulkMode) return;
     const itemType = e.active.data?.current?.type;
+    console.info('[DealsKanbanBoard] drag-start', {
+      buildFingerprint: (window as any).__BUILD_FINGERPRINT__,
+      origin: window.location.origin,
+      activeId: e.active.id,
+      itemType,
+      pipelineId,
+      stageId: e.active.data?.current?.pipelineStageId ?? null,
+    });
     if (itemType === "stage") {
       setActiveStageId(e.active.id as string);
       setActiveDeal(null);
@@ -172,6 +180,12 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   // Unified drag end — route to stage reorder or deal move
   const handleDragEnd = useCallback((e: DragEndEvent) => {
     const itemType = e.active.data?.current?.type;
+    console.info('[DealsKanbanBoard] drag-end', {
+      activeId: e.active.id,
+      overId: e.over?.id ?? null,
+      itemType,
+      pipelineId,
+    });
 
     if (itemType === "stage") {
       // Stage reorder
@@ -232,8 +246,15 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
 
   const handleOpenDeal = useCallback((id: string) => {
     if (bulkMode) return;
+    console.info('[DealsKanbanBoard] onOpenDeal', {
+      buildFingerprint: (window as any).__BUILD_FINGERPRINT__,
+      origin: window.location.origin,
+      dealId: id,
+      pipelineId,
+      bulkMode,
+    });
     onOpenDeal(id);
-  }, [onOpenDeal, bulkMode]);
+  }, [onOpenDeal, bulkMode, pipelineId]);
 
   // Summary totals
   const summaryTotals = useMemo(() => {
@@ -302,6 +323,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       showMoveButton={canEdit && stages.length > 1 && !bulkMode}
       availableStages={stages.filter((s) => s.id !== stage.id)}
       canEdit={canEdit}
+      pipelineId={pipelineId}
       onRename={canEdit ? (name) => renameStage({ id: stage.id, name }) : undefined}
       onDelete={
         canEdit && stage.stage_type === "open"
