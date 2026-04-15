@@ -139,15 +139,26 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
         .in("order_id", ids);
       if (entError) console.error("[BulkDelete] Error deleting entitlements:", entError);
 
-      // Delete payments
-      const { error: paymentsError } = await supabase
+      // Step 1: Nullify self-references to avoid FK violation (refunds/chargebacks referencing parent payments)
+      const { count: nullifiedCount, error: nullifyError } = await supabase
+        .from("payments_v2")
+        .update({ reference_payment_id: null })
+        .in("order_id", ids);
+      if (nullifyError) {
+        console.error("[BulkDelete] Error nullifying payment references:", nullifyError);
+      } else {
+        console.log(`[BulkDelete] Nullified reference_payment_id for ${nullifiedCount ?? '?'} payments`);
+      }
+
+      // Step 2: Delete payments
+      const { error: paymentsError, count: deletedPaymentsCount } = await supabase
         .from("payments_v2")
         .delete()
         .in("order_id", ids);
       if (paymentsError) {
         console.error("[BulkDelete] Error deleting payments:", paymentsError);
       } else {
-        console.log(`[BulkDelete] Deleted payments for orders`);
+        console.log(`[BulkDelete] Deleted ${deletedPaymentsCount ?? '?'} payments for orders`);
       }
 
       // Delete orders
