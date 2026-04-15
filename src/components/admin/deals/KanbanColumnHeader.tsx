@@ -17,8 +17,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { MoreHorizontal, Pencil, Trash2, Shield } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { MoreHorizontal, Pencil, Trash2, Shield, Palette } from "lucide-react";
 import type { CrmPipelineStage } from "@/services/pipelineService";
+import { STAGE_PALETTE } from "@/lib/stagePalette";
 
 interface Props {
   name: string;
@@ -30,6 +36,7 @@ interface Props {
   canEdit: boolean;
   onRename?: (name: string) => void;
   onDelete?: (targetStageId: string) => void;
+  onChangeColor?: (color: string) => void;
   availableStages: CrmPipelineStage[];
   hasDeals: boolean;
   // Bulk selection props
@@ -57,6 +64,7 @@ export function KanbanColumnHeader({
   canEdit,
   onRename,
   onDelete,
+  onChangeColor,
   availableStages,
   hasDeals,
   selectedCount = 0,
@@ -69,6 +77,7 @@ export function KanbanColumnHeader({
   const [renameValue, setRenameValue] = useState(name);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [remapTargetId, setRemapTargetId] = useState<string>("");
+  const [showColorPicker, setShowColorPicker] = useState(false);
 
   const isClosed = stageType !== "open";
 
@@ -99,11 +108,11 @@ export function KanbanColumnHeader({
 
   return (
     <>
-      <div className="p-3 border-b border-border/20 sticky top-0 z-10 bg-card/30 backdrop-blur-xl rounded-t-2xl">
+      <div className="p-3 border-b border-border/20 sticky top-0 z-10 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {/* Bulk selection checkbox */}
-            {(bulkMode || totalInStage > 0) && onSelectAll && (
+            {/* Bulk selection checkbox — only visible in bulk mode */}
+            {bulkMode && totalInStage > 0 && onSelectAll && (
               <Checkbox
                 checked={isIndeterminate ? "indeterminate" : isAllSelected}
                 onCheckedChange={handleCheckboxChange}
@@ -144,7 +153,7 @@ export function KanbanColumnHeader({
             <Badge variant="secondary" className="h-5 text-[10px] px-1.5 font-semibold">
               {count}
             </Badge>
-            {canEdit && (onRename || onDelete) && (
+            {canEdit && (onRename || onDelete || onChangeColor) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
@@ -156,6 +165,12 @@ export function KanbanColumnHeader({
                     <DropdownMenuItem onClick={() => { setRenameValue(name); setIsRenaming(true); }}>
                       <Pencil className="h-3.5 w-3.5 mr-2" />
                       Переименовать
+                    </DropdownMenuItem>
+                  )}
+                  {onChangeColor && (
+                    <DropdownMenuItem onClick={() => setShowColorPicker(true)}>
+                      <Palette className="h-3.5 w-3.5 mr-2" />
+                      Сменить цвет
                     </DropdownMenuItem>
                   )}
                   {onDelete && (
@@ -192,6 +207,33 @@ export function KanbanColumnHeader({
           )}
         </div>
       </div>
+
+      {/* Color picker dialog */}
+      <Dialog open={showColorPicker} onOpenChange={setShowColorPicker}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Цвет стадии</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2 justify-center py-2">
+            {STAGE_PALETTE.map((c) => (
+              <button
+                key={c}
+                onClick={() => {
+                  onChangeColor?.(c);
+                  setShowColorPicker(false);
+                }}
+                className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${
+                  color.toLowerCase() === c.toLowerCase()
+                    ? "border-foreground ring-2 ring-foreground/20"
+                    : "border-transparent hover:border-border"
+                }`}
+                style={{ backgroundColor: c }}
+                title={c}
+              />
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Remap delete dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

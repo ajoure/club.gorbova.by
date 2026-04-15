@@ -26,6 +26,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { bulkAssignDealsToStage } from "@/services/pipelineService";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { getStageBackgroundStyle } from "@/lib/stagePalette";
 
 interface Props {
   stageId: string;
@@ -41,6 +42,7 @@ interface Props {
   canEdit: boolean;
   onRename?: (name: string) => void;
   onDelete?: (targetStageId: string) => void;
+  onChangeColor?: (color: string) => void;
   pipelineId?: string;
   // Bulk selection props
   bulkMode?: boolean;
@@ -64,6 +66,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   canEdit,
   onRename,
   onDelete,
+  onChangeColor,
   pipelineId,
   bulkMode,
   selectedDealIds,
@@ -77,10 +80,12 @@ export const KanbanColumn = memo(function KanbanColumn({
   const [bulkTarget, setBulkTarget] = useState<CrmPipelineStage | null>(null);
   const [isBulkAssigning, setIsBulkAssigning] = useState(false);
 
-  const isClosed = stageType === "closed_won" || stageType === "closed_lost";
   const isUnassigned = stageId === "__unassigned";
 
   const selectedCount = deals.filter((d) => selectedDealIds?.has(d.id)).length;
+
+  // Dynamic tinted background for ALL stages
+  const bgStyle = getStageBackgroundStyle(color, stageType);
 
   const handleBulkAssign = async () => {
     if (!bulkTarget || !pipelineId) return;
@@ -102,12 +107,14 @@ export const KanbanColumn = memo(function KanbanColumn({
     <>
       <div
         ref={setNodeRef}
+        style={{
+          backgroundColor: bgStyle.backgroundColor,
+          borderColor: isOver && !bulkMode ? undefined : bgStyle.borderColor,
+        }}
         className={cn(
           "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-all duration-200",
-          "border-border/30 bg-card/15 backdrop-blur-md",
-          isOver && !bulkMode && "border-primary/50 bg-primary/5 shadow-lg",
-          isClosed && stageType === "closed_won" && "bg-green-500/5 border-green-500/20",
-          isClosed && stageType === "closed_lost" && "bg-red-500/5 border-red-500/20"
+          "backdrop-blur-md",
+          isOver && !bulkMode && "border-primary/50 shadow-lg",
         )}
       >
         <KanbanColumnHeader
@@ -120,6 +127,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           canEdit={canEdit}
           onRename={onRename}
           onDelete={onDelete}
+          onChangeColor={stageType === "open" ? onChangeColor : undefined}
           availableStages={availableStages}
           hasDeals={deals.length > 0}
           selectedCount={selectedCount}
@@ -170,6 +178,8 @@ export const KanbanColumn = memo(function KanbanColumn({
                 bulkMode={bulkMode}
                 isSelected={selectedDealIds?.has(deal.id)}
                 onToggleSelect={onToggleSelect}
+                stageColor={color}
+                stageType={stageType}
               />
             ))
           )}

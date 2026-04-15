@@ -12,6 +12,15 @@ import {
   TrendingUp,
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
+import { getCardAccentColor } from "@/lib/stagePalette";
+
+// ─── Card field definitions (foundation for future configurable fields) ───
+interface CardField {
+  key: string;
+  label: string;
+  visible: boolean;
+  render: (deal: BoardDeal) => React.ReactNode | null;
+}
 
 interface Props {
   deal: BoardDeal;
@@ -22,6 +31,8 @@ interface Props {
   bulkMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (dealId: string) => void;
+  stageColor?: string;
+  stageType?: "open" | "closed_won" | "closed_lost";
 }
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
@@ -66,6 +77,8 @@ export const KanbanDealCard = memo(function KanbanDealCard({
   bulkMode,
   isSelected,
   onToggleSelect,
+  stageColor,
+  stageType,
 }: Props) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: deal.id,
@@ -90,15 +103,28 @@ export const KanbanDealCard = memo(function KanbanDealCard({
     }
   };
 
+  // Subtle left border accent from stage color
+  const accentColor = stageColor && stageType
+    ? getCardAccentColor(stageColor, stageType)
+    : undefined;
+
+  // Deduplicate: if product_name equals deal title (which IS product_name), don't show twice
+  const productName = deal.product_name || "—";
+  const tariffName = deal.tariff_name;
+
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{
+        ...style,
+        borderLeftColor: accentColor,
+        borderLeftWidth: accentColor ? "2px" : undefined,
+      }}
       className={cn(
         "group relative rounded-xl border border-border/30 transition-all duration-150",
         "bg-card/40 backdrop-blur-md hover:bg-card/60 hover:shadow-md hover:border-border/50",
         isDragging && "opacity-0 pointer-events-none",
-        stale && "border-l-2 border-l-amber-400",
+        stale && !accentColor && "border-l-2 border-l-amber-400",
         isSelected && "ring-2 ring-primary/40 bg-primary/5 border-primary/30"
       )}
     >
@@ -110,8 +136,8 @@ export const KanbanDealCard = memo(function KanbanDealCard({
           bulkMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
         )}
       >
-        {/* Top row: checkbox/product + status */}
-        <div className="flex items-start justify-between gap-1.5 mb-1.5">
+        {/* Row 1: Deal title (product) + status icon */}
+        <div className="flex items-start justify-between gap-1.5 mb-1">
           <div className="flex items-start gap-2 min-w-0">
             {bulkMode && (
               <Checkbox
@@ -122,20 +148,27 @@ export const KanbanDealCard = memo(function KanbanDealCard({
               />
             )}
             <span className="text-xs font-medium text-foreground truncate leading-tight">
-              {deal.product_name || "—"}
+              {productName}
             </span>
           </div>
           <Icon className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", iconColor)} />
         </div>
 
-        {/* Contact */}
+        {/* Row 2: Tariff (if different from product) */}
+        {tariffName && tariffName !== productName && (
+          <div className={cn("text-[11px] text-muted-foreground/80 truncate mb-1", bulkMode && "pl-6")}>
+            {tariffName}
+          </div>
+        )}
+
+        {/* Row 3: Contact */}
         {(deal.contact_name || deal.contact_email) && (
           <div className={cn("text-[11px] text-muted-foreground truncate mb-1", bulkMode && "pl-6")}>
             {deal.contact_name || deal.contact_email}
           </div>
         )}
 
-        {/* Amount + badges */}
+        {/* Row 4: Amount + badges */}
         <div className={cn("flex items-center gap-1.5 flex-wrap", bulkMode && "pl-6")}>
           <span className="text-sm font-semibold text-foreground">
             {formatCurrency(Number(deal.final_price || 0), deal.currency)}
@@ -159,11 +192,6 @@ export const KanbanDealCard = memo(function KanbanDealCard({
               trial
             </Badge>
           )}
-        </div>
-
-        {/* Order number */}
-        <div className={cn("text-[10px] text-muted-foreground/60 mt-1 font-mono", showMoveButton && !bulkMode && "pr-6", bulkMode && "pl-6")}>
-          {deal.order_number}
         </div>
       </div>
 
