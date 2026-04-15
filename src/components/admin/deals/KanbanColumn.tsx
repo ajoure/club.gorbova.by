@@ -42,6 +42,12 @@ interface Props {
   onRename?: (name: string) => void;
   onDelete?: (targetStageId: string) => void;
   pipelineId?: string;
+  // Bulk selection props
+  bulkMode?: boolean;
+  selectedDealIds?: Set<string>;
+  onToggleSelect?: (dealId: string) => void;
+  onSelectAllInStage?: (stageId: string) => void;
+  onDeselectAllInStage?: (stageId: string) => void;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
@@ -59,6 +65,11 @@ export const KanbanColumn = memo(function KanbanColumn({
   onRename,
   onDelete,
   pipelineId,
+  bulkMode,
+  selectedDealIds,
+  onToggleSelect,
+  onSelectAllInStage,
+  onDeselectAllInStage,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   const qc = useQueryClient();
@@ -68,6 +79,8 @@ export const KanbanColumn = memo(function KanbanColumn({
 
   const isClosed = stageType === "closed_won" || stageType === "closed_lost";
   const isUnassigned = stageId === "__unassigned";
+
+  const selectedCount = deals.filter((d) => selectedDealIds?.has(d.id)).length;
 
   const handleBulkAssign = async () => {
     if (!bulkTarget || !pipelineId) return;
@@ -92,7 +105,7 @@ export const KanbanColumn = memo(function KanbanColumn({
         className={cn(
           "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-all duration-200",
           "border-border/30 bg-card/15 backdrop-blur-md",
-          isOver && "border-primary/50 bg-primary/5 shadow-lg",
+          isOver && !bulkMode && "border-primary/50 bg-primary/5 shadow-lg",
           isClosed && stageType === "closed_won" && "bg-green-500/5 border-green-500/20",
           isClosed && stageType === "closed_lost" && "bg-red-500/5 border-red-500/20"
         )}
@@ -109,6 +122,11 @@ export const KanbanColumn = memo(function KanbanColumn({
           onDelete={onDelete}
           availableStages={availableStages}
           hasDeals={deals.length > 0}
+          selectedCount={selectedCount}
+          totalInStage={deals.length}
+          bulkMode={bulkMode}
+          onSelectAll={() => onSelectAllInStage?.(stageId)}
+          onDeselectAll={() => onDeselectAllInStage?.(stageId)}
         />
 
         {/* Bulk assign button for unassigned column */}
@@ -149,6 +167,9 @@ export const KanbanColumn = memo(function KanbanColumn({
                 onOpenDeal={onOpenDeal}
                 onMoveClick={onMoveClick}
                 showMoveButton={showMoveButton}
+                bulkMode={bulkMode}
+                isSelected={selectedDealIds?.has(deal.id)}
+                onToggleSelect={onToggleSelect}
               />
             ))
           )}

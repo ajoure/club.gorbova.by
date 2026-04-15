@@ -6,7 +6,8 @@ import { ProductCategoryBadge } from "@/components/ui/ProductCategoryBadge";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useDealsBulkDelete } from "@/hooks/useDealsBulkDelete";
 import { supabase } from "@/integrations/supabase/client";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/button";
@@ -653,169 +654,9 @@ export default function AdminDeals() {
     getItemId: (deal) => deal.id,
   });
 
-  // Bulk delete mutation (unchanged business logic)
-  const deleteMutation = useMutation({
-    mutationFn: async (ids: string[]) => {
-      console.log(`[AdminDeals] Starting deletion of ${ids.length} orders:`, ids);
-      
-      const { data: ordersToDelete, error: fetchError } = await supabase
-        .from("orders_v2")
-        .select("id, user_id, product_id, order_number, status, customer_email, products_v2(name, code, telegram_club_id)")
-        .in("id", ids);
-
-      if (fetchError) {
-        console.error("[AdminDeals] Failed to fetch orders for deletion:", fetchError);
-        throw new Error(`Не удалось получить данные сделок: ${fetchError.message}`);
-      }
-
-      if (!ordersToDelete || ordersToDelete.length === 0) {
-        throw new Error("Сделки не найдены или уже удалены");
-      }
-
-      console.log(`[AdminDeals] Found ${ordersToDelete.length} orders to delete`);
-
-      for (const order of ordersToDelete || []) {
-        if (order.status === "paid") {
-          console.log(`[AdminDeals] Canceling GetCourse for order ${order.order_number}`);
-          await supabase.functions.invoke("getcourse-cancel-deal", {
-            body: { order_id: order.id, reason: "deal_deleted_by_admin" },
-          }).catch(e => console.warn("[AdminDeals] GetCourse cancel failed:", e));
-        }
-      }
-
-      const { data: subscriptions, error: subsQueryError } = await supabase
-        .from("subscriptions_v2")
-        .select("id")
-        .in("order_id", ids);
-
-      if (subsQueryError) {
-        console.error("[AdminDeals] Error fetching subscriptions:", subsQueryError);
-      }
-
-      const subscriptionIds = subscriptions?.map(s => s.id) || [];
-      console.log(`[AdminDeals] Found ${subscriptionIds.length} subscriptions to delete`);
-
-      const uniqueUserIds = [...new Set(ordersToDelete.filter(o => o.user_id).map(o => o.user_id!))];
-
-      if (subscriptionIds.length > 0) {
-        // Delete installment_schedules via raw RPC since table may not be in generated types
-        const { error: installmentsError } = await (supabase as any)
-          .from("installment_schedules")
-          .delete()
-          .in("subscription_id", subscriptionIds);
-        if (installmentsError) {
-          console.error("[AdminDeals] Error deleting installments:", installmentsError);
-        }
-
-        const { error: subscriptionsError } = await supabase
-          .from("subscriptions_v2")
-          .delete()
-          .in("id", subscriptionIds);
-        if (subscriptionsError) {
-          console.error("[AdminDeals] Error deleting subscriptions:", subscriptionsError);
-          throw new Error(`Ошибка удаления подписок: ${subscriptionsError.message}`);
-        }
-        console.log(`[AdminDeals] Deleted ${subscriptionIds.length} subscriptions`);
-      }
-
-      // Revoke TG access for users that have no other active deals
-      for (const order of ordersToDelete) {
-        const product = order.products_v2 as any;
-        if (product?.telegram_club_id && order.user_id) {
-          const { count: otherActiveDeals } = await supabase
-            .from("orders_v2")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", order.user_id)
-            .eq("status", "paid")
-            .not("id", "in", `(${ids.join(",")})`);
-
-          const { count: activeSubscriptions } = await supabase
-            .from("subscriptions_v2")
-            .select("*", { count: "exact", head: true })
-            .eq("user_id", order.user_id)
-            .eq("status", "active");
-
-          if ((otherActiveDeals || 0) === 0 && (activeSubscriptions || 0) === 0) {
-            const { data: prof } = await supabase
-              .from("profiles")
-              .select("telegram_user_id")
-              .eq("user_id", order.user_id)
-              .single();
-
-            if (prof?.telegram_user_id) {
-              supabase.functions.invoke("telegram-club-access", {
-                body: {
-                  action: "revoke",
-                  telegram_user_id: prof.telegram_user_id,
-                  telegram_club_id: product.telegram_club_id,
-                  reason: "deal_deleted",
-                },
-              }).catch(console.error);
-            }
-          } else {
-            console.log(`[AdminDeals] Skipping TG revoke for ${order.order_number}: user has ${otherActiveDeals} other deals, ${activeSubscriptions} active subs`);
-          }
-        }
-      }
-
-      // Delete access ledger entries
-      const { error: ledgerError } = await supabase
-        .from("access_grant_ledger")
-        .delete()
-        .in("order_id", ids);
-      if (ledgerError) console.error("[AdminDeals] Error deleting ledger entries:", ledgerError);
-
-      // Delete entitlements
-      const { error: entError } = await supabase
-        .from("entitlements")
-        .delete()
-        .in("order_id", ids);
-      if (entError) console.error("[AdminDeals] Error deleting entitlements:", entError);
-
-      // Delete payments
-      const { error: paymentsError } = await supabase
-        .from("payments_v2")
-        .delete()
-        .in("order_id", ids);
-      if (paymentsError) {
-        console.error("[AdminDeals] Error deleting payments:", paymentsError);
-      } else {
-        console.log(`[AdminDeals] Deleted payments for orders`);
-      }
-
-      // Delete orders
-      console.log(`[AdminDeals] Attempting to delete orders:`, ids);
-      const { error, count } = await supabase
-        .from("orders_v2")
-        .delete()
-        .in("id", ids);
-
-      if (error) {
-        console.error("[AdminDeals] CRITICAL: Failed to delete orders:", error);
-        throw new Error(`Не удалось удалить сделки: ${error.message}. Код: ${error.code}`);
-      }
-
-      console.log(`[AdminDeals] Successfully deleted orders, count:`, count);
-
-      // Send notifications
-      for (const userId of uniqueUserIds) {
-        supabase.functions.invoke("send-access-revoked-notification", {
-          body: { user_id: userId, reason: "deal_deleted" },
-        }).catch(console.error);
-      }
-
-      return { deleted: ids.length };
-    },
-    onSuccess: (result) => {
-      toast.success(`Удалено ${result.deleted} сделок`);
-      clearSelection();
-      queryClient.invalidateQueries({ queryKey: ["admin-deals"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-deals-tab-counts"] });
-    },
-    onError: (error: any) => {
-      console.error("[AdminDeals] Delete mutation error:", error);
-      toast.error("Ошибка удаления: " + (error?.message || String(error)));
-    },
+  // Bulk delete — shared hook (same flow as kanban)
+  const deleteMutation = useDealsBulkDelete({
+    onSuccess: () => clearSelection(),
   });
 
   const handleBulkDelete = () => {
@@ -1179,6 +1020,7 @@ export default function AdminDeals() {
       {viewMode === "board" && activePipelineId && (
         <DealsKanbanBoard
           pipelineId={activePipelineId}
+          pipelineName={activePipeline?.name}
           isDefaultPipeline={activePipeline?.is_default}
           search={debouncedSearch}
           productId={selectedProductId}
