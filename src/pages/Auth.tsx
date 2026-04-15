@@ -630,17 +630,18 @@ export default function Auth() {
                 </Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('email') ? 'border-destructive' : ''}`}
-                    placeholder="your@email.com"
-                    required
-                    allowAutofill
-                    autoComplete="username"
-                  />
+                    <Input
+                     id="email"
+                     name="email"
+                     type="email"
+                     value={email}
+                     onChange={(e) => setEmail(e.target.value)}
+                     className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('email') ? 'border-destructive' : ''}`}
+                     placeholder="your@email.com"
+                     required
+                     allowAutofill
+                     autoComplete="username"
+                   />
                 </div>
                 {getFieldError('email') && (
                   <p className="text-sm text-destructive">{getFieldError('email')}</p>
@@ -687,6 +688,7 @@ export default function Auth() {
                           <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                           <Input
                             id="firstName"
+                            name="given-name"
                             type="text"
                             value={firstName}
                             onChange={(e) => setFirstName(e.target.value)}
@@ -694,6 +696,8 @@ export default function Auth() {
                             className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('firstName') ? 'border-destructive' : ''}`}
                             placeholder="Иван"
                             required
+                            allowAutofill
+                            autoComplete="given-name"
                           />
                         </div>
                         {getFieldError('firstName') && (
@@ -708,6 +712,7 @@ export default function Auth() {
                           <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                           <Input
                             id="lastName"
+                            name="family-name"
                             type="text"
                             value={lastName}
                             onChange={(e) => setLastName(e.target.value)}
@@ -715,6 +720,8 @@ export default function Auth() {
                             className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('lastName') ? 'border-destructive' : ''}`}
                             placeholder="Иванов"
                             required
+                            allowAutofill
+                            autoComplete="family-name"
                           />
                         </div>
                         {getFieldError('lastName') && (
@@ -752,6 +759,7 @@ export default function Auth() {
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
                       id="email"
+                      name="email"
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -760,7 +768,7 @@ export default function Auth() {
                       placeholder="your@email.com"
                       required
                       allowAutofill
-                      autoComplete="username"
+                      autoComplete={mode === "signup" ? "email" : "username"}
                     />
                   </div>
                   {getFieldError('email') && (
@@ -787,6 +795,7 @@ export default function Auth() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                     <Input
                       id="password"
+                      name={mode === "signup" ? "new-password" : "password"}
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -795,7 +804,7 @@ export default function Auth() {
                       placeholder="••••••••"
                       required
                       allowAutofill
-                      autoComplete="current-password"
+                      autoComplete={mode === "signup" ? "new-password" : "current-password"}
                     />
                   </div>
                   {getFieldError('password') && (
@@ -814,10 +823,13 @@ export default function Auth() {
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="confirmPassword"
+                        name="confirm-password"
                         type="password"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         onBlur={() => handleBlur('confirmPassword')}
+                        allowAutofill
+                        autoComplete="new-password"
                         className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
                         placeholder="••••••••"
                         required

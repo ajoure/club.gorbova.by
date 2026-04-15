@@ -1,4 +1,4 @@
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAuthBootstrap } from "@/hooks/useAuthBootstrap";
@@ -8,9 +8,13 @@ import { saveLastRoute } from "@/hooks/useLastRoute";
 /**
  * ProtectedRoute — deterministic state matrix:
  *
- *   loading === true           → spinner
- *   loading === false && !user → redirect to /auth
- *   loading === false && user  → render children
+ *   loading === true                        → spinner
+ *   loading === false && !user && !settled  → spinner (grace period for session restore)
+ *   loading === false && !user && settled   → redirect to /auth
+ *   loading === false && user               → render children
+ *
+ * The "settled" guard prevents premature redirects during HMR / preview reloads
+ * where getSession() hasn't finished restoring the session yet.
  *
  * Banned check uses canonical bootstrap profile (no separate profiles SELECT).
  */
@@ -23,6 +27,20 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const { profile, bootstrapReady } = useAuthBootstrap();
   const location = useLocation();
+  const [settled, setSettled] = useState(false);
+
+  // Grace period: after auth reports "no user", wait 300ms before redirecting.
+  // This gives getSession time to restore after HMR/preview reload.
+  useEffect(() => {
+    if (loading || user) {
+      // Auth still loading or user present — reset settled
+      setSettled(false);
+      return;
+    }
+    // loading=false && !user → start grace timer
+    const timer = setTimeout(() => setSettled(true), 300);
+    return () => clearTimeout(timer);
+  }, [loading, user]);
 
   // Save route for post-login redirect
   useEffect(() => {
@@ -32,7 +50,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   }, [user, loading, location.pathname, location.search]);
 
   // State matrix
-  if (loading) {
+  if (loading || (!user && !settled)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
