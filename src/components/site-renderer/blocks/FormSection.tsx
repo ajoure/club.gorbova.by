@@ -803,7 +803,7 @@ function AuthFormSection({
         </p>
 
         {telegramUiStatus === "linked" && (
-          <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm">
+          <div className="p-3 rounded-lg bg-primary/10 border border-primary/20 text-primary text-sm">
             ✓ Telegram успешно привязан!
           </div>
         )}
@@ -818,14 +818,13 @@ function AuthFormSection({
           <button
             type="button"
             onClick={handleStartTelegram}
-            disabled={telegramUiStatus === "starting"}
             className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             Привязать Telegram
           </button>
         )}
 
-        {(telegramUiStatus === "starting") && (
+        {telegramUiStatus === "starting" && (
           <div className="text-sm text-muted-foreground">Загрузка...</div>
         )}
 
