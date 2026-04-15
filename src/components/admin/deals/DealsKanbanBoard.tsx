@@ -474,15 +474,18 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
         )}
 
         {/* Bulk actions bar */}
-        <KanbanBulkActionsBar
-          selectedDealIds={selectedDealIds}
-          stages={stages}
-          pipelineId={pipelineId}
-          onClearSelection={clearSelection}
-          onSelectAll={selectAll}
-          totalDeals={deals.length}
-          visible={bulkMode && selectedDealIds.size > 0}
-        />
+        {bulkMode && selectedDealIds.size > 0 && (
+          <KanbanBulkActionsBar
+            selectedIds={selectedDealIds}
+            allDeals={deals}
+            stages={stages}
+            pipelineId={pipelineId}
+            pipelineName={pipelineName}
+            totalBoardDeals={deals.length}
+            onClearSelection={clearSelection}
+            onSelectAll={selectAll}
+          />
+        )}
       </div>
     </TooltipProvider>
   );
