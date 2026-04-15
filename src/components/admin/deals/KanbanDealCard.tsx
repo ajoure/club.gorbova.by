@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import {
   CheckCircle,
@@ -18,6 +19,9 @@ interface Props {
   isDragging?: boolean;
   onMoveClick?: (dealId: string, anchorEl: HTMLElement) => void;
   showMoveButton?: boolean;
+  bulkMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (dealId: string) => void;
 }
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
@@ -53,9 +57,19 @@ function isHighValue(deal: BoardDeal) {
   return Number(deal.final_price || 0) > 500;
 }
 
-export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpenDeal, isDragging, onMoveClick, showMoveButton }: Props) {
+export const KanbanDealCard = memo(function KanbanDealCard({
+  deal,
+  onOpenDeal,
+  isDragging,
+  onMoveClick,
+  showMoveButton,
+  bulkMode,
+  isSelected,
+  onToggleSelect,
+}: Props) {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: deal.id,
+    disabled: bulkMode,
   });
 
   const Icon = STATUS_ICONS[deal.status] || AlertTriangle;
@@ -68,6 +82,14 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpenDeal, i
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
 
+  const handleClick = () => {
+    if (bulkMode && onToggleSelect) {
+      onToggleSelect(deal.id);
+    } else if (!isDragging) {
+      onOpenDeal(deal.id);
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -76,35 +98,45 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpenDeal, i
         "group relative rounded-xl border border-border/30 transition-all duration-150",
         "bg-card/40 backdrop-blur-md hover:bg-card/60 hover:shadow-md hover:border-border/50",
         isDragging && "opacity-0 pointer-events-none",
-        stale && "border-l-2 border-l-amber-400"
+        stale && "border-l-2 border-l-amber-400",
+        isSelected && "ring-2 ring-primary/40 bg-primary/5 border-primary/30"
       )}
     >
-      {/* Drag handle zone */}
       <div
-        {...attributes}
-        {...listeners}
-        onClick={(e) => {
-          if (!isDragging) onOpenDeal(deal.id);
-        }}
-        className="p-3 cursor-grab active:cursor-grabbing"
+        {...(bulkMode ? {} : { ...attributes, ...listeners })}
+        onClick={handleClick}
+        className={cn(
+          "p-3",
+          bulkMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+        )}
       >
-        {/* Top row: product + status */}
+        {/* Top row: checkbox/product + status */}
         <div className="flex items-start justify-between gap-1.5 mb-1.5">
-          <span className="text-xs font-medium text-foreground truncate leading-tight">
-            {deal.product_name || "—"}
-          </span>
+          <div className="flex items-start gap-2 min-w-0">
+            {bulkMode && (
+              <Checkbox
+                checked={isSelected}
+                onCheckedChange={() => onToggleSelect?.(deal.id)}
+                className="mt-0.5 shrink-0"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
+            <span className="text-xs font-medium text-foreground truncate leading-tight">
+              {deal.product_name || "—"}
+            </span>
+          </div>
           <Icon className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", iconColor)} />
         </div>
 
         {/* Contact */}
         {(deal.contact_name || deal.contact_email) && (
-          <div className="text-[11px] text-muted-foreground truncate mb-1">
+          <div className={cn("text-[11px] text-muted-foreground truncate mb-1", bulkMode && "pl-6")}>
             {deal.contact_name || deal.contact_email}
           </div>
         )}
 
         {/* Amount + badges */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className={cn("flex items-center gap-1.5 flex-wrap", bulkMode && "pl-6")}>
           <span className="text-sm font-semibold text-foreground">
             {formatCurrency(Number(deal.final_price || 0), deal.currency)}
           </span>
@@ -130,13 +162,13 @@ export const KanbanDealCard = memo(function KanbanDealCard({ deal, onOpenDeal, i
         </div>
 
         {/* Order number */}
-        <div className={cn("text-[10px] text-muted-foreground/60 mt-1 font-mono", showMoveButton && "pr-6")}>
+        <div className={cn("text-[10px] text-muted-foreground/60 mt-1 font-mono", showMoveButton && !bulkMode && "pr-6", bulkMode && "pl-6")}>
           {deal.order_number}
         </div>
       </div>
 
-      {/* Compact move icon-button — simple button, no portal/dropdown */}
-      {showMoveButton && onMoveClick && (
+      {/* Compact move icon-button */}
+      {showMoveButton && onMoveClick && !bulkMode && (
         <button
           type="button"
           title="Переместить"

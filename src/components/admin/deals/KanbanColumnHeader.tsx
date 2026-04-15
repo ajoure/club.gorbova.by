@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +32,12 @@ interface Props {
   onDelete?: (targetStageId: string) => void;
   availableStages: CrmPipelineStage[];
   hasDeals: boolean;
+  // Bulk selection props
+  selectedCount?: number;
+  totalInStage?: number;
+  onSelectAll?: () => void;
+  onDeselectAll?: () => void;
+  bulkMode?: boolean;
 }
 
 const formatCurrency = (v: number) =>
@@ -52,6 +59,11 @@ export function KanbanColumnHeader({
   onDelete,
   availableStages,
   hasDeals,
+  selectedCount = 0,
+  totalInStage = 0,
+  onSelectAll,
+  onDeselectAll,
+  bulkMode,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
@@ -74,11 +86,40 @@ export function KanbanColumnHeader({
     }
   };
 
+  const isAllSelected = totalInStage > 0 && selectedCount === totalInStage;
+  const isIndeterminate = selectedCount > 0 && selectedCount < totalInStage;
+
+  const handleCheckboxChange = () => {
+    if (isAllSelected || isIndeterminate) {
+      onDeselectAll?.();
+    } else {
+      onSelectAll?.();
+    }
+  };
+
   return (
     <>
       <div className="p-3 border-b border-border/20 sticky top-0 z-10 bg-card/30 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
+            {/* Bulk selection checkbox */}
+            {(bulkMode || totalInStage > 0) && onSelectAll && (
+              <Checkbox
+                checked={isAllSelected}
+                // @ts-ignore — indeterminate is supported by radix
+                ref={(el) => {
+                  if (el) {
+                    const input = el as unknown as HTMLButtonElement;
+                    if (input.dataset) {
+                      input.dataset.state = isIndeterminate ? "indeterminate" : isAllSelected ? "checked" : "unchecked";
+                    }
+                  }
+                }}
+                onCheckedChange={handleCheckboxChange}
+                className="shrink-0"
+                aria-label={`Выделить все сделки в стадии ${name}`}
+              />
+            )}
             <div
               className="w-2.5 h-2.5 rounded-full shrink-0"
               style={{ backgroundColor: color }}
@@ -104,6 +145,11 @@ export function KanbanColumnHeader({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {selectedCount > 0 && (
+              <Badge variant="default" className="h-5 text-[10px] px-1.5 font-semibold bg-primary/20 text-primary">
+                {selectedCount}
+              </Badge>
+            )}
             <Badge variant="secondary" className="h-5 text-[10px] px-1.5 font-semibold">
               {count}
             </Badge>
@@ -156,7 +202,7 @@ export function KanbanColumnHeader({
         </div>
       </div>
 
-      {/* Remap delete dialog — styled */}
+      {/* Remap delete dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
