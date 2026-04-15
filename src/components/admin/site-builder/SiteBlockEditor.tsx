@@ -94,7 +94,7 @@ function getDefaultContent(type: BlockType): Record<string, unknown> {
     case "social": return { items: [], alignment: "center" };
     case "logos": return { items: [], logoHeight: 48, grayscale: false };
     case "spacer": return { height: 40 };
-    case "form": return { title: "", subtitle: "", buttonText: "Отправить", redirectUrl: "", fields: [], placeholderMessage: "Форма будет подключена позже" };
+    case "form": return { title: "", subtitle: "", buttonText: "Отправить", redirectUrl: "", fields: [], auth_mode: false, telegram_link: false, product_binding_enabled: false, product_id: "", tariff_id: "", deal_creation_enabled: false, pipeline_id: "", pipeline_stage_id: "" };
     case "accordion": return { items: [], allowMultiple: false };
     case "tabs": return { tabs: [] };
     case "callout": return { type: "info", content: "", title: "" };
