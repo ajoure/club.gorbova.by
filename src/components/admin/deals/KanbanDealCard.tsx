@@ -76,6 +76,7 @@ export const KanbanDealCard = memo(function KanbanDealCard({
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: deal.id,
     disabled: bulkMode,
+    data: { type: "deal" },
   });
 
   const Icon = STATUS_ICONS[deal.status] || AlertTriangle;
@@ -88,10 +89,19 @@ export const KanbanDealCard = memo(function KanbanDealCard({
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
 
-  const handleCardClick = () => {
+  const handleCardClick = (e: React.MouseEvent) => {
+    console.info('[KanbanCard] click', {
+      dealId: deal.id,
+      stageId: deal.pipeline_stage_id,
+      bulkMode,
+      target: (e.target as HTMLElement)?.tagName,
+      currentTarget: (e.currentTarget as HTMLElement)?.tagName,
+      pointerEvents: (e.target as HTMLElement)?.style?.pointerEvents,
+    });
     if (bulkMode && onToggleSelect) {
       onToggleSelect(deal.id);
     } else {
+      console.info('[KanbanCard] calling onOpenDeal', deal.id);
       onOpenDeal(deal.id);
     }
   };
