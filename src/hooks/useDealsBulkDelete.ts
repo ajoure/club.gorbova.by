@@ -139,26 +139,46 @@ export function useDealsBulkDelete(opts?: { onSuccess?: () => void }) {
         .in("order_id", ids);
       if (entError) console.error("[BulkDelete] Error deleting entitlements:", entError);
 
-      // Step 1: Nullify self-references to avoid FK violation (refunds/chargebacks referencing parent payments)
-      const { count: nullifiedCount, error: nullifyError } = await supabase
+      // Step A: Collect all payment IDs for the target orders
+      const { data: paymentsToDelete, error: paymentsFetchError } = await supabase
         .from("payments_v2")
-        .update({ reference_payment_id: null })
+        .select("id")
         .in("order_id", ids);
-      if (nullifyError) {
-        console.error("[BulkDelete] Error nullifying payment references:", nullifyError);
-      } else {
-        console.log(`[BulkDelete] Nullified reference_payment_id for ${nullifiedCount ?? '?'} payments`);
+
+      if (paymentsFetchError) {
+        console.error("[BulkDelete] Failed to fetch payment IDs:", paymentsFetchError);
+        throw new Error(`Не удалось получить платежи: ${paymentsFetchError.message}`);
       }
 
-      // Step 2: Delete payments
-      const { error: paymentsError, count: deletedPaymentsCount } = await supabase
-        .from("payments_v2")
-        .delete()
-        .in("order_id", ids);
-      if (paymentsError) {
-        console.error("[BulkDelete] Error deleting payments:", paymentsError);
+      const paymentIds = paymentsToDelete?.map(p => p.id) || [];
+      console.log(`[BulkDelete] Step A: Found ${paymentIds.length} payments for ${ids.length} orders`);
+
+      if (paymentIds.length > 0) {
+        // Step B: Nullify ALL inbound references pointing to these payment IDs
+        const { count: nullifiedCount, error: nullifyError } = await supabase
+          .from("payments_v2")
+          .update({ reference_payment_id: null })
+          .in("reference_payment_id", paymentIds);
+
+        if (nullifyError) {
+          console.error("[BulkDelete] Failed to nullify inbound payment refs:", nullifyError);
+          throw new Error(`Не удалось разорвать ссылки платежей: ${nullifyError.message}`);
+        }
+        console.log(`[BulkDelete] Step B: Nullified ${nullifiedCount ?? '?'} inbound references`);
+
+        // Step C: Delete payments
+        const { error: paymentsError, count: deletedPaymentsCount } = await supabase
+          .from("payments_v2")
+          .delete()
+          .in("order_id", ids);
+
+        if (paymentsError) {
+          console.error("[BulkDelete] CRITICAL: Failed to delete payments:", paymentsError);
+          throw new Error(`Не удалось удалить платежи: ${paymentsError.message}. Код: ${paymentsError.code}`);
+        }
+        console.log(`[BulkDelete] Step C: Deleted ${deletedPaymentsCount ?? '?'} payments`);
       } else {
-        console.log(`[BulkDelete] Deleted ${deletedPaymentsCount ?? '?'} payments for orders`);
+        console.log(`[BulkDelete] No payments found, skipping payment cleanup`);
       }
 
       // Delete orders
