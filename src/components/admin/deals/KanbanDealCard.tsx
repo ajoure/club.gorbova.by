@@ -135,7 +135,6 @@ export const KanbanDealCard = memo(function KanbanDealCard({
                 className="shrink-0 mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
                 style={{ touchAction: "none" }}
                 onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
               >
                 <GripVertical className="h-3.5 w-3.5" />
               </div>
