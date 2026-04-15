@@ -156,6 +156,18 @@ export function KanbanColumnHeader({
                 {selectedCount}
               </Badge>
             )}
+            {/* Compact exit selection button */}
+            {bulkMode && onExitSelectionMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+                onClick={onExitSelectionMode}
+                title="Выйти из выделения"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            )}
             <Badge variant="secondary" className="h-5 text-[10px] px-1.5 font-semibold">
               {count}
             </Badge>
