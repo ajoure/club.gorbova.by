@@ -51,6 +51,7 @@ interface Props {
   onSelectAllInStage?: (stageId: string) => void;
   onDeselectAllInStage?: (stageId: string) => void;
   onEnterSelectionMode?: () => void;
+  onExitSelectionMode?: () => void;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
