@@ -1,5 +1,4 @@
 import { memo } from "react";
-import { useDraggable } from "@dnd-kit/core";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -14,11 +13,11 @@ import {
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
 import { getCardAccentColor } from "@/lib/stagePalette";
+import { DealDragHandle } from "./DealDragHandle";
 
 interface Props {
   deal: BoardDeal;
   onOpenDeal: (dealId: string) => void;
-  isDragging?: boolean;
   onMoveClick?: (dealId: string, anchorEl: HTMLElement) => void;
   showMoveButton?: boolean;
   bulkMode?: boolean;
@@ -26,6 +25,7 @@ interface Props {
   onToggleSelect?: (dealId: string) => void;
   stageColor?: string;
   stageType?: "open" | "closed_won" | "closed_lost";
+  pipelineId?: string;
 }
 
 const STATUS_ICONS: Record<string, typeof CheckCircle> = {
@@ -64,7 +64,6 @@ function isHighValue(deal: BoardDeal) {
 export const KanbanDealCard = memo(function KanbanDealCard({
   deal,
   onOpenDeal,
-  isDragging,
   onMoveClick,
   showMoveButton,
   bulkMode,
@@ -72,38 +71,61 @@ export const KanbanDealCard = memo(function KanbanDealCard({
   onToggleSelect,
   stageColor,
   stageType,
+  pipelineId,
 }: Props) {
-  const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: deal.id,
-    disabled: bulkMode,
-    data: { type: "deal" },
-  });
-
   const Icon = STATUS_ICONS[deal.status] || AlertTriangle;
   const iconColor = STATUS_COLORS[deal.status] || "text-muted-foreground";
 
   const stale = isStale(deal);
   const highValue = isHighValue(deal);
 
-  const style = transform
-    ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
-    : undefined;
-
   const handleCardClick = (e: React.MouseEvent) => {
-    console.info('[KanbanCard] click', {
+    const target = e.target as HTMLElement | null;
+    const currentTarget = e.currentTarget as HTMLElement | null;
+    console.info('[KanbanCard] content-click', {
+      buildFingerprint: (window as any).__BUILD_FINGERPRINT__,
+      origin: window.location.origin,
       dealId: deal.id,
+      pipelineId,
       stageId: deal.pipeline_stage_id,
       bulkMode,
-      target: (e.target as HTMLElement)?.tagName,
-      currentTarget: (e.currentTarget as HTMLElement)?.tagName,
-      pointerEvents: (e.target as HTMLElement)?.style?.pointerEvents,
+      defaultPrevented: e.isDefaultPrevented(),
+      target: target?.tagName,
+      currentTarget: currentTarget?.tagName,
+      targetPointerEvents: target ? window.getComputedStyle(target).pointerEvents : undefined,
+      currentTargetPointerEvents: currentTarget ? window.getComputedStyle(currentTarget).pointerEvents : undefined,
+      targetZIndex: target ? window.getComputedStyle(target).zIndex : undefined,
+      currentTargetZIndex: currentTarget ? window.getComputedStyle(currentTarget).zIndex : undefined,
+      hitContentZone: !!target?.closest('[data-kanban-deal-content]'),
+      hitHandle: !!target?.closest('[data-kanban-deal-handle]'),
+      hitMoveButton: !!target?.closest('[data-kanban-deal-move]'),
+      hitCheckbox: !!target?.closest('[data-kanban-deal-checkbox]'),
     });
     if (bulkMode && onToggleSelect) {
       onToggleSelect(deal.id);
     } else {
-      console.info('[KanbanCard] calling onOpenDeal', deal.id);
+      console.info('[KanbanCard] calling onOpenDeal', {
+        dealId: deal.id,
+        pipelineId,
+        stageId: deal.pipeline_stage_id,
+      });
       onOpenDeal(deal.id);
     }
+  };
+
+  const handleContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    if (bulkMode && onToggleSelect) {
+      onToggleSelect(deal.id);
+      return;
+    }
+    console.info('[KanbanCard] keyboard-open', {
+      dealId: deal.id,
+      pipelineId,
+      stageId: deal.pipeline_stage_id,
+    });
+    onOpenDeal(deal.id);
   };
 
   // Stable left border accent from stage color — always 2px, only color changes
@@ -116,70 +138,69 @@ export const KanbanDealCard = memo(function KanbanDealCard({
 
   return (
     <div
-      ref={setNodeRef}
       style={{
-        ...style,
         borderLeftColor: accentColor,
         borderLeftWidth: "2px",
       }}
       className={cn(
         "relative rounded-xl border border-border/30",
         "bg-card/40",
-        isDragging && "opacity-0 pointer-events-none",
         isSelected && "ring-2 ring-primary/40 bg-primary/5 border-primary/30"
       )}
+      data-kanban-deal-card="true"
+      data-deal-id={deal.id}
     >
-      {/* Card content — click opens deal or toggles selection */}
+      {!bulkMode && (
+        <DealDragHandle
+          dealId={deal.id}
+          pipelineId={pipelineId}
+          stageId={deal.pipeline_stage_id}
+          className="absolute left-3 top-3 z-10"
+        />
+      )}
+      {bulkMode && (
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={() => onToggleSelect?.(deal.id)}
+          className="absolute left-3 top-3 z-10 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          data-kanban-deal-checkbox="true"
+        />
+      )}
+
       <div
         onClick={handleCardClick}
-        className="p-3 cursor-pointer"
+        onKeyDown={handleContentKeyDown}
+        role="button"
+        tabIndex={0}
+        data-kanban-deal-content="true"
+        className={cn(
+          "cursor-pointer p-3 outline-none",
+          "focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          bulkMode ? "pl-10" : "pl-9",
+          showMoveButton && !bulkMode && "pr-9"
+        )}
       >
-        {/* Row 1: Drag handle + Deal title (product) + status icon */}
-        <div className="flex items-start justify-between gap-1.5 mb-1">
-          <div className="flex items-start gap-1.5 min-w-0">
-            {/* Compact drag handle — inline, not overlay */}
-            {!bulkMode && (
-              <div
-                {...attributes}
-                {...listeners}
-                className="shrink-0 mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
-                style={{ touchAction: "none" }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <GripVertical className="h-3.5 w-3.5" />
-              </div>
-            )}
-            {bulkMode && (
-              <Checkbox
-                checked={isSelected}
-                onCheckedChange={() => onToggleSelect?.(deal.id)}
-                className="mt-0.5 shrink-0"
-                onClick={(e) => e.stopPropagation()}
-              />
-            )}
-            <span className="text-xs font-medium text-foreground truncate leading-tight">
-              {productName}
-            </span>
-          </div>
+        <div className="mb-1 flex items-start justify-between gap-2">
+          <span className="min-w-0 truncate text-xs font-medium leading-tight text-foreground">
+            {productName}
+          </span>
           <Icon className={cn("h-3.5 w-3.5 shrink-0 mt-0.5", iconColor)} />
         </div>
 
-        {/* Row 2: Tariff (if different from product) */}
         {tariffName && tariffName !== productName && (
-          <div className={cn("text-[11px] text-muted-foreground/80 truncate mb-1", (bulkMode || !bulkMode) && "pl-5")}>
+          <div className="mb-1 truncate text-[11px] text-muted-foreground/80">
             {tariffName}
           </div>
         )}
 
-        {/* Row 3: Contact */}
         {(deal.contact_name || deal.contact_email) && (
-          <div className={cn("text-[11px] text-muted-foreground truncate mb-1", (bulkMode || !bulkMode) && "pl-5")}>
+          <div className="mb-1 truncate text-[11px] text-muted-foreground">
             {deal.contact_name || deal.contact_email}
           </div>
         )}
 
-        {/* Row 4: Amount + badges */}
-        <div className={cn("flex items-center gap-1.5 flex-wrap", "pl-5")}>
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm font-semibold text-foreground">
             {formatCurrency(Number(deal.final_price || 0), deal.currency)}
           </span>
@@ -211,15 +232,29 @@ export const KanbanDealCard = memo(function KanbanDealCard({
           type="button"
           title="Переместить"
           aria-label="Переместить в другую стадию"
+          data-kanban-deal-move="true"
           className={cn(
             "absolute bottom-2 right-2 flex items-center justify-center",
             "h-5 w-5",
+            "z-10",
             "text-muted-foreground/50 hover:text-foreground",
             "opacity-0 hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           )}
-          onPointerDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            console.info('[KanbanCard] move-button-pointerdown', {
+              dealId: deal.id,
+              pipelineId,
+              stageId: deal.pipeline_stage_id,
+            });
+          }}
           onClick={(e) => {
             e.stopPropagation();
+            console.info('[KanbanCard] move-button-click', {
+              dealId: deal.id,
+              pipelineId,
+              stageId: deal.pipeline_stage_id,
+            });
             onMoveClick(deal.id, e.currentTarget);
           }}
         >

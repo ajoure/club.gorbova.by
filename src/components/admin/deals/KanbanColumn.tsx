@@ -192,6 +192,7 @@ export const KanbanColumn = memo(function KanbanColumn({
                 onToggleSelect={onToggleSelect}
                 stageColor={color}
                 stageType={stageType}
+                pipelineId={pipelineId}
               />
             ))
           )}
