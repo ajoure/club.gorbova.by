@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, X, Lock, Shield } from "lucide-react";
+import { Plus, Trash2, Lock, Shield, Package, Handshake } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -23,22 +23,26 @@ const MAPPING_OPTIONS = [
   { value: "instagram_url", label: "Instagram" },
 ];
 
-// System fields for auth_mode — not editable as custom fields
 const SYSTEM_AUTH_FIELDS = [
-  { label: "Email", type: "email", mapping: "email", key: "email" },
-  { label: "Имя", type: "text", mapping: "first_name", key: "first_name" },
-  { label: "Фамилия", type: "text", mapping: "last_name", key: "last_name" },
-  { label: "Телефон", type: "phone", mapping: "phone", key: "phone" },
-  { label: "Пароль", type: "password", mapping: "password", key: "password" },
+  { label: "Email", type: "email", key: "email" },
+  { label: "Имя", type: "text", key: "first_name" },
+  { label: "Фамилия", type: "text", key: "last_name" },
+  { label: "Телефон", type: "phone", key: "phone" },
+  { label: "Пароль", type: "password", key: "password" },
 ];
 
 export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
-  const authMode = (content.auth_mode as boolean) || false;
-  const telegramLink = (content.telegram_link as boolean) || false;
-  const fields = (content.fields as Array<{ label: string; type: string; required: boolean; mapping?: string }>) || [];
+  const authMode = (content.auth_mode as boolean) ?? false;
+  const telegramLink = (content.telegram_link as boolean) ?? false;
+  const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
+  const dealCreationEnabled = (content.deal_creation_enabled as boolean) ?? false;
   const selectedProductId = (content.product_id as string) || "";
   const selectedTariffId = (content.tariff_id as string) || "";
+  const selectedPipelineId = (content.pipeline_id as string) || "";
+  const selectedPipelineStageId = (content.pipeline_stage_id as string) || "";
+  const fields = (content.fields as Array<{ label: string; type: string; required: boolean; mapping?: string }>) || [];
 
+  // ─── Data queries ───
   const { data: products } = useQuery({
     queryKey: ["products-v2-active-for-form"],
     queryFn: async () => {
@@ -68,37 +72,42 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
     enabled: !!selectedProductId,
   });
 
+  const { data: pipelines } = useQuery({
+    queryKey: ["crm-pipelines-for-form"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("crm_pipelines")
+        .select("id, name")
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: dealCreationEnabled,
+  });
+
+  const { data: pipelineStages } = useQuery({
+    queryKey: ["crm-pipeline-stages-for-form", selectedPipelineId],
+    queryFn: async () => {
+      if (!selectedPipelineId) return [];
+      const { data, error } = await supabase
+        .from("crm_pipeline_stages")
+        .select("id, name, order_index")
+        .eq("pipeline_id", selectedPipelineId)
+        .order("order_index");
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: dealCreationEnabled && !!selectedPipelineId,
+  });
+
   const updateField = (index: number, patch: Record<string, unknown>) => {
     const updated = fields.map((f, i) => (i === index ? { ...f, ...patch } : f));
     onChange({ ...content, fields: updated });
   };
 
-  const handleProductChange = (productId: string) => {
-    if (productId === "none") {
-      const { product_id: _p, tariff_id: _t, ...rest } = content;
-      onChange(rest);
-    } else {
-      const { tariff_id: _t, ...rest } = content;
-      onChange({ ...rest, product_id: productId });
-    }
-  };
-
-  const handleTariffChange = (tariffId: string) => {
-    if (tariffId === "none") {
-      const { tariff_id: _t, ...rest } = content;
-      onChange(rest);
-    } else {
-      onChange({ ...content, tariff_id: tariffId });
-    }
-  };
-
-  const clearProductBinding = () => {
-    const { product_id: _p, tariff_id: _t, ...rest } = content;
-    onChange(rest);
-  };
-
   return (
     <div className="space-y-3">
+      {/* Basic form settings */}
       <div>
         <Label className="text-xs">Заголовок</Label>
         <Input value={(content.title as string) || ""} onChange={(e) => onChange({ ...content, title: e.target.value })} />
@@ -118,10 +127,10 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
           onChange={(e) => onChange({ ...content, redirectUrl: e.target.value })} 
           placeholder="https://... или /thank-you"
         />
-        <p className="text-[10px] text-muted-foreground mt-1">Оставьте пустым для показа сообщения «Спасибо». Допустимы только https:// или относительные пути (/...)</p>
+        <p className="text-[10px] text-muted-foreground mt-1">Оставьте пустым для показа сообщения «Спасибо»</p>
       </div>
 
-      {/* Auth mode toggle */}
+      {/* ─── Auth mode toggle ─── */}
       <div className="border rounded-lg p-3 space-y-3 bg-muted/30">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -139,7 +148,6 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
 
         {authMode && (
           <div className="space-y-3 pt-2 border-t">
-            {/* System fields display (locked) */}
             <div>
               <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
               <div className="space-y-1">
@@ -162,49 +170,130 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
               />
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Предложит привязать Telegram для доступов и уведомлений. Пользователь может пропустить.
+              Предложит привязать Telegram. Пользователь может пропустить.
             </p>
           </div>
         )}
       </div>
 
-      {/* Product/Tariff binding */}
+      {/* ─── Product binding toggle ─── */}
       <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
         <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold">Привязка к продукту</Label>
-          {selectedProductId && (
-            <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={clearProductBinding}>
-              <X className="h-3 w-3 mr-1" /> Убрать
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <Package className="h-4 w-4 text-primary" />
+            <Label className="text-xs font-semibold">Привязка к продукту</Label>
+          </div>
+          <Switch
+            checked={productBindingEnabled}
+            onCheckedChange={(v) => onChange({ ...content, product_binding_enabled: v })}
+          />
         </div>
-        <Select value={selectedProductId || "none"} onValueChange={handleProductChange}>
-          <SelectTrigger><SelectValue placeholder="Без привязки" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="none">Без привязки</SelectItem>
-            {(products || []).map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {selectedProductId && (
-          <div>
-            <Label className="text-xs">Тариф (опционально)</Label>
-            <Select value={selectedTariffId || "none"} onValueChange={handleTariffChange}>
-              <SelectTrigger><SelectValue placeholder="Без тарифа" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Без тарифа</SelectItem>
-                {(tariffs || []).map((t) => (
-                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        <p className="text-[10px] text-muted-foreground">
+          Информация о продукте и тарифе будет сохранена в заявке.
+        </p>
+
+        {productBindingEnabled && (
+          <div className="space-y-2 pt-2 border-t">
+            <div>
+              <Label className="text-xs">Продукт</Label>
+              <Select 
+                value={selectedProductId || "none"} 
+                onValueChange={(v) => {
+                  const pid = v === "none" ? "" : v;
+                  onChange({ ...content, product_id: pid, tariff_id: "" });
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Выберите продукт" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Не выбран</SelectItem>
+                  {(products || []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedProductId && (
+              <div>
+                <Label className="text-xs">Тариф (опционально)</Label>
+                <Select 
+                  value={selectedTariffId || "none"} 
+                  onValueChange={(v) => onChange({ ...content, tariff_id: v === "none" ? "" : v })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Без тарифа" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без тарифа</SelectItem>
+                    {(tariffs || []).map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         )}
-        <p className="text-[10px] text-muted-foreground">При отправке формы автоматически создастся сделка с выбранным продуктом</p>
       </div>
 
-      {/* Custom fields (extra fields / questionnaire) */}
+      {/* ─── Deal creation toggle ─── */}
+      <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Handshake className="h-4 w-4 text-primary" />
+            <Label className="text-xs font-semibold">Создавать сделку</Label>
+          </div>
+          <Switch
+            checked={dealCreationEnabled}
+            onCheckedChange={(v) => onChange({ ...content, deal_creation_enabled: v })}
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          При отправке формы автоматически создастся сделка в CRM.
+        </p>
+
+        {dealCreationEnabled && (
+          <div className="space-y-2 pt-2 border-t">
+            <div>
+              <Label className="text-xs">Воронка <span className="text-destructive">*</span></Label>
+              <Select 
+                value={selectedPipelineId || "none"} 
+                onValueChange={(v) => {
+                  const pid = v === "none" ? "" : v;
+                  onChange({ ...content, pipeline_id: pid, pipeline_stage_id: "" });
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Выберите воронку" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Не выбрана</SelectItem>
+                  {(pipelines || []).map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {selectedPipelineId && (
+              <div>
+                <Label className="text-xs">Стадия <span className="text-destructive">*</span></Label>
+                <Select 
+                  value={selectedPipelineStageId || "none"} 
+                  onValueChange={(v) => onChange({ ...content, pipeline_stage_id: v === "none" ? "" : v })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Выберите стадию" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Не выбрана</SelectItem>
+                    {(pipelineStages || []).map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {dealCreationEnabled && (!selectedPipelineId || !selectedPipelineStageId) && (
+              <p className="text-[10px] text-destructive">Для создания сделки необходимо выбрать воронку и стадию</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ─── Custom fields ─── */}
       <div>
         <Label className="text-xs font-semibold mb-2 block">
           {authMode ? "Дополнительные поля анкеты" : "Поля формы"}
