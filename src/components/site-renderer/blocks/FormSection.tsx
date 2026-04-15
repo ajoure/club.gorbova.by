@@ -698,7 +698,6 @@ function AuthFormSection({
           <PhoneInput
             value={phone}
             onChange={(val) => setPhone(val || "")}
-            defaultCountry="BY"
           />
         </div>
         <div>
