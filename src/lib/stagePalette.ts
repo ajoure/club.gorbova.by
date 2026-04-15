@@ -43,7 +43,7 @@ export function getNextStageColor(existingOpenColors: string[]): string {
     }
   }
   let minCount = Infinity;
-  let best = STAGE_PALETTE[0];
+  let best: string = STAGE_PALETTE[0];
   for (const [color, count] of counts) {
     if (count < minCount) {
       minCount = count;

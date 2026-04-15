@@ -60,10 +60,10 @@ export async function createPipeline(name: string): Promise<CrmPipeline> {
 
   // Create default closed stages for every new pipeline
   const stageSeeds = [
-    { name: "Новая", color: "#6366f1", order_index: 0, stage_type: "open", is_default: true },
-    { name: "В работе", color: "#f59e0b", order_index: 1, stage_type: "open", is_default: false },
-    { name: "Успешно", color: "#22c55e", order_index: 2, stage_type: "closed_won", is_default: false },
-    { name: "Отказ", color: "#ef4444", order_index: 3, stage_type: "closed_lost", is_default: false },
+    { name: "Новая", color: STAGE_PALETTE[0], order_index: 0, stage_type: "open", is_default: true },
+    { name: "В работе", color: STAGE_PALETTE[1], order_index: 1, stage_type: "open", is_default: false },
+    { name: "Успешно", color: SEMANTIC_COLORS.closed_won, order_index: 2, stage_type: "closed_won", is_default: false },
+    { name: "Отказ", color: SEMANTIC_COLORS.closed_lost, order_index: 3, stage_type: "closed_lost", is_default: false },
   ];
   await supabase.from("crm_pipeline_stages").insert(
     stageSeeds.map((s) => ({ ...s, pipeline_id: data.id }))
