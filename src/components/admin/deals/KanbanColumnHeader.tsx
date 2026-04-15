@@ -45,6 +45,7 @@ interface Props {
   onSelectAll?: () => void;
   onDeselectAll?: () => void;
   bulkMode?: boolean;
+  onEnterSelectionMode?: () => void;
 }
 
 const formatCurrency = (v: number) =>
@@ -72,6 +73,7 @@ export function KanbanColumnHeader({
   onSelectAll,
   onDeselectAll,
   bulkMode,
+  onEnterSelectionMode,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
@@ -99,6 +101,12 @@ export function KanbanColumnHeader({
   const isIndeterminate = selectedCount > 0 && selectedCount < totalInStage;
 
   const handleCheckboxChange = () => {
+    if (!bulkMode) {
+      // First click: only enter selection mode, don't select anything
+      onEnterSelectionMode?.();
+      return;
+    }
+    // Already in selection mode — toggle select all
     if (isAllSelected || isIndeterminate) {
       onDeselectAll?.();
     } else {
@@ -111,8 +119,8 @@ export function KanbanColumnHeader({
       <div className="p-3 border-b border-border/20 sticky top-0 z-10 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {/* Bulk selection checkbox — only visible in bulk mode */}
-            {bulkMode && totalInStage > 0 && onSelectAll && (
+            {/* Bulk selection checkbox — always visible when stage has deals */}
+            {totalInStage > 0 && onSelectAll && (
               <Checkbox
                 checked={isIndeterminate ? "indeterminate" : isAllSelected}
                 onCheckedChange={handleCheckboxChange}

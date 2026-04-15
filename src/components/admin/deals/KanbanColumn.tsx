@@ -50,6 +50,7 @@ interface Props {
   onToggleSelect?: (dealId: string) => void;
   onSelectAllInStage?: (stageId: string) => void;
   onDeselectAllInStage?: (stageId: string) => void;
+  onEnterSelectionMode?: () => void;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
@@ -73,6 +74,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onToggleSelect,
   onSelectAllInStage,
   onDeselectAllInStage,
+  onEnterSelectionMode,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   const qc = useQueryClient();
@@ -135,6 +137,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           bulkMode={bulkMode}
           onSelectAll={() => onSelectAllInStage?.(stageId)}
           onDeselectAll={() => onDeselectAllInStage?.(stageId)}
+          onEnterSelectionMode={onEnterSelectionMode}
         />
 
         {/* Bulk assign button for unassigned column */}

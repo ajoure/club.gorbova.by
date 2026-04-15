@@ -117,14 +117,13 @@ export const KanbanDealCard = memo(function KanbanDealCard({
       ref={setNodeRef}
       style={{
         ...style,
-        borderLeftColor: accentColor,
-        borderLeftWidth: accentColor ? "2px" : undefined,
+        borderLeftColor: accentColor || "transparent",
+        borderLeftWidth: "2px",
       }}
       className={cn(
         "group relative rounded-xl border border-border/30 transition-all duration-150",
         "bg-card/40 backdrop-blur-md hover:bg-card/60 hover:shadow-md hover:border-border/50",
         isDragging && "opacity-0 pointer-events-none",
-        stale && !accentColor && "border-l-2 border-l-amber-400",
         isSelected && "ring-2 ring-primary/40 bg-primary/5 border-primary/30"
       )}
     >

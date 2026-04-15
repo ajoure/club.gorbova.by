@@ -14,7 +14,7 @@ import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
 import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
-import { Plus, CheckSquare, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -252,28 +252,19 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       <div className="space-y-3">
         <KanbanSummaryStrip {...summaryTotals} />
 
-        {/* Selection mode toolbar */}
-        {canEdit && (
+        {/* Selection info strip (no button — mode enters via stage checkbox) */}
+        {selectionMode && (
           <div className="flex items-center gap-2 px-1">
             <Button
-              variant={selectionMode ? "default" : "outline"}
+              variant="outline"
               size="sm"
-              className="h-8 text-xs gap-1.5"
-              onClick={toggleSelectionMode}
+              className="h-7 text-xs gap-1.5"
+              onClick={clearSelection}
             >
-              {selectionMode ? (
-                <>
-                  <X className="h-3.5 w-3.5" />
-                  Выйти из выделения
-                </>
-              ) : (
-                <>
-                  <CheckSquare className="h-3.5 w-3.5" />
-                  Режим выделения
-                </>
-              )}
+              <X className="h-3.5 w-3.5" />
+              Выйти из выделения
             </Button>
-            {selectionMode && selectedDealIds.size > 0 && (
+            {selectedDealIds.size > 0 && (
               <span className="text-xs text-muted-foreground">
                 Выбрано: {selectedDealIds.size}
               </span>
@@ -308,6 +299,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onToggleSelect={toggleSelect}
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
+                onEnterSelectionMode={() => setSelectionMode(true)}
               />
             )}
 
@@ -341,6 +333,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onToggleSelect={toggleSelect}
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
+                onEnterSelectionMode={() => setSelectionMode(true)}
               />
             ))}
 
