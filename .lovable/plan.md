@@ -2,74 +2,70 @@
 
 &nbsp;
 
-1. Уточни, что в этом спринте canonical entity для формы — это profile + submission + contact/deal, а не order.
-  В DoD у тебя появилось submission, order и deal, хотя выше order не описан как обязательная часть form-flow. Если order реально не создаётся текущим site-form-submit, не добавляй его в DoD.
-2. Для ветки signup -> email_confirm_wait нужно явно описать resume-механику.
-  Иначе пользователь подтвердит email, вернётся на страницу, а форма не поймёт, с какого шага продолжать. Нужен один из вариантов:
+1. Уточни fix для preview более жёстко:
+  проблема не только в auto-submit, а в том, что preview использует реальную admin-session.
+  Нужно явно ввести guard:
   &nbsp;
-  - при возврате и наличии session автоматически переходить в telegram_prompt / extra_fields;
-  - либо кнопка Я подтвердил email с повторной проверкой session;
-  - либо polling/recheck session.
-    Это должно быть явно в плане.
+  - в preview/editor режиме **никогда не выполнять реальный submit автоматически**;
+  - шаг check_session может использоваться только для UI-ветвления, но не для side effects;
+  - submit только по явному нажатию пользователя.
+    Это надо зафиксировать как hard rule, а не только как “убрать auto-submit”.
   &nbsp;
-3. В useInlineAuth зафиксируй, что extract из PaymentDialog — **add-only refactor без изменения step-contracts**.
-  Иначе подрядчик может “заодно” переписать текущий payment-flow.
-  Нужно прямо указать: сигнатуры, тексты ошибок, step-переходы и UX PaymentDialog не меняются.
-4. Для site-form-submit уточни механизм server-side определения пользователя.
-  Недостаточно просто написать “через JWT / getClaims()”. Нужен явный контракт:
+2. Добавь явное различение контекстов:
   &nbsp;
-  - request приходит с bearer token;
-  - функция валидирует токен;
-  - при отсутствии/невалидности токена и auth_mode=true → 401;
-  - при auth_mode=false отсутствие JWT допустимо и работает legacy-ветка.
+  - editor preview
+  - published public page
+    И опиши, как renderer понимает, что он в preview. Сейчас это не прописано, а без этого fix останется полуописанным.
   &nbsp;
-5. Tenant guard нужно расписать до конца:
-  не только page_id -> workspace_id, но и что:
+3. В FormSection.tsx лучше не вводить абстрактный шаг ready_to_submit без точного контракта.
+  Зафиксируй state machine явно:
   &nbsp;
-  - найденный canonical profile должен принадлежать тому же workspace_id, либо
-  - если профиль глобально-auth, должен существовать безопасный механизм attach/create profile именно в workspace страницы.
-    Иначе возможен кейс: один auth user, но несколько workspaces/сайтов.
+  - check_session
+  - email_check/login/signup/email_confirm_wait
+  - telegram_prompt
+  - extra_fields
+  - ready
+  - submitting
+  - success
+    И отдельно: ready всегда требует явного клика по кнопке.
   &nbsp;
-6. Сейчас в плане не хватает явной стратегии создания canonical profile, если auth.users уже есть, а profiles.user_id = auth.uid() ещё нет.
-  Нужно добавить отдельную ветку:
+4. В formContentSchema и defaults добавь ещё одно поле-контракт для preview-safe поведения не нужно.
+  Не надо хранить preview/runtime flags в block content.
+  Это надо прямо записать в план, чтобы подрядчик не начал сохранять технические runtime состояния в JSON блока.
+5. Для product_binding_enabled=false и deal_creation_enabled=false недостаточно “игнорировать на backend”.
+  Нужно выбрать один из двух режимов и зафиксировать:
   &nbsp;
-  - auth user найден,
-  - profile по user_id нет,
-  - создаём новый canonical profile в нужном workspace,
-  - без ghost merge,
-  - без lookup по email/phone как trusted attach.
+  - либо при выключении toggle зависимые поля очищаются из content,
+  - либо поля сохраняются, но гарантированно не участвуют в runtime.
+    Сейчас у тебя implied второй вариант, но это лучше написать явно.
   &nbsp;
-7. Для Telegram шага зафиксируй, что это **non-blocking optional step** даже когда telegram_link=true.
-  Иначе подрядчик может сделать его обязательным.
-  Нужны явные переходы:
+6. Для deal_creation_enabled=true опиши validation pipeline точнее:
   &nbsp;
-  - start,
-  - skip,
-  - already_linked,
-  - completed,
-  - timeout/return later.
-    Submit должен оставаться доступным по разрешённому сценарию.
+  - pipeline должен существовать;
+  - stage должен существовать;
+  - stage должен принадлежать pipeline;
+  - если validation не проходит, submit не должен тихо продолжаться как success.
+    Нужен явный error contract.
   &nbsp;
-8. В FormBlockEditor уточни, что locked system fields не попадают в обычный массив editable custom fields.
-  Лучше явно разделить:
+7. Не называй reuse guard “race guard: 5 секунд” как готовое решение без оговорки.
+  Это слишком эвристично. Лучше так:
   &nbsp;
-  - systemAuthFields
-  - customFields
-    Иначе можно получить дубли keys/mappings в одном списке.
+  - основной reuse идёт по deterministic key для draft/pending;
+  - дополнительный anti-double-submit guard допустим как короткое временное окно, только если не ломает нормальные повторные отправки.
+    Иначе можно случайно скрыть легитимный второй submit.
   &nbsp;
-9. Для instagram_url лучше не записывать “username”, если колонка называется instagram_url, без явной оговорки формата.
-  Нужен единый канонический формат хранения. Выбери один вариант и зафиксируй:
+8. Для site_form_submissions укажи явно, что новая submission создаётся **всегда**, даже если deal reuse-ится.
+  Это у тебя уже подразумевается, но лучше зафиксировать как hard invariant.
+9. Для orders_v2 уточни exact contract сценария “deal without product”:
   &nbsp;
-  - либо хранить только username,
-  - либо всегда хранить полный URL.
-    Сейчас у тебя нормализация превращает значение в username, но колонка называется как URL — это создаёт двусмысленность.
+  - допускается product_id = null
+  - допускается tariff_id = null
+  - UI/queries/admin views должны это переваривать без ошибок
+    Это должно быть не только в dry-run, но и в DoD.
   &nbsp;
-10. Если решишь хранить username, добавь это как явный compat-rule:
-  profiles.instagram_url временно хранит normalized handle, несмотря на legacy name колонки.
-  Иначе позже это станет источником путаницы в UI/API.
-11. В плане нужен duplicate/idempotency guard для повторного submit.
-  Сейчас в DoD есть “не создаёт второй профиль”, но нет явного правила для submission/deal.
-  Нужно описать:
+10. Для tenant guard формулировка пока слишком сильная:
+  “все сущности в этом workspace” может не соответствовать текущей схеме, если profiles/CRM не workspace-scoped напрямую.
+  Лучше зафиксировать мягче и точнее:
 
 &nbsp;
 
@@ -77,11 +73,10 @@
 
 &nbsp;
 
-- создаётся ли новая submission каждый раз,
-- создаётся ли новая сделка каждый раз,
-- есть ли dedupe ключ,
-- что считается нормальным повторным поведением.
-  Иначе подрядчик сам решит это по ходу.
+- submission всегда создаётся в workspace страницы;
+- order/deal создаётся в контексте страницы/сайта этого workspace;
+- profile linkage не должен приводить к cross-page/cross-tenant side effects вне допустимой текущей модели.
+  Иначе подрядчик может упереться в несуществующие поля/ограничения.
 
 &nbsp;
 
@@ -89,8 +84,7 @@
 
 &nbsp;
 
-12. Для audit/domain events лучше не обещать сразу полноценные domain_events, если в текущем контуре site-form-submit их фактически нет.
-  Либо:
+11. Для Telegram recheck добавь явные статусы UI:
 
 &nbsp;
 
@@ -98,9 +92,13 @@
 
 &nbsp;
 
-- явно требуй audit_logs как обязательный минимум,
-- а domain_events пометь как только если этот контур уже использует event-core.
-  Иначе план может раздуть scope лишней архитектурой.
+- idle
+- starting
+- pending
+- linked
+- failed
+- skipped
+  И правило переходов. Сейчас логика описана, но не как контракт.
 
 &nbsp;
 
@@ -108,11 +106,9 @@
 
 &nbsp;
 
-13. Нужен явный STOP-guard:
-  если extract useInlineAuth начинает ломать PaymentDialog, sprint должен остановиться на add-only compatible adapter, а не на полном переписывании payment auth flow.
-  Это важно как технический предохранитель.
-14. В DoD добавь machine-check/observable proof, а не только функциональные формулировки.
-  Минимум:
+12. Уточни, что visibilitychange listener — add-only enhancement, но не единственный механизм.
+  Основной механизм должен быть manual recheck/retry button, потому что visibilitychange ненадёжен сам по себе.
+13. В разделе про Instagram normalization добавь, что normalization применяется:
 
 &nbsp;
 
@@ -120,11 +116,9 @@
 
 &nbsp;
 
-- один [profiles.id](http://profiles.id) на одного auth user в рамках workspace,
-- отсутствие нового ghost-profile в БД,
-- submission.profile_id/contact_id/deal_id указывают на canonical linkage,
-- audit_logs содержат записи по auth-mode submit,
-- auth_mode=false smoke-test проходит на старом JSON блока.
+- в renderer перед submit
+- и повторно на backend как source of truth
+  Нельзя полагаться только на client-side нормализацию.
 
 &nbsp;
 
@@ -132,7 +126,7 @@
 
 &nbsp;
 
-15. Для backward compatibility добавь не только “старые блоки открываются”, но и:
+14. Для machine-checkable proof добавь обязательный пункт:
 
 &nbsp;
 
@@ -140,10 +134,8 @@
 
 &nbsp;
 
-- старый publish/render не ломается без пересохранения блока,
-- schema parse старого content проходит без миграции,
-- preview в editor и public render совпадают.
-  Это частый источник скрытых регрессий.
+- proof, что publish/unpublish не меняет JSON content блока
+  Ты это вынес в STOP-guard, но лучше включить и в verify.
 
 &nbsp;
 
@@ -151,12 +143,7 @@
 
 &nbsp;
 
-16. Уточни, что auth_mode=true доступен только для тех form-типов/страниц, где это допустимо по UX.
-  Иначе подрядчик может включить auth-режим на любых технических формах без проверки сценария. Если ограничений нет — так и напиши явно.
-17. Лучше отдельно зафиксировать, что extra_fields отправляются только после успешной auth/session-проверки, и никакие промежуточные пользовательские ответы не должны теряться при переходах email_check -> login/signup -> confirm_wait.
-  Нужен draft-state формы в клиенте до финального submit.
-18. Финальный DoD стоит дополнить кейсом “already authenticated + already telegram linked”.
-  Это один из главных реальных happy-path:
+15. Нужен отдельный negative DoD для preview:
 
 &nbsp;
 
@@ -164,131 +151,179 @@
 
 &nbsp;
 
-- пользователь вошёл,
-- Telegram уже привязан,
-- форма сразу открывает extra fields,
-- submit проходит без лишних шагов.
+- preview при auth_mode=true и активной admin-session **не создаёт submission**
+- preview **не создаёт orders_v2**
+- preview **не пишет audit/domain events**, если submit не был явно нажат
+  Это один из главных багов, и его надо доказать отдельно.
 
 &nbsp;
 
 &nbsp;
 
-План: Auth-режим формы в конструкторе сайтов
+&nbsp;
 
-## Проблема
+16. Добавь explicit rule: при auth_mode=true и уже активной session, но без extra fields, форма должна показывать обычную кнопку submit, а не silently переходить в success.
+  Это следует из текста, но лучше записать отдельно как UX-ожидание.
+17. В плане не хватает явной проверки editor persistence для зависимых селекторов:
 
-Блок «Форма» создаёт ghost-профили и не привязывается к auth-системе. Нужен режим `auth_mode`, при котором форма проводит пользователя через идентификацию, опционально привязывает Telegram-бота и сохраняет данные в canonical profile.
+&nbsp;
 
-## Архитектура
+&nbsp;
 
-### State machine формы (auth_mode=true)
+&nbsp;
 
-```text
-[has session?] ─yes─> extra_fields -> submit -> success
-      │no
-      v
-  email_check ──exists──> login ──ok──> [telegram?] -> extra_fields -> submit -> success
-      │                                      │no
-      │not found                             v
-      v                               extra_fields -> submit -> success
-  signup (name, phone, password) -> [telegram?] -> extra_fields -> submit -> success
+- product_id
+- tariff_id
+- pipeline_id
+- pipeline_stage_id
+  Нужно доказать не только сохранение toggles, но и сохранение выбранных значений этих селекторов после reload.
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+18. Финальный DoD усили:
+  добавь, что при deal_creation_enabled=false и product_binding_enabled=true:
+
+&nbsp;
+
+&nbsp;
+
+&nbsp;
+
+- metadata по продукту сохраняется,
+- но orders_v2 не создаётся.
+  Это важный комбинированный сценарий, а не только отдельные positive/negative проверки.
+
+&nbsp;
+
+&nbsp;
+
+План: Patch блока Form — persistence, preview bug, deal creation, Telegram flow
+
+## Диагностика
+
+### Корневая причина бага "Спасибо" в предпросмотре
+
+`AuthFormSection` (строка 277-293 FormSection.tsx): при `check_session` шаге обнаруживает активную admin-сессию → `customFields.length === 0` (нет дополнительных полей) → сразу `setFormStep("submit")` → auto-submit → "Спасибо". Это происходит потому что **admin уже залогинен**, а в preview используется тот же `useAuth()` контекст.
+
+### Корневая причина потери настроек после reload
+
+`formContentSchema` (types.ts:165-176) **не содержит** `auth_mode`, `telegram_link`, `product_id`, `tariff_id`, `product_binding_enabled`, `deal_creation_enabled`, `pipeline_id`, `pipeline_stage_id`. Эти поля не проходят через schema validation при save/load.
+
+### Корневая причина: product binding / deal creation не разделены
+
+В editor продукт и сделка смешаны. В `site-form-submit` нет логики `deal_creation_enabled` и `pipeline_id/pipeline_stage_id`.
+
+## Решение
+
+### 1. Починить `formContentSchema` в `types.ts`
+
+Добавить все новые поля с backward-compatible defaults:
+
+```
+auth_mode: z.boolean().default(false)
+telegram_link: z.boolean().default(false)
+product_binding_enabled: z.boolean().default(false)
+product_id: z.string().default("")
+tariff_id: z.string().default("")
+deal_creation_enabled: z.boolean().default(false)
+pipeline_id: z.string().default("")
+pipeline_stage_id: z.string().default("")
 ```
 
-### Ключевые принципы (по правкам)
+### 2. Починить `getDefaultContent("form")` в `SiteBlockEditor.tsx`
 
-1. **Server-side trust**: `site-form-submit` определяет user по JWT (`Authorization: Bearer`), а не по `user_id` из payload.
-2. **Shared auth flow**: Логика email-check → login/signup выносится в общий hook `useInlineAuth` из `PaymentDialog`. Оба компонента переиспользуют его.
-3. **No ghost merge в этом спринте**: В `auth_mode=true` ghost-профили НЕ создаются. Работаем только с canonical profile (`profiles.user_id = auth.uid()`). Merge существующих ghost-профилей — отдельная задача.
-4. **Canonical path**: auth user → `profiles.user_id` → contact/deal linkage. Email/phone lookup — только для legacy `auth_mode=false`.
-5. **Telegram отделён от submit**: Форма вызывает существующий `useStartTelegramLink`. После привязки профиль обновляется каноническим flow бота. `site-form-submit` только читает `telegram_user_id` из профиля.
-6. **Tenant guard**: `site-form-submit` извлекает `workspace_id` из `site_pages` и проверяет, что профиль/сделка/submission создаются только в этом workspace.
-7. **System fields**: email, first_name, last_name, phone, password — фиксированные системные поля с hardcoded keys/mapping, не редактируемые как custom fields.
-8. **Already authenticated branch**: Если есть активная session → сразу шаг extra_fields (без email-check).
-9. **Email confirmation**: Используем текущее проектное поведение (auto-confirm выключен). После `signUp` форма показывает «Подтвердите email» и ждёт. Не продолжает flow до подтверждения.
-10. **Server-side upsert pipeline**: Дозаполнение `instagram_url` только если текущее значение NULL. `email`, `phone`, `first_name`, `last_name` НЕ перезаписываются автоматически.
-11. **Instagram normalization**: trim → убрать `https://instagram.com/` → убрать `@` → lowercase → записать в `profiles.instagram_url`.
-12. **Extra fields → только в `form_data**`: Дополнительные поля анкеты сохраняются в `site_form_submissions.form_data`, не в profiles.
-13. **Audit/domain events**: Логируются `auth_mode_form_submitted`, `profile_linked`, `deal_created`, `telegram_step_started/completed/skipped`.
-14. **Backward compatibility**: Старые блоки без `auth_mode` открываются без ошибок. `auth_mode=false`, `telegram_link=false` по умолчанию.
-15. **Не создаётся новый block type**: Расширяется существующий `form`.
+Добавить те же поля в defaults.
 
-## Изменяемые файлы
+### 3. Починить preview bug в `FormSection.tsx`
 
-### 1. Новый: `src/hooks/useInlineAuth.ts`
+В `AuthFormSection` при `check_session` шаге: если пользователь уже залогинен **но form находится в preview/editor контексте**, НЕ авто-сабмитить. Конкретный fix: убрать auto-submit. Шаг `submit` не должен запускаться автоматически из `check_session`. Вместо этого:
 
-Shared hook, извлечённый из `PaymentDialog`:
+- Если есть active session → показать extra_fields (если есть) или показать кнопку "Отправить" (а не auto-submit)
+- Добавить явный шаг `ready_to_submit` между `extra_fields` и `submit`, где пользователь нажимает кнопку
 
-- `checkEmail(email)` → `auth-check-email`
-- `login(email, password)` → `signInWithPassword`
-- `signup(email, password, meta)` → `signUp`
-- Возвращает `step`, `user`, `isLoading`, `error`
-- Обрабатывает `email_confirmation_required` state
+### 4. Добавить независимые toggles в `FormBlockEditor.tsx`
 
-### 2. `src/components/payment/PaymentDialog.tsx`
+- `product_binding_enabled` — отдельный toggle вместо текущего неявного наличия `product_id`
+- `deal_creation_enabled` — новый toggle с выбором воронки (`crm_pipelines`) и стадии (`crm_pipeline_stages`)
+- При `product_binding_enabled=false` → скрыть product/tariff selectors
+- При `deal_creation_enabled=false` → скрыть pipeline/stage selectors
+- Validation: если toggle on, зависимое поле обязательно
 
-- Рефакторинг: заменить inline auth-логику на `useInlineAuth`
-- Без функциональных изменений — чистый extract
+### 5. Обновить `site-form-submit` Edge Function
 
-### 3. `src/components/site-renderer/blocks/FormSection.tsx`
+Разделить на 4 последовательных этапа:
 
-- При `auth_mode=true`:
-  - State machine: `check_session → email_check → login/signup → email_confirm_wait → telegram_prompt → extra_fields → submit → success`
-  - Проверка активной session на старте
-  - Использует `useInlineAuth` для auth-шагов
-  - Telegram шаг через `useStartTelegramLink` (опционально)
-  - При submit передаёт JWT в headers (supabase client делает это автоматически)
-- При `auth_mode=false` — без изменений
+1. **create submission** — всегда
+2. **resolve canonical profile** — по JWT (`auth.uid()`) если auth_mode, иначе legacy
+3. **apply product binding** — только если `product_binding_enabled=true` в content; игнорировать `product_id/tariff_id` при `false`
+4. **apply deal creation** — только если `deal_creation_enabled=true`; создать draft `orders_v2` с `pipeline_id`, `pipeline_stage_id`, `reconcile_source='site_form'`
 
-### 4. `src/components/admin/site-builder/blocks/FormBlockEditor.tsx`
+Reuse policy для deal: reuse только `draft/pending` с тем же `(profile_id, page_id, product_id, pipeline_id, pipeline_stage_id, reconcile_source='site_form')`. Никогда не reuse `paid/completed/cancelled`. Race guard: проверка на submission с тем же `page_id + profile_id` за последние 5 секунд.
 
-- Переключатель «Режим авторизации» (`auth_mode`)
-- При `auth_mode=true`:
-  - Системные поля (email, имя, фамилия, телефон, пароль) отображаются как locked/non-editable
-  - Переключатель «Привязка Telegram-бота» (`telegram_link`)
-- Добавить `instagram_url` в `MAPPING_OPTIONS`
-- Custom fields по-прежнему можно добавлять (сохраняются в `form_data`)
+`pipeline_id` и `pipeline_stage_id` дополнительно сохраняются в `site_form_submissions.metadata` как snapshot.
 
-### 5. `supabase/functions/site-form-submit/index.ts`
+Tenant guard: `page_id → site_pages.workspace_id → все сущности в этом workspace`.
 
-- Новая ветка при наличии JWT:
-  - Извлечь `auth.uid()` из JWT через `getClaims()`
-  - Найти profile по `user_id = auth.uid()`
-  - **Tenant guard**: проверить `page_id → workspace_id`, все сущности в этом workspace
-  - Upsert pipeline: `instagram_url` — заполнить только если NULL
-  - НЕ создавать ghost-profile
-  - НЕ перезаписывать email/phone/name
-- Без JWT → текущее поведение (`auth_mode=false`)
-- Instagram normalization: trim, удалить URL-префикс, удалить `@`, lowercase
+### 6. Telegram flow
 
-### 6. `src/lib/normalizeInstagram.ts` (новый)
+- При `telegram_link=true` шаг optional, skip всегда разрешён, submit не блокируется
+- После `handleTelegramDone` добавить recheck: `useTelegramLinkStatus` refetch + проверка `active/pending/not_linked`
+- Добавить `visibilitychange` listener для auto-recheck при возврате на вкладку
 
-Единая функция нормализации Instagram username.
+### 7. Instagram normalization
+
+Каноничный формат хранения в `profiles.instagram_url`: **normalized handle** (без `@`, без URL-префикса, lowercase). Compat-rule: несмотря на legacy имя колонки `_url`, хранится handle.
+
+## Файлы
+
+1. `src/services/sitePages/types.ts` — расширить `formContentSchema`
+2. `src/components/admin/site-builder/SiteBlockEditor.tsx` — расширить defaults
+3. `src/components/admin/site-builder/blocks/FormBlockEditor.tsx` — 4 независимых toggle, pipeline/stage selectors, validation
+4. `src/components/site-renderer/blocks/FormSection.tsx` — убрать auto-submit, добавить Telegram recheck, fix preview parity
+5. `supabase/functions/site-form-submit/index.ts` — 4-этапный pipeline, deal creation, product binding guards
 
 ## Что НЕ меняется
 
-- `auth-check-email` edge function
-- `useTelegramLink` hooks — переиспользуем as-is
-- Ghost merge — вне scope
-- Block registry — не добавляем новый block type
-- Таблицы БД — `profiles.instagram_url` уже существует, `site_form_submissions` имеет все нужные колонки
+- `PaymentDialog` — не рефакторится
+- Новый block type не создаётся
+- Auth semantics не меняются (add-only расширение)
+- Ghost merge вне scope
+- Legacy `auth_mode=false` — без изменений
 
 ## DoD
 
-1. `auth_mode=false` работает 1:1 как раньше — без регрессии
-2. `auth_mode=true`:
-  - Создаётся/используется один canonical profile, привязанный к `auth.users.id`
-  - Повторная отправка тем же юзером не создаёт второй профиль
-  - Ghost-профиль НЕ создаётся
-  - Submission, order и deal связаны с canonical profile детерминированно
-3. Instagram записан в `profiles.instagram_url` в нормализованном формате
-4. Telegram использует существующий flow линковки
-5. Telegram optional branch не блокирует submit, если отключён
-6. `PaymentDialog` не ломается после вынесения общего auth flow
-7. Server-side: подмена `user_id` в payload не влияет на результат
-8. Старые form-блоки без `auth_mode` открываются и сохраняются без ошибок
-9. Негативные кейсы:
-  - Неверный пароль → ошибка, не зависает
-  - Email уже существует → login flow
-  - Signup → «подтвердите email» (не продолжает без подтверждения)
-  - Submit без session в `auth_mode=true` → ошибка 401
-10. End-to-end цепочка: `auth.users → profiles.user_id → submission → order/deal`
+**Positive:**
+
+1. Toggles `auth_mode`, `telegram_link`, `product_binding_enabled`, `deal_creation_enabled` сохраняются после save+reload (proof: JSON content до/после)
+2. Preview НЕ показывает "Спасибо" сразу при `auth_mode=true`
+3. Preview и published используют один renderer и один content contract
+4. Telegram шаг появляется при `telegram_link=true`, пропускается при `false`
+5. При `deal_creation_enabled=true` создаётся draft `orders_v2` с правильными `pipeline_id/pipeline_stage_id` (proof: запись в БД)
+6. `pipeline_id/pipeline_stage_id` записаны в `site_form_submissions.metadata`
+7. `auth.users → profiles.user_id → submission → orders_v2` — canonical linkage
+
+**Negative:**
+8. `product_binding_enabled=false` → `product_id/tariff_id` не влияют на submit
+9. `deal_creation_enabled=false` → `orders_v2` не создаётся
+10. `telegram_link=false` → Telegram шаг не появляется
+11. Старые form blocks без новых полей открываются, сохраняются, публикуются без ошибок
+12. Повторный submit тем же юзером не создаёт второй профиль
+
+**Machine-checkable proof:**
+
+- JSON content блока до/после reload
+- Запись в `site_form_submissions.metadata`
+- Запись/отсутствие `orders_v2` с `reconcile_source='site_form'`
+- Audit logs: `auth_mode_form_submitted`, `profile_linked`, `deal_created/skipped`, `telegram_step_started/completed/skipped`
+
+## STOP-guards
+
+- Если новые флаги не переживают save+reload → стоп
+- Если `auth_mode=false` ломается → стоп
+- Если "deal without product" ломает AdminDeals/DealDetailSheet → стоп
+- Save без изменения других полей не должен сбрасывать новые флаги
+- Publish/unpublish не должен менять block content
