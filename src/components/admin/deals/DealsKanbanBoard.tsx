@@ -14,7 +14,7 @@ import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
 import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
-import { Plus } from "lucide-react";
+import { Plus, CheckSquare, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,7 +45,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
-  const { stages, isLoading: stagesLoading, createStage, renameStage, deleteStage } =
+  const { stages, isLoading: stagesLoading, createStage, renameStage, updateStageColor, deleteStage } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
     useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo });
@@ -54,14 +54,39 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const [showNewStage, setShowNewStage] = useState(false);
   const [newStageName, setNewStageName] = useState("");
 
-  // Bulk selection state
+  // Explicit selection mode toggle
+  const [selectionMode, setSelectionMode] = useState(false);
   const [selectedDealIds, setSelectedDealIds] = useState<Set<string>>(new Set());
-  const bulkMode = selectedDealIds.size > 0;
+  const bulkMode = selectionMode;
+
+  // Exit selection mode on Escape
+  useEffect(() => {
+    if (!selectionMode) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectionMode(false);
+        setSelectedDealIds(new Set());
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [selectionMode]);
 
   // Clear selection when pipeline/filters change
   useEffect(() => {
     setSelectedDealIds(new Set());
+    setSelectionMode(false);
   }, [pipelineId, search, productId, dateFrom, dateTo]);
+
+  const toggleSelectionMode = useCallback(() => {
+    setSelectionMode((prev) => {
+      if (prev) {
+        // Exiting: clear selection
+        setSelectedDealIds(new Set());
+      }
+      return !prev;
+    });
+  }, []);
 
   const toggleSelect = useCallback((dealId: string) => {
     setSelectedDealIds((prev) => {
@@ -101,6 +126,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
 
   const clearSelection = useCallback(() => {
     setSelectedDealIds(new Set());
+    setSelectionMode(false);
   }, []);
 
   // Shared move menu state
@@ -164,7 +190,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   }, [moveTarget, deals, canEdit, moveDeal]);
 
   const handleOpenDeal = useCallback((id: string) => {
-    if (bulkMode) return; // Don't open deals in bulk mode
+    if (bulkMode) return;
     onOpenDeal(id);
   }, [onOpenDeal, bulkMode]);
 
@@ -226,6 +252,35 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       <div className="space-y-3">
         <KanbanSummaryStrip {...summaryTotals} />
 
+        {/* Selection mode toolbar */}
+        {canEdit && (
+          <div className="flex items-center gap-2 px-1">
+            <Button
+              variant={selectionMode ? "default" : "outline"}
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={toggleSelectionMode}
+            >
+              {selectionMode ? (
+                <>
+                  <X className="h-3.5 w-3.5" />
+                  Выйти из выделения
+                </>
+              ) : (
+                <>
+                  <CheckSquare className="h-3.5 w-3.5" />
+                  Режим выделения
+                </>
+              )}
+            </Button>
+            {selectionMode && selectedDealIds.size > 0 && (
+              <span className="text-xs text-muted-foreground">
+                Выбрано: {selectedDealIds.size}
+              </span>
+            )}
+          </div>
+        )}
+
         <DndContext
           sensors={bulkMode ? emptySensors : sensors}
           collisionDetection={closestCenter}
@@ -274,6 +329,11 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onDelete={
                   canEdit && stage.stage_type === "open"
                     ? (targetId) => deleteStage({ stageId: stage.id, targetStageId: targetId })
+                    : undefined
+                }
+                onChangeColor={
+                  canEdit && stage.stage_type === "open"
+                    ? (color) => updateStageColor({ id: stage.id, color })
                     : undefined
                 }
                 bulkMode={bulkMode}
@@ -389,16 +449,18 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
         )}
 
         {/* Bulk actions floating bar */}
-        <KanbanBulkActionsBar
-          selectedIds={selectedDealIds}
-          allDeals={deals}
-          stages={stages}
-          pipelineId={pipelineId}
-          pipelineName={pipelineName}
-          totalBoardDeals={deals.length}
-          onClearSelection={clearSelection}
-          onSelectAll={selectAll}
-        />
+        {selectionMode && (
+          <KanbanBulkActionsBar
+            selectedIds={selectedDealIds}
+            allDeals={deals}
+            stages={stages}
+            pipelineId={pipelineId}
+            pipelineName={pipelineName}
+            totalBoardDeals={deals.length}
+            onClearSelection={clearSelection}
+            onSelectAll={selectAll}
+          />
+        )}
       </div>
     </TooltipProvider>
   );
