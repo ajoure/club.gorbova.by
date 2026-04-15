@@ -833,8 +833,7 @@ export default function Auth() {
                         className={`pl-10 h-12 rounded-xl bg-background/50 border-border/50 focus:border-primary ${getFieldError('confirmPassword') || (touched.confirmPassword && !passwordsMatch && confirmPassword) ? 'border-destructive' : ''}`}
                         placeholder="••••••••"
                         required
-                        allowAutofill
-                        autoComplete="new-password"
+                      />
                       />
                     </div>
                     {getFieldError('confirmPassword') && (
