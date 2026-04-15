@@ -2,75 +2,139 @@
 
 &nbsp;
 
-1. Исправление по сути правильное: перед delete по payments_v2 нужно сначала обнулить reference_payment_id у платежей тех заказов, которые удаляются. Это снимет self-referencing FK blocker.
-2. Делать это нужно только в пределах удаляемых order_id, как у вас и указано. Не трогать остальные платежи вне текущей пачки.
-3. После update reference_payment_id = null желательно проверить affected rows и только потом выполнять delete. Не обязательно отдельным dry-run, но в логах/console показать:  
+1. По Apple Keychain / autofill направление правильное.  
+Обязательно добавить name к полям логина:  
 
-  - сколько платежей обновлено,
-  - сколько потом удалено.
+  - email
+  - password  
+  И не ломать стандартные атрибуты:
+  - type="email" / type="password"
+  - autocomplete="username" / autocomplete="current-password"  
+  Для регистрации тоже ок добавить понятные name, но ключевое именно login form.
+2. &nbsp;
+3. В Auth.tsx лучше проверить оба сценария:  
+
+  - вход;
+  - регистрация.  
+  Для регистрации не смешивать name и autocomplete.  
+  То есть:
+  - name можно задать читаемо,
+  - но autocomplete оставить правильным:  
+
+    - given-name
+    - family-name
+    - email
+    - tel
+    - new-password
+  - &nbsp;
 4. &nbsp;
-5. Порядок шагов в hook оставить таким:  
+5. По logout при HMR я бы не утверждал как окончательное решение просто setTimeout(300).  
+Это можно использовать как временное смягчение, но лучше зафиксировать точнее:  
 
-  - nullify self-references in payments_v2
-  - delete payments_v2
-  - дальше остальная существующая логика удаления без изменений
+  - redirect не должен происходить, пока не завершён initial auth bootstrap;
+  - ProtectedRoute должен отличать:  
+
+    - “ещё не успели восстановить сессию”
+    - от “сессии реально нет”.  
+    То есть не просто debounce ради debounce, а именно guard на фазу восстановления auth state.
+  - &nbsp;
 6. &nbsp;
-7. Так как delete flow уже вынесен в shared hook, этим фикс автоматически должен починить и:  
+7. Поэтому блок ProtectedRoute.tsx лучше сформулировать так:  
 
-  - bulk delete в kanban
-  - delete в list-view
+  - добавить authReady / bootstrapped guard;
+  - redirect только после завершения initial session restore;
+  - короткий grace timeout допустим как fallback, но не как единственная логика.
 8. &nbsp;
-9. В proof обязательно показать:  
+9. Если проблема действительно только в preview/HMR, это нужно аккуратно описать в отчёте как:  
 
-  - удаление пачки, где есть refund/chargeback/reference payment
-  - отсутствие FK error
-  - после refresh сделки, платежи и связанные записи реально удалены
+  - “смягчили ложный redirect после hot reload”,  
+  а не как “полностью исправили auth persistence”.  
+  Иначе это будет звучать сильнее, чем реально сделано.
 10. &nbsp;
+11. В DoD добавить ещё один обязательный пункт:  
+
+  - обычный вход/выход и redirect flow не сломаны вне HMR-сценария.  
+  Иначе можно случайно улучшить preview, но испортить реальный auth flow.
+12. &nbsp;
+13. Итоговый уточнённый смысл патча:  
+
+  - Auth.tsx: корректно размеченная форма для Apple Keychain/autofill;
+  - ProtectedRoute.tsx: не делать преждевременный redirect, пока auth state ещё восстанавливается после mount/HMR.
+14. &nbsp;
 
 &nbsp;
 
 &nbsp;
 
-Итог: патч корректный, можно применять.
+В таком виде план можно отдавать в работу.
 
 &nbsp;
 
-# План: Исправить bulk delete — self-referencing FK в payments_v2
+# План: Исправить logout при HMR + Apple Keychain autofill
 
 ## Диагностика
 
-Ошибка: `update or delete on table "payments_v2" violates foreign key constraint "payments_v2_reference_payment_id_fkey"`.
+### Проблема 1: Выход при каждом патче (HMR)
 
-Причина: таблица `payments_v2` имеет колонку `reference_payment_id` с FK на саму себя (`payments_v2.id`). При массовом удалении платежей дочерний платёж (refund/chargeback) ссылается на родительский платёж — оба в одной пачке удаления. Postgres не может удалить родителя, пока на него ссылается дочерний.
+Preview-окружение при hot-reload полностью пересоздаёт React-дерево. `AuthContext` при mount вызывает `getSession()`, но пока он не ответит — `loading=true`, затем `loading=false`. Если HMR вызывает **full page reload** (а не hot update), Supabase-сессия может теряться из-за fetch-proxy в preview-окружении.
+
+**Это известное ограничение preview-окружения** — preview использует отдельный auth-бэкенд (Cloud Dev), и при перезагрузке страницы сессия может не восстановиться. На published URL (`gorbova.lovable.app` / `club.gorbova.by`) этой проблемы нет.
+
+Однако можно смягчить эффект: в `ProtectedRoute` при `loading=false && !user` показывать не мгновенный redirect, а короткую задержку (debounce), чтобы дать `getSession` время восстановить сессию после HMR.
+
+### Проблема 2: Apple Keychain / автозаполнение
+
+Скриншот показывает форму входа. Apple Keychain (связка ключей) требует:
+
+1. `<form>` с `action` — уже есть `<form onSubmit=...>`
+2. Поля с правильными `name` атрибутами — **отсутствуют**
+3. `autocomplete` — уже есть (`username`, `current-password`)
+
+Без `name="email"` и `name="password"` на `<input>` элементах iOS/macOS Keychain не распознаёт форму как login form и не предлагает автозаполнение или сохранение.
 
 ## Решение
 
-В `useDealsBulkDelete.ts` перед удалением `payments_v2` — обнулить `reference_payment_id` для всех платежей этих заказов. Затем удалять.
+### 1. Добавить `name` атрибуты к полям формы входа (`Auth.tsx`)
 
-## Изменения
+На email input добавить `name="email"`, на password input — `name="password"`. Это стандартное требование для password managers и Apple Keychain.
 
-### `src/hooks/useDealsBulkDelete.ts` (строки 142-151)
+Также:
 
-Заменить простой delete на двухшаговый:
+- signup form: `name="new-password"` + `name="confirm-password"`
+- firstName/lastName: `name="given-name"` / `name="family-name"`
+- phone: `name="tel"`
+
+### 2. Debounce redirect в `ProtectedRoute.tsx`
+
+Добавить 300ms задержку перед redirect на `/auth`, чтобы `getSession` успел восстановить сессию после HMR/reload:
 
 ```typescript
-// Step 1: Nullify self-references to avoid FK violation
-await supabase
-  .from("payments_v2")
-  .update({ reference_payment_id: null })
-  .in("order_id", ids);
+const [readyToRedirect, setReadyToRedirect] = useState(false);
 
-// Step 2: Delete payments
-const { error: paymentsError } = await supabase
-  .from("payments_v2")
-  .delete()
-  .in("order_id", ids);
+useEffect(() => {
+  if (!loading && !user) {
+    const timer = setTimeout(() => setReadyToRedirect(true), 300);
+    return () => clearTimeout(timer);
+  }
+  setReadyToRedirect(false);
+}, [loading, user]);
+
+// В state matrix: redirect только если readyToRedirect
 ```
 
-Логика, порядок, остальные шаги — без изменений.
+Это не решит проблему preview auth полностью (это ограничение окружения), но уменьшит ложные logout при HMR.
+
+## Изменяемые файлы
+
+
+| Файл                                       | Что                                          |
+| ------------------------------------------ | -------------------------------------------- |
+| `src/pages/Auth.tsx`                       | Добавить `name` атрибуты ко всем полям формы |
+| `src/components/layout/ProtectedRoute.tsx` | Debounce redirect на 300ms                   |
+
 
 ## DoD
 
-1. Bulk delete из kanban не падает с FK error
-2. Платежи корректно удаляются (включая refund/chargeback записи)
-3. List-view delete тоже использует тот же исправленный hook
+1. Apple Keychain предлагает автозаполнение на форме входа
+2. При HMR в preview не происходит мгновенный redirect на `/auth`
+3. Логика auth не сломана — на published URL всё работает как раньше
