@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useInlineAuth } from "@/hooks/useInlineAuth";
 import { useStartTelegramLink, useTelegramLinkStatus } from "@/hooks/useTelegramLink";
@@ -17,6 +17,8 @@ interface FormField {
 interface FormSectionProps {
   content: Record<string, unknown>;
   pageId?: string;
+  /** True when rendered inside admin editor preview — disables real submit */
+  isPreview?: boolean;
 }
 
 function isSafeRedirectUrl(url: string): boolean {
@@ -47,24 +49,26 @@ type AuthFormStep =
   | "email_confirm_wait"
   | "telegram_prompt"
   | "extra_fields"
-  | "submit"
+  | "ready"       // awaits explicit user click
+  | "submitting"  // network request in flight
   | "success";
+
+type TelegramUiStatus = "idle" | "starting" | "pending" | "linked" | "failed" | "skipped";
 
 const emailSchema = z.string().email("Введите корректный email");
 const passwordSchema = z.string().min(6, "Пароль должен быть не менее 6 символов");
 
-export function FormSection({ content, pageId }: FormSectionProps) {
+export function FormSection({ content, pageId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
   const redirectUrl = (content.redirectUrl as string) || "";
   const fields = (content.fields as FormField[]) || [];
-  const authMode = (content.auth_mode as boolean) || false;
-  const telegramLinkEnabled = (content.telegram_link as boolean) || false;
+  const authMode = (content.auth_mode as boolean) ?? false;
+  const telegramLinkEnabled = (content.telegram_link as boolean) ?? false;
 
-  // If auth_mode is false, render the legacy form
   if (!authMode) {
-    return <LegacyFormSection content={content} pageId={pageId} />;
+    return <LegacyFormSection content={content} pageId={pageId} isPreview={isPreview} />;
   }
 
   return (
@@ -77,17 +81,19 @@ export function FormSection({ content, pageId }: FormSectionProps) {
       telegramLinkEnabled={telegramLinkEnabled}
       pageId={pageId}
       content={content}
+      isPreview={isPreview}
     />
   );
 }
 
 // ─── Legacy form (auth_mode=false) — unchanged behavior ───
-function LegacyFormSection({ content, pageId }: FormSectionProps) {
+function LegacyFormSection({ content, pageId, isPreview }: FormSectionProps) {
   const title = (content.title as string) || "";
   const subtitle = (content.subtitle as string) || "";
   const buttonText = (content.buttonText as string) || "Отправить";
   const redirectUrl = (content.redirectUrl as string) || "";
   const fields = (content.fields as FormField[]) || [];
+  const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
 
   const [values, setValues] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(false);
@@ -102,6 +108,7 @@ function LegacyFormSection({ content, pageId }: FormSectionProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPreview) { setSubmitted(true); return; }
     setError("");
 
     for (let i = 0; i < fields.length; i++) {
@@ -124,8 +131,9 @@ function LegacyFormSection({ content, pageId }: FormSectionProps) {
 
     setLoading(true);
     try {
-      const productId = content.product_id as string | undefined;
-      const tariffId = content.tariff_id as string | undefined;
+      // Only send product_id/tariff_id if product_binding_enabled
+      const productId = productBindingEnabled ? (content.product_id as string) || undefined : undefined;
+      const tariffId = productBindingEnabled ? (content.tariff_id as string) || undefined : undefined;
 
       const payload: Record<string, unknown> = {
         page_id: pageId,
@@ -140,6 +148,16 @@ function LegacyFormSection({ content, pageId }: FormSectionProps) {
 
       if (productId) payload.product_id = productId;
       if (tariffId) payload.tariff_id = tariffId;
+
+      // Deal creation settings
+      const dealEnabled = (content.deal_creation_enabled as boolean) ?? false;
+      if (dealEnabled) {
+        payload.deal_creation_enabled = true;
+        const pipelineId = (content.pipeline_id as string) || "";
+        const stageId = (content.pipeline_stage_id as string) || "";
+        if (pipelineId) payload.pipeline_id = pipelineId;
+        if (stageId) payload.pipeline_stage_id = stageId;
+      }
 
       const { error: fnError } = await supabase.functions.invoke(
         "site-form-submit",
@@ -235,6 +253,7 @@ interface AuthFormSectionProps {
   telegramLinkEnabled: boolean;
   pageId?: string;
   content: Record<string, unknown>;
+  isPreview?: boolean;
 }
 
 function AuthFormSection({
@@ -246,11 +265,12 @@ function AuthFormSection({
   telegramLinkEnabled,
   pageId,
   content,
+  isPreview,
 }: AuthFormSectionProps) {
   const { user, session } = useAuth();
   const inlineAuth = useInlineAuth();
   const startTelegramLink = useStartTelegramLink();
-  const { data: telegramStatus } = useTelegramLinkStatus();
+  const { data: telegramStatus, refetch: refetchTelegramStatus } = useTelegramLinkStatus();
 
   // State machine
   const [formStep, setFormStep] = useState<AuthFormStep>("check_session");
@@ -262,35 +282,41 @@ function AuthFormSection({
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
 
-  // Extra custom fields (non-system)
+  // Extra custom fields
   const [extraValues, setExtraValues] = useState<Record<number, string>>({});
 
   // UI state
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [telegramDeepLink, setTelegramDeepLink] = useState<string | null>(null);
+  const [telegramUiStatus, setTelegramUiStatus] = useState<TelegramUiStatus>("idle");
 
-  // Determine extra fields (non-system custom fields added by admin)
   const customFields = fields;
+  const productBindingEnabled = (content.product_binding_enabled as boolean) ?? false;
+  const dealCreationEnabled = (content.deal_creation_enabled as boolean) ?? false;
 
-  // ─── Session check on mount ───
+  // ─── Determine next step after auth ───
+  const getNextStepAfterAuth = useCallback((): AuthFormStep => {
+    if (telegramLinkEnabled && telegramStatus?.status !== "active") {
+      return "telegram_prompt";
+    }
+    if (customFields.length > 0) {
+      return "extra_fields";
+    }
+    // No extra fields → show ready button (never auto-submit)
+    return "ready";
+  }, [telegramLinkEnabled, telegramStatus?.status, customFields.length]);
+
+  // ─── Session check on mount — HARD RULE: never auto-submit, only UI branching ───
   useEffect(() => {
     if (formStep !== "check_session") return;
 
     if (session && user) {
-      // Already authenticated — determine next step
-      if (telegramLinkEnabled && telegramStatus?.status !== "active") {
-        setFormStep("telegram_prompt");
-      } else if (customFields.length > 0) {
-        setFormStep("extra_fields");
-      } else {
-        // No extra fields, auto-submit
-        setFormStep("submit");
-      }
+      setFormStep(getNextStepAfterAuth());
     } else {
       setFormStep("email_check");
     }
-  }, [formStep, session, user, telegramLinkEnabled, telegramStatus?.status, customFields.length]);
+  }, [formStep, session, user, getNextStepAfterAuth]);
 
   // ─── Listen for session changes (email confirmation resume) ───
   useEffect(() => {
@@ -298,19 +324,42 @@ function AuthFormSection({
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (event === "SIGNED_IN" && newSession) {
-        // User confirmed email and is now logged in
-        if (telegramLinkEnabled && telegramStatus?.status !== "active") {
-          setFormStep("telegram_prompt");
-        } else if (customFields.length > 0) {
-          setFormStep("extra_fields");
-        } else {
-          setFormStep("submit");
-        }
+        setFormStep(getNextStepAfterAuth());
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [formStep, telegramLinkEnabled, telegramStatus?.status, customFields.length]);
+  }, [formStep, getNextStepAfterAuth]);
+
+  // ─── Telegram recheck on visibility change (add-only enhancement) ───
+  useEffect(() => {
+    if (formStep !== "telegram_prompt") return;
+
+    const handler = () => {
+      if (!document.hidden) {
+        refetchTelegramStatus();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [formStep, refetchTelegramStatus]);
+
+  // ─── Auto-advance from telegram_prompt when status becomes active ───
+  useEffect(() => {
+    if (formStep !== "telegram_prompt") return;
+    if (telegramStatus?.status === "active") {
+      setTelegramUiStatus("linked");
+      // Auto-advance after brief feedback
+      const t = setTimeout(() => {
+        if (customFields.length > 0) {
+          setFormStep("extra_fields");
+        } else {
+          setFormStep("ready");
+        }
+      }, 1500);
+      return () => clearTimeout(t);
+    }
+  }, [formStep, telegramStatus?.status, customFields.length]);
 
   // ─── Handlers ───
 
@@ -326,11 +375,7 @@ function AuthFormSection({
 
     const result = await inlineAuth.checkEmail(email);
     if (result) {
-      if (result.exists) {
-        setFormStep("login");
-      } else {
-        setFormStep("signup");
-      }
+      setFormStep(result.exists ? "login" : "signup");
     }
   };
 
@@ -346,7 +391,6 @@ function AuthFormSection({
 
     const result = await inlineAuth.login(email, password);
     if (result) {
-      // Fetch profile data to pre-fill
       const { data: profile } = await supabase
         .from("profiles")
         .select("full_name, phone, first_name, last_name")
@@ -359,14 +403,7 @@ function AuthFormSection({
         setPhone(profile.phone || "");
       }
 
-      // Advance to next step
-      if (telegramLinkEnabled && telegramStatus?.status !== "active") {
-        setFormStep("telegram_prompt");
-      } else if (customFields.length > 0) {
-        setFormStep("extra_fields");
-      } else {
-        setFormStep("submit");
-      }
+      setFormStep(getNextStepAfterAuth());
     } else if (inlineAuth.error) {
       setError(inlineAuth.error);
     }
@@ -404,13 +441,7 @@ function AuthFormSection({
       if (result.needsConfirmation) {
         setFormStep("email_confirm_wait");
       } else {
-        if (telegramLinkEnabled && telegramStatus?.status !== "active") {
-          setFormStep("telegram_prompt");
-        } else if (customFields.length > 0) {
-          setFormStep("extra_fields");
-        } else {
-          setFormStep("submit");
-        }
+        setFormStep(getNextStepAfterAuth());
       }
     } else if (inlineAuth.error) {
       setError(inlineAuth.error);
@@ -418,30 +449,33 @@ function AuthFormSection({
   };
 
   const handleStartTelegram = async () => {
+    setTelegramUiStatus("starting");
     try {
       const result = await startTelegramLink.mutateAsync();
       if (result.deep_link) {
         setTelegramDeepLink(result.deep_link);
+        setTelegramUiStatus("pending");
         window.open(result.deep_link, "_blank");
       }
     } catch (err) {
       console.error("Failed to start Telegram link:", err);
+      setTelegramUiStatus("failed");
+    }
+  };
+
+  const handleTelegramRecheck = async () => {
+    const { data } = await refetchTelegramStatus();
+    if (data?.status === "active") {
+      setTelegramUiStatus("linked");
     }
   };
 
   const handleSkipTelegram = () => {
+    setTelegramUiStatus("skipped");
     if (customFields.length > 0) {
       setFormStep("extra_fields");
     } else {
-      setFormStep("submit");
-    }
-  };
-
-  const handleTelegramDone = () => {
-    if (customFields.length > 0) {
-      setFormStep("extra_fields");
-    } else {
-      setFormStep("submit");
+      setFormStep("ready");
     }
   };
 
@@ -449,7 +483,6 @@ function AuthFormSection({
     e.preventDefault();
     setError("");
 
-    // Validate required custom fields
     for (let i = 0; i < customFields.length; i++) {
       const field = customFields[i];
       const val = (extraValues[i] || "").trim();
@@ -463,29 +496,31 @@ function AuthFormSection({
       }
     }
 
-    setFormStep("submit");
+    setFormStep("ready");
   };
 
-  // ─── Auto-submit when reaching "submit" step ───
-  useEffect(() => {
-    if (formStep !== "submit") return;
-    doSubmit();
-  }, [formStep]);
-
+  // ─── Submit — only by explicit click from "ready" step ───
   const doSubmit = async () => {
+    // HARD RULE: preview never creates real submissions
+    if (isPreview) {
+      setFormStep("success");
+      return;
+    }
+
     if (!pageId) {
       setError("Ошибка конфигурации формы");
       return;
     }
 
+    setFormStep("submitting");
     setLoading(true);
     setError("");
 
     try {
-      const productId = content.product_id as string | undefined;
-      const tariffId = content.tariff_id as string | undefined;
+      // Only include product if product_binding_enabled
+      const productId = productBindingEnabled ? (content.product_id as string) || undefined : undefined;
+      const tariffId = productBindingEnabled ? (content.tariff_id as string) || undefined : undefined;
 
-      // Build fields array for submission
       const submissionFields = customFields.map((field, i) => ({
         label: field.label,
         type: field.type,
@@ -493,7 +528,7 @@ function AuthFormSection({
         mapping: field.mapping || "none",
       }));
 
-      // Normalize instagram if mapped
+      // Client-side instagram normalization (server re-normalizes as source of truth)
       for (const f of submissionFields) {
         if (f.mapping === "instagram_url" && f.value) {
           f.value = normalizeInstagram(f.value) || f.value;
@@ -510,7 +545,18 @@ function AuthFormSection({
       if (productId) payload.product_id = productId;
       if (tariffId) payload.tariff_id = tariffId;
 
-      // JWT is sent automatically by supabase client
+      // Deal creation settings — only if toggle enabled
+      if (dealCreationEnabled) {
+        payload.deal_creation_enabled = true;
+        const pipelineId = (content.pipeline_id as string) || "";
+        const stageId = (content.pipeline_stage_id as string) || "";
+        if (pipelineId) payload.pipeline_id = pipelineId;
+        if (stageId) payload.pipeline_stage_id = stageId;
+      }
+
+      // product_binding_enabled flag for backend to guard
+      payload.product_binding_enabled = !!productBindingEnabled;
+
       const { error: fnError } = await supabase.functions.invoke(
         "site-form-submit",
         { body: payload }
@@ -519,6 +565,7 @@ function AuthFormSection({
       if (fnError) {
         console.error("Form submit error:", fnError);
         setError("Не удалось отправить форму. Попробуйте позже.");
+        setFormStep("ready");
         return;
       }
 
@@ -530,6 +577,7 @@ function AuthFormSection({
     } catch (err) {
       console.error("Form submit exception:", err);
       setError("Произошла ошибка. Попробуйте позже.");
+      setFormStep("ready");
     } finally {
       setLoading(false);
     }
@@ -537,11 +585,14 @@ function AuthFormSection({
 
   // ─── Render ───
 
-  const wrapSection = (children: React.ReactNode) => (
+  const wrapSection = (stepLabel: string | null, children: React.ReactNode) => (
     <section className="py-12 px-6">
       <div className="max-w-xl mx-auto space-y-6">
         {title && <h3 className="text-2xl font-bold text-foreground text-center">{title}</h3>}
         {subtitle && <p className="text-muted-foreground text-center">{subtitle}</p>}
+        {stepLabel && (
+          <p className="text-xs text-muted-foreground text-center uppercase tracking-wide">{stepLabel}</p>
+        )}
         {children}
       </div>
     </section>
@@ -560,13 +611,13 @@ function AuthFormSection({
   }
 
   if (formStep === "check_session") {
-    return wrapSection(
+    return wrapSection(null,
       <div className="text-center text-muted-foreground">Загрузка...</div>
     );
   }
 
-  if (formStep === "submit") {
-    return wrapSection(
+  if (formStep === "submitting") {
+    return wrapSection(null,
       <div className="text-center space-y-2">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto" />
         <p className="text-muted-foreground">Отправка...</p>
@@ -576,7 +627,7 @@ function AuthFormSection({
   }
 
   if (formStep === "email_check") {
-    return wrapSection(
+    return wrapSection("Шаг 1 — Вход",
       <form onSubmit={handleEmailSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">
@@ -604,19 +655,14 @@ function AuthFormSection({
   }
 
   if (formStep === "login") {
-    return wrapSection(
+    return wrapSection("Вход в аккаунт",
       <form onSubmit={handleLoginSubmit} className="space-y-4">
         <p className="text-sm text-muted-foreground text-center">
           Аккаунт найден. Введите пароль для входа.
         </p>
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">Email</label>
-          <input
-            type="email"
-            className="w-full rounded-md border border-input bg-muted px-3 py-2 text-sm"
-            value={email}
-            disabled
-          />
+          <input type="email" className="w-full rounded-md border border-input bg-muted px-3 py-2 text-sm" value={email} disabled />
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">
@@ -651,19 +697,11 @@ function AuthFormSection({
   }
 
   if (formStep === "signup") {
-    return wrapSection(
+    return wrapSection("Регистрация",
       <form onSubmit={handleSignupSubmit} className="space-y-4">
-        <p className="text-sm text-muted-foreground text-center">
-          Создание аккаунта
-        </p>
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">Email</label>
-          <input
-            type="email"
-            className="w-full rounded-md border border-input bg-muted px-3 py-2 text-sm"
-            value={email}
-            disabled
-          />
+          <input type="email" className="w-full rounded-md border border-input bg-muted px-3 py-2 text-sm" value={email} disabled />
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">
@@ -692,13 +730,8 @@ function AuthFormSection({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-foreground mb-1">
-            Телефон
-          </label>
-          <PhoneInput
-            value={phone}
-            onChange={(val) => setPhone(val || "")}
-          />
+          <label className="block text-sm font-medium text-foreground mb-1">Телефон</label>
+          <PhoneInput value={phone} onChange={(val) => setPhone(val || "")} />
         </div>
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">
@@ -733,7 +766,7 @@ function AuthFormSection({
   }
 
   if (formStep === "email_confirm_wait") {
-    return wrapSection(
+    return wrapSection("Подтверждение email",
       <div className="text-center space-y-4">
         <div className="text-4xl">✉️</div>
         <h4 className="text-lg font-semibold text-foreground">Подтвердите email</h4>
@@ -746,16 +779,9 @@ function AuthFormSection({
         <button
           type="button"
           onClick={() => {
-            // Manual recheck
             supabase.auth.getSession().then(({ data: { session: s } }) => {
               if (s) {
-                if (telegramLinkEnabled && telegramStatus?.status !== "active") {
-                  setFormStep("telegram_prompt");
-                } else if (customFields.length > 0) {
-                  setFormStep("extra_fields");
-                } else {
-                  setFormStep("submit");
-                }
+                setFormStep(getNextStepAfterAuth());
               }
             });
           }}
@@ -768,36 +794,66 @@ function AuthFormSection({
   }
 
   if (formStep === "telegram_prompt") {
-    return wrapSection(
+    return wrapSection("Привязка Telegram",
       <div className="space-y-4 text-center">
         <div className="text-4xl">🤖</div>
         <h4 className="text-lg font-semibold text-foreground">Привязка Telegram</h4>
         <p className="text-sm text-muted-foreground">
-          Привяжите Telegram для получения доступов и уведомлений. Это позволит нам добавить вас в закрытую группу.
+          Привяжите Telegram для получения доступов и уведомлений.
         </p>
-        {telegramDeepLink ? (
+
+        {telegramUiStatus === "linked" && (
+          <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-green-700 text-sm">
+            ✓ Telegram успешно привязан!
+          </div>
+        )}
+
+        {telegramUiStatus === "failed" && (
+          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+            Не удалось начать привязку. Попробуйте ещё раз.
+          </div>
+        )}
+
+        {(telegramUiStatus === "idle" || telegramUiStatus === "failed") && (
+          <button
+            type="button"
+            onClick={handleStartTelegram}
+            disabled={telegramUiStatus === "starting"}
+            className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            Привязать Telegram
+          </button>
+        )}
+
+        {(telegramUiStatus === "starting") && (
+          <div className="text-sm text-muted-foreground">Загрузка...</div>
+        )}
+
+        {telegramUiStatus === "pending" && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
               Бот открыт в новом окне. Нажмите «Start» в Telegram, затем вернитесь сюда.
             </p>
             <button
               type="button"
-              onClick={handleTelegramDone}
+              onClick={handleTelegramRecheck}
               className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              Я привязал Telegram — продолжить
+              Проверить статус
             </button>
+            {telegramDeepLink && (
+              <a
+                href={telegramDeepLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-sm text-primary hover:underline"
+              >
+                Открыть бота повторно
+              </a>
+            )}
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={handleStartTelegram}
-            disabled={startTelegramLink.isPending}
-            className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {startTelegramLink.isPending ? "Загрузка..." : "Привязать Telegram"}
-          </button>
         )}
+
         <button
           type="button"
           onClick={handleSkipTelegram}
@@ -810,7 +866,7 @@ function AuthFormSection({
   }
 
   if (formStep === "extra_fields") {
-    return wrapSection(
+    return wrapSection(customFields.length > 0 ? "Дополнительные вопросы" : null,
       <form onSubmit={handleExtraFieldsSubmit} className="space-y-4">
         {customFields.map((field, i) => (
           <div key={i}>
@@ -841,12 +897,27 @@ function AuthFormSection({
 
         <button
           type="submit"
+          className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+        >
+          Продолжить
+        </button>
+      </form>
+    );
+  }
+
+  if (formStep === "ready") {
+    return wrapSection(null,
+      <div className="space-y-4">
+        {error && <p className="text-sm text-destructive text-center">{error}</p>}
+        <button
+          type="button"
+          onClick={doSubmit}
           disabled={loading}
           className="w-full rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? "Отправка..." : buttonText}
         </button>
-      </form>
+      </div>
     );
   }
 
