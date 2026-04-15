@@ -76,6 +76,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onSelectAllInStage,
   onDeselectAllInStage,
   onEnterSelectionMode,
+  onExitSelectionMode,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   const qc = useQueryClient();
