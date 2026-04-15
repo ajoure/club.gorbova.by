@@ -634,6 +634,50 @@ export default function AdminDeals() {
 
   const selectedDeal = allDeals.find(d => d.id === selectedDealId);
 
+  // Fallback: fetch deal by ID when not found in allDeals (board view — different data source)
+  const { data: fallbackDeal } = useQuery({
+    queryKey: ["admin-deal-fallback", selectedDealId],
+    queryFn: async () => {
+      if (!selectedDealId) return null;
+      const { data, error } = await supabase
+        .from("orders_v2")
+        .select(`
+          id,
+          order_number,
+          status,
+          deal_date,
+          created_at,
+          customer_email,
+          customer_phone,
+          final_price,
+          currency,
+          discount_percent,
+          is_trial,
+          trial_end_at,
+          product_id,
+          tariff_id,
+          pipeline_id,
+          user_id,
+          profile_id,
+          reconcile_source,
+          purchase_snapshot,
+          meta,
+          products_v2(id, name, code, category),
+          tariffs(id, name),
+          profiles:profile_id(id, user_id, full_name, email, phone, avatar_url),
+          payments_v2(id, status, paid_at, created_at, card_holder, meta)
+        `)
+        .eq("id", selectedDealId)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!selectedDealId && !selectedDeal,
+    staleTime: 30_000,
+  });
+
+  const resolvedDeal = selectedDeal || fallbackDeal;
+
   // Drag select
   const {
     selectedIds: selectedDealIds,
@@ -1389,8 +1433,8 @@ export default function AdminDeals() {
 
       {/* Deal Detail Sheet */}
       <DealDetailSheet
-        deal={selectedDeal || null}
-        profile={selectedDeal ? resolveDealProfile(selectedDeal, fallbackProfilesMap) : null}
+        deal={resolvedDeal || null}
+        profile={resolvedDeal ? resolveDealProfile(resolvedDeal, fallbackProfilesMap) : null}
         open={!!selectedDealId}
         onOpenChange={(open) => !open && setSelectedDealId(null)}
       />
