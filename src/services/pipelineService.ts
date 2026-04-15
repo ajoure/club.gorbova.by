@@ -119,7 +119,7 @@ export async function fetchStages(pipelineId: string): Promise<CrmPipelineStage[
 /**
  * Canonical helper: normalizes order_index for all stages in a pipeline.
  * Order: open stages first (preserving relative order), then closed_won, then closed_lost.
- * Two-phase: move all to negative safe-zone, then assign 0..N sequentially.
+ * Two-phase with POSITIVE safe-zone (CHECK order_index >= 0).
  */
 async function normalizeStageOrder(pipelineId: string): Promise<void> {
   const stages = await fetchStages(pipelineId);
@@ -131,15 +131,19 @@ async function normalizeStageOrder(pipelineId: string): Promise<void> {
   const lost = stages.filter((s) => s.stage_type === "closed_lost");
   const ordered = [...open, ...won, ...lost];
 
-  // Phase 1: move all to negative safe-zone
+  // Dynamic safe-zone base: guaranteed free range above all current indices
+  const maxIdx = Math.max(...stages.map((s) => s.order_index), 0);
+  const safeBase = maxIdx + 100;
+
+  // Phase 1: move all to positive safe-zone (safeBase + i)
   for (let i = 0; i < ordered.length; i++) {
     await supabase
       .from("crm_pipeline_stages")
-      .update({ order_index: -(i + 1000) })
+      .update({ order_index: safeBase + i })
       .eq("id", ordered[i].id);
   }
 
-  // Phase 2: assign final sequential indices
+  // Phase 2: assign final sequential indices 0..N
   for (let i = 0; i < ordered.length; i++) {
     await supabase
       .from("crm_pipeline_stages")
@@ -160,23 +164,28 @@ export async function createStage(
   // Auto-pick color if not provided
   const resolvedColor = color || getNextStageColor(openStages.map((s) => s.color));
 
-  // Phase 1: move ALL existing stages to negative safe-zone
+  // Dynamic safe-zone: above all current indices
+  const maxIdx = Math.max(...stages.map((s) => s.order_index), 0);
+  const safeBase = maxIdx + 100;
+
+  // Phase 1: move ALL existing stages to positive safe-zone
   for (let i = 0; i < stages.length; i++) {
     await supabase
       .from("crm_pipeline_stages")
-      .update({ order_index: -(i + 1000) })
+      .update({ order_index: safeBase + i })
       .eq("id", stages[i].id);
   }
 
-  // Phase 2: insert new stage with a temporary safe index
+  // Phase 2: insert new stage with a temporary safe index (above everything)
+  const insertIdx = safeBase + stages.length;
   const { data, error } = await supabase
     .from("crm_pipeline_stages")
-    .insert({ pipeline_id: pipelineId, name, color: resolvedColor, stage_type: stageType, order_index: -1 })
+    .insert({ pipeline_id: pipelineId, name, color: resolvedColor, stage_type: stageType, order_index: insertIdx })
     .select()
     .single();
   if (error) throw error;
 
-  // Phase 3: normalize entire pipeline order
+  // Phase 3: normalize entire pipeline order (open -> won -> lost, 0..N)
   await normalizeStageOrder(pipelineId);
 
   await writeAudit("pipeline_stage.created", { stage_id: data.id, pipeline_id: pipelineId, name });
@@ -209,12 +218,12 @@ export async function deleteStageWithRemap(stageId: string, targetStageId: strin
 }
 
 export async function reorderStages(pipelineId: string, orderedIds: string[]) {
-  // Update order_index for each stage
-  // Temporarily set all to negative to avoid unique constraint conflicts
+  // Positive safe-zone to avoid unique constraint conflicts (CHECK order_index >= 0)
+  const safeBase = orderedIds.length + 100;
   for (let i = 0; i < orderedIds.length; i++) {
     await supabase
       .from("crm_pipeline_stages")
-      .update({ order_index: -(i + 1000) })
+      .update({ order_index: safeBase + i })
       .eq("id", orderedIds[i]);
   }
   for (let i = 0; i < orderedIds.length; i++) {
@@ -227,11 +236,12 @@ export async function reorderStages(pipelineId: string, orderedIds: string[]) {
 }
 
 export async function reorderPipelines(orderedIds: string[]) {
-  // Temporary negative indices to avoid unique constraint conflicts
+  // Positive safe-zone to avoid unique constraint conflicts
+  const safeBase = orderedIds.length + 100;
   for (let i = 0; i < orderedIds.length; i++) {
     await supabase
       .from("crm_pipelines")
-      .update({ order_index: -(i + 1000) })
+      .update({ order_index: safeBase + i })
       .eq("id", orderedIds[i]);
   }
   for (let i = 0; i < orderedIds.length; i++) {
