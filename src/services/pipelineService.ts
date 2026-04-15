@@ -3,6 +3,7 @@
  * UI hooks call these functions; no business logic lives in components.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { STAGE_PALETTE, SEMANTIC_COLORS, getNextStageColor } from "@/lib/stagePalette";
 
 // ─── Types ───
 export interface CrmPipeline {
