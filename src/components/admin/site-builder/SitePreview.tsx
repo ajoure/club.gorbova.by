@@ -12,7 +12,7 @@ export function SitePreview({ blocks, themeSettings, pageId }: SitePreviewProps)
   const { pricingData } = useSitePricingData(blocks);
   return (
     <div className="bg-white min-h-full">
-      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} />
+      <SitePageRenderer blocks={blocks} themeSettings={themeSettings} pricingData={pricingData} pageId={pageId} isPreview />
     </div>
   );
 }
