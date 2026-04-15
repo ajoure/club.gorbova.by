@@ -14,7 +14,7 @@ import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
 import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -252,25 +252,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       <div className="space-y-3">
         <KanbanSummaryStrip {...summaryTotals} />
 
-        {/* Selection info strip (no button — mode enters via stage checkbox) */}
-        {selectionMode && (
-          <div className="flex items-center gap-2 px-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs gap-1.5"
-              onClick={clearSelection}
-            >
-              <X className="h-3.5 w-3.5" />
-              Выйти из выделения
-            </Button>
-            {selectedDealIds.size > 0 && (
-              <span className="text-xs text-muted-foreground">
-                Выбрано: {selectedDealIds.size}
-              </span>
-            )}
-          </div>
-        )}
+        {/* No top strip — selection mode managed via stage checkboxes + floating bar + Escape */}
 
         <DndContext
           sensors={bulkMode ? emptySensors : sensors}
@@ -300,6 +282,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
                 onEnterSelectionMode={() => setSelectionMode(true)}
+                onExitSelectionMode={clearSelection}
               />
             )}
 
@@ -334,6 +317,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
                 onEnterSelectionMode={() => setSelectionMode(true)}
+                onExitSelectionMode={clearSelection}
               />
             ))}
 

@@ -51,6 +51,7 @@ interface Props {
   onSelectAllInStage?: (stageId: string) => void;
   onDeselectAllInStage?: (stageId: string) => void;
   onEnterSelectionMode?: () => void;
+  onExitSelectionMode?: () => void;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
@@ -75,6 +76,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onSelectAllInStage,
   onDeselectAllInStage,
   onEnterSelectionMode,
+  onExitSelectionMode,
 }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: stageId });
   const qc = useQueryClient();
@@ -114,8 +116,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           borderColor: isOver && !bulkMode ? undefined : bgStyle.borderColor,
         }}
         className={cn(
-          "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-all duration-200",
-          "backdrop-blur-md",
+          "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-colors duration-200",
           isOver && !bulkMode && "border-primary/50 shadow-lg",
         )}
       >
@@ -138,6 +139,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           onSelectAll={() => onSelectAllInStage?.(stageId)}
           onDeselectAll={() => onDeselectAllInStage?.(stageId)}
           onEnterSelectionMode={onEnterSelectionMode}
+          onExitSelectionMode={onExitSelectionMode}
         />
 
         {/* Bulk assign button for unassigned column */}

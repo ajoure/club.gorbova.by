@@ -17,12 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { MoreHorizontal, Pencil, Trash2, Shield, Palette } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X } from "lucide-react";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { STAGE_PALETTE } from "@/lib/stagePalette";
 
@@ -46,6 +41,7 @@ interface Props {
   onDeselectAll?: () => void;
   bulkMode?: boolean;
   onEnterSelectionMode?: () => void;
+  onExitSelectionMode?: () => void;
 }
 
 const formatCurrency = (v: number) =>
@@ -74,6 +70,7 @@ export function KanbanColumnHeader({
   onDeselectAll,
   bulkMode,
   onEnterSelectionMode,
+  onExitSelectionMode,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
@@ -119,12 +116,13 @@ export function KanbanColumnHeader({
       <div className="p-3 border-b border-border/20 sticky top-0 z-10 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {/* Bulk selection checkbox — always visible when stage has deals */}
-            {totalInStage > 0 && onSelectAll && (
+            {/* Bulk selection checkbox — always visible */}
+            {onSelectAll && (
               <Checkbox
-                checked={isIndeterminate ? "indeterminate" : isAllSelected}
+                checked={bulkMode ? (isIndeterminate ? "indeterminate" : isAllSelected) : false}
                 onCheckedChange={handleCheckboxChange}
                 className="shrink-0"
+                disabled={!bulkMode && totalInStage === 0}
                 aria-label={`Выделить все сделки в стадии ${name}`}
               />
             )}
@@ -157,6 +155,18 @@ export function KanbanColumnHeader({
               <Badge variant="default" className="h-5 text-[10px] px-1.5 font-semibold bg-primary/20 text-primary">
                 {selectedCount}
               </Badge>
+            )}
+            {/* Compact exit selection button */}
+            {bulkMode && onExitSelectionMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+                onClick={onExitSelectionMode}
+                title="Выйти из выделения"
+              >
+                <X className="h-3 w-3" />
+              </Button>
             )}
             <Badge variant="secondary" className="h-5 text-[10px] px-1.5 font-semibold">
               {count}

@@ -116,43 +116,68 @@ export async function fetchStages(pipelineId: string): Promise<CrmPipelineStage[
   return (data || []) as unknown as CrmPipelineStage[];
 }
 
+/**
+ * Canonical helper: normalizes order_index for all stages in a pipeline.
+ * Order: open stages first (preserving relative order), then closed_won, then closed_lost.
+ * Two-phase: move all to negative safe-zone, then assign 0..N sequentially.
+ */
+async function normalizeStageOrder(pipelineId: string): Promise<void> {
+  const stages = await fetchStages(pipelineId);
+  if (stages.length === 0) return;
+
+  // Desired order: open first, then closed_won, then closed_lost
+  const open = stages.filter((s) => s.stage_type === "open");
+  const won = stages.filter((s) => s.stage_type === "closed_won");
+  const lost = stages.filter((s) => s.stage_type === "closed_lost");
+  const ordered = [...open, ...won, ...lost];
+
+  // Phase 1: move all to negative safe-zone
+  for (let i = 0; i < ordered.length; i++) {
+    await supabase
+      .from("crm_pipeline_stages")
+      .update({ order_index: -(i + 1000) })
+      .eq("id", ordered[i].id);
+  }
+
+  // Phase 2: assign final sequential indices
+  for (let i = 0; i < ordered.length; i++) {
+    await supabase
+      .from("crm_pipeline_stages")
+      .update({ order_index: i })
+      .eq("id", ordered[i].id);
+  }
+}
+
 export async function createStage(
   pipelineId: string,
   name: string,
   color?: string,
   stageType: "open" | "closed_won" | "closed_lost" = "open"
 ): Promise<CrmPipelineStage> {
-  // Insert before closed stages
   const stages = await fetchStages(pipelineId);
-  const closedStages = stages.filter((s) => s.stage_type !== "open");
   const openStages = stages.filter((s) => s.stage_type === "open");
-  const newIndex = openStages.length; // after last open, before closed
 
   // Auto-pick color if not provided
   const resolvedColor = color || getNextStageColor(openStages.map((s) => s.color));
 
-  // Two-phase shift: move closed stages to negative zone to avoid unique constraint
-  for (let i = 0; i < closedStages.length; i++) {
+  // Phase 1: move ALL existing stages to negative safe-zone
+  for (let i = 0; i < stages.length; i++) {
     await supabase
       .from("crm_pipeline_stages")
       .update({ order_index: -(i + 1000) })
-      .eq("id", closedStages[i].id);
+      .eq("id", stages[i].id);
   }
 
+  // Phase 2: insert new stage with a temporary safe index
   const { data, error } = await supabase
     .from("crm_pipeline_stages")
-    .insert({ pipeline_id: pipelineId, name, color: resolvedColor, stage_type: stageType, order_index: newIndex })
+    .insert({ pipeline_id: pipelineId, name, color: resolvedColor, stage_type: stageType, order_index: -1 })
     .select()
     .single();
   if (error) throw error;
 
-  // Phase 2: restore closed stages after the new one
-  for (let i = 0; i < closedStages.length; i++) {
-    await supabase
-      .from("crm_pipeline_stages")
-      .update({ order_index: newIndex + 1 + i })
-      .eq("id", closedStages[i].id);
-  }
+  // Phase 3: normalize entire pipeline order
+  await normalizeStageOrder(pipelineId);
 
   await writeAudit("pipeline_stage.created", { stage_id: data.id, pipeline_id: pipelineId, name });
   return data as unknown as CrmPipelineStage;
