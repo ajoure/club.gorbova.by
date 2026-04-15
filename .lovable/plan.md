@@ -1,153 +1,216 @@
-да, согласен, с учетом правок:
+# да, согласен, с учетом правок:
 
 &nbsp;
 
-1. Корневой вывод правильный: текущий фикс недостаточен, потому что он обнуляет reference_payment_id только у payments_v2 внутри order_id in ids, а нужно разрывать **все inbound-ссылки** на удаляемые paymentIds.
-2. В useDealsBulkDelete.ts обязательно зафиксировать **жёсткий порядок**:
+1. **Проверка маршрутизации новых сделок**
   &nbsp;
-  - получить paymentIds удаляемой пачки;
-  - если paymentIds.length > 0, сделать update payments_v2 set reference_payment_id = null where reference_payment_id in (...);
-  - только потом delete from payments_v2 where order_id in ids;
-  - только после успешного удаления payments переходить к orders_v2 и остальным шагам.
+  - Недостаточно только SQL-проверки последних записей.
+  - Нужен именно **runtime-proof** на реальных новых сделках после патча:
+    &nbsp;
+    - новый успешный платёж по Gorbova Club;
+    - новый неуспешный / pending платёж по Gorbova Club;
+    - новый успешный платёж по другому продукту;
+    - новый неуспешный / pending платёж по другому продукту.
+    &nbsp;
+  - Нужно доказать:
+    &nbsp;
+    - в какую pipeline попала сделка;
+    - в какую stage попала сделка;
+    - что routing работает и для success, и для non-success.
+    &nbsp;
   &nbsp;
-3. Добавить явный **hard stop**:
+2. **Цвета existing open-стадий**
   &nbsp;
-  - если paymentsError есть, throw сразу;
-  - никаких дальнейших delete orders_v2, entitlements, notifications и т.д. после failed payments delete.
+  - Не просто обновить seed для новых стадий.
+  - Нужно привести **все уже существующие open-стадии** к новой палитре, чтобы после патча интерфейс сразу выглядел цельно.
+  - closed_won и closed_lost оставить жёстко semantic-only.
   &nbsp;
-4. В dry-run / logs лучше фиксировать не только paymentsCount, но и:
+3. **Автовыбор цвета**
   &nbsp;
-  - сколько строк затронул nullify inbound refs;
-  - сколько реально удалено payments_v2;
-  - какие paymentIds участвуют, хотя бы частично/сэмплом в debug log.
+  - getNextStageColor(existingColors) должен учитывать только open-цвета текущей pipeline.
+  - Не должен выбирать зелёный/красный и вообще не должен пересекаться с semantic-цветами.
+  - При исчерпании палитры — безопасный cycle по palette, но без выбора closed_won/closed_lost цветов.
   &nbsp;
-5. Патч должен оставаться **общим для list-view и kanban**, это верно.
-  Никаких отдельных веток логики по delete для kanban делать не нужно.
-6. В runtime-proof обязательно проверить именно problematic batch:
+4. **Смена цвета стадии**
   &nbsp;
-  - где есть refund / chargeback / reference_payment_id;
-  - удалить из kanban;
-  - refresh;
-  - убедиться, что исчезли и сделки, и платежи;
-  - затем повторить в list-view или подтвердить, что он использует тот же shared hook.
+  - Добавить не просто пункт “Сменить цвет”, а компактный preset-picker с красивыми swatch-кнопками.
+  - Менять цвет можно только для open-стадий.
+  - Для Успешно и Отказ ручную смену цвета не давать, чтобы не ломать семантику.
   &nbsp;
-7. В DoD добавить ещё один пункт:
+5. **Режим выделения**
   &nbsp;
-  - после failed payments cleanup UI не показывает ложный success и selection не сбрасывается как при успешном удалении.
+  - Согласен, что он должен включаться отдельной кнопкой, а не автоматически.
+  - Но при этом сохранить поддержку:
+    &nbsp;
+    - select-all по стадии,
+    - partial selection по одной карточке,
+    - комбинированное выделение по нескольким стадиям.
+    &nbsp;
+  - При выключении режима — выделение очищается полностью.
+  - В обычном режиме чекбоксы не должны занимать место и не должны влиять на drag/click.
   &nbsp;
-8. Если после этого всплывёт **новый FK blocker**, не размазывать решение.
-  Нужен отдельный узкий patch по конкретному FK, а не переписывание всего delete flow сразу.
-9. Итоговый смысл патча сформулирован верно:
+6. **Карточка сделки**
   &nbsp;
-  - не менять схему БД;
-  - не менять UI bulk flow;
-  - чинить именно shared delete hook и порядок cleanup steps.
+  - Убрать order_number полностью.
+  - Добавить:
+    &nbsp;
+    - название сделки,
+    - продукт,
+    - тариф,
+    - контакт,
+    - сумму.
+    &nbsp;
+  - Важно не дублировать одно и то же дважды. Если название сделки и продукт совпадают, нужен аккуратный fallback, чтобы карточка не выглядела как повтор текста.
+  - Карточку лучше перестроить так:
+    &nbsp;
+    - 1 строка: название сделки;
+    - 2 строка: продукт / тариф;
+    - 3 строка: контакт;
+    - 4 строка: сумма + статусы.
+    &nbsp;
   &nbsp;
-10. Этот план можно отдавать в работу как следующий fix-патч по bulk delete.
+7. **Foundation под будущую настройку полей**
+  &nbsp;
+  - Верно, но зафиксировать явно:
+    &nbsp;
+    - сейчас только внутренняя подготовка структуры;
+    - никакого UI-конструктора полей в этом патче не делать.
+    &nbsp;
+  &nbsp;
+8. **Tinted background**
+  &nbsp;
+  - Подсветка должна применяться ко всей колонке стадии.
+  - Карточки внутри стадии — только слегка гармонизировать тоном, без потери контраста и без превращения в однотонную “кашу”.
+  - Нельзя ухудшить читаемость текста и бейджей.
+  &nbsp;
+9. **Изменяемые файлы**
+  &nbsp;
+  - Согласен с набором файлов.
+  - Новый stagePalette.ts — нормальный вариант.
+  - Но отдельную миграцию делать только если реально нужен persist для existing stage colors. Если можно обойтись data patch/update без новой схемы — так лучше.
+  &nbsp;
+10. **DoD дополнить**
 
 &nbsp;
 
 &nbsp;
 
-План:
+&nbsp;
 
-1. Проблема
+- Добавить в DoD:
+  &nbsp;
+  - runtime-proof по новым сделкам;
+  - existing open-стадии перекрашены в новую палитру;
+  - semantic stages не потеряли свои fixed colors;
+  - partial selection удобен без необходимости сначала “выбрать всё” в колонке.
+  &nbsp;
 
-Bulk delete не закрыт: runtime по-прежнему падает с `payments_v2_reference_payment_id_fkey` (`23503`). Значит текущий shared hook не разрывает все ссылки перед удалением.
+&nbsp;
 
-2. Диагностика
+&nbsp;
 
-- `docs/ENGINEERING_RULES.md` прочитан, поэтому фикс планируется как diagnose-first, с dry-run и verify.
-- В `src/hooks/useDealsBulkDelete.ts` nullify уже есть, но он делает только:
-  - `update payments_v2 set reference_payment_id = null where order_id in ids`
-  - затем `delete from payments_v2 where order_id in ids`
-- По логам это реально выполняется, но delete всё равно падает.
-- В схеме (`supabase/migrations/20260115180732_...sql` и `types.ts`) подтвержден самоссылочный FK:
-`payments_v2.reference_payment_id -> payments_v2.id`
-без каскада.
-- Значит проблема не в отсутствии фикса в коде, а в недостаточном охвате: надо обнулять не только строки удаляемых заказов, но и все inbound-ссылки на payment id из этой пачки.
-- Дополнительно сейчас hook после failed delete payments всё равно идёт дальше к delete orders, что даёт второй error и шумный ложный flow.
-- Отдельно подтверждено: kanban и list-view уже используют один shared hook, значит чинить нужно только его.
+Итог: план хороший, но без **реального runtime-proof по новым сделкам** и без **массового приведения existing open-стадий к новой палитре** патч считать закрытым нельзя.
 
-3. Предлагаемое решение
+&nbsp;
 
-Переработать payment-блок в shared hook в безопасный 4-шаговый flow:
+План: Visual polish стадий + selection mode + карточка сделки
 
-- Шаг A: сначала получить `paymentIds` всех `payments_v2`, где `order_id in ids`
-- Шаг B: dry-run/лог — сколько payment ids найдено
-- Шаг C: обнулить `reference_payment_id` для всех строк, где `reference_payment_id in paymentIds`  
-Это ключевой фикс: разрываем входящие self-references на удаляемые записи, а не только “внутри тех же order_id”.
-- Шаг D: удалить `payments_v2` по `order_id in ids`
-- Если delete payments упал — немедленный STOP, не продолжать delete orders
-- Сохранить подробные логи:
-  - сколько payments найдено
-  - сколько ссылок nullified
-  - сколько payments удалено
+## Диагностика текущего состояния
 
-4. Изменяемые компоненты
+1. **Цвета стадий**: Все pipelines имеют одинаковые 4 стадии с одними и теми же цветами (`#3b82f6` Новая, `#f59e0b` В работе, `#22c55e` Успешно, `#ef4444` Отказ). Tinted background применяется только к `closed_won` и `closed_lost` через CSS-классы в `KanbanColumn.tsx`. Open-стадии не имеют tinted background.
+2. **Автовыбор цвета**: `createStage()` в `pipelineService.ts` использует hardcoded `#6366f1` по умолчанию. Нет палитры.
+3. **Смена цвета**: Нет функции `updateStageColor` — только `renameStage`.
+4. **Bulk mode**: Вход через первый клик по checkbox в header стадии. Нет отдельной кнопки.
+5. **Карточка**: Показывает `product_name`, `contact`, `amount`, `order_number`. Не показывает `tariff_name`. Показывает `order_number` (ID).
+6. **BoardDeal**: Уже содержит `tariff_name` — данные есть, просто не отображаются.
 
-- `src/hooks/useDealsBulkDelete.ts` — основной фикс порядка и охвата delete flow
-- при необходимости только точечная корректировка query invalidation в этом же hook, если в verify выяснится, что не хватает связанных ключей
+## Изменяемые файлы
 
-5. Что не будет изменено
+### 1. `src/lib/stagePalette.ts` (новый)
 
-- UI kanban/list bulk bar
-- права admin/super_admin
-- confirm dialogs
-- bulk move/export
-- логика selection/bulk mode
-- структура таблиц и FK в БД в рамках этого патча
+Палитра приглушённых цветов для open-стадий + утилиты:
 
-6. Dry-run
+- `STAGE_PALETTE` — 8 цветов: slate-blue `#6366f1`, amber `#d97706`, teal `#0d9488`, indigo `#4f46e5`, violet `#7c3aed`, cyan `#0891b2`, rose-slate `#64748b`, sky `#0284c7`
+- `getNextStageColor(existingColors: string[])` — возвращает первый неиспользованный цвет
+- `getStageBackgroundStyle(color: string, stageType)` — возвращает `{ backgroundColor, borderColor }` для tinted block
+- `SEMANTIC_COLORS = { closed_won: '#22c55e', closed_lost: '#ef4444' }`
 
-Перед финальным delete flow в коде:
+### 2. `src/services/pipelineService.ts`
 
-- собрать `paymentIds` удаляемой пачки
-- залогировать `paymentsCount`
-- выполнить nullify только по `reference_payment_id in paymentIds`
-- залогировать `nullifiedCount`
-- только после этого делать delete payments
-- если `paymentsCount = 0`, payment-блок пропускается
+- Добавить `updateStageColor(id: string, color: string)` — update + audit
+- В `createStage()`: вместо hardcoded `#6366f1` — вызвать `getNextStageColor()` с учётом существующих стадий (уже загружены в этой функции)
+- В `createPipeline()` seed stages: использовать разные цвета из палитры для open-стадий
 
-7. Execute
+### 3. `src/hooks/usePipelineStages.ts`
 
-Внести изменения в shared hook:
+- Добавить мутацию `updateColor` через новый `updateStageColor`
 
-- заменить update по `order_id` на двухфазный resolve:
-  - select ids из `payments_v2`
-  - update inbound refs по `reference_payment_id`
-- добавить hard stop после `paymentsError`
-- не переходить к delete orders, если payment cleanup не завершился успешно
-- оставить reuse того же hook для list-view и kanban
+### 4. `src/components/admin/deals/KanbanColumn.tsx`
 
-8. STOP-guards
+- Заменить hardcoded CSS-классы `bg-green-500/5 border-green-500/20` и `bg-red-500/5 border-red-500/20` на динамический tinted background из `getStageBackgroundStyle(color, stageType)` — применяется ко ВСЕМ стадиям, не только closed
+- Карточки внутри получают гармоничный тон через prop `stageColor`
 
-Остановиться и не считать патч успешным, если:
+### 5. `src/components/admin/deals/KanbanColumnHeader.tsx`
 
-- payment ids не читаются из БД
-- nullify даёт ошибку
-- delete payments даёт любой FK error
-- rowcount выглядит аномально большим относительно выбранной пачки
-- после failed payments delete код всё ещё пытается удалять `orders_v2`
+- В dropdown меню стадии добавить пункт «Сменить цвет» (для open-стадий)
+- По клику — показать небольшой popover/dialog с preset-палитрой из `STAGE_PALETTE`
+- Передать `onChangeColor?: (color: string) => void` prop
 
-9. DoD
+### 6. `src/components/admin/deals/KanbanDealCard.tsx`
 
-- bulk delete не падает с `payments_v2_reference_payment_id_fkey`
-- shared hook сначала разрывает inbound references, потом удаляет payments
-- при ошибке payments delete orders не трогаются
-- kanban bulk delete работает на пачке с refund/chargeback/reference payment
-- list-view delete использует тот же исправленный flow
-- runtime-proof включает:
-  - удаление тестовой пачки
-  - отсутствие `23503`
-  - refresh
-  - подтверждение, что сделки и payments исчезли
+- Убрать `order_number` (строка 165-167)
+- Добавить `tariff_name` рядом с `product_name`
+- Переструктурировать layout:
+  - Верх: product + status icon
+  - Под ним: tariff (мелким текстом)
+  - Контакт
+  - Сумма + badges
+- Подготовить данные карточки как массив `CardField[]` для будущей настройки видимости (пока все поля показываются, но структура ready)
+- Добавить опциональный `stageColor` prop для гармонизации (например, subtle left border accent)
 
-10. Риски и зависимости
+### 7. `src/components/admin/deals/DealsKanbanBoard.tsx`
 
-- Возможны дополнительные внешние ссылки на `payments_v2`, кроме `reference_payment_id`; если verify покажет новый FK blocker, потребуется второй узкий PATCH уже по конкретному FK.
-- Supabase update/delete rowcount может не всегда возвращаться стабильно, поэтому proof должен опираться и на runtime-результат, и на post-delete UI/backend-проверку.
+- Добавить кнопку-тумблер «Режим выделения» в toolbar (между summary strip и board)
+- `bulkMode` управляется этой кнопкой, а не автоматически от `selectedDealIds.size > 0`
+- При выключении режима — `clearSelection()`
+- Escape — выход из режима выделения
+- Передать `stageColor` в `KanbanColumn` → `KanbanDealCard`
+- Передать `onChangeColor` в `KanbanColumn` → `KanbanColumnHeader`
 
-11. Требуется дополнительная информация
+### 8. Миграция — обновить существующие цвета open-стадий
 
-Дополнительных входных данных от вас не нужно. После approval следующий шаг — применить патч и сделать runtime-proof именно на проблемной пачке/аналогичном наборе сделок.
+SQL-миграция для обновления цветов существующих стадий:
+
+- Для каждого pipeline: «Новая» → slate-blue, «В работе» → amber/teal (разные)
+- `closed_won` и `closed_lost` оставить как есть
+
+## Проверка авторазмещения новых сделок
+
+Runtime-proof через SQL-запросы к `orders_v2` + `crm_pipeline_product_bindings`:
+
+- Проверить последние сделки и их pipeline_id/stage_id
+- Подтвердить корректность routing
+
+## Что НЕ меняется
+
+- SQL-схема таблиц (только данные — цвета)
+- Логика CRUD стадий
+- Bulk delete / move / export
+- List-view
+- Deal routing / assignment logic
+- DragOverlay
+
+## DoD
+
+1. Все open-стадии имеют tinted background в разных приглушённых цветах
+2. Новая стадия получает цвет автоматически из палитры (не дублируя)
+3. Цвет стадии можно сменить через меню в header
+4. Весь stage block окрашен, не только точка
+5. Карточки гармонируют с цветом стадии
+6. Есть отдельная кнопка «Режим выделения»
+7. Чекбоксы видны только в этом режиме
+8. Escape выходит из режима
+9. ID/номер сделки убран с карточки
+10. Тариф добавлен на карточку
+11. Drag-and-drop не сломан
+12. Новые сделки корректно маршрутизируются
