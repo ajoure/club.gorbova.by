@@ -14,7 +14,7 @@ import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
 import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
-import { Plus, X } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
