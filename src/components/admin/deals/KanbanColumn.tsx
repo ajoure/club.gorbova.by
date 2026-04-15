@@ -140,6 +140,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           onSelectAll={() => onSelectAllInStage?.(stageId)}
           onDeselectAll={() => onDeselectAllInStage?.(stageId)}
           onEnterSelectionMode={onEnterSelectionMode}
+          onExitSelectionMode={onExitSelectionMode}
         />
 
         {/* Bulk assign button for unassigned column */}
