@@ -1,18 +1,33 @@
 /**
  * Stage color palette and utilities for CRM Kanban columns.
  * Open stages get muted, rich colors. Closed stages have fixed semantic colors.
+ * 20 curated preset colors — muted, premium, no red/green to avoid semantic confusion.
  */
 
-// Muted, premium palette for open stages — no green/red to avoid semantic confusion
+// 20 curated muted, premium colors for open stages
+// Progression: cool → neutral → warm (approaching green near the end = closer to "success")
+// No pure red (reserved for closed_lost) and no pure green (reserved for closed_won)
 export const STAGE_PALETTE = [
   "#6366f1", // indigo
-  "#d97706", // amber
-  "#0d9488", // teal
+  "#818cf8", // light indigo
   "#4f46e5", // deep indigo
   "#7c3aed", // violet
+  "#8b5cf6", // light violet
+  "#a78bfa", // lavender
   "#0891b2", // cyan
-  "#64748b", // slate
+  "#06b6d4", // light cyan
   "#0284c7", // sky
+  "#0ea5e9", // light sky
+  "#0d9488", // teal
+  "#14b8a6", // light teal
+  "#64748b", // slate
+  "#78716c", // stone
+  "#d97706", // amber
+  "#f59e0b", // light amber
+  "#ea580c", // orange
+  "#c2410c", // deep orange
+  "#84cc16", // lime (warm-green, not pure green)
+  "#65a30d", // dark lime
 ] as const;
 
 // Fixed semantic colors — never used for open stages
@@ -77,7 +92,6 @@ function hexToHsl(hex: string): [number, number, number] {
 
 /**
  * Returns inline style for tinted column background.
- * All stages (open + closed) get a tinted background based on their color.
  */
 export function getStageBackgroundStyle(
   color: string,
@@ -97,7 +111,6 @@ export function getStageBackgroundStyle(
 
 /**
  * Returns a subtle card accent color derived from the stage color.
- * Used for a left border on deal cards to harmonize with the stage.
  */
 export function getCardAccentColor(color: string, stageType: "open" | "closed_won" | "closed_lost"): string {
   const effectiveColor =
