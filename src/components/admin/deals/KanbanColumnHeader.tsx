@@ -17,12 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { MoreHorizontal, Pencil, Trash2, Shield, Palette } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X } from "lucide-react";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { STAGE_PALETTE } from "@/lib/stagePalette";
 
@@ -46,6 +41,7 @@ interface Props {
   onDeselectAll?: () => void;
   bulkMode?: boolean;
   onEnterSelectionMode?: () => void;
+  onExitSelectionMode?: () => void;
 }
 
 const formatCurrency = (v: number) =>

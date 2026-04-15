@@ -10,17 +10,10 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   TrendingUp,
+  GripVertical,
 } from "lucide-react";
 import type { BoardDeal } from "@/hooks/useDealsBoard";
 import { getCardAccentColor } from "@/lib/stagePalette";
-
-// ─── Card field definitions (foundation for future configurable fields) ───
-interface CardField {
-  key: string;
-  label: string;
-  visible: boolean;
-  render: (deal: BoardDeal) => React.ReactNode | null;
-}
 
 interface Props {
   deal: BoardDeal;
@@ -95,20 +88,19 @@ export const KanbanDealCard = memo(function KanbanDealCard({
     ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
     : undefined;
 
-  const handleClick = () => {
+  const handleCardClick = () => {
     if (bulkMode && onToggleSelect) {
       onToggleSelect(deal.id);
-    } else if (!isDragging) {
+    } else {
       onOpenDeal(deal.id);
     }
   };
 
-  // Subtle left border accent from stage color
+  // Stable left border accent from stage color — always 2px, only color changes
   const accentColor = stageColor && stageType
     ? getCardAccentColor(stageColor, stageType)
-    : undefined;
+    : "transparent";
 
-  // Deduplicate: if product_name equals deal title (which IS product_name), don't show twice
   const productName = deal.product_name || "—";
   const tariffName = deal.tariff_name;
 
@@ -117,22 +109,36 @@ export const KanbanDealCard = memo(function KanbanDealCard({
       ref={setNodeRef}
       style={{
         ...style,
-        borderLeftColor: accentColor || "transparent",
+        borderLeftColor: accentColor,
         borderLeftWidth: "2px",
       }}
       className={cn(
-        "group relative rounded-xl border border-border/30 transition-all duration-150",
-        "bg-card/40 backdrop-blur-md hover:bg-card/60 hover:shadow-md hover:border-border/50",
+        "group relative rounded-xl border border-border/30",
+        "bg-card/40 backdrop-blur-md",
+        "hover:bg-card/60 hover:border-border/50",
         isDragging && "opacity-0 pointer-events-none",
         isSelected && "ring-2 ring-primary/40 bg-primary/5 border-primary/30"
       )}
     >
+      {/* Drag handle — only this zone activates drag */}
+      {!bulkMode && (
+        <div
+          {...attributes}
+          {...listeners}
+          className="absolute left-0 top-0 bottom-0 w-5 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-60 transition-opacity z-10"
+          style={{ touchAction: "none" }}
+        >
+          <GripVertical className="h-3 w-3 text-muted-foreground" />
+        </div>
+      )}
+
+      {/* Card content — click opens deal or toggles selection */}
       <div
-        {...(bulkMode ? {} : { ...attributes, ...listeners })}
-        onClick={handleClick}
+        onClick={handleCardClick}
         className={cn(
           "p-3",
-          bulkMode ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"
+          !bulkMode && "pl-5",
+          bulkMode ? "cursor-pointer" : "cursor-pointer"
         )}
       >
         {/* Row 1: Deal title (product) + status icon */}
@@ -202,19 +208,17 @@ export const KanbanDealCard = memo(function KanbanDealCard({
           aria-label="Переместить в другую стадию"
           className={cn(
             "absolute bottom-2 right-2 flex items-center justify-center",
-            "h-3 w-3 min-w-[24px] min-h-[24px]",
+            "h-5 w-5",
             "text-muted-foreground/50 hover:text-foreground",
-            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity",
-            "touch-action-manipulation"
+            "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           )}
-          style={{ touchAction: "manipulation" }}
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             onMoveClick(deal.id, e.currentTarget);
           }}
         >
-          <ArrowRightLeft className="h-2 w-2" />
+          <ArrowRightLeft className="h-3 w-3" />
         </button>
       )}
     </div>
