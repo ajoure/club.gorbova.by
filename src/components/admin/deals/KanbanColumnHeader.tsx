@@ -105,16 +105,7 @@ export function KanbanColumnHeader({
             {/* Bulk selection checkbox */}
             {(bulkMode || totalInStage > 0) && onSelectAll && (
               <Checkbox
-                checked={isAllSelected}
-                // @ts-ignore — indeterminate is supported by radix
-                ref={(el) => {
-                  if (el) {
-                    const input = el as unknown as HTMLButtonElement;
-                    if (input.dataset) {
-                      input.dataset.state = isIndeterminate ? "indeterminate" : isAllSelected ? "checked" : "unchecked";
-                    }
-                  }
-                }}
+                checked={isIndeterminate ? "indeterminate" : isAllSelected}
                 onCheckedChange={handleCheckboxChange}
                 className="shrink-0"
                 aria-label={`Выделить все сделки в стадии ${name}`}
