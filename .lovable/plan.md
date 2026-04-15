@@ -2,94 +2,90 @@
 
 &nbsp;
 
-1. **Проверка маршрутизации новых сделок**
+1. **createStage() чинить не поштучным сдвигом, а через безопасную двухфазную перестановку**
   &nbsp;
-  - Недостаточно только SQL-проверки последних записей.
-  - Нужен именно **runtime-proof** на реальных новых сделках после патча:
+  - Подтверждаю root cause по uq_crm_pipeline_stages_order.
+  - Делать именно через временную безопасную зону для order_index, затем insert, затем финальную нормализацию.
+  - После вставки обязательно один раз перечитать стадии и убедиться, что итоговый порядок:
     &nbsp;
-    - новый успешный платёж по Gorbova Club;
-    - новый неуспешный / pending платёж по Gorbova Club;
-    - новый успешный платёж по другому продукту;
-    - новый неуспешный / pending платёж по другому продукту.
-    &nbsp;
-  - Нужно доказать:
-    &nbsp;
-    - в какую pipeline попала сделка;
-    - в какую stage попала сделка;
-    - что routing работает и для success, и для non-success.
+    - все open идут первыми;
+    - closed_won и closed_lost всегда в конце;
+    - без дублей по order_index.
     &nbsp;
   &nbsp;
-2. **Цвета existing open-стадий**
+2. **Убрать отдельную кнопку «Режим выделения» из toolbar**
   &nbsp;
-  - Не просто обновить seed для новых стадий.
-  - Нужно привести **все уже существующие open-стадии** к новой палитре, чтобы после патча интерфейс сразу выглядел цельно.
-  - closed_won и closed_lost оставить жёстко semantic-only.
+  - Полностью убрать.
+  - Вход в режим выделения только через checkbox в header стадии.
   &nbsp;
-3. **Автовыбор цвета**
+3. **Логика checkbox стадии**
   &nbsp;
-  - getNextStageColor(existingColors) должен учитывать только open-цвета текущей pipeline.
-  - Не должен выбирать зелёный/красный и вообще не должен пересекаться с semantic-цветами.
-  - При исчерпании палитры — безопасный cycle по palette, но без выбора closed_won/closed_lost цветов.
-  &nbsp;
-4. **Смена цвета стадии**
-  &nbsp;
-  - Добавить не просто пункт “Сменить цвет”, а компактный preset-picker с красивыми swatch-кнопками.
-  - Менять цвет можно только для open-стадий.
-  - Для Успешно и Отказ ручную смену цвета не давать, чтобы не ломать семантику.
-  &nbsp;
-5. **Режим выделения**
-  &nbsp;
-  - Согласен, что он должен включаться отдельной кнопкой, а не автоматически.
-  - Но при этом сохранить поддержку:
+  - Первое нажатие при bulkMode=false:
     &nbsp;
-    - select-all по стадии,
-    - partial selection по одной карточке,
-    - комбинированное выделение по нескольким стадиям.
+    - только включает режим выделения;
+    - ничего массово не выделяет.
     &nbsp;
-  - При выключении режима — выделение очищается полностью.
-  - В обычном режиме чекбоксы не должны занимать место и не должны влиять на drag/click.
-  &nbsp;
-6. **Карточка сделки**
-  &nbsp;
-  - Убрать order_number полностью.
-  - Добавить:
+  - Второе нажатие по checkbox уже в активном режиме:
     &nbsp;
-    - название сделки,
-    - продукт,
-    - тариф,
-    - контакт,
-    - сумму.
+    - работает как select all / deselect all для этой стадии.
     &nbsp;
-  - Важно не дублировать одно и то же дважды. Если название сделки и продукт совпадают, нужен аккуратный fallback, чтобы карточка не выглядела как повтор текста.
-  - Карточку лучше перестроить так:
+  - Это поведение должно быть одинаковым для всех стадий, включая Без стадии.
+  &nbsp;
+4. **Checkbox в header стадии показывать всегда**
+  &nbsp;
+  - Да, убрать зависимость от bulkMode.
+  - Но карточные checkbox оставить только в режиме выделения.
+  &nbsp;
+5. **После входа в selection mode не должно быть лишнего клика-блокера**
+  &nbsp;
+  - Как только режим включен первым кликом по header-checkbox, пользователь должен сразу иметь возможность:
     &nbsp;
-    - 1 строка: название сделки;
-    - 2 строка: продукт / тариф;
-    - 3 строка: контакт;
-    - 4 строка: сумма + статусы.
+    - выбирать отдельные карточки;
+    - выделять все в одной стадии;
+    - комбинировать сделки из нескольких стадий.
+    &nbsp;
+  - Никаких промежуточных состояний, где режим включён, но UI еще не готов.
+  &nbsp;
+6. **Проверить открытие карточек в Gorbova Club**
+  &nbsp;
+  - Здесь не ограничиваться только гипотезой про useDraggable.
+  - Нужен фактический runtime-fix и proof:
+    &nbsp;
+    - карточка открывается обычным кликом;
+    - drag не перехватывает обычный click;
+    - в длинной колонке Gorbova Club это тоже работает стабильно.
+    &nbsp;
+  - Если причина в drag listeners, исправлять точечно, не ломая drag-and-drop.
+  &nbsp;
+7. **Убрать визуальное мерцание карточки**
+  &nbsp;
+  - Да, border-left должен быть постоянной ширины.
+  - Менять только цвет, не геометрию.
+  - Проверить, чтобы не было shift ни при hover, ни при selected state, ни при drag.
+  &nbsp;
+8. **Добавить явный post-insert proof для createStage**
+  &nbsp;
+  - В DoD добавить не просто “2 стадии создались”, а:
+    &nbsp;
+    - создание 2 новых стадий подряд;
+    - обе видны в UI;
+    - цвета назначены автоматически;
+    - порядок корректен;
+    - повторное создание не ломает существующие стадии.
     &nbsp;
   &nbsp;
-7. **Foundation под будущую настройку полей**
+9. **Проверить selection flow на реальном сценарии**
   &nbsp;
-  - Верно, но зафиксировать явно:
+  - В DoD добавить сценарий:
     &nbsp;
-    - сейчас только внутренняя подготовка структуры;
-    - никакого UI-конструктора полей в этом патче не делать.
+    - первый клик по checkbox стадии Новая включает режим;
+    - затем вручную выбрать 1 карточку в Новая и 2 карточки в В работе;
+    - затем вторым кликом по header-checkbox одной стадии выделить все только в ней;
+    - затем снять часть вручную.
     &nbsp;
+  - Это нужно, чтобы не вернуться к старой неудобной логике.
   &nbsp;
-8. **Tinted background**
-  &nbsp;
-  - Подсветка должна применяться ко всей колонке стадии.
-  - Карточки внутри стадии — только слегка гармонизировать тоном, без потери контраста и без превращения в однотонную “кашу”.
-  - Нельзя ухудшить читаемость текста и бейджей.
-  &nbsp;
-9. **Изменяемые файлы**
-  &nbsp;
-  - Согласен с набором файлов.
-  - Новый stagePalette.ts — нормальный вариант.
-  - Но отдельную миграцию делать только если реально нужен persist для existing stage colors. Если можно обойтись data patch/update без новой схемы — так лучше.
-  &nbsp;
-10. **DoD дополнить**
+10. **Ничего лишнего не менять**
 
 &nbsp;
 
@@ -97,120 +93,127 @@
 
 &nbsp;
 
-- Добавить в DoD:
-  &nbsp;
-  - runtime-proof по новым сделкам;
-  - existing open-стадии перекрашены в новую палитру;
-  - semantic stages не потеряли свои fixed colors;
-  - partial selection удобен без необходимости сначала “выбрать всё” в колонке.
-  &nbsp;
+- Не трогать bulk delete / move / export.
+- Не трогать цветовую палитру, если она уже устраивает.
+- Не трогать list-view в этом патче, кроме случаев, если баг реально общий.
 
 &nbsp;
 
 &nbsp;
 
-Итог: план хороший, но без **реального runtime-proof по новым сделкам** и без **массового приведения existing open-стадий к новой палитре** патч считать закрытым нельзя.
+Итог: план хороший, но закрывать патч только после доказуемого исправления трех вещей:
+
+**create stage**, **новая логика входа в selection mode через checkbox**, **нормальный click по карточкам без мерцания и без конфликта с drag**.
 
 &nbsp;
 
-План: Visual polish стадий + selection mode + карточка сделки
+План: Fix createStage unique constraint + selection mode через checkbox + visual bugs
 
-## Диагностика текущего состояния
+## Диагностика
 
-1. **Цвета стадий**: Все pipelines имеют одинаковые 4 стадии с одними и теми же цветами (`#3b82f6` Новая, `#f59e0b` В работе, `#22c55e` Успешно, `#ef4444` Отказ). Tinted background применяется только к `closed_won` и `closed_lost` через CSS-классы в `KanbanColumn.tsx`. Open-стадии не имеют tinted background.
-2. **Автовыбор цвета**: `createStage()` в `pipelineService.ts` использует hardcoded `#6366f1` по умолчанию. Нет палитры.
-3. **Смена цвета**: Нет функции `updateStageColor` — только `renameStage`.
-4. **Bulk mode**: Вход через первый клик по checkbox в header стадии. Нет отдельной кнопки.
-5. **Карточка**: Показывает `product_name`, `contact`, `amount`, `order_number`. Не показывает `tariff_name`. Показывает `order_number` (ID).
-6. **BoardDeal**: Уже содержит `tariff_name` — данные есть, просто не отображаются.
+### 1. createStage() — `uq_crm_pipeline_stages_order`
+
+В `pipelineService.ts:134-142` текущая логика сдвигает closed-стадии по одной через `update order_index = order_index + 1`. Если closed_won имеет `order_index=2` и closed_lost `order_index=3`, при сдвиге closed_won на 3 — конфликт с closed_lost. Нужен двухфазный сдвиг через временные отрицательные значения (как уже сделано в `reorderStages()`).
+
+### 2. Кнопка «Режим выделения» — убрать
+
+В `DealsKanbanBoard.tsx:256-282` рендерится кнопка. Удалить весь блок.
+
+### 3. Вход в selection mode через checkbox стадии
+
+В `KanbanColumnHeader.tsx:101-107` checkbox вызывает `onSelectAll/onDeselectAll` напрямую. Нужно:
+
+- Если `bulkMode=false` → первое нажатие только включает selection mode (новый callback `onEnterSelectionMode`)
+- Если `bulkMode=true` → обычный select-all/deselect-all
+
+### 4. Checkbox видимость — всегда показывать в header (не только в bulkMode)
+
+Строка 115: `{bulkMode && totalInStage > 0 && onSelectAll && (` — убрать `bulkMode &&`, чтобы checkbox был виден всегда. Карточные checkboxes остаются только в bulkMode.
+
+### 5. Карточки не открываются в Gorbova Club
+
+В `DealsKanbanBoard.tsx:192-195` `handleOpenDeal` возвращает пустоту если `bulkMode=true`. Но проблема в другом: `KanbanDealCard` использует `useDraggable`, и drag listeners (`...attributes, ...listeners`) перехватывают pointer events. В Gorbova Club все 1001 сделок в `closed_won` стадии — `useDraggable` **не disabled** для closed stages. Нужно проверить, не блокирует ли `onPointerDown` из drag listeners клик. Скорее всего проблема в том, что drag activation с `distance: 5` на touchpad/trackpad может мешать чистому клику. Однако это работает в других воронках, значит проблема может быть в количестве элементов или в специфике `closed_won` stage. Нужно убедиться, что `onClick` на inner div не конфликтует с drag `listeners`.
+
+### 6. Визуальный баг — полоса/мерцание при hover
+
+В `KanbanDealCard.tsx:120-122` условный `borderLeftWidth: accentColor ? "2px" : undefined` создаёт layout shift при hover, потому что без accent border нет 2px слева, а с ним — есть. Это вызывает "моргание" при наведении. Решение: всегда задавать `borderLeftWidth: "2px"` и менять только цвет (прозрачный → accent).
 
 ## Изменяемые файлы
 
-### 1. `src/lib/stagePalette.ts` (новый)
 
-Палитра приглушённых цветов для open-стадий + утилиты:
+| Файл                                                | Что                                                                                            |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/services/pipelineService.ts`                   | createStage: двухфазный сдвиг через отрицательные order_index                                  |
+| `src/components/admin/deals/DealsKanbanBoard.tsx`   | Убрать кнопку «Режим выделения», добавить `onEnterSelectionMode` callback в props KanbanColumn |
+| `src/components/admin/deals/KanbanColumnHeader.tsx` | Checkbox всегда видим; первый клик = enable mode, второй = select all                          |
+| `src/components/admin/deals/KanbanColumn.tsx`       | Прокинуть `onEnterSelectionMode`                                                               |
+| `src/components/admin/deals/KanbanDealCard.tsx`     | Убрать условный borderLeftWidth, всегда 2px с transparent fallback                             |
 
-- `STAGE_PALETTE` — 8 цветов: slate-blue `#6366f1`, amber `#d97706`, teal `#0d9488`, indigo `#4f46e5`, violet `#7c3aed`, cyan `#0891b2`, rose-slate `#64748b`, sky `#0284c7`
-- `getNextStageColor(existingColors: string[])` — возвращает первый неиспользованный цвет
-- `getStageBackgroundStyle(color: string, stageType)` — возвращает `{ backgroundColor, borderColor }` для tinted block
-- `SEMANTIC_COLORS = { closed_won: '#22c55e', closed_lost: '#ef4444' }`
 
-### 2. `src/services/pipelineService.ts`
+## Детали реализации
 
-- Добавить `updateStageColor(id: string, color: string)` — update + audit
-- В `createStage()`: вместо hardcoded `#6366f1` — вызвать `getNextStageColor()` с учётом существующих стадий (уже загружены в этой функции)
-- В `createPipeline()` seed stages: использовать разные цвета из палитры для open-стадий
+### createStage — безопасный порядок
 
-### 3. `src/hooks/usePipelineStages.ts`
+```typescript
+// 1. Сдвинуть closed stages в безопасную зону (отрицательные)
+for (let i = 0; i < closedStages.length; i++) {
+  await supabase.from("crm_pipeline_stages")
+    .update({ order_index: -(i + 1000) })
+    .eq("id", closedStages[i].id);
+}
+// 2. Вставить новую стадию
+// 3. Вернуть closed stages с правильными индексами
+for (let i = 0; i < closedStages.length; i++) {
+  await supabase.from("crm_pipeline_stages")
+    .update({ order_index: newIndex + 1 + i })
+    .eq("id", closedStages[i].id);
+}
+```
 
-- Добавить мутацию `updateColor` через новый `updateStageColor`
+### Selection mode через checkbox
 
-### 4. `src/components/admin/deals/KanbanColumn.tsx`
+```typescript
+// KanbanColumnHeader
+const handleCheckboxChange = () => {
+  if (!bulkMode) {
+    onEnterSelectionMode?.(); // только включить режим
+    return;
+  }
+  // уже в режиме — toggle select all
+  if (isAllSelected || isIndeterminate) {
+    onDeselectAll?.();
+  } else {
+    onSelectAll?.();
+  }
+};
+```
 
-- Заменить hardcoded CSS-классы `bg-green-500/5 border-green-500/20` и `bg-red-500/5 border-red-500/20` на динамический tinted background из `getStageBackgroundStyle(color, stageType)` — применяется ко ВСЕМ стадиям, не только closed
-- Карточки внутри получают гармоничный тон через prop `stageColor`
+### Карточка — стабильный border
 
-### 5. `src/components/admin/deals/KanbanColumnHeader.tsx`
-
-- В dropdown меню стадии добавить пункт «Сменить цвет» (для open-стадий)
-- По клику — показать небольшой popover/dialog с preset-палитрой из `STAGE_PALETTE`
-- Передать `onChangeColor?: (color: string) => void` prop
-
-### 6. `src/components/admin/deals/KanbanDealCard.tsx`
-
-- Убрать `order_number` (строка 165-167)
-- Добавить `tariff_name` рядом с `product_name`
-- Переструктурировать layout:
-  - Верх: product + status icon
-  - Под ним: tariff (мелким текстом)
-  - Контакт
-  - Сумма + badges
-- Подготовить данные карточки как массив `CardField[]` для будущей настройки видимости (пока все поля показываются, но структура ready)
-- Добавить опциональный `stageColor` prop для гармонизации (например, subtle left border accent)
-
-### 7. `src/components/admin/deals/DealsKanbanBoard.tsx`
-
-- Добавить кнопку-тумблер «Режим выделения» в toolbar (между summary strip и board)
-- `bulkMode` управляется этой кнопкой, а не автоматически от `selectedDealIds.size > 0`
-- При выключении режима — `clearSelection()`
-- Escape — выход из режима выделения
-- Передать `stageColor` в `KanbanColumn` → `KanbanDealCard`
-- Передать `onChangeColor` в `KanbanColumn` → `KanbanColumnHeader`
-
-### 8. Миграция — обновить существующие цвета open-стадий
-
-SQL-миграция для обновления цветов существующих стадий:
-
-- Для каждого pipeline: «Новая» → slate-blue, «В работе» → amber/teal (разные)
-- `closed_won` и `closed_lost` оставить как есть
-
-## Проверка авторазмещения новых сделок
-
-Runtime-proof через SQL-запросы к `orders_v2` + `crm_pipeline_product_bindings`:
-
-- Проверить последние сделки и их pipeline_id/stage_id
-- Подтвердить корректность routing
+```typescript
+style={{
+  ...style,
+  borderLeftColor: accentColor || "transparent",
+  borderLeftWidth: "2px",
+}}
+```
 
 ## Что НЕ меняется
 
-- SQL-схема таблиц (только данные — цвета)
-- Логика CRUD стадий
-- Bulk delete / move / export
+- Bulk delete/move/export
 - List-view
-- Deal routing / assignment logic
 - DragOverlay
+- Палитра цветов
+- SQL-схема
 
 ## DoD
 
-1. Все open-стадии имеют tinted background в разных приглушённых цветах
-2. Новая стадия получает цвет автоматически из палитры (не дублируя)
-3. Цвет стадии можно сменить через меню в header
-4. Весь stage block окрашен, не только точка
-5. Карточки гармонируют с цветом стадии
-6. Есть отдельная кнопка «Режим выделения»
-7. Чекбоксы видны только в этом режиме
-8. Escape выходит из режима
-9. ID/номер сделки убран с карточки
-10. Тариф добавлен на карточку
-11. Drag-and-drop не сломан
-12. Новые сделки корректно маршрутизируются
+1. Создание 2 стадий подряд без `uq_crm_pipeline_stages_order`
+2. Успешно и Отказ остаются в конце
+3. Toolbar не содержит кнопку «Режим выделения»
+4. Первый клик по checkbox стадии включает selection mode без массового выделения
+5. Второй клик по тому же checkbox выделяет все сделки стадии
+6. Partial selection по нескольким стадиям работает
+7. Escape выходит и очищает
+8. Карточки в Gorbova Club открываются по клику
+9. Нет визуального мерцания/полосы при hover на карточках
