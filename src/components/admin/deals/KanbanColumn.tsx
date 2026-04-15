@@ -122,7 +122,7 @@ export const KanbanColumn = memo(function KanbanColumn({
           borderColor: isOver && !bulkMode ? undefined : bgStyle.borderColor,
         }}
         className={cn(
-          "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-colors duration-200",
+          "min-w-[280px] max-w-[320px] w-[280px] shrink-0 flex flex-col rounded-2xl border transition-colors duration-200 self-stretch",
           isOver && !bulkMode && "border-primary/50 shadow-lg",
         )}
       >
