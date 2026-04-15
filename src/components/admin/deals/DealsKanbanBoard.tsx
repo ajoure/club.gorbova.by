@@ -282,6 +282,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
                 onEnterSelectionMode={() => setSelectionMode(true)}
+                onExitSelectionMode={clearSelection}
               />
             )}
 
@@ -316,6 +317,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
                 onSelectAllInStage={selectAllInStage}
                 onDeselectAllInStage={deselectAllInStage}
                 onEnterSelectionMode={() => setSelectionMode(true)}
+                onExitSelectionMode={clearSelection}
               />
             ))}
 
