@@ -5,6 +5,7 @@ import {
   renameStage,
   deleteStageWithRemap,
   reorderStages,
+  updateStageColor,
   type CrmPipelineStage,
 } from "@/services/pipelineService";
 import { toast } from "sonner";
@@ -32,6 +33,12 @@ export function usePipelineStages(pipelineId: string | null) {
   const renameMut = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => renameStage(id, name),
     onSuccess: () => { invalidate(); toast.success("Стадия переименована"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const colorMut = useMutation({
+    mutationFn: ({ id, color }: { id: string; color: string }) => updateStageColor(id, color),
+    onSuccess: () => { invalidate(); toast.success("Цвет стадии обновлён"); },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -66,6 +73,7 @@ export function usePipelineStages(pipelineId: string | null) {
     isLoading,
     createStage: createMut.mutateAsync,
     renameStage: renameMut.mutateAsync,
+    updateStageColor: colorMut.mutateAsync,
     deleteStage: deleteMut.mutateAsync,
     reorderStages: reorderMut.mutateAsync,
   };

@@ -119,7 +119,7 @@ export async function fetchStages(pipelineId: string): Promise<CrmPipelineStage[
 export async function createStage(
   pipelineId: string,
   name: string,
-  color = "#6366f1",
+  color?: string,
   stageType: "open" | "closed_won" | "closed_lost" = "open"
 ): Promise<CrmPipelineStage> {
   // Insert before closed stages
@@ -127,6 +127,9 @@ export async function createStage(
   const closedStages = stages.filter((s) => s.stage_type !== "open");
   const openStages = stages.filter((s) => s.stage_type === "open");
   const newIndex = openStages.length; // after last open, before closed
+
+  // Auto-pick color if not provided
+  const resolvedColor = color || getNextStageColor(openStages.map((s) => s.color));
 
   // Shift closed stages up
   for (const cs of closedStages) {
@@ -140,12 +143,18 @@ export async function createStage(
 
   const { data, error } = await supabase
     .from("crm_pipeline_stages")
-    .insert({ pipeline_id: pipelineId, name, color, stage_type: stageType, order_index: newIndex })
+    .insert({ pipeline_id: pipelineId, name, color: resolvedColor, stage_type: stageType, order_index: newIndex })
     .select()
     .single();
   if (error) throw error;
   await writeAudit("pipeline_stage.created", { stage_id: data.id, pipeline_id: pipelineId, name });
   return data as unknown as CrmPipelineStage;
+}
+
+export async function updateStageColor(id: string, color: string) {
+  const { error } = await supabase.from("crm_pipeline_stages").update({ color }).eq("id", id);
+  if (error) throw error;
+  await writeAudit("pipeline_stage.color_changed", { stage_id: id, color });
 }
 
 export async function renameStage(id: string, name: string) {
