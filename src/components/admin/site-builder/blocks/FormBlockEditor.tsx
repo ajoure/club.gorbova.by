@@ -3,7 +3,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2, X, Lock, Shield } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -20,9 +20,21 @@ const MAPPING_OPTIONS = [
   { value: "first_name", label: "Имя" },
   { value: "last_name", label: "Фамилия" },
   { value: "telegram_username", label: "Telegram" },
+  { value: "instagram_url", label: "Instagram" },
+];
+
+// System fields for auth_mode — not editable as custom fields
+const SYSTEM_AUTH_FIELDS = [
+  { label: "Email", type: "email", mapping: "email", key: "email" },
+  { label: "Имя", type: "text", mapping: "first_name", key: "first_name" },
+  { label: "Фамилия", type: "text", mapping: "last_name", key: "last_name" },
+  { label: "Телефон", type: "phone", mapping: "phone", key: "phone" },
+  { label: "Пароль", type: "password", mapping: "password", key: "password" },
 ];
 
 export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
+  const authMode = (content.auth_mode as boolean) || false;
+  const telegramLink = (content.telegram_link as boolean) || false;
   const fields = (content.fields as Array<{ label: string; type: string; required: boolean; mapping?: string }>) || [];
   const selectedProductId = (content.product_id as string) || "";
   const selectedTariffId = (content.tariff_id as string) || "";
@@ -109,6 +121,53 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
         <p className="text-[10px] text-muted-foreground mt-1">Оставьте пустым для показа сообщения «Спасибо». Допустимы только https:// или относительные пути (/...)</p>
       </div>
 
+      {/* Auth mode toggle */}
+      <div className="border rounded-lg p-3 space-y-3 bg-muted/30">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-primary" />
+            <Label className="text-xs font-semibold">Режим авторизации</Label>
+          </div>
+          <Switch
+            checked={authMode}
+            onCheckedChange={(v) => onChange({ ...content, auth_mode: v })}
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          При включении форма запросит email и пароль. Новым пользователям создастся аккаунт, существующие войдут в систему.
+        </p>
+
+        {authMode && (
+          <div className="space-y-3 pt-2 border-t">
+            {/* System fields display (locked) */}
+            <div>
+              <Label className="text-xs text-muted-foreground mb-2 block">Системные поля (автоматически)</Label>
+              <div className="space-y-1">
+                {SYSTEM_AUTH_FIELDS.map((sf) => (
+                  <div key={sf.key} className="flex items-center gap-2 px-2 py-1.5 bg-muted rounded text-xs text-muted-foreground">
+                    <Lock className="h-3 w-3 flex-shrink-0" />
+                    <span>{sf.label}</span>
+                    <span className="ml-auto text-[10px] opacity-70">{sf.type}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Telegram link toggle */}
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Привязка Telegram-бота</Label>
+              <Switch
+                checked={telegramLink}
+                onCheckedChange={(v) => onChange({ ...content, telegram_link: v })}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Предложит привязать Telegram для доступов и уведомлений. Пользователь может пропустить.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Product/Tariff binding */}
       <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
         <div className="flex items-center justify-between">
@@ -143,6 +202,13 @@ export function FormBlockEditor({ content, onChange }: FormBlockEditorProps) {
           </div>
         )}
         <p className="text-[10px] text-muted-foreground">При отправке формы автоматически создастся сделка с выбранным продуктом</p>
+      </div>
+
+      {/* Custom fields (extra fields / questionnaire) */}
+      <div>
+        <Label className="text-xs font-semibold mb-2 block">
+          {authMode ? "Дополнительные поля анкеты" : "Поля формы"}
+        </Label>
       </div>
 
       {fields.map((field, i) => (
