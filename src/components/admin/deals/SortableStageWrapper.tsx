@@ -24,13 +24,20 @@ export function SortableStageWrapper({ id, disabled, children }: Props) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id, disabled });
+  } = useSortable({
+    id,
+    disabled,
+    data: { type: "stage" },
+  });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 10 : undefined,
+    // Ensure full-height stretch within flex row
+    display: "flex",
+    alignSelf: "stretch",
   };
 
   return (
