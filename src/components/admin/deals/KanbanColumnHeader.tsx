@@ -70,6 +70,7 @@ export function KanbanColumnHeader({
   onDeselectAll,
   bulkMode,
   onEnterSelectionMode,
+  onExitSelectionMode,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
@@ -115,12 +116,13 @@ export function KanbanColumnHeader({
       <div className="p-3 border-b border-border/20 sticky top-0 z-10 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            {/* Bulk selection checkbox — always visible when stage has deals */}
-            {totalInStage > 0 && onSelectAll && (
+            {/* Bulk selection checkbox — always visible */}
+            {onSelectAll && (
               <Checkbox
-                checked={isIndeterminate ? "indeterminate" : isAllSelected}
+                checked={bulkMode ? (isIndeterminate ? "indeterminate" : isAllSelected) : false}
                 onCheckedChange={handleCheckboxChange}
                 className="shrink-0"
+                disabled={!bulkMode && totalInStage === 0}
                 aria-label={`Выделить все сделки в стадии ${name}`}
               />
             )}
