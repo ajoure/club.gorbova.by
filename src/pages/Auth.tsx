@@ -834,7 +834,6 @@ export default function Auth() {
                         placeholder="••••••••"
                         required
                       />
-                      />
                     </div>
                     {getFieldError('confirmPassword') && (
                       <p className="text-sm text-destructive">{getFieldError('confirmPassword')}</p>
