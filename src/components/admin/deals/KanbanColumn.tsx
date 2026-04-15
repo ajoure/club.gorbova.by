@@ -52,6 +52,11 @@ interface Props {
   onDeselectAllInStage?: (stageId: string) => void;
   onEnterSelectionMode?: () => void;
   onExitSelectionMode?: () => void;
+  // Stage drag handle props
+  dragHandleProps?: {
+    attributes: Record<string, any>;
+    listeners: Record<string, any> | undefined;
+  };
 }
 
 export const KanbanColumn = memo(function KanbanColumn({
