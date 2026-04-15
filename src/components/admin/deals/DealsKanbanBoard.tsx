@@ -9,11 +9,17 @@ import {
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
 import { useDealsBoard, type BoardDeal } from "@/hooks/useDealsBoard";
 import { usePipelineStages } from "@/hooks/usePipelineStages";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanSummaryStrip } from "./KanbanSummaryStrip";
 import { KanbanBulkActionsBar } from "./KanbanBulkActionsBar";
+import { SortableStageWrapper } from "./SortableStageWrapper";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +51,7 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const { canWrite, isSuperAdmin } = usePermissions();
   const canEdit = canWrite("deals") || isSuperAdmin();
 
-  const { stages, isLoading: stagesLoading, createStage, renameStage, updateStageColor, deleteStage } =
+  const { stages, isLoading: stagesLoading, createStage, renameStage, updateStageColor, deleteStage, reorderStages } =
     usePipelineStages(pipelineId);
   const { deals, isLoading: dealsLoading, moveDeal, groupByStage, getStageTotals } =
     useDealsBoard({ pipelineId, isDefaultPipeline, search, productId, tariffIds, dateFrom, dateTo });
@@ -81,7 +87,6 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const toggleSelectionMode = useCallback(() => {
     setSelectionMode((prev) => {
       if (prev) {
-        // Exiting: clear selection
         setSelectedDealIds(new Set());
       }
       return !prev;
@@ -133,13 +138,23 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
   const [moveTarget, setMoveTarget] = useState<{ dealId: string; anchorEl: HTMLElement } | null>(null);
   const moveAnchorRef = useRef<HTMLDivElement>(null);
 
-  // Disable drag sensors in bulk mode
-  const sensors = useSensors(
+  // Sensors for deal drag
+  const dealSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
   const emptySensors = useSensors();
 
+  // Sensors for stage drag (separate)
+  const stageSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
   const grouped = useMemo(() => groupByStage(stages), [deals, stages]);
+
+  // Split stages into sortable open and fixed closed
+  const openStages = useMemo(() => stages.filter(s => s.stage_type === "open"), [stages]);
+  const closedStages = useMemo(() => stages.filter(s => s.stage_type !== "open"), [stages]);
+  const openStageIds = useMemo(() => openStages.map(s => s.id), [openStages]);
 
   const handleDragStart = useCallback((e: DragStartEvent) => {
     if (bulkMode) return;
@@ -165,6 +180,21 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
       oldStageId: deal.pipeline_stage_id,
     });
   }, [deals, canEdit, moveDeal, bulkMode]);
+
+  // Stage reorder handler
+  const handleStageDragEnd = useCallback((e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id || !canEdit) return;
+
+    const oldIndex = openStages.findIndex(s => s.id === active.id);
+    const newIndex = openStages.findIndex(s => s.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(openStages, oldIndex, newIndex);
+    // Full ordered list: reordered open stages + closed stages (order preserved)
+    const allOrderedIds = [...reordered.map(s => s.id), ...closedStages.map(s => s.id)];
+    reorderStages(allOrderedIds);
+  }, [openStages, closedStages, canEdit, reorderStages]);
 
   const handleCreateStage = async () => {
     if (!newStageName.trim()) return;
@@ -247,134 +277,157 @@ export function DealsKanbanBoard({ pipelineId, pipelineName, isDefaultPipeline, 
 
   const anchorRect = moveTarget?.anchorEl?.getBoundingClientRect();
 
+  const renderColumn = (stage: CrmPipelineStage, dragHandleProps?: any) => (
+    <KanbanColumn
+      key={stage.id}
+      stageId={stage.id}
+      name={stage.name}
+      color={stage.color}
+      stageType={stage.stage_type}
+      deals={grouped[stage.id] || []}
+      totals={getStageTotals(grouped[stage.id] || [])}
+      onOpenDeal={handleOpenDeal}
+      onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
+      showMoveButton={canEdit && stages.length > 1 && !bulkMode}
+      availableStages={stages.filter((s) => s.id !== stage.id)}
+      canEdit={canEdit}
+      onRename={canEdit ? (name) => renameStage({ id: stage.id, name }) : undefined}
+      onDelete={
+        canEdit && stage.stage_type === "open"
+          ? (targetId) => deleteStage({ stageId: stage.id, targetStageId: targetId })
+          : undefined
+      }
+      onChangeColor={
+        canEdit && stage.stage_type === "open"
+          ? (color) => updateStageColor({ id: stage.id, color })
+          : undefined
+      }
+      bulkMode={bulkMode}
+      selectedDealIds={selectedDealIds}
+      onToggleSelect={toggleSelect}
+      onSelectAllInStage={selectAllInStage}
+      onDeselectAllInStage={deselectAllInStage}
+      onEnterSelectionMode={() => setSelectionMode(true)}
+      onExitSelectionMode={clearSelection}
+      dragHandleProps={dragHandleProps}
+    />
+  );
+
   return (
     <TooltipProvider delayDuration={300}>
       <div className="space-y-3">
         <KanbanSummaryStrip {...summaryTotals} />
 
-        {/* No top strip — selection mode managed via stage checkboxes + floating bar + Escape */}
-
+        {/* Outer DndContext for stage reordering */}
         <DndContext
-          sensors={bulkMode ? emptySensors : sensors}
+          sensors={bulkMode ? emptySensors : stageSensors}
           collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
+          onDragEnd={handleStageDragEnd}
         >
-          <div className="flex gap-3 overflow-x-auto pb-4 px-1 min-h-[400px]">
-            {/* Unassigned column */}
-            {(grouped.__unassigned?.length || 0) > 0 && (
-              <KanbanColumn
-                stageId="__unassigned"
-                name="Без стадии"
-                color="#94a3b8"
-                stageType="open"
-                deals={grouped.__unassigned || []}
-                totals={getStageTotals(grouped.__unassigned || [])}
-                onOpenDeal={handleOpenDeal}
-                onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
-                showMoveButton={canEdit && stages.length > 0 && !bulkMode}
-                availableStages={stages}
-                canEdit={canEdit}
-                pipelineId={pipelineId}
-                bulkMode={bulkMode}
-                selectedDealIds={selectedDealIds}
-                onToggleSelect={toggleSelect}
-                onSelectAllInStage={selectAllInStage}
-                onDeselectAllInStage={deselectAllInStage}
-                onEnterSelectionMode={() => setSelectionMode(true)}
-                onExitSelectionMode={clearSelection}
-              />
-            )}
+          <SortableContext items={openStageIds} strategy={horizontalListSortingStrategy}>
+            {/* Inner DndContext for deal drag */}
+            <DndContext
+              sensors={bulkMode ? emptySensors : dealSensors}
+              collisionDetection={closestCenter}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+            >
+              <div className="flex gap-3 overflow-x-auto pb-4 px-1 min-h-[400px]">
+                {/* Unassigned column — fixed position */}
+                {(grouped.__unassigned?.length || 0) > 0 && (
+                  <KanbanColumn
+                    stageId="__unassigned"
+                    name="Без стадии"
+                    color="#94a3b8"
+                    stageType="open"
+                    deals={grouped.__unassigned || []}
+                    totals={getStageTotals(grouped.__unassigned || [])}
+                    onOpenDeal={handleOpenDeal}
+                    onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
+                    showMoveButton={canEdit && stages.length > 0 && !bulkMode}
+                    availableStages={stages}
+                    canEdit={canEdit}
+                    pipelineId={pipelineId}
+                    bulkMode={bulkMode}
+                    selectedDealIds={selectedDealIds}
+                    onToggleSelect={toggleSelect}
+                    onSelectAllInStage={selectAllInStage}
+                    onDeselectAllInStage={deselectAllInStage}
+                    onEnterSelectionMode={() => setSelectionMode(true)}
+                    onExitSelectionMode={clearSelection}
+                  />
+                )}
 
-            {stages.map((stage) => (
-              <KanbanColumn
-                key={stage.id}
-                stageId={stage.id}
-                name={stage.name}
-                color={stage.color}
-                stageType={stage.stage_type}
-                deals={grouped[stage.id] || []}
-                totals={getStageTotals(grouped[stage.id] || [])}
-                onOpenDeal={handleOpenDeal}
-                onMoveClick={canEdit && !bulkMode ? handleMoveClick : undefined}
-                showMoveButton={canEdit && stages.length > 1 && !bulkMode}
-                availableStages={stages.filter((s) => s.id !== stage.id)}
-                canEdit={canEdit}
-                onRename={canEdit ? (name) => renameStage({ id: stage.id, name }) : undefined}
-                onDelete={
-                  canEdit && stage.stage_type === "open"
-                    ? (targetId) => deleteStage({ stageId: stage.id, targetStageId: targetId })
-                    : undefined
-                }
-                onChangeColor={
-                  canEdit && stage.stage_type === "open"
-                    ? (color) => updateStageColor({ id: stage.id, color })
-                    : undefined
-                }
-                bulkMode={bulkMode}
-                selectedDealIds={selectedDealIds}
-                onToggleSelect={toggleSelect}
-                onSelectAllInStage={selectAllInStage}
-                onDeselectAllInStage={deselectAllInStage}
-                onEnterSelectionMode={() => setSelectionMode(true)}
-                onExitSelectionMode={clearSelection}
-              />
-            ))}
+                {/* Sortable open stages */}
+                {openStages.map((stage) => (
+                  <SortableStageWrapper key={stage.id} id={stage.id} disabled={bulkMode}>
+                    {({ setNodeRef, style, dragHandleProps, isDragging }) => (
+                      <div ref={setNodeRef} style={style}>
+                        {renderColumn(stage, dragHandleProps)}
+                      </div>
+                    )}
+                  </SortableStageWrapper>
+                ))}
 
-            {/* Add stage button */}
-            {canEdit && (
-              <div className="min-w-[260px] shrink-0">
-                {showNewStage ? (
-                  <div className="p-3 rounded-xl border border-border/30 bg-card/20 backdrop-blur-md space-y-2">
-                    <Input
-                      value={newStageName}
-                      onChange={(e) => setNewStageName(e.target.value)}
-                      placeholder="Название стадии..."
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleCreateStage();
-                        if (e.key === "Escape") setShowNewStage(false);
-                      }}
-                    />
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={handleCreateStage} disabled={!newStageName.trim()}>
-                        Создать
+                {/* Fixed closed stages */}
+                {closedStages.map((stage) => renderColumn(stage))}
+
+                {/* Add stage button */}
+                {canEdit && (
+                  <div className="min-w-[260px] shrink-0">
+                    {showNewStage ? (
+                      <div className="p-3 rounded-xl border border-border/30 bg-card/20 space-y-2">
+                        <Input
+                          value={newStageName}
+                          onChange={(e) => setNewStageName(e.target.value)}
+                          placeholder="Название стадии..."
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleCreateStage();
+                            if (e.key === "Escape") setShowNewStage(false);
+                          }}
+                        />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={handleCreateStage} disabled={!newStageName.trim()}>
+                            Создать
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setShowNewStage(false)}>
+                            Отмена
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        className="w-full h-12 border border-dashed border-border/40 rounded-xl text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowNewStage(true)}
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Добавить стадию
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setShowNewStage(false)}>
-                        Отмена
-                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* DragOverlay for deals */}
+              <DragOverlay>
+                {activeDeal ? (
+                  <div className="p-3 rounded-xl border border-border/40 bg-card shadow-xl opacity-90 rotate-1 w-[260px] pointer-events-none">
+                    <div className="text-xs font-medium text-foreground truncate">{activeDeal.product_name || "—"}</div>
+                    {(activeDeal.contact_name || activeDeal.contact_email) && (
+                      <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {activeDeal.contact_name || activeDeal.contact_email}
+                      </div>
+                    )}
+                    <div className="text-sm font-semibold text-foreground mt-1">
+                      {formatCurrency(Number(activeDeal.final_price || 0), activeDeal.currency)}
                     </div>
                   </div>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    className="w-full h-12 border border-dashed border-border/40 rounded-xl text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowNewStage(true)}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Добавить стадию
-                  </Button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* DragOverlay */}
-          <DragOverlay>
-            {activeDeal ? (
-              <div className="p-3 rounded-xl border border-border/40 bg-card shadow-xl opacity-90 rotate-1 w-[260px] pointer-events-none">
-                <div className="text-xs font-medium text-foreground truncate">{activeDeal.product_name || "—"}</div>
-                {(activeDeal.contact_name || activeDeal.contact_email) && (
-                  <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                    {activeDeal.contact_name || activeDeal.contact_email}
-                  </div>
-                )}
-                <div className="text-sm font-semibold text-foreground mt-1">
-                  {formatCurrency(Number(activeDeal.final_price || 0), activeDeal.currency)}
-                </div>
-              </div>
-            ) : null}
-          </DragOverlay>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          </SortableContext>
         </DndContext>
 
         {/* Shared move menu */}

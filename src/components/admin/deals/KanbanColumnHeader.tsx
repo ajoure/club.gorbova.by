@@ -17,7 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X, GripVertical } from "lucide-react";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { STAGE_PALETTE } from "@/lib/stagePalette";
 
@@ -42,6 +42,11 @@ interface Props {
   bulkMode?: boolean;
   onEnterSelectionMode?: () => void;
   onExitSelectionMode?: () => void;
+  // Stage drag handle props
+  dragHandleProps?: {
+    attributes: Record<string, any>;
+    listeners: Record<string, any> | undefined;
+  };
 }
 
 const formatCurrency = (v: number) =>
@@ -71,6 +76,7 @@ export function KanbanColumnHeader({
   bulkMode,
   onEnterSelectionMode,
   onExitSelectionMode,
+  dragHandleProps,
 }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(name);
@@ -116,6 +122,17 @@ export function KanbanColumnHeader({
       <div className="p-3 border-b border-border/20 sticky top-0 z-10 backdrop-blur-xl rounded-t-2xl">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
+            {/* Stage drag handle — only for open stages */}
+            {dragHandleProps && stageType === "open" && !bulkMode && (
+              <div
+                {...dragHandleProps.attributes}
+                {...dragHandleProps.listeners}
+                className="shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors"
+                style={{ touchAction: "none" }}
+              >
+                <GripVertical className="h-3.5 w-3.5" />
+              </div>
+            )}
             {/* Bulk selection checkbox — always visible */}
             {onSelectAll && (
               <Checkbox
