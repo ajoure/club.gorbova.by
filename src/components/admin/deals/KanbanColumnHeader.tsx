@@ -17,7 +17,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Shield, Palette, X, GripVertical } from "lucide-react";
 import type { CrmPipelineStage } from "@/services/pipelineService";
 import { STAGE_PALETTE } from "@/lib/stagePalette";
 
@@ -42,6 +42,11 @@ interface Props {
   bulkMode?: boolean;
   onEnterSelectionMode?: () => void;
   onExitSelectionMode?: () => void;
+  // Stage drag handle props
+  dragHandleProps?: {
+    attributes: Record<string, any>;
+    listeners: Record<string, any> | undefined;
+  };
 }
 
 const formatCurrency = (v: number) =>
